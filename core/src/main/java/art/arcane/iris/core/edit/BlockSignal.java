@@ -117,7 +117,7 @@ public class BlockSignal {
                     e.setTicksLived(1);
                     e.teleport(tg.clone());
                     e.setVelocity(new Vector(0, 0, 0));
-                })) {
+                }, 0, this::cancel)) {
                     cancel();
                 }
             }

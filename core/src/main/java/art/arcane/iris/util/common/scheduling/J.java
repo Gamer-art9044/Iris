@@ -258,6 +258,29 @@ public class J {
         return true;
     }
 
+    public static boolean runEntity(Entity entity, Runnable runnable, int delayTicks, Runnable retired) {
+        if (retired == null) {
+            return runEntity(entity, runnable, delayTicks);
+        }
+
+        if (entity == null || runnable == null) {
+            return false;
+        }
+
+        if (isFolia()) {
+            return FoliaScheduler.runEntity(BukkitPlatform.plugin(), entity, runnable, Math.max(0, delayTicks), retired);
+        }
+
+        Runnable guarded = () -> {
+            if (entity.isValid()) {
+                runnable.run();
+            } else {
+                retired.run();
+            }
+        };
+        return runEntity(entity, guarded, delayTicks);
+    }
+
     public static boolean runRegion(World world, int chunkX, int chunkZ, Runnable runnable) {
         if (world == null || runnable == null) {
             return false;

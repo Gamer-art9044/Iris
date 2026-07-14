@@ -22,6 +22,7 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.loader.IrisRegistrant;
+import art.arcane.iris.core.service.EntityRiseSVC;
 import art.arcane.iris.core.service.ExternalDataSVC;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
@@ -389,16 +390,18 @@ public class IrisEntity extends IrisRegistrant {
                 boolean originalAi = living.hasAI();
                 boolean originalCollidable = living.isCollidable();
                 int originalNoDamageTicks = living.getNoDamageTicks();
+                EntityRiseSVC.stamp(e, originalInvulnerable, originalAi, originalCollidable);
                 e.setInvulnerable(true);
                 living.setAI(false);
                 living.setCollidable(false);
                 living.setNoDamageTicks(100000);
+                Runnable restore = () -> restoreRiseState(e, living, originalInvulnerable, originalAi,
+                        originalCollidable, originalNoDamageTicks);
                 AtomicInteger t = new AtomicInteger(0);
                 Runnable[] loop = new Runnable[1];
                 loop[0] = () -> {
                     if (t.get() > 100 || e.isDead()) {
-                        restoreRiseState(e, living, originalInvulnerable, originalAi,
-                                originalCollidable, originalNoDamageTicks);
+                        restore.run();
                         return;
                     }
 
@@ -410,16 +413,16 @@ public class IrisEntity extends IrisRegistrant {
                         if (M.r(0.2)) {
                             e.getWorld().playSound(e.getLocation(), Sound.BLOCK_CHORUS_FLOWER_GROW, 0.8f, 0.1f);
                         }
-                        if (!J.runEntity(e, loop[0], 1)) {
-                            restoreRiseState(e, living, originalInvulnerable, originalAi,
-                                    originalCollidable, originalNoDamageTicks);
+                        if (!J.runEntity(e, loop[0], 1, restore)) {
+                            restore.run();
                         }
                     } else {
-                        restoreRiseState(e, living, originalInvulnerable, originalAi,
-                                originalCollidable, originalNoDamageTicks);
+                        restore.run();
                     }
                 };
-                J.runEntity(e, loop[0]);
+                if (!J.runEntity(e, loop[0], 0, restore)) {
+                    restore.run();
+                }
             }
         });
 
@@ -433,6 +436,7 @@ public class IrisEntity extends IrisRegistrant {
         living.setCollidable(collidable);
         living.setAI(ai);
         entity.setInvulnerable(invulnerable);
+        EntityRiseSVC.clearStamp(entity);
     }
 
     private int surfaceY(Location l) {
@@ -498,7 +502,7 @@ public class IrisEntity extends IrisRegistrant {
 
     private static final class BukkitOps {
         private static void persistVillager(Villager villager) {
-            J.runEntity(villager, () -> villager.setPersistent(true), 1);
+            villager.setPersistent(true);
         }
 
         private static void bindLoot(IrisEntity entity, Engine gen, Lootable l, Location finalAt, RNG rng) {

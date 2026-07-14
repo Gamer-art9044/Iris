@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.gui;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.render.RenderType;
@@ -47,7 +48,7 @@ public final class BukkitVisionOverlay implements GuiOverlay {
     public List<GuiMarker> players() {
         IrisWorld world = engine.getWorld();
         List<GuiMarker> markers = new ArrayList<>();
-        for (Player player : world.getPlayers()) {
+        for (Player player : BukkitWorldBinding.players(world)) {
             markers.add(GuiMarker.player(player.getName(), player.getLocation().getX(), player.getLocation().getZ()));
         }
         return markers;
@@ -58,7 +59,7 @@ public final class BukkitVisionOverlay implements GuiOverlay {
         J.s(() -> {
             IrisWorld world = engine.getWorld();
             List<GuiMarker> markers = new ArrayList<>();
-            for (LivingEntity entity : world.getEntitiesByClass(LivingEntity.class)) {
+            for (LivingEntity entity : BukkitWorldBinding.entities(world, LivingEntity.class)) {
                 if (entity instanceof Player) {
                     continue;
                 }
@@ -78,11 +79,11 @@ public final class BukkitVisionOverlay implements GuiOverlay {
     @Override
     public void teleport(double worldX, double worldZ) {
         IrisWorld world = engine.getWorld();
-        if (!world.hasRealWorld()) {
+        if (!world.hasPlatformWorld()) {
             return;
         }
         J.s(() -> {
-            List<Player> players = world.getPlayers();
+            List<Player> players = BukkitWorldBinding.players(world);
             if (players.isEmpty()) {
                 return;
             }

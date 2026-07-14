@@ -20,11 +20,13 @@ package art.arcane.iris.modded;
 
 import art.arcane.iris.spi.PlatformBlockState;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -35,24 +37,31 @@ public final class ModdedBlockState implements PlatformBlockState {
     private final Map<Property<?>, Comparable<?>> parsedProperties;
     private final String key;
     private final String namespace;
+    private final String deferredPlacementKey;
     private volatile Boolean air;
     private volatile Boolean solid;
     private volatile Boolean occluding;
     private volatile Boolean fluid;
     private volatile Boolean water;
     private volatile Boolean foliage;
+    private volatile Boolean treeBlock;
     private volatile Boolean decorant;
 
-    private ModdedBlockState(BlockState state, Map<Property<?>, Comparable<?>> parsedProperties, String key) {
+    private ModdedBlockState(BlockState state, Map<Property<?>, Comparable<?>> parsedProperties, String key, String deferredPlacementKey) {
         this.state = state;
         this.parsedProperties = parsedProperties;
         this.key = key;
         this.namespace = parseNamespace(key);
+        this.deferredPlacementKey = deferredPlacementKey;
     }
 
     public static ModdedBlockState of(BlockState state, Map<Property<?>, Comparable<?>> parsedProperties) {
         String key = serialize(state);
-        return CACHE.computeIfAbsent(key, (String k) -> new ModdedBlockState(state, parsedProperties, k));
+        return CACHE.computeIfAbsent(key, (String k) -> new ModdedBlockState(state, parsedProperties, k, null));
+    }
+
+    public static ModdedBlockState deferred(BlockState state, Map<Property<?>, Comparable<?>> parsedProperties, String placementKey) {
+        return new ModdedBlockState(state, parsedProperties, serialize(state), Objects.requireNonNull(placementKey));
     }
 
     public static String serialize(BlockState state) {
@@ -83,12 +92,12 @@ public final class ModdedBlockState implements PlatformBlockState {
         if (!(other instanceof ModdedBlockState blockState)) {
             return false;
         }
-        return state.equals(blockState.state);
+        return state.equals(blockState.state) && Objects.equals(deferredPlacementKey, blockState.deferredPlacementKey);
     }
 
     @Override
     public int hashCode() {
-        return key.hashCode();
+        return Objects.hash(state, deferredPlacementKey);
     }
 
     private static String parseNamespace(String key) {
@@ -171,7 +180,17 @@ public final class ModdedBlockState implements PlatformBlockState {
 
     @Override
     public boolean isCustom() {
-        return false;
+        return deferredPlacementKey != null;
+    }
+
+    @Override
+    public String deferredPlacementKey() {
+        return deferredPlacementKey;
+    }
+
+    @Override
+    public PlatformBlockState placementBaseState() {
+        return deferredPlacementKey == null ? this : of(state, parsedProperties);
     }
 
     @Override
@@ -215,6 +234,16 @@ public final class ModdedBlockState implements PlatformBlockState {
         if (cached == null) {
             cached = ModdedBlockResolution.isFoliage(state);
             foliage = cached;
+        }
+        return cached;
+    }
+
+    @Override
+    public boolean isTreeBlock() {
+        Boolean cached = treeBlock;
+        if (cached == null) {
+            cached = state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES);
+            treeBlock = cached;
         }
         return cached;
     }
@@ -298,7 +327,17 @@ public final class ModdedBlockState implements PlatformBlockState {
     @Override
     public PlatformBlockState withProperty(String name, String value) {
         String merged = mergeProperty(key, name, value);
-        return ModdedBlockResolution.strictParse(merged);
+        ModdedBlockState resolved = ModdedBlockResolution.strictParse(merged);
+        return withHandle(resolved.handle(), resolved.parsedProperties());
+    }
+
+    ModdedBlockState withHandle(BlockState updated, Map<Property<?>, Comparable<?>> properties) {
+        if (updated == state && properties == parsedProperties) {
+            return this;
+        }
+        return deferredPlacementKey == null
+                ? of(updated, properties)
+                : deferred(updated, properties, deferredPlacementKey);
     }
 
     @Override

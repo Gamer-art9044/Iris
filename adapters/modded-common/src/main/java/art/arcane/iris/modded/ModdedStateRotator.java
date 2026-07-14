@@ -168,7 +168,7 @@ public final class ModdedStateRotator implements IrisObjectRotation.StateRotator
             return null;
         }
 
-        return d == fabric.handle() ? state : ModdedBlockState.of(d, fabric.parsedProperties());
+        return d == fabric.handle() ? state : fabric.withHandle(d, fabric.parsedProperties());
     }
 
     private static Property<?> findFacing(BlockState state) {

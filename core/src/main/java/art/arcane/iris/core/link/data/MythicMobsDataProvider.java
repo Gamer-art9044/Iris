@@ -3,8 +3,13 @@ package art.arcane.iris.core.link.data;
 import art.arcane.iris.core.link.ExternalDataProvider;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import io.lumine.mythic.api.adapters.AbstractLocation;
 import io.lumine.mythic.api.config.MythicLineConfig;
+import io.lumine.mythic.api.mobs.MythicMob;
 import io.lumine.mythic.api.mobs.entities.SpawnReason;
 import io.lumine.mythic.api.skills.conditions.ILocationCondition;
 import io.lumine.mythic.bukkit.BukkitAdapter;
@@ -12,6 +17,7 @@ import io.lumine.mythic.bukkit.MythicBukkit;
 import io.lumine.mythic.bukkit.adapters.BukkitWorld;
 import io.lumine.mythic.bukkit.events.MythicConditionLoadEvent;
 import io.lumine.mythic.core.mobs.ActiveMob;
+import io.lumine.mythic.core.mobs.MobExecutor;
 import io.lumine.mythic.core.mobs.MobStack;
 import io.lumine.mythic.core.skills.SkillCondition;
 import io.lumine.mythic.core.utils.annotations.MythicCondition;
@@ -19,6 +25,7 @@ import io.lumine.mythic.core.utils.annotations.MythicField;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -30,7 +37,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
-public class MythicMobsDataProvider extends ExternalDataProvider {
+public class MythicMobsDataProvider extends ExternalDataProvider implements Listener {
     public MythicMobsDataProvider() {
         super("MythicMobs");
     }
@@ -41,25 +48,25 @@ public class MythicMobsDataProvider extends ExternalDataProvider {
 
     @Override
     public @Nullable Entity spawnMob(@NotNull Location location, @NotNull Identifier entityId) throws MissingResourceException {
-        var mm = spawnMob(BukkitAdapter.adapt(location), entityId);
-        return mm == null ? null : mm.getEntity().getBukkitEntity();
+        ActiveMob activeMob = spawnMob(BukkitAdapter.adapt(location), entityId);
+        return activeMob == null ? null : activeMob.getEntity().getBukkitEntity();
     }
 
     private ActiveMob spawnMob(AbstractLocation location, Identifier entityId) throws MissingResourceException {
-        var manager = MythicBukkit.inst().getMobManager();
-        var mm = manager.getMythicMob(entityId.key()).orElse(null);
-        if (mm == null) {
-            var stack = manager.getMythicMobStack(entityId.key());
+        MobExecutor manager = MythicBukkit.inst().getMobManager();
+        MythicMob mythicMob = manager.getMythicMob(entityId.key()).orElse(null);
+        if (mythicMob == null) {
+            MobStack stack = manager.getMythicMobStack(entityId.key());
             if (stack == null) throw new MissingResourceException("Failed to find Mob!", entityId.namespace(), entityId.key());
             return stack.spawn(location, 1d, SpawnReason.OTHER, null);
         }
-        return mm.spawn(location, 1d, SpawnReason.OTHER, null, null);
+        return mythicMob.spawn(location, 1d, SpawnReason.OTHER, null, null);
     }
 
     @Override
     public @NotNull Collection<@NotNull Identifier> getTypes(@NotNull DataType dataType) {
         if (dataType != DataType.ENTITY) return List.of();
-        var manager = MythicBukkit.inst().getMobManager();
+        MobExecutor manager = MythicBukkit.inst().getMobManager();
         return Stream.concat(manager.getMobNames().stream(),
                         manager.getMobStacks()
                                 .stream()
@@ -99,11 +106,11 @@ public class MythicMobsDataProvider extends ExternalDataProvider {
 
         @Override
         public boolean check(AbstractLocation target) {
-            var access = IrisToolbelt.access(((BukkitWorld) target.getWorld()).getBukkitWorld());
+            PlatformChunkGenerator access = IrisToolbelt.access(((BukkitWorld) target.getWorld()).getBukkitWorld());
             if (access == null) return false;
-            var engine = access.getEngine();
+            Engine engine = access.getEngine();
             if (engine == null) return false;
-            var biome = surface ?
+            IrisBiome biome = surface ?
                     engine.getSurfaceBiome(target.getBlockX(), target.getBlockZ()) :
                     engine.getBiomeOrMantle(target.getBlockX(), target.getBlockY() - engine.getMinHeight(), target.getBlockZ());
             return biomes.contains(biome.getLoadKey());
@@ -123,11 +130,11 @@ public class MythicMobsDataProvider extends ExternalDataProvider {
 
         @Override
         public boolean check(AbstractLocation target) {
-            var access = IrisToolbelt.access(((BukkitWorld) target.getWorld()).getBukkitWorld());
+            PlatformChunkGenerator access = IrisToolbelt.access(((BukkitWorld) target.getWorld()).getBukkitWorld());
             if (access == null) return false;
-            var engine = access.getEngine();
+            Engine engine = access.getEngine();
             if (engine == null) return false;
-            var region = engine.getRegion(target.getBlockX(), target.getBlockZ());
+            IrisRegion region = engine.getRegion(target.getBlockX(), target.getBlockZ());
             return regions.contains(region.getLoadKey());
         }
     }

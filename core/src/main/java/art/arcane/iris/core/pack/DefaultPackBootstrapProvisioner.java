@@ -40,8 +40,9 @@ import java.util.zip.ZipInputStream;
 
 public final class DefaultPackBootstrapProvisioner {
     private static final URI DEFAULT_SOURCE = URI.create("https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip");
+    private static final String WORLD_DATAPACK_DIRECTORY = "iris";
     private static final int PACK_FORMAT = 107;
-    private static final int MARKER_SCHEMA = 1;
+    private static final int MARKER_SCHEMA = 2;
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_ARCHIVE_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_EXPANDED_BYTES = 2L * 1024L * 1024L * 1024L;
@@ -77,24 +78,38 @@ public final class DefaultPackBootstrapProvisioner {
         if (dataDirectory == null) {
             return false;
         }
-        Path bootstrapRoot = dataDirectory.toAbsolutePath().normalize().resolve("bootstrap");
-        Path datapackRoot = bootstrapRoot.resolve("datapack");
-        Path packRoot = dataDirectory.toAbsolutePath().normalize().resolve("packs/overworld");
-        Path markerFile = bootstrapRoot.resolve("provisioned.properties");
-        if (!Files.isRegularFile(markerFile) || !isPackRoot(packRoot) || !isDatapackRoot(datapackRoot)) {
+        try {
+            return isProvisioned(
+                    dataDirectory,
+                    resolveLevelRoot(Path.of("").toAbsolutePath().normalize())
+            );
+        } catch (IOException | RuntimeException exception) {
             return false;
         }
+    }
+
+    static boolean isProvisioned(Path dataDirectory, Path levelRoot) {
         try {
+            Path normalizedData = dataDirectory.toAbsolutePath().normalize();
+            Path normalizedLevel = levelRoot.toAbsolutePath().normalize();
+            Path bootstrapRoot = normalizedData.resolve("bootstrap");
+            Path datapackRoot = worldDatapackRoot(normalizedLevel);
+            Path packRoot = normalizedData.resolve("packs/overworld");
+            Path markerFile = bootstrapRoot.resolve("provisioned.properties");
+            if (!Files.isRegularFile(markerFile) || !isPackRoot(packRoot) || !isDatapackRoot(datapackRoot)) {
+                return false;
+            }
             Properties marker = loadProperties(markerFile);
             if (!Integer.toString(MARKER_SCHEMA).equals(marker.getProperty("schema"))) {
                 return false;
             }
             return directoryFingerprint(packRoot).equals(marker.getProperty("defaultPackFingerprint"))
                     && directoryFingerprint(datapackRoot).equals(marker.getProperty("datapackFingerprint"))
+                    && datapackRoot.toString().equals(marker.getProperty("datapackPath"))
                     && packRootsFingerprint(IrisDatapackCompiler.collectPackRoots(
-                    dataDirectory.toAbsolutePath().normalize(),
-                    resolveLevelRoot(Path.of("").toAbsolutePath().normalize())
-            )).equals(marker.getProperty("aggregateFingerprint"));
+                            normalizedData,
+                            normalizedLevel
+                    )).equals(marker.getProperty("aggregateFingerprint"));
         } catch (IOException | RuntimeException exception) {
             return false;
         }
@@ -109,12 +124,15 @@ public final class DefaultPackBootstrapProvisioner {
         Path packsRoot = normalizedData.resolve("packs");
         Path packRoot = packsRoot.resolve("overworld");
         Path bootstrapRoot = normalizedData.resolve("bootstrap");
-        Path datapackRoot = bootstrapRoot.resolve("datapack");
+        Path legacyDatapackRoot = bootstrapRoot.resolve("datapack");
+        Path datapacksRoot = options.levelRoot().toAbsolutePath().normalize().resolve("datapacks");
+        Path datapackRoot = datapacksRoot.resolve(WORLD_DATAPACK_DIRECTORY);
         Path markerFile = bootstrapRoot.resolve("provisioned.properties");
         Path cacheRoot = normalizedData.resolve("cache/bootstrap");
         Files.createDirectories(packsRoot);
         Files.createDirectories(bootstrapRoot);
         Files.createDirectories(cacheRoot);
+        Files.createDirectories(datapacksRoot);
 
         Properties previousMarker = Files.isRegularFile(markerFile) ? loadProperties(markerFile) : new Properties();
         boolean existingPack = isPackRoot(packRoot);
@@ -137,7 +155,6 @@ public final class DefaultPackBootstrapProvisioner {
         Path stagedPack = null;
         Path extractionRoot = null;
         Path compileContainer = null;
-        Path stagedDatapack = null;
         Path packBackup = null;
         Path datapackBackup = null;
         boolean packReplaced = false;
@@ -162,9 +179,10 @@ public final class DefaultPackBootstrapProvisioner {
             boolean rebuildDatapack = replacePack
                     || !existingDatapack
                     || !aggregateFingerprint.equals(previousMarker.getProperty("aggregateFingerprint"))
+                    || !datapackRoot.toString().equals(previousMarker.getProperty("datapackPath"))
                     || !directoryFingerprint(datapackRoot).equals(previousMarker.getProperty("datapackFingerprint"));
             if (rebuildDatapack) {
-                compileContainer = bootstrapRoot.resolve(".compile-" + UUID.randomUUID());
+                compileContainer = datapacksRoot.resolve("." + WORLD_DATAPACK_DIRECTORY + "-stage-" + UUID.randomUUID());
                 Files.createDirectories(compileContainer);
                 KList<File> outputFolders = new KList<File>().qadd(compileContainer.toFile());
                 IDataFixer fixer = DataVersion.getLatest().get();
@@ -172,14 +190,11 @@ public final class DefaultPackBootstrapProvisioner {
                     throw new IOException("Latest Iris datapack fixer is unavailable during bootstrap");
                 }
                 IrisDatapackCompiler.compile(packRoots, outputFolders, fixer, PACK_FORMAT, false);
-                Path canonicalOutput = compileContainer;
-                if (!isDatapackRoot(canonicalOutput)) {
-                    throw new IOException("Canonical Iris datapack compiler produced incomplete output at " + canonicalOutput);
+                if (!isDatapackRoot(compileContainer)) {
+                    throw new IOException("Canonical Iris datapack compiler produced incomplete output at " + compileContainer);
                 }
-                stagedDatapack = bootstrapRoot.resolve(".datapack-stage-" + UUID.randomUUID());
-                move(canonicalOutput, stagedDatapack, false);
+                datapackBackup = replaceWithBackup(compileContainer, datapackRoot);
                 compileContainer = null;
-                datapackBackup = replaceWithBackup(stagedDatapack, datapackRoot);
                 datapackReplaced = true;
             }
 
@@ -200,11 +215,13 @@ public final class DefaultPackBootstrapProvisioner {
             marker.setProperty("defaultPackFingerprint", finalPackFingerprint);
             marker.setProperty("aggregateFingerprint", finalAggregateFingerprint);
             marker.setProperty("datapackFingerprint", finalDatapackFingerprint);
+            marker.setProperty("datapackPath", datapackRoot.toString());
             marker.setProperty("completedAt", Long.toString(options.clock().millis()));
             storePropertiesAtomic(markerFile, marker);
             PROVISIONED_THIS_STARTUP.set(true);
             deleteQuietly(packBackup, feedback);
             deleteQuietly(datapackBackup, feedback);
+            deleteQuietly(legacyDatapackRoot, feedback);
 
             ProvisionStatus status;
             if (!existingPack && !existingDatapack) {
@@ -230,7 +247,6 @@ public final class DefaultPackBootstrapProvisioner {
             throw new IOException("Iris bootstrap provisioning failed", failure);
         } finally {
             deleteQuietly(stagedPack, feedback);
-            deleteQuietly(stagedDatapack, feedback);
             deleteQuietly(extractionRoot, feedback);
             deleteQuietly(compileContainer, feedback);
         }
@@ -329,7 +345,7 @@ public final class DefaultPackBootstrapProvisioner {
             feedback.accept("Default overworld download failed; using the validated cached archive.");
             return new Archive(archivePath, sha256(archivePath));
         }
-        if (isProvisionedOutputUsable(marker, cacheRoot.getParent().getParent())) {
+        if (isManagedPackOutputUsable(marker, cacheRoot.getParent().getParent())) {
             String sourceSha = marker.getProperty("sourceSha256");
             return new Archive(null, sourceSha);
         }
@@ -338,9 +354,18 @@ public final class DefaultPackBootstrapProvisioner {
                 : new IOException("Default overworld archive is unavailable and no valid cache exists", networkFailure);
     }
 
-    private static boolean isProvisionedOutputUsable(Properties marker, Path dataDirectory) {
+    private static boolean isManagedPackOutputUsable(Properties marker, Path dataDirectory) {
         String sourceSha = marker.getProperty("sourceSha256");
-        return sourceSha != null && !sourceSha.isBlank() && isProvisioned(dataDirectory);
+        String expectedFingerprint = marker.getProperty("defaultPackFingerprint");
+        if (sourceSha == null || sourceSha.isBlank() || expectedFingerprint == null || expectedFingerprint.isBlank()) {
+            return false;
+        }
+        Path packRoot = dataDirectory.toAbsolutePath().normalize().resolve("packs/overworld");
+        try {
+            return isPackRoot(packRoot) && directoryFingerprint(packRoot).equals(expectedFingerprint);
+        } catch (IOException | RuntimeException exception) {
+            return false;
+        }
     }
 
     static Path resolveLevelRoot(Path serverRoot) throws IOException {
@@ -503,6 +528,10 @@ public final class DefaultPackBootstrapProvisioner {
         return path != null
                 && Files.isRegularFile(path.resolve("pack.mcmeta"))
                 && Files.isDirectory(path.resolve("data/iris/dimension_type"));
+    }
+
+    static Path worldDatapackRoot(Path levelRoot) {
+        return levelRoot.toAbsolutePath().normalize().resolve("datapacks").resolve(WORLD_DATAPACK_DIRECTORY);
     }
 
     private static String packRootsFingerprint(List<File> packRoots) throws IOException {

@@ -28,18 +28,68 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.level.block.entity.BannerPattern;
 
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.function.Supplier;
 
 public final class ModdedTileReader implements TileData.TileReader {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().setStrictness(Strictness.LENIENT).create();
     private static final int DYE_COLOR_COUNT = 16;
+    private static final Identifier DEFAULT_SPAWNER_ENTITY = Identifier.parse("minecraft:pig");
+    private static final Identifier DEFAULT_BANNER_PATTERN = Identifier.parse("minecraft:base");
+    private static final List<Identifier> LEGACY_BUKKIT_ENTITY_TYPES = createLegacyBukkitEntityTypes();
+    private static final List<Identifier> PAPER_26_2_BANNER_PATTERNS = List.of(
+            Identifier.parse("minecraft:small_stripes"),
+            Identifier.parse("minecraft:stripe_right"),
+            Identifier.parse("minecraft:diagonal_left"),
+            Identifier.parse("minecraft:stripe_middle"),
+            Identifier.parse("minecraft:square_bottom_right"),
+            Identifier.parse("minecraft:half_horizontal"),
+            Identifier.parse("minecraft:skull"),
+            Identifier.parse("minecraft:flow"),
+            Identifier.parse("minecraft:rhombus"),
+            Identifier.parse("minecraft:border"),
+            Identifier.parse("minecraft:gradient_up"),
+            Identifier.parse("minecraft:guster"),
+            Identifier.parse("minecraft:square_top_left"),
+            Identifier.parse("minecraft:triangle_bottom"),
+            Identifier.parse("minecraft:triangles_bottom"),
+            Identifier.parse("minecraft:half_horizontal_bottom"),
+            Identifier.parse("minecraft:gradient"),
+            Identifier.parse("minecraft:triangle_top"),
+            Identifier.parse("minecraft:piglin"),
+            Identifier.parse("minecraft:stripe_center"),
+            Identifier.parse("minecraft:circle"),
+            Identifier.parse("minecraft:stripe_left"),
+            Identifier.parse("minecraft:stripe_bottom"),
+            Identifier.parse("minecraft:square_top_right"),
+            Identifier.parse("minecraft:curly_border"),
+            Identifier.parse("minecraft:creeper"),
+            Identifier.parse("minecraft:square_bottom_left"),
+            Identifier.parse("minecraft:triangles_top"),
+            Identifier.parse("minecraft:half_vertical"),
+            Identifier.parse("minecraft:mojang"),
+            Identifier.parse("minecraft:diagonal_right"),
+            Identifier.parse("minecraft:cross"),
+            Identifier.parse("minecraft:straight_cross"),
+            Identifier.parse("minecraft:bricks"),
+            Identifier.parse("minecraft:diagonal_up_left"),
+            Identifier.parse("minecraft:base"),
+            Identifier.parse("minecraft:flower"),
+            Identifier.parse("minecraft:stripe_downleft"),
+            Identifier.parse("minecraft:diagonal_up_right"),
+            Identifier.parse("minecraft:stripe_downright"),
+            Identifier.parse("minecraft:stripe_top"),
+            Identifier.parse("minecraft:globe"),
+            Identifier.parse("minecraft:half_vertical_right"));
 
     private final Supplier<MinecraftServer> server;
 
@@ -135,7 +185,8 @@ public final class ModdedTileReader implements TileData.TileReader {
             if (properties == null) {
                 throw new NullPointerException("properties is marked non-null but is null");
             }
-            return new ModdedTileData(replay.consumed(), properties);
+            return new ModdedTileData(replay.consumed(), properties,
+                    ModdedTileData.normalizeBlockKey(materialKey), -1);
         } catch (Throwable e) {
             replay.rewind();
             return parseLegacy(din, replay);
@@ -149,102 +200,162 @@ public final class ModdedTileReader implements TileData.TileReader {
 
     private TileData parseLegacy(DataInputStream din, ReplayInputStream replay) throws IOException {
         int id = din.readShort();
-        switch (id) {
+        String expectedBlockKey = null;
+        KMap<String, Object> properties = switch (id) {
             case 0 -> readSign(din);
             case 1 -> readSpawner(din, replay);
             case 2 -> readBanner(din, replay);
-            case 3 -> readLootable(din);
+            case 3 -> {
+                expectedBlockKey = ModdedTileData.normalizeBlockKey(din.readUTF());
+                yield readLootable(din);
+            }
             default -> throw new IOException("Unknown tile type: " + id);
-        }
-        return new ModdedTileData(replay.consumed(), new KMap<>());
+        };
+        return new ModdedTileData(replay.consumed(), properties, expectedBlockKey, id);
     }
 
-    private static void readSign(DataInputStream din) throws IOException {
-        din.readUTF();
-        din.readUTF();
-        din.readUTF();
-        din.readUTF();
+    private static KMap<String, Object> readSign(DataInputStream din) throws IOException {
+        List<String> messages = List.of(din.readUTF(), din.readUTF(), din.readUTF(), din.readUTF());
         byte dye = din.readByte();
         if (dye < 0 || dye >= DYE_COLOR_COUNT) {
             throw new ArrayIndexOutOfBoundsException("Index " + dye + " out of bounds for length " + DYE_COLOR_COUNT);
         }
+        KMap<String, Object> text = new KMap<>();
+        text.put("messages", messages);
+        text.put("color", DyeColor.byId(dye).getName());
+        text.put("has_glowing_text", false);
+        KMap<String, Object> properties = new KMap<>();
+        properties.put("front_text", text);
+        properties.put("back_text", text.copy());
+        return properties;
     }
 
-    private static void readSpawner(DataInputStream din, ReplayInputStream replay) throws IOException {
-        boolean resolved = false;
+    private static KMap<String, Object> readSpawner(DataInputStream din, ReplayInputStream replay) throws IOException {
+        Identifier entityId = null;
         replay.mark(Integer.MAX_VALUE);
 
         try {
             String keyString = din.readUTF();
             Identifier key = Identifier.tryParse(keyString);
-            resolved = key != null && BuiltInRegistries.ENTITY_TYPE.containsKey(key);
-            if (!resolved) {
+            if (key != null && BuiltInRegistries.ENTITY_TYPE.containsKey(key)) {
+                entityId = key;
+            } else {
                 replay.reset();
             }
         } catch (Throwable ignored) {
             replay.reset();
         }
 
-        if (!resolved) {
-            din.readShort();
+        if (entityId == null) {
+            entityId = legacySpawnerEntityId(din.readShort());
         }
+        KMap<String, Object> entity = new KMap<>();
+        entity.put("id", entityId.toString());
+        KMap<String, Object> spawnData = new KMap<>();
+        spawnData.put("entity", entity);
+        KMap<String, Object> properties = new KMap<>();
+        properties.put("SpawnData", spawnData);
+        return properties;
     }
 
-    private void readBanner(DataInputStream din, ReplayInputStream replay) throws IOException {
-        din.readUnsignedByte();
+    static Identifier legacySpawnerEntityId(int legacyOrdinal) {
+        if (legacyOrdinal < 0 || legacyOrdinal >= LEGACY_BUKKIT_ENTITY_TYPES.size()) {
+            return DEFAULT_SPAWNER_ENTITY;
+        }
+        return LEGACY_BUKKIT_ENTITY_TYPES.get(legacyOrdinal);
+    }
+
+    private static List<Identifier> createLegacyBukkitEntityTypes() {
+        List<Identifier> entityTypes = new ArrayList<>();
+        for (Identifier key : BuiltInRegistries.ENTITY_TYPE.keySet()) {
+            if (Identifier.DEFAULT_NAMESPACE.equals(key.getNamespace())) {
+                entityTypes.add(key);
+            }
+        }
+        entityTypes.sort(Identifier::compareTo);
+        return List.copyOf(entityTypes);
+    }
+
+    private KMap<String, Object> readBanner(DataInputStream din, ReplayInputStream replay) throws IOException {
+        int baseColor = din.readUnsignedByte();
         int listSize = din.readUnsignedByte();
         replay.mark(Integer.MAX_VALUE);
 
-        boolean parsedKeyed = false;
+        List<Object> layers = new ArrayList<>(listSize);
         try {
             for (int i = 0; i < listSize; i++) {
-                din.readUnsignedByte();
+                int color = din.readUnsignedByte();
                 Identifier patternKey = Identifier.tryParse(din.readUTF());
                 if (patternKey == null || !bannerPatternExists(patternKey)) {
                     throw new IOException("Unknown banner pattern key");
                 }
+                layers.add(bannerLayer(patternKey, color));
             }
-            parsedKeyed = true;
         } catch (Throwable ignored) {
             replay.reset();
+            layers.clear();
         }
 
-        if (parsedKeyed) {
-            return;
+        if (layers.isEmpty() && listSize > 0) {
+            for (int i = 0; i < listSize; i++) {
+                int color = din.readUnsignedByte();
+                int pattern = din.readUnsignedByte();
+                layers.add(bannerLayer(legacyBannerPatternKey(pattern), color));
+            }
         }
+        KMap<String, Object> properties = new KMap<>();
+        properties.put("patterns", layers);
+        properties.put(ModdedTileData.LEGACY_BANNER_COLOR_PROPERTY, DyeColor.byId(baseColor).getName());
+        return properties;
+    }
 
-        for (int i = 0; i < listSize; i++) {
-            din.readUnsignedByte();
-            din.readUnsignedByte();
+    private static KMap<String, Object> bannerLayer(Identifier pattern, int color) {
+        KMap<String, Object> layer = new KMap<>();
+        layer.put("pattern", pattern.toString());
+        layer.put("color", DyeColor.byId(color).getName());
+        return layer;
+    }
+
+    static Identifier legacyBannerPatternKey(int legacyOrdinal) {
+        if (legacyOrdinal < 0 || legacyOrdinal >= PAPER_26_2_BANNER_PATTERNS.size()) {
+            return DEFAULT_BANNER_PATTERN;
         }
+        return PAPER_26_2_BANNER_PATTERNS.get(legacyOrdinal);
     }
 
     private boolean bannerPatternExists(Identifier key) {
         MinecraftServer instance = server.get();
         if (instance == null) {
-            return false;
+            return true;
         }
         Registry<BannerPattern> registry = instance.registryAccess().lookupOrThrow(Registries.BANNER_PATTERN);
         return registry.containsKey(key);
     }
 
-    private static void readLootable(DataInputStream din) throws IOException {
-        din.readUTF();
-        din.readUTF();
-        din.readLong();
+    private static KMap<String, Object> readLootable(DataInputStream din) throws IOException {
+        String lootTable = din.readUTF();
+        long seed = din.readLong();
+        KMap<String, Object> properties = new KMap<>();
+        if (!lootTable.isBlank()) {
+            properties.put("LootTable", lootTable);
+            properties.put("LootTableSeed", seed);
+        }
+        return properties;
     }
 
     private static boolean matchMaterial(String name) {
-        String filtered = name;
-        if (filtered.startsWith("minecraft:")) {
-            filtered = filtered.substring("minecraft:".length());
+        String filtered = name.trim().toLowerCase(Locale.ROOT);
+        int bracket = filtered.indexOf('[');
+        if (bracket >= 0) {
+            filtered = filtered.substring(0, bracket);
         }
-        filtered = filtered.toUpperCase(Locale.ROOT);
-        filtered = filtered.replaceAll("\\s+", "_").replaceAll("\\W", "");
-        Identifier identifier = Identifier.tryParse("minecraft:" + filtered.toLowerCase(Locale.ROOT));
+        if (!filtered.contains(":")) {
+            filtered = "minecraft:" + filtered.replaceAll("\\s+", "_");
+        }
+        Identifier identifier = Identifier.tryParse(filtered);
         if (identifier == null) {
             return false;
         }
-        return BuiltInRegistries.ITEM.containsKey(identifier) || BuiltInRegistries.BLOCK.containsKey(identifier);
+        return BuiltInRegistries.BLOCK.containsKey(identifier);
     }
 }

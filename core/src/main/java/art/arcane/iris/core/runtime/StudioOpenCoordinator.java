@@ -1,5 +1,6 @@
 package art.arcane.iris.core.runtime;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
@@ -74,7 +75,7 @@ public final class StudioOpenCoordinator {
             return new StudioCloseResult(null, true, true, false, null);
         }
 
-        World world = provider.getTarget().getWorld().realWorld();
+        World world = BukkitWorldBinding.world(provider.getTarget().getWorld());
         String worldName = world == null ? provider.getTarget().getWorld().name() : world.getName();
         try {
             return closeWorld(provider, worldName, world, true, project);

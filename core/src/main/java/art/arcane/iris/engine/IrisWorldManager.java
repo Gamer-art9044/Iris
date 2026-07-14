@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
@@ -35,6 +36,7 @@ import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisSpawner;
 import art.arcane.iris.spi.IrisLogging;
+import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
@@ -149,11 +151,11 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                     interrupt();
                 }
 
-                if (!getEngine().getWorld().hasRealWorld() && clw.flip()) {
-                    J.runGlobal(() -> getEngine().getWorld().tryGetRealWorld());
+                if (!getEngine().getWorld().hasPlatformWorld() && clw.flip()) {
+                    J.runGlobal(() -> BukkitWorldBinding.tryBind(getEngine().getWorld()));
                 }
 
-                if (getEngine().getWorld().hasRealWorld()) {
+                if (getEngine().getWorld().hasPlatformWorld()) {
                     if (chunkUpdater.flip()) {
                         updateChunks();
                     }
@@ -191,7 +193,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     }
 
     private void discoverChunks() {
-        World world = getEngine().getWorld().realWorld();
+        World world = BukkitWorldBinding.world(getEngine().getWorld());
         if (world == null) {
             return;
         }
@@ -206,7 +208,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
         boolean scheduled = J.runGlobal(() -> {
             try {
-                if (getEngine().isClosed() || !world.equals(getEngine().getWorld().realWorld())) {
+                if (getEngine().isClosed() || !world.equals(BukkitWorldBinding.world(getEngine().getWorld()))) {
                     return;
                 }
 
@@ -273,7 +275,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     }
 
     private void updateChunks() {
-        World world = getEngine().getWorld().realWorld();
+        World world = BukkitWorldBinding.world(getEngine().getWorld());
         if (world == null) {
             return;
         }
@@ -294,7 +296,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
     private void updateChunksOnGlobal(World world) {
         try {
-            if (getEngine().isClosed() || !world.equals(getEngine().getWorld().realWorld())) {
+            if (getEngine().isClosed() || !world.equals(BukkitWorldBinding.world(getEngine().getWorld()))) {
                 return;
             }
 
@@ -496,7 +498,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
         actuallySpawned = 0;
 
-        if (!getEngine().getWorld().hasRealWorld()) {
+        if (!getEngine().getWorld().hasPlatformWorld()) {
             IrisLogging.debug("Can't spawn. No real world");
             J.sleep(5000);
             return false;
@@ -504,7 +506,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
         if (cl.flip()) {
             try {
-                World realWorld = getEngine().getWorld().realWorld();
+                World realWorld = BukkitWorldBinding.world(getEngine().getWorld());
                 if (realWorld == null) {
                     entityCount = 0;
                 } else if (J.isFolia()) {
@@ -540,7 +542,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
         }
 
         int spawnBuffer = RNG.r.i(2, 12);
-        World world = getEngine().getWorld().realWorld();
+        World world = BukkitWorldBinding.world(getEngine().getWorld());
         if (world == null) {
             return false;
         }
@@ -560,7 +562,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     }
 
     private boolean isPregenActiveForThisWorld() {
-        World world = getEngine().getWorld().realWorld();
+        World world = BukkitWorldBinding.world(getEngine().getWorld());
         if (world == null) {
             return false;
         }
@@ -574,7 +576,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return false;
         }
 
-        return job.targetsWorld(world);
+        return job.targetsWorldIdentity(WorldIdentity.serialize(world));
     }
 
     private Position2[] getLoadedChunkPositionsSnapshot(World world) {
@@ -1122,9 +1124,12 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
     @Override
     public void onBlockBreak(BlockBreakEvent e) {
-        if (e.getBlock().getWorld().equals(getTarget().getWorld().realWorld())) {
+        if (e.getBlock().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
+            int blockX = e.getBlock().getX();
+            int mantleY = toMantleY(e.getBlock().getY(), getEngine().getWorld().minHeight());
+            int blockZ = e.getBlock().getZ();
             J.a(() -> {
-                MatterMarker marker = getMantle().get(e.getBlock().getX(), e.getBlock().getY(), e.getBlock().getZ(), MatterMarker.class);
+                MatterMarker marker = getMantle().get(blockX, mantleY, blockZ, MatterMarker.class);
 
                 if (marker != null) {
                     if (marker.getTag().equals("cave_floor") || marker.getTag().equals("cave_ceiling")) {
@@ -1134,7 +1139,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                     IrisMarker mark = getData().getMarkerLoader().load(marker.getTag());
 
                     if (mark == null || mark.isRemoveOnChange()) {
-                        getMantle().remove(e.getBlock().getX(), e.getBlock().getY(), e.getBlock().getZ(), MatterMarker.class);
+                        getMantle().remove(blockX, mantleY, blockZ, MatterMarker.class);
                     }
                 }
             });
@@ -1168,6 +1173,10 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
         }
     }
 
+    static int toMantleY(int worldY, int minHeight) {
+        return worldY - minHeight;
+    }
+
     private List<IrisBlockDrops> filterDrops(KList<IrisBlockDrops> drops, BlockBreakEvent e, IrisData data) {
         return new KList<>(drops.stream().filter(d -> d.shouldDropFor(e.getBlock().getBlockData(), data)).toList());
     }
@@ -1193,7 +1202,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
     @Override
     public double getEntitySaturation() {
-        if (!getEngine().getWorld().hasRealWorld()) {
+        if (!getEngine().getWorld().hasPlatformWorld()) {
             return 1;
         }
 

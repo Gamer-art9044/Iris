@@ -35,6 +35,7 @@ import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.functions.ComponentFlagFunction;
 import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.volmlib.util.io.IO;
@@ -50,8 +51,6 @@ import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.Accessors;
-import org.bukkit.World.Environment;
-import org.bukkit.block.Biome;
 
 import java.io.File;
 import java.io.IOException;
@@ -422,19 +421,6 @@ public class IrisDimension extends IrisRegistrant {
         return rad.aquire(() -> Math.toRadians(dimensionAngleDeg));
     }
 
-    public Environment getEnvironment() {
-        if (environment == null) {
-            return null;
-        }
-
-        return switch (environment) {
-            case NORMAL -> Environment.NORMAL;
-            case NETHER -> Environment.NETHER;
-            case THE_END -> Environment.THE_END;
-            case CUSTOM -> Environment.CUSTOM;
-        };
-    }
-
     public boolean hasFocusRegion() {
         return !focusRegion.equals("");
     }
@@ -454,8 +440,16 @@ public class IrisDimension extends IrisRegistrant {
     public KList<IrisRegion> getAllRegions(DataProvider g) {
         KList<IrisRegion> r = new KList<>();
 
+        if (g == null) {
+            return r;
+        }
+        IrisData data = g.getData();
+        if (data == null || data.getRegionLoader() == null) {
+            return r;
+        }
+
         for (String i : getRegions()) {
-            r.add(g.getData().getRegionLoader().load(i));
+            r.add(data.getRegionLoader().load(i));
         }
 
         return r;
@@ -472,7 +466,31 @@ public class IrisDimension extends IrisRegistrant {
     }
 
     public KList<IrisBiome> getAllBiomes(DataProvider g) {
-        return g.getData().getBiomeLoader().loadAll(g.getData().getBiomeLoader().getPossibleKeys());
+        if (g == null) {
+            return new KList<>();
+        }
+        IrisData data = g.getData();
+        if (data == null || data.getBiomeLoader() == null) {
+            return new KList<>();
+        }
+        return data.getBiomeLoader().loadAll(data.getBiomeLoader().getPossibleKeys());
+    }
+
+    public KList<IrisBiome> getReachableBiomes(DataProvider g) {
+        KMap<String, IrisBiome> biomes = new KMap<>();
+
+        for (IrisRegion region : getAllRegions(g)) {
+            if (region == null) {
+                continue;
+            }
+            for (IrisBiome biome : region.getAllBiomes(g)) {
+                if (biome != null) {
+                    biomes.put(biome.getLoadKey(), biome);
+                }
+            }
+        }
+
+        return biomes.v();
     }
 
     public KList<IrisBiome> getAllAnyBiomes() {

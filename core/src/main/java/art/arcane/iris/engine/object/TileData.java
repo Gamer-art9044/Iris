@@ -51,13 +51,22 @@ public class TileData implements Cloneable {
     private static final Gson gson = new GsonBuilder().disableHtmlEscaping().setStrictness(Strictness.LENIENT).create();
     private static final boolean BUKKIT_PRESENT = detectBukkit();
     private static volatile TileReader FALLBACK_READER = null;
+    private static volatile TileFactory FALLBACK_FACTORY = null;
 
     public interface TileReader {
         TileData read(DataInputStream in) throws IOException;
     }
 
+    public interface TileFactory {
+        TileData create(PlatformBlockState state, KMap<String, Object> properties);
+    }
+
     public static void bindFallbackReader(TileReader reader) {
         FALLBACK_READER = reader;
+    }
+
+    public static void bindFallbackFactory(TileFactory factory) {
+        FALLBACK_FACTORY = factory;
     }
 
     private static boolean detectBukkit() {
@@ -84,7 +93,7 @@ public class TileData implements Cloneable {
         if (!BukkitPlatform.hasTile(block.getType()))
             return null;
         if (useLegacy) {
-            var legacy = LegacyTileData.fromBukkit(block.getState());
+            LegacyTileData legacy = LegacyTileData.fromBukkit(block.getState());
             if (legacy != null)
                 return legacy;
         }
@@ -93,6 +102,10 @@ public class TileData implements Cloneable {
     }
 
     public static TileData of(PlatformBlockState state, KMap<String, Object> properties) {
+        TileFactory factory = FALLBACK_FACTORY;
+        if (factory != null) {
+            return factory.create(state, properties);
+        }
         if (!BUKKIT_PRESENT) {
             return null;
         }
@@ -104,11 +117,12 @@ public class TileData implements Cloneable {
     }
 
     public static TileData read(DataInputStream in) throws IOException {
+        TileReader reader = FALLBACK_READER;
+        if (reader != null) {
+            return reader.read(in);
+        }
         if (!BUKKIT_PRESENT) {
-            TileReader reader = FALLBACK_READER;
-            if (reader != null) {
-                return reader.read(in);
-            }
+            throw new IOException("No tile data reader is available for this platform");
         }
         if (!in.markSupported())
             throw new IOException("Mark not supported");
@@ -182,7 +196,7 @@ public class TileData implements Cloneable {
 
     @Override
     public TileData clone() {
-        var clone = new TileData();
+        TileData clone = new TileData();
         clone.material = material;
         clone.properties = properties.copy(); //TODO make a deep copy
         return clone;

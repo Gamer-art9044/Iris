@@ -22,6 +22,7 @@ import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.IrisCustomData;
 import org.bukkit.Bukkit;
+import org.bukkit.Tag;
 import org.bukkit.block.data.BlockData;
 
 import java.util.LinkedHashMap;
@@ -46,6 +47,7 @@ public final class BukkitBlockState implements PlatformBlockState {
     private volatile Boolean lit;
     private volatile Boolean updatable;
     private volatile Boolean foliage;
+    private volatile Boolean treeBlock;
     private volatile Boolean foliagePlantable;
     private volatile Boolean decorant;
     private volatile Boolean storage;
@@ -169,6 +171,16 @@ public final class BukkitBlockState implements PlatformBlockState {
     }
 
     @Override
+    public String deferredPlacementKey() {
+        return data instanceof IrisCustomData custom ? custom.getCustom().toString() : null;
+    }
+
+    @Override
+    public PlatformBlockState placementBaseState() {
+        return data instanceof IrisCustomData custom ? of(custom.getBase()) : this;
+    }
+
+    @Override
     public boolean isFluid() {
         Boolean cached = fluid;
         if (cached == null) {
@@ -224,6 +236,16 @@ public final class BukkitBlockState implements PlatformBlockState {
         if (cached == null) {
             cached = BukkitBlockResolution.isFoliage(data);
             foliage = cached;
+        }
+        return cached;
+    }
+
+    @Override
+    public boolean isTreeBlock() {
+        Boolean cached = treeBlock;
+        if (cached == null) {
+            cached = Tag.LOGS.isTagged(data.getMaterial()) || Tag.LEAVES.isTagged(data.getMaterial());
+            treeBlock = cached;
         }
         return cached;
     }

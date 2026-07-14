@@ -18,7 +18,9 @@
 
 package art.arcane.iris.modded.api;
 
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.modded.ModdedBlockResolution;
+import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
@@ -96,7 +98,7 @@ public final class ModdedCustomContentRegistry {
         return !PROVIDERS.isEmpty() || !CUSTOM_BLOCKS.isEmpty();
     }
 
-    public static BlockState resolveBlock(String key) {
+    public static ModdedBlockData resolveBlock(String key) {
         if (key == null || (PROVIDERS.isEmpty() && CUSTOM_BLOCKS.isEmpty())) {
             return null;
         }
@@ -106,7 +108,7 @@ public final class ModdedCustomContentRegistry {
         }
         BlockState custom = CUSTOM_BLOCKS.get(base.toString());
         if (custom != null) {
-            return custom;
+            return ModdedBlockData.direct(custom);
         }
         if (PROVIDERS.isEmpty()) {
             return null;
@@ -117,7 +119,7 @@ public final class ModdedCustomContentRegistry {
                 continue;
             }
             try {
-                BlockState resolved = provider.getBlockData(base, state);
+                ModdedBlockData resolved = provider.getBlockData(base, state);
                 if (resolved != null) {
                     return resolved;
                 }
@@ -126,6 +128,28 @@ public final class ModdedCustomContentRegistry {
             }
         }
         return null;
+    }
+
+    public static void processBlockPlacement(Engine engine, ServerLevel level, BlockPos position, String key) {
+        Identifier base = parseIdentifier(key);
+        if (base == null) {
+            LOGGER.warn("Iris deferred custom block placement rejected invalid id {}", key);
+            return;
+        }
+        Map<String, String> state = parseState(key);
+        for (ModdedDataProvider provider : PROVIDERS) {
+            if (!provider.isReady() || !provider.isValidProvider(base, ModdedDataType.BLOCK)) {
+                continue;
+            }
+            try {
+                provider.processBlockPlacement(new ModdedBlockPlacementContext(
+                        engine, level, position.immutable(), base, state, level.getBlockState(position)));
+            } catch (Throwable error) {
+                LOGGER.error("Iris custom content provider '{}' failed post-placement for {} at {}", provider.modId(), key, position, error);
+            }
+            return;
+        }
+        LOGGER.warn("Iris deferred custom block placement has no provider for {}", key);
     }
 
     public static Entity spawnMob(ServerLevel level, double x, double y, double z, String key) {

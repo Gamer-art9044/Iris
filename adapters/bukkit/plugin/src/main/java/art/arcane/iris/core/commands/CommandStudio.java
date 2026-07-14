@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.commands;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.Iris;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisSettings;
@@ -43,6 +44,7 @@ import art.arcane.iris.engine.object.IrisNoiseGenerator;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.object.NoiseStyle;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
@@ -621,14 +623,14 @@ public class CommandStudio implements DirectorExecutor {
         }
 
         sender().sendMessage(C.GREEN + "Sending you to the studio world!");
-        var player = player();
-        BukkitPlatform.teleportAsync(player(), Iris.service(StudioSVC.class)
+        Player player = player();
+        IrisWorld studioWorld = Iris.service(StudioSVC.class)
                 .getActiveProject()
                 .getActiveProvider()
                 .getTarget()
-                .getWorld()
-                .spawnLocation()
-        ).thenRun(() -> player.setGameMode(GameMode.SPECTATOR));
+                .getWorld();
+        BukkitPlatform.teleportAsync(player, BukkitWorldBinding.spawnLocation(studioWorld))
+                .thenRun(() -> player.setGameMode(GameMode.SPECTATOR));
     }
 
     @Director(description = "Update your dimension projects VSCode workspace")

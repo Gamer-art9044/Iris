@@ -1,5 +1,8 @@
 package art.arcane.iris.modded;
 
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -21,38 +24,224 @@ public class ModdedWorldCheckTest {
     }
 
     @Test
-    public void passStopsServerBeforeZeroExit() {
+    public void validStructureStartIsGenerationEvidence() {
+        assertTrue(ModdedWorldCheck.hasNativeStructureEvidence(true, 0));
+    }
+
+    @Test
+    public void structureReferenceIsGenerationEvidence() {
+        assertTrue(ModdedWorldCheck.hasNativeStructureEvidence(false, 1));
+    }
+
+    @Test
+    public void absentStartAndReferencesFailGenerationEvidence() {
+        assertFalse(ModdedWorldCheck.hasNativeStructureEvidence(false, 0));
+    }
+
+    @Test
+    public void characteristicMaterialsCoverEveryNativeStructureFamily() {
+        assertTrue(characteristic("stronghold", "minecraft:stronghold", "minecraft:cracked_stone_bricks"));
+        assertTrue(characteristic("trial_chambers", "minecraft:trial_chambers", "minecraft:oxidized_copper_grate"));
+        assertTrue(characteristic("mansion", "minecraft:mansion", "minecraft:dark_oak_planks"));
+        assertTrue(characteristic("mansion", "minecraft:mansion", "minecraft:birch_planks"));
+        assertTrue(characteristic("village", "minecraft:village_plains", "minecraft:oak_planks"));
+        assertTrue(characteristic("village", "minecraft:village_desert", "minecraft:cut_sandstone"));
+        assertTrue(characteristic("village", "minecraft:village_savanna", "minecraft:acacia_stairs"));
+        assertTrue(characteristic("village", "minecraft:village_snowy", "minecraft:spruce_planks"));
+        assertTrue(characteristic("village", "minecraft:village_snowy", "minecraft:stripped_spruce_log"));
+        assertTrue(characteristic("village", "minecraft:village_taiga", "minecraft:cobblestone"));
+        assertTrue(characteristic("monument", "minecraft:monument", "minecraft:dark_prismarine"));
+    }
+
+    @Test
+    public void naturalTerrainAndWrongVillageWoodAreNotCharacteristic() {
+        assertFalse(characteristic("stronghold", "minecraft:stronghold", "minecraft:stone"));
+        assertFalse(characteristic("trial_chambers", "minecraft:trial_chambers", "minecraft:tuff"));
+        assertFalse(characteristic("mansion", "minecraft:mansion", "minecraft:dark_oak_leaves"));
+        assertFalse(characteristic("village", "minecraft:village_desert", "minecraft:sandstone"));
+        assertFalse(characteristic("village", "minecraft:village_savanna", "minecraft:oak_planks"));
+        assertFalse(characteristic("monument", "minecraft:monument", "minecraft:water"));
+    }
+
+    @Test
+    public void materialEvidenceMustExist() {
+        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(0, 0, 1));
+        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 0, 1));
+        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 1, 0));
+        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 2, 1));
+    }
+
+    @Test
+    public void singleChunkStructureAcceptsMaterialInItsOnlyChunk() {
+        assertTrue(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 1, 1));
+    }
+
+    @Test
+    public void multiChunkStructureRejectsMaterialConfinedToOneChunk() {
+        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 1, 4));
+        assertTrue(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 2, 4));
+    }
+
+    @Test
+    public void configuredVerticalShiftRequiresSafetyClampedGenerationEvidence() {
+        assertTrue(ModdedWorldCheck.verticalShiftMatches(0, null, -32, 20, -64, 320));
+        assertFalse(ModdedWorldCheck.verticalShiftMatches(0, null, -112, -80, -64, 320));
+        assertTrue(ModdedWorldCheck.verticalShiftMatches(0, 0, -32, 20, -64, 320));
+        assertTrue(ModdedWorldCheck.verticalShiftMatches(0, 48, -64, -32, -64, 320));
+        assertTrue(ModdedWorldCheck.verticalShiftMatches(-64, -64, -48, 4, -64, 320));
+        assertTrue(ModdedWorldCheck.verticalShiftMatches(-64, -16, -64, -12, -64, 320));
+        assertFalse(ModdedWorldCheck.verticalShiftMatches(-64, null, -48, 4, -64, 320));
+        assertFalse(ModdedWorldCheck.verticalShiftMatches(-64, -15, -63, -11, -64, 320));
+        assertFalse(ModdedWorldCheck.verticalShiftMatches(0, -1, -33, 19, -64, 320));
+    }
+
+    @Test
+    public void mansionVegetationGateRejectsRemainingLeaves() {
+        assertTrue(ModdedWorldCheck.mansionVegetationPass(0));
+        assertFalse(ModdedWorldCheck.mansionVegetationPass(1));
+    }
+
+    @Test
+    public void mansionVegetationAuditIgnoresTemplateBlocksAndRejectsVegetationAbovePieces() {
+        assertFalse(ModdedWorldCheck.mansionVegetationAbovePiece(true, 80, 80));
+        assertFalse(ModdedWorldCheck.mansionVegetationAbovePiece(true, 79, 80));
+        assertTrue(ModdedWorldCheck.mansionVegetationAbovePiece(true, 81, 80));
+        assertFalse(ModdedWorldCheck.mansionVegetationAbovePiece(false, 81, 80));
+    }
+
+    @Test
+    public void villageFoundationGateRejectsUnsupportedColumns() {
+        assertTrue(ModdedWorldCheck.villageFoundationPass(0));
+        assertFalse(ModdedWorldCheck.villageFoundationPass(1));
+    }
+
+    @Test
+    public void villageFoundationAuditRejectsMissingBaseAndInvalidSupport() {
+        assertTrue(ModdedWorldCheck.villageFoundationSupported(true, false, true, false));
+        assertTrue(ModdedWorldCheck.villageFoundationSupported(true, true, false, false));
+        assertFalse(ModdedWorldCheck.villageFoundationSupported(false, false, true, false));
+        assertFalse(ModdedWorldCheck.villageFoundationSupported(true, false, false, false));
+        assertFalse(ModdedWorldCheck.villageFoundationSupported(true, false, true, true));
+    }
+
+    @Test
+    public void villagePoiGateRequiresInBoundsPoiWithoutOutOfBoundsRecords() {
+        assertTrue(ModdedWorldCheck.villagePoiPass(1, 0));
+        assertFalse(ModdedWorldCheck.villagePoiPass(0, 0));
+        assertFalse(ModdedWorldCheck.villagePoiPass(1, 1));
+    }
+
+    @Test
+    public void smallStructureFootprintIncludesEveryChunk() {
+        BoundingBox bounds = new BoundingBox(-16, -20, -16, 31, 120, 31);
+
+        List<ChunkPos> chunks = ModdedWorldCheck.boundedFootprintChunks(bounds, ChunkPos.ZERO, 96);
+
+        assertEquals(9, chunks.size());
+        assertTrue(chunks.contains(new ChunkPos(-1, -1)));
+        assertTrue(chunks.contains(new ChunkPos(1, 1)));
+    }
+
+    @Test
+    public void largeStructureFootprintIsBoundedAndSamplesEdges() {
+        BoundingBox bounds = new BoundingBox(-512, -64, -512, 511, 300, 511);
+
+        List<ChunkPos> chunks = ModdedWorldCheck.boundedFootprintChunks(bounds, ChunkPos.ZERO, 20);
+
+        assertTrue(chunks.size() <= 20);
+        assertTrue(chunks.size() >= 16);
+        assertTrue(chunks.contains(ChunkPos.ZERO));
+        assertTrue(chunks.contains(new ChunkPos(-32, -32)));
+        assertTrue(chunks.contains(new ChunkPos(31, 31)));
+    }
+
+    @Test
+    public void qaEventsEscapeStructuredValues() {
+        String event = ModdedWorldCheck.qaEventJson("locate\"", "village\n", false, "x\\y\t");
+
+        assertEquals("QA_EVT {\"event\":\"locate\\\"\",\"structure\":\"village\\n\","
+                + "\"pass\":false,\"detail\":\"x\\\\y\\t\"}", event);
+    }
+
+    @Test
+    public void passRequestsStopAfterValidation() {
         List<String> events = new ArrayList<>();
 
-        ModdedWorldCheck.stopAndExit(
-                () -> events.add("stop"),
+        int status = ModdedWorldCheck.runAndRequestStop(
+                () -> {
+                    events.add("check");
+                    return true;
+                },
+                () -> events.add("request-stop")
+        );
+
+        assertEquals(0, status);
+        assertEquals(List.of("check", "request-stop"), events);
+    }
+
+    @Test
+    public void failureStillRequestsStop() {
+        List<String> events = new ArrayList<>();
+
+        int status = ModdedWorldCheck.runAndRequestStop(
+                () -> {
+                    events.add("check");
+                    return false;
+                },
+                () -> events.add("request-stop")
+        );
+
+        assertEquals(1, status);
+        assertEquals(List.of("check", "request-stop"), events);
+    }
+
+    @Test
+    public void thrownCheckStillRequestsStop() {
+        AtomicBoolean stopRequested = new AtomicBoolean(false);
+
+        int status = ModdedWorldCheck.runAndRequestStop(
+                () -> {
+                    throw new IllegalStateException("check failed");
+                },
+                () -> stopRequested.set(true)
+        );
+
+        assertEquals(1, status);
+        assertTrue(stopRequested.get());
+    }
+
+    @Test
+    public void stopRequestFailureForcesNonzeroResult() {
+        int status = ModdedWorldCheck.runAndRequestStop(
+                () -> true,
+                () -> {
+                    throw new IllegalStateException("stop request failed");
+                }
+        );
+
+        assertEquals(1, status);
+    }
+
+    @Test
+    public void coordinatorAwaitsServerBeforeExit() {
+        List<String> events = new ArrayList<>();
+
+        ModdedWorldCheck.awaitStopAndExit(
+                () -> events.add("await-stop"),
                 0,
                 status -> events.add("exit:" + status)
         );
 
-        assertEquals(List.of("stop", "exit:0"), events);
+        assertEquals(List.of("await-stop", "exit:0"), events);
     }
 
     @Test
-    public void failureStopsServerBeforeNonzeroExit() {
-        List<String> events = new ArrayList<>();
-
-        ModdedWorldCheck.stopAndExit(
-                () -> events.add("stop"),
-                1,
-                status -> events.add("exit:" + status)
-        );
-
-        assertEquals(List.of("stop", "exit:1"), events);
-    }
-
-    @Test
-    public void shutdownFailureForcesNonzeroExit() {
+    public void shutdownWaitFailureForcesNonzeroExit() {
         AtomicInteger status = new AtomicInteger(-1);
 
-        ModdedWorldCheck.stopAndExit(
+        ModdedWorldCheck.awaitStopAndExit(
                 () -> {
-                    throw new IllegalStateException("shutdown failed");
+                    throw new IllegalStateException("shutdown wait failed");
                 },
                 0,
                 status::set
@@ -68,7 +257,7 @@ public class ModdedWorldCheckTest {
         AtomicInteger status = new AtomicInteger(-1);
         Thread.currentThread().interrupt();
         try {
-            ModdedWorldCheck.stopAndExit(
+            ModdedWorldCheck.awaitStopAndExit(
                     () -> interruptedDuringStop.set(Thread.currentThread().isInterrupted()),
                     0,
                     exitStatus -> {
@@ -83,5 +272,10 @@ public class ModdedWorldCheckTest {
         } finally {
             Thread.interrupted();
         }
+    }
+
+    private static boolean characteristic(String structureLabel, String structureKey, String blockKey) {
+        return ModdedWorldCheck.isCharacteristicMaterial(structureLabel,
+                Identifier.parse(structureKey), Identifier.parse(blockKey));
     }
 }

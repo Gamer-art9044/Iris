@@ -17,7 +17,6 @@ art/arcane/iris/core/lifecycle/WorldLifecycleService.java
 art/arcane/iris/core/lifecycle/WorldLifecycleStaging.java
 art/arcane/iris/core/lifecycle/WorldLifecycleSupport.java
 art/arcane/iris/core/lifecycle/WorldsProviderBackend.java
-art/arcane/iris/core/link/CustomItemsDataProvider.java
 art/arcane/iris/core/link/ExternalDataProvider.java
 art/arcane/iris/core/link/Identifier.java
 art/arcane/iris/core/link/MultiverseCoreLink.java
@@ -25,7 +24,6 @@ art/arcane/iris/core/link/WorldEditLink.java
 art/arcane/iris/core/link/data/CraftEngineDataProvider.java
 art/arcane/iris/core/link/data/EcoItemsDataProvider.java
 art/arcane/iris/core/link/data/ExecutableItemsDataProvider.java
-art/arcane/iris/core/link/data/HMCLeavesDataProvider.java
 art/arcane/iris/core/link/data/ItemAdderDataProvider.java
 art/arcane/iris/core/link/data/KGeneratorsDataProvider.java
 art/arcane/iris/core/link/data/MMOItemsDataProvider.java

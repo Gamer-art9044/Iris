@@ -18,35 +18,20 @@
 
 package art.arcane.iris.engine.object;
 
-import art.arcane.iris.core.IrisWorldStorage;
-import art.arcane.iris.core.tools.IrisToolbelt;
-import art.arcane.iris.spi.IrisLogging;
-import art.arcane.volmlib.util.bukkit.WorldIdentity;
-import art.arcane.volmlib.util.collection.KList;
+import art.arcane.iris.spi.PlatformWorld;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.Accessors;
-import org.bukkit.Location;
-import org.bukkit.NamespacedKey;
-import org.bukkit.World;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.Player;
-import org.bukkit.generator.WorldInfo;
 
 import java.io.File;
-import java.util.Collection;
-import java.util.List;
 
 @Builder
 @Data
 @Accessors(chain = true, fluent = true)
 public class IrisWorld {
-    private static final KList<Player> NO_PLAYERS = new KList<>();
-    private static final KList<? extends Entity> NO_ENTITIES = new KList<>();
-    private NamespacedKey key;
     private String platformIdentity;
     private String name;
     private File worldFolder;
@@ -54,106 +39,24 @@ public class IrisWorld {
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     private long seed;
-    private World.Environment environment;
-    private World realWorld;
+    private PlatformWorld platformWorld;
     private int minHeight;
     private int maxHeight;
-
-    public static IrisWorld fromWorld(World world) {
-        return bindWorld(IrisWorld.builder().build(), world);
-    }
-
-    private static IrisWorld bindWorld(IrisWorld iw, World world) {
-        return iw.key(WorldIdentity.key(world))
-                .name(world.getName())
-                .worldFolder(world.getWorldFolder())
-                .minHeight(world.getMinHeight())
-                .maxHeight(world.getMaxHeight())
-                .realWorld(world)
-                .environment(world.getEnvironment());
-    }
 
     public long getRawWorldSeed() {
         return seed;
     }
 
     public String identity() {
-        return key == null ? platformIdentity : key.toString();
+        return platformIdentity;
     }
 
     public void setRawWorldSeed(long seed) {
         this.seed = seed;
     }
 
-    public boolean tryGetRealWorld() {
-        if (hasRealWorld()) {
-            return true;
-        }
-
-        if (key == null) {
-            return false;
-        }
-
-        World w = WorldIdentity.resolve(key).orElse(null);
-
-        if (w != null) {
-            realWorld = w;
-            return true;
-        }
-
-        return false;
-    }
-
-    public boolean hasRealWorld() {
-        return realWorld != null;
-    }
-
-    public List<Player> getPlayers() {
-
-        if (hasRealWorld()) {
-            return realWorld().getPlayers();
-        }
-
-        return NO_PLAYERS;
-    }
-
-    public void evacuate() {
-        if (hasRealWorld()) {
-            IrisToolbelt.evacuate(realWorld());
-        }
-    }
-
-    public void bind(WorldInfo worldInfo) {
-        key(WorldIdentity.key(worldInfo))
-                .worldFolder(IrisWorldStorage.dimensionRoot(worldInfo))
-                .minHeight(worldInfo.getMinHeight())
-                .maxHeight(worldInfo.getMaxHeight())
-                .environment(worldInfo.getEnvironment());
-    }
-
-    public void bind(World world) {
-        if (hasRealWorld()) {
-            return;
-        }
-
-        bindWorld(this, world);
-    }
-
-    public Location spawnLocation() {
-        if (hasRealWorld()) {
-            return realWorld().getSpawnLocation();
-        }
-
-        IrisLogging.error("This world is not real yet, cannot get spawn location! HEADLESS!");
-        return null;
-    }
-
-    public <T extends Entity> Collection<? extends T> getEntitiesByClass(Class<T> t) {
-        if (hasRealWorld()) {
-            return realWorld().getEntitiesByClass(t);
-        }
-
-        return (KList<? extends T>) NO_ENTITIES;
+    public boolean hasPlatformWorld() {
+        return platformWorld != null;
     }
 
     public int getHeight() {

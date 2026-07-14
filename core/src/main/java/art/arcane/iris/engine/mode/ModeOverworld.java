@@ -18,12 +18,12 @@
 
 package art.arcane.iris.engine.mode;
 
-import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.actuator.IrisBiomeActuator;
 import art.arcane.iris.engine.actuator.IrisDecorantActuator;
 import art.arcane.iris.engine.actuator.IrisTerrainNormalActuator;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineMode;
+import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.EngineStage;
 import art.arcane.iris.engine.framework.IrisEngineMode;
 import art.arcane.iris.engine.modifier.IrisCarveModifier;
@@ -33,27 +33,28 @@ import art.arcane.iris.engine.modifier.IrisFloatingChildBiomeModifier;
 import art.arcane.iris.engine.modifier.IrisPerfectionModifier;
 import art.arcane.iris.engine.modifier.IrisPostModifier;
 import art.arcane.iris.spi.IrisLogging;
-import art.arcane.iris.util.common.scheduling.J;
 
 import java.util.concurrent.atomic.AtomicLong;
 
 public class ModeOverworld extends IrisEngineMode implements EngineMode {
     private static final AtomicLong lastMaintenanceBypassLog = new AtomicLong(0L);
+    private final EnginePlatformHooks platformHooks;
 
     public ModeOverworld(Engine engine) {
         super(engine);
-        var terrain = new IrisTerrainNormalActuator(getEngine());
-        var biome = new IrisBiomeActuator(getEngine());
-        var decorant = new IrisDecorantActuator(getEngine());
-        var cave = new IrisCarveModifier(getEngine());
-        var post = new IrisPostModifier(getEngine());
-        var deposit = new IrisDepositModifier(getEngine());
-        var perfection = new IrisPerfectionModifier(getEngine());
-        var custom = new IrisCustomModifier(getEngine());
-        var floatingChildBiomes = new IrisFloatingChildBiomeModifier(getEngine());
+        platformHooks = engine.getPlatformHooks();
+        IrisTerrainNormalActuator terrain = new IrisTerrainNormalActuator(getEngine());
+        IrisBiomeActuator biome = new IrisBiomeActuator(getEngine());
+        IrisDecorantActuator decorant = new IrisDecorantActuator(getEngine());
+        IrisCarveModifier cave = new IrisCarveModifier(getEngine());
+        IrisPostModifier post = new IrisPostModifier(getEngine());
+        IrisDepositModifier deposit = new IrisDepositModifier(getEngine());
+        IrisPerfectionModifier perfection = new IrisPerfectionModifier(getEngine());
+        IrisCustomModifier custom = new IrisCustomModifier(getEngine());
+        IrisFloatingChildBiomeModifier floatingChildBiomes = new IrisFloatingChildBiomeModifier(getEngine());
         EngineStage sBiome = (x, z, k, p, m, c) -> biome.actuate(x, z, p, m, c);
         EngineStage sGenMatter = (x, z, k, p, m, c) -> {
-            if (shouldBypassMantleStages(getEngine())) {
+            if (shouldBypassMantleStages()) {
                 return;
             }
             generateMatter(x >> 4, z >> 4, m, c);
@@ -61,25 +62,25 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
         EngineStage sTerrain = (x, z, k, p, m, c) -> terrain.actuate(x, z, k, m, c);
         EngineStage sDecorant = (x, z, k, p, m, c) -> decorant.actuate(x, z, k, m, c);
         EngineStage sCave = (x, z, k, p, m, c) -> {
-            if (shouldBypassMantleStages(getEngine())) {
+            if (shouldBypassMantleStages()) {
                 return;
             }
             cave.modify(x >> 4, z >> 4, k, m, c);
         };
         EngineStage sDeposit = (x, z, k, p, m, c) -> {
-            if (shouldBypassMantleStages(getEngine())) {
+            if (shouldBypassMantleStages()) {
                 return;
             }
             deposit.modify(x, z, k, m, c);
         };
         EngineStage sPost = (x, z, k, p, m, c) -> {
-            if (shouldBypassMantleStages(getEngine())) {
+            if (shouldBypassMantleStages()) {
                 return;
             }
             post.modify(x, z, k, m, c);
         };
         EngineStage sInsertMatter = (x, z, K, p, m, c) -> {
-            if (shouldBypassMantleStages(getEngine())) {
+            if (shouldBypassMantleStages()) {
                 return;
             }
             getMantle().insertMatter(x >> 4, z >> 4, K, m);
@@ -88,7 +89,7 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
         EngineStage sFloatingDecorate = (x, z, k, p, m, c) -> floatingChildBiomes.decorateColumns(x, z, k, m, c);
         EngineStage sPerfection = (x, z, k, p, m, c) -> perfection.modify(x, z, k, m, c);
         EngineStage sCustom = (x, z, k, p, m, c) -> {
-            if (shouldBypassMantleStages(getEngine())) {
+            if (shouldBypassMantleStages()) {
                 return;
             }
             custom.modify(x, z, k, m, c);
@@ -114,13 +115,8 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
         registerStage(sCustom);
     }
 
-    private static boolean shouldBypassMantleStages(Engine engine) {
-        if (!J.isFolia()) {
-            return false;
-        }
-
-        var world = engine.getWorld().realWorld();
-        boolean active = world != null && IrisToolbelt.isWorldMaintenanceBypassingMantleStages(world);
+    private boolean shouldBypassMantleStages() {
+        boolean active = platformHooks.shouldBypassMantleStages(getEngine());
         if (active) {
             long now = System.currentTimeMillis();
             long last = lastMaintenanceBypassLog.get();

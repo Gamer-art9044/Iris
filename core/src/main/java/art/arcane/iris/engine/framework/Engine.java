@@ -22,12 +22,10 @@ package art.arcane.iris.engine.framework;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.framework.render.RenderType;
 import art.arcane.iris.engine.framework.render.Renderer;
-import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.core.nms.container.BlockPos;
 import art.arcane.iris.core.nms.container.Pair;
-import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
@@ -93,6 +91,8 @@ public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdat
     }
 
     EngineMode getMode();
+
+    EnginePlatformHooks getPlatformHooks();
 
     int getBlockUpdatesPerSecond();
 
@@ -352,7 +352,7 @@ public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdat
         KMap<String, IrisBiome> v = new KMap<>();
 
         IrisDimension dim = getDimension();
-        dim.getAllBiomes(this).forEach((i) -> v.put(i.getLoadKey(), i));
+        dim.getReachableBiomes(this).forEach((i) -> v.put(i.getLoadKey(), i));
 
         return v.v();
     }
@@ -389,7 +389,7 @@ public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdat
     }
 
     default IrisPosition lookForBiome(IrisBiome biome, long timeout, Consumer<Integer> triesc) {
-        if (!getWorld().hasRealWorld()) {
+        if (!getWorld().hasPlatformWorld()) {
             IrisLogging.error("Cannot GOTO without a bound world (headless mode)");
             return null;
         }
@@ -398,7 +398,7 @@ public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdat
         long s = M.ms();
         int cpus = (Runtime.getRuntime().availableProcessors());
 
-        if (!getDimension().getAllBiomes(this).contains(biome)) {
+        if (!getDimension().getReachableBiomes(this).contains(biome)) {
             return null;
         }
 
@@ -460,7 +460,7 @@ public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdat
     }
 
     default IrisPosition lookForRegion(IrisRegion reg, long timeout, Consumer<Integer> triesc) {
-        if (!getWorld().hasRealWorld()) {
+        if (!getWorld().hasPlatformWorld()) {
             IrisLogging.error("Cannot GOTO without a bound world (headless mode)");
             return null;
         }
@@ -626,7 +626,7 @@ public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdat
             return false;
         }
 
-        Set<String> biomeKeys = getDimension().getAllBiomes(this).stream()
+        Set<String> biomeKeys = getDimension().getReachableBiomes(this).stream()
                 .filter((i) -> containsObjectPlacement(i.getObjects(), normalizedObjectKey))
                 .map(IrisRegistrant::getLoadKey)
                 .collect(Collectors.toSet());
@@ -678,24 +678,11 @@ public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdat
     }
 
     default void cleanupMantleChunk(int x, int z) {
-        if (shouldSkipMaintenanceCleanup()) {
+        if (getPlatformHooks().shouldSkipMantleCleanup(this)) {
             return;
         }
         if (IrisSettings.get().getPerformance().isTrimMantleInStudio() || !isStudio()) {
             getMantle().cleanupChunk(x, z);
         }
-    }
-
-    private boolean shouldSkipMaintenanceCleanup() {
-        IrisWorld world = getWorld();
-        if (world == null) {
-            return false;
-        }
-        String worldIdentity = world.identity();
-        if (!WorldMaintenance.isWorldMaintenanceActive(worldIdentity)) {
-            return false;
-        }
-        PregeneratorJob pregeneratorJob = PregeneratorJob.getInstance();
-        return pregeneratorJob == null || !pregeneratorJob.targetsWorldIdentity(worldIdentity);
     }
 }

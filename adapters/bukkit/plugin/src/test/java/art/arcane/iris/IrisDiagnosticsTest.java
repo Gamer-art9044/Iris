@@ -1,6 +1,8 @@
 package art.arcane.iris;
 
 import art.arcane.iris.core.splash.IrisSplashPackScanner;
+import art.arcane.iris.core.service.CommandSVC;
+import art.arcane.iris.util.common.plugin.IrisService;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -13,9 +15,18 @@ import java.util.Comparator;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class IrisDiagnosticsTest {
+    @Test
+    public void serviceInitializationSkipsPackageHelperClasses() throws Exception {
+        Class<?> registrar = Class.forName("art.arcane.iris.core.service.PaperCommandRegistrar");
+
+        assertFalse(Iris.isConcreteImplementation(registrar, IrisService.class));
+        assertTrue(Iris.isConcreteImplementation(CommandSVC.class, IrisService.class));
+    }
+
     @Test
     public void reportErrorWithContextPrintsFullStacktrace() {
         ByteArrayOutputStream output = new ByteArrayOutputStream();

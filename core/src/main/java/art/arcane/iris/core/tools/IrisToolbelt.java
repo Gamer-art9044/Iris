@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.tools;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -230,7 +231,7 @@ public class IrisToolbelt {
             if (activeProject != null) {
                 PlatformChunkGenerator activeProvider = activeProject.getActiveProvider();
                 if (activeProvider != null) {
-                    World activeWorld = activeProvider.getTarget().getWorld().realWorld();
+                    World activeWorld = BukkitWorldBinding.world(activeProvider.getTarget().getWorld());
                     if (activeWorld != null && WorldIdentity.key(activeWorld).equals(WorldIdentity.key(world))) {
                         if (activeProvider instanceof BukkitChunkGenerator bukkit) {
                             bukkit.touch(world);
@@ -273,7 +274,7 @@ public class IrisToolbelt {
     }
 
     private static PregenCache resolvePregenCache(IrisWorld world) {
-        String worldIdentity = world.key() == null ? null : world.key().toString();
+        String worldIdentity = world.identity();
         if (worldIdentity == null) {
             throw new IllegalStateException("Pregeneration requires a namespaced world identity.");
         }
@@ -306,14 +307,14 @@ public class IrisToolbelt {
      * @return the pregenerator job (already started)
      */
     public static PregeneratorJob pregenerate(PregenTask task, PlatformChunkGenerator gen) {
-        World world = gen.getEngine().getWorld().realWorld();
+        World world = BukkitWorldBinding.world(gen.getEngine().getWorld());
         int threads = IrisSettings.getThreadCount(IrisSettings.get().getConcurrency().getParallelism());
         PregeneratorMethod method = new HybridPregenMethod(world, threads);
         return pregenerate(task, method, gen.getEngine());
     }
 
     public static PregeneratorJob pregenerateSerial(PregenTask task, PlatformChunkGenerator gen) {
-        World world = gen.getEngine().getWorld().realWorld();
+        World world = BukkitWorldBinding.world(gen.getEngine().getWorld());
         PregeneratorMethod method = HybridPregenMethod.strictSerial(world);
         return pregenerate(task, method, gen.getEngine());
     }

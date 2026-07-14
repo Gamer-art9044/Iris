@@ -52,6 +52,7 @@ public final class ModdedStructureCommands {
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
 
     private static final SuggestionProvider<CommandSourceStack> IRIS_STRUCTURE_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestIrisStructureKeys(context, builder);
+    private static final SuggestionProvider<CommandSourceStack> ALL_STRUCTURE_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> IrisModdedCommands.suggestStructureKeys(context, builder);
 
     private ModdedStructureCommands() {
     }
@@ -84,10 +85,18 @@ public final class ModdedStructureCommands {
         root.then(message("all", "Structure import rebuilds vanilla & datapack structures as editable Iris resources through Bukkit/NMS template managers; run /iris structure import on a Bukkit server against this pack, then copy the pack folder over."));
         root.then(message("capture", "Structure capture generates each structure in a throwaway Bukkit scratch world to read its blocks; it requires the Bukkit plugin (v26 NMS binding)."));
         root.then(message("cap", "Structure capture generates each structure in a throwaway Bukkit scratch world to read its blocks; it requires the Bukkit plugin (v26 NMS binding)."));
-        root.then(message("verify", "Vanilla structure locate is meaningless here: Iris modded dimensions do not run vanilla structure placement (Iris places structures itself). Use /iris goto structure <key> to locate Iris-placed structures."));
-        root.then(message("locateall", "Vanilla structure locate is meaningless here: Iris modded dimensions do not run vanilla structure placement (Iris places structures itself). Use /iris goto structure <key> to locate Iris-placed structures."));
+        root.then(verifyTree("verify"));
+        root.then(verifyTree("locateall"));
 
         return root;
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> verifyTree(String name) {
+        return Commands.literal(name)
+                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.verifyStructures(context.getSource(), null))
+                .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ALL_STRUCTURE_KEYS)
+                        .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.verifyStructures(
+                                context.getSource(), StringArgumentType.getString(context, "key"))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> message(String name, String text) {

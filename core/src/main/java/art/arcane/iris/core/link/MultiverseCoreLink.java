@@ -25,43 +25,48 @@ import org.mvplugins.multiverse.core.MultiverseCoreApi;
 import org.mvplugins.multiverse.core.world.MultiverseWorld;
 import org.mvplugins.multiverse.core.world.WorldManager;
 import org.mvplugins.multiverse.core.world.options.ImportWorldOptions;
+import org.mvplugins.multiverse.core.world.options.RemoveWorldOptions;
+
+import java.lang.reflect.Field;
 
 public class MultiverseCoreLink {
-    private final boolean active;
-
-    public MultiverseCoreLink() {
-        active = Bukkit.getPluginManager().getPlugin("Multiverse-Core") != null;
-    }
-
     public void removeFromConfig(World world) {
         removeFromConfig(world.getName());
     }
 
     public void removeFromConfig(String world) {
-        if (!active) return;
-        var manager = worldManager();
-        manager.removeWorld(world).onSuccess(manager::saveWorldsConfig);
+        if (!isActive()) {
+            return;
+        }
+        WorldManager manager = worldManager();
+        MultiverseWorld multiverseWorld = manager.getWorld(world).getOrElse((MultiverseWorld) null);
+        if (multiverseWorld == null) {
+            return;
+        }
+        manager.removeWorld(RemoveWorldOptions.world(multiverseWorld)).onSuccess(ignored -> manager.saveWorldsConfig());
     }
 
     @SneakyThrows
     public void updateWorld(World bukkitWorld, String pack) {
-        if (!active) return;
-        var generator = "Iris:" + pack;
-        var manager = worldManager();
-        var world = manager.getWorld(bukkitWorld).getOrElse(() -> {
-            var options = ImportWorldOptions.worldName(bukkitWorld.getName())
+        if (!isActive()) {
+            return;
+        }
+        String generator = "Iris:" + pack;
+        WorldManager manager = worldManager();
+        MultiverseWorld multiverseWorld = manager.getWorld(bukkitWorld).getOrElse(() -> {
+            ImportWorldOptions options = ImportWorldOptions.worldName(bukkitWorld.getName())
                     .generator(generator)
                     .environment(bukkitWorld.getEnvironment())
                     .useSpawnAdjust(false);
             return manager.importWorld(options).get();
         });
 
-        world.setAutoLoad(false);
-        if (!generator.equals(world.getGenerator())) {
-            var field = MultiverseWorld.class.getDeclaredField("worldConfig");
+        multiverseWorld.setAutoLoad(false);
+        if (!generator.equals(multiverseWorld.getGenerator())) {
+            Field field = MultiverseWorld.class.getDeclaredField("worldConfig");
             field.setAccessible(true);
 
-            var config = field.get(world);
+            Object config = field.get(multiverseWorld);
             config.getClass()
                     .getDeclaredMethod("setGenerator", String.class)
                     .invoke(config, generator);
@@ -71,7 +76,11 @@ public class MultiverseCoreLink {
     }
 
     private WorldManager worldManager() {
-        var api = MultiverseCoreApi.get();
+        MultiverseCoreApi api = MultiverseCoreApi.get();
         return api.getWorldManager();
+    }
+
+    private boolean isActive() {
+        return Bukkit.getPluginManager().isPluginEnabled("Multiverse-Core");
     }
 }

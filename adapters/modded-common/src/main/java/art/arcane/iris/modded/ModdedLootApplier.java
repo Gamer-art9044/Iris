@@ -23,6 +23,8 @@ import art.arcane.iris.engine.framework.PlacedObject;
 import art.arcane.iris.engine.object.IObjectLoot;
 import art.arcane.iris.engine.object.InventorySlotType;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisLootMode;
+import art.arcane.iris.engine.object.IrisLootReference;
 import art.arcane.iris.engine.object.IrisLootTable;
 import art.arcane.iris.engine.object.IrisObjectLoot;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
@@ -43,41 +45,24 @@ import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.storage.loot.LootParams;
+import net.minecraft.world.level.storage.loot.LootTable;
+import net.minecraft.world.level.storage.loot.parameters.LootContextParamSets;
+import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 
 public final class ModdedLootApplier {
     private ModdedLootApplier() {
     }
 
-    private record Candidate(IrisLootTable table, Identifier vanillaId, int weight) {
-    }
-
-    private record Resolution(KList<IrisLootTable> tables, Identifier vanillaTable) {
-        boolean isEmpty() {
-            return tables.isEmpty() && vanillaTable == null;
-        }
-    }
-
     public static void apply(Engine engine, ServerLevel level, BlockPos pos, BlockState state, MantleChunk<Matter> mc, RNG rng, int localX, int localZ) {
-        Resolution resolution = resolveTables(engine, rng, pos, state, mc);
-        if (resolution.isEmpty()) {
-            return;
-        }
-
-        if (resolution.vanillaTable() != null) {
-            BlockEntity blockEntity = level.getBlockEntity(pos);
-            if (blockEntity instanceof RandomizableContainerBlockEntity randomizable) {
-                randomizable.setLootTable(ResourceKey.create(Registries.LOOT_TABLE, resolution.vanillaTable()), rng.nextLong());
-            } else {
-                IrisLogging.debug("Iris loot: no randomizable container at " + pos + " for vanilla table " + resolution.vanillaTable());
-            }
-        }
-
-        if (resolution.tables().isEmpty()) {
+        List<LootSource> sources = resolveSources(engine, level, rng, pos, state, mc);
+        if (sources.isEmpty()) {
             return;
         }
 
@@ -88,40 +73,43 @@ public final class ModdedLootApplier {
         }
 
         KList<ItemStack> items = new KList<>();
-        for (IrisLootTable table : resolution.tables()) {
-            if (table == null) {
+        LootParams nativeParams = null;
+        for (LootSource source : sources) {
+            if (source instanceof IrisLootSource irisSource) {
+                IrisLootTable table = irisSource.table();
+                if (table == null) {
+                    continue;
+                }
+                items.addAll(ModdedItemTranslator.loot(table, rng, InventorySlotType.STORAGE, level, localX, pos.getY(), localZ));
                 continue;
             }
-            items.addAll(ModdedItemTranslator.loot(table, rng, InventorySlotType.STORAGE, level, localX, pos.getY(), localZ));
+            if (source instanceof NativeLootSource nativeSource) {
+                if (nativeParams == null) {
+                    nativeParams = new LootParams.Builder(level)
+                            .withParameter(LootContextParams.ORIGIN, Vec3.atCenterOf(pos))
+                            .create(LootContextParamSets.CHEST);
+                }
+                items.addAll(nativeSource.table().getRandomItems(nativeParams, rng.nextLong()));
+            }
         }
 
-        for (ItemStack item : items) {
-            addItem(container, item);
-        }
-
-        scramble(container, rng);
-        container.setChanged();
+        fillContainer(container, items, rng);
     }
 
-    private static Resolution resolveTables(Engine engine, RNG rng, BlockPos pos, BlockState state, MantleChunk<Matter> mc) {
+    private static List<LootSource> resolveSources(Engine engine, ServerLevel level, RNG rng, BlockPos pos, BlockState state, MantleChunk<Matter> mc) {
         int rx = pos.getX();
         int rz = pos.getZ();
         int ry = pos.getY() - engine.getWorld().minHeight();
         double he = engine.getComplex().getHeightStream().get(rx, rz);
-        KList<IrisLootTable> tables = new KList<>();
-        Identifier vanillaTable = null;
+        List<LootSource> sources = new ArrayList<>();
 
         PlacedObject po = engine.getObjectPlacement(rx, ry, rz, mc);
         if (po != null && po.getPlacement() != null && ModdedBlockResolution.isStorageChest(state)) {
-            Candidate picked = pickPlacementTable(engine, po.getPlacement(), state, rng);
+            Candidate picked = pickPlacementTable(engine, level, po.getPlacement(), state, rng);
             if (picked != null) {
-                if (picked.table() != null) {
-                    tables.add(picked.table());
-                } else {
-                    vanillaTable = picked.vanillaId();
-                }
+                sources.add(picked.source());
                 if (po.getPlacement().isOverrideGlobalLoot()) {
-                    return new Resolution(tables, vanillaTable);
+                    return sources;
                 }
             }
         }
@@ -131,28 +119,16 @@ public final class ModdedLootApplier {
         IrisBiome biomeUnder = ry < he ? engine.getCaveBiome(rx, ry, rz) : biomeSurface;
 
         double multiplier = 1D * engine.getDimension().getLoot().getMultiplier() * region.getLoot().getMultiplier() * biomeSurface.getLoot().getMultiplier() * biomeUnder.getLoot().getMultiplier();
-        boolean fallback = tables.isEmpty() && vanillaTable == null;
-        engine.injectTables(tables, engine.getDimension().getLoot(), fallback);
-        engine.injectTables(tables, region.getLoot(), fallback);
-        engine.injectTables(tables, biomeSurface.getLoot(), fallback);
-        engine.injectTables(tables, biomeUnder.getLoot(), fallback);
-
-        if (tables.isNotEmpty()) {
-            int target = (int) Math.round(tables.size() * multiplier);
-
-            while (tables.size() < target && tables.isNotEmpty()) {
-                tables.add(tables.get(rng.i(tables.size() - 1)));
-            }
-
-            while (tables.size() > target && tables.isNotEmpty()) {
-                tables.remove(rng.i(tables.size() - 1));
-            }
-        }
-
-        return new Resolution(tables, vanillaTable);
+        boolean fallback = sources.isEmpty();
+        injectReferenceSources(sources, engine.getDimension().getLoot(), engine, fallback);
+        injectReferenceSources(sources, region.getLoot(), engine, fallback);
+        injectReferenceSources(sources, biomeSurface.getLoot(), engine, fallback);
+        injectReferenceSources(sources, biomeUnder.getLoot(), engine, fallback);
+        scaleSources(sources, multiplier, rng);
+        return sources;
     }
 
-    private static Candidate pickPlacementTable(Engine engine, IrisObjectPlacement placement, BlockState state, RNG rng) {
+    private static Candidate pickPlacementTable(Engine engine, ServerLevel level, IrisObjectPlacement placement, BlockState state, RNG rng) {
         List<Candidate> exact = new ArrayList<>();
         List<Candidate> basic = new ArrayList<>();
         List<Candidate> global = new ArrayList<>();
@@ -166,23 +142,91 @@ public final class ModdedLootApplier {
                 IrisLogging.warn("Couldn't find loot table " + loot.getName());
                 continue;
             }
-            bucket(engine, loot, new Candidate(table, null, loot.getWeight()), state, exact, basic, global);
+            bucket(engine, loot, new Candidate(new IrisLootSource(table), loot.getWeight()), state, exact, basic, global);
         }
 
         for (IrisObjectVanillaLoot loot : placement.getVanillaLoot()) {
             if (loot == null) {
                 continue;
             }
-            Identifier id = loot.getName() == null ? null : Identifier.tryParse(loot.getName());
-            if (id == null) {
-                IrisLogging.warn("Couldn't parse vanilla loot table " + loot.getName());
+            ResourceKey<LootTable> key = resolveNativeKey(loot.getName(), candidate -> hasNativeTable(level, candidate));
+            if (key == null) {
+                IrisLogging.warn("Couldn't find vanilla loot table " + loot.getName());
                 continue;
             }
-            bucket(engine, loot, new Candidate(null, id, loot.getWeight()), state, exact, basic, global);
+            LootTable table = level.getServer().reloadableRegistries().lookup()
+                    .lookupOrThrow(Registries.LOOT_TABLE)
+                    .getOrThrow(key)
+                    .value();
+            bucket(engine, loot, new Candidate(new NativeLootSource(table), loot.getWeight()), state, exact, basic, global);
         }
 
         List<Candidate> pool = !exact.isEmpty() ? exact : !basic.isEmpty() ? basic : global;
         return pickWeighted(pool, rng);
+    }
+
+    static <T> void injectSources(List<T> sources, List<? extends T> additions, IrisLootMode mode, boolean fallback) {
+        if (mode == IrisLootMode.FALLBACK && !fallback) {
+            return;
+        }
+        if (mode == IrisLootMode.CLEAR || mode == IrisLootMode.REPLACE) {
+            sources.clear();
+        }
+        sources.addAll(additions);
+    }
+
+    static <T> void scaleSources(List<T> sources, double multiplier, RNG rng) {
+        if (sources.isEmpty()) {
+            return;
+        }
+        int target = (int) Math.round(sources.size() * multiplier);
+        while (sources.size() < target && !sources.isEmpty()) {
+            sources.add(sources.get(rng.i(sources.size() - 1)));
+        }
+        while (sources.size() > target && !sources.isEmpty()) {
+            sources.remove(rng.i(sources.size() - 1));
+        }
+    }
+
+    static ResourceKey<LootTable> resolveNativeKey(String name, Predicate<ResourceKey<LootTable>> registryContains) {
+        Identifier id = name == null ? null : Identifier.tryParse(name);
+        if (id == null) {
+            return null;
+        }
+        ResourceKey<LootTable> key = ResourceKey.create(Registries.LOOT_TABLE, id);
+        return registryContains.test(key) ? key : null;
+    }
+
+    static void fillContainer(Container container, List<ItemStack> items, RNG rng) {
+        for (ItemStack item : items) {
+            addItem(container, item);
+        }
+        scramble(container, rng);
+        container.setChanged();
+    }
+
+    private static void injectReferenceSources(List<LootSource> sources, IrisLootReference reference, Engine engine, boolean fallback) {
+        IrisLootMode mode = reference.getMode();
+        if (mode == IrisLootMode.FALLBACK && !fallback) {
+            return;
+        }
+        injectSources(sources, irisSources(reference, engine), mode, fallback);
+    }
+
+    private static List<LootSource> irisSources(IrisLootReference reference, Engine engine) {
+        KList<IrisLootTable> tables = reference.getLootTables(engine.getComplex());
+        List<LootSource> sources = new ArrayList<>(tables.size());
+        for (IrisLootTable table : tables) {
+            sources.add(new IrisLootSource(table));
+        }
+        return sources;
+    }
+
+    private static boolean hasNativeTable(ServerLevel level, ResourceKey<LootTable> key) {
+        return level.getServer().reloadableRegistries().lookup()
+                .lookup(Registries.LOOT_TABLE)
+                .flatMap(registry -> registry.get(key))
+                .isPresent();
     }
 
     private static void bucket(Engine engine, IObjectLoot loot, Candidate candidate, BlockState state, List<Candidate> exact, List<Candidate> basic, List<Candidate> global) {
@@ -287,5 +331,17 @@ public final class ModdedLootApplier {
         for (int i = 0; i < size; i++) {
             container.setItem(i, items[i]);
         }
+    }
+
+    private interface LootSource {
+    }
+
+    private record IrisLootSource(IrisLootTable table) implements LootSource {
+    }
+
+    private record NativeLootSource(LootTable table) implements LootSource {
+    }
+
+    private record Candidate(LootSource source, int weight) {
     }
 }

@@ -541,7 +541,7 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
         Set<String> objectKeys = new HashSet<>();
         try {
             IrisData data = getData();
-            for (IrisBiome biome : getDimension().getAllBiomes(this::getData)) {
+            for (IrisBiome biome : getDimension().getReachableBiomes(this::getData)) {
                 KList<IrisFloatingChildBiomes> entries = biome.getFloatingChildBiomes();
                 if (entries == null || entries.isEmpty()) {
                     continue;

@@ -1,5 +1,6 @@
 package art.arcane.iris.core.service;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import com.google.common.util.concurrent.AtomicDouble;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
@@ -9,6 +10,7 @@ import art.arcane.iris.core.runtime.GoldenHashScanner;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
@@ -312,7 +314,7 @@ public class IrisEngineSVC implements IrisService {
                             || engine.getMantle().getMantle().isClosed()
                             || !shouldReduce(engine))
                         return;
-                    World engineWorld = engine.getWorld().realWorld();
+                    World engineWorld = BukkitWorldBinding.world(engine.getWorld());
                     if (shouldSkipForMaintenance(engineWorld)) {
                         return;
                     }
@@ -346,7 +348,7 @@ public class IrisEngineSVC implements IrisService {
                             || engine.getMantle().getMantle().isClosed()
                             || !shouldReduce(engine))
                         return;
-                    World engineWorld = engine.getWorld().realWorld();
+                    World engineWorld = BukkitWorldBinding.world(engine.getWorld());
                     if (shouldSkipForMaintenance(engineWorld)) {
                         return;
                     }
@@ -446,7 +448,7 @@ public class IrisEngineSVC implements IrisService {
             }
 
             PregeneratorJob pregeneratorJob = PregeneratorJob.getInstance();
-            boolean pregeneratorTargetsWorld = pregeneratorJob != null && pregeneratorJob.targetsWorld(world);
+            boolean pregeneratorTargetsWorld = pregeneratorJob != null && pregeneratorJob.targetsWorldIdentity(WorldIdentity.serialize(world));
             return shouldSkipMantleReductionForMaintenance(maintenanceActive, pregeneratorTargetsWorld);
         }
     }

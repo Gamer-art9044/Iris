@@ -41,11 +41,13 @@ import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.object.IrisDimensionContractException;
 import art.arcane.iris.engine.object.IrisDimension;
-import art.arcane.iris.engine.object.VanillaStructureMode;
+import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.object.StudioMode;
 import art.arcane.iris.engine.platform.studio.StudioGenerator;
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBiome;
@@ -110,6 +112,9 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private volatile Looper hotloader;
     private volatile StudioMode lastMode;
     private volatile DummyBiomeProvider dummyBiomeProvider;
+    private volatile Throwable initializationFailure;
+    private volatile IrisDimension validatedDimension;
+    private volatile IrisDimensionRuntimeContract validatedWorldContract;
     private volatile boolean closing;
     @Setter
     private volatile StudioGenerator studioGenerator;
@@ -132,15 +137,17 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 new KList<>(".iris"),
                 new KList<>()
         );
+        this.initializationFailure = null;
+        this.validatedDimension = null;
+        this.validatedWorldContract = null;
         this.closing = false;
         Bukkit.getServer().getPluginManager().registerEvents(this, BukkitPlatform.plugin());
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onWorldInit(WorldInitEvent event) {
-        if (!Objects.equals(world.key(), WorldIdentity.key(event.getWorld()))) return;
+        if (!Objects.equals(world.identity(), WorldIdentity.key(event.getWorld()).toString())) return;
         BukkitPlatform.volmitPlugin().unregisterListener(this);
-        world.bind(event.getWorld());
         world.setRawWorldSeed(event.getWorld().getSeed());
         if (initialize(event.getWorld())) return;
 
@@ -153,18 +160,29 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     }
 
     private boolean initialize(World world) {
-        Engine engine = getEngine(world);
-        if (engine == null) return false;
         try {
+            Engine engine = getEngine(world);
+            if (engine == null) {
+                return false;
+            }
             INMS.get().inject(world.getSeed(), engine, world);
             IrisLogging.debug("Injected Iris Biome Source into " + world.getName());
             if (!studio) {
                 J.s(() -> updateSpawnLocation(world), 1);
             }
         } catch (Throwable e) {
+            initializationFailure = e;
+            spawnChunks.completeExceptionally(e);
             IrisLogging.reportError(e);
-            IrisLogging.error("Failed to inject biome source into " + world.getName());
+            IrisLogging.error("Failed to initialize Iris generator for " + world.getName());
             e.printStackTrace();
+            if (e instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (e instanceof Error error) {
+                throw error;
+            }
+            throw new IllegalStateException("Failed to initialize Iris for world '" + world.getName() + "'", e);
         }
         spawnChunks.complete(INMS.get().getSpawnChunkCount(world));
         BukkitPlatform.volmitPlugin().unregisterListener(this);
@@ -280,6 +298,8 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     }
 
     private Engine getEngine(WorldInfo world) {
+        throwIfInitializationFailed();
+        validateAndBindWorld(world);
         if (setup.get()) {
             return getEngine();
         }
@@ -319,6 +339,40 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             return engine;
         } finally {
             lock.unlock();
+        }
+    }
+
+    private void throwIfInitializationFailed() {
+        Throwable failure = initializationFailure;
+        if (failure == null) {
+            return;
+        }
+        if (failure instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        throw new IllegalStateException("Iris initialization previously failed for world '" + world.name() + "'", failure);
+    }
+
+    private void validateAndBindWorld(WorldInfo worldInfo) {
+        IrisDimension dimension = getTarget().getDimension();
+        IrisDimensionRuntimeContract activeContract = validatedWorldContract;
+        if (activeContract == null || validatedDimension != dimension) {
+            IrisDimensionRuntimeContract expected = IrisDimensionRuntimeContract.expected(dimension, "iris");
+            if (activeContract != null) {
+                expected.requireExact("Bukkit world '" + worldInfo.getName() + "'", activeContract);
+            }
+            int runtimeHeight = worldInfo.getMaxHeight() - worldInfo.getMinHeight();
+            expected.requireHeight("Bukkit world '" + worldInfo.getName() + "'", worldInfo.getMinHeight(), runtimeHeight);
+            BukkitWorldBinding.bind(world, worldInfo);
+            validatedWorldContract = expected;
+            validatedDimension = dimension;
+            return;
+        }
+        if (!world.hasPlatformWorld() && worldInfo instanceof World) {
+            BukkitWorldBinding.bind(world, worldInfo);
         }
     }
 
@@ -434,13 +488,13 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         if (closing) {
             return;
         }
+        throwIfInitializationFailed();
 
         try {
             Engine engine = getEngine(world);
             lastChunkGenTime = System.currentTimeMillis();
             computeStudioGenerator();
             TerrainChunk tc = TerrainChunk.create(d);
-            this.world.bind(world);
             if (studioGenerator != null) {
                 studioGenerator.generateChunk(engine, tc, x, z);
             } else {
@@ -452,6 +506,8 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             }
 
             IrisLogging.debug("Generated " + x + " " + z);
+        } catch (IrisDimensionContractException e) {
+            throw e;
         } catch (GenerationSessionException e) {
             if (closing || isExpectedTeardown(engine, e)) {
                 return;
@@ -494,7 +550,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     }
 
     private boolean isMaintenanceActive() {
-        World realWorld = this.world.realWorld();
+        World realWorld = BukkitWorldBinding.world(this.world);
         return realWorld != null && IrisToolbelt.isWorldMaintenanceActive(realWorld);
     }
 
@@ -525,17 +581,14 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             return true;
         }
 
-        World realWorld = this.world.realWorld();
+        World realWorld = BukkitWorldBinding.world(this.world);
         PregeneratorJob pregeneratorJob = PregeneratorJob.getInstance();
-        return realWorld != null && pregeneratorJob != null && pregeneratorJob.targetsWorld(realWorld);
+        return realWorld != null && pregeneratorJob != null && pregeneratorJob.targetsWorldIdentity(WorldIdentity.serialize(realWorld));
     }
 
     @Override
     public int getBaseHeight(@NotNull WorldInfo worldInfo, @NotNull Random random, int x, int z, @NotNull HeightMap heightMap) {
-        Engine currentEngine = engine;
-        if (currentEngine == null || !setup.get()) {
-            currentEngine = getEngine(worldInfo);
-        }
+        Engine currentEngine = getEngine(worldInfo);
 
         boolean ignoreFluid = switch (heightMap) {
             case OCEAN_FLOOR, OCEAN_FLOOR_WG -> true;
@@ -579,14 +632,19 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
     @Override
     public boolean shouldGenerateStructures() {
+        if (initializationFailure != null) {
+            return false;
+        }
         try {
             Engine e = this.engine;
             if (e == null) {
                 return true;
             }
-            return e.getDimension().getImportedStructures().getMode() != VanillaStructureMode.ALL_OFF;
+            return e.getDimension().getImportedStructures().active();
         } catch (Throwable t) {
-            return true;
+            IrisLogging.reportError("Iris could not resolve native structure generation policy for "
+                    + world.name() + ".", t);
+            return false;
         }
     }
 

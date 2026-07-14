@@ -10,7 +10,7 @@ application {
 }
 
 String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
-    .orElse('com.github.VolmitSoftware:VolmLib:cdf7e8bb880199734dacd386a6616bda799fcde1')
+    .orElse('com.github.VolmitSoftware:VolmLib:4c38988b344792a79f925f57f8a675bc85fc1bed')
     .get()
 
 dependencies {
@@ -23,16 +23,13 @@ dependencies {
     runtimeOnly(libs.paralithic)
     runtimeOnly(libs.gson)
     runtimeOnly(libs.lru)
-    runtimeOnly(libs.kotlin.coroutines)
     runtimeOnly(libs.commons.io)
-    runtimeOnly(libs.commons.lang)
     runtimeOnly(libs.commons.lang3)
-    runtimeOnly(libs.commons.math3)
     runtimeOnly(libs.fastutil)
     runtimeOnly(libs.caffeine)
     runtimeOnly(libs.lz4)
     runtimeOnly(libs.zip)
-    runtimeOnly('com.google.guava:guava:33.4.0-jre')
+    runtimeOnly(libs.guava)
     runtimeOnly(libs.sentry)
     runtimeOnly(libs.oshi)
     runtimeOnly(libs.byteBuddy.core)

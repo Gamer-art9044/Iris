@@ -23,6 +23,8 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedBlockBuffer;
+import art.arcane.iris.modded.ModdedEngineBootstrap;
+import art.arcane.iris.modded.service.ModdedChunkUpdateService;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -33,16 +35,13 @@ import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.math.M;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Registry;
 import net.minecraft.core.SectionPos;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ThreadedLevelLightEngine;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -240,9 +239,13 @@ public final class ModdedRegen {
             lightEngine.updateSectionStatus(SectionPos.of(pos, chunk.getSectionYFromSectionIndex(i)), section.hasOnlyAir());
         }
 
+        ModdedChunkUpdateService updateService = ModdedEngineBootstrap.services().service(ModdedChunkUpdateService.class);
+        if (updateService == null) {
+            throw new IllegalStateException("Iris chunk update service is unavailable during regeneration");
+        }
+        updateService.updateRegeneratedChunk(engine, level, chunkX, chunkZ);
         Heightmap.primeHeightmaps(chunk, ChunkStatus.FULL.heightmapsAfter());
-        Registry<Biome> biomeRegistry = level.registryAccess().lookupOrThrow(Registries.BIOME);
-        chunk.fillBiomesFromNoise(generator.regenBiomeResolver(biomeRegistry, biomes, pos), level.getChunkSource().randomState().sampler());
+        chunk.fillBiomesFromNoise(generator.regenBiomeResolver(), level.getChunkSource().randomState().sampler());
         chunk.markUnsaved();
 
         for (BlockPos check : lightChecks) {

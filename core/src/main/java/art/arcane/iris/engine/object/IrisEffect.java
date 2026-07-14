@@ -165,6 +165,18 @@ public class IrisEffect {
         return latch.aquire(() -> new ChronoLatch(interval)).flip();
     }
 
+    public boolean shouldApplyNow() {
+        return canTick() && RNG.r.nextInt(chance) == 0;
+    }
+
+    public String getParticleEffectKey() {
+        return particleEffect;
+    }
+
+    public String getSoundKey() {
+        return sound;
+    }
+
     public Particle getParticleEffect() {
         if (particleEffect == null) {
             return null;
@@ -215,11 +227,7 @@ public class IrisEffect {
     }
 
     public void apply(Player p, Engine g) {
-        if (!canTick()) {
-            return;
-        }
-
-        if (RNG.r.nextInt(chance) != 0) {
+        if (!shouldApplyNow()) {
             return;
         }
 
@@ -278,11 +286,7 @@ public class IrisEffect {
     }
 
     public void apply(Entity p) {
-        if (!canTick()) {
-            return;
-        }
-
-        if (RNG.r.nextInt(chance) != 0) {
+        if (!shouldApplyNow()) {
             return;
         }
 

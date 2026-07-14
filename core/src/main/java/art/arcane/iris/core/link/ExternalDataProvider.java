@@ -18,7 +18,6 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Entity;
-import org.bukkit.event.Listener;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
@@ -31,7 +30,7 @@ import java.util.MissingResourceException;
 
 @Getter
 @RequiredArgsConstructor
-public abstract class ExternalDataProvider implements Listener {
+public abstract class ExternalDataProvider {
 
     @NonNull
     private final String pluginId;

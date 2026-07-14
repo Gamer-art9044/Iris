@@ -27,11 +27,10 @@ import art.arcane.iris.modded.ModdedBlockState;
 import art.arcane.iris.modded.ModdedTileData;
 import art.arcane.iris.spi.PlatformBlockState;
 import net.minecraft.core.BlockPos;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtUtils;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -148,26 +147,31 @@ final class ModdedObjectPlacer implements IObjectPlacer {
             skippedTiles++;
             return;
         }
-        String snbt = moddedTile.snbt();
-        if (snbt == null || snbt.isBlank()) {
-            skippedTiles++;
-            return;
-        }
         BlockPos pos = new BlockPos(xx, yy, zz);
         BlockState state = level.getBlockState(pos);
+        BlockState adjusted = moddedTile.adjustBlockState(state);
+        if (adjusted != state) {
+            level.setBlock(pos, adjusted, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+            state = adjusted;
+        }
         if (!state.hasBlockEntity()) {
             skippedTiles++;
             return;
         }
         try {
-            CompoundTag tag = NbtUtils.snbtToStructure(snbt);
-            BlockEntity restored = BlockEntity.loadStatic(pos, state, tag, level.registryAccess());
+            BlockEntity restored = level.getBlockEntity(pos);
+            if (restored == null && state.getBlock() instanceof EntityBlock entityBlock) {
+                restored = entityBlock.newBlockEntity(pos, state);
+            }
             if (restored == null) {
                 skippedTiles++;
                 return;
             }
             level.setBlockEntity(restored);
-            restored.setChanged();
+            if (!moddedTile.apply(restored, level)) {
+                skippedTiles++;
+                return;
+            }
             restoredTiles++;
         } catch (Throwable e) {
             LOGGER.error("Iris tile restore failed at {} {} {}", xx, yy, zz, e);

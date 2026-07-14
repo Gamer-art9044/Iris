@@ -21,7 +21,8 @@ package art.arcane.iris.core.structure;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.util.project.matter.IrisMatterSupport;
+import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.engine.object.IrisStructure;
 import com.google.gson.GsonBuilder;
 
 import java.io.File;
@@ -36,14 +37,16 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class StructureIndexService {
+    private static final String INDEX_PATH = ".iris/structure-index.json";
+    private static final String LEGACY_INDEX_PATH = "structures/structure-index.json";
+    private static final String LEGACY_INDEX_KEY = "structure-index";
     private static final Set<String> GENERATED = ConcurrentHashMap.newKeySet();
-    private static final boolean BUKKIT_PRESENT = IrisMatterSupport.isBukkitPresent();
 
     private StructureIndexService() {
     }
 
     public static File writeOnce(IrisData data) {
-        if (!BUKKIT_PRESENT || data == null) {
+        if (data == null || !IrisPlatforms.isBound() || IrisPlatforms.get().structureHooks() == null) {
             return null;
         }
 
@@ -63,6 +66,7 @@ public final class StructureIndexService {
     }
 
     public static File write(IrisData data) {
+        removeLegacyIndex(data);
         List<String> structures = IrisPlatforms.get().structureHooks().structureKeys();
         List<String> sets = IrisPlatforms.get().structureHooks().structureSetKeys();
 
@@ -89,6 +93,7 @@ public final class StructureIndexService {
         List<String> iris = new ArrayList<>();
         if (data.getStructureLoader() != null) {
             Collections.addAll(iris, data.getStructureLoader().getPossibleKeys());
+            iris.removeIf(LEGACY_INDEX_KEY::equals);
         }
 
         Collections.sort(vanilla);
@@ -118,7 +123,7 @@ public final class StructureIndexService {
         root.put("structureSets", setsNode);
         root.put("iris", iris);
 
-        File file = new File(data.getDataFolder(), "structures/structure-index.json");
+        File file = indexFile(data.getDataFolder());
         try {
             file.getParentFile().mkdirs();
             String json = new GsonBuilder().setPrettyPrinting().create().toJson(root);
@@ -127,5 +132,28 @@ public final class StructureIndexService {
             IrisLogging.reportError(e);
         }
         return file;
+    }
+
+    static File indexFile(File dataFolder) {
+        return new File(dataFolder, INDEX_PATH);
+    }
+
+    static File legacyIndexFile(File dataFolder) {
+        return new File(dataFolder, LEGACY_INDEX_PATH);
+    }
+
+    static void removeLegacyIndex(IrisData data) {
+        File legacyFile = legacyIndexFile(data.getDataFolder());
+        try {
+            Files.deleteIfExists(legacyFile.toPath());
+            ResourceLoader<IrisStructure> structureLoader = data.getStructureLoader();
+            if (structureLoader != null) {
+                structureLoader.getLoadCache().invalidate(LEGACY_INDEX_KEY);
+                structureLoader.clearList();
+            }
+        } catch (Throwable e) {
+            IrisLogging.reportError("Failed to remove legacy structure index '"
+                    + legacyFile.getAbsolutePath() + "'", e);
+        }
     }
 }

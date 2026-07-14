@@ -29,13 +29,15 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
+import java.util.Locale;
+
 @Accessors(chain = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Desc("Controls native vanilla & ingested datapack structure generation for this dimension (set as the dimension's 'importedStructures' field). Default mode is ALL_ON (everything generates). Blacklist a few: mode=ALL_ON + list them in 'disabled'. Whitelist a few: mode=ALL_OFF + list them in 'enabled'. Both lists autocomplete every live vanilla AND ingested datapack structure key. Key matching is exact OR prefix (an entry matches when the structure key equals it or starts with it), so 'minecraft:village' covers every village variant. Run '/iris structure list <dimension>' to dump every valid key. Only affects NEWLY generated chunks, and is separate from the Iris 'structures' placement system (imported structures are placed by biome/region/dimension 'structures' lists, not here).")
+@Desc("Controls native vanilla, mod, and ingested datapack structure generation for this dimension (set as the dimension's 'importedStructures' field). Default mode is ALL_ON. Blacklist keys with 'disabled', or use ALL_OFF with 'enabled' as a whitelist. Family matching uses namespace, slash, or underscore boundaries, so 'minecraft:village' covers every village variant without matching unrelated names. Run '/iris structure list <dimension>' to dump every valid key. Only affects newly generated chunks and is separate from Iris structure placements.")
 @Data
 public class IrisImportedStructureControl {
-    @Desc("Master toggle. ALL_ON generates every vanilla & datapack structure except those in 'disabled'. ALL_OFF (or CUSTOM) generates nothing except those in 'enabled'.")
+    @Desc("Master toggle. ALL_ON generates every native structure except those in 'disabled'. ALL_OFF generates nothing except those in 'enabled'.")
     private VanillaStructureMode mode = VanillaStructureMode.ALL_ON;
 
     @ArrayType(type = String.class, min = 1)
@@ -45,19 +47,19 @@ public class IrisImportedStructureControl {
 
     @ArrayType(type = String.class, min = 1)
     @RegistryListVanillaStructure
-    @Desc("Structure keys to turn ON while mode is ALL_OFF (or CUSTOM), e.g. 'minecraft:village_plains'. A namespace:path prefix also matches, so 'minecraft:village' enables every village variant. Ignored when mode is ALL_ON.")
+    @Desc("Structure keys to turn ON while mode is ALL_OFF, e.g. 'minecraft:village_plains'. A family prefix also matches at namespace, slash, or underscore boundaries, so 'minecraft:village' enables every village variant. Ignored when mode is ALL_ON.")
     private KList<String> enabled = new KList<>();
 
     @MinNumber(-512)
     @MaxNumber(512)
-    @Desc("Vertical block offset applied only to UNDERGROUND vanilla structures (the UNDERGROUND_STRUCTURES and STRONGHOLDS generation steps: strongholds, trial chambers, mineshafts, ancient cities, etc.). Surface structures (villages, outposts, etc.) are never shifted. Use a negative value to push deep structures lower when your dimension's sea/terrain level differs from vanilla's (e.g. -64 if you lowered the fluid height to 0). 0 = no shift.")
+    @Desc("Vertical block offset applied only to UNDERGROUND vanilla structures (the UNDERGROUND_STRUCTURES, UNDERGROUND_DECORATION, and STRONGHOLDS generation steps: strongholds, trial chambers, mineshafts, ancient cities, etc.). Surface structures (villages, outposts, etc.) are never shifted. Use a negative value to push deep structures lower when your dimension's sea/terrain level differs from vanilla's (e.g. -64 if you lowered the fluid height to 0). 0 = no shift.")
     private int undergroundYShift = 0;
 
-    @Desc("When true (the default), ingested datapacks generate normally: a datapack that redefines a VANILLA structure key (e.g. an ancient-city datapack overriding 'minecraft:ancient_city') REPLACES the vanilla placement, structure definition, jigsaw pools and pieces exactly as the datapack intends, and the datapack's OWN new structures generate too. When false, datapack structures do NOT generate at all - Iris strips the vanilla-key overrides from the installed datapack copy so the original vanilla structures generate untouched, and holds every datapack-namespaced structure out of natural generation so it never appears over or beside the vanilla one. Datapacks stay installed and importable either way, so when false the only way to get a datapack structure is to run '/iris structure import' and place it manually from a biome/region/dimension 'structures' list. Resolved globally across every loaded pack: if ANY dimension sets this false, vanilla-key overrides are stripped for every installed datapack.")
+    @Desc("Controls whether ingested datapacks may replace minecraft-namespaced structure definitions, sets, pools, and templates. When false, those overrides are stripped from installed datapack copies so vanilla definitions stay intact. Non-minecraft structures from datapacks and mods remain governed by mode, enabled, and disabled because namespace alone cannot identify their origin. Resolved globally across loaded packs: if any dimension sets this false, minecraft-namespaced overrides are stripped from every installed datapack copy.")
     private boolean datapackOverrides = true;
 
     @ArrayType(type = IrisVanillaStructureAdjustment.class, min = 1)
-    @Desc("Per-structure transforms applied to the vanilla & datapack structures that still generate natively. Each entry translates the matched structure by (xShift, yShift, zShift). Use this to relocate structures you do not own through the Iris 'structures' placement system - e.g. push 'minecraft:stronghold' down 64 blocks. Multiple matching entries stack, and any underground shift here adds on top of 'undergroundYShift'. A structure suppressed by an Iris placement is unaffected (Iris already controls its position).")
+    @Desc("Per-structure adjustments applied to vanilla, mod, and datapack structures that still generate natively. Vertical shifts from every matching entry stack. Surface-intersecting structures clear logs and leaves automatically; a matching vegetation option can force clearing for unusual placements. The last matching entry with stilt settings controls foundation columns. A structure suppressed by an Iris placement is unaffected.")
     private KList<IrisVanillaStructureAdjustment> adjustments = new KList<>();
 
     public boolean active() {
@@ -65,31 +67,26 @@ public class IrisImportedStructureControl {
     }
 
     public boolean shouldGenerate(String key) {
-        if (!datapackOverrides && isDatapackKey(key)) {
-            return false;
-        }
         if (mode == VanillaStructureMode.ALL_ON) {
             return !matches(disabled, key);
         }
         return matches(enabled, key);
     }
 
-    public int[] resolveOffset(String key, boolean undergroundStep) {
-        int x = 0;
+    public IrisNativeStructureDecision resolve(String key, boolean undergroundStep) {
         int y = undergroundStep ? undergroundYShift : 0;
-        int z = 0;
+        boolean clearVegetation = false;
+        IrisVanillaStructureStiltSettings stilt = null;
         for (IrisVanillaStructureAdjustment adjustment : adjustments) {
             if (adjustment != null && adjustment.matches(key)) {
-                x += adjustment.getXShift();
                 y += adjustment.getYShift();
-                z += adjustment.getZShift();
+                clearVegetation |= adjustment.isClearVegetation();
+                if (adjustment.getStilt() != null) {
+                    stilt = adjustment.getStilt();
+                }
             }
         }
-        return new int[]{x, y, z};
-    }
-
-    private static boolean isDatapackKey(String key) {
-        return key != null && key.contains(":") && !key.startsWith("minecraft:");
+        return new IrisNativeStructureDecision(shouldGenerate(key), y, clearVegetation, stilt);
     }
 
     private boolean matches(KList<String> list, String key) {
@@ -97,13 +94,30 @@ public class IrisImportedStructureControl {
             return false;
         }
         for (String entry : list) {
-            if (entry == null || entry.isEmpty()) {
-                continue;
-            }
-            if (key.equals(entry) || key.startsWith(entry)) {
+            if (matchesKey(entry, key)) {
                 return true;
             }
         }
         return false;
+    }
+
+    static boolean matchesKey(String pattern, String key) {
+        if (pattern == null || key == null) {
+            return false;
+        }
+        String normalizedPattern = pattern.trim().toLowerCase(Locale.ROOT);
+        String normalizedKey = key.trim().toLowerCase(Locale.ROOT);
+        if (normalizedPattern.isEmpty() || !normalizedKey.startsWith(normalizedPattern)) {
+            return false;
+        }
+        if (normalizedKey.length() == normalizedPattern.length()) {
+            return true;
+        }
+        char patternEnd = normalizedPattern.charAt(normalizedPattern.length() - 1);
+        if (patternEnd == ':' || patternEnd == '/' || patternEnd == '_') {
+            return true;
+        }
+        char boundary = normalizedKey.charAt(normalizedPattern.length());
+        return boundary == '/' || boundary == '_';
     }
 }

@@ -18,8 +18,6 @@
 
 package art.arcane.iris.engine.framework;
 
-import art.arcane.iris.core.tools.WorldMaintenance;
-import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.util.project.context.ChunkContext;
@@ -31,7 +29,6 @@ import art.arcane.iris.util.common.parallel.BurstExecutor;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
-import art.arcane.iris.util.common.scheduling.J;
 
 public interface EngineMode extends Staged {
     RollingSequence r = new RollingSequence(64);
@@ -76,10 +73,7 @@ public interface EngineMode extends Staged {
 
     @BlockCoordinates
     default void generate(int x, int z, Hunk<PlatformBlockState> blocks, Hunk<PlatformBiome> biomes, boolean multicore, long generationSessionId) {
-        boolean cacheContext = true;
-        if (J.isFolia() && getEngine().getWorld().hasRealWorld() && shouldDisableContextCacheForMaintenance()) {
-            cacheContext = false;
-        }
+        boolean cacheContext = !getEngine().getPlatformHooks().shouldDisableChunkContextCache(getEngine());
         ChunkContext.PrefillPlan prefillPlan = cacheContext ? ChunkContext.PrefillPlan.NO_CAVE : ChunkContext.PrefillPlan.NONE;
         ChunkContext ctx = new ChunkContext(x, z, getComplex(), generationSessionId, cacheContext, prefillPlan, getEngine().getMetrics());
 
@@ -93,16 +87,5 @@ public interface EngineMode extends Staged {
 
     static boolean shouldDisableContextCacheForMaintenance(boolean maintenanceActive, boolean pregeneratorTargetsWorld) {
         return maintenanceActive && !pregeneratorTargetsWorld;
-    }
-
-    private boolean shouldDisableContextCacheForMaintenance() {
-        boolean maintenanceActive = WorldMaintenance.isWorldMaintenanceActive(getEngine().getWorld().identity());
-        if (!maintenanceActive) {
-            return false;
-        }
-
-        PregeneratorJob pregeneratorJob = PregeneratorJob.getInstance();
-        boolean pregeneratorTargetsWorld = pregeneratorJob != null && pregeneratorJob.targetsWorldIdentity(getEngine().getWorld().identity());
-        return shouldDisableContextCacheForMaintenance(maintenanceActive, pregeneratorTargetsWorld);
     }
 }

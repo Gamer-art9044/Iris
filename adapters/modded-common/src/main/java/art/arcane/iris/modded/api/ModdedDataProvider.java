@@ -21,7 +21,6 @@ package art.arcane.iris.modded.api;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.Collection;
 import java.util.Map;
@@ -37,8 +36,11 @@ public interface ModdedDataProvider {
 
     boolean isValidProvider(Identifier id, ModdedDataType type);
 
-    default BlockState getBlockData(Identifier blockId, Map<String, String> state) {
+    default ModdedBlockData getBlockData(Identifier blockId, Map<String, String> state) {
         return null;
+    }
+
+    default void processBlockPlacement(ModdedBlockPlacementContext context) {
     }
 
     default Entity spawnMob(ServerLevel level, double x, double y, double z, Identifier entityId) {

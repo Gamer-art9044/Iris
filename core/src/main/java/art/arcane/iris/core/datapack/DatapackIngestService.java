@@ -124,7 +124,7 @@ public final class DatapackIngestService {
         Manifest manifest = readManifest(root);
         boolean stripOverrides = resolveStripOverrides();
 
-        message(sender, C.GRAY + "Ingesting " + C.WHITE + urls.size() + C.GRAY + " datapack import(s)" + (mcVersion == null ? "" : " for MC " + mcVersion) + (stripOverrides ? C.GRAY + " (datapackOverrides=false: vanilla-key overrides will be stripped)" : "") + "...");
+        message(sender, C.GRAY + "Ingesting " + C.WHITE + urls.size() + C.GRAY + " datapack import(s)" + (mcVersion == null ? "" : " for MC " + mcVersion) + (stripOverrides ? C.GRAY + " (datapackOverrides=false: minecraft-namespaced structure overrides will be stripped)" : "") + "...");
 
         for (String url : urls) {
             try {
@@ -142,7 +142,7 @@ public final class DatapackIngestService {
         if (report.changed()) {
             message(sender, C.YELLOW + "New datapack structures were installed. A server restart is required for them to register and generate.");
             message(sender, C.GRAY + "After the restart their jigsaw pools, pieces & objects are imported automatically (set general.autoImportDatapackStructures=false to disable), or run /iris structure import <dimension> to import everything on demand. Reference an imported key from a 'structures' placement to position it manually.");
-            message(sender, C.GRAY + "Datapacks replace matching vanilla structure keys and generate their own structures by default; set the dimension 'importedStructures.datapackOverrides' to false to keep vanilla untouched and stop ALL datapack structures from generating - they stay importable for manual placement only.");
+            message(sender, C.GRAY + "Datapacks replace matching vanilla structure keys by default. Set 'importedStructures.datapackOverrides' to false to keep minecraft-namespaced structure definitions untouched; control non-minecraft datapack and mod structures with importedStructures.enabled/disabled.");
             if (restart) {
                 ServerConfigurator.restart();
             } else {

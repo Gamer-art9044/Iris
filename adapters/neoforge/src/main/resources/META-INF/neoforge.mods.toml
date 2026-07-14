@@ -2,6 +2,9 @@ modLoader = "javafml"
 loaderVersion = "[3,)"
 license = "GPL-3.0"
 
+[[mixins]]
+config = "irisworldgen.entity.mixins.json"
+
 [[mods]]
 modId = "irisworldgen"
 version = "${version}"

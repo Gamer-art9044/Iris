@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.platform;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.core.events.IrisLootEvent;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.service.ExternalDataSVC;
@@ -343,7 +344,8 @@ public final class EngineBukkitOps {
         PlacedObject po = engine.getObjectPlacement(rx, ry, rz, mc);
         if (po != null && po.getPlacement() != null) {
             if (BukkitBlockResolution.isStorageChest(b.getBlockData())) {
-                IrisLootTable table = po.getPlacement().getTable(BukkitBlockState.of(b.getBlockData()), engine.getData());
+                IrisLootTable table = po.getPlacement().getTable(
+                        BukkitBlockState.of(b.getBlockData()), engine.getData(), rng);
                 if (table != null) {
                     tables.add(table);
                     if (po.getPlacement().isOverrideGlobalLoot()) {
@@ -390,8 +392,8 @@ public final class EngineBukkitOps {
         if (IrisLootEvent.callLootEvent(items, inv, world, x, y, z))
             return;
 
-        if (PaperLib.isPaper() && engine.getWorld().hasRealWorld()) {
-            PaperLib.getChunkAtAsync(engine.getWorld().realWorld(), x >> 4, z >> 4).thenAccept((c) -> {
+        if (PaperLib.isPaper() && engine.getWorld().hasPlatformWorld()) {
+            PaperLib.getChunkAtAsync(BukkitWorldBinding.world(engine.getWorld()), x >> 4, z >> 4).thenAccept((c) -> {
                 Runnable r = () -> {
                     for (ItemStack i : items) {
                         inv.addItem(i);

@@ -12,6 +12,7 @@ import dev.lone.itemsadder.api.Events.ItemsAdderLoadDataEvent;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 
@@ -21,7 +22,7 @@ import java.util.MissingResourceException;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-public class ItemAdderDataProvider extends ExternalDataProvider {
+public class ItemAdderDataProvider extends ExternalDataProvider implements Listener {
 
     private volatile Set<String> itemNamespaces = Set.of();
     private volatile Set<String> blockNamespaces = Set.of();
@@ -93,7 +94,7 @@ public class ItemAdderDataProvider extends ExternalDataProvider {
     }
 
     private void updateNamespaces(DataType dataType) {
-        var namespaces = getTypes(dataType).stream().map(Identifier::namespace).collect(Collectors.toSet());
+        Set<String> namespaces = getTypes(dataType).stream().map(Identifier::namespace).collect(Collectors.toSet());
         if (dataType == DataType.ITEM) itemNamespaces = namespaces;
         else blockNamespaces = namespaces;
         IrisLogging.debug("Updated ItemAdder namespaces: " + dataType + " - " + namespaces);

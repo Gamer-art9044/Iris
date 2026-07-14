@@ -20,9 +20,15 @@ package art.arcane.iris.modded.service;
 
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.EnginePlatformHooks;
+import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
+import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedDimensionManager;
+import art.arcane.iris.modded.ModdedForcedDatapack;
 import art.arcane.iris.modded.ModdedWorkspaceGenerator;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.io.ReactiveFolder;
@@ -41,7 +47,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class ModdedStudioHotloadService implements ModdedTickableService {
+public final class ModdedStudioHotloadService implements ModdedTickableService, EnginePlatformHooks {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String STUDIO_DIMENSION_PREFIX = "irisworldgen:studio_";
     private static final long POLL_MILLIS = 250L;
@@ -74,6 +80,34 @@ public final class ModdedStudioHotloadService implements ModdedTickableService {
             active.shutdownNow();
         }
         watches.clear();
+    }
+
+    @Override
+    public void refreshWorkspace(Engine engine) {
+        writeWorkspace(engine, "workspace refresh");
+    }
+
+    @Override
+    public void refreshDatapackWorkspace(Engine engine) {
+        IrisData data = engine.getData();
+        KList<IrisDimension> dimensions = data.getDimensionLoader().loadAll(data.getDimensionLoader().getPossibleKeys());
+        if (hasDatapackImports(dimensions)) {
+            writeWorkspace(engine, "datapack workspace refresh");
+        }
+    }
+
+    @Override
+    public void reloadDatapacks(Engine engine) {
+        ModdedForcedDatapack.regenerate();
+    }
+
+    @Override
+    public void validateDimensionHotload(Engine engine, IrisDimension replacement) {
+        IrisDimensionRuntimeContract.requireHotloadCompatible(
+                "Modded Studio level '" + engine.getWorld().identity() + "'",
+                engine.getDimension(),
+                replacement,
+                "irisworldgen");
     }
 
     @Override
@@ -134,12 +168,34 @@ public final class ModdedStudioHotloadService implements ModdedTickableService {
         }
     }
 
+    @Override
+    public boolean isPregeneratorActive(Engine engine) {
+        IrisWorld world = engine.getWorld();
+        if (world == null) {
+            return false;
+        }
+        PregeneratorJob pregeneratorJob = PregeneratorJob.getInstance();
+        return pregeneratorJob != null && pregeneratorJob.targetsWorldIdentity(world.identity());
+    }
+
+    @Override
+    public void shutdownPregenerator(Engine engine) {
+        PregeneratorJob.shutdownInstance();
+    }
+
+    @Override
+    public boolean shouldSkipMantleCleanup(Engine engine) {
+        IrisWorld world = engine.getWorld();
+        return world != null
+                && WorldMaintenance.isWorldMaintenanceActive(world.identity())
+                && !isPregeneratorActive(engine);
+    }
+
     private boolean throttled(IrisModdedChunkGenerator generator, Engine engine, long now) {
         if (now - generator.lastChunkGenAt() < RECENT_GENERATION_HOLDOFF_MILLIS) {
             return true;
         }
-        PregeneratorJob job = PregeneratorJob.getInstance();
-        return job != null && job.targetsWorldIdentity(engine.getWorld().identity());
+        return isPregeneratorActive(engine);
     }
 
     private void poll(String dimensionId, Watch watch, IrisModdedChunkGenerator generator, Engine engine) {
@@ -171,19 +227,32 @@ public final class ModdedStudioHotloadService implements ModdedTickableService {
         try {
             engine.hotloadSilently();
             generator.onHotload();
-            regenerateSchemas(dimensionId, engine);
             LOGGER.info("Iris studio hotload {} pack={} {}ms", dimensionId, engine.getDimension().getLoadKey(), System.currentTimeMillis() - start);
         } catch (Throwable e) {
             LOGGER.error("Iris studio hotload failed for {}", dimensionId, e);
         }
     }
 
-    private void regenerateSchemas(String dimensionId, Engine engine) {
+    static boolean hasDatapackImports(Iterable<IrisDimension> dimensions) {
+        if (dimensions == null) {
+            return false;
+        }
+        for (IrisDimension dimension : dimensions) {
+            if (dimension != null
+                    && dimension.getDatapackImports() != null
+                    && !dimension.getDatapackImports().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void writeWorkspace(Engine engine, String operation) {
         try {
             IrisData data = engine.getData();
             ModdedWorkspaceGenerator.writeWorkspace(data, data.getDataFolder());
         } catch (Throwable e) {
-            LOGGER.error("Iris studio schema regeneration failed for {}", dimensionId, e);
+            LOGGER.error("Iris {} failed for {}", operation, engine.getDimension().getLoadKey(), e);
         }
     }
 

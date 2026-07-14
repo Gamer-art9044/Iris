@@ -39,7 +39,6 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.biome.FixedBiomeSource;
-import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -53,7 +52,6 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -64,7 +62,6 @@ public final class ModdedDimensionManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Object LOCK = new Object();
     private static final ConcurrentHashMap<String, Handle> HANDLES = new ConcurrentHashMap<>();
-    private static final Set<String> TYPE_FALLBACK_WARNINGS = ConcurrentHashMap.newKeySet();
     private static final TicketType TELEPORT_WARM_TICKET = new TicketType(TicketType.NO_TIMEOUT, TicketType.FLAG_LOADING);
     private static volatile ModdedServerAccess access;
 
@@ -234,21 +231,15 @@ public final class ModdedDimensionManager {
     private static Holder<DimensionType> resolveDimensionType(RegistryAccess registryAccess, String pack, String packDimensionKey) {
         Registry<DimensionType> registry = registryAccess.lookupOrThrow(Registries.DIMENSION_TYPE);
         IrisDimension dimension = loadPackDimension(pack, packDimensionKey);
-        if (dimension != null) {
-            String typeRef = ModdedForcedDatapack.dimensionTypeRef(dimension);
-            ResourceKey<DimensionType> typeKey = ResourceKey.create(Registries.DIMENSION_TYPE, Identifier.parse(typeRef));
-            Optional<Holder.Reference<DimensionType>> packType = registry.get(typeKey);
-            if (packType.isPresent()) {
-                return packType.get();
-            }
-            if (TYPE_FALLBACK_WARNINGS.add(typeRef)) {
-                LOGGER.warn("Iris dimension type {} (pack {} dim {}) is not registered yet; injecting with fallback heights. Restart the server so the forced datapack installs it.", typeRef, pack, packDimensionKey);
-            }
+        if (dimension == null) {
+            throw new IllegalStateException("Iris cannot resolve dimension type for missing pack dimension '"
+                    + packDimensionKey + "' in pack '" + pack + "'");
         }
-        ResourceKey<DimensionType> studioPool = ResourceKey.create(Registries.DIMENSION_TYPE, Identifier.parse("irisworldgen:studio_pool"));
-        return registry.get(studioPool)
-                .map(reference -> (Holder<DimensionType>) reference)
-                .orElseGet(() -> registry.getOrThrow(BuiltinDimensionTypes.OVERWORLD));
+        String typeRef = ModdedForcedDatapack.dimensionTypeRef(dimension);
+        ResourceKey<DimensionType> typeKey = ResourceKey.create(Registries.DIMENSION_TYPE, Identifier.parse(typeRef));
+        Holder.Reference<DimensionType> packType = ModdedForcedDatapack.requireRegisteredDimensionType(
+                typeRef, registry.get(typeKey), pack, packDimensionKey);
+        return packType;
     }
 
     private static IrisDimension loadPackDimension(String pack, String packDimensionKey) {
@@ -295,6 +286,7 @@ public final class ModdedDimensionManager {
                 false);
 
         serverAccess.putLevel(server, key, level);
+        generator.bindLevel(level);
         server.getPlayerList().addWorldborderListener(level);
         return new Handle(dimensionId, pack, packDimensionKey, seed, level, generator);
     }

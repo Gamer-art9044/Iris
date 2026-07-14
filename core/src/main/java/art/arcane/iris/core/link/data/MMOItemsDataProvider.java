@@ -7,6 +7,7 @@ import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.common.scheduling.J;
 import net.Indyuce.mmoitems.MMOItems;
 import net.Indyuce.mmoitems.api.ItemTier;
+import net.Indyuce.mmoitems.api.Type;
 import net.Indyuce.mmoitems.api.block.CustomBlock;
 import org.bukkit.Bukkit;
 import org.bukkit.block.data.BlockData;
@@ -52,7 +53,7 @@ public class MMOItemsDataProvider extends ExternalDataProvider {
         CompletableFuture<ItemStack> future = new CompletableFuture<>();
         Runnable run = () -> {
             try {
-                var type = api().getTypes().get(parts[1]);
+                Type type = api().getTypes().get(parts[1]);
                 int level = -1;
                 ItemTier tier = null;
 

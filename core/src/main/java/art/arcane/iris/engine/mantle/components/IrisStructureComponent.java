@@ -21,10 +21,9 @@ package art.arcane.iris.engine.mantle.components;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.data.cache.Cache;
+import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.PlacedStructurePiece;
-import art.arcane.iris.engine.framework.StructureAssembler;
 import art.arcane.iris.engine.framework.StructurePlacementMarker;
-import art.arcane.iris.engine.framework.StructurePlacementGrid;
 import art.arcane.iris.engine.mantle.ComponentFlag;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.IrisMantleComponent;
@@ -47,10 +46,18 @@ import art.arcane.volmlib.util.matter.MatterCavern;
 import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
 import art.arcane.volmlib.util.math.RNG;
 
+import java.util.HashSet;
+import java.util.Set;
+
 @ComponentFlag(ReservedFlag.JIGSAW)
 public class IrisStructureComponent extends IrisMantleComponent {
     private static final long MAX_BORE_VOLUME = 6_000_000L;
     private static final long MAX_OVERBORE_VOLUME = 48_000_000L;
+    private static final double OVERBORE_MIN_BOUNDARY = 0.2;
+    private static final double OVERBORE_MIN_BOUNDARY_SQUARED = OVERBORE_MIN_BOUNDARY * OVERBORE_MIN_BOUNDARY;
+    private static final double OVERBORE_BOUNDARY_SPAN = 0.8;
+    private static final double OVERBORE_MAX_UP_REACH = 1.8;
+    private static final int DYNAMIC_STRUCTURE_Y_TOLERANCE = 32;
     private static final MatterCavern CARVE_CAVERN = new MatterCavern(true, "", (byte) 3);
 
     public IrisStructureComponent(EngineMantle engineMantle) {
@@ -65,8 +72,6 @@ public class IrisStructureComponent extends IrisMantleComponent {
         int zzz = 8 + (z << 4);
         IrisRegion region = complex.getRegionStream().get(xxx, zzz);
         IrisBiome biome = complex.getTrueBiomeStream().get(xxx, zzz);
-        RNG rng = new RNG(Cache.key(x, z) + seed());
-
         KList<IrisStructurePlacement> placements = new KList<>();
         if (biome != null) {
             placements.addAll(biome.getStructures());
@@ -76,17 +81,16 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
         placements.addAll(getDimension().getStructures());
 
-        for (IrisStructurePlacement placement : placements) {
-            placeFromPlacement(writer, placement, x, z, rng);
+        for (int placementOrdinal = 0; placementOrdinal < placements.size(); placementOrdinal++) {
+            placeFromPlacement(writer, placements.get(placementOrdinal), x, z, placementOrdinal);
         }
     }
 
     @ChunkCoordinates
-    private void placeFromPlacement(MantleWriter writer, IrisStructurePlacement placement, int cx, int cz, RNG rng) {
-        if (placement.getStructures().isEmpty()) {
-            return;
-        }
-        if (!StructurePlacementGrid.startsInChunk(placement, cx, cz, seed(), rng)) {
+    private void placeFromPlacement(MantleWriter writer, IrisStructurePlacement placement, int cx, int cz, int placementOrdinal) {
+        IrisStructureLocator.ResolvedPlacement resolved = IrisStructureLocator.resolvePlacement(
+                getEngineMantle().getEngine(), placement, cx, cz, placementOrdinal);
+        if (resolved == null) {
             return;
         }
 
@@ -96,50 +100,17 @@ public class IrisStructureComponent extends IrisMantleComponent {
                     + " underground=" + placement.isUnderground() + " band=" + placement.getMinHeight() + ".." + placement.getMaxHeight());
         }
 
-        int sx = (cx << 4) + rng.i(0, 15);
-        int sz = (cz << 4) + rng.i(0, 15);
-        int baseY;
-        if (placement.isUnderground()) {
-            int worldMinY = getEngineMantle().getEngine().getMinHeight() + 1;
-            int worldMaxY = getEngineMantle().getEngine().getMinHeight() + getEngineMantle().getEngine().getHeight() - 1;
-            int bandMin = Math.max(worldMinY, Math.min(placement.getMinHeight(), placement.getMaxHeight()));
-            int bandMax = Math.min(worldMaxY, Math.max(placement.getMinHeight(), placement.getMaxHeight()));
-            if (bandMin > bandMax) {
-                if (trace) {
-                    IrisLogging.info("[StructTrace] BAIL band-inverted chunk=" + cx + "," + cz + " bandMin=" + bandMin + " bandMax=" + bandMax
-                            + " worldMinY=" + worldMinY + " worldMaxY=" + worldMaxY);
-                }
-                return;
-            }
-            baseY = bandMin == bandMax ? bandMin : rng.i(bandMin, bandMax);
-        } else {
-            int surfaceY = getEngineMantle().getEngine().getHeight(sx, sz, true) + getEngineMantle().getEngine().getMinHeight();
-            if (surfaceY < placement.getMinHeight() || surfaceY > placement.getMaxHeight()) {
-                return;
-            }
-            baseY = surfaceY;
-        }
-
-        String key = placement.getStructures().get(rng.i(0, placement.getStructures().size() - 1));
-        IrisStructure structure = art.arcane.iris.core.loader.IrisData.loadAnyStructure(key, getData());
-        if (structure == null) {
-            if (trace) {
-                IrisLogging.info("[StructTrace] BAIL structure-load-null chunk=" + cx + "," + cz + " key=" + key);
-            }
-            return;
-        }
-
-        StructureAssembler assembler = new StructureAssembler(getData(), structure, sx, baseY, sz);
-        KList<PlacedStructurePiece> pieces = assembler.assemble(rng);
-        if (pieces == null || pieces.isEmpty()) {
-            if (trace) {
-                IrisLogging.info("[StructTrace] BAIL no-pieces chunk=" + cx + "," + cz + " key=" + key + " baseY=" + baseY
-                        + " pieces=" + (pieces == null ? "null" : "empty"));
-            }
-            return;
-        }
+        String key = resolved.structureKey();
+        IrisStructure structure = resolved.structure();
+        KList<PlacedStructurePiece> pieces = resolved.pieces();
+        RNG rng = resolved.rng();
+        int baseY = resolved.baseY();
         if (trace) {
             IrisLogging.info("[StructTrace] ASSEMBLED chunk=" + cx + "," + cz + " key=" + key + " baseY=" + baseY + " pieces=" + pieces.size());
+        }
+
+        if (!placement.isUnderground()) {
+            clearIntersectingObjectTrees(writer, resolved);
         }
 
         if (placement.isOverbore()) {
@@ -162,13 +133,8 @@ public class IrisStructureComponent extends IrisMantleComponent {
         } else if (pieces.size() == 1) {
             placeObject(writer, structure, pieces.getFirst(), mode, -1, rng);
         } else {
-            int lowest = Integer.MAX_VALUE;
             for (PlacedStructurePiece p : pieces) {
-                lowest = Math.min(lowest, p.getMinY());
-            }
-            int shift = baseY - lowest;
-            for (PlacedStructurePiece p : pieces) {
-                placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY() + shift, rng);
+                placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY(), rng);
             }
         }
     }
@@ -221,14 +187,13 @@ public class IrisStructureComponent extends IrisMantleComponent {
 
         double freq = 0.07;
         double rollFreq = 0.03;
-        double clearMax = 1.45;
         double reachSide = margin;
         double reachUp = head < 1 ? 1.0 : head;
         double reachDown = floorCut < 1 ? 1.0 : floorCut;
         double upReachMin = 0.4;
         double upReachSpan = 1.4;
-        int sideExt = (int) Math.ceil(reachSide * clearMax);
-        int upExt = (int) Math.ceil(reachUp * (upReachMin + upReachSpan) * clearMax);
+        int sideExt = overboreSideExtension(margin);
+        int upExt = overboreUpExtension(reachUp);
 
         long work = 0L;
         for (PlacedStructurePiece p : pieces) {
@@ -270,6 +235,9 @@ public class IrisStructureComponent extends IrisMantleComponent {
                     double dz = bz < pMinZ ? pMinZ - bz : bz > pMaxZ ? bz - pMaxZ : 0;
                     double nz = dz / reachSide;
                     double nxz = nx * nx + nz * nz;
+                    if (nxz > 1.0) {
+                        continue;
+                    }
                     double w = roll.fitDouble(0.0, 1.0, bx * rollFreq, bz * rollFreq) * 0.7
                             + roll.fitDouble(0.0, 1.0, bx * rollFreq * 3.0, bz * rollFreq * 3.0) * 0.3;
                     double contrast = (w - 0.5) * 2.6 + 0.5;
@@ -291,23 +259,101 @@ public class IrisStructureComponent extends IrisMantleComponent {
                         } else {
                             ny = 0.0;
                         }
-                        double nd = Math.sqrt(nxz + ny * ny);
-                        if (nd > clearMax) {
+                        double distanceSquared = nxz + ny * ny;
+                        if (distanceSquared > 1.0) {
                             continue;
                         }
-                        boolean carve = nd <= 0.45;
-                        if (!carve) {
+                        if (distanceSquared > OVERBORE_MIN_BOUNDARY_SQUARED) {
                             double n = blob.fitDouble(0.0, 1.0, bx * freq, by * freq, bz * freq);
-                            carve = nd <= 0.5 + 0.5 * n;
+                            if (!shouldCarveOverboreCell(distanceSquared, n)) {
+                                continue;
+                            }
                         }
-                        writer.clearBlock(bx, by - mantleOffset, bz);
-                        if (carve) {
-                            writer.setDataIfAbsent(bx, by - mantleOffset, bz, CARVE_CAVERN);
-                        }
+                        writer.carveDataIfAbsent(bx, by - mantleOffset, bz, CARVE_CAVERN);
                     }
                 }
             }
         }
+    }
+
+    static int overboreSideExtension(int radius) {
+        return Math.max(1, radius);
+    }
+
+    static int overboreUpExtension(double reachUp) {
+        return (int) Math.ceil(Math.max(1.0, reachUp) * OVERBORE_MAX_UP_REACH);
+    }
+
+    static double overboreBoundaryLimit(double noise) {
+        double clampedNoise = Math.max(0.0, Math.min(1.0, noise));
+        return OVERBORE_MIN_BOUNDARY + OVERBORE_BOUNDARY_SPAN * clampedNoise;
+    }
+
+    static boolean shouldCarveOverboreCell(double distanceSquared, double noise) {
+        if (distanceSquared <= 0.0) {
+            return true;
+        }
+        if (distanceSquared > 1.0) {
+            return false;
+        }
+        double limit = overboreBoundaryLimit(noise);
+        return distanceSquared <= limit * limit;
+    }
+
+    private void clearIntersectingObjectTrees(MantleWriter writer, IrisStructureLocator.ResolvedPlacement resolved) {
+        int mantleOffset = getEngineMantle().getEngine().getMinHeight();
+        int worldHeight = getEngineMantle().getEngine().getHeight();
+        int verticalTolerance = resolved.exactY() ? 0 : DYNAMIC_STRUCTURE_Y_TOLERANCE;
+        for (PlacedStructurePiece piece : resolved.pieces()) {
+            int minY = Math.max(0, piece.getMinY() - mantleOffset - verticalTolerance);
+            int maxY = Math.min(worldHeight - 1, piece.getMaxY() - mantleOffset + verticalTolerance);
+            if (minY > maxY) {
+                continue;
+            }
+            for (int x = piece.getMinX(); x <= piece.getMaxX(); x++) {
+                for (int z = piece.getMinZ(); z <= piece.getMaxZ(); z++) {
+                    clearIntersectingObjectTreeColumn(writer, x, z, minY, maxY, worldHeight);
+                }
+            }
+        }
+    }
+
+    private void clearIntersectingObjectTreeColumn(MantleWriter writer, int x, int z,
+                                                   int minY, int maxY, int worldHeight) {
+        Set<String> intersectingMarkers = null;
+        for (int y = minY; y <= maxY; y++) {
+            PlatformBlockState state = writer.getDataIfPresent(x, y, z, PlatformBlockState.class);
+            if (state == null || !state.isTreeBlock()) {
+                continue;
+            }
+            String marker = writer.getDataIfPresent(x, y, z, String.class);
+            if (isOrdinaryObjectMarker(marker)) {
+                if (intersectingMarkers == null) {
+                    intersectingMarkers = new HashSet<>();
+                }
+                intersectingMarkers.add(marker);
+            }
+        }
+        if (intersectingMarkers == null) {
+            return;
+        }
+        for (int y = 0; y < worldHeight; y++) {
+            String marker = writer.getDataIfPresent(x, y, z, String.class);
+            if (!intersectingMarkers.contains(marker)) {
+                continue;
+            }
+            PlatformBlockState state = writer.getDataIfPresent(x, y, z, PlatformBlockState.class);
+            if (state == null || !state.isTreeBlock()) {
+                continue;
+            }
+            writer.clearBlock(x, y, z);
+            writer.clearData(x, y, z, String.class);
+        }
+    }
+
+    static boolean isOrdinaryObjectMarker(String marker) {
+        StructurePlacementMarker.Decoded decoded = StructurePlacementMarker.decode(marker);
+        return decoded != null && !decoded.structureAware();
     }
 
     private int[] computePieceBounds(KList<PlacedStructurePiece> pieces) {
@@ -383,7 +429,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
         for (IrisRegion region : dimension.getAllRegions(this::getData)) {
             maxBlocks = Math.max(maxBlocks, maxBlocksFrom(region.getStructures()));
         }
-        for (IrisBiome biome : dimension.getAllBiomes(this::getData)) {
+        for (IrisBiome biome : dimension.getReachableBiomes(this::getData)) {
             maxBlocks = Math.max(maxBlocks, maxBlocksFrom(biome.getStructures()));
         }
         maxBlocks = Math.max(maxBlocks, maxBlocksFrom(dimension.getStructures()));

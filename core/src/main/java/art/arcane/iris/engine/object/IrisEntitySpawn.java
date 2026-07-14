@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
@@ -76,8 +77,9 @@ public class IrisEntitySpawn implements IRare {
             for (int id = 0; id < spawns; id++) {
                 int x = (c.getX() * 16) + rng.i(15);
                 int z = (c.getZ() * 16) + rng.i(15);
-                int h = gen.getHeight(x, z, true) + (gen.getWorld().tryGetRealWorld() ? gen.getWorld().realWorld().getMinHeight() : -64);
-                int hf = gen.getHeight(x, z, false) + (gen.getWorld().tryGetRealWorld() ? gen.getWorld().realWorld().getMinHeight() : -64);
+                World world = BukkitWorldBinding.tryBind(gen.getWorld()) ? BukkitWorldBinding.world(gen.getWorld()) : null;
+                int h = gen.getHeight(x, z, true) + (world == null ? -64 : world.getMinHeight());
+                int hf = gen.getHeight(x, z, false) + (world == null ? -64 : world.getMinHeight());
                 Location l = switch (getReferenceSpawner().getGroup()) {
                     case NORMAL -> new Location(c.getWorld(), x, hf + 1, z);
                     case CAVE -> {
@@ -114,11 +116,11 @@ public class IrisEntitySpawn implements IRare {
         int spawns = minSpawns == maxSpawns ? minSpawns : rng.i(Math.min(minSpawns, maxSpawns), Math.max(minSpawns, maxSpawns));
         int s = 0;
 
-        if (!gen.getWorld().tryGetRealWorld()) {
+        if (!BukkitWorldBinding.tryBind(gen.getWorld())) {
             return 0;
         }
 
-        World world = gen.getWorld().realWorld();
+        World world = BukkitWorldBinding.world(gen.getWorld());
         if (spawns > 0) {
 
             if (referenceMarker != null && referenceMarker.shouldExhaust()) {

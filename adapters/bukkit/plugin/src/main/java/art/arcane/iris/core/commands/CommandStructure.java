@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.commands;
 
+import art.arcane.iris.Iris;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.structure.BulkStructureImporter;
 import art.arcane.iris.core.structure.StructureCaptureImporter;
@@ -41,7 +42,9 @@ import art.arcane.volmlib.util.director.annotations.Director;
 import art.arcane.volmlib.util.director.annotations.Param;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.iris.util.common.scheduling.J;
 import io.papermc.paper.registry.RegistryAccess;
 import io.papermc.paper.registry.RegistryKey;
 import org.bukkit.Bukkit;
@@ -51,12 +54,12 @@ import org.bukkit.Registry;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Player;
 import org.bukkit.generator.structure.Structure;
-import org.bukkit.util.StructureSearchResult;
 
 import java.io.File;
-import java.util.Collections;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -111,7 +114,7 @@ public class CommandStructure implements DirectorExecutor {
         sender().sendMessage(C.GRAY + "Captured " + report.imported() + " structures. Place them from a 'structures' list and regenerate chunks. Delete a structures/*.json to re-capture it.");
     }
 
-    @Director(description = "Locate every vanilla/datapack/iris structure to verify which are locatable in this world. Heavy synchronous search per structure - keep the radius modest. 'Not found' can mean rarer than the radius, a different dimension (nether/end structures never appear in the overworld), or a structure that generates but cannot be located; generation itself happens during chunk decoration, independent of locate.", aliases = {"locateall"}, origin = DirectorOrigin.BOTH, sync = true)
+    @Director(description = "Verify native structure eligibility and locate Iris-placed structures without running blocking native searches.", aliases = {"locateall"}, origin = DirectorOrigin.BOTH, sync = true)
     public void verify(
             @Param(description = "The dimension to verify", aliases = "dim")
             IrisDimension dimension,
@@ -124,85 +127,150 @@ public class CommandStructure implements DirectorExecutor {
             return;
         }
         boolean senderIsPlayer = sender() != null && sender().isPlayer();
-        Location center = (senderIsPlayer && player().getWorld() == world) ? player().getLocation() : world.getSpawnLocation();
+        Location center = senderIsPlayer && player().getWorld() == world
+                ? player().getLocation()
+                : world.getSpawnLocation();
         int searchRadius = Math.max(1, Math.min(radius, 1000));
-
-        sender().sendMessage(C.GREEN + "Verifying structures in " + C.WHITE + world.getName() + C.GREEN + " from " + center.getBlockX() + "," + center.getBlockZ() + " within " + searchRadius + " chunks...");
-
-        Engine engine = null;
         PlatformChunkGenerator access = IrisToolbelt.access(world);
-        if (access != null) {
-            engine = access.getEngine();
+        Engine engine = access == null ? null : access.getEngine();
+        if (engine == null) {
+            sender().sendMessage(C.RED + "The selected Iris world has no active generator engine.");
+            return;
         }
-        Set<String> reachable = engine == null ? Collections.emptySet() : StructureReachability.reachableKeys(engine);
-
-        int found = 0;
-        int missing = 0;
-        int unreachable = 0;
-        int irisPlaced = 0;
-        KList<String> notFound = new KList<>();
-        KList<String> cannotGenerate = new KList<>();
+        KList<String> structureKeys = new KList<>();
         Registry<Structure> structureRegistry = RegistryAccess.registryAccess().getRegistry(RegistryKey.STRUCTURE);
         for (Structure structure : structureRegistry) {
             NamespacedKey key = structureRegistry.getKey(structure);
-            String keyName = key == null ? structure.toString() : key.toString();
-            boolean isIrisPlaced = engine != null && IrisStructureLocator.suppressesVanilla(engine, keyName);
-            boolean isReachable = engine != null && reachable.contains(keyName.toLowerCase());
-            if (engine != null && !isIrisPlaced && !isReachable) {
-                unreachable++;
-                KList<String> miss = StructureReachability.missingBiomeKeys(engine, keyName);
-                cannotGenerate.add(keyName + (miss.isEmpty() ? "" : " (needs " + String.join("/", miss) + ")"));
+            if (key != null) {
+                structureKeys.add(key.toString());
+            }
+        }
+        VolmitSender commandSender = sender();
+        Player target = senderIsPlayer ? player() : null;
+        commandSender.sendMessage(C.GREEN + "Verifying structures in " + C.WHITE + world.getName()
+                + C.GREEN + " from " + center.getBlockX() + "," + center.getBlockZ()
+                + " within " + searchRadius + " chunks...");
+        int centerX = center.getBlockX();
+        int centerZ = center.getBlockZ();
+        J.a(() -> runVerification(engine, structureKeys, centerX, centerZ, searchRadius, commandSender, target));
+    }
+
+    private void runVerification(Engine engine, KList<String> structureKeys, int centerX, int centerZ,
+                                 int searchRadius, VolmitSender commandSender, Player target) {
+        KList<String> messages = new KList<>();
+        Set<String> reachable;
+        try {
+            reachable = StructureReachability.reachableKeys(engine);
+        } catch (Throwable error) {
+            messages.add(C.RED + "Structure verification could not resolve native biome reachability.");
+            sendVerificationMessages(commandSender, target, messages);
+            Iris.reportError("Could not resolve native structure biome reachability for verification.", error);
+            return;
+        }
+        int located = 0;
+        int nativeEligible = 0;
+        int disabled = 0;
+        int unreachable = 0;
+        int unavailable = 0;
+        int searchLimited = 0;
+        int errors = 0;
+        for (String keyName : structureKeys) {
+            boolean irisPlaced = IrisStructureLocator.isPlaced(engine, keyName);
+            if (irisPlaced) {
+                try {
+                    IrisStructureLocator.LocateResult result =
+                            IrisStructureLocator.locate(engine, keyName, centerX, centerZ, searchRadius);
+                    if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
+                        searchLimited++;
+                        messages.add(C.YELLOW + "[iris-search-limit] " + C.WHITE + keyName + C.YELLOW
+                                + ": unable to complete the density search before its safety limit was reached");
+                        continue;
+                    }
+                    if (!result.found()) {
+                        messages.add(C.YELLOW + "[iris-not-found] " + C.WHITE + keyName);
+                        continue;
+                    }
+                    located++;
+                    messages.add(C.AQUA + "[iris] " + C.WHITE + keyName + C.GREEN + " @ "
+                            + result.originX() + "," + result.baseY() + "," + result.originZ());
+                } catch (Throwable error) {
+                    errors++;
+                    messages.add(C.RED + "[error] " + C.WHITE + keyName + C.RED + ": "
+                            + error.getClass().getSimpleName());
+                    Iris.reportError("Could not verify Iris-placed structure '" + keyName + "'.", error);
+                }
                 continue;
             }
-            if (isIrisPlaced) {
-                irisPlaced++;
+            if (!engine.getDimension().getImportedStructures().shouldGenerate(keyName)) {
+                disabled++;
+                messages.add(C.GRAY + "[disabled] " + C.WHITE + keyName);
+                continue;
             }
-            try {
-                StructureSearchResult result = world.locateNearestStructure(center, structure, searchRadius, true);
-                if (result != null && result.getLocation() != null) {
-                    found++;
-                    Location l = result.getLocation();
-                    sender().sendMessage((isIrisPlaced ? C.AQUA + "[iris] " : C.GREEN + "[ok] ") + C.WHITE + keyName + C.GREEN + " @ " + l.getBlockX() + "," + l.getBlockZ());
-                } else {
-                    missing++;
-                    notFound.add(keyName);
-                }
-            } catch (Throwable e) {
-                missing++;
-                notFound.add(keyName + " (error: " + e.getClass().getSimpleName() + ")");
+            if (!reachable.contains(keyName.toLowerCase(Locale.ROOT))) {
+                unreachable++;
+                KList<String> missing = StructureReachability.missingBiomeKeys(engine, keyName);
+                messages.add(C.YELLOW + "[unreachable] " + C.WHITE + keyName
+                        + (missing.isEmpty() ? "" : C.YELLOW + " needs " + String.join("/", missing)));
+                continue;
             }
+            if (BukkitNativeStructureLocatePolicy.isUnavailable(keyName)) {
+                unavailable++;
+                messages.add(C.RED + "[unavailable] " + C.WHITE + keyName + C.RED + ": "
+                        + BukkitNativeStructureLocatePolicy.unavailableMessage());
+                continue;
+            }
+            nativeEligible++;
+            messages.add(C.GREEN + "[native-eligible] " + C.WHITE + keyName);
         }
+        messages.add(C.GREEN + "Structure verify: " + C.WHITE + located + C.GREEN + " Iris placements located, "
+                + C.WHITE + nativeEligible + C.GREEN + " native structures eligible, "
+                + C.WHITE + disabled + C.GREEN + " disabled by policy, "
+                + C.WHITE + unreachable + C.GREEN + " biome-unreachable, "
+                + C.WHITE + unavailable + C.GREEN + " unavailable on this platform, "
+                + C.WHITE + searchLimited + C.GREEN + " density searches safety-limited, "
+                + C.WHITE + errors + C.GREEN + " errors. Native eligibility is checked without running blocking live locates.");
+        sendVerificationMessages(commandSender, target, messages);
+    }
 
-        sender().sendMessage(C.GREEN + "Structure verify: " + C.WHITE + found + C.GREEN + " located (" + irisPlaced + " iris-placed), "
-                + C.WHITE + unreachable + C.GREEN + " cannot generate here, "
-                + C.WHITE + missing + C.GREEN + " reachable-but-not-found within " + searchRadius + " chunks.");
-        if (!cannotGenerate.isEmpty()) {
-            sender().sendMessage(C.RED + "Cannot generate (required biomes absent from this pack): " + C.GRAY + String.join(", ", cannotGenerate));
-        }
-        if (!notFound.isEmpty()) {
-            sender().sendMessage(C.YELLOW + "Reachable but not found (rarer than radius): " + C.GRAY + String.join(", ", notFound));
+    private void sendVerificationMessages(VolmitSender commandSender, Player target,
+                                          KList<String> messages) {
+        Runnable send = () -> {
+            for (String message : messages) {
+                commandSender.sendMessage(message);
+            }
+        };
+        if (target != null) {
+            J.runEntity(target, send);
+        } else {
+            J.s(send);
         }
     }
 
     private World resolveIrisWorld(IrisDimension dimension) {
         if (sender() != null && sender().isPlayer() && IrisToolbelt.isIrisWorld(player().getWorld())) {
-            return player().getWorld();
+            PlatformChunkGenerator playerGenerator = IrisToolbelt.access(player().getWorld());
+            if (matchesDimension(playerGenerator, dimension.getLoadKey())) {
+                return player().getWorld();
+            }
         }
-        World fallback = null;
         for (World w : Bukkit.getWorlds()) {
             if (!IrisToolbelt.isIrisWorld(w)) {
                 continue;
             }
-            if (fallback == null) {
-                fallback = w;
-            }
             PlatformChunkGenerator gen = IrisToolbelt.access(w);
-            if (gen != null && gen.getEngine() != null && gen.getEngine().getDimension() != null
-                    && dimension.getLoadKey().equals(gen.getEngine().getDimension().getLoadKey())) {
+            if (matchesDimension(gen, dimension.getLoadKey())) {
                 return w;
             }
         }
-        return fallback;
+        return null;
+    }
+
+    static boolean matchesDimension(PlatformChunkGenerator generator, String dimensionKey) {
+        return dimensionKey != null
+                && generator != null
+                && generator.getEngine() != null
+                && generator.getEngine().getDimension() != null
+                && dimensionKey.equals(generator.getEngine().getDimension().getLoadKey());
     }
 
     @Director(description = "Resolve an iris structure's jigsaw graph and report piece count & bounds", origin = DirectorOrigin.BOTH)

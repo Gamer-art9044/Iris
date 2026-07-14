@@ -23,6 +23,7 @@ import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.object.IrisWorld;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.dimension.DimensionType;
@@ -82,6 +83,7 @@ public final class ModdedWorldEngines {
         }
 
         long seed = seedOverride == Long.MIN_VALUE ? level.getSeed() : seedOverride;
+        validateDimensionContract(dimension, level);
         File worldFolder = DimensionType.getStorageFolder(level.dimension(), level.getServer().getWorldPath(LevelResource.ROOT)).toFile();
         IrisWorld world = IrisWorld.builder()
                 .platformIdentity(level.dimension().identifier().toString())
@@ -90,19 +92,29 @@ public final class ModdedWorldEngines {
                 .worldFolder(worldFolder)
                 .minHeight(dimension.getMinHeight())
                 .maxHeight(dimension.getMaxHeight())
+                .platformWorld(new ModdedPlatformWorld(level))
                 .build();
         Engine engine = new IrisEngine(new EngineTarget(world, dimension, data), false);
-
-        int levelMinY = level.getMinY();
-        int levelMaxY = level.getMinY() + level.getHeight();
-        if (dimension.getMinHeight() < levelMinY || dimension.getMaxHeight() > levelMaxY) {
-            LOGGER.warn("Iris pack height range for {} exceeds the level: pack generates {}..{} but the level is {}..{}. Terrain outside the level range will be clipped; restart so the forced datapack registers the pack dimension type.",
-                    level.dimension().identifier(), dimension.getMinHeight(), dimension.getMaxHeight(), levelMinY, levelMaxY);
-        }
 
         LOGGER.info("Iris engine up for {}: pack={} dim={} seed={} height={}..{}",
                 level.dimension().identifier(), packDir.getAbsolutePath(), dimension.getLoadKey(), seed, dimension.getMinHeight(), dimension.getMaxHeight());
         return engine;
+    }
+
+    private static void validateDimensionContract(IrisDimension dimension, ServerLevel level) {
+        DimensionType actualType = level.dimensionType();
+        String actualTypeKey = level.dimensionTypeRegistration().unwrapKey()
+                .map(key -> key.identifier().toString())
+                .orElse("<unregistered>");
+        IrisDimensionRuntimeContract expected = IrisDimensionRuntimeContract.expected(dimension, "irisworldgen");
+        IrisDimensionRuntimeContract actual = new IrisDimensionRuntimeContract(
+                actualTypeKey,
+                actualType.minY(),
+                actualType.height(),
+                actualType.logicalHeight());
+        String runtimeName = "Modded level '" + level.dimension().identifier() + "'";
+        expected.requireExact(runtimeName, actual);
+        expected.requireHeight(runtimeName, level.getMinY(), level.getHeight());
     }
 
     public static File packFolder(String pack) {
@@ -113,7 +125,7 @@ public final class ModdedWorldEngines {
                 .toFile();
     }
 
-    private static File resolvePack(String pack, String dimensionKey) {
+    static File resolvePack(String pack, String dimensionKey) {
         File packDir = packFolder(pack);
         if (packDir.isDirectory()) {
             return packDir;

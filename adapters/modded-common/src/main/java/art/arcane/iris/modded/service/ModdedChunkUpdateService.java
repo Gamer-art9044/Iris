@@ -20,6 +20,7 @@ package art.arcane.iris.modded.service;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.gui.PregeneratorJob;
+import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.TileData;
@@ -27,6 +28,7 @@ import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedBlockResolution;
 import art.arcane.iris.modded.ModdedLootApplier;
 import art.arcane.iris.modded.ModdedTileData;
+import art.arcane.iris.modded.api.ModdedCustomContentRegistry;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.project.matter.TileWrapper;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
@@ -39,14 +41,13 @@ import art.arcane.volmlib.util.matter.MatterCavern;
 import art.arcane.volmlib.util.matter.MatterUpdate;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 import net.minecraft.core.BlockPos;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -148,11 +149,21 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
         }
     }
 
+    public void updateRegeneratedChunk(Engine engine, ServerLevel level, int chunkX, int chunkZ) {
+        updateChunk(engine, level, chunkX, chunkZ, false);
+    }
+
     private void updateChunk(Engine engine, ServerLevel level, int chunkX, int chunkZ) {
-        for (int x = -1; x <= 1; x++) {
-            for (int z = -1; z <= 1; z++) {
-                if (level.getChunkSource().getChunkNow(chunkX + x, chunkZ + z) == null) {
-                    return;
+        updateChunk(engine, level, chunkX, chunkZ, true);
+    }
+
+    private void updateChunk(Engine engine, ServerLevel level, int chunkX, int chunkZ, boolean requireNeighbors) {
+        if (requireNeighbors) {
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    if (level.getChunkSource().getChunkNow(chunkX + x, chunkZ + z) == null) {
+                        return;
+                    }
                 }
             }
         }
@@ -170,6 +181,7 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
         try {
             chunk.raiseFlagUnchecked(MantleFlag.ETCHED, () -> {
                 chunk.raiseFlagUnchecked(MantleFlag.TILE, () -> runTilePass(engine, level, chunkX, chunkZ, chunk));
+                chunk.raiseFlagUnchecked(MantleFlag.CUSTOM, () -> runCustomPass(engine, level, chunkX, chunkZ, chunk));
                 chunk.raiseFlagUnchecked(MantleFlag.UPDATE, () -> runUpdatePass(engine, level, chunkX, chunkZ, chunk));
             });
         } finally {
@@ -183,10 +195,24 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
         int baseZ = chunkZ << 4;
         chunk.iterate(TileWrapper.class, (Integer x, Integer yf, Integer z, TileWrapper v) -> {
             int y = yf + minHeight;
-            if (y < level.getMinY() || y > level.getMaxY()) {
+            if (y < level.getMinY() || y >= level.getMaxY()) {
                 return;
             }
             applyTile(level, baseX + (x & 15), y, baseZ + (z & 15), v.getData());
+        });
+    }
+
+    private void runCustomPass(Engine engine, ServerLevel level, int chunkX, int chunkZ, MantleChunk<Matter> chunk) {
+        int minHeight = engine.getWorld().minHeight();
+        int baseX = chunkX << 4;
+        int baseZ = chunkZ << 4;
+        chunk.iterate(Identifier.class, (Integer x, Integer yf, Integer z, Identifier identifier) -> {
+            int y = yf + minHeight;
+            if (y < level.getMinY() || y >= level.getMaxY()) {
+                return;
+            }
+            BlockPos position = new BlockPos(baseX + (x & 15), y, baseZ + (z & 15));
+            ModdedCustomContentRegistry.processBlockPlacement(engine, level, position, identifier.toString());
         });
     }
 
@@ -194,23 +220,32 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
         if (!(tile instanceof ModdedTileData moddedTile)) {
             return;
         }
-        String snbt = moddedTile.snbt();
-        if (snbt == null || snbt.isBlank()) {
-            return;
-        }
         BlockPos pos = new BlockPos(x, y, z);
         BlockState state = level.getBlockState(pos);
-        if (!state.hasBlockEntity()) {
+        BlockState adjusted = moddedTile.adjustBlockState(state);
+        if (adjusted != state) {
+            level.setBlock(pos, adjusted, SILENT_FLAGS);
+            state = adjusted;
+        }
+        if (!state.hasBlockEntity() || !(state.getBlock() instanceof EntityBlock entityBlock)) {
             return;
         }
         try {
-            CompoundTag tag = NbtUtils.snbtToStructure(snbt);
-            BlockEntity restored = BlockEntity.loadStatic(pos, state, tag, level.registryAccess());
-            if (restored == null) {
+            BlockEntity blockEntity = level.getBlockEntity(pos);
+            if (blockEntity == null) {
+                blockEntity = entityBlock.newBlockEntity(pos, state);
+            }
+            if (blockEntity == null) {
+                IrisLogging.warn("Iris could not create block entity at " + pos + " for " + state);
                 return;
             }
-            level.setBlockEntity(restored);
-            restored.setChanged();
+            if (!moddedTile.isApplicable(state, blockEntity)) {
+                return;
+            }
+            level.setBlockEntity(blockEntity);
+            if (!moddedTile.apply(blockEntity, level)) {
+                IrisLogging.warn("Iris tile payload was empty at " + pos + " for " + state);
+            }
         } catch (Throwable e) {
             IrisLogging.reportError(e);
         }
@@ -255,7 +290,7 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
         RNG rng = new RNG(Cache.key(chunkX, chunkZ));
         chunk.iterate(MatterCavern.class, (Integer x, Integer yf, Integer z, MatterCavern v) -> {
             int y = yf + minHeight;
-            if (y < level.getMinY() || y > level.getMaxY()) {
+            if (y < level.getMinY() || y >= level.getMaxY()) {
                 return;
             }
             int lx = x & 15;
@@ -294,7 +329,7 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
     }
 
     private void update(Engine engine, ServerLevel level, int x, int y, int z, int baseX, int baseZ, MantleChunk<Matter> chunk, RNG rng) {
-        if (y < level.getMinY() || y > level.getMaxY()) {
+        if (y < level.getMinY() || y >= level.getMaxY()) {
             return;
         }
         BlockPos pos = new BlockPos(baseX + (x & 15), y, baseZ + (z & 15));

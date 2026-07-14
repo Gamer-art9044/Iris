@@ -1,14 +1,13 @@
 import io.github.slimjar.resolver.data.Mirror
-import org.ajoberstar.grgit.Grgit
 import org.gradle.api.Task
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.TaskProvider
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 import java.net.URI
+import java.nio.charset.StandardCharsets
 
 /*
  * Iris is a World Generator for Minecraft Bukkit Servers
@@ -34,14 +33,11 @@ plugins {
     alias(libs.plugins.shadow)
     alias(libs.plugins.sentry)
     alias(libs.plugins.slimjar)
-    alias(libs.plugins.grgit)
-    alias(libs.plugins.kotlin.jvm)
-    alias(libs.plugins.kotlin.lombok)
 }
 
 def lib = 'art.arcane.iris.util'
 String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
-    .orElse('com.github.VolmitSoftware:VolmLib:cdf7e8bb880199734dacd386a6616bda799fcde1')
+    .orElse('com.github.VolmitSoftware:VolmLib:4c38988b344792a79f925f57f8a675bc85fc1bed')
     .get()
 String sentryAuthToken = findProperty('sentry.auth.token') as String ?: System.getenv('SENTRY_AUTH_TOKEN')
 boolean hasSentryAuthToken = sentryAuthToken != null && !sentryAuthToken.isBlank()
@@ -62,19 +58,22 @@ dependencies {
     api(project(':spi'))
 
     // Provided or Classpath
+    compileOnly(libs.lombok)
+    annotationProcessor(libs.lombok)
     compileOnly(libs.paper.api)
     compileOnly(libs.log4j.api)
     compileOnly(libs.log4j.core)
+    compileOnly(libs.guava)
 
     // Third Party Integrations
     compileOnly(libs.nexo)
     compileOnly(libs.itemsadder)
-    compileOnly(libs.placeholderApi)
     compileOnly(libs.score)
     compileOnly(libs.mmoitems)
-    compileOnly(libs.ecoitems)
+    compileOnly(libs.mythiclib)
+    compileOnly(libs.eco)
     compileOnly(libs.mythic)
-    compileOnly(libs.mythicChrucible)
+    compileOnly(libs.mythicCrucible)
     compileOnly(libs.kgenerators) {
         transitive = false
     }
@@ -101,25 +100,21 @@ dependencies {
     slim(libs.sentry)
 
     slim(libs.commons.io)
-    slim(libs.commons.lang)
     slim(libs.commons.lang3)
-    slim(libs.commons.math3)
     slim(libs.oshi)
     slim(libs.lz4)
     slim(libs.fastutil)
-    slim(libs.zip)
+    slim(libs.zip) {
+        exclude(group: 'org.slf4j', module: 'slf4j-api')
+    }
     slim(libs.asm)
     slim(libs.byteBuddy.core)
     slim(libs.byteBuddy.agent)
     slim(libs.dom4j)
     slim(libs.jaxen)
 
-    // Script Engine
-    slim(libs.kotlin.stdlib)
-    slim(libs.kotlin.coroutines)
-
     testImplementation('junit:junit:4.13.2')
-    testImplementation('org.mockito:mockito-core:5.16.1')
+    testImplementation('org.mockito:mockito-core:5.23.0')
     testImplementation(libs.paper.api)
     testRuntimeOnly(libs.paper.api)
 }
@@ -127,13 +122,6 @@ dependencies {
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
-    }
-}
-
-kotlin {
-    jvmToolchain(25)
-    compilerOptions {
-        jvmTarget.set(JvmTarget.fromTarget('25'))
     }
 }
 
@@ -188,7 +176,16 @@ def generateTemplates = tasks.register('generateTemplates', Copy) {
             String commitId = null
             Exception failure = null
             try {
-                commitId = project.extensions.getByType(Grgit).head().id
+                Process process = new ProcessBuilder('git', '-C', rootProject.projectDir.absolutePath, 'rev-parse', 'HEAD')
+                        .redirectErrorStream(true)
+                        .start()
+                String output = new String(process.inputStream.readAllBytes(), StandardCharsets.UTF_8).trim()
+                int exitCode = process.waitFor()
+                if (exitCode == 0) {
+                    commitId = output
+                } else {
+                    failure = new GradleException("git rev-parse exited with code ${exitCode}: ${output}")
+                }
             } catch (Exception ex) {
                 failure = ex
             }

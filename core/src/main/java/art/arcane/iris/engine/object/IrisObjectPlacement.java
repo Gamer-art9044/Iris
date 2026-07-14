@@ -325,17 +325,17 @@ public class IrisObjectPlacement {
      * @param dataManager Iris Data Manager
      * @return The loot table it should use.
      */
-    public IrisLootTable getTable(PlatformBlockState state, IrisData dataManager) {
+    public IrisLootTable getTable(PlatformBlockState state, IrisData dataManager, RNG rng) {
         TableCache cache = getCache(dataManager);
         BlockData data = (BlockData) state.nativeHandle();
         if (BukkitBlockResolution.isStorageChest(data)) {
             IrisLootTable picked = null;
             if (cache.exact.containsKey(data.getMaterial()) && cache.exact.get(data.getMaterial()).containsKey(data)) {
-                picked = cache.exact.get(data.getMaterial()).get(data).pullRandom();
+                picked = cache.exact.get(data.getMaterial()).get(data).pullRandom(rng);
             } else if (cache.basic.containsKey(data.getMaterial())) {
-                picked = cache.basic.get(data.getMaterial()).pullRandom();
+                picked = cache.basic.get(data.getMaterial()).pullRandom(rng);
             } else if (cache.global.getSize() > 0) {
-                picked = cache.global.pullRandom();
+                picked = cache.global.pullRandom(rng);
             }
 
             return picked;

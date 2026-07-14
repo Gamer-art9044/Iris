@@ -18,17 +18,15 @@
 
 package art.arcane.iris.engine.framework;
 
-import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.IrisWorld;
-import art.arcane.iris.platform.bukkit.BukkitWorld;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.volmlib.util.collection.KList;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
-import java.util.Map;
 import java.util.Set;
-import java.util.WeakHashMap;
 
 /**
  * Determines which vanilla/datapack structures can ever generate in a world, using the same biome
@@ -37,10 +35,10 @@ import java.util.WeakHashMap;
  * never produced cannot generate and must not be scanned for by {@code /locate} or {@code /iris find}
  * (an unbounded scan for an absent biome is what stalls the server).
  *
- * <p>The reachable set is fixed per pack/world, so it is cached per {@link IrisData}.
+ * <p>The reachable set is fixed per live engine/world and is rebuilt after hotload.
  */
 public final class StructureReachability {
-    private static final Map<IrisData, Set<String>> REACHABLE_CACHE = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Cache<Engine, Set<String>> REACHABLE_CACHE = Caffeine.newBuilder().weakKeys().build();
 
     private StructureReachability() {
     }
@@ -49,17 +47,10 @@ public final class StructureReachability {
         if (engine == null) {
             return Collections.emptySet();
         }
-        IrisData data = engine.getData();
-        if (data == null) {
+        if (engine.getData() == null) {
             return Collections.emptySet();
         }
-        Set<String> cached = REACHABLE_CACHE.get(data);
-        if (cached != null) {
-            return cached;
-        }
-        Set<String> built = build(engine);
-        REACHABLE_CACHE.put(data, built);
-        return built;
+        return REACHABLE_CACHE.get(engine, ignored -> build(engine));
     }
 
     public static boolean isReachable(Engine engine, String structureKey) {
@@ -73,24 +64,21 @@ public final class StructureReachability {
         if (engine == null) {
             return;
         }
-        IrisData data = engine.getData();
-        if (data != null) {
-            REACHABLE_CACHE.remove(data);
-        }
+        REACHABLE_CACHE.invalidate(engine);
     }
 
     private static Set<String> build(Engine engine) {
         IrisWorld world = engine.getWorld();
-        if (world == null || world.realWorld() == null) {
+        if (world == null || world.platformWorld() == null) {
             return Collections.emptySet();
         }
         Set<String> reachable = new LinkedHashSet<>();
-        for (String key : IrisPlatforms.get().structureHooks().reachableStructureKeys(new BukkitWorld(world.realWorld()))) {
+        for (String key : IrisPlatforms.get().structureHooks().reachableStructureKeys(world.platformWorld())) {
             if (key != null && !key.isEmpty()) {
                 reachable.add(key.toLowerCase());
             }
         }
-        return reachable;
+        return Collections.unmodifiableSet(reachable);
     }
 
     /**
@@ -104,11 +92,11 @@ public final class StructureReachability {
             return missing;
         }
         IrisWorld world = engine.getWorld();
-        if (world == null || world.realWorld() == null) {
+        if (world == null || world.platformWorld() == null) {
             return missing;
         }
         Set<String> possible = new LinkedHashSet<>();
-        for (String key : IrisPlatforms.get().structureHooks().possibleBiomeKeys(new BukkitWorld(world.realWorld()))) {
+        for (String key : IrisPlatforms.get().structureHooks().possibleBiomeKeys(world.platformWorld())) {
             if (key != null) {
                 possible.add(key.toLowerCase());
             }

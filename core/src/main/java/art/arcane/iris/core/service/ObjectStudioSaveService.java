@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.service;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.loader.IrisData;
@@ -75,7 +76,7 @@ public class ObjectStudioSaveService implements IrisService {
     }
 
     public void register(Engine engine, ObjectStudioGenerator generator) {
-        World world = engine.getTarget().getWorld().realWorld();
+        World world = BukkitWorldBinding.world(engine.getTarget().getWorld());
         if (world == null) return;
         ObjectStudioLayout layout = generator.getLayout();
         if (layout == null) return;

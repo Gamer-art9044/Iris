@@ -53,7 +53,7 @@ final class ModdedCommandHelp {
                 Entry.command("version", "", "Print version information"),
                 Entry.command("info", "[dimension]", "List loaded Iris dimensions and pack details"),
                 Entry.command("what", "[block|hand|markers]", "Inspect the Iris biome, region, cave biome, surface and chunk at your position, the block you look at, your held item, or nearby markers"),
-                Entry.group("find", "Find and teleport to Iris biomes, regions, objects, structures and points of interest", "goto"),
+                Entry.group("find", "Find and teleport to Iris biomes, regions, objects, Iris structures, native structures and points of interest", "goto"),
                 Entry.command("tp", "<dimension> [player]", "Teleport yourself or a named player into a loaded Iris dimension"),
                 Entry.command("evacuate", "[dimension]", "Teleport every player out of an Iris dimension to the primary world spawn"),
                 Entry.command("seed", "", "Print world and engine seed information"),
@@ -79,7 +79,7 @@ final class ModdedCommandHelp {
                 Entry.command("biome", "<key>", "Find an Iris biome"),
                 Entry.command("region", "<key>", "Find an Iris region"),
                 Entry.command("object", "<key>", "Find an object placement"),
-                Entry.command("structure", "<key>", "Find an Iris-placed structure"),
+                Entry.command("structure", "<key>", "Find an Iris-placed or native/datapack structure"),
                 Entry.command("poi", "<type>", "Find a supported point of interest")
         ));
         SECTIONS.put("goto", SECTIONS.get("find"));
@@ -160,7 +160,7 @@ final class ModdedCommandHelp {
                 Entry.command("place", "<key>", "Assemble and place an Iris structure at your location", "p"),
                 Entry.command("import", "", "Explain Bukkit structure import workflow", "import-all", "reimport", "imp", "all"),
                 Entry.command("capture", "", "Explain Bukkit structure capture workflow", "cap"),
-                Entry.command("verify", "", "Explain modded structure locate behavior", "locateall")
+                Entry.command("verify", "[key]", "Report native and Iris structure reachability in the current dimension", "locateall")
         ));
         SECTIONS.put("struct", SECTIONS.get("structure"));
         SECTIONS.put("str", SECTIONS.get("structure"));

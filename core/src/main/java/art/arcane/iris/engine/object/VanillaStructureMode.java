@@ -20,14 +20,11 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.engine.object.annotations.Desc;
 
-@Desc("Master toggle for vanilla & datapack structure generation in a dimension.")
+@Desc("Master toggle for native vanilla, mod, and datapack structure generation in a dimension.")
 public enum VanillaStructureMode {
-    @Desc("All vanilla & datapack structures generate, except any keys listed in 'disabled'. This is the default. Use this to blacklist a few structures.")
+    @Desc("All native vanilla, mod, and datapack structures generate, except any keys listed in 'disabled'. This is the default. Use this to blacklist a few structures.")
     ALL_ON,
 
-    @Desc("No vanilla or datapack structures generate, except any keys listed in 'enabled'. Use this to whitelist a few structures.")
-    ALL_OFF,
-
-    @Desc("Same as ALL_OFF: nothing generates except keys listed in 'enabled'.")
-    CUSTOM
+    @Desc("No native vanilla, mod, or datapack structures generate, except any keys listed in 'enabled'. Use this to whitelist a few structures.")
+    ALL_OFF
 }

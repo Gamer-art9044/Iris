@@ -122,11 +122,6 @@ public class IrisCaveProfile {
     @Desc("Minimum depth below terrain surface required for cave-only object anchor placement.")
     private int objectMinDepthBelowSurface = 6;
 
-    @MinNumber(0)
-    @MaxNumber(32)
-    @Desc("Skip surface-object placement when carved cells exist this many blocks below terrain surface.")
-    private int surfaceObjectExclusionDepth = 5;
-
     @ArrayType(type = IrisCaveFieldModule.class, min = 1)
     @Desc("Additional layered cave-density modules.")
     private KList<IrisCaveFieldModule> modules = new KList<>();

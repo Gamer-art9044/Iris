@@ -8,3 +8,65 @@ load: STARTUP
 authors: [ cyberpwn, NextdoorPsycho, Vatuu ]
 website: volmit.com
 description: More than a Dimension!
+dependencies:
+  server:
+    PlaceholderAPI:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    CraftEngine:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    Nexo:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    ItemsAdder:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    SCore:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    ExecutableItems:
+      load: BEFORE
+      required: false
+      join-classpath: false
+    MythicLib:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    MMOItems:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    eco:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    EcoItems:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    MythicMobs:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    MythicCrucible:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    KGenerators:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    Multiverse-Core:
+      load: AFTER
+      required: false
+      join-classpath: true
+    WorldEdit:
+      load: BEFORE
+      required: false
+      join-classpath: true

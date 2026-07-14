@@ -22,7 +22,7 @@ import org.gradle.jvm.toolchain.JavaLanguageVersion
 
 plugins {
     id 'java'
-    id 'net.minecraftforge.gradle' version '7.0.27'
+    id 'net.minecraftforge.gradle' version '7.0.31'
     alias(libs.plugins.shadow)
 }
 
@@ -30,8 +30,8 @@ Properties rootProperties = new Properties()
 file('../../gradle.properties').withInputStream { InputStream stream -> rootProperties.load(stream) }
 String irisVersion = providers.gradleProperty('irisVersion').getOrElse(rootProperties.getProperty('irisVersion', '4.0.0-26.2'))
 String minecraftVersion = providers.gradleProperty('minecraftVersion').getOrElse(rootProperties.getProperty('minecraftVersion', '26.2'))
-String forgeVersion = providers.gradleProperty('forgeVersion').getOrElse(rootProperties.getProperty('forgeVersion', '26.2-65.0.0'))
-String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate').getOrElse(rootProperties.getProperty('volmLibCoordinate', 'com.github.VolmitSoftware:VolmLib:cdf7e8bb880199734dacd386a6616bda799fcde1'))
+String forgeVersion = providers.gradleProperty('forgeVersion').getOrElse(rootProperties.getProperty('forgeVersion', '26.2-65.0.4'))
+String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate').getOrElse(rootProperties.getProperty('volmLibCoordinate', 'com.github.VolmitSoftware:VolmLib:4c38988b344792a79f925f57f8a675bc85fc1bed'))
 Closure<String> loaderDisplayVersion = { String loaderVersion ->
     String coordinatePrefix = "${minecraftVersion}-"
     if (loaderVersion.startsWith(coordinatePrefix)) {
@@ -57,10 +57,16 @@ sourceSets {
     main {
         java {
             srcDir '../modded-common/src/main/java'
+            srcDir '../minecraft-common/src/main/java'
             srcDir '../client-common/src/main/java'
         }
         resources {
             srcDir '../modded-common/src/main/resources'
+        }
+    }
+    test {
+        java {
+            srcDir '../modded-common/src/test/java'
         }
     }
 }
@@ -88,11 +94,6 @@ configurations {
         canBeConsumed = false
         canBeResolved = true
     }
-    commonsLangRaw {
-        canBeConsumed = false
-        canBeResolved = true
-        transitive = false
-    }
 }
 
 configurations.named('bundle').configure {
@@ -116,8 +117,10 @@ configurations.named('runBundle').configure {
 
 configurations.compileClasspath.extendsFrom(configurations.devBundle)
 configurations.runtimeClasspath.extendsFrom(configurations.runBundle)
+configurations.testCompileClasspath.extendsFrom(configurations.compileClasspath, configurations.devBundle)
+configurations.testRuntimeClasspath.extendsFrom(configurations.runtimeClasspath, configurations.runBundle)
 
-['compileClasspath', 'runtimeClasspath'].each { String name ->
+['compileClasspath', 'runtimeClasspath', 'testCompileClasspath', 'testRuntimeClasspath'].each { String name ->
     configurations.named(name).configure {
         resolutionStrategy.capabilitiesResolution.withCapability('org.lz4:lz4-java') {
             selectHighestVersion()
@@ -127,48 +130,45 @@ configurations.runtimeClasspath.extendsFrom(configurations.runBundle)
 
 dependencies {
     implementation minecraft.dependency("net.minecraftforge:forge:${forgeVersion}")
+    testImplementation('junit:junit:4.13.2')
     compileOnly('org.slf4j:slf4j-api:2.0.17')
     compileOnly(libs.spigot) {
+        transitive = false
+    }
+    add('bundle', volmLibCoordinate) {
+        transitive = false
+    }
+    add('devBundle', volmLibCoordinate) {
+        transitive = false
+    }
+    add('runBundle', volmLibCoordinate) {
+        transitive = false
+    }
+    add('bundle', libs.zip) {
+        transitive = false
+    }
+    add('devBundle', libs.zip) {
+        transitive = false
+    }
+    add('runBundle', libs.zip) {
         transitive = false
     }
 
     List<Object> shared = [
         "art.arcane:core:${irisVersion}".toString(),
         "art.arcane:spi:${irisVersion}".toString(),
-        volmLibCoordinate,
         libs.paralithic,
         libs.lru,
-        libs.kotlin.stdlib,
-        libs.kotlin.coroutines,
-        libs.commons.math3,
         libs.caffeine,
-        libs.lz4,
-        libs.zip,
-        libs.sentry,
-        libs.oshi,
-        libs.byteBuddy.core,
-        libs.byteBuddy.agent
+        libs.dom4j,
+        libs.jaxen,
+        libs.sentry
     ]
     shared.each { Object notation ->
         add('bundle', notation)
         add('devBundle', notation)
         add('runBundle', notation)
     }
-    add('bundle', libs.commons.lang)
-    add('devBundle', libs.commons.lang)
-    add('commonsLangRaw', libs.commons.lang)
-}
-
-TaskProvider<Jar> sanitizedCommonsLang = tasks.register('sanitizedCommonsLang', Jar) {
-    archiveBaseName.set('commons-lang-sanitized')
-    destinationDirectory.set(layout.buildDirectory.dir('sanitized'))
-    from({ zipTree(configurations.named('commonsLangRaw').get().singleFile) })
-    exclude('org/apache/commons/lang/enum/**')
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-}
-
-dependencies {
-    add('runBundle', files(sanitizedCommonsLang))
 }
 
 minecraft {
@@ -193,7 +193,7 @@ minecraft {
                 systemProperty('iris.worldcheck', worldCheck)
             }
             jvmArgs('-Xmx8G')
-            args('--nogui')
+            args('--mixin.config', 'irisworldgen.entity.mixins.json', '--nogui')
         }
     }
 }
@@ -201,6 +201,10 @@ minecraft {
 tasks.named('compileJava', JavaCompile).configure {
     options.encoding = 'UTF-8'
     options.release.set(25)
+}
+
+tasks.named('test').configure {
+    systemProperty('iris.moddedCommonSources', file('../modded-common/src/main/java').absolutePath)
 }
 
 processResources {
@@ -214,6 +218,9 @@ processResources {
 tasks.named('shadowJar', ShadowJar).configure {
     doFirst {
         delete(layout.buildDirectory.file("libs/Iris-${project.version}+mc${minecraftVersion}-forge.jar"))
+    }
+    manifest {
+        attributes('MixinConfigs': 'irisworldgen.entity.mixins.json')
     }
     archiveFileName.set(irisArtifactName('Forge', "${minecraftVersion}+${loaderDisplayVersion(forgeVersion)}"))
     configurations = [project.configurations.named('bundle').get()]

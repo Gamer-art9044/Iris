@@ -31,13 +31,13 @@ public class WorldLifecycleStagingTest {
     }
 
     @Test
-    public void stagedStemGeneratorIsConsumedWhenLevelIdDiffersFromWorldName() {
+    public void stagedStemGeneratorCannotBeConsumedByDifferentWorldName() {
         ChunkGenerator generator = mock(ChunkGenerator.class);
 
         WorldLifecycleStaging.stageStemGenerator("iris_world", generator);
 
-        assertSame(generator, WorldLifecycleStaging.consumeStemGenerator("world"));
-        assertNull(WorldLifecycleStaging.consumeStemGenerator("iris_world"));
+        assertNull(WorldLifecycleStaging.consumeStemGenerator("world"));
+        assertSame(generator, WorldLifecycleStaging.consumeStemGenerator("iris_world"));
         assertNull(WorldLifecycleStaging.consumeStemGenerator("world"));
     }
 

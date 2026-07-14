@@ -20,6 +20,7 @@ package art.arcane.iris.modded;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.modded.api.ModdedCustomContentRegistry;
+import art.arcane.iris.modded.api.ModdedBlockData;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.data.UnresolvedKeyLog;
 import com.mojang.brigadier.StringReader;
@@ -89,7 +90,7 @@ public final class ModdedBlockResolution {
     private ModdedBlockResolution() {
     }
 
-    record Parsed(BlockState state, Map<Property<?>, Comparable<?>> properties) {
+    record Parsed(BlockState state, Map<Property<?>, Comparable<?>> properties, String deferredPlacementKey) {
     }
 
     private static Set<Block> blockSet(String... ids) {
@@ -171,12 +172,12 @@ public final class ModdedBlockResolution {
 
     public static ModdedBlockState get(String bdxf) {
         Parsed parsed = resolveGet(bdxf);
-        return ModdedBlockState.of(parsed.state(), parsed.properties());
+        return stateFrom(parsed);
     }
 
     public static ModdedBlockState getNoCompat(String bdxf) {
         Parsed parsed = resolveNoCompat(bdxf);
-        return ModdedBlockState.of(parsed.state(), parsed.properties());
+        return stateFrom(parsed);
     }
 
     public static ModdedBlockState getOrNull(String bdxf) {
@@ -185,7 +186,13 @@ public final class ModdedBlockResolution {
 
     public static ModdedBlockState getOrNull(String bdxf, boolean warn) {
         Parsed parsed = resolveOrNull(bdxf, warn);
-        return parsed == null ? null : ModdedBlockState.of(parsed.state(), parsed.properties());
+        return parsed == null ? null : stateFrom(parsed);
+    }
+
+    private static ModdedBlockState stateFrom(Parsed parsed) {
+        return parsed.deferredPlacementKey() == null
+                ? ModdedBlockState.of(parsed.state(), parsed.properties())
+                : ModdedBlockState.deferred(parsed.state(), parsed.properties(), parsed.deferredPlacementKey());
     }
 
     static Parsed resolveGet(String bdxf) {
@@ -194,7 +201,7 @@ public final class ModdedBlockResolution {
             return parsed;
         }
         IrisLogging.error("Can't find block data for " + bdxf);
-        return new Parsed(AIR, null);
+        return new Parsed(AIR, null, null);
     }
 
     static Parsed resolveNoCompat(String bdxf) {
@@ -202,7 +209,7 @@ public final class ModdedBlockResolution {
         if (parsed != null) {
             return parsed;
         }
-        return new Parsed(AIR, null);
+        return new Parsed(AIR, null, null);
     }
 
     static Parsed resolveOrNull(String bdxf, boolean warn) {
@@ -214,20 +221,20 @@ public final class ModdedBlockResolution {
             }
 
             if (bd.equals("minecraft:grass_path")) {
-                return new Parsed(Blocks.DIRT_PATH.defaultBlockState(), null);
+                return new Parsed(Blocks.DIRT_PATH.defaultBlockState(), null, null);
             }
 
             Parsed bdx = parseBlockData(bd, warn);
 
             if (bdx == null) {
-                BlockState provided = ModdedCustomContentRegistry.resolveBlock(bd);
+                ModdedBlockData provided = ModdedCustomContentRegistry.resolveBlock(bd);
                 if (provided != null) {
-                    return new Parsed(provided, null);
+                    return new Parsed(provided.state(), null, provided.deferredPlacement() ? bd : null);
                 }
                 if (warn) {
                     warnUnresolved(bd, "Unknown Block Data '" + bd + "'");
                 }
-                return new Parsed(AIR, null);
+                return new Parsed(AIR, null, null);
             }
 
             return bdx;
@@ -243,7 +250,7 @@ public final class ModdedBlockResolution {
 
     public static ModdedBlockState strictParse(String key) {
         Parsed parsed = parseStrict(key);
-        return ModdedBlockState.of(parsed.state(), parsed.properties());
+        return stateFrom(parsed);
     }
 
     private static Parsed parseStrict(String key) {
@@ -257,7 +264,7 @@ public final class ModdedBlockResolution {
         if (reader.canRead()) {
             throw new IllegalArgumentException("Could not parse remainder: " + reader.getRemaining());
         }
-        return new Parsed(result.blockState(), result.properties());
+        return new Parsed(result.blockState(), result.properties(), null);
     }
 
     private static Parsed createBlockData(String s, boolean warn) {
@@ -283,7 +290,7 @@ public final class ModdedBlockResolution {
         if (identifier == null || !BuiltInRegistries.BLOCK.containsKey(identifier)) {
             return null;
         }
-        return new Parsed(BuiltInRegistries.BLOCK.getValue(identifier).defaultBlockState(), null);
+        return new Parsed(BuiltInRegistries.BLOCK.getValue(identifier).defaultBlockState(), null, null);
     }
 
     private static Parsed parseBlockData(String ix, boolean warn) {
@@ -307,7 +314,7 @@ public final class ModdedBlockResolution {
 
             if (bx.state().getBlock() instanceof LeavesBlock) {
                 BlockState mutated = bx.state().setValue(LeavesBlock.PERSISTENT, shouldPreventLeafDecay());
-                bx = new Parsed(mutated, bx.properties());
+                bx = new Parsed(mutated, bx.properties(), bx.deferredPlacementKey());
             }
 
             return bx;

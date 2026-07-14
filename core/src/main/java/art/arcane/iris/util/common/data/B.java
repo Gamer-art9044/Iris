@@ -76,6 +76,10 @@ public class B {
         return state != null && state.isFoliage();
     }
 
+    public static boolean isTreeBlock(PlatformBlockState state) {
+        return state != null && state.isTreeBlock();
+    }
+
     public static boolean isFoliagePlantable(PlatformBlockState state) {
         return state != null && state.isFoliagePlantable();
     }

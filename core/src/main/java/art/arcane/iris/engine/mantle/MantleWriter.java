@@ -23,6 +23,7 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.project.matter.TileWrapper;
 import com.google.common.collect.ImmutableList;
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.Cache;
@@ -33,7 +34,6 @@ import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.TileData;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
-import art.arcane.iris.util.common.data.IrisCustomData;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.volmlib.util.function.Function3;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
@@ -46,12 +46,12 @@ import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.common.scheduling.J;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import lombok.Data;
-import art.arcane.iris.platform.bukkit.BukkitBlockState;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.B;
 import org.bukkit.util.Vector;
 
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -82,7 +82,9 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         if (foliaMaintenance && IrisSettings.get().getGeneral().isDebug()) {
             IrisLogging.info("MantleWriter using sequential chunk prefetch for maintenance regen at " + x + "," + z + ".");
         }
-        final var map = multicore ? cachedChunks : new KMap<Long, MantleChunk<Matter>>(d * d, 1f, parallelism);
+        Map<Long, MantleChunk<Matter>> map = multicore
+                ? cachedChunks
+                : new KMap<Long, MantleChunk<Matter>>(d * d, 1f, parallelism);
         mantle.getChunks(
                 x - radius,
                 x + radius,
@@ -177,6 +179,9 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         if (chunk == null) return;
 
         Matter matter = chunk.getOrCreate(y >> 4);
+        if (t instanceof PlatformBlockState) {
+            clearDeferredPlacement(matter, x, y, z);
+        }
         Class<?> sliceType = t instanceof PlatformBlockState ? PlatformBlockState.class : matter.getClass(t);
         matter.slice(sliceType).set(x & 15, y & 15, z & 15, t);
     }
@@ -208,6 +213,29 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         return true;
     }
 
+    public boolean carveDataIfAbsent(int x, int y, int z, MatterCavern value) {
+        if (value == null || y < 0 || y >= mantle.getWorldHeight()) {
+            return false;
+        }
+
+        MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
+        if (chunk == null) {
+            return false;
+        }
+
+        Matter matter = chunk.getOrCreate(y >> 4);
+        if (matter.hasSlice(PlatformBlockState.class)) {
+            matter.<PlatformBlockState>getSlice(PlatformBlockState.class).set(x & 15, y & 15, z & 15, null);
+        }
+        clearDeferredPlacement(matter, x, y, z);
+        MatterSlice<MatterCavern> cavernSlice = matter.slice(MatterCavern.class);
+        if (cavernSlice.get(x & 15, y & 15, z & 15) != null) {
+            return false;
+        }
+        cavernSlice.set(x & 15, y & 15, z & 15, value);
+        return true;
+    }
+
     public void clearBlock(int x, int y, int z) {
         if (y < 0 || y >= mantle.getWorldHeight()) {
             return;
@@ -224,7 +252,10 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         if (matter == null) {
             return;
         }
-        matter.<PlatformBlockState>slice(PlatformBlockState.class).set(x & 15, y & 15, z & 15, null);
+        if (matter.hasSlice(PlatformBlockState.class)) {
+            matter.<PlatformBlockState>getSlice(PlatformBlockState.class).set(x & 15, y & 15, z & 15, null);
+        }
+        clearDeferredPlacement(matter, x, y, z);
     }
 
     public <T> T getData(int x, int y, int z, Class<T> type) {
@@ -245,6 +276,48 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
                 .get(x & 15, y & 15, z & 15);
     }
 
+    public <T> T getDataIfPresent(int x, int y, int z, Class<T> type) {
+        if (y < 0 || y >= mantle.getWorldHeight()) {
+            return null;
+        }
+
+        MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
+        int section = y >> 4;
+        if (chunk == null || !chunk.exists(section)) {
+            return null;
+        }
+
+        Matter matter = chunk.get(section);
+        if (matter == null || !matter.hasSlice(type)) {
+            return null;
+        }
+        return matter.<T>getSlice(type).get(x & 15, y & 15, z & 15);
+    }
+
+    public void clearData(int x, int y, int z, Class<?> type) {
+        if (y < 0 || y >= mantle.getWorldHeight()) {
+            return;
+        }
+
+        MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
+        int section = y >> 4;
+        if (chunk == null || !chunk.exists(section)) {
+            return;
+        }
+
+        Matter matter = chunk.get(section);
+        if (matter == null || !matter.hasSlice(type)) {
+            return;
+        }
+        matter.getSlice(type).set(x & 15, y & 15, z & 15, null);
+    }
+
+    private static void clearDeferredPlacement(Matter matter, int x, int y, int z) {
+        if (matter.hasSlice(Identifier.class)) {
+            matter.<Identifier>getSlice(Identifier.class).set(x & 15, y & 15, z & 15, null);
+        }
+    }
+
     @ChunkCoordinates
     public MantleChunk<Matter> acquireChunk(int cx, int cz) {
         if (cx < this.x - radius || cx > this.x + radius
@@ -256,7 +329,7 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         MantleChunk<Matter> chunk = cachedChunks.get(key);
         if (chunk == null) {
             chunk = mantle.getChunk(cx, cz).use();
-            var old = cachedChunks.put(key, chunk);
+            MantleChunk<Matter> old = cachedChunks.put(key, chunk);
             if (old != null) old.release();
         }
         return chunk;
@@ -277,9 +350,11 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         if (s == null) {
             return;
         }
-        if (s.isCustom() && s.nativeHandle() instanceof IrisCustomData data) {
-            setData(x, y, z, BukkitBlockState.of(data.getBase()));
-            setData(x, y, z, data.getCustom());
+        String placementKey = s.deferredPlacementKey();
+        PlatformBlockState baseState = s.placementBaseState();
+        if (s.isCustom() && placementKey != null && baseState != null) {
+            setData(x, y, z, baseState);
+            setData(x, y, z, Identifier.fromString(placementKey));
             return;
         }
         setData(x, y, z, s);
@@ -842,7 +917,7 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
 
     @Override
     public void close() {
-        var iterator = cachedChunks.values().iterator();
+        Iterator<MantleChunk<Matter>> iterator = cachedChunks.values().iterator();
         while (iterator.hasNext()) {
             iterator.next().release();
             iterator.remove();

@@ -19,15 +19,19 @@
 package art.arcane.iris.neoforge;
 
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
-import art.arcane.iris.modded.ModdedDeathLoot;
+import art.arcane.iris.modded.ModdedBlockBreakHandler;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
 import art.arcane.iris.modded.ModdedForcedDatapack;
 import art.arcane.iris.modded.command.IrisModdedCommands;
 import art.arcane.iris.modded.command.ModdedWandService;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
@@ -37,8 +41,12 @@ import net.neoforged.fml.loading.FMLLoader;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.AddPackFindersEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.entity.living.LivingDropsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.neoforged.neoforge.event.level.BlockDropsEvent;
+import net.neoforged.neoforge.event.level.LevelEvent;
+import net.neoforged.neoforge.event.level.block.BreakBlockEvent;
+import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -65,10 +73,37 @@ public final class IrisNeoForgeBootstrap {
             IrisNeoForgeClient.init(modBus);
         }
 
+        NeoForge.EVENT_BUS.addListener((ServerAboutToStartEvent event) -> ModdedEngineBootstrap.serverAboutToStart(event.getServer()));
         NeoForge.EVENT_BUS.addListener((ServerStartingEvent event) -> ModdedEngineBootstrap.start(event.getServer()));
+        NeoForge.EVENT_BUS.addListener((ServerStartedEvent event) -> ModdedEngineBootstrap.serverStarted(event.getServer()));
         NeoForge.EVENT_BUS.addListener((ServerStoppingEvent event) -> ModdedEngineBootstrap.stop());
+        NeoForge.EVENT_BUS.addListener((LevelEvent.Load event) -> {
+            if (event.getLevel() instanceof ServerLevel level) {
+                ModdedEngineBootstrap.levelLoaded(level);
+            }
+        });
         NeoForge.EVENT_BUS.addListener((RegisterCommandsEvent event) -> IrisModdedCommands.register(event.getDispatcher()));
-        NeoForge.EVENT_BUS.addListener((LivingDropsEvent event) -> ModdedDeathLoot.handle(event.getEntity()));
+        NeoForge.EVENT_BUS.addListener((BreakBlockEvent event) -> {
+            if (event.getLevel() instanceof ServerLevel level && !event.isCanceled()) {
+                ModdedBlockBreakHandler.prepare(level, event.getPos(), event.getState());
+            }
+        });
+        NeoForge.EVENT_BUS.addListener((BlockDropsEvent event) -> {
+            if (!(event.getBreaker() instanceof Player)) {
+                return;
+            }
+            ServerLevel level = event.getLevel();
+            ModdedBlockBreakHandler.Result result = ModdedBlockBreakHandler.complete(level, event.getPos(), event.getState());
+            if (result.replaceVanillaDrops()) {
+                event.getDrops().clear();
+            }
+            for (ItemStack stack : result.drops()) {
+                ItemEntity item = ModdedBlockBreakHandler.createDrop(level, event.getPos(), stack);
+                if (item != null) {
+                    event.getDrops().add(item);
+                }
+            }
+        });
         NeoForge.EVENT_BUS.addListener((PlayerInteractEvent.LeftClickBlock event) -> {
             if (ModdedWandService.attackBlock(event.getEntity(), event.getLevel(), event.getHand(), event.getPos())) {
                 event.setCanceled(true);

@@ -19,13 +19,14 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.core.IrisSettings;
-import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisEffect;
 import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.engine.platform.EngineBukkitOps;
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
-import art.arcane.volmlib.util.math.M;
 import art.arcane.iris.util.common.scheduling.J;
+import art.arcane.volmlib.util.math.M;
 import lombok.Data;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
@@ -42,38 +43,40 @@ public class EnginePlayer {
     public EnginePlayer(Engine engine, Player player) {
         this.engine = engine;
         this.player = player;
-        lastLocation = player.getLocation().clone();
+        lastLocation = null;
         lastSample = -1;
-        sample();
     }
 
     public void tick() {
-        if (sample() || !IrisSettings.get().getWorld().isEffectSystem())
+        J.runEntity(player, this::tickOnEntity);
+    }
+
+    private void tickOnEntity() {
+        if (sample() || !IrisSettings.get().getWorld().isEffectSystem()) {
             return;
+        }
 
-        J.a(() -> {
-            if (region != null) {
-                for (IrisEffect j : region.getEffects()) {
-                    try {
-                        j.apply(player, getEngine());
-                    } catch (Throwable e) {
-                        IrisLogging.reportError(e);
+        if (region != null) {
+            for (IrisEffect effect : region.getEffects()) {
+                try {
+                    effect.apply(player, getEngine());
+                } catch (Throwable e) {
+                    IrisLogging.reportError(e);
 
-                    }
                 }
             }
+        }
 
-            if (biome != null) {
-                for (IrisEffect j : biome.getEffects()) {
-                    try {
-                        j.apply(player, getEngine());
-                    } catch (Throwable e) {
-                        IrisLogging.reportError(e);
+        if (biome != null) {
+            for (IrisEffect effect : biome.getEffects()) {
+                try {
+                    effect.apply(player, getEngine());
+                } catch (Throwable e) {
+                    IrisLogging.reportError(e);
 
-                    }
                 }
             }
-        });
+        }
     }
 
     public long ticksSinceLastSample() {
@@ -82,10 +85,13 @@ public class EnginePlayer {
 
     public boolean sample() {
         Location current = player.getLocation().clone();
-        if (current.getWorld() != engine.getWorld().realWorld())
+        if (current.getWorld() != BukkitWorldBinding.world(engine.getWorld())) {
             return true;
+        }
         try {
-            if (ticksSinceLastSample() > 55 && current.distanceSquared(lastLocation) > 9 * 9) {
+            boolean sampled = lastLocation != null;
+            double distanceSquared = sampled ? current.distanceSquared(lastLocation) : 0D;
+            if (needsSample(sampled, ticksSinceLastSample(), distanceSquared)) {
                 lastLocation = current;
                 lastSample = M.ms();
                 biome = EngineBukkitOps.getBiome(engine, current);
@@ -97,5 +103,9 @@ public class EnginePlayer {
 
         }
         return true;
+    }
+
+    static boolean needsSample(boolean sampled, long elapsedMillis, double distanceSquared) {
+        return !sampled || elapsedMillis > 55L && distanceSquared > 81D;
     }
 }

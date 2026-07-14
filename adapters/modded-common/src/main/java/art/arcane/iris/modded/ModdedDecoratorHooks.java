@@ -91,7 +91,7 @@ public final class ModdedDecoratorHooks implements DecoratorPlatformHooks.FaceFi
             }
         }
 
-        return ModdedBlockState.of(cloned, fabric.parsedProperties());
+        return fabric.withHandle(cloned, fabric.parsedProperties());
     }
 
     @Override

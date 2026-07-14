@@ -34,6 +34,14 @@ public interface PlatformBlockState {
 
     boolean isCustom();
 
+    default String deferredPlacementKey() {
+        return null;
+    }
+
+    default PlatformBlockState placementBaseState() {
+        return this;
+    }
+
     boolean isFluid();
 
     boolean isWater();
@@ -45,6 +53,8 @@ public interface PlatformBlockState {
     boolean isUpdatable();
 
     boolean isFoliage();
+
+    boolean isTreeBlock();
 
     boolean isFoliagePlantable();
 

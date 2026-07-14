@@ -27,6 +27,7 @@ import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -51,6 +52,9 @@ public final class PackValidator {
     private static final String CACHE_FOLDER = "cache";
     private static final String OBJECTS_FOLDER = "objects";
     private static final String DIMENSIONS_FOLDER = "dimensions";
+    private static final String STRUCTURES_FOLDER = "structures";
+    private static final String JIGSAW_POOLS_FOLDER = "jigsaw-pools";
+    private static final String JIGSAW_PIECES_FOLDER = "jigsaw-pieces";
     private static final List<String> STRUCTURE_HOST_FOLDERS = List.of(DIMENSIONS_FOLDER, "regions", "biomes");
     private static final List<String> UNSUPPORTED_STRUCTURE_TRANSFORM_FIELDS = List.of("rotation", "translate", "scale");
     private static final Pattern RESOURCE_KEY_PATTERN = Pattern.compile("[a-z0-9_.-]+:[a-z0-9/._-]+");
@@ -83,6 +87,7 @@ public final class PackValidator {
 
         validateDimensions(packFolder, dimensionFiles, blockingErrors, warnings);
         blockingErrors.addAll(validateUnsupportedStructureTransforms(packFolder));
+        blockingErrors.addAll(validateStructureGraph(packFolder));
         blockingErrors.addAll(validateSpawnerEntityReferences(
                 new File(packFolder, "spawners"), new File(packFolder, "entities")));
         blockingErrors.addAll(validateCustomBiomeSpawns(
@@ -136,6 +141,206 @@ public final class PackValidator {
             }
         }
         return blockingErrors;
+    }
+
+    static List<String> validateStructureGraph(File packFolder) {
+        List<String> blockingErrors = new ArrayList<>();
+        if (packFolder == null || !packFolder.isDirectory()) {
+            return blockingErrors;
+        }
+
+        File structuresFolder = new File(packFolder, STRUCTURES_FOLDER);
+        File poolsFolder = new File(packFolder, JIGSAW_POOLS_FOLDER);
+        File piecesFolder = new File(packFolder, JIGSAW_PIECES_FOLDER);
+        File objectsFolder = new File(packFolder, OBJECTS_FOLDER);
+        Set<String> structureKeys = deriveRegistrantKeysExact(structuresFolder);
+        Set<String> poolKeys = deriveRegistrantKeysExact(poolsFolder);
+        Set<String> pieceKeys = deriveRegistrantKeysExact(piecesFolder);
+        Set<String> objectKeys = deriveObjectKeysExact(objectsFolder);
+
+        validateStructurePlacements(packFolder, structureKeys, blockingErrors);
+        validateStructureStartPools(structuresFolder, poolKeys, blockingErrors);
+        validateJigsawPools(poolsFolder, poolKeys, pieceKeys, blockingErrors);
+        validateJigsawPieces(piecesFolder, poolKeys, objectKeys, blockingErrors);
+        return blockingErrors;
+    }
+
+    private static void validateStructurePlacements(File packFolder,
+                                                    Set<String> structureKeys,
+                                                    List<String> blockingErrors) {
+        for (String folderName : STRUCTURE_HOST_FOLDERS) {
+            File resourceFolder = new File(packFolder, folderName);
+            if (!resourceFolder.isDirectory()) {
+                continue;
+            }
+            List<File> resourceFiles = listJsonRecursive(resourceFolder);
+            resourceFiles.sort(Comparator.comparing(File::getPath));
+            String resourceType = structureHostType(folderName);
+            for (File resourceFile : resourceFiles) {
+                JSONObject resource = readJson(resourceFile);
+                if (resource == null) {
+                    continue;
+                }
+                JSONArray placements = resource.optJSONArray("structures");
+                if (placements == null) {
+                    continue;
+                }
+                String resourceKey = deriveKey(resourceFolder, resourceFile);
+                for (int placementIndex = 0; placementIndex < placements.length(); placementIndex++) {
+                    JSONObject placement = placements.optJSONObject(placementIndex);
+                    if (placement == null) {
+                        continue;
+                    }
+                    JSONArray references = placement.optJSONArray("structures");
+                    if (references == null) {
+                        continue;
+                    }
+                    for (int referenceIndex = 0; referenceIndex < references.length(); referenceIndex++) {
+                        Object rawReference = references.opt(referenceIndex);
+                        if (!(rawReference instanceof String structureKey) || structureKey.isBlank()) {
+                            continue;
+                        }
+                        if (!structureKeys.contains(structureKey)) {
+                            blockingErrors.add(resourceType + " '" + resourceKey + "' structures["
+                                    + placementIndex + "].structures[" + referenceIndex
+                                    + "] references missing structure '" + structureKey + "'.");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static void validateStructureStartPools(File structuresFolder,
+                                                     Set<String> poolKeys,
+                                                     List<String> blockingErrors) {
+        if (!structuresFolder.isDirectory()) {
+            return;
+        }
+        List<File> structureFiles = listJsonRecursive(structuresFolder);
+        structureFiles.sort(Comparator.comparing(File::getPath));
+        for (File structureFile : structureFiles) {
+            String structureKey = deriveKey(structuresFolder, structureFile);
+            JSONObject structure = readGraphJson(structureFile, "Structure", structureKey, blockingErrors);
+            if (structure == null || isLegacyStructureIndex(structureKey, structure)) {
+                continue;
+            }
+            String startPool = structure.optString("startPool", "").trim();
+            if (startPool.isEmpty()) {
+                blockingErrors.add("Structure '" + structureKey + "' does not declare a startPool.");
+            } else if (!poolKeys.contains(startPool)) {
+                blockingErrors.add("Structure '" + structureKey + "' references missing start pool '"
+                        + startPool + "'.");
+            }
+        }
+    }
+
+    private static void validateJigsawPools(File poolsFolder,
+                                            Set<String> poolKeys,
+                                            Set<String> pieceKeys,
+                                            List<String> blockingErrors) {
+        if (!poolsFolder.isDirectory()) {
+            return;
+        }
+        List<File> poolFiles = listJsonRecursive(poolsFolder);
+        poolFiles.sort(Comparator.comparing(File::getPath));
+        for (File poolFile : poolFiles) {
+            String poolKey = deriveKey(poolsFolder, poolFile);
+            JSONObject pool = readGraphJson(poolFile, "Jigsaw pool", poolKey, blockingErrors);
+            if (pool == null) {
+                continue;
+            }
+            JSONArray entries = pool.optJSONArray("pieces");
+            if (entries != null) {
+                for (int entryIndex = 0; entryIndex < entries.length(); entryIndex++) {
+                    JSONObject entry = entries.optJSONObject(entryIndex);
+                    if (entry == null) {
+                        continue;
+                    }
+                    String pieceKey = entry.optString("piece", "").trim();
+                    if (!pieceKey.isEmpty() && !pieceKeys.contains(pieceKey)) {
+                        blockingErrors.add("Jigsaw pool '" + poolKey + "' pieces[" + entryIndex
+                                + "] references missing piece '" + pieceKey + "'.");
+                    }
+                }
+            }
+            String fallback = pool.optString("fallback", "").trim();
+            if (!fallback.isEmpty() && !poolKeys.contains(fallback)) {
+                blockingErrors.add("Jigsaw pool '" + poolKey + "' references missing fallback pool '"
+                        + fallback + "'.");
+            }
+        }
+    }
+
+    private static void validateJigsawPieces(File piecesFolder,
+                                             Set<String> poolKeys,
+                                             Set<String> objectKeys,
+                                             List<String> blockingErrors) {
+        if (!piecesFolder.isDirectory()) {
+            return;
+        }
+        List<File> pieceFiles = listJsonRecursive(piecesFolder);
+        pieceFiles.sort(Comparator.comparing(File::getPath));
+        for (File pieceFile : pieceFiles) {
+            String pieceKey = deriveKey(piecesFolder, pieceFile);
+            JSONObject piece = readGraphJson(pieceFile, "Jigsaw piece", pieceKey, blockingErrors);
+            if (piece == null) {
+                continue;
+            }
+            String objectKey = piece.optString("object", "").trim();
+            if (objectKey.isEmpty()) {
+                blockingErrors.add("Jigsaw piece '" + pieceKey + "' does not declare an object.");
+            } else if (!objectKeys.contains(objectKey)) {
+                blockingErrors.add("Jigsaw piece '" + pieceKey + "' references missing object '"
+                        + objectKey + "'.");
+            }
+            JSONArray connectors = piece.optJSONArray("connectors");
+            if (connectors == null) {
+                continue;
+            }
+            for (int connectorIndex = 0; connectorIndex < connectors.length(); connectorIndex++) {
+                JSONObject connector = connectors.optJSONObject(connectorIndex);
+                if (connector == null) {
+                    continue;
+                }
+                String poolKey = connector.optString("pool", "").trim();
+                if (!poolKey.isEmpty() && !poolKeys.contains(poolKey)) {
+                    blockingErrors.add("Jigsaw piece '" + pieceKey + "' connectors[" + connectorIndex
+                            + "] references missing pool '" + poolKey + "'.");
+                }
+            }
+        }
+    }
+
+    private static JSONObject readGraphJson(File file,
+                                            String resourceType,
+                                            String resourceKey,
+                                            List<String> blockingErrors) {
+        try {
+            return new JSONObject(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeException e) {
+            String reason = e.getMessage();
+            if (reason == null || reason.isBlank()) {
+                reason = e.getClass().getSimpleName();
+            }
+            blockingErrors.add(resourceType + " '" + resourceKey + "' has invalid JSON: " + reason);
+            return null;
+        }
+    }
+
+    private static JSONObject readJson(File file) {
+        try {
+            return new JSONObject(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static boolean isLegacyStructureIndex(String structureKey, JSONObject structure) {
+        return "structure-index".equals(structureKey)
+                && structure.has("counts")
+                && structure.has("structureSets")
+                && structure.has("iris");
     }
 
     private static String structureHostType(String folderName) {
@@ -542,6 +747,38 @@ public final class PackValidator {
             if (key != null && !key.isBlank()) {
                 keys.add(key.toLowerCase(Locale.ROOT));
             }
+        }
+        return keys;
+    }
+
+    private static Set<String> deriveRegistrantKeysExact(File folder) {
+        Set<String> keys = new HashSet<>();
+        if (!folder.isDirectory()) {
+            return keys;
+        }
+        for (File file : listJsonRecursive(folder)) {
+            String key = deriveKey(folder, file);
+            if (key != null && !key.isBlank()) {
+                keys.add(key);
+            }
+        }
+        return keys;
+    }
+
+    private static Set<String> deriveObjectKeysExact(File folder) {
+        Set<String> keys = new HashSet<>();
+        if (!folder.isDirectory()) {
+            return keys;
+        }
+        try (Stream<Path> stream = Files.walk(folder.toPath())) {
+            stream.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".iob"))
+                    .forEach(path -> {
+                        Path relative = folder.toPath().relativize(path);
+                        String key = relative.toString().replace(File.separatorChar, '/');
+                        keys.add(key.substring(0, key.length() - ".iob".length()));
+                    });
+        } catch (IOException ignored) {
         }
         return keys;
     }

@@ -21,6 +21,10 @@ package art.arcane.iris.probe;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.EngineAssignedComponent;
+import art.arcane.iris.engine.framework.EngineEffects;
+import art.arcane.iris.engine.framework.EngineEffectsProvider;
+import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.EngineWorldManager;
 import art.arcane.iris.engine.framework.EngineWorldManagerProvider;
@@ -33,10 +37,6 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.hunk.Hunk;
-import org.bukkit.Chunk;
-import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.block.BlockPlaceEvent;
-import org.bukkit.event.player.PlayerTeleportEvent;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -102,26 +102,23 @@ public final class GenerationProbe {
         @Override
         public void onSave() {
         }
+    }
 
-        @Override
-        public void onBlockBreak(BlockBreakEvent e) {
+    private static final class InertEffects extends EngineAssignedComponent implements EngineEffects {
+        private InertEffects(Engine engine) {
+            super(engine, "FX");
         }
 
         @Override
-        public void onBlockPlace(BlockPlaceEvent e) {
+        public void updatePlayerMap() {
         }
 
         @Override
-        public void onChunkLoad(Chunk e, boolean generated) {
+        public void tickRandomPlayer() {
         }
+    }
 
-        @Override
-        public void onChunkUnload(Chunk e) {
-        }
-
-        @Override
-        public void teleportAsync(PlayerTeleportEvent e) {
-        }
+    private static final class InertPlatformHooks implements EnginePlatformHooks {
     }
 
     public static void main(String[] args) throws Exception {
@@ -130,6 +127,8 @@ public final class GenerationProbe {
         StubPlatform.errorSink(REPORTED::add);
         IrisServices.register(PreservationRegistry.class, new InertPreservation());
         IrisServices.register(EngineWorldManagerProvider.class, (EngineWorldManagerProvider) (Engine engine) -> new InertWorldManager());
+        IrisServices.register(EngineEffectsProvider.class, (EngineEffectsProvider) InertEffects::new);
+        IrisServices.register(EnginePlatformHooks.class, new InertPlatformHooks());
 
         File packSource = new File(args[0]);
         int radius = args.length > 1 ? Integer.parseInt(args[1]) : 2;

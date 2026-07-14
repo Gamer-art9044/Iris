@@ -100,6 +100,7 @@ public class IrisObject extends IrisRegistrant {
     protected transient volatile boolean smartBored = false;
     @Setter
     protected transient AtomicCache<AxisAlignedBB> aabb = new AtomicCache<>();
+    private transient final AtomicCache<Boolean> treeBlockPresence = new AtomicCache<>();
     @Getter
     private VectorMap<PlatformBlockState> blocks;
     @Getter
@@ -325,6 +326,7 @@ public class IrisObject extends IrisRegistrant {
     }
 
     public void readLegacy(InputStream in) throws IOException {
+        treeBlockPresence.reset();
         DataInputStream din = new DataInputStream(in);
         this.w = din.readInt();
         this.h = din.readInt();
@@ -356,6 +358,7 @@ public class IrisObject extends IrisRegistrant {
     }
 
     public void read(InputStream in) throws Throwable {
+        treeBlockPresence.reset();
         DataInputStream din = new DataInputStream(in);
         this.w = din.readInt();
         this.h = din.readInt();
@@ -621,6 +624,7 @@ public class IrisObject extends IrisRegistrant {
     }
 
     public void setUnsigned(int x, int y, int z, PlatformBlockState block) {
+        treeBlockPresence.reset();
         IrisBlockVector v = getSigned(x, y, z);
 
         if (block == null) {
@@ -642,6 +646,7 @@ public class IrisObject extends IrisRegistrant {
     }
 
     public void setUnsigned(int x, int y, int z, Block block, boolean legacy) {
+        treeBlockPresence.reset();
         IrisBlockVector v = getSigned(x, y, z);
 
         if (block == null) {
@@ -923,11 +928,13 @@ public class IrisObject extends IrisRegistrant {
                 && !config.isFromBottom()
                 && config.getMode() != ObjectPlaceMode.FLOATING
                 && !rawStructurePiece
-                && !stilting
                 && !vacuuming
+                && !config.isUnderwater()
+                && !config.isOnwater()
                 && config.getCarvingSupport().supportsSurface()
-                && y > 0
-                && lacksFootprintSupport(placer, config, x, y, z, spinx, spiny, spinz)) {
+                && hasTreeBlocks()
+                && IrisSurfaceOpening.isOpen(oplacer, getLoader(), x, z, config.getTranslate(),
+                        config.getRotation(), spinx, spiny, spinz)) {
             return -1;
         }
 
@@ -1493,38 +1500,27 @@ public class IrisObject extends IrisRegistrant {
     }
 
     private boolean shouldBailForCarvingAnchor(IObjectPlacer placer, IrisObjectPlacement placement, int x, int y, int z) {
-        boolean carved = isCarvedAnchor(placer, x, y, z);
         CarvingMode carvingMode = placement.getCarvingSupport();
         return switch (carvingMode) {
-            case SURFACE_ONLY -> carved;
-            case CARVING_ONLY -> !carved;
+            case SURFACE_ONLY -> placer.isCarved(x, y, z);
+            case CARVING_ONLY -> !isCarvedCaveAnchor(placer, x, y, z);
             case ANYWHERE -> false;
         };
     }
 
-    private boolean lacksFootprintSupport(IObjectPlacer placer, IrisObjectPlacement config, int x, int y, int z, int spinx, int spiny, int spinz) {
-        IrisBlockVector rot = config.getRotation().rotate(new IrisBlockVector(getW(), getH(), getD()), spinx, spiny, spinz).clone();
-        int halfW = Math.max(0, Math.abs(rot.getBlockX()) / 2);
-        int halfD = Math.max(0, Math.abs(rot.getBlockZ()) / 2);
-        if (halfW == 0 && halfD == 0) {
-            return false;
-        }
-        int tx = config.getTranslate().getX();
-        int tz = config.getTranslate().getZ();
-        int cx = x + tx;
-        int cz = z + tz;
-        int[] sampleX = {cx, cx - halfW, cx + halfW, cx - halfW, cx + halfW};
-        int[] sampleZ = {cz, cz - halfD, cz + halfD, cz + halfD, cz - halfD};
-        for (int i = 0; i < sampleX.length; i++) {
-            int sh = placer.getHighest(sampleX[i], sampleZ[i], getLoader(), true);
-            if (isCarvedAnchor(placer, sampleX[i], sh, sampleZ[i])) {
-                return true;
+    boolean hasTreeBlocks() {
+        Boolean present = treeBlockPresence.aquire(() -> {
+            readLock.lock();
+            try {
+                return IrisSurfaceOpening.containsTreeBlocks(blocks.values());
+            } finally {
+                readLock.unlock();
             }
-        }
-        return false;
+        });
+        return Boolean.TRUE.equals(present);
     }
 
-    private boolean isCarvedAnchor(IObjectPlacer placer, int x, int y, int z) {
+    private boolean isCarvedCaveAnchor(IObjectPlacer placer, int x, int y, int z) {
         return placer.isCarved(x, y, z)
                 || placer.isCarved(x, y - 1, z)
                 || placer.isCarved(x, y - 2, z)

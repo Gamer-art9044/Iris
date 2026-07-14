@@ -32,7 +32,7 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Desc("A per-structure transform applied to vanilla & datapack structures that still generate natively (those NOT suppressed by an Iris 'structures' placement). Every block the structure writes is translated by (xShift, yShift, zShift). Use it to relocate a structure you do not control through the Iris placement system - e.g. push 'minecraft:stronghold' down 64 blocks when your terrain sits lower than vanilla's. Listed under the dimension's importedStructures 'adjustments'.")
+@Desc("A per-structure adjustment applied to vanilla, mod, and datapack structures that still generate natively (those NOT suppressed by an Iris 'structures' placement). Vertical shifts move the structure start, pieces, bounds, and jigsaw metadata together before references and placement. Surface structures clear intersecting trees automatically; optional postprocessing can force vegetation clearing or build palette-driven foundation columns.")
 @Data
 public class IrisVanillaStructureAdjustment {
     @ArrayType(type = String.class, min = 1)
@@ -42,28 +42,18 @@ public class IrisVanillaStructureAdjustment {
 
     @MinNumber(-512)
     @MaxNumber(512)
-    @Desc("Vertical block offset. Negative pushes the structure down, positive lifts it. Applied to every block the structure places.")
+    @Desc("Vertical block offset. Negative pushes the structure down, positive lifts it. The resolved shift is clamped so the structure remains inside the world's vertical build bounds.")
     private int yShift = 0;
 
-    @MinNumber(-512)
-    @MaxNumber(512)
-    @Desc("East/west block offset (positive = +X). Keep small; large horizontal shifts move the structure far from the position vanilla chose for it.")
-    private int xShift = 0;
+    @Desc("When true, force logs and leaves out of the structure footprint even when the structure does not reach the detected tree base. Normal surface-intersecting structures are protected automatically.")
+    private boolean clearVegetation = false;
 
-    @MinNumber(-512)
-    @MaxNumber(512)
-    @Desc("North/south block offset (positive = +Z). Keep small; large horizontal shifts move the structure far from the position vanilla chose for it.")
-    private int zShift = 0;
+    @Desc("Optional foundation columns placed beneath the native structure piece bases after placement.")
+    private IrisVanillaStructureStiltSettings stilt = null;
 
     public boolean matches(String key) {
-        if (key == null) {
-            return false;
-        }
         for (String entry : match) {
-            if (entry == null || entry.isEmpty()) {
-                continue;
-            }
-            if (key.equals(entry) || key.startsWith(entry)) {
+            if (IrisImportedStructureControl.matchesKey(entry, key)) {
                 return true;
             }
         }

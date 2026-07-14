@@ -18,6 +18,30 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 public class PaperPluginMetadataTest {
+    private static final List<String> OPTIONAL_PLUGIN_IDS = List.of(
+            "PlaceholderAPI",
+            "CraftEngine",
+            "Nexo",
+            "ItemsAdder",
+            "SCore",
+            "ExecutableItems",
+            "MythicLib",
+            "MMOItems",
+            "eco",
+            "EcoItems",
+            "MythicMobs",
+            "MythicCrucible",
+            "KGenerators",
+            "Multiverse-Core",
+            "WorldEdit"
+    );
+    private static final List<String> JOINED_PLUGIN_IDS = OPTIONAL_PLUGIN_IDS.stream()
+            .filter(pluginId -> !"ExecutableItems".equals(pluginId) && !"Multiverse-Core".equals(pluginId))
+            .toList();
+    private static final List<String> BUKKIT_SOFT_DEPEND_IDS = OPTIONAL_PLUGIN_IDS.stream()
+            .filter(pluginId -> !"Multiverse-Core".equals(pluginId))
+            .toList();
+
     @Test
     public void paperMetadataDeclaresBootstrapAndFoliaSupport() throws Exception {
         String metadata;
@@ -30,6 +54,11 @@ public class PaperPluginMetadataTest {
         assertTrue(metadata.contains("folia-supported: true"));
         assertTrue(metadata.contains("load: STARTUP"));
         assertFalse(metadata.contains("commands:"));
+        for (String pluginId : JOINED_PLUGIN_IDS) {
+            assertTrue(metadata.contains(optionalDependencyBlock(pluginId, "BEFORE", true)));
+        }
+        assertTrue(metadata.contains(optionalDependencyBlock("ExecutableItems", "BEFORE", false)));
+        assertTrue(metadata.contains(optionalDependencyBlock("Multiverse-Core", "AFTER", true)));
     }
 
     @Test
@@ -45,6 +74,8 @@ public class PaperPluginMetadataTest {
         Map<String, Map<String, Object>> commands = metadata.getCommands();
         assertTrue(commands.containsKey("iris"));
         assertEquals(List.of("ir", "irs"), commands.get("iris").get("aliases"));
+        assertEquals(BUKKIT_SOFT_DEPEND_IDS, metadata.getSoftDepend());
+        assertEquals(List.of("Multiverse-Core"), metadata.getLoadBeforePlugins());
     }
 
     @Test
@@ -55,5 +86,12 @@ public class PaperPluginMetadataTest {
         Path bukkitMetadata = Path.of(paperMetadata.toURI()).resolveSibling("plugin.yml");
         assertTrue(Files.isRegularFile(bukkitMetadata));
         assertFalse(Files.readString(bukkitMetadata, StandardCharsets.UTF_8).contains("${"));
+    }
+
+    private static String optionalDependencyBlock(String pluginId, String loadOrder, boolean joinClasspath) {
+        return "    " + pluginId + ":\n"
+                + "      load: " + loadOrder + "\n"
+                + "      required: false\n"
+                + "      join-classpath: " + joinClasspath + "\n";
     }
 }

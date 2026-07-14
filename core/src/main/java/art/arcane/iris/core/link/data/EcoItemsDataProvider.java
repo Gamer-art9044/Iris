@@ -4,10 +4,8 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.link.ExternalDataProvider;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.volmlib.util.collection.KMap;
-import art.arcane.iris.util.common.reflect.WrappedField;
-import com.willfp.ecoitems.items.EcoItem;
-import com.willfp.ecoitems.items.EcoItems;
-import org.bukkit.NamespacedKey;
+import com.willfp.eco.core.items.CustomItem;
+import com.willfp.eco.core.items.Items;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 
@@ -16,9 +14,6 @@ import java.util.List;
 import java.util.MissingResourceException;
 
 public class EcoItemsDataProvider extends ExternalDataProvider {
-    private WrappedField<EcoItem, ItemStack> itemStack;
-    private WrappedField<EcoItem, NamespacedKey> id;
-
     public EcoItemsDataProvider() {
         super("EcoItems");
     }
@@ -26,30 +21,26 @@ public class EcoItemsDataProvider extends ExternalDataProvider {
     @Override
     public void init() {
         IrisLogging.info("Setting up EcoItems Link...");
-        itemStack = new WrappedField<>(EcoItem.class, "_itemStack");
-        if (this.itemStack.hasFailed()) {
-            IrisLogging.error("Failed to set up EcoItems Link: Unable to fetch ItemStack field!");
-        }
-        id = new WrappedField<>(EcoItem.class, "id");
-        if (this.id.hasFailed()) {
-            IrisLogging.error("Failed to set up EcoItems Link: Unable to fetch id field!");
-        }
     }
 
     @NotNull
     @Override
     public ItemStack getItemStack(@NotNull Identifier itemId, @NotNull KMap<String, Object> customNbt) throws MissingResourceException {
-        EcoItem item = EcoItems.INSTANCE.getByID(itemId.key());
-        if (item == null) throw new MissingResourceException("Failed to find Item!", itemId.namespace(), itemId.key());
-        return itemStack.get(item).clone();
+        ItemStack item = Items.lookup(itemId.namespace() + ":" + itemId.key()).getItem();
+        if (item.getType().isAir()) {
+            throw new MissingResourceException("Failed to find Item!", itemId.namespace(), itemId.key());
+        }
+        return item;
     }
 
     @Override
     public @NotNull Collection<@NotNull Identifier> getTypes(@NotNull DataType dataType) {
         if (dataType != DataType.ITEM) return List.of();
-        return EcoItems.INSTANCE.values()
+        return Items.getCustomItems()
                 .stream()
-                .map(x -> Identifier.fromNamespacedKey(id.get(x)))
+                .map(CustomItem::getKey)
+                .filter(key -> key.getNamespace().equalsIgnoreCase("ecoitems"))
+                .map(key -> new Identifier(key.getNamespace(), key.getKey()))
                 .filter(dataType.asPredicate(this))
                 .toList();
     }

@@ -10,6 +10,8 @@ import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.common.data.IrisCustomData;
 import me.kryniowesegryderiusz.kgenerators.Main;
 import me.kryniowesegryderiusz.kgenerators.api.KGeneratorsAPI;
+import me.kryniowesegryderiusz.kgenerators.api.interfaces.IGeneratorLocation;
+import me.kryniowesegryderiusz.kgenerators.generators.generator.objects.Generator;
 import me.kryniowesegryderiusz.kgenerators.generators.locations.objects.GeneratorLocation;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
@@ -39,23 +41,23 @@ public class KGeneratorsDataProvider extends ExternalDataProvider {
 
     @Override
     public @NotNull ItemStack getItemStack(@NotNull Identifier itemId, @NotNull KMap<String, Object> customNbt) throws MissingResourceException {
-        var gen = Main.getGenerators().get(itemId.key());
-        if (gen == null) throw new MissingResourceException("Failed to find ItemData!", itemId.namespace(), itemId.key());
-        return gen.getGeneratorItem();
+        Generator generator = Main.getGenerators().get(itemId.key());
+        if (generator == null) throw new MissingResourceException("Failed to find ItemData!", itemId.namespace(), itemId.key());
+        return generator.getGeneratorItem();
     }
 
     @Override
     public void processUpdate(@NotNull Engine engine, @NotNull Block block, @NotNull Identifier blockId) {
         if (block.getType() != Material.STRUCTURE_VOID) return;
-        var existing = KGeneratorsAPI.getLoadedGeneratorLocation(block.getLocation());
+        IGeneratorLocation existing = KGeneratorsAPI.getLoadedGeneratorLocation(block.getLocation());
         if (existing != null) return;
         block.setBlockData(BukkitBlockResolution.getAir(), false);
-        var gen = Main.getGenerators().get(blockId.key());
-        if (gen == null) return;
-        var loc = new GeneratorLocation(-1, gen, block.getLocation(), Main.getPlacedGenerators().getChunkInfo(block.getChunk()), null, null);
-        Main.getDatabases().getDb().saveGenerator(loc);
-        Main.getPlacedGenerators().addLoaded(loc);
-        Main.getSchedules().schedule(loc, true);
+        Generator generator = Main.getGenerators().get(blockId.key());
+        if (generator == null) return;
+        GeneratorLocation location = new GeneratorLocation(-1, generator, block.getLocation(), Main.getPlacedGenerators().getChunkInfo(block.getChunk()), null, null);
+        Main.getDatabases().getDb().saveGenerator(location);
+        Main.getPlacedGenerators().addLoaded(location);
+        Main.getSchedules().schedule(location, true);
     }
 
     @Override

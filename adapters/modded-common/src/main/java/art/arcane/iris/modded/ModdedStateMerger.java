@@ -30,23 +30,24 @@ public final class ModdedStateMerger implements BlockDataMergeSupport.StateMerge
     public PlatformBlockState merge(PlatformBlockState base, PlatformBlockState update) {
         ModdedBlockState fabricBase = (ModdedBlockState) base;
         ModdedBlockState fabricUpdate = (ModdedBlockState) update;
+        ModdedBlockState metadataSource = fabricUpdate.isCustom() ? fabricUpdate : fabricBase;
 
         try {
-            return ModdedBlockState.of(mergeStates(fabricBase.handle(), fabricUpdate.handle(), fabricUpdate.parsedProperties()), null);
+            return metadataSource.withHandle(mergeStates(fabricBase.handle(), fabricUpdate.handle(), fabricUpdate.parsedProperties()), null);
         } catch (IllegalArgumentException e) {
             ModdedBlockResolution.Parsed normalizedBase = ModdedBlockResolution.resolveGet(ModdedBlockState.serialize(fabricBase.handle()));
             ModdedBlockResolution.Parsed normalizedUpdate = ModdedBlockResolution.resolveGet(ModdedBlockState.serialize(fabricUpdate.handle()));
 
             if (normalizedBase != null && normalizedUpdate != null) {
                 try {
-                    return ModdedBlockState.of(mergeStates(normalizedBase.state(), normalizedUpdate.state(), normalizedUpdate.properties()), null);
+                    return metadataSource.withHandle(mergeStates(normalizedBase.state(), normalizedUpdate.state(), normalizedUpdate.properties()), null);
                 } catch (IllegalArgumentException ignored) {
-                    return ModdedBlockState.of(normalizedUpdate.state(), normalizedUpdate.properties());
+                    return metadataSource.withHandle(normalizedUpdate.state(), normalizedUpdate.properties());
                 }
             }
 
             if (normalizedUpdate != null) {
-                return ModdedBlockState.of(normalizedUpdate.state(), normalizedUpdate.properties());
+                return metadataSource.withHandle(normalizedUpdate.state(), normalizedUpdate.properties());
             }
 
             return update;

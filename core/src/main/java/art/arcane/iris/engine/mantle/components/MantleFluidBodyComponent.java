@@ -70,7 +70,7 @@ public class MantleFluidBodyComponent extends IrisMantleComponent {
             max = Math.max(max, i.getFluidBodies().getMaxRange(getData()));
         }
 
-        for (IrisBiome i : getDimension().getAllBiomes(this::getData)) {
+        for (IrisBiome i : getDimension().getReachableBiomes(this::getData)) {
             max = Math.max(max, i.getFluidBodies().getMaxRange(getData()));
         }
 

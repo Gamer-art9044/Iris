@@ -27,6 +27,7 @@ import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.Locator;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
@@ -40,6 +41,7 @@ import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.Position2;
 import art.arcane.volmlib.util.matter.MatterMarker;
+import com.mojang.datafixers.util.Pair;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.LongArgumentType;
@@ -58,10 +60,14 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.DimensionArgument;
 import net.minecraft.commands.arguments.EntityArgument;
-import net.minecraft.network.chat.Component;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.core.HolderSet;
+import net.minecraft.core.Registry;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -71,6 +77,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import org.slf4j.Logger;
@@ -79,10 +86,13 @@ import org.slf4j.LoggerFactory;
 import java.awt.Desktop;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Predicate;
@@ -91,6 +101,7 @@ public final class IrisModdedCommands {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
     private static final long LOCATE_TIMEOUT_MS = 120000L;
+    private static final int NATIVE_STRUCTURE_LOCATE_RADIUS = 100;
 
     private static final SuggestionProvider<CommandSourceStack> BIOME_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestBiomeKeys(context, builder);
     private static final SuggestionProvider<CommandSourceStack> REGION_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestRegionKeys(context, builder);
@@ -869,36 +880,58 @@ public final class IrisModdedCommands {
             return 0;
         }
         String key = keyRaw.trim();
-        Set<String> placed = IrisStructureLocator.placedKeys(engine);
-        if (!IrisStructureLocator.isPlaced(engine, key)) {
-            fail(source, "Structure " + key + " is not placed by this pack. Placed keys (" + placed.size() + "): "
-                    + String.join(", ", placed.stream().limit(8).toList()) + (placed.size() > 8 ? ", ..." : ""));
+        if (key.isEmpty()) {
+            fail(source, "Name an Iris or native structure to locate.");
             return 0;
         }
         ServerPlayer player = source.getPlayer();
         if (player == null) {
-            fail(source, "This command can only be used by players. (structure key '" + key + "' resolved; "
-                    + placed.size() + " placed structure keys loaded)");
+            fail(source, "This command can only be used by players.");
             return 0;
         }
+        if (IrisStructureLocator.isPlaced(engine, key)) {
+            locateIrisStructure(source, level, engine, player, key);
+            return 1;
+        }
+        Optional<NativeStructureTarget> resolved = resolveNativeStructure(source, level, engine, key);
+        if (resolved.isEmpty()) {
+            fail(source, "Unknown structure '" + key + "'. Use tab completion to choose an Iris placement or a registered native/datapack structure.");
+            return 0;
+        }
+        NativeStructureTarget target = resolved.get();
+        if (target.availability() != NativeStructureAvailability.AVAILABLE) {
+            fail(source, nativeUnavailableMessage(target.key(), target.availability()));
+            return 0;
+        }
+        ok(source, "Searching for native structure " + target.key() + " within " + NATIVE_STRUCTURE_LOCATE_RADIUS + " chunks...");
+        runNativeStructureLocate(source, level, player, target);
+        return 1;
+    }
+
+    private static void locateIrisStructure(CommandSourceStack source, ServerLevel level, Engine engine,
+                                            ServerPlayer player, String key) {
         MinecraftServer server = source.getServer();
         int blockX = player.blockPosition().getX();
         int blockZ = player.blockPosition().getZ();
-        ok(source, "Searching for structure " + key + "...");
+        ok(source, "Searching for Iris-placed structure " + key + "...");
         Thread thread = new Thread(() -> {
             try {
-                int[] at = IrisStructureLocator.locate(engine, key, blockX, blockZ, 1024);
-                if (at == null) {
-                    server.execute(() -> fail(source, "Could not find structure " + key + " within 1024 chunks."));
+                IrisStructureLocator.LocateResult result =
+                        IrisStructureLocator.locate(engine, key, blockX, blockZ, 1024);
+                if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
+                    server.execute(() -> fail(source, "Unable to locate Iris-placed structure " + key
+                            + ": the density search safety limit was reached before the full 1024-chunk radius was searched."));
                     return;
                 }
-                int targetX = at[0] + 8;
-                int targetY = at[1] + 2;
-                int targetZ = at[2] + 8;
-                server.execute(() -> {
-                    player.teleportTo(level, targetX + 0.5D, targetY, targetZ + 0.5D, Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
-                    ok(source, "Teleported to structure " + key + " at " + targetX + " " + targetY + " " + targetZ);
-                });
+                if (!result.found()) {
+                    server.execute(() -> fail(source, "Could not find Iris-placed structure " + key + " within 1024 chunks."));
+                    return;
+                }
+                int targetX = result.originX();
+                int targetY = result.baseY() + 2;
+                int targetZ = result.originZ();
+                server.execute(() -> teleportToStructure(source, level, player, targetX, targetY, targetZ,
+                        "Iris-placed structure " + key));
             } catch (Throwable e) {
                 LOGGER.error("Iris structure locate failed for {}", key, e);
                 server.execute(() -> fail(source, "Search failed: " + e.getClass().getSimpleName()));
@@ -906,7 +939,194 @@ public final class IrisModdedCommands {
         }, "Iris Structure Locator");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private static void runNativeStructureLocate(CommandSourceStack source, ServerLevel level,
+                                                 ServerPlayer player, NativeStructureTarget target) {
+        MinecraftServer server = source.getServer();
+        Runnable locateTask = () -> locateNativeStructure(source, level, player, target);
+        if (Thread.currentThread() == server.getRunningThread()) {
+            locateTask.run();
+            return;
+        }
+        server.execute(locateTask);
+    }
+
+    private static void locateNativeStructure(CommandSourceStack source, ServerLevel level,
+                                              ServerPlayer player, NativeStructureTarget target) {
+        try {
+            ChunkGenerator generator = level.getChunkSource().getGenerator();
+            Pair<BlockPos, Holder<Structure>> found = generator.findNearestMapStructure(
+                    level,
+                    HolderSet.direct(target.holder()),
+                    player.blockPosition(),
+                    NATIVE_STRUCTURE_LOCATE_RADIUS,
+                    false);
+            if (found == null) {
+                fail(source, "Could not find native structure " + target.key() + " within "
+                        + NATIVE_STRUCTURE_LOCATE_RADIUS + " chunks.");
+                return;
+            }
+            BlockPos position = found.getFirst();
+            int targetX = position.getX();
+            int targetZ = position.getZ();
+            level.getChunk(targetX >> 4, targetZ >> 4);
+            int surfaceY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, targetX, targetZ) + 1;
+            int targetY = Math.max(level.getMinY() + 1, Math.min(level.getMaxY() - 1, surfaceY));
+            teleportToStructure(source, level, player, targetX, targetY, targetZ,
+                    "native structure " + target.key());
+        } catch (Throwable e) {
+            LOGGER.error("Native structure locate failed for {}", target.key(), e);
+            fail(source, "Search for native structure " + target.key() + " failed: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private static void teleportToStructure(CommandSourceStack source, ServerLevel level, ServerPlayer player,
+                                            int targetX, int targetY, int targetZ, String label) {
+        if (player.hasDisconnected() || player.isRemoved()) {
+            fail(source, "The player disconnected before the structure search completed.");
+            return;
+        }
+        if (player.level() != level) {
+            fail(source, "You changed dimensions before the structure search completed; run the command again.");
+            return;
+        }
+        level.getChunk(targetX >> 4, targetZ >> 4);
+        int clampedY = Math.max(level.getMinY() + 1, Math.min(level.getMaxY() - 1, targetY));
+        boolean teleported = player.teleportTo(level, targetX + 0.5D, clampedY, targetZ + 0.5D,
+                Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
+        if (!teleported) {
+            fail(source, "Found " + label + " at " + targetX + " " + clampedY + " " + targetZ + ", but teleportation failed.");
+            return;
+        }
+        ok(source, "Teleported to " + label + " at " + targetX + " " + clampedY + " " + targetZ);
+    }
+
+    static int verifyStructures(CommandSourceStack source, String keyRaw) {
+        ServerLevel level = source.getLevel();
+        Engine engine = engineFor(level);
+        if (engine == null) {
+            fail(source, "This dimension is not generated by Iris.");
+            return 0;
+        }
+        String key = keyRaw == null ? "" : keyRaw.trim();
+        if (!key.isEmpty()) {
+            return verifyStructure(source, level, engine, key);
+        }
+        Registry<Structure> registry = source.getServer().registryAccess().lookupOrThrow(Registries.STRUCTURE);
+        int available = 0;
+        int disabled = 0;
+        int suppressed = 0;
+        int unreachableBiomes = 0;
+        int unsupported = 0;
+        for (Identifier identifier : registry.keySet()) {
+            Optional<Holder.Reference<Structure>> holder = registry.get(identifier);
+            if (holder.isEmpty()) {
+                continue;
+            }
+            NativeStructureAvailability availability = nativeAvailability(source, level, engine,
+                    identifier.toString(), holder.get());
+            switch (availability) {
+                case AVAILABLE -> available++;
+                case WORLD_DISABLED, FILTERED -> disabled++;
+                case IRIS_SUPPRESSED -> suppressed++;
+                case BIOME_UNREACHABLE -> unreachableBiomes++;
+                case NO_PLACEMENT -> unsupported++;
+            }
+        }
+        int irisPlaced = IrisStructureLocator.placedKeys(engine).size();
+        ok(source, "Structure reachability: " + available + " native locatable, " + irisPlaced
+                + " Iris-placed, " + disabled + " native disabled, " + suppressed
+                + " native replaced by Iris placements, " + unreachableBiomes
+                + " native excluded by this pack's biomes, and " + unsupported
+                + " registered native structures unsupported in this dimension. Use /iris structure verify <key> for one structure.");
         return 1;
+    }
+
+    private static int verifyStructure(CommandSourceStack source, ServerLevel level, Engine engine, String key) {
+        if (IrisStructureLocator.isPlaced(engine, key)) {
+            ok(source, "Structure " + key + " is Iris-placed and locatable with /iris goto structure " + key + ".");
+            return 1;
+        }
+        Optional<NativeStructureTarget> target = resolveNativeStructure(source, level, engine, key);
+        if (target.isEmpty()) {
+            fail(source, "Unknown structure '" + key + "'. It is neither Iris-placed nor registered by vanilla or a datapack.");
+            return 0;
+        }
+        NativeStructureTarget resolved = target.get();
+        if (resolved.availability() != NativeStructureAvailability.AVAILABLE) {
+            fail(source, nativeUnavailableMessage(resolved.key(), resolved.availability()));
+            return 0;
+        }
+        ok(source, "Native structure " + resolved.key() + " is enabled, supported by this dimension's generator state, and locatable with /iris goto structure " + resolved.key() + ".");
+        return 1;
+    }
+
+    private static Optional<NativeStructureTarget> resolveNativeStructure(CommandSourceStack source,
+                                                                           ServerLevel level,
+                                                                           Engine engine,
+                                                                           String keyRaw) {
+        Identifier identifier = Identifier.tryParse(keyRaw);
+        if (identifier == null) {
+            return Optional.empty();
+        }
+        Registry<Structure> registry = source.getServer().registryAccess().lookupOrThrow(Registries.STRUCTURE);
+        Optional<Holder.Reference<Structure>> holder = registry.get(identifier);
+        if (holder.isEmpty()) {
+            return Optional.empty();
+        }
+        String key = identifier.toString();
+        NativeStructureAvailability availability = nativeAvailability(source, level, engine, key, holder.get());
+        return Optional.of(new NativeStructureTarget(key, holder.get(), availability));
+    }
+
+    private static NativeStructureAvailability nativeAvailability(CommandSourceStack source, ServerLevel level,
+                                                                   Engine engine, String key,
+                                                                   Holder.Reference<Structure> holder) {
+        boolean worldEnabled = source.getServer().getWorldGenSettings().options().generateStructures();
+        IrisImportedStructureControl control = engine.getDimension().getImportedStructures();
+        boolean selected = control != null && control.active() && control.shouldGenerate(key);
+        boolean suppressed = IrisStructureLocator.suppressesVanilla(engine, key);
+        ChunkGenerator chunkGenerator = level.getChunkSource().getGenerator();
+        boolean biomeReachable = chunkGenerator instanceof IrisModdedChunkGenerator irisGenerator
+                && irisGenerator.isNativeStructureReachable(holder);
+        boolean hasPlacement = false;
+        if (worldEnabled && selected && !suppressed && biomeReachable) {
+            hasPlacement = !level.getChunkSource().getGeneratorState().getPlacementsForStructure(holder).isEmpty();
+        }
+        return classifyNativeAvailability(worldEnabled, selected, suppressed, biomeReachable, hasPlacement);
+    }
+
+    static NativeStructureAvailability classifyNativeAvailability(boolean worldEnabled, boolean selected,
+                                                                   boolean suppressed, boolean biomeReachable,
+                                                                   boolean hasPlacement) {
+        if (!worldEnabled) {
+            return NativeStructureAvailability.WORLD_DISABLED;
+        }
+        if (!selected) {
+            return NativeStructureAvailability.FILTERED;
+        }
+        if (suppressed) {
+            return NativeStructureAvailability.IRIS_SUPPRESSED;
+        }
+        if (!biomeReachable) {
+            return NativeStructureAvailability.BIOME_UNREACHABLE;
+        }
+        if (!hasPlacement) {
+            return NativeStructureAvailability.NO_PLACEMENT;
+        }
+        return NativeStructureAvailability.AVAILABLE;
+    }
+
+    private static String nativeUnavailableMessage(String key, NativeStructureAvailability availability) {
+        return switch (availability) {
+            case WORLD_DISABLED -> "Native structure generation is disabled for this world, so " + key + " cannot generate or be located.";
+            case FILTERED -> "Native structure " + key + " is disabled by this dimension's importedStructures settings.";
+            case IRIS_SUPPRESSED -> "Native structure " + key + " is replaced by an Iris placement in this pack; locate the Iris key instead.";
+            case BIOME_UNREACHABLE -> "Native structure " + key + " cannot generate because none of its required biomes are produced by this Iris pack.";
+            case NO_PLACEMENT -> "Native structure " + key + " is registered, but its structure set has no placement supported by this dimension's generator state.";
+            case AVAILABLE -> "Native structure " + key + " is available.";
+        };
     }
 
     private static int gotoPoi(CommandSourceStack source, String typeRaw) {
@@ -991,7 +1211,7 @@ public final class IrisModdedCommands {
             boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, branch,
                     (String message) -> server.execute(() -> ok(source, message)));
             if (installed) {
-                server.execute(() -> ok(source, "Pack '" + pack + "' installed. Its dimension types and custom biomes join the forced Iris datapack on the next server restart; worlds created before restarting run with fallback heights until then."));
+                server.execute(() -> ok(source, "Pack '" + pack + "' installed. Its exact dimension types and custom biomes join the forced Iris datapack on the next server restart; restart before creating worlds from this pack."));
             } else {
                 server.execute(() -> fail(source, "Pack download failed for " + pack + " (" + downloadSource + "; see console)."));
             }
@@ -1079,16 +1299,27 @@ public final class IrisModdedCommands {
         return builder.buildFuture();
     }
 
-    private static CompletableFuture<Suggestions> suggestStructureKeys(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+    static CompletableFuture<Suggestions> suggestStructureKeys(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
         ModdedCommandFeedback.tab(context.getSource());
         try {
             Engine engine = engineFor(context.getSource().getLevel());
-            if (engine != null) {
-                return SharedSuggestionProvider.suggest(IrisStructureLocator.placedKeys(engine), builder);
+            Collection<String> irisKeys = engine == null ? List.of() : IrisStructureLocator.placedKeys(engine);
+            Registry<Structure> registry = context.getSource().getServer().registryAccess().lookupOrThrow(Registries.STRUCTURE);
+            List<String> nativeKeys = new ArrayList<>(registry.keySet().size());
+            for (Identifier identifier : registry.keySet()) {
+                nativeKeys.add(identifier.toString());
             }
+            return SharedSuggestionProvider.suggest(combineStructureKeys(irisKeys, nativeKeys), builder);
         } catch (Throwable ignored) {
         }
         return builder.buildFuture();
+    }
+
+    static List<String> combineStructureKeys(Collection<String> irisKeys, Collection<String> nativeKeys) {
+        Set<String> combined = new TreeSet<>();
+        combined.addAll(irisKeys);
+        combined.addAll(nativeKeys);
+        return List.copyOf(combined);
     }
 
     private static CompletableFuture<Suggestions> suggestPackNames(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
@@ -1131,5 +1362,18 @@ public final class IrisModdedCommands {
 
     static void fail(CommandSourceStack source, String message) {
         ModdedCommandFeedback.fail(source, message);
+    }
+
+    enum NativeStructureAvailability {
+        AVAILABLE,
+        WORLD_DISABLED,
+        FILTERED,
+        IRIS_SUPPRESSED,
+        BIOME_UNREACHABLE,
+        NO_PLACEMENT
+    }
+
+    private record NativeStructureTarget(String key, Holder.Reference<Structure> holder,
+                                         NativeStructureAvailability availability) {
     }
 }

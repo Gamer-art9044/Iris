@@ -20,16 +20,20 @@ package art.arcane.iris.engine;
 
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineEffects;
+import art.arcane.iris.engine.framework.EngineEffectsProvider;
 import art.arcane.iris.engine.framework.EngineMetrics;
 import art.arcane.iris.engine.framework.EngineMode;
+import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.EngineWorldManager;
 import art.arcane.iris.engine.framework.EngineWorldManagerProvider;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.GenerationSessionManager;
+import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.PreservationRegistry;
 import art.arcane.iris.engine.framework.SeedManager;
+import art.arcane.iris.engine.framework.StructureReachability;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomePaletteLayer;
@@ -46,18 +50,12 @@ import com.google.gson.Gson;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.protocol.IrisMessage;
-import art.arcane.iris.core.ServerConfigurator;
-import art.arcane.iris.core.events.IrisEngineHotloadEvent;
-import art.arcane.iris.core.datapack.DatapackIngestService;
-import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.protocol.IrisProtocolServer;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.core.nms.container.BlockPos;
 import art.arcane.iris.core.nms.container.Pair;
-import art.arcane.iris.core.project.IrisProject;
 import art.arcane.iris.core.structure.StructureIndexService;
-import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.util.common.data.B;
@@ -112,6 +110,7 @@ public class IrisEngine implements Engine {
     private final ChronoLatch cleanLatch;
     private final SeedManager seedManager;
     private final GenerationSessionManager generationSessions;
+    private final EnginePlatformHooks platformHooks;
     private final AtomicBoolean closing;
     private CompletableFuture<Long> hash32;
     private EngineMode mode;
@@ -132,6 +131,7 @@ public class IrisEngine implements Engine {
     public IrisEngine(EngineTarget target, boolean studio) {
         this.studio = studio;
         this.target = target;
+        this.platformHooks = IrisServices.get(EnginePlatformHooks.class);
         getEngineData();
         verifySeed();
         this.seedManager = new SeedManager(target.getWorld().getRawWorldSeed());
@@ -233,13 +233,15 @@ public class IrisEngine implements Engine {
             currentMode.close();
         }
 
-        if (getWorld().hasRealWorld()) {
-            J.a(() -> new IrisProject(getData().getDataFolder()).updateWorkspace());
+        if (getWorld().hasPlatformWorld()) {
+            J.a(() -> platformHooks.refreshWorkspace(this));
         }
     }
 
     private void setupEngine() {
         try {
+            IrisStructureLocator.invalidate(this);
+            StructureReachability.invalidate(this);
             generationSessions.activateNextSession();
             closing.set(false);
             IrisLogging.debug("Setup Engine " + getCacheID());
@@ -251,8 +253,8 @@ public class IrisEngine implements Engine {
             upperContext = buildUpperContext();
             IrisLogging.debug("[IrisEngine timing] buildUpperContext=" + (M.ms() - t0) + "ms");
             t0 = M.ms();
-            effects = new IrisEngineEffects(this);
-            IrisLogging.debug("[IrisEngine timing] IrisEngineEffects=" + (M.ms() - t0) + "ms");
+            effects = IrisServices.get(EngineEffectsProvider.class).create(this);
+            IrisLogging.debug("[IrisEngine timing] EngineEffects=" + (M.ms() - t0) + "ms");
             hash32 = new CompletableFuture<>();
             t0 = M.ms();
             mantle.hotload();
@@ -276,7 +278,7 @@ public class IrisEngine implements Engine {
                         .toArray(File[]::new);
                 hash32.complete(IO.hashRecursiveMeta(roots));
             });
-            J.a(() -> DatapackIngestService.refreshWorkspace(getData()));
+            J.a(() -> platformHooks.refreshDatapackWorkspace(this));
         } catch (Throwable e) {
             IrisLogging.error("FAILED TO SETUP ENGINE!");
             IrisLogging.reportError(e);
@@ -409,7 +411,7 @@ public class IrisEngine implements Engine {
     @Override
     public void hotload() {
         hotloadSilently();
-        IrisPlatforms.get().callEvent(new IrisEngineHotloadEvent(this));
+        platformHooks.fireHotloadEvent(this);
     }
 
     public void hotloadComplex() {
@@ -422,15 +424,16 @@ public class IrisEngine implements Engine {
         try {
             getData().dump();
             getData().clearLists();
-            getTarget().setDimension(getData().getDimensionLoader().load(getDimension().getLoadKey()));
+            IrisDimension replacement = getData().getDimensionLoader().load(getDimension().getLoadKey());
+            if (replacement == null) {
+                throw new IllegalStateException("Studio hotload could not reload Iris dimension '" + getDimension().getLoadKey() + "'");
+            }
+            platformHooks.validateDimensionHotload(this, replacement);
+            getTarget().setDimension(replacement);
             prehotload();
             setupEngine();
-            if (getWorld().hasRealWorld()) {
-                J.a(() -> {
-                    synchronized (ServerConfigurator.class) {
-                        ServerConfigurator.installDataPacks(false);
-                    }
-                });
+            if (getWorld().hasPlatformWorld()) {
+                J.a(() -> platformHooks.reloadDatapacks(this));
             }
             broadcastStudioHotload(false, "");
         } catch (RuntimeException | Error e) {
@@ -526,7 +529,7 @@ public class IrisEngine implements Engine {
     }
 
     private void computeBiomeMaxes() {
-        for (IrisBiome i : getDimension().getAllBiomes(this)) {
+        for (IrisBiome i : getDimension().getReachableBiomes(this)) {
             double density = 0;
 
             for (IrisObjectPlacement j : i.getObjects()) {
@@ -613,7 +616,7 @@ public class IrisEngine implements Engine {
 
     @Override
     public void close() {
-        PregeneratorJob.shutdownInstance();
+        platformHooks.shutdownPregenerator(this);
         closing.set(true);
         closed = true;
         J.car(art);
@@ -649,8 +652,7 @@ public class IrisEngine implements Engine {
     }
 
     private boolean isPregeneratorActiveForThisWorld() {
-        PregeneratorJob pregeneratorJob = PregeneratorJob.getInstance();
-        return pregeneratorJob != null && pregeneratorJob.targetsWorldIdentity(getWorld().identity());
+        return platformHooks.isPregeneratorActive(this);
     }
 
     private void savePrefetchOnce() {
@@ -728,7 +730,7 @@ public class IrisEngine implements Engine {
                 activeMode.generate(x, z, blocks, vbiomes, multicore, lease.sessionId());
             }
 
-            boolean skipRealFlag = J.isFolia() && getWorld().hasRealWorld() && IrisToolbelt.isWorldMaintenanceBypassingMantleStages(getWorld().realWorld());
+            boolean skipRealFlag = platformHooks.shouldBypassMantleStages(this);
             if (!skipRealFlag) {
                 getMantle().getMantle().flag(x >> 4, z >> 4, MantleFlag.REAL, true);
             }

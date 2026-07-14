@@ -26,6 +26,7 @@ import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.nms.container.BiomeColor;
 import art.arcane.iris.core.nms.container.BlockProperty;
+import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.core.service.ExternalDataSVC;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.volmlib.util.collection.KMap;
@@ -38,10 +39,12 @@ import io.lumine.mythiccrucible.items.ItemManager;
 import io.lumine.mythiccrucible.items.blocks.CustomBlockItemContext;
 import io.lumine.mythiccrucible.items.furniture.FurnitureItemContext;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 
+import java.awt.Color;
 import java.util.Collection;
 import java.util.List;
 import java.util.MissingResourceException;
@@ -58,11 +61,7 @@ public class MythicCrucibleDataProvider extends ExternalDataProvider {
     @Override
     public void init() {
         IrisLogging.info("Setting up MythicCrucible Link...");
-        try {
-            this.itemManager = MythicCrucible.inst().getItemManager();
-        } catch (Exception e) {
-            IrisLogging.error("Failed to set up MythicCrucible Link: Unable to fetch MythicCrucible instance!");
-        }
+        itemManager = MythicCrucible.inst().getItemManager();
     }
 
     @NotNull
@@ -114,8 +113,8 @@ public class MythicCrucibleDataProvider extends ExternalDataProvider {
 
     @Override
     public void processUpdate(@NotNull Engine engine, @NotNull Block block, @NotNull Identifier blockId) {
-        var parsedState = ExternalDataSVC.parseState(blockId);
-        var state = parsedState.getB();
+        Pair<Identifier, KMap<String, String>> parsedState = ExternalDataSVC.parseState(blockId);
+        KMap<String, String> state = parsedState.getB();
         blockId = parsedState.getA();
 
         Optional<CrucibleItem> item = itemManager.getItem(blockId.key());
@@ -123,14 +122,14 @@ public class MythicCrucibleDataProvider extends ExternalDataProvider {
         FurnitureItemContext furniture = item.get().getFurnitureData();
         if (furniture == null) return;
 
-        var pair = parseYawAndFace(engine, block, state);
+        Pair<Float, BlockFace> pair = parseYawAndFace(engine, block, state);
         BiomeColor type = null;
         Chroma color = null;
         try {
             type = BiomeColor.valueOf(state.get("matchBiome").toUpperCase());
         } catch (NullPointerException | IllegalArgumentException ignored) {}
         if (type != null) {
-            var biomeColor = INMS.get().getBiomeColor(block.getLocation(), type);
+            Color biomeColor = INMS.get().getBiomeColor(block.getLocation(), type);
             if (biomeColor == null) return;
             color = Chroma.of(biomeColor.getRGB());
         }

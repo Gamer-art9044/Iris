@@ -14,10 +14,13 @@ import art.arcane.volmlib.util.math.RNG;
 import net.momirealms.craftengine.bukkit.api.CraftEngineBlocks;
 import net.momirealms.craftengine.bukkit.api.CraftEngineFurniture;
 import net.momirealms.craftengine.bukkit.api.CraftEngineItems;
+import net.momirealms.craftengine.bukkit.item.BukkitItemDefinition;
+import net.momirealms.craftengine.core.block.BlockDefinition;
 import net.momirealms.craftengine.core.block.ImmutableBlockState;
-import net.momirealms.craftengine.core.block.properties.BooleanProperty;
-import net.momirealms.craftengine.core.block.properties.IntegerProperty;
-import net.momirealms.craftengine.core.block.properties.Property;
+import net.momirealms.craftengine.core.block.property.BooleanProperty;
+import net.momirealms.craftengine.core.block.property.IntegerProperty;
+import net.momirealms.craftengine.core.block.property.Property;
+import net.momirealms.craftengine.core.entity.furniture.FurnitureDefinition;
 import net.momirealms.craftengine.core.util.Key;
 import org.bukkit.Location;
 import org.bukkit.block.Block;
@@ -52,12 +55,12 @@ public class CraftEngineDataProvider extends ExternalDataProvider {
     @Override
     public @NotNull List<BlockProperty> getBlockProperties(@NotNull Identifier blockId) throws MissingResourceException {
         Key key = Key.of(blockId.namespace(), blockId.key());
-        net.momirealms.craftengine.core.block.CustomBlock block = CraftEngineBlocks.byId(key);
+        BlockDefinition block = CraftEngineBlocks.byId(key);
         if (block != null) {
             return block.properties().stream().map(CraftEngineDataProvider::convert).toList();
         }
 
-        net.momirealms.craftengine.core.entity.furniture.CustomFurniture furniture = CraftEngineFurniture.byId(key);
+        FurnitureDefinition furniture = CraftEngineFurniture.byId(key);
         if (furniture != null) {
             BlockProperty[] properties = Arrays.copyOf(FURNITURE_PROPERTIES, 5);
             properties[4] = new BlockProperty(
@@ -75,12 +78,12 @@ public class CraftEngineDataProvider extends ExternalDataProvider {
 
     @Override
     public @NotNull ItemStack getItemStack(@NotNull Identifier itemId, @NotNull KMap<String, Object> customNbt) throws MissingResourceException {
-        net.momirealms.craftengine.core.item.CustomItem<ItemStack> item = CraftEngineItems.byId(Key.of(itemId.namespace(), itemId.key()));
+        BukkitItemDefinition item = CraftEngineItems.byId(Key.of(itemId.namespace(), itemId.key()));
         if (item == null) {
             throw new MissingResourceException("Failed to find ItemData!", itemId.namespace(), itemId.key());
         }
 
-        return item.buildItemStack();
+        return item.buildBukkitItem();
     }
 
     @Override
@@ -100,7 +103,7 @@ public class CraftEngineDataProvider extends ExternalDataProvider {
         KMap<String, String> state = statePair.getB();
         Key key = Key.of(baseBlockId.namespace(), baseBlockId.key());
 
-        net.momirealms.craftengine.core.block.CustomBlock customBlock = CraftEngineBlocks.byId(key);
+        BlockDefinition customBlock = CraftEngineBlocks.byId(key);
         if (customBlock != null) {
             ImmutableBlockState blockState = customBlock.defaultState();
 
@@ -122,7 +125,7 @@ public class CraftEngineDataProvider extends ExternalDataProvider {
             return;
         }
 
-        net.momirealms.craftengine.core.entity.furniture.CustomFurniture furniture = CraftEngineFurniture.byId(key);
+        FurnitureDefinition furniture = CraftEngineFurniture.byId(key);
         if (furniture == null) {
             return;
         }

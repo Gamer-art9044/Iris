@@ -18,8 +18,12 @@
 
 package art.arcane.iris;
 
+import art.arcane.iris.engine.IrisEngineEffects;
 import art.arcane.iris.engine.IrisWorldManager;
 
+import art.arcane.iris.engine.framework.EngineComponentCleanup;
+import art.arcane.iris.engine.framework.EngineEffectsProvider;
+import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.EngineWorldManagerProvider;
 import art.arcane.iris.core.splash.IrisSplashComposer;
 import art.arcane.iris.core.IrisSettings;
@@ -29,6 +33,7 @@ import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.lifecycle.PaperLibBootstrap;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
+import art.arcane.iris.core.runtime.BukkitEnginePlatformHooks;
 import art.arcane.iris.core.runtime.TransientWorldCleanupSupport;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.core.lifecycle.WorldLifecycleStaging;
@@ -57,6 +62,7 @@ import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.core.safeguard.IrisSafeguard;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
+import art.arcane.iris.platform.bukkit.BukkitEnvironment;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisServices;
@@ -116,6 +122,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -201,25 +208,33 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
     }
 
-    public static KList<Object> initialize(String s, Class<? extends Annotation> slicedClass) {
+    private static <T> KList<T> initialize(String s, Class<T> requiredType) {
         JarScanner js = new JarScanner(instance.getJarFile(), s);
-        KList<Object> v = new KList<>();
+        KList<T> v = new KList<>();
         J.attempt(js::scan);
         for (Class<?> i : js.getClasses()) {
-            if (slicedClass == null || i.isAnnotationPresent(slicedClass)) {
-                try {
-                    v.add(i.getDeclaredConstructor().newInstance());
-                } catch (Throwable ex) {
-                    Iris.warn("Skipped class initialization for %s: %s%s",
-                            i.getName(),
-                            ex.getClass().getSimpleName(),
-                            ex.getMessage() == null ? "" : " - " + ex.getMessage());
-                    Iris.reportError(ex);
-                }
+            if (!isConcreteImplementation(i, requiredType)) {
+                continue;
+            }
+            try {
+                v.add(requiredType.cast(i.getDeclaredConstructor().newInstance()));
+            } catch (Throwable ex) {
+                Iris.warn("Skipped class initialization for %s: %s%s",
+                        i.getName(),
+                        ex.getClass().getSimpleName(),
+                        ex.getMessage() == null ? "" : " - " + ex.getMessage());
+                Iris.reportError(ex);
             }
         }
 
         return v;
+    }
+
+    static boolean isConcreteImplementation(Class<?> candidate, Class<?> requiredType) {
+        int modifiers = candidate.getModifiers();
+        return requiredType.isAssignableFrom(candidate)
+                && !candidate.isInterface()
+                && !Modifier.isAbstract(modifiers);
     }
 
     public static KList<Class<?>> getClasses(String s, Class<? extends Annotation> slicedClass) {
@@ -241,10 +256,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
 
         return v;
-    }
-
-    public static KList<Object> initialize(String s) {
-        return initialize(s, null);
     }
 
     public static void sq(Runnable r) {
@@ -599,9 +610,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         services = new KMap<>();
         setupAudience();
         Bindings.setupSentry();
-        initialize("art.arcane.iris.core.service").forEach((i) -> {
-            services.put((Class<? extends IrisService>) i.getClass(), (IrisService) i);
-            IrisServices.register(i.getClass(), i);
+        initialize("art.arcane.iris.core.service", IrisService.class).forEach((i) -> {
+            Class<? extends IrisService> serviceType = i.getClass().asSubclass(IrisService.class);
+            services.put(serviceType, i);
+            IrisServices.register(serviceType, i);
         });
         IrisServices.register(BlockEditAccess.class, services.get(EditSVC.class));
         IrisServices.register(PreservationRegistry.class, services.get(PreservationSVC.class));
@@ -619,6 +631,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         tickets = new ChunkTickets();
         linkMultiverseCore = new MultiverseCoreLink();
         IrisServices.register(MultiverseCoreLink.class, linkMultiverseCore);
+        IrisServices.register(EngineComponentCleanup.class, (EngineComponentCleanup) BukkitPlatform::unregisterListener);
+        IrisServices.register(EngineEffectsProvider.class, (EngineEffectsProvider) IrisEngineEffects::new);
+        IrisServices.register(EnginePlatformHooks.class, new BukkitEnginePlatformHooks());
         IrisServices.register(EngineWorldManagerProvider.class, (EngineWorldManagerProvider) (Engine engine) -> {
             IrisWorldManager manager = new IrisWorldManager(engine);
             manager.startManager();
@@ -711,7 +726,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                     Iris.info(C.LIGHT_PURPLE + "Preparing Spawn for " + s + "' using Iris:" + generator + "...");
                     WorldCreator c = WorldCreator.ofKey(worldKey)
                             .generator(gen)
-                            .environment(dim.getEnvironment());
+                            .environment(BukkitEnvironment.from(dim.getEnvironment()));
                     Long stagedSeed = IrisWorlds.readBukkitWorldSeed(s);
                     if (stagedSeed != null) {
                         c.seed(stagedSeed);
@@ -1067,7 +1082,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     }
 
     private void setupPapi() {
-        if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
+        if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
             new IrisPapiExpansion().register();
         }
     }
@@ -1215,10 +1230,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         NamespacedKey worldKey = IrisWorldStorage.keyFromLegacyName(worldName);
 
         IrisWorld w = IrisWorld.builder()
-                .key(worldKey)
+                .platformIdentity(worldKey.toString())
                 .name(worldName)
                 .seed(1337)
-                .environment(dim.getEnvironment())
                 .worldFolder(IrisWorldStorage.dimensionRoot(worldKey))
                 .minHeight(dim.getMinHeight())
                 .maxHeight(dim.getMaxHeight())

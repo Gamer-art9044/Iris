@@ -22,7 +22,7 @@ import org.gradle.jvm.toolchain.JavaLanguageVersion
 
 plugins {
     id 'java'
-    id 'net.fabricmc.fabric-loom' version '1.17.11'
+    id 'net.fabricmc.fabric-loom' version '1.17.14'
     alias(libs.plugins.shadow)
 }
 
@@ -31,7 +31,7 @@ file('../../gradle.properties').withInputStream { InputStream stream -> rootProp
 String irisVersion = providers.gradleProperty('irisVersion').getOrElse(rootProperties.getProperty('irisVersion', '4.0.0-26.2'))
 String minecraftVersion = providers.gradleProperty('minecraftVersion').getOrElse(rootProperties.getProperty('minecraftVersion', '26.2'))
 String fabricLoaderVersion = providers.gradleProperty('fabricLoaderVersion').getOrElse(rootProperties.getProperty('fabricLoaderVersion', '0.19.3'))
-String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate').getOrElse(rootProperties.getProperty('volmLibCoordinate', 'com.github.VolmitSoftware:VolmLib:cdf7e8bb880199734dacd386a6616bda799fcde1'))
+String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate').getOrElse(rootProperties.getProperty('volmLibCoordinate', 'com.github.VolmitSoftware:VolmLib:4c38988b344792a79f925f57f8a675bc85fc1bed'))
 Closure<String> irisArtifactName = { String platform, String targetVersion ->
     return "Iris v${project.version} [${platform}] ${targetVersion}.jar"
 }
@@ -49,6 +49,7 @@ sourceSets {
     main {
         java {
             srcDir '../modded-common/src/main/java'
+            srcDir '../minecraft-common/src/main/java'
             srcDir '../client-common/src/main/java'
         }
         resources {
@@ -99,6 +100,8 @@ configurations.named('bundle').configure {
 
 configurations.compileClasspath.extendsFrom(configurations.devBundle)
 configurations.runtimeClasspath.extendsFrom(configurations.devBundle)
+configurations.testCompileClasspath.extendsFrom(configurations.devBundle)
+configurations.testRuntimeClasspath.extendsFrom(configurations.devBundle)
 
 configurations.create('jij') {
     transitive = true
@@ -127,24 +130,28 @@ dependencies {
     compileOnly(libs.spigot) {
         transitive = false
     }
+    add('bundle', volmLibCoordinate) {
+        transitive = false
+    }
+    add('devBundle', volmLibCoordinate) {
+        transitive = false
+    }
+    add('bundle', libs.zip) {
+        transitive = false
+    }
+    add('devBundle', libs.zip) {
+        transitive = false
+    }
 
     List<Object> shared = [
         "art.arcane:core:${irisVersion}".toString(),
         "art.arcane:spi:${irisVersion}".toString(),
-        volmLibCoordinate,
         libs.paralithic,
         libs.lru,
-        libs.kotlin.stdlib,
-        libs.kotlin.coroutines,
-        libs.commons.lang,
-        libs.commons.math3,
         libs.caffeine,
-        libs.lz4,
-        libs.zip,
-        libs.sentry,
-        libs.oshi,
-        libs.byteBuddy.core,
-        libs.byteBuddy.agent
+        libs.dom4j,
+        libs.jaxen,
+        libs.sentry
     ]
     shared.each { Object notation ->
         add('bundle', notation)
@@ -155,6 +162,10 @@ dependencies {
 tasks.named('compileJava', JavaCompile).configure {
     options.encoding = 'UTF-8'
     options.release.set(25)
+}
+
+tasks.named('test').configure {
+    systemProperty('iris.moddedCommonSources', file('../modded-common/src/main/java').absolutePath)
 }
 
 loom {

@@ -23,6 +23,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
+import art.arcane.iris.platform.bukkit.BukkitEnvironment;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
@@ -76,15 +77,15 @@ public class IrisWorldCreator {
     public WorldCreator create() {
         IrisDimension dim = dimension == null ? IrisData.loadAnyDimension(dimensionName, null) : dimension;
         NamespacedKey worldKey = IrisWorldStorage.keyFromLegacyName(name);
+        World.Environment environment = findEnvironment();
 
         IrisWorld w = IrisWorld.builder()
-                .key(worldKey)
+                .platformIdentity(worldKey.toString())
                 .name(name)
                 .minHeight(dim.getMinHeight())
                 .maxHeight(dim.getMaxHeight())
                 .seed(seed)
                 .worldFolder(IrisWorldStorage.dimensionRoot(worldKey))
-                .environment(findEnvironment())
                 .build();
         ChunkGenerator g = new BukkitChunkGenerator(w, studio, studio
                 ? dim.getLoader().getDataFolder() :
@@ -92,18 +93,14 @@ public class IrisWorldCreator {
 
 
         return WorldCreator.ofKey(worldKey)
-                .environment(w.environment())
+                .environment(environment)
                 .generateStructures(true)
                 .generator(g).seed(seed);
     }
 
     private World.Environment findEnvironment() {
         IrisDimension dim = dimension == null ? IrisData.loadAnyDimension(dimensionName, null) : dimension;
-        if (dim == null || dim.getEnvironment() == null) {
-            return World.Environment.NORMAL;
-        } else {
-            return dim.getEnvironment();
-        }
+        return BukkitEnvironment.from(dim == null ? null : dim.getEnvironment());
     }
 
     public IrisWorldCreator studio(boolean studio) {

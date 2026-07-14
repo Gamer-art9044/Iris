@@ -19,7 +19,6 @@
 package art.arcane.iris.core.service;
 
 import art.arcane.iris.spi.IrisLogging;
-import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.link.ExternalDataProvider;
 import art.arcane.iris.core.link.Identifier;
@@ -29,79 +28,91 @@ import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
-import art.arcane.volmlib.util.io.JarScanner;
 import art.arcane.iris.util.common.plugin.IrisService;
-import art.arcane.iris.util.common.scheduling.J;
-import lombok.Data;
-import lombok.NonNull;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Entity;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
 import org.bukkit.event.server.PluginEnableEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.Plugin;
 
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.MissingResourceException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-@Data
 public class ExternalDataSVC implements IrisService {
+    private static final String PROVIDER_PACKAGE = "art.arcane.iris.core.link.data.";
+    private static final List<ProviderDefinition> BUILT_IN_PROVIDERS = List.of(
+            new ProviderDefinition("CraftEngine", PROVIDER_PACKAGE + "CraftEngineDataProvider"),
+            new ProviderDefinition("Nexo", PROVIDER_PACKAGE + "NexoDataProvider"),
+            new ProviderDefinition("ItemsAdder", PROVIDER_PACKAGE + "ItemAdderDataProvider"),
+            new ProviderDefinition("ExecutableItems", PROVIDER_PACKAGE + "ExecutableItemsDataProvider"),
+            new ProviderDefinition("MMOItems", PROVIDER_PACKAGE + "MMOItemsDataProvider"),
+            new ProviderDefinition("EcoItems", PROVIDER_PACKAGE + "EcoItemsDataProvider"),
+            new ProviderDefinition("MythicMobs", PROVIDER_PACKAGE + "MythicMobsDataProvider"),
+            new ProviderDefinition("MythicCrucible", PROVIDER_PACKAGE + "MythicCrucibleDataProvider"),
+            new ProviderDefinition("KGenerators", PROVIDER_PACKAGE + "KGeneratorsDataProvider")
+    );
 
-    private KList<ExternalDataProvider> providers = new KList<>(), activeProviders = new KList<>();
+    private final KList<ExternalDataProvider> providers = new KList<>();
+    private final KList<ExternalDataProvider> activeProviders = new KList<>();
 
     @Override
     public void onEnable() {
         IrisLogging.info("Loading ExternalDataProvider...");
         Bukkit.getPluginManager().registerEvents(this, BukkitPlatform.plugin());
 
-        providers.addAll(createProviders());
-        for (ExternalDataProvider p : providers) {
-            if (p.isReady()) {
-                activeProviders.add(p);
-                p.init();
-                BukkitPlatform.volmitPlugin().registerListener(p);
-                IrisLogging.info("Enabled ExternalDataProvider for %s.", p.getPluginId());
-            }
+        for (ProviderDefinition definition : BUILT_IN_PROVIDERS) {
+            activateConfiguredProvider(definition);
         }
     }
 
     @Override
     public void onDisable() {
+        activeProviders.clear();
+        providers.clear();
     }
 
     @EventHandler
-    public void onPluginEnable(PluginEnableEvent e) {
-        if (activeProviders.stream().noneMatch(p -> e.getPlugin().equals(p.getPlugin()))) {
-            providers.stream().filter(p -> p.isReady() && e.getPlugin().equals(p.getPlugin())).findFirst().ifPresent(edp -> {
-                activeProviders.add(edp);
-                edp.init();
-                BukkitPlatform.volmitPlugin().registerListener(edp);
-                IrisLogging.info("Enabled ExternalDataProvider for %s.", edp.getPluginId());
-            });
+    public void onPluginEnable(PluginEnableEvent event) {
+        String pluginId = event.getPlugin().getName();
+        Optional<ExternalDataProvider> existingProvider = findProvider(pluginId);
+        if (existingProvider.isPresent()) {
+            activateProvider(existingProvider.get());
+            return;
         }
+
+        BUILT_IN_PROVIDERS.stream()
+                .filter(definition -> definition.pluginId().equalsIgnoreCase(pluginId))
+                .findFirst()
+                .ifPresent(this::activateConfiguredProvider);
     }
 
-    public void registerProvider(@NonNull ExternalDataProvider provider) {
-        String plugin = provider.getPluginId();
-        if (providers.stream().map(ExternalDataProvider::getPluginId).anyMatch(plugin::equals))
+    public void registerProvider(ExternalDataProvider provider) {
+        ExternalDataProvider registeredProvider = Objects.requireNonNull(provider);
+        String pluginId = registeredProvider.getPluginId();
+        boolean builtIn = BUILT_IN_PROVIDERS.stream()
+                .anyMatch(definition -> definition.pluginId().equalsIgnoreCase(pluginId));
+        if (builtIn || findProvider(pluginId).isPresent()) {
             throw new IllegalArgumentException("A provider with the same plugin id already exists.");
+        }
 
-        providers.add(provider);
-        if (provider.isReady()) {
-            activeProviders.add(provider);
-            provider.init();
-            BukkitPlatform.volmitPlugin().registerListener(provider);
+        providers.add(registeredProvider);
+        if (registeredProvider.isReady()) {
+            activateProvider(registeredProvider);
         }
     }
 
     public Optional<BlockData> getBlockData(final Identifier key) {
-        var pair = parseState(key);
+        Pair<Identifier, KMap<String, String>> pair = parseState(key);
         Identifier mod = pair.getA();
 
         Optional<ExternalDataProvider> provider = activeProviders.stream().filter(p -> p.isValidProvider(mod, DataType.BLOCK)).findFirst();
@@ -201,20 +212,52 @@ public class ExternalDataSVC implements IrisService {
         return new Identifier(key.namespace(), path);
     }
 
-    private static KList<ExternalDataProvider> createProviders() {
-        JarScanner jar = new JarScanner(IrisPlatforms.get().pluginJar(), "art.arcane.iris.core.link.data", false);
-        J.attempt(jar::scan);
-        KList<ExternalDataProvider> providers = new KList<>();
+    private Optional<ExternalDataProvider> findProvider(String pluginId) {
+        return providers.stream()
+                .filter(provider -> provider.getPluginId().equalsIgnoreCase(pluginId))
+                .findFirst();
+    }
 
-        for (Class<?> c : jar.getClasses()) {
-            if (ExternalDataProvider.class.isAssignableFrom(c)) {
-                try {
-                    ExternalDataProvider p = (ExternalDataProvider) c.getDeclaredConstructor().newInstance();
-                    if (p.getPlugin() != null) IrisLogging.info(p.getPluginId() + " found, loading " + c.getSimpleName() + "...");
-                    providers.add(p);
-                } catch (Throwable ignored) {}
-            }
+    private void activateConfiguredProvider(ProviderDefinition definition) {
+        if (!isPluginEnabled(definition.pluginId()) || findProvider(definition.pluginId()).isPresent()) {
+            return;
         }
-        return providers;
+
+        try {
+            Class<?> rawProviderClass = Class.forName(definition.className(), true, ExternalDataSVC.class.getClassLoader());
+            Class<? extends ExternalDataProvider> providerClass = rawProviderClass.asSubclass(ExternalDataProvider.class);
+            ExternalDataProvider provider = providerClass.getDeclaredConstructor().newInstance();
+            IrisLogging.info(definition.pluginId() + " found, loading " + providerClass.getSimpleName() + "...");
+            activateProvider(provider);
+        } catch (Throwable error) {
+            IrisLogging.reportError("Failed to create Iris external data provider " + definition.className() + ".", error);
+        }
+    }
+
+    private void activateProvider(ExternalDataProvider provider) {
+        if (activeProviders.contains(provider)) {
+            return;
+        }
+        try {
+            provider.init();
+            if (provider instanceof Listener listener) {
+                BukkitPlatform.volmitPlugin().registerListener(listener);
+            }
+            if (!providers.contains(provider)) {
+                providers.add(provider);
+            }
+            activeProviders.add(provider);
+            IrisLogging.info("Enabled ExternalDataProvider for %s.", provider.getPluginId());
+        } catch (Throwable error) {
+            IrisLogging.reportError("Failed to enable Iris external data provider " + provider.getPluginId() + ".", error);
+        }
+    }
+
+    private boolean isPluginEnabled(String pluginId) {
+        Plugin plugin = Bukkit.getPluginManager().getPlugin(pluginId);
+        return plugin != null && plugin.isEnabled();
+    }
+
+    private record ProviderDefinition(String pluginId, String className) {
     }
 }

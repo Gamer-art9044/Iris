@@ -69,8 +69,8 @@ public final class ModdedDatapackCommands {
         root.then(Commands.literal("ls")
                 .executes((CommandContext<CommandSourceStack> context) -> list(context.getSource())));
 
-        root.then(message("ingest", "Modrinth datapack ingest requires the Bukkit plugin: its post-restart structure import into editable Iris resources uses Bukkit registries, and Iris modded dimensions do not run vanilla structure placement, so ingested structure datapacks would not generate. Drop datapacks into world/datapacks manually for non-structure content."));
-        root.then(message("pull", "Modrinth datapack ingest requires the Bukkit plugin: its post-restart structure import into editable Iris resources uses Bukkit registries, and Iris modded dimensions do not run vanilla structure placement, so ingested structure datapacks would not generate. Drop datapacks into world/datapacks manually for non-structure content."));
+        root.then(message("ingest", "Modrinth datapack ingest requires the Bukkit plugin because its editable-resource import and manifest workflow use Bukkit tooling. Iris modded dimensions do run native vanilla and datapack structure placement; install the datapack in world/datapacks and restart to generate its registered structures."));
+        root.then(message("pull", "Modrinth datapack ingest requires the Bukkit plugin because its editable-resource import and manifest workflow use Bukkit tooling. Iris modded dimensions do run native vanilla and datapack structure placement; install the datapack in world/datapacks and restart to generate its registered structures."));
 
         root.then(message("remove", "Datapack removal manages the Bukkit ingest manifest. On modded servers delete the datapack folder from world/datapacks and restart."));
         root.then(message("rm", "Datapack removal manages the Bukkit ingest manifest. On modded servers delete the datapack folder from world/datapacks and restart."));
@@ -135,8 +135,7 @@ public final class ModdedDatapackCommands {
                     + (override.isFile() ? " (world datapack override installed)" : ""));
             if (!matches) {
                 mismatches++;
-                IrisModdedCommands.fail(source, "  WARNING: the active dimension type does not match the pack. Terrain outside "
-                        + activeMin + ".." + activeMax + " will be clipped. Run /iris world enable <dimension> <pack> for new worlds, or /iris datapack install for already-loaded Iris dimensions, then restart.");
+                IrisModdedCommands.fail(source, "  WARNING: the active dimension type does not match the pack. Iris will refuse to start this world engine instead of clipping terrain. Run /iris world enable <dimension> <pack> for new worlds, or /iris datapack install for already-loaded Iris dimensions, then restart.");
             }
         }
         if (irisLevels == 0) {

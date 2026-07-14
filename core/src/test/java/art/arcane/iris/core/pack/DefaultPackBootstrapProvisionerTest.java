@@ -38,6 +38,9 @@ public class DefaultPackBootstrapProvisionerTest {
         Path root = Files.createTempDirectory("iris-bootstrap-cold");
         try {
             Path dataDirectory = root.resolve("plugins/Iris");
+            Path legacyDatapack = dataDirectory.resolve("bootstrap/datapack");
+            Files.createDirectories(legacyDatapack);
+            Files.writeString(legacyDatapack.resolve("obsolete.txt"), "obsolete", StandardCharsets.UTF_8);
             DefaultPackBootstrapProvisioner.ProvisionOptions options = options(server, root, Duration.ofHours(1));
             DefaultPackBootstrapProvisioner.ProvisionResult installed = DefaultPackBootstrapProvisioner.provision(
                     dataDirectory,
@@ -56,12 +59,54 @@ public class DefaultPackBootstrapProvisionerTest {
             assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UNCHANGED, unchanged.status());
             assertEquals(1, requests.get());
             assertTrue(Files.isRegularFile(installed.packRoot().resolve("dimensions/overworld.json")));
+            assertEquals(root.resolve("datapacks/iris"), installed.datapackRoot());
             assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("pack.mcmeta")));
             assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("data/overworld/worldgen/biome/bootstrap_biome.json")));
-            assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory));
+            assertFalse(Files.exists(dataDirectory.resolve("bootstrap/datapack")));
+            assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root));
             assertTrue(DefaultPackBootstrapProvisioner.wasProvisionedThisStartup());
         } finally {
             server.stop(0);
+            delete(root);
+        }
+    }
+
+    @Test
+    public void missingArchiveRebuildsWorldDatapackFromValidatedInstalledPack() throws Exception {
+        byte[] archive = packArchive("overworld", "bootstrap_biome");
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(archive, requests);
+        boolean serverStopped = false;
+        Path root = Files.createTempDirectory("iris-bootstrap-offline-migration");
+        try {
+            Path dataDirectory = root.resolve("plugins/Iris");
+            DefaultPackBootstrapProvisioner.ProvisionOptions options = options(server, root, Duration.ofHours(1));
+            DefaultPackBootstrapProvisioner.ProvisionResult installed = DefaultPackBootstrapProvisioner.provision(
+                    dataDirectory,
+                    ignored -> {
+                    },
+                    options
+            );
+            Files.delete(dataDirectory.resolve("cache/bootstrap/default-overworld.zip"));
+            delete(installed.datapackRoot());
+            server.stop(0);
+            serverStopped = true;
+
+            DefaultPackBootstrapProvisioner.ProvisionResult rebuilt = DefaultPackBootstrapProvisioner.provision(
+                    dataDirectory,
+                    ignored -> {
+                    },
+                    options
+            );
+
+            assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UPDATED, rebuilt.status());
+            assertEquals(1, requests.get());
+            assertTrue(Files.isRegularFile(rebuilt.datapackRoot().resolve("pack.mcmeta")));
+            assertTrue(Files.isRegularFile(rebuilt.datapackRoot().resolve("data/overworld/worldgen/biome/bootstrap_biome.json")));
+        } finally {
+            if (!serverStopped) {
+                server.stop(0);
+            }
             delete(root);
         }
     }
@@ -169,7 +214,7 @@ public class DefaultPackBootstrapProvisionerTest {
             assertTrue(Files.isRegularFile(result.datapackRoot().resolve("data/overworld/worldgen/biome/local_biome.json")));
 
             Files.writeString(target.resolve("biomes/local.json"), biomeJson("changed_biome"), StandardCharsets.UTF_8);
-            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory));
+            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root));
             DefaultPackBootstrapProvisioner.ProvisionResult updated = DefaultPackBootstrapProvisioner.provision(
                     dataDirectory,
                     ignored -> {
@@ -198,7 +243,7 @@ public class DefaultPackBootstrapProvisionerTest {
             writePack(dataDirectory.resolve("packs/second"), "second", "second_biome");
             writePack(root.resolve("dimensions/example/world/iris/pack"), "world_local", "world_local_biome");
 
-            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory));
+            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root));
             DefaultPackBootstrapProvisioner.ProvisionResult updated = DefaultPackBootstrapProvisioner.provision(
                     dataDirectory,
                     ignored -> {

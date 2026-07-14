@@ -383,41 +383,40 @@ public class IrisEntity extends IrisRegistrant {
 
         J.runEntity(e, () -> {
             if (isSpawnEffectRiseOutOfGround() && e instanceof LivingEntity && Chunks.hasPlayersNearby(finalAt1)) {
+                LivingEntity living = (LivingEntity) e;
                 Location start = finalAt1.clone();
+                boolean originalInvulnerable = e.isInvulnerable();
+                boolean originalAi = living.hasAI();
+                boolean originalCollidable = living.isCollidable();
+                int originalNoDamageTicks = living.getNoDamageTicks();
                 e.setInvulnerable(true);
-                ((LivingEntity) e).setAI(false);
-                ((LivingEntity) e).setCollidable(false);
-                ((LivingEntity) e).setNoDamageTicks(100000);
+                living.setAI(false);
+                living.setCollidable(false);
+                living.setNoDamageTicks(100000);
                 AtomicInteger t = new AtomicInteger(0);
                 Runnable[] loop = new Runnable[1];
                 loop[0] = () -> {
                     if (t.get() > 100 || e.isDead()) {
-                        ((LivingEntity) e).setNoDamageTicks(0);
-                        ((LivingEntity) e).setCollidable(true);
-                        ((LivingEntity) e).setAI(true);
-                        e.setInvulnerable(false);
+                        restoreRiseState(e, living, originalInvulnerable, originalAi,
+                                originalCollidable, originalNoDamageTicks);
                         return;
                     }
 
                     t.incrementAndGet();
-                    if (e.getLocation().getBlock().getType().isSolid() || ((LivingEntity) e).getEyeLocation().getBlock().getType().isSolid()) {
+                    if (e.getLocation().getBlock().getType().isSolid() || living.getEyeLocation().getBlock().getType().isSolid()) {
                         e.teleport(start.add(new Vector(0, 0.1, 0)));
-                        ItemStack itemCrackData = new ItemStack(((LivingEntity) e).getEyeLocation().clone().subtract(0, 2, 0).getBlock().getBlockData().getMaterial());
-                        e.getWorld().spawnParticle(ITEM, ((LivingEntity) e).getEyeLocation(), 6, 0.2, 0.4, 0.2, 0.06f, itemCrackData);
+                        ItemStack itemCrackData = new ItemStack(living.getEyeLocation().clone().subtract(0, 2, 0).getBlock().getBlockData().getMaterial());
+                        e.getWorld().spawnParticle(ITEM, living.getEyeLocation(), 6, 0.2, 0.4, 0.2, 0.06f, itemCrackData);
                         if (M.r(0.2)) {
                             e.getWorld().playSound(e.getLocation(), Sound.BLOCK_CHORUS_FLOWER_GROW, 0.8f, 0.1f);
                         }
                         if (!J.runEntity(e, loop[0], 1)) {
-                            ((LivingEntity) e).setNoDamageTicks(0);
-                            ((LivingEntity) e).setCollidable(true);
-                            ((LivingEntity) e).setAI(true);
-                            e.setInvulnerable(false);
+                            restoreRiseState(e, living, originalInvulnerable, originalAi,
+                                    originalCollidable, originalNoDamageTicks);
                         }
                     } else {
-                        ((LivingEntity) e).setNoDamageTicks(0);
-                        ((LivingEntity) e).setCollidable(true);
-                        ((LivingEntity) e).setAI(true);
-                        e.setInvulnerable(false);
+                        restoreRiseState(e, living, originalInvulnerable, originalAi,
+                                originalCollidable, originalNoDamageTicks);
                     }
                 };
                 J.runEntity(e, loop[0]);
@@ -426,6 +425,14 @@ public class IrisEntity extends IrisRegistrant {
 
 
         return e;
+    }
+
+    private static void restoreRiseState(Entity entity, LivingEntity living, boolean invulnerable,
+                                         boolean ai, boolean collidable, int noDamageTicks) {
+        living.setNoDamageTicks(noDamageTicks);
+        living.setCollidable(collidable);
+        living.setAI(ai);
+        entity.setInvulnerable(invulnerable);
     }
 
     private int surfaceY(Location l) {

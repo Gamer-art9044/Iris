@@ -18,8 +18,8 @@ Consider supporting development by buying Iris on Spigot.
 | Folia | plugin jar | 26.2 | Region-safe scheduling throughout |
 | Spigot / CraftBukkit | plugin jar | 26.2 | Full feature set |
 | Fabric | mod jar | 26.2 | Server worldgen + client HUD; requires Fabric Loader 0.19.3+ |
-| Forge | mod jar | 26.2 | Server worldgen + client HUD; requires Forge 65.0.0+ |
-| NeoForge | mod jar | 26.2 | Server worldgen + client HUD; requires NeoForge 26.2+ |
+| Forge | mod jar | 26.2 | Server worldgen + client HUD; requires Forge 65.0.4+ |
+| NeoForge | mod jar | 26.2 | Server worldgen + client HUD; requires NeoForge 26.2.0.12-beta+ |
 
 Java 25 is required on every platform.
 

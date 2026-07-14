@@ -49,10 +49,10 @@ project(':core') {
 }
 String minecraftVersion = providers.gradleProperty('minecraftVersion').getOrElse('26.2')
 String fabricLoaderVersion = providers.gradleProperty('fabricLoaderVersion').getOrElse('0.19.3')
-String forgeVersion = providers.gradleProperty('forgeVersion').getOrElse('26.2-65.0.0')
-String neoForgeVersion = providers.gradleProperty('neoForgeVersion').getOrElse('26.2.0.6-beta')
+String forgeVersion = providers.gradleProperty('forgeVersion').getOrElse('26.2-65.0.4')
+String neoForgeVersion = providers.gradleProperty('neoForgeVersion').getOrElse('26.2.0.12-beta')
 String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
-    .orElse('com.github.VolmitSoftware:VolmLib:cdf7e8bb880199734dacd386a6616bda799fcde1')
+    .orElse('com.github.VolmitSoftware:VolmLib:4c38988b344792a79f925f57f8a675bc85fc1bed')
     .get()
 String useLocalVolmLib = providers.gradleProperty('useLocalVolmLib').getOrElse('true')
 String localVolmLibDirectory = providers.gradleProperty('localVolmLibDirectory').getOrNull()
@@ -95,6 +95,8 @@ nmsBindings.each { key, value ->
         extensions.extraProperties.set('nms', nmsConfig)
         plugins.apply(NMSBinding)
 
+        sourceSets.main.java.srcDir(rootProject.file('adapters/minecraft-common/src/main/java'))
+
         dependencies {
             compileOnly(project(':core'))
             compileOnly(volmLibCoordinate) {
@@ -102,6 +104,14 @@ nmsBindings.each { key, value ->
             }
             compileOnly(rootProject.libs.annotations)
             compileOnly(rootProject.libs.byteBuddy.core)
+            testImplementation('junit:junit:4.13.2')
+        }
+
+        tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+            systemProperty('iris.nmsChunkGeneratorSource',
+                rootProject.file("adapters/bukkit/nms/${key}/src/main/java/art/arcane/iris/core/nms/${key}/IrisChunkGenerator.java").absolutePath)
+            systemProperty('iris.nativeStructurePostProcessorSource',
+                rootProject.file('adapters/minecraft-common/src/main/java/art/arcane/iris/nativegen/NativeStructurePostProcessor.java').absolutePath)
         }
     }
 }
@@ -143,6 +153,9 @@ tasks.register('buildBukkit', Copy) {
     from(layout.buildDirectory.file("libs/${bukkitArtifactName}"))
     into(layout.projectDirectory.dir('dist'))
     doFirst {
+        delete(fileTree(layout.projectDirectory.dir('dist')) {
+            include('Iris v* [CraftBukkit] *.jar')
+        })
         delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}.jar"))
     }
 }
@@ -173,6 +186,9 @@ tasks.register('buildFabric', Copy) {
     from(layout.projectDirectory.file("adapters/fabric/build/libs/${fabricArtifactName}"))
     into(layout.projectDirectory.dir('dist'))
     doFirst {
+        delete(fileTree(layout.projectDirectory.dir('dist')) {
+            include('Iris v* [Fabric] *.jar')
+        })
         delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}-fabric.jar"))
     }
 }
@@ -203,6 +219,9 @@ tasks.register('buildForge', Copy) {
     from(layout.projectDirectory.file("adapters/forge/build/libs/${forgeArtifactName}"))
     into(layout.projectDirectory.dir('dist'))
     doFirst {
+        delete(fileTree(layout.projectDirectory.dir('dist')) {
+            include('Iris v* [Forge] *.jar')
+        })
         delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}-forge.jar"))
     }
 }
@@ -233,6 +252,9 @@ tasks.register('buildNeoforge', Copy) {
     from(layout.projectDirectory.file("adapters/neoforge/build/libs/${neoForgeArtifactName}"))
     into(layout.projectDirectory.dir('dist'))
     doFirst {
+        delete(fileTree(layout.projectDirectory.dir('dist')) {
+            include('Iris v* [NeoForge] *.jar')
+        })
         delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}-neoforge.jar"))
     }
 }
@@ -382,7 +404,8 @@ allprojects {
         maven { url = uri('https://repo.papermc.io/repository/maven-public/') }
         maven { url = uri('https://repo.codemc.org/repository/maven-public/') }
 
-        maven { url = uri('https://jitpack.io') } // EcoItems, score
+        maven { url = uri('https://jitpack.io') } // score
+        maven { url = uri('https://repo.auxilor.io/repository/maven-releases/') } // eco
         maven { url = uri('https://repo.nexomc.com/releases/') } // nexo
         maven { url = uri('https://maven.devs.beer/') } // itemsadder
         maven { url = uri('https://repo.extendedclip.com/releases/') } // placeholderapi
@@ -390,12 +413,6 @@ allprojects {
         maven { url = uri('https://nexus.phoenixdevt.fr/repository/maven-public/') } //MMOItems
         maven { url = uri('https://repo.onarandombox.com/content/groups/public/') } //Multiverse Core
         maven { url = uri('https://repo.momirealms.net/releases/') } // CraftEngine
-    }
-
-    dependencies {
-        // Provided or Classpath
-        compileOnly(rootProject.libs.lombok)
-        annotationProcessor(rootProject.libs.lombok)
     }
 
     /**

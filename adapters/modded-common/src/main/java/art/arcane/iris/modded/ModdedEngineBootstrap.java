@@ -21,6 +21,8 @@ package art.arcane.iris.modded;
 import art.arcane.iris.core.gui.GuiHost;
 import art.arcane.iris.engine.decorator.DecoratorPlatformHooks;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.EngineEffectsProvider;
+import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.EngineWorldManagerProvider;
 import art.arcane.iris.engine.framework.PreservationRegistry;
 import art.arcane.iris.engine.object.BlockDataMergeSupport;
@@ -42,7 +44,12 @@ import art.arcane.iris.modded.service.ModdedSettingsHotloadService;
 import art.arcane.iris.modded.service.ModdedStudioHotloadService;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisServices;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.storage.LevelData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,6 +65,8 @@ public final class ModdedEngineBootstrap {
     private static volatile ModdedLoader loader;
     private static volatile ModdedPlatform platform;
     private static volatile MinecraftServer currentServer;
+    private static volatile MinecraftServer spawnCaptureServer;
+    private static volatile boolean initialSpawnWasDefault;
 
     private ModdedEngineBootstrap() {
     }
@@ -81,8 +90,10 @@ public final class ModdedEngineBootstrap {
     }
 
     public static void start(MinecraftServer server) {
+        captureInitialSpawn(server);
         currentServer = server;
         bind();
+        bindWorldGenerators(server);
         ModdedStartup.reset();
         ModdedScheduler scheduler = schedulerOrNull();
         if (scheduler != null) {
@@ -94,11 +105,38 @@ public final class ModdedEngineBootstrap {
         ModdedSentry.start(loader());
     }
 
+    private static void bindWorldGenerators(MinecraftServer server) {
+        for (ServerLevel level : server.getAllLevels()) {
+            if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator) {
+                generator.bindLevel(level);
+            }
+        }
+    }
+
+    public static void serverAboutToStart(MinecraftServer server) {
+        captureInitialSpawn(server);
+    }
+
+    public static void serverStarted(MinecraftServer server) {
+        bindWorldGenerators(server);
+        reconcileSpawn(server);
+        ModdedWorldCheck.serverStarted(server);
+    }
+
+    public static void levelLoaded(ServerLevel level) {
+        if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator) {
+            generator.bindLevel(level);
+        }
+    }
+
     public static void stop() {
+        MinecraftServer stoppingServer = currentServer;
+        ModdedWorldCheck.serverStopped(stoppingServer);
         ModdedProtocolHandler.stop();
         ModdedPregenJob.shutdown();
         ModdedObjectUndo.clearAll();
         ModdedWandService.clearAll();
+        ModdedBlockBreakHandler.clear();
         ModdedStudioCommands.clear();
         ModdedWorldEngines.shutdown();
         ModdedPrimaryWorldRouter.clear();
@@ -112,6 +150,49 @@ public final class ModdedEngineBootstrap {
         ModdedSentry.flush();
         ModdedStartup.reset();
         currentServer = null;
+        spawnCaptureServer = null;
+        initialSpawnWasDefault = false;
+    }
+
+    private static void captureInitialSpawn(MinecraftServer server) {
+        if (spawnCaptureServer == server) {
+            return;
+        }
+        LevelData.RespawnData respawnData = server.getRespawnData();
+        initialSpawnWasDefault = respawnData == null || LevelData.RespawnData.DEFAULT.equals(respawnData);
+        spawnCaptureServer = server;
+    }
+
+    private static void reconcileSpawn(MinecraftServer server) {
+        LevelData.RespawnData current = server.getRespawnData();
+        if (current == null) {
+            return;
+        }
+        ServerLevel level = server.getLevel(current.dimension());
+        if (level == null || !(level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator)) {
+            return;
+        }
+        String dimensionId = level.dimension().identifier().toString();
+        boolean studio = dimensionId.startsWith("irisworldgen:studio_");
+        if (!shouldReconcileSpawn(initialSpawnWasDefault, studio, current.pos().getX(), current.pos().getZ())) {
+            return;
+        }
+        LevelChunk originChunk = level.getChunk(0, 0);
+        int surfaceY = originChunk.getHeight(Heightmap.Types.MOTION_BLOCKING, 0, 0) + 1;
+        BlockPos position = reconciledSpawnPosition(surfaceY, level.getMinY(), level.getHeight());
+        server.setRespawnData(LevelData.RespawnData.of(
+                level.dimension(), position, current.yaw(), current.pitch()));
+        LOGGER.info("Iris spawn reconciled for {} at {},{},{}", dimensionId,
+                position.getX(), position.getY(), position.getZ());
+    }
+
+    static boolean shouldReconcileSpawn(boolean initialDefault, boolean studio, int currentX, int currentZ) {
+        return initialDefault || studio || currentX == 0 && currentZ == 0;
+    }
+
+    static BlockPos reconciledSpawnPosition(int surfaceY, int minY, int height) {
+        int y = Math.max(minY + 1, Math.min(minY + height - 2, surfaceY));
+        return new BlockPos(0, y, 0);
     }
 
     public static void bootCommon(ModdedLoader moddedLoader, String loaderDescription, Runnable chunkGeneratorRegistration) {
@@ -191,6 +272,7 @@ public final class ModdedEngineBootstrap {
             IrisObjectRotation.bindFallbackRotator(new ModdedStateRotator());
             BlockDataMergeSupport.bindFallbackMerger(new ModdedStateMerger());
             TileData.bindFallbackReader(new ModdedTileReader(boundLoader::currentServer));
+            TileData.bindFallbackFactory(ModdedTileData::fromProperties);
             ModdedGuiHost.install();
             ModdedDecoratorHooks decoratorHooks = new ModdedDecoratorHooks();
             DecoratorPlatformHooks.bind(decoratorHooks, decoratorHooks);
@@ -198,10 +280,12 @@ public final class ModdedEngineBootstrap {
             SERVICE_MANAGER.register(ModdedLogFilterService.class, new ModdedLogFilterService());
             SERVICE_MANAGER.register(ModdedEngineMaintenanceService.class, new ModdedEngineMaintenanceService());
             SERVICE_MANAGER.register(ModdedSettingsHotloadService.class, new ModdedSettingsHotloadService());
-            SERVICE_MANAGER.register(ModdedStudioHotloadService.class, new ModdedStudioHotloadService());
+            ModdedStudioHotloadService studioHotloadService = SERVICE_MANAGER.register(ModdedStudioHotloadService.class, new ModdedStudioHotloadService());
             SERVICE_MANAGER.register(ModdedChunkUpdateService.class, new ModdedChunkUpdateService());
             SERVICE_MANAGER.register(ModdedEntitySpawnService.class, new ModdedEntitySpawnService());
             IrisServices.register(PreservationRegistry.class, preservation);
+            IrisServices.register(EngineEffectsProvider.class, (EngineEffectsProvider) ModdedEngineEffects::new);
+            IrisServices.register(EnginePlatformHooks.class, studioHotloadService);
             IrisServices.register(EngineWorldManagerProvider.class, (EngineWorldManagerProvider) (Engine engine) -> new ModdedWorldManager(engine));
             ModdedCustomContentRegistry.discover();
             platform = created;

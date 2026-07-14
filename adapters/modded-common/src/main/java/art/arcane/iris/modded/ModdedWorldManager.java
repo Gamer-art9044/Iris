@@ -30,7 +30,6 @@ import art.arcane.iris.engine.object.IrisEntitySpawn;
 import art.arcane.iris.engine.object.IrisMarker;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRange;
-import art.arcane.iris.engine.object.IrisRate;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisSpawnGroup;
 import art.arcane.iris.engine.object.IrisSpawner;
@@ -43,18 +42,16 @@ import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterMarker;
+import art.arcane.volmlib.util.matter.slices.MarkerMatter;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
-import org.bukkit.Chunk;
-import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.block.BlockPlaceEvent;
-import org.bukkit.event.player.PlayerTeleportEvent;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -66,15 +63,13 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 public final class ModdedWorldManager implements EngineWorldManager {
+    static final MantleFlag INITIAL_SPAWN_COMPLETION_FLAG = MantleFlag.INITIAL_SPAWNED_MARKER;
     private static final int MAX_INITIAL_QUEUE = 8192;
     private static final int MAX_INITIAL_DRAIN_PER_TICK = 8;
     private static final int MAX_INITIAL_RECOVERY_PER_PASS = 128;
     private static final int MANTLE_WARMUP_QUEUE_CAPACITY = 256;
     private static final long INITIAL_RECOVERY_INTERVAL_MS = 1_000L;
     private static final long COUNT_INTERVAL_MS = 3_000L;
-    private static final int ENTITY_SCAN_RADIUS = 64;
-    private static final int PLAYER_CHUNK_RADIUS = 4;
-    private static final int MIN_TICK_INTERVAL_MS = 1_000;
 
     private final Engine engine;
     private final InitialSpawnQueue initialSpawnQueue;
@@ -123,6 +118,9 @@ public final class ModdedWorldManager implements EngineWorldManager {
         if (closed || engine.isClosed() || engine.getMantle().getMantle().isClosed()) {
             return;
         }
+        if (!isEntitySpawningEnabledForCurrentWorld()) {
+            return;
+        }
         if (isPregenActive()) {
             return;
         }
@@ -132,7 +130,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
     }
 
     private void recoverLoadedInitialSpawns(ServerLevel level) {
-        if (!markerSystemEnabled() && !ambientSystemEnabled()) {
+        if (!markerSystemEnabled()) {
             return;
         }
         long now = System.currentTimeMillis();
@@ -161,7 +159,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
             if (level.getChunkSource().getChunkNow(chunkX, chunkZ) == null) {
                 continue;
             }
-            if (mantle.isChunkLoaded(chunkX, chunkZ) && mantle.hasFlag(chunkX, chunkZ, MantleFlag.INITIAL_SPAWNED)) {
+            if (mantle.isChunkLoaded(chunkX, chunkZ) && mantle.hasFlag(chunkX, chunkZ, INITIAL_SPAWN_COMPLETION_FLAG)) {
                 continue;
             }
             if (initialSpawnQueue.offer(key) && ++recovered >= MAX_INITIAL_RECOVERY_PER_PASS) {
@@ -174,7 +172,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
         if (initialSpawnQueue.isEmpty()) {
             return;
         }
-        if (!markerSystemEnabled() && !ambientSystemEnabled()) {
+        if (!markerSystemEnabled()) {
             initialSpawnQueue.clear();
             return;
         }
@@ -211,28 +209,61 @@ public final class ModdedWorldManager implements EngineWorldManager {
     }
 
     private boolean initialSpawnChunk(ServerLevel level, int chunkX, int chunkZ) {
+        if (!ModdedEntitySpawner.chunksSafe(level, chunkX, chunkZ)) {
+            return false;
+        }
         Mantle<Matter> mantle = engine.getMantle().getMantle();
         if (!mantle.isChunkLoaded(chunkX, chunkZ)) {
             return false;
         }
-        if (mantle.hasFlag(chunkX, chunkZ, MantleFlag.INITIAL_SPAWNED)) {
+        if (mantle.hasFlag(chunkX, chunkZ, INITIAL_SPAWN_COMPLETION_FLAG)) {
             return true;
         }
 
         MantleChunk<Matter> chunk = mantle.getChunk(chunkX, chunkZ).use();
         try {
-            chunk.raiseFlagUnchecked(MantleFlag.INITIAL_SPAWNED, () -> {
-                if (markerSystemEnabled()) {
-                    spawnMarkerSpawners(level, chunkX, chunkZ, chunk, true);
-                }
-                if (ambientSystemEnabled()) {
-                    spawnAmbient(level, chunkX, chunkZ, true);
-                }
+            chunk.raiseFlagUnchecked(INITIAL_SPAWN_COMPLETION_FLAG, () -> {
+                spawnMarkerSpawners(level, chunkX, chunkZ, chunk, true);
+                scheduleInitialFollowUp(level, chunkX, chunkZ);
             });
         } finally {
             chunk.release();
         }
         return true;
+    }
+
+    private void scheduleInitialFollowUp(ServerLevel level, int chunkX, int chunkZ) {
+        ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
+        if (scheduler == null) {
+            IrisLogging.error("Iris could not schedule the initial entity-spawn follow-up because the modded scheduler is unavailable.");
+            return;
+        }
+        scheduler.laterGlobal(() -> runInitialFollowUp(level, chunkX, chunkZ), RNG.r.i(5, 200));
+    }
+
+    private void runInitialFollowUp(ServerLevel level, int chunkX, int chunkZ) {
+        Mantle<Matter> mantle = engine.getMantle().getMantle();
+        if (closed || engine.isClosed() || mantle.isClosed() || !isEntitySpawningEnabledForCurrentWorld()) {
+            return;
+        }
+        if (level.getChunkSource().getChunkNow(chunkX, chunkZ) == null || !mantle.isChunkLoaded(chunkX, chunkZ)) {
+            return;
+        }
+        if (engine.getComplex() == null) {
+            return;
+        }
+
+        MantleChunk<Matter> chunk = mantle.getChunk(chunkX, chunkZ).use();
+        try {
+            if (markerSystemEnabled()) {
+                spawnMarkerSpawners(level, chunkX, chunkZ, chunk, false);
+            }
+            if (ambientSystemEnabled()) {
+                spawnAmbient(level, chunkX, chunkZ, true);
+            }
+        } finally {
+            chunk.release();
+        }
     }
 
     private void warmupMantleChunkAsync(long key, int chunkX, int chunkZ) {
@@ -263,25 +294,25 @@ public final class ModdedWorldManager implements EngineWorldManager {
 
     private void ambientTick(ServerLevel level) {
         long now = System.currentTimeMillis();
-        long interval = Math.max((long) MIN_TICK_INTERVAL_MS, IrisSettings.get().getWorld().getAsyncTickIntervalMS());
+        long interval = IrisSettings.get().getWorld().getAsyncTickIntervalMS();
         if (now - lastAmbientAt < interval) {
             return;
         }
         lastAmbientAt = now;
 
-        if (level.players().isEmpty()) {
-            return;
-        }
         if (!markerSystemEnabled() && !ambientSystemEnabled()) {
             return;
         }
+        if (level.players().isEmpty()) {
+            return;
+        }
 
-        refreshEntityCount(level, now);
+        long[] candidates = loadedChunkPositionsSnapshot(level);
+        refreshEntityCount(level, now, candidates.length);
         if (cachedSaturation > IrisSettings.get().getWorld().getTargetSpawnEntitiesPerChunk()) {
             return;
         }
 
-        long[] candidates = loadedChunksNearPlayers(level);
         if (candidates.length == 0) {
             return;
         }
@@ -298,6 +329,9 @@ public final class ModdedWorldManager implements EngineWorldManager {
     }
 
     private void ambientSpawnChunk(ServerLevel level, int chunkX, int chunkZ) {
+        if (!ModdedEntitySpawner.chunksSafe(level, chunkX, chunkZ)) {
+            return;
+        }
         Mantle<Matter> mantle = engine.getMantle().getMantle();
         if (!mantle.isChunkLoaded(chunkX, chunkZ)) {
             return;
@@ -318,6 +352,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
 
     private void spawnMarkerSpawners(ServerLevel level, int chunkX, int chunkZ, MantleChunk<Matter> chunk, boolean initial) {
         int minHeight = engine.getWorld().minHeight();
+        KList<IrisPosition> obstructed = new KList<>();
         chunk.iterate(MatterMarker.class, (Integer x, Integer yf, Integer z, MatterMarker marker) -> {
             String tag = marker.getTag();
             if (tag.equals("cave_floor") || tag.equals("cave_ceiling")) {
@@ -333,6 +368,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
             int worldY = yf + minHeight;
 
             if (resolved.isEmptyAbove() && aboveObstructed(level, worldX, worldY, worldZ)) {
+                obstructed.add(new IrisPosition(worldX, yf, worldZ));
                 return;
             }
 
@@ -346,6 +382,10 @@ public final class ModdedWorldManager implements EngineWorldManager {
             }
             spawnFromSpawner(level, new IrisPosition(worldX, worldY, worldZ), chosen, initial);
         });
+        Mantle<Matter> mantle = engine.getMantle().getMantle();
+        for (IrisPosition position : obstructed) {
+            mantle.remove(position.getX(), position.getY(), position.getZ(), MatterMarker.class);
+        }
     }
 
     private KList<IrisSpawner> resolveMarkerSpawners(IrisMarker marker) {
@@ -397,7 +437,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
         int blockZ = chunkZ << 4;
         IrisBiome biome = engine.getSurfaceBiome(blockX, blockZ);
         IrisRegion region = engine.getRegion(blockX, blockZ);
-        int chunkMobs = countChunkMobs(level, chunkX, chunkZ);
+        int chunkMobs = countChunkLivingEntities(level, chunkX, chunkZ);
 
         KList<IrisEntitySpawn> pool = new KList<>();
         collectSpawns(pool, engine.getData().getSpawnerLoader().loadAll(engine.getDimension().getEntitySpawners()), biome, chunkX, chunkZ, chunkMobs, initial);
@@ -457,19 +497,33 @@ public final class ModdedWorldManager implements EngineWorldManager {
             return 0;
         }
 
-        RNG entityRng = new RNG(engine.getSeedManager().getEntity());
+        RNG entityRng = entry.getRng().aquire(() -> new RNG(engine.getSeedManager().getEntity()));
         IrisSpawnGroup group = spawner.getGroup();
+        KList<IrisPosition> caveFloors = group == IrisSpawnGroup.CAVE
+                ? engine.getMantle().findMarkers(chunkX, chunkZ, MarkerMatter.CAVE_FLOOR)
+                : new KList<>();
         int spawned = 0;
         for (int i = 0; i < count; i++) {
-            int worldX = (chunkX << 4) + RNG.r.i(15);
-            int worldZ = (chunkZ << 4) + RNG.r.i(15);
-            int surfaceY = level.getMinY() + engine.getHeight(worldX, worldZ, false);
-            int solidY = level.getMinY() + engine.getHeight(worldX, worldZ, true);
-            int worldY = switch (group) {
-                case NORMAL -> surfaceY + 1;
-                case CAVE -> solidY + 1;
-                case UNDERWATER, BEACH -> surfaceY > solidY + 1 ? RNG.r.i(solidY + 1, surfaceY) : surfaceY;
-            };
+            int worldX;
+            int worldY;
+            int worldZ;
+            if (group == IrisSpawnGroup.CAVE) {
+                if (caveFloors.isEmpty()) {
+                    continue;
+                }
+                IrisPosition caveFloor = caveFloors.getRandom(RNG.r);
+                worldX = caveFloor.getX();
+                worldY = caveFloor.getY() + 1;
+                worldZ = caveFloor.getZ();
+            } else {
+                worldX = (chunkX << 4) + RNG.r.i(15);
+                worldZ = (chunkZ << 4) + RNG.r.i(15);
+                int surfaceY = level.getMinY() + engine.getHeight(worldX, worldZ, false);
+                int solidY = level.getMinY() + engine.getHeight(worldX, worldZ, true);
+                worldY = group == IrisSpawnGroup.NORMAL
+                        ? surfaceY + 1
+                        : RNG.r.i(solidY + 1, surfaceY);
+            }
             if (worldY <= level.getMinY() || worldY >= level.getMaxY()) {
                 continue;
             }
@@ -479,7 +533,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
             if (!surfaceMatches(irisEntity.getSurface(), level, worldX, worldY, worldZ)) {
                 continue;
             }
-            if (!clearForSpawn(level, worldX, worldY, worldZ)) {
+            if (!ModdedEntitySpawner.isAreaClearForSpawn(level, irisEntity, worldX, worldY, worldZ)) {
                 continue;
             }
             if (ModdedEntitySpawner.spawn(engine, irisEntity, level, worldX, worldY, worldZ, entityRng) != null) {
@@ -504,7 +558,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
 
         exhaustMarker(spawner, position);
 
-        RNG entityRng = new RNG(engine.getSeedManager().getEntity());
+        RNG entityRng = entry.getRng().aquire(() -> new RNG(engine.getSeedManager().getEntity()));
         int worldX = position.getX();
         int worldY = position.getY() + 1;
         int worldZ = position.getZ();
@@ -529,12 +583,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
     }
 
     private boolean canSpawn(IrisSpawner spawner, int chunkX, int chunkZ) {
-        IrisRate rate = spawner.getMaximumRate();
-        if (!rate.isInfinite() && !engine.getEngineData().getCooldown(spawner).canSpawn(rate)) {
-            return false;
-        }
-        IrisRate chunkRate = spawner.getMaximumRatePerChunk();
-        return chunkRate.isInfinite() || engine.getEngineData().getChunk(chunkX, chunkZ).getCooldown(spawner).canSpawn(chunkRate);
+        return spawner.canSpawn(engine, chunkX, chunkZ);
     }
 
     private boolean lightAllowed(IrisSpawner spawner, ServerLevel level, int worldX, int worldY, int worldZ) {
@@ -575,68 +624,51 @@ public final class ModdedWorldManager implements EngineWorldManager {
                 || state.is(Blocks.KELP) || state.is(Blocks.KELP_PLANT);
     }
 
-    private boolean clearForSpawn(ServerLevel level, int worldX, int worldY, int worldZ) {
-        BlockState at = level.getBlockState(new BlockPos(worldX, worldY, worldZ));
-        BlockState above = level.getBlockState(new BlockPos(worldX, worldY + 1, worldZ));
-        return !ModdedBlockResolution.isSolid(at) && !ModdedBlockResolution.isSolid(above);
-    }
-
     private boolean aboveObstructed(ServerLevel level, int worldX, int worldY, int worldZ) {
-        return ModdedBlockResolution.isSolid(level.getBlockState(new BlockPos(worldX, worldY + 1, worldZ)))
+        return worldY + 2 >= level.getMaxY()
+                || ModdedBlockResolution.isSolid(level.getBlockState(new BlockPos(worldX, worldY + 1, worldZ)))
                 || ModdedBlockResolution.isSolid(level.getBlockState(new BlockPos(worldX, worldY + 2, worldZ)));
     }
 
-    private int countChunkMobs(ServerLevel level, int chunkX, int chunkZ) {
+    private int countChunkLivingEntities(ServerLevel level, int chunkX, int chunkZ) {
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
         AABB box = new AABB(baseX, level.getMinY(), baseZ, baseX + 16, level.getMaxY(), baseZ + 16);
-        return level.getEntities((Entity) null, box, (Entity e) -> e instanceof Mob && e.isAlive()).size();
+        return level.getEntities((Entity) null, box,
+                (Entity entity) -> isLivingEntityInChunk(entity, chunkX, chunkZ)).size();
     }
 
-    private void refreshEntityCount(ServerLevel level, long now) {
+    private static boolean isLivingEntityInChunk(Entity entity, int chunkX, int chunkZ) {
+        if (!(entity instanceof LivingEntity)) {
+            return false;
+        }
+        BlockPos position = entity.blockPosition();
+        return (position.getX() >> 4) == chunkX && (position.getZ() >> 4) == chunkZ;
+    }
+
+    private void refreshEntityCount(ServerLevel level, long now, int loadedChunks) {
+        cachedConsideredChunks = loadedChunks;
+        cachedSaturation = cachedEntityCount / (loadedChunks + 1.0) * 1.28;
         if (now - lastCountAt < COUNT_INTERVAL_MS) {
             return;
         }
         lastCountAt = now;
 
-        int mobs = 0;
-        int chunks = 0;
-        for (ServerPlayer player : level.players()) {
-            int px = player.blockPosition().getX();
-            int pz = player.blockPosition().getZ();
-            AABB box = new AABB(px - ENTITY_SCAN_RADIUS, level.getMinY(), pz - ENTITY_SCAN_RADIUS,
-                    px + ENTITY_SCAN_RADIUS, level.getMaxY(), pz + ENTITY_SCAN_RADIUS);
-            mobs += level.getEntities((Entity) null, box, (Entity e) -> e instanceof Mob && e.isAlive()).size();
-            chunks += (PLAYER_CHUNK_RADIUS * 2 + 1) * (PLAYER_CHUNK_RADIUS * 2 + 1);
-        }
-
-        cachedEntityCount = mobs;
-        cachedConsideredChunks = chunks;
-        cachedSaturation = mobs / (chunks + 1.0) * 1.28;
-    }
-
-    private long[] loadedChunksNearPlayers(ServerLevel level) {
-        Set<Long> keys = new HashSet<>();
-        for (ServerPlayer player : level.players()) {
-            int centerX = player.blockPosition().getX() >> 4;
-            int centerZ = player.blockPosition().getZ() >> 4;
-            for (int dx = -PLAYER_CHUNK_RADIUS; dx <= PLAYER_CHUNK_RADIUS; dx++) {
-                for (int dz = -PLAYER_CHUNK_RADIUS; dz <= PLAYER_CHUNK_RADIUS; dz++) {
-                    int chunkX = centerX + dx;
-                    int chunkZ = centerZ + dz;
-                    if (level.getChunkSource().getChunkNow(chunkX, chunkZ) != null) {
-                        keys.add(pack(chunkX, chunkZ));
-                    }
-                }
+        int livingEntities = 0;
+        for (Entity entity : level.getAllEntities()) {
+            if (entity instanceof LivingEntity && entity.isAlive()) {
+                livingEntities++;
             }
         }
 
-        long[] result = new long[keys.size()];
-        int index = 0;
-        for (long key : keys) {
-            result[index++] = key;
-        }
-        return result;
+        cachedEntityCount = livingEntities;
+        cachedSaturation = livingEntities / (loadedChunks + 1.0) * 1.28;
+    }
+
+    private long[] loadedChunkPositionsSnapshot(ServerLevel level) {
+        LongArrayList positions = new LongArrayList(level.getChunkSource().getLoadedChunksCount());
+        level.getChunkSource().chunkMap.forEachReadyToSendChunk(chunk -> positions.add(chunk.getPos().pack()));
+        return positions.toLongArray();
     }
 
     private boolean isPregenActive() {
@@ -650,6 +682,14 @@ public final class ModdedWorldManager implements EngineWorldManager {
 
     private static boolean ambientSystemEnabled() {
         return IrisSettings.get().getWorld().isAmbientEntitySpawningSystem();
+    }
+
+    private boolean isEntitySpawningEnabledForCurrentWorld() {
+        return entitySpawningEnabled(engine.isStudio(), IrisSettings.get().getStudio().isEnableEntitySpawning());
+    }
+
+    static boolean entitySpawningEnabled(boolean studio, boolean studioSetting) {
+        return !studio || studioSetting;
     }
 
     private IrisEntitySpawn rarityPick(KList<IrisEntitySpawn> entries) {
@@ -709,25 +749,5 @@ public final class ModdedWorldManager implements EngineWorldManager {
     @Override
     public void onSave() {
         engine.getMantle().save();
-    }
-
-    @Override
-    public void onBlockBreak(BlockBreakEvent e) {
-    }
-
-    @Override
-    public void onBlockPlace(BlockPlaceEvent e) {
-    }
-
-    @Override
-    public void onChunkLoad(Chunk e, boolean generated) {
-    }
-
-    @Override
-    public void onChunkUnload(Chunk e) {
-    }
-
-    @Override
-    public void teleportAsync(PlayerTeleportEvent e) {
     }
 }

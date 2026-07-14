@@ -25,7 +25,10 @@ final class VanillaStructureBiomes {
         if (source == null) {
             return keys;
         }
-        for (Holder<Biome> holder : source.possibleBiomes()) {
+        Set<Holder<Biome>> possibleBiomes = source instanceof CustomBiomeSource customBiomeSource
+                ? customBiomeSource.possibleStructureBiomes()
+                : source.possibleBiomes();
+        for (Holder<Biome> holder : possibleBiomes) {
             Optional<ResourceKey<Biome>> key = holder.unwrapKey();
             if (key.isPresent()) {
                 keys.add(key.get().identifier().toString());

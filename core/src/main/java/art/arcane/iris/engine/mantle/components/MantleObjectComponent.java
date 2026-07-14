@@ -42,7 +42,6 @@ import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisObjectRotation;
 import art.arcane.iris.engine.object.IrisObjectScale;
-import art.arcane.iris.engine.object.IrisObjectTranslate;
 import art.arcane.iris.engine.object.IrisObjectVacuum;
 import art.arcane.iris.engine.object.IrisProceduralObjects;
 import art.arcane.iris.engine.object.IrisProceduralPlacement;
@@ -53,9 +52,7 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
-import art.arcane.iris.util.project.context.ChunkedDoubleDataCache;
 import art.arcane.iris.util.project.context.ChunkContext;
-import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.volmlib.util.format.Form;
@@ -64,7 +61,6 @@ import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.MatterStructurePOI;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.noise.NoiseType;
-import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -83,7 +79,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public class MantleObjectComponent extends IrisMantleComponent {
     private static final long CAVE_REJECT_LOG_THROTTLE_MS = 5000L;
     private static final int BEDROCK_CLEARANCE = 6;
-    private static final int SURFACE_HEIGHT_CHUNK_FILL_THRESHOLD = 128;
     private static final Map<String, CaveRejectLogState> CAVE_REJECT_LOG_STATE = new ConcurrentHashMap<>();
     private static final Set<String> MISSING_LOAD_KEY_WARNED = ConcurrentHashMap.newKeySet();
     private static final int[] GOLDEN_DEBUG_TARGET = parseGoldenDebugTarget(resolveGoldenDebugSpec());
@@ -156,7 +151,6 @@ public class MantleObjectComponent extends IrisMantleComponent {
         IrisBiome surfaceBiome = complex.getTrueBiomeStream().get(xxx, zzz);
         int surfaceY = getEngineMantle().getEngine().getHeight(xxx, zzz, true);
         IrisBiome caveBiome = resolveCaveObjectBiome(xxx, zzz, surfaceY, surfaceBiome);
-        SurfaceHeightLookup surfaceHeightLookup = new SurfaceHeightLookup(context);
         if (IrisSettings.get().getGeneral().isDebug() && (x & 31) == 0 && (z & 31) == 0) {
             int carvedBlocks = 0;
             int minY = 1;
@@ -186,7 +180,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     + " regionSurfacePlacers=" + region.getSurfaceObjects().size()
                     + " regionCavePlacers=" + region.getCarvingObjects().size());
         }
-        ObjectPlacementSummary summary = placeObjects(writer, rng, x, z, surfaceBiome, caveBiome, region, complex, traceRegen, surfaceHeightLookup);
+        ObjectPlacementSummary summary = placeObjects(writer, rng, x, z, surfaceBiome, caveBiome, region, complex, traceRegen);
         placeProceduralObjects(writer, rng, x, z, surfaceBiome, caveBiome, region);
         UpperDimensionContext upperCtx = getEngineMantle().getEngine().getUpperContext();
         IrisDimension dimension = getDimension();
@@ -252,7 +246,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
     }
 
     @ChunkCoordinates
-    private ObjectPlacementSummary placeObjects(MantleWriter writer, RNG rng, int x, int z, IrisBiome surfaceBiome, IrisBiome caveBiome, IrisRegion region, IrisComplex complex, boolean traceRegen, SurfaceHeightLookup surfaceHeightLookup) {
+    private ObjectPlacementSummary placeObjects(MantleWriter writer, RNG rng, int x, int z, IrisBiome surfaceBiome, IrisBiome caveBiome, IrisRegion region, IrisComplex complex, boolean traceRegen) {
         int biomeSurfaceChecked = 0;
         int biomeSurfaceTriggered = 0;
         int biomeCaveChecked = 0;
@@ -268,9 +262,6 @@ public class MantleObjectComponent extends IrisMantleComponent {
         int errors = 0;
         IrisCaveProfile biomeCaveProfile = resolveCaveProfile(caveBiome.getCaveProfile(), region.getCaveProfile());
         IrisCaveProfile regionCaveProfile = resolveCaveProfile(region.getCaveProfile(), caveBiome.getCaveProfile());
-        int biomeSurfaceExclusionDepth = resolveSurfaceObjectExclusionDepth(biomeCaveProfile);
-        int regionSurfaceExclusionDepth = resolveSurfaceObjectExclusionDepth(regionCaveProfile);
-        SurfaceExposureCache surfaceExposureCache = new SurfaceExposureCache();
         CaveAnchorCache caveAnchorCache = new CaveAnchorCache();
 
         for (IrisObjectPlacement i : surfaceBiome.getSurfaceObjects()) {
@@ -287,7 +278,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             if (chance) {
                 biomeSurfaceTriggered++;
                 try {
-                    ObjectPlacementResult result = placeObject(writer, rng, x << 4, z << 4, i, biomeSurfaceExclusionDepth, complex, traceRegen, x, z, "biome-surface", surfaceHeightLookup, surfaceExposureCache, caveAnchorCache);
+                    ObjectPlacementResult result = placeObject(writer, rng, x << 4, z << 4, i, complex, traceRegen, x, z, "biome-surface");
                     attempts += result.attempts();
                     placed += result.placed();
                     rejected += result.rejected();
@@ -352,7 +343,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             if (chance) {
                 regionSurfaceTriggered++;
                 try {
-                    ObjectPlacementResult result = placeObject(writer, rng, x << 4, z << 4, i, regionSurfaceExclusionDepth, complex, traceRegen, x, z, "region-surface", surfaceHeightLookup, surfaceExposureCache, caveAnchorCache);
+                    ObjectPlacementResult result = placeObject(writer, rng, x << 4, z << 4, i, complex, traceRegen, x, z, "region-surface");
                     attempts += result.attempts();
                     placed += result.placed();
                     rejected += result.rejected();
@@ -538,15 +529,11 @@ public class MantleObjectComponent extends IrisMantleComponent {
             int x,
             int z,
             IrisObjectPlacement objectPlacement,
-            int surfaceObjectExclusionBaseDepth,
             IrisComplex complex,
             boolean traceRegen,
             int chunkX,
             int chunkZ,
-            String scope,
-            SurfaceHeightLookup surfaceHeightLookup,
-            SurfaceExposureCache surfaceExposureCache,
-            CaveAnchorCache caveAnchorCache
+            String scope
     ) {
         int attempts = 0;
         int placed = 0;
@@ -572,12 +559,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             }
             int xx = rng.i(x, x + 15);
             int zz = rng.i(z, z + 15);
-            int surfaceObjectExclusionDepth = resolveSurfaceObjectExclusionDepth(surfaceObjectExclusionBaseDepth, v, objectPlacement);
-            int surfaceObjectExclusionRadius = resolveSurfaceObjectExclusionRadius(v, objectPlacement);
             IrisObjectPlacement effectivePlacement = resolveEffectivePlacement(objectPlacement, v);
-            boolean overCave = effectivePlacement.getMode() != ObjectPlaceMode.FLOATING
-                    && surfaceObjectExclusionDepth > 0
-                    && hasSurfaceCarveExposure(writer, surfaceHeightLookup, xx, zz, surfaceObjectExclusionDepth, surfaceObjectExclusionRadius, surfaceExposureCache);
             int id = rng.i(0, Integer.MAX_VALUE);
             IObjectPlacer placePlacer = golden ? new GoldenDebugPlacer(writer, scope + "/" + v.getLoadKey()) : writer;
             if (golden) {
@@ -587,57 +569,18 @@ public class MantleObjectComponent extends IrisMantleComponent {
                         + " densityIndex=" + i
                         + " xx=" + xx
                         + " zz=" + zz
-                        + " overCave=" + overCave
-                        + " exclusionDepth=" + surfaceObjectExclusionDepth
-                        + " exclusionRadius=" + surfaceObjectExclusionRadius
                         + " mode=" + effectivePlacement.getMode());
             }
             try {
-                int result = -1;
-                String fallbackPath = "surface";
-
-                if (overCave) {
-                    int caveFloorY = findNearestCaveFloor(writer, xx, zz, caveAnchorCache);
-                    if (caveFloorY > 0) {
-                        IrisObjectPlacement floorPlacement = effectivePlacement.toPlacement(v.getLoadKey());
-                        floorPlacement.setMode(ObjectPlaceMode.FAST_MIN_HEIGHT);
-                        result = v.place(xx, caveFloorY, zz, placePlacer, floorPlacement, rng, (b, data) -> {
-                            String marker = placementMarker(v, id, "cave-floor");
-                            if (marker != null) {
-                                writer.setData(b.getX(), b.getY(), b.getZ(), marker);
-                            }
-                            if (effectivePlacement.isDolphinTarget() && effectivePlacement.isUnderwater() && B.isStorageChest(data)) {
-                                writer.setData(b.getX(), b.getY(), b.getZ(), MatterStructurePOI.BURIED_TREASURE);
-                            }
-                        }, null, getData());
-                        fallbackPath = "cave-floor";
+                int result = v.place(xx, -1, zz, placePlacer, effectivePlacement, rng, (b, data) -> {
+                    String marker = placementMarker(v, id, "surface");
+                    if (marker != null) {
+                        writer.setData(b.getX(), b.getY(), b.getZ(), marker);
                     }
-
-                    if (result < 0) {
-                        IrisObjectPlacement stiltPlacement = effectivePlacement.toPlacement(v.getLoadKey());
-                        stiltPlacement.setMode(ObjectPlaceMode.FAST_MIN_STILT);
-                        result = v.place(xx, -1, zz, placePlacer, stiltPlacement, rng, (b, data) -> {
-                            String marker = placementMarker(v, id, "stilt");
-                            if (marker != null) {
-                                writer.setData(b.getX(), b.getY(), b.getZ(), marker);
-                            }
-                            if (effectivePlacement.isDolphinTarget() && effectivePlacement.isUnderwater() && B.isStorageChest(data)) {
-                                writer.setData(b.getX(), b.getY(), b.getZ(), MatterStructurePOI.BURIED_TREASURE);
-                            }
-                        }, null, getData());
-                        fallbackPath = "stilt";
+                    if (effectivePlacement.isDolphinTarget() && effectivePlacement.isUnderwater() && B.isStorageChest(data)) {
+                        writer.setData(b.getX(), b.getY(), b.getZ(), MatterStructurePOI.BURIED_TREASURE);
                     }
-                } else {
-                    result = v.place(xx, -1, zz, placePlacer, effectivePlacement, rng, (b, data) -> {
-                        String marker = placementMarker(v, id, "surface");
-                        if (marker != null) {
-                            writer.setData(b.getX(), b.getY(), b.getZ(), marker);
-                        }
-                        if (effectivePlacement.isDolphinTarget() && effectivePlacement.isUnderwater() && B.isStorageChest(data)) {
-                            writer.setData(b.getX(), b.getY(), b.getZ(), MatterStructurePOI.BURIED_TREASURE);
-                        }
-                    }, null, getData());
-                }
+                }, null, getData());
 
                 if (result >= 0) {
                     placed++;
@@ -650,7 +593,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                             + " scope=" + scope
                             + " object=" + v.getLoadKey()
                             + " resultY=" + result
-                            + " fallback=" + fallbackPath);
+                            + " fallback=surface");
                 }
 
                 if (traceRegen) {
@@ -660,8 +603,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                             + " resultY=" + result
                             + " px=" + xx
                             + " pz=" + zz
-                            + " overCave=" + overCave
-                            + " fallback=" + fallbackPath
+                            + " fallback=surface"
                             + " densityIndex=" + i
                             + " density=" + density);
                 }
@@ -1466,106 +1408,12 @@ public class MantleObjectComponent extends IrisMantleComponent {
         return Math.max(0, caveProfile.getObjectMinDepthBelowSurface());
     }
 
-    private int resolveSurfaceObjectExclusionDepth(IrisCaveProfile caveProfile) {
-        if (caveProfile == null) {
-            return 5;
-        }
-
-        return Math.max(0, caveProfile.getSurfaceObjectExclusionDepth());
-    }
-
-    private int resolveSurfaceObjectExclusionDepth(int baseDepth, IrisObject object, IrisObjectPlacement placement) {
-        if (object == null) {
-            return baseDepth;
-        }
-
-        int horizontalReach = resolveSurfaceObjectExclusionRadius(object, placement) + 2;
-        int verticalReach = Math.max(4, Math.min(16, Math.floorDiv(Math.max(1, object.getH()), 2)));
-        return Math.max(baseDepth, Math.max(horizontalReach, verticalReach));
-    }
-
-    static int computeSurfaceExclusionRadius(int maxDimension, int absTranslateX, int absTranslateZ) {
-        return Math.max(1, Math.floorDiv(Math.max(1, maxDimension), 2) + absTranslateX + absTranslateZ + 1);
-    }
-
-    private int resolveSurfaceObjectExclusionRadius(IrisObject object, IrisObjectPlacement placement) {
-        if (object == null) {
-            return 1;
-        }
-
-        int maxDimension = Math.max(object.getW(), object.getD());
-        IrisObjectTranslate t = placement != null ? placement.getTranslate() : null;
-        int absX = t != null ? Math.abs(t.getX()) : 0;
-        int absZ = t != null ? Math.abs(t.getZ()) : 0;
-        return computeSurfaceExclusionRadius(maxDimension, absX, absZ);
-    }
-
     private int resolveAnchorSearchAttempts(IrisCaveProfile caveProfile) {
         if (caveProfile == null) {
             return 6;
         }
 
         return Math.max(1, caveProfile.getAnchorSearchAttempts());
-    }
-
-    private boolean hasSurfaceCarveExposure(MantleWriter writer, SurfaceHeightLookup surfaceHeightLookup, int x, int z, int depth, int radius, SurfaceExposureCache surfaceExposureCache) {
-        int horizontalRadius = Math.max(0, radius);
-        int maxY = getEngineMantle().getEngine().getHeight() - 1;
-        if (surfaceExposureCache.get(writer, surfaceHeightLookup, x, z, depth, maxY)) {
-            return true;
-        }
-
-        int sampleCount = surfaceExposureSampleCount(horizontalRadius);
-        for (int sx = 0; sx < sampleCount; sx++) {
-            int dx = surfaceExposureSampleOffset(sx, sampleCount, horizontalRadius);
-            for (int sz = 0; sz < sampleCount; sz++) {
-                int dz = surfaceExposureSampleOffset(sz, sampleCount, horizontalRadius);
-                if (dx == 0 && dz == 0) {
-                    continue;
-                }
-
-                int columnX = x + dx;
-                int columnZ = z + dz;
-                if (surfaceExposureCache.get(writer, surfaceHeightLookup, columnX, columnZ, depth, maxY)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private int surfaceExposureSampleCount(int radius) {
-        if (radius <= 0) {
-            return 1;
-        }
-
-        if (radius <= 3) {
-            return (radius << 1) + 1;
-        }
-
-        return 3;
-    }
-
-    private int surfaceExposureSampleOffset(int sample, int sampleCount, int radius) {
-        if (sampleCount <= 1) {
-            return 0;
-        }
-
-        return -radius + Math.floorDiv((sample * radius * 2) + ((sampleCount - 1) >> 1), sampleCount - 1);
-    }
-
-    private boolean hasSurfaceCarveExposureColumn(MantleWriter writer, SurfaceHeightLookup surfaceHeightLookup, int x, int z, int depth, int maxY) {
-        int surfaceY = surfaceHeightLookup.getRoundedHeight(x, z);
-        int fromY = Math.max(1, surfaceY - Math.max(0, depth));
-        int toY = Math.min(maxY, surfaceY + 1);
-        for (int y = fromY; y <= toY; y++) {
-            if (writer.isCarved(x, y, z)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private boolean isRegenTraceThread() {
@@ -1656,7 +1504,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             }
             updateProceduralRadiusBounds(region.getProceduralObjects(), xg, zg);
         }
-        for (IrisBiome biome : dimension.getAllBiomes(this::getData)) {
+        for (IrisBiome biome : dimension.getReachableBiomes(this::getData)) {
             updateProceduralRadiusBounds(biome.getProceduralObjects(), xg, zg);
             for (IrisObjectPlacement j : biome.getObjects()) {
                 if (j.getScale().canScaleBeyond()) {
@@ -1781,34 +1629,6 @@ public class MantleObjectComponent extends IrisMantleComponent {
         });
     }
 
-    private final class SurfaceExposureCache {
-        private final Long2ObjectOpenHashMap<Long2ByteOpenHashMap> depthCaches;
-
-        private SurfaceExposureCache() {
-            this.depthCaches = new Long2ObjectOpenHashMap<>();
-        }
-
-        private boolean get(MantleWriter writer, SurfaceHeightLookup surfaceHeightLookup, int x, int z, int depth, int maxY) {
-            long depthKey = depth;
-            Long2ByteOpenHashMap columnCache = depthCaches.get(depthKey);
-            if (columnCache == null) {
-                columnCache = new Long2ByteOpenHashMap();
-                columnCache.defaultReturnValue((byte) -1);
-                depthCaches.put(depthKey, columnCache);
-            }
-
-            long columnKey = Cache.key(x, z);
-            byte cached = columnCache.get(columnKey);
-            if (cached != -1) {
-                return cached == 1;
-            }
-
-            boolean exposed = hasSurfaceCarveExposureColumn(writer, surfaceHeightLookup, x, z, depth, maxY);
-            columnCache.put(columnKey, (byte) (exposed ? 1 : 0));
-            return exposed;
-        }
-    }
-
     private final class CaveAnchorCache {
         private final Long2ObjectOpenHashMap<Long2ObjectOpenHashMap<KList<Integer>>> settingCaches;
         private final Long2ObjectOpenHashMap<byte[]> carvedColumns;
@@ -1869,84 +1689,4 @@ public class MantleObjectComponent extends IrisMantleComponent {
         }
     }
 
-    private static final class SurfaceHeightLookup {
-        private final ChunkContext context;
-        private final ProceduralStream<Double> heightStream;
-        private final Long2ObjectOpenHashMap<ForeignChunkHeights> foreignChunkHeights;
-
-        private SurfaceHeightLookup(ChunkContext context) {
-            this.context = context;
-            this.heightStream = context.getComplex().getHeightStream();
-            this.foreignChunkHeights = new Long2ObjectOpenHashMap<>();
-        }
-
-        private int getRoundedHeight(int worldX, int worldZ) {
-            int chunkBlockX = worldX & ~15;
-            int chunkBlockZ = worldZ & ~15;
-            if (chunkBlockX == context.getX() && chunkBlockZ == context.getZ()) {
-                return context.getRoundedHeight(worldX & 15, worldZ & 15);
-            }
-
-            long chunkKey = Cache.key(chunkBlockX, chunkBlockZ);
-            ForeignChunkHeights chunkHeights = foreignChunkHeights.get(chunkKey);
-            if (chunkHeights == null) {
-                chunkHeights = new ForeignChunkHeights(heightStream, chunkBlockX, chunkBlockZ);
-                foreignChunkHeights.put(chunkKey, chunkHeights);
-            }
-            return chunkHeights.getRoundedHeight(worldX, worldZ);
-        }
-    }
-
-    private static final class ForeignChunkHeights {
-        private final ProceduralStream<Double> heightStream;
-        private final int chunkBlockX;
-        private final int chunkBlockZ;
-        private final Long2IntOpenHashMap sparseColumnHeights;
-        private int uniqueColumnCount;
-        private int[] roundedHeights;
-
-        private ForeignChunkHeights(ProceduralStream<Double> heightStream, int chunkBlockX, int chunkBlockZ) {
-            this.heightStream = heightStream;
-            this.chunkBlockX = chunkBlockX;
-            this.chunkBlockZ = chunkBlockZ;
-            this.sparseColumnHeights = new Long2IntOpenHashMap();
-            this.sparseColumnHeights.defaultReturnValue(Integer.MIN_VALUE);
-            this.uniqueColumnCount = 0;
-        }
-
-        private int getRoundedHeight(int worldX, int worldZ) {
-            int[] localRoundedHeights = roundedHeights;
-            if (localRoundedHeights != null) {
-                int localX = worldX - chunkBlockX;
-                int localZ = worldZ - chunkBlockZ;
-                return localRoundedHeights[(localZ << 4) + localX];
-            }
-
-            long columnKey = Cache.key(worldX, worldZ);
-            int cachedHeight = sparseColumnHeights.get(columnKey);
-            if (cachedHeight != Integer.MIN_VALUE) {
-                return cachedHeight;
-            }
-
-            int roundedHeight = (int) Math.round(heightStream.getDouble(worldX, worldZ));
-            sparseColumnHeights.put(columnKey, roundedHeight);
-            uniqueColumnCount++;
-            if (uniqueColumnCount >= SURFACE_HEIGHT_CHUNK_FILL_THRESHOLD) {
-                promoteToChunkCache();
-            }
-
-            return roundedHeight;
-        }
-
-        private void promoteToChunkCache() {
-            if (roundedHeights != null) {
-                return;
-            }
-
-            int[] filledHeights = new int[256];
-            new ChunkedDoubleDataCache(heightStream, chunkBlockX, chunkBlockZ, true).fillRounded(filledHeights);
-            roundedHeights = filledHeights;
-            sparseColumnHeights.clear();
-        }
-    }
 }

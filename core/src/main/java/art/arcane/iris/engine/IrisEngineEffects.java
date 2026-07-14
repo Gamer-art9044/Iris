@@ -22,69 +22,93 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedComponent;
 import art.arcane.iris.engine.framework.EngineEffects;
 import art.arcane.iris.engine.framework.EnginePlayer;
-import art.arcane.volmlib.util.collection.KMap;
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
+import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.math.M;
-import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 import org.bukkit.entity.Player;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class IrisEngineEffects extends EngineAssignedComponent implements EngineEffects {
-    private final KMap<UUID, EnginePlayer> players;
+    private static final long EFFECT_BUDGET_NANOS = 1_500_000L;
+
+    private final ConcurrentHashMap<UUID, EnginePlayer> players;
     private final Semaphore limit;
+    private final AtomicBoolean playerMapUpdateQueued;
 
     public IrisEngineEffects(Engine engine) {
         super(engine, "FX");
-        players = new KMap<>();
+        players = new ConcurrentHashMap<>();
         limit = new Semaphore(1);
+        playerMapUpdateQueued = new AtomicBoolean(false);
     }
 
     @Override
     public void updatePlayerMap() {
-        List<Player> pr = getEngine().getWorld().getPlayers();
+        if (!playerMapUpdateQueued.compareAndSet(false, true)) {
+            return;
+        }
+        if (!J.runGlobal(() -> {
+            try {
+                syncPlayerMap();
+            } finally {
+                playerMapUpdateQueued.set(false);
+            }
+        })) {
+            playerMapUpdateQueued.set(false);
+        }
+    }
+
+    private void syncPlayerMap() {
+        List<Player> pr = BukkitWorldBinding.players(getEngine().getWorld());
 
         if (pr == null) {
             return;
         }
 
-        for (Player i : pr) {
-            boolean pcc = players.containsKey(i.getUniqueId());
-            if (!pcc) {
-                players.put(i.getUniqueId(), new EnginePlayer(getEngine(), i));
+        Set<UUID> activeIds = new HashSet<>(Math.max(16, pr.size() * 2));
+        for (Player player : pr) {
+            UUID playerId = player.getUniqueId();
+            activeIds.add(playerId);
+            EnginePlayer existing = players.get(playerId);
+            if (existing == null || existing.getPlayer() != player) {
+                players.put(playerId, new EnginePlayer(getEngine(), player));
             }
         }
 
-        for (UUID i : players.k()) {
-            if (!pr.contains(players.get(i).getPlayer())) {
-                players.remove(i);
-            }
-        }
+        players.keySet().removeIf((UUID playerId) -> !activeIds.contains(playerId));
     }
 
     @Override
     public void tickRandomPlayer() {
-        if (limit.tryAcquire()) {
-            if (M.r(0.02)) {
+        if (!limit.tryAcquire()) {
+            return;
+        }
+        try {
+            if (players.isEmpty() || M.r(0.02)) {
                 updatePlayerMap();
-                limit.release();
                 return;
             }
 
-            if (players.isEmpty()) {
-                limit.release();
+            List<EnginePlayer> snapshot = new ArrayList<>(players.values());
+            if (snapshot.isEmpty()) {
                 return;
             }
 
-            double limitms = 1.5;
-            int max = players.size();
-            PrecisionStopwatch p = new PrecisionStopwatch();
-
-            while (max-- > 0 && M.ms() - p.getMilliseconds() < limitms) {
-                players.v().getRandom().tick();
+            long started = System.nanoTime();
+            int remaining = snapshot.size();
+            while (remaining-- > 0 && System.nanoTime() - started < EFFECT_BUDGET_NANOS) {
+                snapshot.get(ThreadLocalRandom.current().nextInt(snapshot.size())).tick();
             }
-
+        } finally {
             limit.release();
         }
     }

@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.events.IrisEngineHotloadEvent;
 import art.arcane.iris.util.common.format.C;
@@ -36,7 +37,7 @@ import org.bukkit.event.world.WorldUnloadEvent;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class EngineAssignedWorldManager extends EngineAssignedComponent implements EngineWorldManager, Listener {
+public abstract class EngineAssignedWorldManager extends EngineAssignedComponent implements EngineWorldManager, BukkitEngineWorldManager, Listener {
     private final int taskId;
     protected AtomicBoolean ignoreTP = new AtomicBoolean(false);
 
@@ -53,7 +54,7 @@ public abstract class EngineAssignedWorldManager extends EngineAssignedComponent
 
     @EventHandler
     public void on(IrisEngineHotloadEvent e) {
-        for (Player i : e.getEngine().getWorld().getPlayers()) {
+        for (Player i : BukkitWorldBinding.players(e.getEngine().getWorld())) {
             i.playSound(i.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_BREAK, 1f, 1.8f);
             VolmitSender s = new VolmitSender(i);
             s.sendTitle(C.IRIS + "Engine " + C.AQUA + "<font:minecraft:uniform>Hotloaded", 70, 60, 410);
@@ -62,42 +63,42 @@ public abstract class EngineAssignedWorldManager extends EngineAssignedComponent
 
     @EventHandler
     public void on(WorldSaveEvent e) {
-        if (e.getWorld().equals(getTarget().getWorld().realWorld())) {
+        if (e.getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
             getEngine().save();
         }
     }
 
     @EventHandler
     public void on(WorldUnloadEvent e) {
-        if (e.getWorld().equals(getTarget().getWorld().realWorld())) {
+        if (e.getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
             getEngine().close();
         }
     }
 
     @EventHandler
     public void on(BlockBreakEvent e) {
-        if (e.getPlayer().getWorld().equals(getTarget().getWorld().realWorld())) {
+        if (e.getPlayer().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
             onBlockBreak(e);
         }
     }
 
     @EventHandler
     public void on(BlockPlaceEvent e) {
-        if (e.getPlayer().getWorld().equals(getTarget().getWorld().realWorld())) {
+        if (e.getPlayer().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
             onBlockPlace(e);
         }
     }
 
     @EventHandler
     public void on(ChunkLoadEvent e) {
-        if (e.getChunk().getWorld().equals(getTarget().getWorld().realWorld())) {
+        if (e.getChunk().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
             onChunkLoad(e.getChunk(), e.isNewChunk());
         }
     }
 
     @EventHandler
     public void on(ChunkUnloadEvent e) {
-        if (e.getChunk().getWorld().equals(getTarget().getWorld().realWorld())) {
+        if (e.getChunk().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
             onChunkUnload(e.getChunk());
         }
     }

@@ -13,6 +13,7 @@ import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.util.project.agent.Agent;
 import art.arcane.volmlib.util.collection.KList;
@@ -71,6 +72,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.commands.data.BlockDataAccessor;
+import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ThreadedLevelLightEngine;
 import net.minecraft.tags.TagKey;
@@ -93,6 +95,7 @@ import net.minecraft.world.level.chunk.ProtoChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.chunk.status.WorldGenContext;
 import net.minecraft.world.level.dimension.LevelStem;
+import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.levelgen.FlatLevelSource;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
@@ -1019,30 +1022,39 @@ public class NMSBinding implements INMSBinding {
     }
 
     public void inject(long seed, Engine engine, World world) throws NoSuchFieldException, IllegalAccessException {
-        var chunkMap = ((CraftWorld)world).getHandle().getChunkSource().chunkMap;
-        var worldGenContextField = getField(chunkMap.getClass(), WorldGenContext.class);
+        ServerLevel level = ((CraftWorld) world).getHandle();
+        validateDimensionContract(engine, world, level);
+
+        ChunkMap chunkMap = level.getChunkSource().chunkMap;
+        Field worldGenContextField = getField(chunkMap.getClass(), WorldGenContext.class);
         worldGenContextField.setAccessible(true);
-        var worldGenContext = (WorldGenContext) worldGenContextField.get(chunkMap);
-        var dimensionType = chunkMap.level.dimensionTypeRegistration().unwrapKey().orElse(null);
-        String expectedDimensionType = "iris:" + engine.getDimension().getDimensionTypeKey();
-        if (dimensionType != null) {
-            String actualDimensionType = dimensionType.identifier().toString();
-            if (!dimensionType.identifier().getNamespace().equals("iris")) {
-                IrisLogging.error("Loaded world %s with invalid dimension type! expected=%s actual=%s", world.getName(), expectedDimensionType, actualDimensionType);
-            } else {
-                IrisLogging.debug("Loaded world " + world.getName() + " with Iris dimension type " + actualDimensionType);
-            }
-        } else {
-            IrisLogging.error("Loaded world %s with unknown dimension type! expected=%s", world.getName(), expectedDimensionType);
-        }
+        WorldGenContext worldGenContext = (WorldGenContext) worldGenContextField.get(chunkMap);
 
         IrisChunkGenerator irisGenerator = new IrisChunkGenerator(worldGenContext.generator(), seed, engine, world);
-        var newContext = new WorldGenContext(
+        WorldGenContext newContext = new WorldGenContext(
                 worldGenContext.level(), irisGenerator,
                 worldGenContext.structureManager(), worldGenContext.lightEngine(), worldGenContext.mainThreadExecutor(), worldGenContext.unsavedListener());
 
         worldGenContextField.set(chunkMap, newContext);
-        retargetStructureCheck(((CraftWorld) world).getHandle(), irisGenerator);
+        retargetStructureCheck(level, irisGenerator);
+    }
+
+    private void validateDimensionContract(Engine engine, World world, ServerLevel level) {
+        DimensionType actualType = level.dimensionType();
+        String actualTypeKey = level.dimensionTypeRegistration().unwrapKey()
+                .map(key -> key.identifier().toString())
+                .orElse("<unregistered>");
+        IrisDimensionRuntimeContract expected = IrisDimensionRuntimeContract.expected(engine.getDimension(), "iris");
+        IrisDimensionRuntimeContract actual = new IrisDimensionRuntimeContract(
+                actualTypeKey,
+                actualType.minY(),
+                actualType.height(),
+                actualType.logicalHeight());
+        String runtimeName = "Bukkit world '" + world.getName() + "'";
+        expected.requireExact(runtimeName, actual);
+        expected.requireHeight(runtimeName, level.getMinY(), level.getHeight());
+        expected.requireHeight(runtimeName, world.getMinHeight(), world.getMaxHeight() - world.getMinHeight());
+        IrisLogging.debug("Loaded world " + world.getName() + " with exact Iris dimension type " + actualTypeKey);
     }
 
     private static void retargetStructureCheck(ServerLevel level, IrisChunkGenerator generator) throws NoSuchFieldException, IllegalAccessException {
@@ -1208,33 +1220,38 @@ public class NMSBinding implements INMSBinding {
 
     @Override
     public boolean injectBukkit() {
-        if (injected.getAndSet(true))
-            return true;
-        try {
-            IrisLogging.info("Injecting Bukkit");
-            new AgentBuilder.Default()
-                    .disableClassFormatChanges()
-                    .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
-                    .type(ElementMatchers.is(ServerLevel.class))
-                    .transform((builder, typeDescription, classLoader, module, protectionDomain) ->
-                            builder.visit(Advice.to(ServerLevelAdvice.class).on(ElementMatchers.isConstructor()
-                                    .and(ElementMatchers.takesArgument(0, MinecraftServer.class))
-                                    .and(ElementMatchers.takesArgument(5, LevelStem.class)))))
-                    .installOn(Agent.getInstrumentation());
-            ByteBuddy buddy = new ByteBuddy();
-            for (Class<?> clazz : List.of(ChunkAccess.class, ProtoChunk.class)) {
-                buddy.redefine(clazz)
-                        .visit(Advice.to(ChunkAccessAdvice.class).on(ElementMatchers.isMethod().and(ElementMatchers.takesArguments(ShortList.class, int.class))))
-                        .make()
-                        .load(clazz.getClassLoader(), Agent.installed());
+        synchronized (injected) {
+            if (injected.get()) {
+                return true;
             }
+            try {
+                IrisLogging.info("Injecting Bukkit");
+                new AgentBuilder.Default()
+                        .disableClassFormatChanges()
+                        .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+                        .type(ElementMatchers.is(ServerLevel.class))
+                        .transform((builder, typeDescription, classLoader, module, protectionDomain) ->
+                                builder.visit(Advice.to(ServerLevelAdvice.class).on(ElementMatchers.isConstructor()
+                                        .and(ElementMatchers.takesArgument(0, MinecraftServer.class))
+                                        .and(ElementMatchers.takesArgument(5, LevelStem.class))
+                                        .and(ElementMatchers.takesArgument(12, ChunkGenerator.class)))))
+                        .installOn(Agent.getInstrumentation());
+                ByteBuddy buddy = new ByteBuddy();
+                for (Class<?> clazz : List.of(ChunkAccess.class, ProtoChunk.class)) {
+                    buddy.redefine(clazz)
+                            .visit(Advice.to(ChunkAccessAdvice.class).on(ElementMatchers.isMethod().and(ElementMatchers.takesArguments(ShortList.class, int.class))))
+                            .make()
+                            .load(clazz.getClassLoader(), Agent.installed());
+                }
 
-            return true;
-        } catch (Throwable e) {
-            IrisLogging.error(C.RED + "Failed to inject Bukkit");
-            e.printStackTrace();
+                injected.set(true);
+                return true;
+            } catch (Throwable e) {
+                IrisLogging.error(C.RED + "Failed to inject Bukkit");
+                e.printStackTrace();
+                return false;
+            }
         }
-        return false;
     }
 
     @Override
@@ -1304,7 +1321,8 @@ public class NMSBinding implements INMSBinding {
         static void enter(
                 @Advice.Argument(0) MinecraftServer server,
                 @Advice.Argument(4) ResourceKey<Level> dimensionKey,
-                @Advice.Argument(value = 5, readOnly = false) LevelStem levelStem
+                @Advice.Argument(value = 5, readOnly = false) LevelStem levelStem,
+                @Advice.Argument(12) ChunkGenerator constructorGenerator
         ) {
             if (dimensionKey == null)
                 return;
@@ -1315,18 +1333,19 @@ public class NMSBinding implements INMSBinding {
                     return;
                 }
 
-                Object generator = Class.forName("art.arcane.iris.core.lifecycle.WorldLifecycleStaging", true, Bukkit.getPluginManager().getPlugin("Iris")
-                                .getClass()
-                                .getClassLoader())
-                        .getDeclaredMethod("consumeStemGenerator", String.class)
-                        .invoke(null, levelId);
+                ClassLoader pluginClassLoader = Bukkit.getPluginManager().getPlugin("Iris").getClass().getClassLoader();
+                Class<?> generatorType = Class.forName("art.arcane.iris.engine.platform.PlatformChunkGenerator", true, pluginClassLoader);
+                Object generator = generatorType.isInstance(constructorGenerator) ? constructorGenerator : null;
+                if (generator == null) {
+                    generator = Class.forName("art.arcane.iris.core.lifecycle.WorldLifecycleStaging", true, pluginClassLoader)
+                            .getDeclaredMethod("consumeStemGenerator", String.class)
+                            .invoke(null, levelId);
+                }
                 if (!(generator instanceof ChunkGenerator gen) || !gen.getClass().getPackageName().startsWith("art.arcane.iris")) {
                     return;
                 }
 
-                Object bindings = Class.forName("art.arcane.iris.core.nms.INMS", true, Bukkit.getPluginManager().getPlugin("Iris")
-                                .getClass()
-                                .getClassLoader())
+                Object bindings = Class.forName("art.arcane.iris.core.nms.INMS", true, pluginClassLoader)
                         .getDeclaredMethod("get")
                         .invoke(null);
                 if (bindings == null) {

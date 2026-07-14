@@ -18,10 +18,14 @@
 
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.engine.object.IrisStructurePlacement;
+import art.arcane.iris.engine.object.StructureDistribution;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class StructurePlacementGridTest {
@@ -100,5 +104,70 @@ public class StructurePlacementGridTest {
         }
         assertEquals(1, total);
         assertTrue(matches <= total);
+    }
+
+    @Test
+    public void densityStartIsDeterministicAndOrdinalScoped() {
+        IrisStructurePlacement placement = placement(StructureDistribution.DENSITY);
+        placement.setDensity(0.35);
+        boolean differsByOrdinal = false;
+        for (int cx = -32; cx <= 32; cx++) {
+            for (int cz = -32; cz <= 32; cz++) {
+                boolean first = StructurePlacementGrid.startsInChunk(placement, cx, cz, 912345L, 0);
+                boolean repeated = StructurePlacementGrid.startsInChunk(placement, cx, cz, 912345L, 0);
+                boolean secondPlacement = StructurePlacementGrid.startsInChunk(placement, cx, cz, 912345L, 1);
+                assertEquals(first, repeated);
+                differsByOrdinal |= first != secondPlacement;
+            }
+        }
+        assertTrue(differsByOrdinal);
+    }
+
+    @Test
+    public void densityBoundariesNeverAndAlwaysStart() {
+        IrisStructurePlacement placement = placement(StructureDistribution.DENSITY);
+        placement.setDensity(0.0);
+        assertFalse(StructurePlacementGrid.startsInChunk(placement, 4, -9, 77L, 0));
+        placement.setDensity(1.0);
+        assertTrue(StructurePlacementGrid.startsInChunk(placement, 4, -9, 77L, 0));
+    }
+
+    @Test
+    public void concentricRingCountIsFiniteTotalPlacementCount() {
+        IrisStructurePlacement placement = placement(StructureDistribution.CONCENTRIC_RINGS);
+        placement.setRingCount(10);
+        placement.setRingSpread(3);
+        placement.setRingDistance(12);
+        long seed = 484848L;
+        int lastRing = Math.ceilDiv(placement.getRingCount(), placement.getRingSpread());
+        int scanRadius = (lastRing + 2) * placement.getRingDistance();
+        int starts = 0;
+        for (int cx = -scanRadius; cx <= scanRadius; cx++) {
+            for (int cz = -scanRadius; cz <= scanRadius; cz++) {
+                if (StructurePlacementGrid.startsInChunk(placement, cx, cz, seed, 0)) {
+                    starts++;
+                }
+            }
+        }
+        assertEquals(placement.getRingCount(), starts);
+        assertNull(StructurePlacementGrid.concentricRingChunk(placement, placement.getRingCount(), seed));
+    }
+
+    @Test
+    public void placementRngIsStableAndOrdinalScoped() {
+        IrisStructurePlacement placement = placement(StructureDistribution.RANDOM_SPREAD);
+        long first = StructurePlacementGrid.placementRng(placement, 7, -11, 123L, 0).getSeed();
+        long repeated = StructurePlacementGrid.placementRng(placement, 7, -11, 123L, 0).getSeed();
+        long secondPlacement = StructurePlacementGrid.placementRng(placement, 7, -11, 123L, 1).getSeed();
+        assertEquals(first, repeated);
+        assertNotEquals(first, secondPlacement);
+    }
+
+    private IrisStructurePlacement placement(StructureDistribution distribution) {
+        IrisStructurePlacement placement = new IrisStructurePlacement();
+        placement.setDistribution(distribution);
+        placement.getStructures().add("test:structure");
+        placement.setSalt(31415926);
+        return placement;
     }
 }

@@ -31,9 +31,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Locale;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -47,7 +48,7 @@ public final class ModdedEngineMaintenanceService implements ModdedTickableServi
     private static final long SAVE_PERIOD_MILLIS = 60_000L;
 
     private final AtomicInteger tectonicLimit = new AtomicInteger(30);
-    private final Set<Engine> inFlight = ConcurrentHashMap.newKeySet();
+    private final Set<Engine> inFlight = Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
     private volatile ExecutorService service;
     private long lastMaintenanceAt;
     private long lastSaveAt;

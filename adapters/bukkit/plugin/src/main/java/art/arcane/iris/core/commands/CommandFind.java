@@ -42,6 +42,7 @@ import io.papermc.paper.registry.RegistryKey;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
+import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.generator.structure.Structure;
 import org.bukkit.util.StructureSearchResult;
@@ -98,7 +99,7 @@ public class CommandFind implements DirectorExecutor {
         EngineBukkitOps.gotoPOI(e, type, player(), teleport);
     }
 
-    @Director(description = "Find a structure (a vanilla key like minecraft:village_plains or minecraft:stronghold, or an imported iris structure key)")
+    @Director(description = "Find a structure (a vanilla key like minecraft:village_plains or minecraft:stronghold, or an imported iris structure key)", sync = true)
     public void structure(
             @Param(description = "The structure to look for (e.g. minecraft:village_plains, minecraft:stronghold, minecraft_ancient_city)", customHandler = StructureHandler.class)
             String structure
@@ -117,7 +118,12 @@ public class CommandFind implements DirectorExecutor {
         }
 
         if (IrisStructureLocator.isPlaced(e, structure)) {
-            EngineBukkitOps.gotoStructure(e, structure, player(), true);
+            locateIrisStructure(e, structure, commandSender);
+            return;
+        }
+
+        if (BukkitNativeStructureLocatePolicy.isUnavailable(structure)) {
+            commandSender.sendMessage(C.RED + BukkitNativeStructureLocatePolicy.unavailableMessage());
             return;
         }
 
@@ -127,6 +133,8 @@ public class CommandFind implements DirectorExecutor {
             return;
         }
 
+        World targetWorld = target.getWorld();
+        Location origin = target.getLocation();
         commandSender.sendMessage(C.GRAY + "Locating " + structure + "...");
         J.s(() -> {
             try {
@@ -140,28 +148,62 @@ public class CommandFind implements DirectorExecutor {
                     }
                 }
                 if (match == null) {
-                    commandSender.sendMessage(C.RED + "Unknown structure: " + structure);
+                    sendStructureMessage(target, commandSender, C.RED + "Unknown structure: " + structure);
                     return;
                 }
                 if (!StructureReachability.isReachable(e, structure)) {
                     KList<String> miss = StructureReachability.missingBiomeKeys(e, structure);
-                    commandSender.sendMessage(C.YELLOW + structure + " cannot generate in this world (its required biomes are not produced by this pack"
-                            + (miss.isEmpty() ? "" : ": needs " + String.join("/", miss)) + ").");
+                    sendStructureMessage(target, commandSender,
+                            C.YELLOW + structure + " cannot generate in this world (its required biomes are not produced by this pack"
+                                    + (miss.isEmpty() ? "" : ": needs " + String.join("/", miss)) + ").");
                     return;
                 }
-                StructureSearchResult result = target.getWorld().locateNearestStructure(target.getLocation(), match, 100, true);
+                StructureSearchResult result = targetWorld.locateNearestStructure(origin, match, 100, false);
                 if (result == null || result.getLocation() == null) {
-                    commandSender.sendMessage(C.YELLOW + "No " + structure + " found within range of you.");
+                    sendStructureMessage(target, commandSender, C.YELLOW + "No " + structure + " found within range of you.");
                     return;
                 }
-                Location at = result.getLocation();
-                int y = target.getWorld().getHighestBlockYAt(at.getBlockX(), at.getBlockZ()) + 2;
-                Location dest = new Location(target.getWorld(), at.getBlockX() + 0.5, y, at.getBlockZ() + 0.5);
-                BukkitPlatform.teleportAsync(target, dest);
-                commandSender.sendMessage(C.GREEN + "Teleported to " + structure + " @ " + at.getBlockX() + ", " + at.getBlockZ());
+                prepareStructureTeleport(target, targetWorld, commandSender, structure, result.getLocation(), false);
             } catch (Throwable t) {
-                commandSender.sendMessage(C.RED + "Could not locate " + structure + ": " + t.getClass().getSimpleName());
+                sendStructureMessage(target, commandSender, C.RED + "Could not locate " + structure + ": " + t.getClass().getSimpleName());
                 Iris.reportError("Could not locate structure '" + structure + "'.", t);
+            }
+        });
+    }
+
+    private void locateIrisStructure(Engine engine, String structure, VolmitSender commandSender) {
+        Player target = player();
+        if (target == null) {
+            commandSender.sendMessage(C.GOLD + "Run this in-game to teleport to a structure.");
+            return;
+        }
+        World targetWorld = target.getWorld();
+        Location origin = target.getLocation();
+        int blockX = origin.getBlockX();
+        int blockZ = origin.getBlockZ();
+        commandSender.sendMessage(C.GRAY + "Locating " + structure + "...");
+        J.a(() -> {
+            try {
+                IrisStructureLocator.LocateResult result =
+                        IrisStructureLocator.locate(engine, structure, blockX, blockZ, 1024);
+                if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
+                    sendStructureMessage(target, commandSender,
+                            C.YELLOW + "Unable to locate " + structure
+                                    + ": the density search safety limit was reached before the full 1024-chunk radius was searched.");
+                    return;
+                }
+                if (!result.found()) {
+                    sendStructureMessage(target, commandSender,
+                            C.YELLOW + "No " + structure + " found within 1024 chunks of you.");
+                    return;
+                }
+                Location destination = new Location(
+                        targetWorld, result.originX(), result.baseY(), result.originZ());
+                prepareStructureTeleport(target, targetWorld, commandSender, structure, destination, true);
+            } catch (Throwable t) {
+                sendStructureMessage(target, commandSender,
+                        C.RED + "Could not locate " + structure + ": " + t.getClass().getSimpleName());
+                Iris.reportError("Could not locate Iris-placed structure '" + structure + "'.", t);
             }
         });
     }
@@ -198,5 +240,45 @@ public class CommandFind implements DirectorExecutor {
         }
 
         sender().sendMessage(C.RED + object + " is not configured in any region/biome object placements.");
+    }
+
+    private void prepareStructureTeleport(Player target, World world, VolmitSender commandSender, String structure,
+                                          Location at, boolean useLocatedY) {
+        int chunkX = at.getBlockX() >> 4;
+        int chunkZ = at.getBlockZ() >> 4;
+        BukkitPlatform.chunkAtAsync(world, chunkX, chunkZ, true).whenComplete((chunk, error) -> {
+            if (error != null) {
+                sendStructureMessage(target, commandSender, C.RED + "Could not load the destination for " + structure + ".");
+                Iris.reportError("Could not load structure destination '" + structure + "'.", error);
+                return;
+            }
+            boolean scheduled = J.runRegion(world, chunkX, chunkZ,
+                    () -> teleportToStructure(target, world, commandSender, structure, at, useLocatedY));
+            if (!scheduled) {
+                sendStructureMessage(target, commandSender, C.RED + "Could not schedule the destination lookup for " + structure + ".");
+            }
+        });
+    }
+
+    private void teleportToStructure(Player target, World world, VolmitSender commandSender, String structure,
+                                     Location at, boolean useLocatedY) {
+        try {
+            int y = useLocatedY
+                    ? Math.max(world.getMinHeight() + 1, Math.min(world.getMaxHeight() - 1, at.getBlockY() + 2))
+                    : world.getHighestBlockYAt(at.getBlockX(), at.getBlockZ()) + 2;
+            Location destination = new Location(world, at.getBlockX() + 0.5, y, at.getBlockZ() + 0.5);
+            J.runEntity(target, () -> {
+                BukkitPlatform.teleportAsync(target, destination);
+                commandSender.sendMessage(C.GREEN + "Teleported to " + structure + " @ "
+                        + at.getBlockX() + ", " + y + ", " + at.getBlockZ());
+            });
+        } catch (Throwable t) {
+            sendStructureMessage(target, commandSender, C.RED + "Could not prepare the destination for " + structure + ".");
+            Iris.reportError("Could not prepare structure destination '" + structure + "'.", t);
+        }
+    }
+
+    private void sendStructureMessage(Player target, VolmitSender commandSender, String message) {
+        J.runEntity(target, () -> commandSender.sendMessage(message));
     }
 }

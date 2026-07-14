@@ -24,9 +24,12 @@ import art.arcane.iris.engine.object.IrisLootTable;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.vehicle.ContainerEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 
@@ -37,81 +40,125 @@ public final class ModdedDeathLoot {
     private static final String TAG_PREFIX = "iris_loot|";
     private static final int LOOT_RNG_SALT = 345911;
     private static final Set<String> WARNED_TABLES = ConcurrentHashMap.newKeySet();
+    private static final Set<String> WARNED_ENTITY_TYPES = ConcurrentHashMap.newKeySet();
 
     private ModdedDeathLoot() {
     }
 
-    public static void tag(LivingEntity entity, KList<String> tableKeys, int spawnX, int spawnY, int spawnZ, RNG rng) {
-        if (entity == null || tableKeys == null || tableKeys.isEmpty()) {
+    public static void bind(Engine engine, Entity entity, KList<String> tableKeys, int spawnX, int spawnY, int spawnZ, RNG rng) {
+        if (engine == null || entity == null || tableKeys == null || tableKeys.isEmpty()) {
             return;
         }
-        entity.addTag(TAG_PREFIX + rng.getSeed() + "|" + spawnX + "|" + spawnY + "|" + spawnZ + "|" + String.join(",", tableKeys));
+        LootBinding binding = new LootBinding(rng.getSeed(), spawnX, spawnY, spawnZ, new KList<>(tableKeys));
+        if (entity instanceof Mob) {
+            entity.addTag(encode(binding));
+            return;
+        }
+        if (entity instanceof ContainerEntity container && entity.level() instanceof ServerLevel level) {
+            fillContainer(engine, level, container, binding);
+            return;
+        }
+
+        String type = String.valueOf(BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()));
+        if (WARNED_ENTITY_TYPES.add(type)) {
+            IrisLogging.warn("Iris entity loot: entity type '" + type + "' does not expose a vanilla lootable path");
+        }
     }
 
-    public static void handle(LivingEntity entity) {
+    public static boolean replaceBaseLoot(LivingEntity entity) {
         if (entity == null || !(entity.level() instanceof ServerLevel level)) {
-            return;
+            return false;
         }
         String encoded = findTag(entity);
         if (encoded == null) {
-            return;
+            return false;
         }
-        String[] parts = encoded.substring(TAG_PREFIX.length()).split("\\|", 5);
-        if (parts.length < 5) {
-            IrisLogging.debug("Iris death loot: malformed loot tag '" + encoded + "'");
-            return;
-        }
-        long seed;
-        int spawnX;
-        int spawnY;
-        int spawnZ;
-        try {
-            seed = Long.parseLong(parts[0]);
-            spawnX = Integer.parseInt(parts[1]);
-            spawnY = Integer.parseInt(parts[2]);
-            spawnZ = Integer.parseInt(parts[3]);
-        } catch (NumberFormatException error) {
-            IrisLogging.debug("Iris death loot: malformed loot tag '" + encoded + "'");
-            return;
+        LootBinding binding = decode(encoded);
+        if (binding == null) {
+            return true;
         }
         Engine engine = engineFor(level);
         if (engine == null) {
-            return;
+            return true;
         }
-        RNG lootRng = new RNG(seed).nextParallelRNG(LOOT_RNG_SALT);
-        KList<ItemStack> drops = new KList<>();
-        for (String key : parts[4].split(",")) {
-            String trimmed = key.trim();
-            if (trimmed.isEmpty()) {
-                continue;
+        KList<ItemStack> stacks = resolve(engine, level, binding);
+        emit(level, entity, stacks);
+        return true;
+    }
+
+    static boolean hasBindingTag(Set<String> tags) {
+        for (String tag : tags) {
+            if (tag.startsWith(TAG_PREFIX)) {
+                return true;
             }
-            IrisLootTable table = engine.getData().getLootLoader().load(trimmed);
+        }
+        return false;
+    }
+
+    private static void fillContainer(Engine engine, ServerLevel level, ContainerEntity container, LootBinding binding) {
+        container.setContainerLootTable(null);
+        container.clearItemStacks();
+        KList<ItemStack> items = resolve(engine, level, binding);
+        ModdedLootApplier.fillContainer(container, items, new RNG(binding.seed()));
+    }
+
+    private static KList<ItemStack> resolve(Engine engine, ServerLevel level, LootBinding binding) {
+        KList<ItemStack> drops = new KList<>();
+        for (String key : binding.tableKeys()) {
+            IrisLootTable table = engine.getData().getLootLoader().load(key);
             if (table == null) {
-                if (WARNED_TABLES.add(trimmed)) {
-                    IrisLogging.warn("Iris death loot: unknown loot table '" + trimmed + "'");
+                if (WARNED_TABLES.add(key)) {
+                    IrisLogging.warn("Iris death loot: unknown loot table '" + key + "'");
                 }
                 continue;
             }
-            drops.addAll(ModdedItemTranslator.loot(table, lootRng, InventorySlotType.STORAGE, level, spawnX, spawnY, spawnZ));
+            RNG lootRng = new RNG(binding.seed()).nextParallelRNG(LOOT_RNG_SALT);
+            drops.addAll(ModdedItemTranslator.loot(table, lootRng, InventorySlotType.STORAGE, level,
+                    binding.spawnX(), binding.spawnY(), binding.spawnZ()));
         }
-        emit(level, entity, drops);
+        return drops;
     }
 
     private static void emit(ServerLevel level, LivingEntity entity, KList<ItemStack> drops) {
-        double x = entity.getX();
-        double y = entity.getY() + 0.5D;
-        double z = entity.getZ();
         for (ItemStack stack : drops) {
             if (stack == null || stack.isEmpty()) {
                 continue;
             }
-            ItemEntity itemEntity = new ItemEntity(level, x, y, z, stack);
-            itemEntity.setDefaultPickUpDelay();
-            level.addFreshEntity(itemEntity);
+            entity.spawnAtLocation(level, stack);
         }
     }
 
-    private static String findTag(LivingEntity entity) {
+    private static String encode(LootBinding binding) {
+        return TAG_PREFIX + binding.seed() + "|" + binding.spawnX() + "|" + binding.spawnY() + "|"
+                + binding.spawnZ() + "|" + String.join(",", binding.tableKeys());
+    }
+
+    private static LootBinding decode(String encoded) {
+        String[] parts = encoded.substring(TAG_PREFIX.length()).split("\\|", 5);
+        if (parts.length < 5) {
+            IrisLogging.debug("Iris death loot: malformed loot tag '" + encoded + "'");
+            return null;
+        }
+        try {
+            long seed = Long.parseLong(parts[0]);
+            int spawnX = Integer.parseInt(parts[1]);
+            int spawnY = Integer.parseInt(parts[2]);
+            int spawnZ = Integer.parseInt(parts[3]);
+            KList<String> tableKeys = new KList<>();
+            for (String key : parts[4].split(",")) {
+                String trimmed = key.trim();
+                if (!trimmed.isEmpty()) {
+                    tableKeys.add(trimmed);
+                }
+            }
+            return new LootBinding(seed, spawnX, spawnY, spawnZ, tableKeys);
+        } catch (NumberFormatException error) {
+            IrisLogging.debug("Iris death loot: malformed loot tag '" + encoded + "'");
+            return null;
+        }
+    }
+
+    private static String findTag(Entity entity) {
         for (String tag : entity.entityTags()) {
             if (tag.startsWith(TAG_PREFIX)) {
                 return tag;
@@ -126,5 +173,8 @@ public final class ModdedDeathLoot {
             return irisGenerator.engineIfBound();
         }
         return null;
+    }
+
+    private record LootBinding(long seed, int spawnX, int spawnY, int spawnZ, KList<String> tableKeys) {
     }
 }

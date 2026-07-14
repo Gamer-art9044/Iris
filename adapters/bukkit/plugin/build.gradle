@@ -3,11 +3,13 @@ def mainClass = 'art.arcane.iris.Iris'
 def bootstrapperClass = 'art.arcane.iris.IrisBootstrap'
 
 String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
-    .orElse('com.github.VolmitSoftware:VolmLib:cdf7e8bb880199734dacd386a6616bda799fcde1')
+    .orElse('com.github.VolmitSoftware:VolmLib:4c38988b344792a79f925f57f8a675bc85fc1bed')
     .get()
 
 dependencies {
     compileOnly(project(':core'))
+    compileOnly(libs.lombok)
+    annotationProcessor(libs.lombok)
     compileOnly(volmLibCoordinate) {
         transitive = false
     }
@@ -21,7 +23,6 @@ dependencies {
         transitive = false
     }
     compileOnly(libs.placeholderApi)
-    compileOnly(libs.multiverseCore)
 }
 
 tasks.named('processResources').configure {
@@ -40,4 +41,9 @@ tasks.named('processResources').configure {
 
 tasks.named('jar', Jar).configure {
     archiveBaseName.set('iris-bukkit-plugin')
+}
+
+tasks.named('test').configure {
+    systemProperty('iris.commandFindSource', file('src/main/java/art/arcane/iris/core/commands/CommandFind.java').absolutePath)
+    systemProperty('iris.commandStructureSource', file('src/main/java/art/arcane/iris/core/commands/CommandStructure.java').absolutePath)
 }

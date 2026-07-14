@@ -4,8 +4,6 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.volmlib.util.parallel.MultiBurstSupport;
 import art.arcane.volmlib.util.math.M;
-import kotlinx.coroutines.CoroutineDispatcher;
-import kotlinx.coroutines.ExecutorsKt;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
@@ -15,8 +13,6 @@ public class MultiBurst extends MultiBurstSupport {
     private static final long TIMEOUT = Long.getLong("iris.burst.timeout", 15000);
     public static final MultiBurst burst = new MultiBurst();
     public static final MultiBurst ioBurst = new MultiBurst("Iris IO", () -> IrisSettings.get().getConcurrency().getIoParallelism());
-    private volatile CoroutineDispatcher dispatcher;
-    private volatile ExecutorService dispatcherService;
 
     public MultiBurst() {
         this("Iris");
@@ -32,20 +28,6 @@ public class MultiBurst extends MultiBurstSupport {
 
     public MultiBurst(String name, int priority, IntSupplier parallelism) {
         super(name, priority, parallelism, IrisSettings::getThreadCount, M::ms, IrisLogging::reportError, IrisLogging::info, IrisLogging::warn, TIMEOUT);
-    }
-
-    public CoroutineDispatcher getDispatcher() {
-        ExecutorService service = service();
-        if (dispatcherService != service || dispatcher == null) {
-            synchronized (this) {
-                if (dispatcherService != service || dispatcher == null) {
-                    dispatcher = ExecutorsKt.from(service);
-                    dispatcherService = service;
-                }
-            }
-        }
-
-        return dispatcher;
     }
 
     public boolean ownsCurrentThread() {

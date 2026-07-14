@@ -22,15 +22,21 @@ import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.volmlib.util.math.RNG;
 
 public final class StructurePlacementGrid {
+    private static final long DENSITY_SIGNATURE = 0x6A09E667F3BCC909L;
+
     private StructurePlacementGrid() {
     }
 
-    public static boolean startsInChunk(IrisStructurePlacement placement, int cx, int cz, long seed, RNG chunkRng) {
+    public static boolean startsInChunk(IrisStructurePlacement placement, int cx, int cz, long seed, int placementOrdinal) {
         return switch (placement.getDistribution()) {
             case RANDOM_SPREAD -> randomSpreadStart(cx, cz, placement.getSpacing(), placement.getSeparation(), placement.getSalt(), seed);
-            case DENSITY -> chunkRng.chance(placement.getDensity());
+            case DENSITY -> densityStart(placement, cx, cz, seed, placementOrdinal);
             case CONCENTRIC_RINGS -> concentricRingsStart(cx, cz, placement, seed);
         };
+    }
+
+    public static RNG placementRng(IrisStructurePlacement placement, int cx, int cz, long seed, int placementOrdinal) {
+        return new RNG(placementSeed(placement, cx, cz, seed, placementOrdinal));
     }
 
     public static boolean randomSpreadStart(int cx, int cz, int spacing, int separation, int salt, long seed) {
@@ -51,9 +57,34 @@ public final class StructurePlacementGrid {
         int sep = Math.max(0, Math.min(separation, sp - 1));
         RNG r = new RNG(mix(seed, cellX, cellZ, salt));
         int range = Math.max(1, sp - sep);
-        int startCx = cellX * sp + r.i(0, range - 1);
-        int startCz = cellZ * sp + r.i(0, range - 1);
+        int startCx = cellX * sp + r.nextInt(range);
+        int startCz = cellZ * sp + r.nextInt(range);
         return new int[]{startCx, startCz};
+    }
+
+    public static int[] concentricRingChunk(IrisStructurePlacement placement, int placementIndex, long seed) {
+        int count = Math.max(1, placement.getRingCount());
+        if (placementIndex < 0 || placementIndex >= count) {
+            return null;
+        }
+        int distance = Math.max(1, placement.getRingDistance());
+        int spread = Math.max(1, placement.getRingSpread());
+        int ring = Math.floorDiv(placementIndex, spread) + 1;
+        int firstIndex = (ring - 1) * spread;
+        int slots = Math.min(spread, count - firstIndex);
+        int slot = placementIndex - firstIndex;
+        double slotAngle = (2.0 * Math.PI) / slots;
+        double offset = unitDouble(mix(seed, ring, count, placement.getSalt())) * slotAngle;
+        double angle = offset + (slot * slotAngle);
+        long configuredRadius = (long) ring * distance;
+        if (configuredRadius > Integer.MAX_VALUE) {
+            return null;
+        }
+        int radius = (int) configuredRadius;
+        return new int[]{
+                (int) Math.round(Math.cos(angle) * radius),
+                (int) Math.round(Math.sin(angle) * radius)
+        };
     }
 
     private static boolean concentricRingsStart(int cx, int cz, IrisStructurePlacement placement, long seed) {
@@ -64,23 +95,61 @@ public final class StructurePlacementGrid {
         int count = Math.max(1, placement.getRingCount());
         int spread = Math.max(1, placement.getRingSpread());
         double dist = Math.sqrt((double) cx * cx + (double) cz * cz);
-        int ring = (int) Math.round(dist / distance);
-        if (ring <= 0) {
+        int estimatedRing = (int) Math.round(dist / distance);
+        int ringCount = Math.ceilDiv(count, spread);
+        int firstRing = Math.max(1, estimatedRing - 1);
+        int lastRing = Math.min(ringCount, estimatedRing + 1);
+        for (int ring = firstRing; ring <= lastRing; ring++) {
+            int firstIndex = (ring - 1) * spread;
+            int slots = Math.min(spread, count - firstIndex);
+            if (slots <= 0) {
+                continue;
+            }
+            double slotAngle = (2.0 * Math.PI) / slots;
+            double offset = unitDouble(mix(seed, ring, count, placement.getSalt())) * slotAngle;
+            double slotPosition = (Math.atan2(cz, cx) - offset) / slotAngle;
+            int nearestSlot = Math.floorMod((int) Math.round(slotPosition), slots);
+            for (int delta = -1; delta <= 1; delta++) {
+                int slot = Math.floorMod(nearestSlot + delta, slots);
+                int[] candidate = concentricRingChunk(placement, firstIndex + slot, seed);
+                if (candidate != null && candidate[0] == cx && candidate[1] == cz) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean densityStart(IrisStructurePlacement placement, int cx, int cz, long seed, int placementOrdinal) {
+        double density = placement.getDensity();
+        if (density <= 0.0) {
             return false;
         }
-        int ringRadius = ring * distance;
-        int slots = Math.min(spread * ring, count);
-        if (slots <= 0) {
-            return false;
+        if (density >= 1.0) {
+            return true;
         }
-        double slotAngle = (2 * Math.PI) / slots;
-        double offset = (mix(seed, ring, 0, 0) & 0xFFFFL) / 65536.0 * slotAngle;
-        double angle = Math.atan2(cz, cx);
-        int slotIndex = (int) Math.round((angle - offset) / slotAngle);
-        double idealAngle = offset + slotIndex * slotAngle;
-        int idealCx = (int) Math.round(Math.cos(idealAngle) * ringRadius);
-        int idealCz = (int) Math.round(Math.sin(idealAngle) * ringRadius);
-        return idealCx == cx && idealCz == cz;
+        RNG rng = new RNG(placementSeed(placement, cx, cz, seed, placementOrdinal) ^ DENSITY_SIGNATURE);
+        return rng.chance(density);
+    }
+
+    private static long placementSeed(IrisStructurePlacement placement, int cx, int cz, long seed, int placementOrdinal) {
+        long signature = 1469598103934665603L;
+        signature = (signature ^ placement.getDistribution().ordinal()) * 1099511628211L;
+        signature = (signature ^ placement.getSalt()) * 1099511628211L;
+        signature = (signature ^ placementOrdinal) * 1099511628211L;
+        for (String key : placement.getStructures()) {
+            if (key == null) {
+                continue;
+            }
+            for (int i = 0; i < key.length(); i++) {
+                signature = (signature ^ key.charAt(i)) * 1099511628211L;
+            }
+        }
+        return mix(seed ^ signature, cx, cz, placement.getSalt() ^ placementOrdinal);
+    }
+
+    private static double unitDouble(long value) {
+        return (value >>> 11) * 0x1.0p-53;
     }
 
     public static long mix(long seed, int a, int b, int salt) {

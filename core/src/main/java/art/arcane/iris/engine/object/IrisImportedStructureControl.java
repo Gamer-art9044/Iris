@@ -52,7 +52,7 @@ public class IrisImportedStructureControl {
     private boolean datapackOverrides = true;
 
     @ArrayType(type = IrisVanillaStructureAdjustment.class, min = 1)
-    @Desc("Per-structure adjustments applied to vanilla, mod, and datapack structures that still generate natively. Vertical shifts from every matching entry stack. Surface-intersecting structures clear logs and leaves automatically; a matching vegetation option can force clearing for unusual placements. The last matching entry with stilt settings controls foundation columns. A structure suppressed by an Iris placement is unaffected.")
+    @Desc("Per-structure adjustments applied to vanilla, mod, and datapack structures that still generate natively. Vertical shifts from every matching entry stack. A matching vegetation option explicitly clears logs and leaves inside structure piece bounds. The last matching entry with stilt settings controls foundation columns. A structure suppressed by an Iris placement is unaffected.")
     private KList<IrisVanillaStructureAdjustment> adjustments = new KList<>();
 
     public boolean shouldGenerate(String key) {

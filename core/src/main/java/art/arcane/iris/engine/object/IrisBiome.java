@@ -144,7 +144,7 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     @Desc("The raw derivative of this biome. This is required or the terrain will not properly generate. Use any vanilla biome type. Look in examples/biome-list.txt")
     private String derivative = "minecraft:the_void";
     @Required
-    @Desc("Override the derivative when vanilla places structures to this derivative. This is useful for example if you have an ocean biome, but you have set the derivative to desert to get a brown-ish color. To prevent desert structures from spawning on top of your ocean, you can set your vanillaDerivative to ocean, to allow for vanilla structures. Not defining this value will simply select the derivative.")
+    @Desc("Override the derivative used for vanilla structure selection. Iris still enforces the generated terrain role: land-only Minecraft derivatives on sea biomes expose no native structure biome, and land-only derivatives on shore biomes resolve as beach, while exact ocean, river, beach, and shore variants remain eligible. Non-Minecraft namespaces remain authoritative. Not defining this value selects derivative.")
     private String vanillaDerivative = null;
     @ArrayType(min = 1, type = String.class)
     @Desc("You can instead specify multiple biome derivatives to randomly scatter colors in this biome")
@@ -315,6 +315,20 @@ public class IrisBiome extends IrisRegistrant implements IRare {
         return resolved == null ? namespacedBiomeKey(derivative) : resolved;
     }
 
+    public String getStructureDerivativeKey() {
+        String key = getVanillaDerivativeKey();
+        if (key == null || !key.startsWith("minecraft:")) {
+            return key;
+        }
+        if (isSea() && !isVanillaSeaStructureBiome(key)) {
+            return "minecraft:the_void";
+        }
+        if (isShore() && !isVanillaShoreStructureBiome(key)) {
+            return "minecraft:beach";
+        }
+        return key;
+    }
+
     public String getDerivativeKey() {
         return namespacedBiomeKey(derivative);
     }
@@ -325,6 +339,14 @@ public class IrisBiome extends IrisRegistrant implements IRare {
         }
         String trimmed = key.trim();
         return trimmed.indexOf(':') >= 0 ? trimmed : "minecraft:" + trimmed;
+    }
+
+    static boolean isVanillaSeaStructureBiome(String key) {
+        return key != null && (key.contains("ocean") || key.endsWith("river"));
+    }
+
+    static boolean isVanillaShoreStructureBiome(String key) {
+        return key != null && (key.endsWith("beach") || key.endsWith("shore"));
     }
 
     private KList<Biome> getBiomeScatterResolved() {

@@ -21,7 +21,6 @@ package art.arcane.iris.core.commands;
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.structure.BulkStructureImporter;
-import art.arcane.iris.core.structure.NativeStructureLocateCapability;
 import art.arcane.iris.core.structure.StructureCaptureImporter;
 import art.arcane.iris.core.structure.StructureImporter;
 import art.arcane.iris.core.structure.StructureIndexService;
@@ -185,7 +184,6 @@ public class CommandStructure implements DirectorExecutor {
         int nativeEligible = 0;
         int disabled = 0;
         int unreachable = 0;
-        int unavailable = 0;
         int searchLimited = 0;
         int errors = 0;
         for (String keyName : structureKeys) {
@@ -228,19 +226,12 @@ public class CommandStructure implements DirectorExecutor {
                 continue;
             }
             nativeEligible++;
-            if (NativeStructureLocateCapability.isPaperUnavailable(keyName)) {
-                unavailable++;
-                messages.add(C.YELLOW + "[native-eligible/locate-unavailable] " + C.WHITE + keyName + C.YELLOW + ": "
-                        + NativeStructureLocateCapability.unavailableMessage());
-                continue;
-            }
             messages.add(C.GREEN + "[native-eligible] " + C.WHITE + keyName);
         }
         messages.add(C.GREEN + "Structure verify: " + C.WHITE + located + C.GREEN + " Iris placements located, "
                 + C.WHITE + nativeEligible + C.GREEN + " native structures eligible, "
                 + C.WHITE + disabled + C.GREEN + " disabled by policy, "
                 + C.WHITE + unreachable + C.GREEN + " biome-unreachable, "
-                + C.WHITE + unavailable + C.GREEN + " generation-eligible but unavailable to synchronous locate, "
                 + C.WHITE + searchLimited + C.GREEN + " density searches safety-limited, "
                 + C.WHITE + errors + C.GREEN + " errors. Native eligibility is checked without running blocking live locates.");
         sendVerificationMessages(commandSender, target, messages);

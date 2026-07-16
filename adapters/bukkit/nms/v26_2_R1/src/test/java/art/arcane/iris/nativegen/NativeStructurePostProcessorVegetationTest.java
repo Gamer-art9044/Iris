@@ -27,8 +27,8 @@ public class NativeStructurePostProcessorVegetationTest {
     }
 
     @Test
-    public void surfaceStructuresClearTheirEntireFootprintByDefault() {
-        assertTrue(NativeStructurePostProcessor.shouldClearEntireVegetationFootprint(
+    public void surfaceStructuresPreserveVegetationUnlessConfigured() {
+        assertFalse(NativeStructurePostProcessor.shouldClearEntireVegetationFootprint(
                 GenerationStep.Decoration.SURFACE_STRUCTURES, false));
         assertTrue(NativeStructurePostProcessor.shouldClearEntireVegetationFootprint(
                 GenerationStep.Decoration.SURFACE_STRUCTURES, true));

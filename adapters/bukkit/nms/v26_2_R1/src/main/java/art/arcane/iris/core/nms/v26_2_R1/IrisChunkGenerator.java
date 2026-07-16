@@ -3,7 +3,6 @@ package art.arcane.iris.core.nms.v26_2_R1;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
-import art.arcane.iris.core.structure.NativeStructureLocateCapability;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisStructureStiltSettings;
@@ -174,7 +173,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             String key = id.toString();
             IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine,
                     key, NativeStructurePostProcessor.isUndergroundStep(holder.value().step()));
-            if (NativeStructureLocateCapability.isPaperUnavailable(key) || !decision.generate()) {
+            if (!decision.generate()) {
                 continue;
             }
             candidates.add(new NativeLocateCandidate(holder, key));

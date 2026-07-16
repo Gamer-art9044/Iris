@@ -4,6 +4,7 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisRange;
+import art.arcane.iris.engine.object.InferredType;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import net.minecraft.SharedConstants;
@@ -101,11 +102,18 @@ public class IrisModdedStructureParityTest {
         IrisBiome custom = new IrisBiome()
                 .setDerivative("forest")
                 .setCustomDerivitives(new KList<>(new IrisBiomeCustom().setId("Aurora")));
+        IrisBiome shore = new IrisBiome()
+                .setVanillaDerivative("minecraft:desert")
+                .setInferredType(InferredType.SHORE);
+        IrisBiome unsafeSea = new IrisBiome()
+                .setVanillaDerivative("minecraft:plains")
+                .setInferredType(InferredType.SEA);
 
         Set<String> keys = IrisModdedChunkGenerator.collectConfiguredBiomeKeys(
-                List.of(ocean, custom), "OverWorld");
+                List.of(ocean, custom, shore, unsafeSea), "OverWorld");
 
-        assertEquals(Set.of("minecraft:deep_ocean", "minecraft:forest", "overworld:aurora"), keys);
+        assertEquals(Set.of("minecraft:deep_ocean", "minecraft:forest", "minecraft:beach",
+                "minecraft:the_void", "overworld:aurora"), keys);
         assertFalse(keys.contains("minecraft:desert"));
         assertFalse(keys.contains("minecraft:plains"));
     }

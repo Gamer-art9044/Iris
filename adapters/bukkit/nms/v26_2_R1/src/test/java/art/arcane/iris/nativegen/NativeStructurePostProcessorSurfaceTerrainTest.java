@@ -174,6 +174,24 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
+    public void raisedSurfaceTerrainDoesNotSliceTreeBlocks() {
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        BlockState log = Blocks.OAK_LOG.defaultBlockState();
+        BlockState leaves = Blocks.OAK_LEAVES.defaultBlockState();
+        put(blocks, 0, 63, 0, Blocks.DIRT.defaultBlockState());
+        put(blocks, 0, 64, 0, Blocks.GRASS_BLOCK.defaultBlockState());
+        put(blocks, 0, 66, 0, log);
+        put(blocks, 0, 68, 0, leaves);
+
+        NativeStructurePostProcessor.applySurfaceColumn(
+                world(blocks), new BlockPos.MutableBlockPos(),
+                0, 0, 64, 68, -64, 319);
+
+        assertEquals(log, state(blocks, 0, 66, 0));
+        assertEquals(leaves, state(blocks, 0, 68, 0));
+    }
+
+    @Test
     public void loweredFluidColumnsRemainFluidFilled() {
         Map<BlockPos, BlockState> blocks = new HashMap<>();
         put(blocks, 0, 62, 0, Blocks.DIRT.defaultBlockState());
@@ -266,11 +284,18 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
-    public void vegetationCleanupUsesTheSameCircularTaperAsTerrain() {
-        BoundingBox piece = new BoundingBox(0, 60, 0, 4, 80, 4);
+    public void templateAirDoesNotEraseTreesInsideVillagePieces() throws Exception {
+        BlockPos origin = new BlockPos(0, 80, 0);
+        StructureTemplate template = template(List.of(
+                new StructureTemplate.StructureBlockInfo(BlockPos.ZERO, Blocks.AIR.defaultBlockState(), null)));
+        StructurePlaceSettings settings = new StructurePlaceSettings().setRotation(Rotation.NONE);
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        BlockState log = Blocks.OAK_LOG.defaultBlockState();
+        blocks.put(origin, log);
 
-        assertTrue(NativeStructurePostProcessor.withinSurfaceTerrainRadius(16, 2, piece, 12));
-        assertFalse(NativeStructurePostProcessor.withinSurfaceTerrainRadius(16, 16, piece, 12));
+        NativeStructurePostProcessor.clearTemplateAir(world(blocks), template, origin, 80, settings);
+
+        assertEquals(log, blocks.get(origin));
     }
 
     private static NativeStructurePostProcessor.SurfaceAnchor anchor(int meetY, int strength) {

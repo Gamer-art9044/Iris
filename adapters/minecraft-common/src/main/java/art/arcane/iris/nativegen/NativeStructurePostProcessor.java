@@ -7,6 +7,7 @@ import art.arcane.iris.engine.object.IrisStructureStiltSettings;
 import art.arcane.volmlib.util.math.RNG;
 import com.mojang.datafixers.util.Either;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.ChunkPos;
@@ -252,7 +253,7 @@ public final class NativeStructurePostProcessor {
 
     public static boolean shouldClearEntireVegetationFootprint(GenerationStep.Decoration step,
                                                                 boolean configured) {
-        return configured || !isUndergroundStep(step);
+        return configured;
     }
 
     public static void prepareSurfaceStructures(WorldGenLevel world, BoundingBox area,
@@ -433,9 +434,15 @@ public final class NativeStructurePostProcessor {
             return;
         }
         for (int y = originalY + 1; y < targetY; y++) {
-            world.setBlock(position.set(x, y, z), materials.subsurface(), 2);
+            position.set(x, y, z);
+            if (!isTreeBlock(world.getBlockState(position))) {
+                world.setBlock(position, materials.subsurface(), 2);
+            }
         }
-        world.setBlock(position.set(x, targetY, z), materials.surface(), 2);
+        position.set(x, targetY, z);
+        if (!isTreeBlock(world.getBlockState(position))) {
+            world.setBlock(position, materials.surface(), 2);
+        }
     }
 
     private static BlockState clearSurfaceDecorationAndResolveFill(
@@ -531,8 +538,10 @@ public final class NativeStructurePostProcessor {
         BlockState air = Blocks.AIR.defaultBlockState();
         for (StructureTemplate.StructureBlockInfo airBlock : airBlocks) {
             BlockPos airPosition = airBlock.pos();
+            BlockState existingState = world.getBlockState(airPosition);
             if (shouldClearLegacyAir(
-                    airPosition.getY(), groundY, world.getBlockState(airPosition).isAir())) {
+                    airPosition.getY(), groundY, existingState.isAir())
+                    && !isTreeBlock(existingState)) {
                 world.setBlock(airPosition, air, 2);
             }
         }
@@ -620,7 +629,7 @@ public final class NativeStructurePostProcessor {
         }
         boolean[] clearColumns = new boolean[area.getXSpan() * area.getZSpan()];
         for (VegetationTarget target : targets) {
-            if (target != null && target.start() != null && target.start().isValid()) {
+            if (target != null && target.force() && target.start() != null && target.start().isValid()) {
                 markVegetationColumns(area, snapshot, target, clearColumns);
             }
         }
@@ -673,25 +682,19 @@ public final class NativeStructurePostProcessor {
     private static void markVegetationColumns(BoundingBox area, VegetationSnapshot snapshot,
                                               VegetationTarget target, boolean[] clearColumns) {
         int width = area.getXSpan();
-        int padding = requiresSurfaceTerrain(target.start()) ? SURFACE_TERRAIN_RADIUS : 0;
         int[] pieceTops = new int[clearColumns.length];
         Arrays.fill(pieceTops, Integer.MIN_VALUE);
         for (StructurePiece piece : target.start().getPieces()) {
             BoundingBox bounds = piece.getBoundingBox();
-            int minX = Math.max(area.minX(), bounds.minX() - padding);
-            int maxX = Math.min(area.maxX(), bounds.maxX() + padding);
-            int minZ = Math.max(area.minZ(), bounds.minZ() - padding);
-            int maxZ = Math.min(area.maxZ(), bounds.maxZ() + padding);
+            int minX = Math.max(area.minX(), bounds.minX());
+            int maxX = Math.min(area.maxX(), bounds.maxX());
+            int minZ = Math.max(area.minZ(), bounds.minZ());
+            int maxZ = Math.min(area.maxZ(), bounds.maxZ());
             if (minX > maxX || minZ > maxZ) {
                 continue;
             }
             for (int z = minZ; z <= maxZ; z++) {
                 for (int x = minX; x <= maxX; x++) {
-                    if (padding > 0) {
-                        if (!withinSurfaceTerrainRadius(x, z, bounds, padding)) {
-                            continue;
-                        }
-                    }
                     int column = (z - area.minZ()) * width + x - area.minX();
                     pieceTops[column] = Math.max(pieceTops[column], bounds.maxY());
                 }
@@ -705,12 +708,6 @@ public final class NativeStructurePostProcessor {
                 clearColumns[column] = true;
             }
         }
-    }
-
-    static boolean withinSurfaceTerrainRadius(int x, int z, BoundingBox bounds, int radius) {
-        int outX = IrisObjectVacuum.outset(x, bounds.minX(), bounds.maxX());
-        int outZ = IrisObjectVacuum.outset(z, bounds.minZ(), bounds.maxZ());
-        return (long) outX * outX + (long) outZ * outZ <= (long) radius * radius;
     }
 
     static boolean shouldClearVegetationColumn(int pieceTopY, int lowestTreeY, boolean force) {
@@ -742,7 +739,13 @@ public final class NativeStructurePostProcessor {
     }
 
     private static boolean isTreeBlock(BlockState state) {
-        return state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES);
+        if (state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES)) {
+            return true;
+        }
+        String path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        return path.endsWith("_log") || path.endsWith("_wood")
+                || path.endsWith("_stem") || path.endsWith("_hyphae")
+                || path.endsWith("_leaves");
     }
 
     private static List<FoundationColumn> foundationEnvelope(BoundingBox area, StructureStart start) {

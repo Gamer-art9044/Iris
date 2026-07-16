@@ -41,6 +41,8 @@ import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.IrisStructureStiltSettings;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.data.B;
+import art.arcane.iris.util.common.math.IrisBlockVector;
 import art.arcane.iris.util.project.matter.TileWrapper;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.volmlib.util.collection.KList;
@@ -67,7 +69,6 @@ public class IrisStructureComponent extends IrisMantleComponent {
     private static final double OVERBORE_MIN_BOUNDARY_SQUARED = OVERBORE_MIN_BOUNDARY * OVERBORE_MIN_BOUNDARY;
     private static final double OVERBORE_BOUNDARY_SPAN = 0.8;
     private static final double OVERBORE_MAX_UP_REACH = 1.8;
-    private static final int DYNAMIC_STRUCTURE_Y_TOLERANCE = 32;
     private static final MatterCavern CARVE_CAVERN = new MatterCavern(true, "", (byte) 3);
 
     public IrisStructureComponent(EngineMantle engineMantle) {
@@ -409,18 +410,19 @@ public class IrisStructureComponent extends IrisMantleComponent {
     private void clearIntersectingObjectTrees(MantleWriter writer, IrisStructureLocator.ResolvedPlacement resolved) {
         int mantleOffset = getEngineMantle().getEngine().getMinHeight();
         int worldHeight = getEngineMantle().getEngine().getHeight();
-        int verticalTolerance = resolved.exactY() ? 0 : DYNAMIC_STRUCTURE_Y_TOLERANCE;
         Map<String, ObjectMarkerBounds> intersectingObjects = new HashMap<>();
         for (PlacedStructurePiece piece : resolved.pieces()) {
-            int minY = Math.max(0, piece.getMinY() - mantleOffset - verticalTolerance);
-            int maxY = Math.min(worldHeight - 1, piece.getMaxY() - mantleOffset + verticalTolerance);
-            if (minY > maxY) {
-                continue;
-            }
-            for (int x = piece.getMinX(); x <= piece.getMaxX(); x++) {
-                for (int z = piece.getMinZ(); z <= piece.getMaxZ(); z++) {
-                    collectIntersectingObjectTreeMarkers(
-                            writer, x, z, minY, maxY, intersectingObjects);
+            for (IrisBlockVector local : piece.getObject().getBlocks().keys()) {
+                PlatformBlockState structureState = piece.getObject().getBlocks().get(local);
+                if (!isOccupiedStructureState(structureState)) {
+                    continue;
+                }
+                IrisBlockVector rotated = piece.getRotation().rotate(local.clone());
+                int y = piece.getY() - mantleOffset + rotated.getBlockY();
+                if (y >= 0 && y < worldHeight) {
+                    collectIntersectingObjectTreeMarker(
+                            writer, piece.getX() + rotated.getBlockX(), y,
+                            piece.getZ() + rotated.getBlockZ(), intersectingObjects);
                 }
             }
         }
@@ -429,19 +431,20 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
     }
 
-    private void collectIntersectingObjectTreeMarkers(MantleWriter writer, int x, int z,
-                                                      int minY, int maxY,
-                                                      Map<String, ObjectMarkerBounds> intersectingObjects) {
-        for (int y = minY; y <= maxY; y++) {
-            PlatformBlockState state = writer.getDataIfPresent(x, y, z, PlatformBlockState.class);
-            if (state == null || !state.isTreeBlock()) {
-                continue;
-            }
-            String marker = writer.getDataIfPresent(x, y, z, String.class);
-            if (isOrdinaryObjectMarker(marker)) {
-                intersectingObjects.computeIfAbsent(marker, ignored -> new ObjectMarkerBounds())
-                        .include(x, y, z);
-            }
+    static boolean isOccupiedStructureState(PlatformBlockState state) {
+        return !B.isAir(state);
+    }
+
+    private void collectIntersectingObjectTreeMarker(MantleWriter writer, int x, int y, int z,
+                                                     Map<String, ObjectMarkerBounds> intersectingObjects) {
+        PlatformBlockState state = writer.getDataIfPresent(x, y, z, PlatformBlockState.class);
+        if (state == null || !state.isTreeBlock()) {
+            return;
+        }
+        String marker = writer.getDataIfPresent(x, y, z, String.class);
+        if (isOrdinaryObjectMarker(marker)) {
+            intersectingObjects.computeIfAbsent(marker, ignored -> new ObjectMarkerBounds())
+                    .include(x, y, z);
         }
     }
 

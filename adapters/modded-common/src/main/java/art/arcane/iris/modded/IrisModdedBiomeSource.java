@@ -242,10 +242,10 @@ final class IrisModdedBiomeSource extends BiomeSource {
             throw new IllegalStateException("Iris returned no surface structure biome at quart "
                     + quartX + "," + quartZ);
         }
-        Holder<Biome> resolved = resolveHolder(registry, irisBiome.getVanillaDerivativeKey());
+        Holder<Biome> resolved = resolveHolder(registry, irisBiome.getStructureDerivativeKey());
         if (resolved == null) {
             throw new IllegalStateException("Iris structure biome derivative '"
-                    + irisBiome.getVanillaDerivativeKey() + "' is not registered at quart "
+                    + irisBiome.getStructureDerivativeKey() + "' is not registered at quart "
                     + quartX + "," + quartZ);
         }
         return resolved;
@@ -262,10 +262,10 @@ final class IrisModdedBiomeSource extends BiomeSource {
         if (registry == null) {
             throw new IllegalStateException("Iris structure biome lookup has no biome registry");
         }
-        Holder<Biome> resolved = resolveHolder(registry, resolution.irisBiome().getVanillaDerivativeKey());
+        Holder<Biome> resolved = resolveHolder(registry, resolution.irisBiome().getStructureDerivativeKey());
         if (resolved == null) {
             throw new IllegalStateException("Iris structure biome derivative '"
-                    + resolution.irisBiome().getVanillaDerivativeKey() + "' is not registered at block "
+                    + resolution.irisBiome().getStructureDerivativeKey() + "' is not registered at block "
                     + resolution.blockX() + "," + resolution.blockY() + "," + resolution.blockZ());
         }
         return resolved;
@@ -353,7 +353,7 @@ final class IrisModdedBiomeSource extends BiomeSource {
             throw new IllegalStateException("Iris returned no structure biome at quart "
                     + quartX + "," + quartY + "," + quartZ);
         }
-        String derivativeKey = irisBiome.getVanillaDerivativeKey();
+        String derivativeKey = irisBiome.getStructureDerivativeKey();
         Holder<Biome> resolved = resolveHolder(registry, derivativeKey);
         if (resolved == null) {
             throw new IllegalStateException("Iris structure biome derivative '" + derivativeKey
@@ -435,7 +435,7 @@ final class IrisModdedBiomeSource extends BiomeSource {
         LinkedHashSet<String> possible = new LinkedHashSet<>();
         String namespace = engine.getDimension().getLoadKey().toLowerCase(Locale.ROOT);
         for (IrisBiome irisBiome : engine.getAllBiomes()) {
-            String derivative = normalizeKey(irisBiome.getVanillaDerivativeKey());
+            String derivative = normalizeKey(irisBiome.getStructureDerivativeKey());
             if (derivative != null) {
                 possible.add(derivative);
             }

@@ -17,7 +17,7 @@ import static org.junit.Assert.assertSame;
 
 public class IrisChunkGeneratorMonumentLocateContractTest {
     @Test
-    public void nativeLocateAllowsExplicitReplacementBeforeNativeCapabilityGate() throws IOException {
+    public void nativeLocateAllowsMonumentsAfterPolicyAndReachabilityChecks() throws IOException {
         String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
         int findStart = source.indexOf("findNearestMapStructure(ServerLevel level");
         assertTrue(findStart >= 0);
@@ -42,9 +42,9 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
         int reachabilityStart = source.indexOf("private Set<String> reachableStructureKeys", filterStart);
         assertTrue(reachabilityStart > filterStart);
         String filterMethod = source.substring(filterStart, reachabilityStart);
-        int monumentReject = filterMethod.indexOf("if (NativeStructureLocateCapability.isPaperUnavailable(key)");
-        int rejectContinue = filterMethod.indexOf("continue;", monumentReject);
-        int emptyNativePartition = filterMethod.indexOf("if (candidates.isEmpty())", rejectContinue);
+        int policyFilter = filterMethod.indexOf("if (!decision.generate())");
+        int filterContinue = filterMethod.indexOf("continue;", policyFilter);
+        int emptyNativePartition = filterMethod.indexOf("if (candidates.isEmpty())", filterContinue);
         int reachabilityLookup = filterMethod.indexOf("reachableStructureKeys(level)", emptyNativePartition);
 
         assertTrue(policyResolution >= 0);
@@ -58,10 +58,11 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
         assertTrue(nativeFilter >= 0);
         assertTrue(delegateLocate > nativeFilter);
         assertTrue(nearestSelection > delegateLocate);
-        assertTrue(monumentReject >= 0);
-        assertTrue(rejectContinue > monumentReject);
-        assertTrue(emptyNativePartition > rejectContinue);
+        assertTrue(policyFilter >= 0);
+        assertTrue(filterContinue > policyFilter);
+        assertTrue(emptyNativePartition > filterContinue);
         assertTrue(reachabilityLookup > emptyNativePartition);
+        assertFalse(filterMethod.contains("NativeStructureLocateCapability"));
         assertFalse(irisHelper.contains("NativeStructureLocateCapability.isPaperUnavailable(structureId)"));
         assertTrue(irisHelper.contains("new BlockPos(result.originX(), result.baseY(), result.originZ())"));
     }

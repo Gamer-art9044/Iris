@@ -42,6 +42,18 @@ public class IrisStructureComponentMarkerTest {
     }
 
     @Test
+    public void treeCollisionUsesOnlyNonAirStructureBlocks() {
+        PlatformBlockState solid = mock(PlatformBlockState.class);
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        when(solid.isAir()).thenReturn(false);
+        when(air.isAir()).thenReturn(true);
+
+        assertTrue(IrisStructureComponent.isOccupiedStructureState(solid));
+        assertFalse(IrisStructureComponent.isOccupiedStructureState(air));
+        assertFalse(IrisStructureComponent.isOccupiedStructureState(null));
+    }
+
+    @Test
     public void emptyResolvedPiecesRemainSkippableForNonReplacement() {
         IrisStructureLocator.ResolvedPlacement resolved = resolvedPlacement(
                 NativeStructureSuppression.NONE, new KList<>());

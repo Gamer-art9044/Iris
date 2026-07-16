@@ -35,18 +35,17 @@ public class IrisStructureLocateCommandContractTest {
         int replacementCheck = method.indexOf(
                 "decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS", policyResolution);
         int replacementLocate = method.indexOf("locateIrisStructure(e, structureKey, commandSender)", replacementCheck);
-        int capabilityCheck = method.indexOf("NativeStructureLocateCapability.isPaperUnavailable(structureKey)", replacementLocate);
         int genericIrisLookup = method.indexOf(
-                "nativeStructure == null && IrisStructureLocator.isPlaced(e, structureKey)", capabilityCheck);
+                "nativeStructure == null && IrisStructureLocator.isPlaced(e, structureKey)", replacementLocate);
         int nativeLocate = method.indexOf("targetWorld.locateNearestStructure(", genericIrisLookup);
         assertTrue(nativeResolution >= 0);
         assertTrue(policyResolution > nativeResolution);
         assertTrue(replacementCheck > policyResolution);
         assertTrue(replacementLocate > replacementCheck);
-        assertTrue(capabilityCheck > replacementLocate);
-        assertTrue(genericIrisLookup > capabilityCheck);
+        assertTrue(genericIrisLookup > replacementLocate);
         assertTrue(nativeLocate > policyResolution);
         assertTrue(method.contains("decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS"));
+        assertFalse(method.contains("NativeStructureLocateCapability"));
     }
 
     @Test

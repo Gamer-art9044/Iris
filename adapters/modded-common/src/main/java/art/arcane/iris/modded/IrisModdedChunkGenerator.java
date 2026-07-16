@@ -28,6 +28,7 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
+import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructureStiltSettings;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.nativegen.NativeStructureGenerationException;
@@ -611,7 +612,20 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     static Set<String> collectConfiguredBiomeKeys(IrisDimension dimension, IrisData data) {
-        return collectConfiguredBiomeKeys(dimension.getReachableBiomes(() -> data), dimension.getLoadKey());
+        LinkedHashSet<String> keys = new LinkedHashSet<>(
+                collectConfiguredBiomeKeys(dimension.getReachableBiomes(() -> data), dimension.getLoadKey()));
+        for (IrisRegion region : dimension.getAllRegions(() -> data)) {
+            if (region == null) {
+                continue;
+            }
+            if (!region.getSeaBiomes().isEmpty()) {
+                keys.add("minecraft:the_void");
+            }
+            if (!region.getShoreBiomes().isEmpty()) {
+                keys.add("minecraft:beach");
+            }
+        }
+        return Set.copyOf(keys);
     }
 
     static Set<String> collectConfiguredBiomeKeys(Iterable<IrisBiome> biomes, String dimensionLoadKey) {
@@ -621,7 +635,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             if (irisBiome == null) {
                 continue;
             }
-            Identifier derivative = Identifier.tryParse(irisBiome.getVanillaDerivativeKey());
+            Identifier derivative = Identifier.tryParse(irisBiome.getStructureDerivativeKey());
             if (derivative != null) {
                 keys.add(derivative.toString().toLowerCase(Locale.ROOT));
             }

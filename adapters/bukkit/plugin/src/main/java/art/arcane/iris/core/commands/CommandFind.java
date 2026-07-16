@@ -21,7 +21,6 @@ package art.arcane.iris.core.commands;
 import art.arcane.iris.Iris;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.service.ObjectStudioSaveService;
-import art.arcane.iris.core.structure.NativeStructureLocateCapability;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
@@ -134,10 +133,6 @@ public class CommandFind implements DirectorExecutor {
             }
             if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
                 locateIrisStructure(e, structureKey, commandSender);
-                return;
-            }
-            if (NativeStructureLocateCapability.isPaperUnavailable(structureKey)) {
-                commandSender.sendMessage(C.RED + NativeStructureLocateCapability.unavailableMessage());
                 return;
             }
         }

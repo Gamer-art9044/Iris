@@ -4,6 +4,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
+import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.RegistryListFunction;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
@@ -33,6 +34,7 @@ public class IrisObjectVanillaLoot implements IObjectLoot {
     @RegistryListFunction(LootTableKeyFunction.class)
     private String name;
     @Desc("The weight of this loot table being chosen")
+    @MinNumber(1)
     private int weight = 1;
 
     public KList<PlatformBlockState> getFilter(IrisData rdata) {

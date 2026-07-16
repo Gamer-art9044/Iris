@@ -41,7 +41,7 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisObjectRotation;
-import art.arcane.iris.engine.object.IrisObjectScale;
+import art.arcane.iris.engine.object.IrisObjectTranslate;
 import art.arcane.iris.engine.object.IrisObjectVacuum;
 import art.arcane.iris.engine.object.IrisProceduralObjects;
 import art.arcane.iris.engine.object.IrisProceduralPlacement;
@@ -55,7 +55,6 @@ import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
-import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.MatterStructurePOI;
@@ -70,7 +69,6 @@ import java.io.IOException;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -413,15 +411,26 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
     @ChunkCoordinates
     private void placeProceduralObjects(MantleWriter writer, RNG rng, int x, int z, IrisBiome surfaceBiome, IrisBiome caveBiome, IrisRegion region) {
-        placeProceduralFrom(writer, rng, x, z, surfaceBiome.getProceduralObjects(), surfaceBiome.getName());
-        placeProceduralFrom(writer, rng, x, z, region.getProceduralObjects(), region.getName());
+        IrisCaveProfile surfaceCaveProfile = resolveCaveProfile(surfaceBiome.getCaveProfile(), region.getCaveProfile());
+        IrisCaveProfile regionCaveProfile = resolveCaveProfile(region.getCaveProfile(), caveBiome == null ? null : caveBiome.getCaveProfile());
+        placeProceduralFrom(writer, rng, x, z, surfaceBiome.getProceduralObjects(), surfaceBiome.getName(), surfaceCaveProfile);
+        placeProceduralFrom(writer, rng, x, z, region.getProceduralObjects(), region.getName(), regionCaveProfile);
         if (caveBiome != null && caveBiome != surfaceBiome) {
-            placeProceduralFrom(writer, rng, x, z, caveBiome.getProceduralObjects(), caveBiome.getName());
+            IrisCaveProfile caveProfile = resolveCaveProfile(caveBiome.getCaveProfile(), region.getCaveProfile());
+            placeProceduralFrom(writer, rng, x, z, caveBiome.getProceduralObjects(), caveBiome.getName(), caveProfile);
         }
     }
 
     @ChunkCoordinates
-    private void placeProceduralFrom(MantleWriter writer, RNG rng, int x, int z, IrisProceduralObjects proceduralObjects, String scope) {
+    private void placeProceduralFrom(
+            MantleWriter writer,
+            RNG rng,
+            int x,
+            int z,
+            IrisProceduralObjects proceduralObjects,
+            String scope,
+            IrisCaveProfile caveProfile
+    ) {
         if (proceduralObjects == null || proceduralObjects.isEmpty()) {
             return;
         }
@@ -444,13 +453,15 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
             IrisObjectPlacement placement = p.asPlacement();
             boolean carving = placement.getCarvingSupport() == CarvingMode.CARVING_ONLY;
-            if (carving && placement.getMode() == ObjectPlaceMode.CENTER_HEIGHT) {
-                placement.setMode(ObjectPlaceMode.FAST_MIN_HEIGHT);
+            IrisCaveAnchorMode anchorMode = resolveAnchorMode(placement, caveProfile);
+            if (placement.getMode() == ObjectPlaceMode.CEILING_HANG) {
+                anchorMode = IrisCaveAnchorMode.CEILING;
             }
-            IObjectPlacer placer = p.isPlausible() ? new DecayControlPlacer(writer) : writer;
-            if (golden) {
-                placer = new GoldenDebugPlacer(placer, scope + "/" + p.getName());
-            }
+            int anchorScanStep = resolveAnchorScanStep(caveProfile);
+            int minDepthBelowSurface = resolveObjectMinDepthBelowSurface(caveProfile);
+            int anchorSearchAttempts = resolveAnchorSearchAttempts(caveProfile);
+            IObjectPlacer basePlacer = p.isPlausible() ? new DecayControlPlacer(writer) : writer;
+            IObjectPlacer placer = golden ? new GoldenDebugPlacer(basePlacer, scope + "/" + p.getName()) : basePlacer;
             int density = Math.max(1, p.getDensity());
             for (int i = 0; i < density; i++) {
                 IrisObject variant = p.getVariantObject(getData(), rng);
@@ -463,8 +474,31 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     }
                     continue;
                 }
-                int xx = rng.i(blockX, blockX + 15);
-                int zz = rng.i(blockZ, blockZ + 15);
+                CavePlacementAnchor caveAnchor = null;
+                if (carving) {
+                    caveAnchor = findCavePlacementAnchor(
+                            writer,
+                            rng,
+                            blockX,
+                            blockZ,
+                            anchorMode,
+                            anchorScanStep,
+                            minDepthBelowSurface,
+                            anchorSearchAttempts,
+                            null,
+                            caveAnchorCache
+                    );
+                }
+                if (carving && caveAnchor == null) {
+                    if (golden) {
+                        IrisLogging.info("Goldendebug procedural cave anchor rejected: chunk=" + x + "," + z
+                                + " placement=" + p.getName()
+                                + " minDepthBelowSurface=" + minDepthBelowSurface);
+                    }
+                    continue;
+                }
+                int xx = caveAnchor == null ? rng.i(blockX, blockX + 16) : caveAnchor.x();
+                int zz = caveAnchor == null ? rng.i(blockZ, blockZ + 16) : caveAnchor.z();
                 int id = rng.i(0, Integer.MAX_VALUE);
                 if (golden) {
                     KList<IrisObject> pool = p.getVariantObjects(getData());
@@ -480,8 +514,9 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 }
                 try {
                     int placeResult = -1;
+                    CaveObjectPlacementTransaction.CommitResult commitResult = CaveObjectPlacementTransaction.CommitResult.EMPTY;
                     if (carving) {
-                        int caveFloorY = findNearestCaveFloor(writer, xx, zz, caveAnchorCache);
+                        int caveFloorY = caveAnchor.y();
                         if (golden) {
                             IrisLogging.info("Goldendebug procedural caveFloor: chunk=" + x + "," + z
                                     + " placement=" + p.getName()
@@ -489,19 +524,26 @@ public class MantleObjectComponent extends IrisMantleComponent {
                                     + " zz=" + zz
                                     + " caveFloorY=" + caveFloorY);
                         }
-                        if (caveFloorY > 0) {
-                            placeResult = variant.place(xx, caveFloorY, zz, placer, placement, rng, (b, data) -> {
-                                String marker = placementMarker(variant, id, "procedural");
-                                if (marker != null) {
-                                    writer.setData(b.getX(), b.getY(), b.getZ(), marker);
-                                }
-                            }, null, getData());
-                        }
+                        IrisObjectPlacement effectivePlacement = resolveCavePlacement(placement, variant, caveProfile);
+                        ContainedPlacementResult contained = placeContainedCaveObject(
+                                placer,
+                                variant,
+                                xx,
+                                caveFloorY,
+                                zz,
+                                effectivePlacement,
+                                minDepthBelowSurface,
+                                id,
+                                "procedural",
+                                rng
+                        );
+                        placeResult = contained.resultY();
+                        commitResult = contained.commitResult();
                     } else {
                         placeResult = variant.place(xx, -1, zz, placer, placement, rng, (b, data) -> {
                             String marker = placementMarker(variant, id, "procedural");
                             if (marker != null) {
-                                writer.setData(b.getX(), b.getY(), b.getZ(), marker);
+                                placer.setData(b.getX(), b.getY(), b.getZ(), marker);
                             }
                         }, null, getData());
                     }
@@ -511,7 +553,8 @@ public class MantleObjectComponent extends IrisMantleComponent {
                                 + " variant=" + variant.getLoadKey()
                                 + " xx=" + xx
                                 + " zz=" + zz
-                                + " resultY=" + placeResult);
+                                + " resultY=" + placeResult
+                                + " commit=" + commitResult);
                     }
                 } catch (Throwable e) {
                     IrisLogging.reportError(e);
@@ -520,6 +563,72 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 }
             }
         }
+    }
+
+    private CavePlacementAnchor findCavePlacementAnchor(
+            MantleWriter writer,
+            RNG rng,
+            int minX,
+            int minZ,
+            IrisCaveAnchorMode anchorMode,
+            int anchorScanStep,
+            int minDepthBelowSurface,
+            int searchAttempts,
+            String expectedCaveBiomeKey,
+            CaveAnchorCache anchorCache
+    ) {
+        for (int search = 0; search < searchAttempts; search++) {
+            int candidateX = rng.i(minX, minX + 16);
+            int candidateZ = rng.i(minZ, minZ + 16);
+            int candidateY = findCaveAnchorY(
+                    writer,
+                    rng,
+                    candidateX,
+                    candidateZ,
+                    anchorMode,
+                    anchorScanStep,
+                    minDepthBelowSurface,
+                    anchorCache
+            );
+            if (candidateY < 0 || caveAnchorBiomeConflicts(candidateX, candidateY, candidateZ, expectedCaveBiomeKey)) {
+                continue;
+            }
+            return new CavePlacementAnchor(candidateX, candidateY, candidateZ);
+        }
+        return null;
+    }
+
+    private ContainedPlacementResult placeContainedCaveObject(
+            IObjectPlacer placer,
+            IrisObject object,
+            int x,
+            int anchorY,
+            int z,
+            IrisObjectPlacement placement,
+            int minDepthBelowSurface,
+            int id,
+            String markerContext,
+            RNG rng
+    ) {
+        CaveObjectPlacementTransaction transaction = new CaveObjectPlacementTransaction(placer, anchorY, minDepthBelowSurface);
+        int placeY = anchorY;
+        if (placement.getMode() == ObjectPlaceMode.CEILING_HANG) {
+            placeY = Math.max(1, transaction.getCaveCeiling(x, z) - 1 - Math.floorDiv(object.getH(), 2));
+        }
+        String marker = placementMarker(object, id, markerContext);
+        int result = object.place(x, placeY, z, transaction, placement, rng, (block, data) -> {
+            if (marker != null) {
+                transaction.setData(block.getX(), block.getY(), block.getZ(), marker);
+            }
+            if (placement.isDolphinTarget() && placement.isUnderwater() && B.isStorageChest(data)) {
+                transaction.setData(block.getX(), block.getY(), block.getZ(), MatterStructurePOI.BURIED_TREASURE);
+            }
+        }, null, getData());
+        if (result < 0) {
+            transaction.discard();
+            return new ContainedPlacementResult(result, CaveObjectPlacementTransaction.CommitResult.EMPTY);
+        }
+        return new ContainedPlacementResult(result, transaction.commit());
     }
 
     @BlockCoordinates
@@ -557,8 +666,8 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 }
                 continue;
             }
-            int xx = rng.i(x, x + 15);
-            int zz = rng.i(z, z + 15);
+            int xx = rng.i(x, x + 16);
+            int zz = rng.i(z, z + 16);
             IrisObjectPlacement effectivePlacement = resolveEffectivePlacement(objectPlacement, v);
             int id = rng.i(0, Integer.MAX_VALUE);
             IObjectPlacer placePlacer = golden ? new GoldenDebugPlacer(writer, scope + "/" + v.getLoadKey()) : writer;
@@ -705,28 +814,20 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 continue;
             }
 
-            int x = 0;
-            int z = 0;
-            int y = -1;
-            for (int search = 0; search < anchorSearchAttempts; search++) {
-                int candidateX = rng.i(minX, minX + 15);
-                int candidateZ = rng.i(minZ, minZ + 15);
-                int candidateY = findCaveAnchorY(writer, rng, candidateX, candidateZ, anchorMode, anchorScanStep, objectMinDepthBelowSurface, anchorCache);
-                if (candidateY < 0) {
-                    continue;
-                }
+            CavePlacementAnchor anchor = findCavePlacementAnchor(
+                    writer,
+                    rng,
+                    minX,
+                    minZ,
+                    anchorMode,
+                    anchorScanStep,
+                    objectMinDepthBelowSurface,
+                    anchorSearchAttempts,
+                    expectedCaveBiomeKey,
+                    anchorCache
+            );
 
-                if (caveAnchorBiomeConflicts(candidateX, candidateY, candidateZ, expectedCaveBiomeKey)) {
-                    continue;
-                }
-
-                x = candidateX;
-                z = candidateZ;
-                y = candidateY;
-                break;
-            }
-
-            if (y < 0) {
+            if (anchor == null) {
                 rejected++;
                 logCaveReject(
                         scope,
@@ -747,44 +848,43 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 continue;
             }
 
+            int x = anchor.x();
+            int y = anchor.y();
+            int z = anchor.z();
+
             int id = rng.i(0, Integer.MAX_VALUE);
-            IrisObjectPlacement resolvedPlacement = resolveEffectivePlacement(objectPlacement, object);
-            if (resolvedPlacement.getMode() == ObjectPlaceMode.CENTER_HEIGHT && caveProfile != null) {
-                ObjectPlaceMode profileMode = caveProfile.getDefaultObjectPlaceMode();
-                if (profileMode != null) {
-                    resolvedPlacement = resolvedPlacement.toPlacement(object.getLoadKey());
-                    resolvedPlacement.setMode(profileMode);
-                }
-            }
-            IrisObjectPlacement effectivePlacement = resolvedPlacement;
-            AtomicBoolean wrotePlacementData = new AtomicBoolean(false);
+            IrisObjectPlacement effectivePlacement = resolveCavePlacement(objectPlacement, object, caveProfile);
 
             try {
-                int caveCeiling = findCaveCeiling(writer, x, y, z);
-                IObjectPlacer clampedPlacer = new CeilingClampedPlacer(writer, caveCeiling);
-                int placeY = y;
-                if (effectivePlacement.getMode() == ObjectPlaceMode.CEILING_HANG) {
-                    placeY = Math.max(1, caveCeiling - 1 - Math.floorDiv(object.getH(), 2));
-                }
-                int result = object.place(x, placeY, z, clampedPlacer, effectivePlacement, rng, (b, data) -> {
-                    wrotePlacementData.set(true);
-                    String marker = placementMarker(object, id, "cave");
-                    if (marker != null) {
-                        writer.setData(b.getX(), b.getY(), b.getZ(), marker);
-                    }
-                    if (effectivePlacement.isDolphinTarget() && effectivePlacement.isUnderwater() && B.isStorageChest(data)) {
-                        writer.setData(b.getX(), b.getY(), b.getZ(), MatterStructurePOI.BURIED_TREASURE);
-                    }
-                }, null, getData());
-
-                boolean wroteBlocks = wrotePlacementData.get();
+                ContainedPlacementResult contained = placeContainedCaveObject(
+                        writer,
+                        object,
+                        x,
+                        y,
+                        z,
+                        effectivePlacement,
+                        objectMinDepthBelowSurface,
+                        id,
+                        "cave",
+                        rng
+                );
+                int result = contained.resultY();
+                boolean wroteBlocks = contained.commitResult() == CaveObjectPlacementTransaction.CommitResult.COMMITTED;
                 if (wroteBlocks) {
                     placed++;
-                } else if (result < 0) {
+                } else {
                     rejected++;
+                    String rejectReason;
+                    if (result < 0) {
+                        rejectReason = "PLACE_NEGATIVE";
+                    } else if (contained.commitResult() == CaveObjectPlacementTransaction.CommitResult.REJECTED_BOUNDS) {
+                        rejectReason = "CONTAINMENT";
+                    } else {
+                        rejectReason = "NO_WRITES";
+                    }
                     logCaveReject(
                             scope,
-                            "PLACE_NEGATIVE",
+                            rejectReason,
                             metricChunkX,
                             metricChunkZ,
                             objectPlacement,
@@ -923,8 +1023,8 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 continue;
             }
 
-            int xx = rng.i(minX, minX + 15);
-            int zz = rng.i(minZ, minZ + 15);
+            int xx = rng.i(minX, minX + 16);
+            int zz = rng.i(minZ, minZ + 16);
             int columnLowerSurfaceY = getEngineMantle().getEngine().getHeight(xx, zz, true);
             int rawUpperSurface = upperCtx.getUpperSurfaceY(xx, zz);
             int upperSurfaceY = Math.max(rawUpperSurface, columnLowerSurfaceY + upperGap);
@@ -1069,24 +1169,33 @@ public class MantleObjectComponent extends IrisMantleComponent {
         return effectivePlacement;
     }
 
-    private int findNearestCaveFloor(MantleWriter writer, int x, int z, CaveAnchorCache anchorCache) {
-        KList<Integer> anchors = anchorCache.get(writer, IrisCaveAnchorMode.FLOOR, 1, 0, x, z);
-        if (anchors.isEmpty()) {
-            return -1;
+    private IrisObjectPlacement resolveCavePlacement(IrisObjectPlacement objectPlacement, IrisObject object, IrisCaveProfile caveProfile) {
+        IrisObjectPlacement resolvedPlacement = resolveEffectivePlacement(objectPlacement, object);
+        if (resolvedPlacement.getMode() != ObjectPlaceMode.CENTER_HEIGHT || caveProfile == null) {
+            return resolvedPlacement;
         }
-        return anchors.get(anchors.size() - 1);
+
+        ObjectPlaceMode profileMode = caveProfile.getDefaultObjectPlaceMode();
+        if (profileMode == null) {
+            return resolvedPlacement;
+        }
+
+        String loadKey = object.getLoadKey();
+        if (loadKey == null || loadKey.isBlank()) {
+            resolvedPlacement = resolvedPlacement.toPlacement();
+        } else {
+            resolvedPlacement = resolvedPlacement.toPlacement(loadKey);
+        }
+        resolvedPlacement.setMode(profileMode);
+        return resolvedPlacement;
     }
 
-    private int findCaveCeiling(MantleWriter writer, int x, int anchorY, int z) {
-        Engine engine = getEngineMantle().getEngine();
-        int surfaceY = engine.getHeight(x, z);
-        int maxScan = Math.min(engine.getHeight() - 1, Math.max(0, surfaceY));
-        for (int sy = anchorY + 1; sy <= maxScan; sy++) {
-            if (!writer.isCarved(x, sy, z)) {
-                return sy;
-            }
+    static int caveAnchorScanUpperBound(int worldHeight, int surfaceY, int minDepthBelowSurface) {
+        int maxAnchorY = CaveObjectPlacementTransaction.maxBuriedY(worldHeight, surfaceY, minDepthBelowSurface);
+        if (maxAnchorY <= 1) {
+            return 0;
         }
-        return maxScan;
+        return maxAnchorY + 1;
     }
 
     private static final class GoldenDebugPlacer implements IObjectPlacer {
@@ -1177,92 +1286,6 @@ public class MantleObjectComponent extends IrisMantleComponent {
         }
     }
 
-    private static final class CeilingClampedPlacer implements IObjectPlacer {
-        private final IObjectPlacer delegate;
-        private final int maxY;
-
-        private CeilingClampedPlacer(IObjectPlacer delegate, int maxY) {
-            this.delegate = delegate;
-            this.maxY = maxY;
-        }
-
-        @Override
-        public int getHighest(int x, int z, IrisData data) {
-            return delegate.getHighest(x, z, data);
-        }
-
-        @Override
-        public int getHighest(int x, int z, IrisData data, boolean ignoreFluid) {
-            return delegate.getHighest(x, z, data, ignoreFluid);
-        }
-
-        @Override
-        public void set(int x, int y, int z, PlatformBlockState d) {
-            if (y >= maxY) {
-                return;
-            }
-            delegate.set(x, y, z, d);
-        }
-
-        @Override
-        public PlatformBlockState get(int x, int y, int z) {
-            return delegate.get(x, y, z);
-        }
-
-        @Override
-        public boolean isPreventingDecay() {
-            return delegate.isPreventingDecay();
-        }
-
-        @Override
-        public boolean isCarved(int x, int y, int z) {
-            return delegate.isCarved(x, y, z);
-        }
-
-        @Override
-        public boolean isSolid(int x, int y, int z) {
-            return delegate.isSolid(x, y, z);
-        }
-
-        @Override
-        public boolean isUnderwater(int x, int z) {
-            return delegate.isUnderwater(x, z);
-        }
-
-        @Override
-        public int getFluidHeight() {
-            return delegate.getFluidHeight();
-        }
-
-        @Override
-        public boolean isDebugSmartBore() {
-            return delegate.isDebugSmartBore();
-        }
-
-        @Override
-        public <T> void setData(int xx, int yy, int zz, T data) {
-            delegate.setData(xx, yy, zz, data);
-        }
-
-        @Override
-        public <T> T getData(int xx, int yy, int zz, Class<T> t) {
-            return delegate.getData(xx, yy, zz, t);
-        }
-
-        @Override
-        public void setTile(int xx, int yy, int zz, TileData tile) {
-            if (yy >= maxY) {
-                return;
-            }
-            delegate.setTile(xx, yy, zz, tile);
-        }
-
-        @Override
-        public Engine getEngine() {
-            return delegate.getEngine();
-        }
-    }
-
     private int findCaveAnchorY(MantleWriter writer, RNG rng, int x, int z, IrisCaveAnchorMode anchorMode, int anchorScanStep, int objectMinDepthBelowSurface, CaveAnchorCache anchorCache) {
         KList<Integer> anchors = anchorCache.get(writer, anchorMode, anchorScanStep, objectMinDepthBelowSurface, x, z);
         if (anchors.isEmpty()) {
@@ -1273,35 +1296,21 @@ public class MantleObjectComponent extends IrisMantleComponent {
             return anchors.get(0);
         }
 
-        return anchors.get(rng.i(0, anchors.size() - 1));
+        return anchors.get(rng.i(anchors.size()));
     }
 
     private KList<Integer> scanCaveAnchorColumn(MantleWriter writer, IrisCaveAnchorMode anchorMode, int anchorScanStep, int objectMinDepthBelowSurface, int x, int z, CaveAnchorCache anchorCache) {
         int height = getEngineMantle().getEngine().getHeight();
         int step = Math.max(1, anchorScanStep);
         int surfaceY = anchorCache.getSurfaceHeight(x, z);
-        int baseMaxAnchorY = Math.min(height - 1, surfaceY - Math.max(0, objectMinDepthBelowSurface));
-        if (baseMaxAnchorY <= 1) {
+        int maxAnchorExclusive = caveAnchorScanUpperBound(height, surfaceY, objectMinDepthBelowSurface);
+        if (maxAnchorExclusive == 0) {
             return new KList<>();
         }
 
-        int widenedMaxAnchorY = Math.min(height - 1, surfaceY - 3);
-        widenedMaxAnchorY = Math.min(widenedMaxAnchorY, baseMaxAnchorY + Math.max(0, objectMinDepthBelowSurface) / 2);
-        int carvedHeight = Math.min(height, Math.max(baseMaxAnchorY, widenedMaxAnchorY) + 4);
+        int carvedHeight = Math.min(height, maxAnchorExclusive + 3);
         byte[] carvedColumn = anchorCache.getCarvedColumn(writer, x, z, carvedHeight);
-        KList<Integer> anchors = scanCaveAnchorRange(anchorMode, step, carvedHeight, BEDROCK_CLEARANCE, baseMaxAnchorY, carvedColumn);
-        if (!anchors.isEmpty()) {
-            return anchors;
-        }
-
-        if (widenedMaxAnchorY > baseMaxAnchorY) {
-            anchors = scanCaveAnchorRange(anchorMode, step, carvedHeight, baseMaxAnchorY, widenedMaxAnchorY, carvedColumn);
-            if (!anchors.isEmpty()) {
-                return anchors;
-            }
-        }
-
-        return anchors;
+        return scanCaveAnchorRange(anchorMode, step, carvedHeight, BEDROCK_CLEARANCE, maxAnchorExclusive, carvedColumn);
     }
 
     private KList<Integer> scanCaveAnchorRange(IrisCaveAnchorMode anchorMode, int step, int height, int minAnchorY, int maxAnchorY, byte[] carvedColumn) {
@@ -1441,6 +1450,15 @@ public class MantleObjectComponent extends IrisMantleComponent {
     private record ObjectPlacementResult(int attempts, int placed, int rejected, int nullObjects, int errors) {
     }
 
+    private record CavePlacementAnchor(int x, int y, int z) {
+    }
+
+    private record ContainedPlacementResult(
+            int resultY,
+            CaveObjectPlacementTransaction.CommitResult commitResult
+    ) {
+    }
+
     private static final class CaveRejectLogState {
         private final AtomicLong lastLogMs = new AtomicLong(0L);
         private final AtomicInteger suppressed = new AtomicInteger(0);
@@ -1484,63 +1502,61 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
     protected int computeRadius() {
         IrisDimension dimension = getDimension();
-
-        AtomicInteger xg = new AtomicInteger();
-        AtomicInteger zg = new AtomicInteger();
-
-        KSet<String> objects = new KSet<>();
-        KMap<IrisObjectScale, KList<String>> scalars = new KMap<>();
-        KList<IrisObjectPlacement> vacuumPlacements = new KList<>();
+        KMap<String, IrisBlockVector> sizeCache = new KMap<>();
+        KSet<String> warnedLargeObjects = new KSet<>();
+        int radius = 0;
         for (IrisRegion region : dimension.getAllRegions(this::getData)) {
-            for (IrisObjectPlacement j : region.getObjects()) {
-                if (j.getScale().canScaleBeyond()) {
-                    scalars.put(j.getScale(), j.getPlace());
-                } else {
-                    objects.addAll(j.getPlace());
-                }
-                if (IrisObjectVacuum.isVacuumMode(j.getMode())) {
-                    vacuumPlacements.add(j);
-                }
+            if (region == null) {
+                continue;
             }
-            updateProceduralRadiusBounds(region.getProceduralObjects(), xg, zg);
+            radius = Math.max(radius, computePlacementRadius(region.getObjects(), sizeCache, warnedLargeObjects));
+            radius = Math.max(radius, computeProceduralRadius(region.getProceduralObjects()));
         }
         for (IrisBiome biome : dimension.getReachableBiomes(this::getData)) {
-            updateProceduralRadiusBounds(biome.getProceduralObjects(), xg, zg);
-            for (IrisObjectPlacement j : biome.getObjects()) {
-                if (j.getScale().canScaleBeyond()) {
-                    scalars.put(j.getScale(), j.getPlace());
-                } else {
-                    objects.addAll(j.getPlace());
-                }
-                if (IrisObjectVacuum.isVacuumMode(j.getMode())) {
-                    vacuumPlacements.add(j);
-                }
+            if (biome == null) {
+                continue;
             }
+            radius = Math.max(radius, computePlacementRadius(biome.getObjects(), sizeCache, warnedLargeObjects));
+            radius = Math.max(radius, computeProceduralRadius(biome.getProceduralObjects()));
         }
 
-        KMap<String, IrisBlockVector> sizeCache = new KMap<>();
-        for (String i : objects) {
-            updateRadiusBounds(sizeCache, xg, zg, i, 1D);
-        }
-
-        for (Map.Entry<IrisObjectScale, KList<String>> entry : scalars.entrySet()) {
-            double ms = entry.getKey().getMaxScale();
-            for (String j : entry.getValue()) {
-                updateRadiusBounds(sizeCache, xg, zg, j, ms);
-            }
-        }
-
-        for (IrisObjectPlacement j : vacuumPlacements) {
-            updateVacuumRadiusBounds(sizeCache, xg, zg, j);
-        }
-
-        return Math.max(xg.get(), zg.get());
+        return radius;
     }
 
-    private void updateProceduralRadiusBounds(IrisProceduralObjects procedural, AtomicInteger xg, AtomicInteger zg) {
-        if (procedural == null || procedural.isEmpty()) {
-            return;
+    private int computePlacementRadius(
+            KList<IrisObjectPlacement> placements,
+            KMap<String, IrisBlockVector> sizeCache,
+            KSet<String> warnedLargeObjects
+    ) {
+        int radius = 0;
+        for (IrisObjectPlacement placement : placements) {
+            if (placement == null) {
+                continue;
+            }
+            for (String objectKey : placement.getPlace()) {
+                try {
+                    IrisBlockVector size = loadObjectSize(sizeCache, objectKey);
+                    if (size == null) {
+                        continue;
+                    }
+                    int reach = calculatePlacementReach(size, placement);
+                    if (reach > 128 && warnedLargeObjects.add(objectKey)) {
+                        IrisLogging.warn("Object " + objectKey + " has a large placement reach (" + reach + " blocks) and may increase memory usage!");
+                    }
+                    radius = Math.max(radius, reach);
+                } catch (Throwable e) {
+                    IrisLogging.reportError(e);
+                }
+            }
         }
+        return radius;
+    }
+
+    private int computeProceduralRadius(IrisProceduralObjects procedural) {
+        if (procedural == null || procedural.isEmpty()) {
+            return 0;
+        }
+        int radius = 0;
         for (IrisProceduralPlacement placement : procedural.getAllPlacements()) {
             if (placement == null) {
                 continue;
@@ -1549,71 +1565,65 @@ public class MantleObjectComponent extends IrisMantleComponent {
             if (variants == null) {
                 continue;
             }
+            IrisObjectPlacement objectPlacement = placement.asPlacement();
             for (IrisObject variant : variants) {
                 if (variant == null) {
                     continue;
                 }
-                xg.getAndSet(Math.max(variant.getW(), xg.get()));
-                zg.getAndSet(Math.max(variant.getD(), zg.get()));
+                IrisBlockVector size = new IrisBlockVector(variant.getW(), variant.getH(), variant.getD());
+                radius = Math.max(radius, calculatePlacementReach(size, objectPlacement));
             }
         }
+        return radius;
     }
 
-    private void updateRadiusBounds(
-            KMap<String, IrisBlockVector> sizeCache,
-            AtomicInteger xg,
-            AtomicInteger zg,
-            String objectKey,
-            double scale
-    ) {
-        try {
-            IrisBlockVector bv = loadObjectSize(sizeCache, objectKey);
-            if (bv == null) {
-                throw new RuntimeException();
-            }
-
-            if (Math.max(bv.getBlockX(), bv.getBlockZ()) > 128) {
-                if (scale > 1D) {
-                    IrisLogging.warn("Object " + objectKey + " has a large size (" + bv + ") and may increase memory usage! (Object scaled up to " + Form.pc(scale, 2) + ")");
-                } else {
-                    IrisLogging.warn("Object " + objectKey + " has a large size (" + bv + ") and may increase memory usage!");
-                }
-            }
-
-            xg.getAndSet(Math.max((int) Math.ceil(bv.getBlockX() * scale), xg.get()));
-            zg.getAndSet(Math.max((int) Math.ceil(bv.getBlockZ() * scale), zg.get()));
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
+    static int calculatePlacementReach(IrisBlockVector size, IrisObjectPlacement placement) {
+        if (size == null) {
+            return 0;
         }
-    }
-
-    private void updateVacuumRadiusBounds(
-            KMap<String, IrisBlockVector> sizeCache,
-            AtomicInteger xg,
-            AtomicInteger zg,
-            IrisObjectPlacement placement
-    ) {
-        int pad = 2 * IrisObjectVacuum.resolveRadius(placement.getMode(), placement.getVacuumSettings());
-        if (pad <= 0) {
-            return;
+        if (placement == null) {
+            return Math.max(Math.abs(size.getBlockX()), Math.abs(size.getBlockZ()));
         }
 
         double scale = placement.getScale() != null ? Math.max(1D, placement.getScale().getMaxScale()) : 1D;
-        for (String objectKey : placement.getPlace()) {
-            try {
-                IrisBlockVector bv = loadObjectSize(sizeCache, objectKey);
-                if (bv == null) {
-                    continue;
-                }
+        int width = scaledDimension(size.getBlockX(), scale);
+        int height = scaledDimension(size.getBlockY(), scale);
+        int depth = scaledDimension(size.getBlockZ(), scale);
+        IrisObjectRotation rotation = placement.getRotation();
+        boolean rotateX = rotation != null && rotation.isEnabled() && rotation.getXAxis() != null && rotation.getXAxis().isEnabled();
+        boolean rotateZ = rotation != null && rotation.isEnabled() && rotation.getZAxis() != null && rotation.getZAxis().isEnabled();
+        int footprint = rotateX || rotateZ ? Math.max(width, Math.max(height, depth)) : Math.max(width, depth);
+        int translation = calculateTranslationReach(placement.getTranslate(), rotation, rotateX || rotateZ);
+        int warp = placement.getWarp() != null && !placement.getWarp().isFlat()
+                ? (int) Math.ceil(Math.abs(placement.getWarp().getMultiplier()) / 2D)
+                : 0;
+        int vacuum = IrisObjectVacuum.isVacuumMode(placement.getMode())
+                ? 2 * IrisObjectVacuum.resolveRadius(placement.getMode(), placement.getVacuumSettings())
+                : 0;
+        long reach = (long) footprint + translation + warp + vacuum;
+        return reach > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) reach;
+    }
 
-                int reachX = (int) Math.ceil(Math.abs(bv.getBlockX()) * scale) + pad;
-                int reachZ = (int) Math.ceil(Math.abs(bv.getBlockZ()) * scale) + pad;
-                xg.getAndSet(Math.max(reachX, xg.get()));
-                zg.getAndSet(Math.max(reachZ, zg.get()));
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
-            }
+    private static int scaledDimension(int dimension, double scale) {
+        int absoluteDimension = Math.abs(dimension);
+        if (scale <= 1D) {
+            return absoluteDimension;
         }
+        return (int) Math.ceil((absoluteDimension * scale) + (scale * 2D));
+    }
+
+    private static int calculateTranslationReach(IrisObjectTranslate translate, IrisObjectRotation rotation, boolean rotateVertically) {
+        if (translate == null || !translate.canTranslate()) {
+            return 0;
+        }
+        double x = translate.getX();
+        double y = translate.getY();
+        double z = translate.getZ();
+        if (rotateVertically) {
+            return (int) Math.ceil(Math.sqrt((x * x) + (y * y) + (z * z)));
+        }
+        boolean rotateY = rotation != null && rotation.isEnabled() && rotation.getYAxis() != null && rotation.getYAxis().isEnabled();
+        return rotateY ? (int) Math.ceil(Math.hypot(x, z)) : (int) Math.max(Math.abs(x), Math.abs(z));
     }
 
     private IrisBlockVector loadObjectSize(KMap<String, IrisBlockVector> sizeCache, String objectKey) {

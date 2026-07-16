@@ -37,9 +37,16 @@ public final class DecoratorPlatformHooks {
         boolean canGoOn(PlatformBlockState surface);
     }
 
-    public static void bind(FaceFixer faceFixer, SurfaceSturdiness surfaceSturdiness) {
+    public static synchronized Bindings bind(FaceFixer faceFixer, SurfaceSturdiness surfaceSturdiness) {
+        Bindings previous = new Bindings(FACE_FIXER, SURFACE_STURDINESS);
         FACE_FIXER = faceFixer;
         SURFACE_STURDINESS = surfaceSturdiness;
+        return previous;
+    }
+
+    public static synchronized void restore(Bindings bindings) {
+        FACE_FIXER = bindings.faceFixer();
+        SURFACE_STURDINESS = bindings.surfaceSturdiness();
     }
 
     static FaceFixer faceFixer() {
@@ -48,5 +55,8 @@ public final class DecoratorPlatformHooks {
 
     static SurfaceSturdiness surfaceSturdiness() {
         return SURFACE_STURDINESS;
+    }
+
+    public record Bindings(FaceFixer faceFixer, SurfaceSturdiness surfaceSturdiness) {
     }
 }

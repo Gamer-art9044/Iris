@@ -49,7 +49,7 @@ public class IrisVanillaStructureAdjustment {
     private boolean clearVegetation = false;
 
     @Desc("Optional foundation columns placed beneath the native structure piece bases after placement.")
-    private IrisVanillaStructureStiltSettings stilt = null;
+    private IrisStructureStiltSettings stilt = null;
 
     public boolean matches(String key) {
         for (String entry : match) {

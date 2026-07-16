@@ -122,8 +122,9 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 }
 
                 PlatformBlockState current = output.getRaw(rx, yy, rz);
+                boolean explicitCarveIntent = hasExplicitCarveIntent(c);
 
-                if (B.isFluid(current)) {
+                if (shouldPreserveExistingFluid(c, current)) {
                     return;
                 }
 
@@ -133,17 +134,14 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                     scratch.customCaveBiomePresent = true;
                 }
 
-                if (current.isAir()) {
+                if (current.isAir() && !explicitCarveIntent) {
                     return;
                 }
 
-                if (c.isWater()) {
-                    output.setRaw(rx, yy, rz, context.getFluid().get(rx, rz));
-                } else if (c.isLava()) {
-                    output.setRaw(rx, yy, rz, LAVA);
-                } else if (c.getLiquid() == 3) {
-                    output.setRaw(rx, yy, rz, AIR);
-                } else if (getEngine().getDimension().getCaveLavaHeight() > yy) {
+                PlatformBlockState explicitState = resolveExplicitCarveState(c, context.getFluid().get(rx, rz), LAVA, AIR);
+                if (explicitCarveIntent) {
+                    output.setRaw(rx, yy, rz, explicitState);
+                } else if (usesDefaultLava(getEngine().getDimension().getCaveLavaHeight(), yy)) {
                     output.setRaw(rx, yy, rz, LAVA);
                 } else {
                     output.setRaw(rx, yy, rz, AIR);
@@ -198,6 +196,32 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             getEngine().getMetrics().getCave().put(p.getMilliseconds());
             mc.release();
         }
+    }
+
+    static boolean hasExplicitCarveIntent(MatterCavern cavern) {
+        return cavern != null && (cavern.isWater() || cavern.isLava() || cavern.getLiquid() == 3);
+    }
+
+    static boolean shouldPreserveExistingFluid(MatterCavern cavern, PlatformBlockState current) {
+        return B.isFluid(current) && !hasExplicitCarveIntent(cavern);
+    }
+
+    static boolean usesDefaultLava(int caveLavaHeight, int y) {
+        return y <= caveLavaHeight;
+    }
+
+    static PlatformBlockState resolveExplicitCarveState(MatterCavern cavern, PlatformBlockState fluid,
+                                                        PlatformBlockState lava, PlatformBlockState air) {
+        if (cavern == null) {
+            return null;
+        }
+        if (cavern.isWater()) {
+            return fluid;
+        }
+        if (cavern.isLava()) {
+            return lava;
+        }
+        return cavern.getLiquid() == 3 ? air : null;
     }
 
     private void addInternalWallsFromMasks(PackedWallBuffer walls, ColumnMask[] columnMasks) {
@@ -595,12 +619,14 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             output.setRaw(rx, cy, rz, b);
         }
 
-        for (IrisDecorator decorator : biome.getDecorators()) {
-            if (decorator.getPartOf().equals(IrisDecorationPart.NONE) && zone.getFloor() > 0 && B.isSolid(output.getRaw(rx, zone.getFloor() - 1, rz))) {
-                decorant.getSurfaceDecorator().decorate(rx, rz, xx, xx, xx, zz, zz, zz, output, biome, InferredType.CAVE, zone.getFloor() - 1, zone.airThickness());
-            } else if (decorator.getPartOf().equals(IrisDecorationPart.CEILING) && zone.getCeiling() + 1 < maxY && B.isSolid(output.getRaw(rx, zone.getCeiling() + 1, rz))) {
-                decorant.getCeilingDecorator().decorate(rx, rz, xx, xx, xx, zz, zz, zz, output, biome, InferredType.CAVE, zone.getCeiling(), zone.airThickness());
-            }
+        IrisDecorator[] surfaceDecorators = biome.getDecoratorBucket(IrisDecorationPart.NONE);
+        if (surfaceDecorators.length > 0 && zone.getFloor() > 0 && B.isSolid(output.getRaw(rx, zone.getFloor() - 1, rz))) {
+            decorant.getSurfaceDecorator().decorate(rx, rz, xx, xx, xx, zz, zz, zz, output, biome, InferredType.CAVE, zone.getFloor() - 1, zone.airThickness());
+        }
+
+        IrisDecorator[] ceilingDecorators = biome.getDecoratorBucket(IrisDecorationPart.CEILING);
+        if (ceilingDecorators.length > 0 && zone.getCeiling() + 1 < maxY && B.isSolid(output.getRaw(rx, zone.getCeiling() + 1, rz))) {
+            decorant.getCeilingDecorator().decorate(rx, rz, xx, xx, xx, zz, zz, zz, output, biome, InferredType.CAVE, zone.getCeiling(), zone.airThickness());
         }
     }
 

@@ -21,7 +21,6 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
-import art.arcane.iris.engine.object.annotations.Required;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -33,12 +32,18 @@ import lombok.experimental.Accessors;
 @Desc("A weighted reference to a jigsaw piece inside a jigsaw pool.")
 @Data
 public class IrisJigsawPieceEntry {
-    @Required
     @RegistryListResource(IrisJigsawPiece.class)
-    @Desc("The jigsaw piece this entry refers to.")
+    @Desc("The jigsaw piece this entry refers to. Leave empty only when empty is true.")
     private String piece = "";
 
     @MinNumber(1)
     @Desc("The relative weight of this piece within its pool. Higher weights are chosen more often.")
     private int weight = 1;
+
+    @Desc("When true, choosing this entry successfully terminates the current branch without placing a piece.")
+    private boolean empty = false;
+
+    public IrisJigsawPieceEntry(String piece, int weight) {
+        this(piece, weight, false);
+    }
 }

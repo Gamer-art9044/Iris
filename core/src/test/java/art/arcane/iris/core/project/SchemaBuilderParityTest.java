@@ -19,10 +19,14 @@
 package art.arcane.iris.core.project;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.engine.object.IrisBlockData;
+import art.arcane.iris.engine.object.IrisExpression;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
+import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
@@ -30,6 +34,7 @@ import art.arcane.iris.engine.object.annotations.RegistryListEnchantment;
 import art.arcane.iris.engine.object.annotations.RegistryListEntityType;
 import art.arcane.iris.engine.object.annotations.RegistryListItemType;
 import art.arcane.iris.engine.object.annotations.RegistryListPotionEffect;
+import art.arcane.iris.engine.object.annotations.RegistryListVanillaStructure;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.LogLevel;
@@ -42,6 +47,8 @@ import art.arcane.iris.spi.PlatformItem;
 import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.spi.PlatformScheduler;
 import art.arcane.iris.spi.PlatformStructureHooks;
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
 import org.junit.After;
@@ -56,6 +63,7 @@ import java.util.Map;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -64,6 +72,7 @@ public class SchemaBuilderParityTest {
     private static final List<String> ENCHANT_KEYS = List.of("minecraft:sharpness", "cool_mod:vorpal");
     private static final List<String> ITEM_KEYS = List.of("minecraft:stone", "minecraft:diamond_sword", "cool_mod:ruby");
     private static final List<String> ENTITY_KEYS = List.of("minecraft:zombie", "cool_mod:grizzly_bear");
+    private static final List<String> STRUCTURE_KEYS = List.of("minecraft:monument", "minecraft:stronghold", "cool_mod:sky_temple");
 
     private static final List<String> EXPECTED_POTIONS = List.of("SPEED", "SLOW_FALLING", "MEGA_BOOST");
     private static final List<String> EXPECTED_ENCHANTS = List.of("sharpness", "vorpal");
@@ -117,23 +126,54 @@ public class SchemaBuilderParityTest {
     }
 
     @Test
-    public void structurePlacementSchemaOmitsUnsupportedTransforms() {
+    public void structurePlacementSchemaIncludesFoundationSettingsAndOmitsUnsupportedTransforms() {
         IrisData data = mock(IrisData.class);
         ResourceLoader<IrisStructure> structureLoader = mock(ResourceLoader.class);
         ResourceLoader<IrisJigsawPiece> pieceLoader = mock(ResourceLoader.class);
+        ResourceLoader<IrisExpression> expressionLoader = mock(ResourceLoader.class);
+        ResourceLoader<IrisBlockData> blockLoader = mock(ResourceLoader.class);
+        KMap<Class<? extends IrisRegistrant>, ResourceLoader<? extends IrisRegistrant>> loaders = new KMap<>();
+        loaders.put(IrisExpression.class, expressionLoader);
         when(data.getStructureLoader()).thenReturn(structureLoader);
         when(data.getJigsawPieceLoader()).thenReturn(pieceLoader);
+        when(data.getBlockLoader()).thenReturn(blockLoader);
+        when(data.getLoaders()).thenReturn(loaders);
+        when(data.getPossibleSnippets(anyString())).thenReturn(new KList<>());
         when(structureLoader.getPossibleKeys()).thenReturn(new String[0]);
         when(pieceLoader.getPossibleKeys()).thenReturn(new String[0]);
+        when(blockLoader.getPossibleKeys()).thenReturn(new String[0]);
+        when(expressionLoader.getPossibleKeys()).thenReturn(new String[0]);
+        when(expressionLoader.getFolderName()).thenReturn("expressions");
+        when(expressionLoader.getResourceTypeName()).thenReturn("Expression");
 
-        JSONObject properties = new SchemaBuilder(IrisStructurePlacement.class, data)
-                .construct().getJSONObject("properties");
+        JSONObject schema = new SchemaBuilder(IrisStructurePlacement.class, data).construct();
+        JSONObject properties = schema.getJSONObject("properties");
+        JSONObject stilt = properties.getJSONObject("stilt");
+        JSONObject stiltDefinition = schema.getJSONObject("definitions")
+                .getJSONObject(stilt.getString("$ref").substring("#/definitions/".length()));
+        JSONObject stiltProperties = stiltDefinition.getJSONObject("properties");
+        JSONObject maxDepth = stiltProperties.getJSONObject("maxDepth");
 
         assertTrue(properties.has("structures"));
         assertTrue(properties.has("distribution"));
+        assertEquals("object", stilt.getString("type"));
+        assertTrue(stiltProperties.has("palette"));
+        assertEquals(1, maxDepth.getInt("minimum"));
+        assertEquals(4064, maxDepth.getInt("maximum"));
         assertFalse(properties.has("rotation"));
         assertFalse(properties.has("translate"));
         assertFalse(properties.has("scale"));
+    }
+
+    @Test
+    public void structurePolicyArraysUseLiveRegistryKeys() {
+        JSONObject schema = new SchemaBuilder(StructureArrayModel.class, (IrisData) null).construct();
+        JSONObject disabled = schema.getJSONObject("properties").getJSONObject("disabled");
+
+        assertEquals("#/definitions/enum-vanilla-structure",
+                disabled.getJSONObject("items").getString("$ref"));
+        assertEquals(STRUCTURE_KEYS,
+                enumValues(schema.getJSONObject("definitions"), "enum-vanilla-structure"));
     }
 
     private static String flavorDefinitionKey() {
@@ -180,6 +220,14 @@ public class SchemaBuilderParityTest {
 
         @Desc("A flavor.")
         private Flavor flavor = Flavor.ALPHA;
+    }
+
+    @Desc("Structure array model.")
+    public static class StructureArrayModel {
+        @Desc("Disabled structures.")
+        @ArrayType(type = String.class)
+        @RegistryListVanillaStructure
+        private KList<String> disabled = new KList<>();
     }
 
     public enum Flavor {
@@ -240,7 +288,7 @@ public class SchemaBuilderParityTest {
 
         @Override
         public List<String> structureKeys() {
-            return List.of();
+            return STRUCTURE_KEYS;
         }
 
         @Override

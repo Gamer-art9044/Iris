@@ -109,6 +109,7 @@ final class ModdedCommandHelp {
                 Entry.command("x&y", "", "Autoselect up, down and out", "xay"),
                 Entry.command("analyze", "<key>", "Show object composition"),
                 Entry.command("shrink", "<key>", "Shrink an object to its minimum size"),
+                Entry.command("plausibilize", "<key|prefix/> [dryrun=true] [reach=N]", "Grow branches so tree leaves survive vanilla decay"),
                 Entry.command("undo", "[amount]", "Undo pasted objects", "u")
         ));
         SECTIONS.put("o", SECTIONS.get("object"));

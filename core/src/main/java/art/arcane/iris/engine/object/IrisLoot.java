@@ -24,6 +24,7 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.service.ExternalDataSVC;
 import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
@@ -38,7 +39,6 @@ import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.math.RNG;
-import art.arcane.iris.util.project.noise.CNG;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -68,7 +68,8 @@ import java.util.Optional;
 @EqualsAndHashCode(doNotUseGetters = true)
 @ToString(doNotUseGetters = true)
 public class IrisLoot {
-    private final transient AtomicCache<CNG> chance = new AtomicCache<>();
+    public static final int MAX_AMOUNT = 64;
+
     private final transient AtomicCache<DyeColor> dyeColorResolved = new AtomicCache<>();
     @Desc("The target inventory slot types to fill this loot with")
     private InventorySlotType slotTypes = InventorySlotType.STORAGE;
@@ -76,10 +77,12 @@ public class IrisLoot {
     @Desc("The sub rarity of this loot. Calculated after this loot table has been picked.")
     private int rarity = 1;
     @MinNumber(1)
-    @Desc("Minimum amount of this loot")
+    @MaxNumber(MAX_AMOUNT)
+    @Desc("Minimum amount of this loot, from 1 to 64")
     private int minAmount = 1;
     @MinNumber(1)
-    @Desc("Maximum amount of this loot")
+    @MaxNumber(MAX_AMOUNT)
+    @Desc("Maximum amount of this loot, from 1 to 64")
     private int maxAmount = 1;
     @MinNumber(1)
     @Desc("The display name of this item")
@@ -163,21 +166,20 @@ public class IrisLoot {
         }
     }
 
-    public ItemStack get(boolean debug, boolean giveSomething, IrisLootTable table, RNG rng, int x, int y, int z) {
-        if (debug) {
-            chance.reset();
+    public ItemStack get(boolean debug, IrisLootTable table, RNG rng, long lootSeed, int entryIndex, int x, int y, int z) {
+        long combinedRarity = LootResolver.combinedRarity(rarity, table.getRarity());
+        if (!LootResolver.spatialOneIn(lootSeed, table, entryIndex, x, y, z, combinedRarity)) {
+            return null;
         }
 
-        if (giveSomething || chance.aquire(() -> NoiseStyle.STATIC.create(rng)).fit(1, rarity * table.getRarity(), x, y, z) == 1) {
-            try {
-                ItemStack is = getItemStack(rng);
-                if (is == null)
-                    return null;
-                is.setItemMeta(applyProperties(is, rng, debug, table));
-                return BukkitPlatform.applyCustomNbt(is, customNbt);
-            } catch (Throwable e) {
-                e.printStackTrace();
-            }
+        try {
+            ItemStack is = getItemStack(rng);
+            if (is == null)
+                return null;
+            is.setItemMeta(applyProperties(is, rng, debug, table));
+            return BukkitPlatform.applyCustomNbt(is, customNbt);
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
         }
 
         return null;
@@ -192,10 +194,10 @@ public class IrisLoot {
                 return new ItemStack(Material.AIR);
             }
             ItemStack is = opt.get();
-            is.setAmount(Math.max(1, rng.i(getMinAmount(), getMaxAmount())));
+            is.setAmount(Math.max(1, LootResolver.inclusive(rng, getMinAmount(), getMaxAmount())));
             return is;
         }
-        return new ItemStack(getType(), Math.max(1, rng.i(getMinAmount(), getMaxAmount())));
+        return new ItemStack(getType(), Math.max(1, LootResolver.inclusive(rng, getMinAmount(), getMaxAmount())));
     }
 
     private ItemMeta applyProperties(ItemStack is, RNG rng, boolean debug, IrisLootTable table) {

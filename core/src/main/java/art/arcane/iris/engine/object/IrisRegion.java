@@ -126,8 +126,6 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     private double caveBiomeZoom = 1;
     @Desc("Profile-driven 3D cave configuration")
     private IrisCaveProfile caveProfile = new IrisCaveProfile();
-    @Desc("Configuration of fluid bodies such as rivers & lakes")
-    private IrisFluidBodies fluidBodies = new IrisFluidBodies();
     @RegistryListResource(IrisBiome.class)
     @Required
     @ArrayType(min = 1, type = String.class)

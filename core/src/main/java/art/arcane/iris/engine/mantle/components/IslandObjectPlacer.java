@@ -23,156 +23,54 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.mantle.MantleWriter;
 import art.arcane.iris.engine.object.FloatingIslandSample;
 import art.arcane.iris.engine.object.IObjectPlacer;
+import art.arcane.iris.engine.object.IrisFloatingChildBiomes;
 import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.spi.PlatformBlockState;
 import org.jetbrains.annotations.Nullable;
 
-public class IslandObjectPlacer implements IObjectPlacer {
+public final class IslandObjectPlacer implements IObjectPlacer {
     private static final int OVERHANG_RADIUS = 2;
-
-    public enum AnchorFace { TOP, BOTTOM }
+    private static final int OVERHANG_HEIGHT_TOLERANCE = 4;
 
     private final MantleWriter wrapped;
-    private final FloatingIslandSample[] samples;
-    private final boolean[] overhangAllowed;
-    private final int minX;
-    private final int minZ;
-    private final int chunkMaxIslandTopY;
-    private final int chunkMinIslandBottomY;
+    private final SampleProvider samples;
+    private final IrisFloatingChildBiomes entry;
     private final int anchorY;
     private final AnchorFace face;
 
-    public IslandObjectPlacer(MantleWriter wrapped, FloatingIslandSample[] samples, int minX, int minZ, int anchorTopY) {
-        this(wrapped, samples, minX, minZ, anchorTopY, AnchorFace.TOP);
-    }
-
-    public IslandObjectPlacer(MantleWriter wrapped, FloatingIslandSample[] samples, int minX, int minZ, int anchorY, AnchorFace face) {
+    private IslandObjectPlacer(MantleWriter wrapped, AnchorSettings settings) {
         this.wrapped = wrapped;
-        this.samples = samples;
-        this.minX = minX;
-        this.minZ = minZ;
-        this.anchorY = anchorY;
-        this.face = face;
-        int maxTopY = -1;
-        int minBottomY = Integer.MAX_VALUE;
-        for (FloatingIslandSample s : samples) {
-            if (s != null) {
-                int ty = s.topY();
-                if (ty > maxTopY) {
-                    maxTopY = ty;
-                }
-                int by = s.bottomY();
-                if (by >= 0 && by < minBottomY) {
-                    minBottomY = by;
-                }
-            }
-        }
-        this.chunkMaxIslandTopY = maxTopY;
-        this.chunkMinIslandBottomY = (minBottomY == Integer.MAX_VALUE) ? -1 : minBottomY;
-        this.overhangAllowed = buildOverhangMask(samples);
+        this.samples = settings.samples();
+        this.entry = settings.entry();
+        this.anchorY = settings.anchorY();
+        this.face = settings.face();
     }
 
-    private static boolean[] buildOverhangMask(FloatingIslandSample[] samples) {
-        boolean[] mask = new boolean[256];
-        for (int zf = 0; zf < 16; zf++) {
-            for (int xf = 0; xf < 16; xf++) {
-                int idx = (zf << 4) | xf;
-                if (samples[idx] != null) {
-                    mask[idx] = true;
-                    continue;
-                }
-                boolean touchedEdge = false;
-                boolean found = false;
-                for (int dz = -OVERHANG_RADIUS; dz <= OVERHANG_RADIUS && !found; dz++) {
-                    int nzf = zf + dz;
-                    for (int dx = -OVERHANG_RADIUS; dx <= OVERHANG_RADIUS; dx++) {
-                        int nxf = xf + dx;
-                        if (nxf < 0 || nxf >= 16 || nzf < 0 || nzf >= 16) {
-                            touchedEdge = true;
-                            continue;
-                        }
-                        if (samples[(nzf << 4) | nxf] != null) {
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-                mask[idx] = found || touchedEdge;
-            }
-        }
-        return mask;
+    public static IslandObjectPlacer top(MantleWriter wrapped, SampleProvider samples,
+                                         IrisFloatingChildBiomes entry, int anchorY) {
+        return new IslandObjectPlacer(wrapped, new AnchorSettings(samples, entry, anchorY, AnchorFace.TOP));
     }
 
-    private boolean shouldSkipAirColumn(int x, int y, int z) {
-        int xf = x - minX;
-        int zf = z - minZ;
-        if (xf >= 0 && xf < 16 && zf >= 0 && zf < 16) {
-            int idx = (zf << 4) | xf;
-            if (samples[idx] != null) {
-                if (face == AnchorFace.TOP) {
-                    return false;
-                }
-                if (y >= anchorY) {
-                    return true;
-                }
-                return false;
-            }
-            if (face == AnchorFace.TOP) {
-                if (y <= anchorY) {
-                    return true;
-                }
-                if (!overhangAllowed[idx]) {
-                    return true;
-                }
-            } else {
-                if (y >= anchorY) {
-                    return true;
-                }
-                if (!overhangAllowed[idx]) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if (face == AnchorFace.TOP) {
-            if (y <= anchorY) {
-                return true;
-            }
-        } else {
-            if (y >= anchorY) {
-                return true;
-            }
-        }
-        return true;
+    public static IslandObjectPlacer bottom(MantleWriter wrapped, SampleProvider samples,
+                                            IrisFloatingChildBiomes entry, int anchorY) {
+        return new IslandObjectPlacer(wrapped, new AnchorSettings(samples, entry, anchorY, AnchorFace.BOTTOM));
     }
 
     public boolean canWriteObjectBlock(int x, int y, int z) {
         return !shouldSkipAirColumn(x, y, z);
     }
 
-    private @Nullable FloatingIslandSample sampleAt(int x, int z) {
-        int xf = x - minX;
-        int zf = z - minZ;
-        if (xf < 0 || xf >= 16 || zf < 0 || zf >= 16) {
-            return null;
-        }
-        return samples[(zf << 4) | xf];
-    }
-
     @Override
     public int getHighest(int x, int z, IrisData data) {
-        FloatingIslandSample s = sampleAt(x, z);
+        FloatingIslandSample sample = samples.sample(x, z);
         if (face == AnchorFace.TOP) {
-            if (s != null) {
-                return s.topY();
-            }
-            return chunkMaxIslandTopY;
+            return sample == null ? anchorY : sample.topY();
         }
-        if (s != null) {
-            int by = s.bottomY();
-            return (by >= 0) ? by : chunkMinIslandBottomY;
+        if (sample == null) {
+            return anchorY;
         }
-        return chunkMinIslandBottomY;
+        int bottomY = sample.bottomY();
+        return bottomY < 0 ? anchorY : bottomY;
     }
 
     @Override
@@ -187,11 +85,11 @@ public class IslandObjectPlacer implements IObjectPlacer {
 
     @Override
     public boolean isSolid(int x, int y, int z) {
-        FloatingIslandSample s = sampleAt(x, z);
-        if (s != null) {
-            int idx = y - s.islandBaseY;
-            if (idx >= 0 && idx < s.solidMask.length) {
-                return s.solidMask[idx];
+        FloatingIslandSample sample = samples.sample(x, z);
+        if (sample != null) {
+            int index = y - sample.islandBaseY;
+            if (index >= 0 && index < sample.solidMask.length) {
+                return sample.solidMask[index];
             }
             return false;
         }
@@ -204,11 +102,10 @@ public class IslandObjectPlacer implements IObjectPlacer {
     }
 
     @Override
-    public void set(int x, int y, int z, PlatformBlockState d) {
-        if (shouldSkipAirColumn(x, y, z)) {
-            return;
+    public void set(int x, int y, int z, PlatformBlockState state) {
+        if (!shouldSkipAirColumn(x, y, z)) {
+            wrapped.set(x, y, z, state);
         }
-        wrapped.set(x, y, z, d);
     }
 
     @Override
@@ -232,28 +129,87 @@ public class IslandObjectPlacer implements IObjectPlacer {
     }
 
     @Override
-    public void setTile(int xx, int yy, int zz, TileData tile) {
-        if (shouldSkipAirColumn(xx, yy, zz)) {
-            return;
+    public void setTile(int x, int y, int z, TileData tile) {
+        if (!shouldSkipAirColumn(x, y, z)) {
+            wrapped.setTile(x, y, z, tile);
         }
-        wrapped.setTile(xx, yy, zz, tile);
     }
 
     @Override
-    public <T> void setData(int xx, int yy, int zz, T data) {
-        if (shouldSkipAirColumn(xx, yy, zz)) {
-            return;
+    public <T> void setData(int x, int y, int z, T data) {
+        if (!shouldSkipAirColumn(x, y, z)) {
+            wrapped.setData(x, y, z, data);
         }
-        wrapped.setData(xx, yy, zz, data);
     }
 
     @Override
-    public <T> @Nullable T getData(int xx, int yy, int zz, Class<T> t) {
-        return wrapped.getData(xx, yy, zz, t);
+    public <T> @Nullable T getData(int x, int y, int z, Class<T> type) {
+        return wrapped.getData(x, y, z, type);
     }
 
     @Override
     public Engine getEngine() {
-        return wrapped.getEngine();
+        return wrapped == null ? null : wrapped.getEngine();
+    }
+
+    static boolean matchesAnchor(FloatingIslandSample sample, IrisFloatingChildBiomes entry, AnchorFace face) {
+        if (sample == null) {
+            return false;
+        }
+        return face == AnchorFace.TOP ? sample.entry == entry : sample.bottomEntry() == entry;
+    }
+
+    private boolean shouldSkipAirColumn(int x, int y, int z) {
+        Engine engine = getEngine();
+        if (engine != null && (y < 0 || y >= engine.getHeight())) {
+            return true;
+        }
+
+        FloatingIslandSample sample = samples.sample(x, z);
+        if (matchesAnchor(sample, entry, face) && isNearAnchorHeight(sample)) {
+            return face == AnchorFace.BOTTOM && y >= anchorY;
+        }
+        if (face == AnchorFace.TOP && y <= anchorY) {
+            return true;
+        }
+        if (face == AnchorFace.BOTTOM && y >= anchorY) {
+            return true;
+        }
+        return !hasNearbySupport(x, z);
+    }
+
+    private boolean hasNearbySupport(int x, int z) {
+        for (int dz = -OVERHANG_RADIUS; dz <= OVERHANG_RADIUS; dz++) {
+            for (int dx = -OVERHANG_RADIUS; dx <= OVERHANG_RADIUS; dx++) {
+                FloatingIslandSample sample = samples.sample(x + dx, z + dz);
+                if (matchesAnchor(sample, entry, face) && isNearAnchorHeight(sample)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isNearAnchorHeight(FloatingIslandSample sample) {
+        int faceY = face == AnchorFace.TOP ? sample.topY() : sample.bottomY();
+        return faceY >= 0 && Math.abs(faceY - anchorY) <= OVERHANG_HEIGHT_TOLERANCE;
+    }
+
+    public enum AnchorFace {
+        TOP,
+        BOTTOM
+    }
+
+    @FunctionalInterface
+    public interface SampleProvider {
+        @Nullable FloatingIslandSample sample(int x, int z);
+    }
+
+    private record AnchorSettings(
+            SampleProvider samples,
+            IrisFloatingChildBiomes entry,
+            int anchorY,
+            AnchorFace face
+    ) {
     }
 }

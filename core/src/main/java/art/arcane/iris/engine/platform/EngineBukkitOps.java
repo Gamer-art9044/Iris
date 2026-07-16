@@ -23,9 +23,9 @@ import art.arcane.iris.core.events.IrisLootEvent;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.service.ExternalDataSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
-import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.Locator;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.framework.PlacedObject;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.InventorySlotType;
@@ -48,7 +48,6 @@ import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
-import art.arcane.volmlib.util.math.BlockPosition;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.Position2;
 import art.arcane.volmlib.util.math.RNG;
@@ -65,18 +64,23 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
+import org.bukkit.block.BlockState;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.type.Chest;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.loot.Lootable;
 
 import java.lang.reflect.Method;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 public final class EngineBukkitOps {
     private EngineBukkitOps() {
@@ -149,7 +153,6 @@ public final class EngineBukkitOps {
                     }
                 }
 
-                RNG rng = new RNG(Cache.key(c.getX(), c.getZ()));
                 chunk.iterate(MatterCavern.class, (x, yf, z, v) -> {
                     int y = yf + engine.getWorld().minHeight();
                     x &= 15;
@@ -172,14 +175,14 @@ public final class EngineBukkitOps {
                         if (grid[x][z] == Integer.MIN_VALUE) {
                             continue;
                         }
-                        update(engine, x, grid[x][z], z, c, chunk, rng);
+                        update(engine, x, grid[x][z], z, c, chunk);
                     }
                 }
 
                 chunk.iterate(MatterUpdate.class, (x, yf, z, v) -> {
                     int y = yf + engine.getWorld().minHeight();
                     if (v != null && v.isUpdate()) {
-                        update(engine, x, y, z, c, chunk, rng);
+                        update(engine, x, y, z, c, chunk);
                     }
                 });
                 chunk.deleteSlices(MatterUpdate.class);
@@ -254,16 +257,15 @@ public final class EngineBukkitOps {
         };
     }
 
-    public static void update(Engine engine, int x, int y, int z, Chunk c, MantleChunk<Matter> mc, RNG rf) {
+    public static void update(Engine engine, int x, int y, int z, Chunk c, MantleChunk<Matter> mc) {
         World world = c.getWorld();
         if (y < world.getMinHeight() || y >= world.getMaxHeight()) {
             return;
         }
-        Block block = c.getBlock(x, y, z);
+        Block block = c.getBlock(x & 15, y, z & 15);
         BlockData data = block.getBlockData();
         engine.blockUpdatedMetric();
         if (BukkitBlockResolution.isStorage(data)) {
-            RNG rx = rf.nextParallelRNG(BlockPosition.toLong(x, y, z));
             InventorySlotType slot = null;
 
             if (BukkitBlockResolution.isStorageChest(data)) {
@@ -271,13 +273,19 @@ public final class EngineBukkitOps {
             }
 
             if (slot != null) {
-                KList<IrisLootTable> tables = getLootTables(engine, rx, block, mc);
+                if (!isCanonicalContainer(block)) {
+                    return;
+                }
+                int worldX = block.getX();
+                int worldZ = block.getZ();
+                RNG rx = LootResolver.containerRng(engine.getSeedManager().getLoot(), worldX, y, worldZ);
+                KList<IrisLootTable> tables = getLootTables(engine, rx, block, mc, hasNativeLootTable(block));
 
                 try {
                     Bukkit.getPluginManager().callEvent(new IrisLootEvent(engine, block, slot, tables));
                     if (tables.isEmpty()) return;
                     InventoryHolder m = (InventoryHolder) block.getState();
-                    addItems(engine, false, m.getInventory(), rx, tables, slot, c.getWorld(), x, y, z, 15);
+                    addItems(engine, false, m.getInventory(), tables, slot, c.getWorld(), worldX, y, worldZ);
 
                 } catch (Throwable e) {
                     IrisLogging.reportError(e);
@@ -287,6 +295,63 @@ public final class EngineBukkitOps {
             block.setType(Material.AIR, false);
             block.setBlockData(data, true);
         }
+    }
+
+    public static boolean isCanonicalContainer(Block block) {
+        if (!(block.getBlockData() instanceof Chest chest) || chest.getType() == Chest.Type.SINGLE) {
+            return true;
+        }
+        BlockFace connectedFace = connectedFace(chest);
+        int connectedX = block.getX() + connectedFace.getModX();
+        int connectedZ = block.getZ() + connectedFace.getModZ();
+        return block.getX() < connectedX || block.getX() == connectedX && block.getZ() <= connectedZ;
+    }
+
+    public static boolean hasNativeLootTable(Block block) {
+        if (hasNativeLootTableAt(block)) {
+            return true;
+        }
+        if (!(block.getBlockData() instanceof Chest chest) || chest.getType() == Chest.Type.SINGLE) {
+            return false;
+        }
+        BlockFace connectedFace = connectedFace(chest);
+        int connectedX = block.getX() + connectedFace.getModX();
+        int connectedZ = block.getZ() + connectedFace.getModZ();
+        if (!block.getWorld().isChunkLoaded(connectedX >> 4, connectedZ >> 4)) {
+            return false;
+        }
+        return hasNativeLootTableAt(block.getWorld().getBlockAt(connectedX, block.getY(), connectedZ));
+    }
+
+    private static boolean hasNativeLootTableAt(Block block) {
+        BlockState state = block.getState();
+        return state instanceof Lootable lootable && lootable.getLootTable() != null;
+    }
+
+    private static BlockFace connectedFace(Chest chest) {
+        return chest.getType() == Chest.Type.LEFT
+                ? clockwise(chest.getFacing())
+                : counterClockwise(chest.getFacing());
+    }
+
+    private static BlockFace clockwise(BlockFace face) {
+        return switch (face) {
+            case NORTH -> BlockFace.EAST;
+            case EAST -> BlockFace.SOUTH;
+            case SOUTH -> BlockFace.WEST;
+            case WEST -> BlockFace.NORTH;
+            default -> BlockFace.SELF;
+        };
+    }
+
+    private static BlockFace counterClockwise(BlockFace face) {
+        return switch (face) {
+            case NORTH -> BlockFace.WEST;
+            case WEST -> BlockFace.SOUTH;
+            case SOUTH -> BlockFace.EAST;
+            case EAST -> BlockFace.NORTH;
+            default -> BlockFace.SELF;
+        };
     }
 
     public static void scramble(Engine engine, Inventory inventory, RNG rng) {
@@ -328,22 +393,29 @@ public final class EngineBukkitOps {
     public static KList<IrisLootTable> getLootTables(Engine engine, RNG rng, Block b) {
         MantleChunk<Matter> mc = engine.getMantle().getMantle().getChunk(b.getChunk()).use();
         try {
-            return getLootTables(engine, rng, b, mc);
+            return getLootTables(engine, rng, b, mc, hasNativeLootTable(b));
         } finally {
             mc.release();
         }
     }
 
     public static KList<IrisLootTable> getLootTables(Engine engine, RNG rng, Block b, MantleChunk<Matter> mc) {
+        return getLootTables(engine, rng, b, mc, hasNativeLootTable(b));
+    }
+
+    public static KList<IrisLootTable> getLootTables(Engine engine, RNG rng, Block b, MantleChunk<Matter> mc, boolean nativeLootDefined) {
         int rx = b.getX();
         int rz = b.getZ();
         int ry = b.getY() - engine.getWorld().minHeight();
-        double he = engine.getComplex().getHeightStream().get(rx, rz);
         KList<IrisLootTable> tables = new KList<>();
+        boolean objectLootDefined = nativeLootDefined;
 
         PlacedObject po = engine.getObjectPlacement(rx, ry, rz, mc);
         if (po != null && po.getPlacement() != null) {
             if (BukkitBlockResolution.isStorageChest(b.getBlockData())) {
+                objectLootDefined = objectLootDefined
+                        || po.getPlacement().getLoot().isNotEmpty()
+                        || po.getPlacement().getVanillaLoot().isNotEmpty();
                 IrisLootTable table = po.getPlacement().getTable(
                         BukkitBlockState.of(b.getBlockData()), engine.getData(), rng);
                 if (table != null) {
@@ -355,57 +427,55 @@ public final class EngineBukkitOps {
             }
         }
 
-        IrisRegion region = engine.getComplex().getRegionStream().get(rx, rz);
-        IrisBiome biomeSurface = engine.getComplex().getTrueBiomeStream().get(rx, rz);
-        IrisBiome biomeUnder = ry < he ? engine.getCaveBiome(rx, ry, rz) : biomeSurface;
-
-        double multiplier = 1D * engine.getDimension().getLoot().getMultiplier() * region.getLoot().getMultiplier() * biomeSurface.getLoot().getMultiplier() * biomeUnder.getLoot().getMultiplier();
-        boolean fallback = tables.isEmpty();
-        engine.injectTables(tables, engine.getDimension().getLoot(), fallback);
-        engine.injectTables(tables, region.getLoot(), fallback);
-        engine.injectTables(tables, biomeSurface.getLoot(), fallback);
-        engine.injectTables(tables, biomeUnder.getLoot(), fallback);
-
-        if (tables.isNotEmpty()) {
-            int target = (int) Math.round(tables.size() * multiplier);
-
-            while (tables.size() < target && tables.isNotEmpty()) {
-                tables.add(tables.get(rng.i(tables.size() - 1)));
-            }
-
-            while (tables.size() > target && tables.isNotEmpty()) {
-                tables.remove(rng.i(tables.size() - 1));
-            }
-        }
+        LootResolver.resolveEnvironmentSources(
+                tables,
+                engine,
+                rng,
+                rx,
+                ry,
+                rz,
+                objectLootDefined,
+                table -> table
+        );
 
         return tables;
     }
 
-    public static void addItems(Engine engine, boolean debug, Inventory inv, RNG rng, KList<IrisLootTable> tables, InventorySlotType slot, World world, int x, int y, int z, int mgf) {
+    public static void addItems(Engine engine, boolean debug, Inventory inv, KList<IrisLootTable> tables, InventorySlotType slot, World world, int x, int y, int z) {
         KList<ItemStack> items = new KList<>();
 
         for (IrisLootTable i : tables) {
             if (i == null)
                 continue;
-            items.addAll(i.getLoot(debug, rng, slot, world, x, y, z));
+            items.addAll(i.getLoot(debug, engine.getSeedManager().getLoot(), slot, world, x, y, z));
         }
         if (IrisLootEvent.callLootEvent(items, inv, world, x, y, z))
             return;
 
         if (PaperLib.isPaper() && engine.getWorld().hasPlatformWorld()) {
             PaperLib.getChunkAtAsync(BukkitWorldBinding.world(engine.getWorld()), x >> 4, z >> 4).thenAccept((c) -> {
-                Runnable r = () -> {
+                Runnable mutation = () -> {
                     for (ItemStack i : items) {
                         inv.addItem(i);
                     }
 
-                    scramble(engine, inv, rng);
+                    scramble(engine, inv, LootResolver.containerRng(engine.getSeedManager().getLoot(), x, y, z));
                 };
 
-                if (Bukkit.isPrimaryThread()) {
-                    r.run();
-                } else {
-                    J.s(r);
+                LootMutationTask task = new LootMutationTask(world, x >> 4, z >> 4, mutation);
+                boolean scheduled = dispatchLootMutation(
+                        task,
+                        J.isFolia(),
+                        Bukkit::isPrimaryThread,
+                        regionTask -> J.runRegion(
+                                regionTask.world(),
+                                regionTask.chunkX(),
+                                regionTask.chunkZ(),
+                                regionTask.mutation()),
+                        J::s
+                );
+                if (!scheduled) {
+                    IrisLogging.error("Failed to schedule loot inventory mutation for " + world.getName() + "@" + (x >> 4) + "," + (z >> 4) + ".");
                 }
             });
         } else {
@@ -413,8 +483,26 @@ public final class EngineBukkitOps {
                 inv.addItem(i);
             }
 
-            scramble(engine, inv, rng);
+            scramble(engine, inv, LootResolver.containerRng(engine.getSeedManager().getLoot(), x, y, z));
         }
+    }
+
+    static boolean dispatchLootMutation(
+            LootMutationTask task,
+            boolean folia,
+            BooleanSupplier primaryThread,
+            Predicate<LootMutationTask> regionScheduler,
+            Consumer<Runnable> syncScheduler) {
+        if (folia) {
+            return regionScheduler.test(task);
+        }
+
+        if (primaryThread.getAsBoolean()) {
+            task.mutation().run();
+        } else {
+            syncScheduler.accept(task.mutation());
+        }
+        return true;
     }
 
     public static IrisBiome getBiome(Engine engine, Location l) {
@@ -549,5 +637,8 @@ public final class EngineBukkitOps {
             IrisLogging.reportError(throwable);
             return false;
         }
+    }
+
+    record LootMutationTask(World world, int chunkX, int chunkZ, Runnable mutation) {
     }
 }

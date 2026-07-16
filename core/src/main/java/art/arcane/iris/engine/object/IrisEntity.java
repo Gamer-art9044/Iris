@@ -25,6 +25,7 @@ import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.core.service.EntityRiseSVC;
 import art.arcane.iris.core.service.ExternalDataSVC;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
@@ -325,27 +326,27 @@ public class IrisEntity extends IrisRegistrant {
 
             l.setRemoveWhenFarAway(isRemovable());
 
-            if (getHelmet() != null && rng.i(1, getHelmet().getRarity()) == 1) {
+            if (getHelmet() != null && LootResolver.oneIn(rng, getHelmet().getRarity())) {
                 l.getEquipment().setHelmet(getHelmet().get(gen.isStudio(), rng));
             }
 
-            if (getChestplate() != null && rng.i(1, getChestplate().getRarity()) == 1) {
+            if (getChestplate() != null && LootResolver.oneIn(rng, getChestplate().getRarity())) {
                 l.getEquipment().setChestplate(getChestplate().get(gen.isStudio(), rng));
             }
 
-            if (getLeggings() != null && rng.i(1, getLeggings().getRarity()) == 1) {
+            if (getLeggings() != null && LootResolver.oneIn(rng, getLeggings().getRarity())) {
                 l.getEquipment().setLeggings(getLeggings().get(gen.isStudio(), rng));
             }
 
-            if (getBoots() != null && rng.i(1, getBoots().getRarity()) == 1) {
+            if (getBoots() != null && LootResolver.oneIn(rng, getBoots().getRarity())) {
                 l.getEquipment().setBoots(getBoots().get(gen.isStudio(), rng));
             }
 
-            if (getMainHand() != null && rng.i(1, getMainHand().getRarity()) == 1) {
+            if (getMainHand() != null && LootResolver.oneIn(rng, getMainHand().getRarity())) {
                 l.getEquipment().setItemInMainHand(getMainHand().get(gen.isStudio(), rng));
             }
 
-            if (getOffHand() != null && rng.i(1, getOffHand().getRarity()) == 1) {
+            if (getOffHand() != null && LootResolver.oneIn(rng, getOffHand().getRarity())) {
                 l.getEquipment().setItemInOffHand(getOffHand().get(gen.isStudio(), rng));
             }
         }
@@ -518,7 +519,7 @@ public class IrisEntity extends IrisRegistrant {
 
                     for (String fi : entity.getLoot().getTables()) {
                         IrisLootTable i = gen.getData().getLootLoader().load(fi);
-                        items.addAll(i.getLoot(gen.isStudio(), rng.nextParallelRNG(345911), InventorySlotType.STORAGE, finalAt.getWorld(), finalAt.getBlockX(), finalAt.getBlockY(), finalAt.getBlockZ()));
+                        items.addAll(i.getLoot(gen.isStudio(), gen.getSeedManager().getLoot(), InventorySlotType.STORAGE, finalAt.getWorld(), finalAt.getBlockX(), finalAt.getBlockY(), finalAt.getBlockZ()));
                     }
 
                     return items;

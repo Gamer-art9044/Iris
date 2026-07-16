@@ -34,8 +34,6 @@ import art.arcane.iris.util.project.matter.TileWrapper;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
-import art.arcane.volmlib.util.math.BlockPosition;
-import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterCavern;
 import art.arcane.volmlib.util.matter.MatterUpdate;
@@ -287,7 +285,6 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
             }
         }
 
-        RNG rng = new RNG(Cache.key(chunkX, chunkZ));
         chunk.iterate(MatterCavern.class, (Integer x, Integer yf, Integer z, MatterCavern v) -> {
             int y = yf + minHeight;
             if (y < level.getMinY() || y >= level.getMaxY()) {
@@ -315,20 +312,20 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
                 if (grid[x][z] == Integer.MIN_VALUE) {
                     continue;
                 }
-                update(engine, level, x, grid[x][z], z, baseX, baseZ, chunk, rng);
+                update(engine, level, x, grid[x][z], z, baseX, baseZ, chunk);
             }
         }
 
         chunk.iterate(MatterUpdate.class, (Integer x, Integer yf, Integer z, MatterUpdate v) -> {
             if (v != null && v.isUpdate()) {
-                update(engine, level, x, yf + minHeight, z, baseX, baseZ, chunk, rng);
+                update(engine, level, x, yf + minHeight, z, baseX, baseZ, chunk);
             }
         });
         chunk.deleteSlices(MatterUpdate.class);
         engine.getMetrics().getUpdates().put(stopwatch.getMilliseconds());
     }
 
-    private void update(Engine engine, ServerLevel level, int x, int y, int z, int baseX, int baseZ, MantleChunk<Matter> chunk, RNG rng) {
+    private void update(Engine engine, ServerLevel level, int x, int y, int z, int baseX, int baseZ, MantleChunk<Matter> chunk) {
         if (y < level.getMinY() || y >= level.getMaxY()) {
             return;
         }
@@ -339,9 +336,8 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
             if (!ModdedBlockResolution.isStorageChest(state)) {
                 return;
             }
-            RNG rx = rng.nextParallelRNG(BlockPosition.toLong(x, y, z));
             try {
-                ModdedLootApplier.apply(engine, level, pos, state, chunk, rx, x & 15, z & 15);
+                ModdedLootApplier.apply(engine, level, pos, state, chunk);
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
             }

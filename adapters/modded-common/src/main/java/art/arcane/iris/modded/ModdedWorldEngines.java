@@ -19,6 +19,7 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineTarget;
@@ -35,6 +36,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ModdedWorldEngines {
@@ -57,22 +59,48 @@ public final class ModdedWorldEngines {
     }
 
     public static void evict(ServerLevel level) {
-        Engine removed = ENGINES.remove(level);
-        if (removed == null) {
-            return;
-        }
         try {
-            if (!removed.isClosed()) {
-                removed.close();
-            }
-            LOGGER.info("Iris engine evicted for {}", level.dimension().identifier());
+            evictOrThrow(level);
         } catch (Throwable e) {
             LOGGER.error("Iris engine evict close failed for {}", level.dimension().identifier(), e);
         }
     }
 
+    static void evictOrThrow(ServerLevel level) {
+        Engine[] removed = new Engine[1];
+        ENGINES.computeIfPresent(level, (ServerLevel ignored, Engine current) -> {
+            close(current);
+            removed[0] = current;
+            return null;
+        });
+        if (removed[0] == null) {
+            return;
+        }
+        LOGGER.info("Iris engine evicted for {}", level.dimension().identifier());
+    }
+
+    static Engine prepareReplacement(ServerLevel level, String pack, String dimensionKey, long seedOverride) {
+        return create(level, pack, dimensionKey, seedOverride);
+    }
+
+    static void installReplacement(ServerLevel level, Engine replacement) {
+        ServerLevel activeLevel = Objects.requireNonNull(level);
+        Engine activeReplacement = Objects.requireNonNull(replacement);
+        ENGINES.compute(activeLevel, (ServerLevel ignored, Engine current) -> {
+            if (current != null && current != activeReplacement) {
+                close(current);
+            }
+            return activeReplacement;
+        });
+    }
+
+    static void closeUnregistered(Engine engine) {
+        close(engine);
+    }
+
     private static Engine create(ServerLevel level, String pack, String dimensionKey, long seedOverride) {
         ModdedEngineBootstrap.bind();
+        PackValidationRegistry.requireLoadable(pack);
         File packDir = resolvePack(pack, dimensionKey);
         IrisData data = IrisData.get(packDir);
         IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
@@ -95,6 +123,16 @@ public final class ModdedWorldEngines {
                 .platformWorld(new ModdedPlatformWorld(level))
                 .build();
         Engine engine = new IrisEngine(new EngineTarget(world, dimension, data), false);
+        if (engine.isClosed() || engine.getComplex() == null) {
+            IllegalStateException failure = new IllegalStateException("Iris engine for "
+                    + level.dimension().identifier() + " did not initialize a ready biome complex");
+            try {
+                close(engine);
+            } catch (Throwable cleanupError) {
+                failure.addSuppressed(cleanupError);
+            }
+            throw failure;
+        }
 
         LOGGER.info("Iris engine up for {}: pack={} dim={} seed={} height={}..{}",
                 level.dimension().identifier(), packDir.getAbsolutePath(), dimension.getLoadKey(), seed, dimension.getMinHeight(), dimension.getMaxHeight());
@@ -131,30 +169,18 @@ public final class ModdedWorldEngines {
             return packDir;
         }
 
-        String parity = System.getProperty("iris.parity");
-        if (parity != null) {
-            String parityPath = parity;
-            int lastColon = parity.lastIndexOf(':');
-            if (lastColon > 0) {
-                try {
-                    Integer.parseInt(parity.substring(lastColon + 1));
-                    parityPath = parity.substring(0, lastColon);
-                } catch (NumberFormatException ignored) {
-                }
-            }
-            File parityPack = new File(parityPath);
-            if (parityPack.isDirectory()) {
-                LOGGER.warn("Iris pack missing at {}; falling back to parity pack {}", packDir.getAbsolutePath(), parityPack.getAbsolutePath());
-                return parityPack;
-            }
-        }
-
         LOGGER.error("===============================================================");
         LOGGER.error("Iris pack '{}' is not installed.", pack);
         LOGGER.error("Expected a pack folder at: {}", packDir.getAbsolutePath());
         LOGGER.error("Install an Iris pack there (the folder must contain dimensions/{}.json) and restart the server.", dimensionKey);
         LOGGER.error("===============================================================");
         throw new IllegalStateException("Iris pack not installed: " + packDir.getAbsolutePath());
+    }
+
+    private static void close(Engine engine) {
+        if (engine != null && !engine.isClosed()) {
+            engine.close();
+        }
     }
 
     public static void shutdown() {

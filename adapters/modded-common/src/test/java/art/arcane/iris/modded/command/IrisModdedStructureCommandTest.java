@@ -20,6 +20,7 @@ public class IrisModdedStructureCommandTest {
         assertTrue(source.contains("generator.findNearestMapStructure("));
         assertTrue(source.contains("NATIVE_STRUCTURE_LOCATE_RADIUS = 100"));
         assertTrue(source.contains("HolderSet.direct(target.holder())"));
+        assertFalse(source.contains("NativeStructureLocateCapability"));
         assertTrue(source.contains("boolean teleported = player.teleportTo("));
         assertTrue(source.contains("combineStructureKeys(irisKeys, nativeKeys)"));
         assertTrue(source.contains("irisGenerator.isNativeStructureReachable(holder)"));
@@ -33,16 +34,64 @@ public class IrisModdedStructureCommandTest {
     }
 
     @Test
-    public void generatorLocatePrefersIrisPlacementsAndRejectsDormantNativeStarts() throws IOException {
+    public void generatorLocateUsesIrisOnlyForExplicitReplacement() throws IOException {
         String source = moddedSource("IrisModdedChunkGenerator.java");
+        int methodStart = source.indexOf("private Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(");
+        int methodEnd = source.indexOf("private HolderSet<Structure> filterReachableNativeStructures(", methodStart);
+        String method = source.substring(methodStart, methodEnd);
+        int unexploredGuard = method.indexOf("if (findUnexplored)");
+        int registryLookup = method.indexOf("level.registryAccess().lookupOrThrow(Registries.STRUCTURE)");
+        int policyResolution = method.indexOf("NativeStructureGenerationPolicy.resolve(current,");
+        int replacementCheck = method.indexOf(
+                "decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS", policyResolution);
+        int irisLocate = method.indexOf("IrisStructureLocator.locate(", replacementCheck);
 
-        assertTrue(source.contains("public Pair<BlockPos, Holder<Structure>> findNearestMapStructure("));
-        assertTrue(source.contains("findNearestIrisStructure("));
-        assertTrue(source.contains("filterReachableNativeStructures("));
-        assertTrue(source.contains("IrisStructureLocator.suppressesVanilla(current, key)"));
+        assertTrue(unexploredGuard >= 0);
+        assertTrue(registryLookup > unexploredGuard);
+        assertTrue(policyResolution > registryLookup);
+        assertTrue(replacementCheck > policyResolution);
+        assertTrue(irisLocate > replacementCheck);
+        assertTrue(method.contains("LocateStatus.SEARCH_LIMIT_REACHED"));
+        assertTrue(method.contains("new BlockPos(result.originX(), result.baseY(), result.originZ())"));
+        assertFalse(method.contains("NativeStructureLocateCapability"));
         assertTrue(source.contains("structureBiomeSource.isStructureReachable(holder)"));
-        assertTrue(source.contains("LocateStatus.SEARCH_LIMIT_REACHED"));
-        assertTrue(source.contains("new BlockPos(result.originX(), result.baseY(), result.originZ())"));
+        assertFalse(source.contains("isPaperUnavailable"));
+    }
+
+    @Test
+    public void commandResolvesNativePolicyBeforeAnyVanillaAliasLookup() throws IOException {
+        String source = source("IrisModdedCommands.java");
+        int methodStart = source.indexOf("private static int gotoStructure(");
+        int methodEnd = source.indexOf("private static void locateIrisStructure(", methodStart);
+        String method = source.substring(methodStart, methodEnd);
+        int nativeResolution = method.indexOf("resolveNativeStructure(source, level, engine, key)");
+        int genericIrisLookup = method.indexOf("IrisStructureLocator.isPlaced(engine, key)", nativeResolution);
+        int policyResolution = method.indexOf("NativeStructureGenerationPolicy.resolve(engine, target.key(), false)", genericIrisLookup);
+        int replacementCheck = method.indexOf(
+                "decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS", policyResolution);
+        int replacementLocate = method.indexOf("locateIrisStructure(source, level, engine, player, target.key())",
+                replacementCheck);
+
+        assertTrue(nativeResolution >= 0);
+        assertTrue(genericIrisLookup > nativeResolution);
+        assertTrue(policyResolution > genericIrisLookup);
+        assertTrue(replacementCheck > policyResolution);
+        assertTrue(replacementLocate > replacementCheck);
+    }
+
+    @Test
+    public void verifyResolvesRegisteredNativeBeforeGenericIrisAliases() throws IOException {
+        String source = source("IrisModdedCommands.java");
+        int methodStart = source.indexOf("private static int verifyStructure(");
+        int methodEnd = source.indexOf("private static Optional<NativeStructureTarget> resolveNativeStructure(",
+                methodStart);
+        String method = source.substring(methodStart, methodEnd);
+        int nativeResolution = method.indexOf("resolveNativeStructure(source, level, engine, key)");
+        int genericIrisLookup = method.indexOf("IrisStructureLocator.isPlaced(engine, key)", nativeResolution);
+
+        assertTrue(nativeResolution >= 0);
+        assertTrue(genericIrisLookup > nativeResolution);
+        assertTrue(method.contains("NativeStructureAvailability.IRIS_SUPPRESSED"));
     }
 
     @Test

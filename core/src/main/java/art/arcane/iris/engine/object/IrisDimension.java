@@ -161,8 +161,6 @@ public class IrisDimension extends IrisRegistrant {
     private KList<IrisDimensionCarvingEntry> carving = new KList<>();
     @Desc("Profile-driven 3D cave configuration")
     private IrisCaveProfile caveProfile = new IrisCaveProfile();
-    @Desc("Configuration of fluid bodies such as rivers & lakes")
-    private IrisFluidBodies fluidBodies = new IrisFluidBodies();
     @Desc("forceConvertTo320Height")
     private Boolean forceConvertTo320Height = false;
     @Desc("The world environment")
@@ -266,10 +264,10 @@ public class IrisDimension extends IrisRegistrant {
     @Desc("Dimension-wide Iris structure placements, independent of biome/region placements")
     @ArrayType(type = IrisStructurePlacement.class, min = 1)
     private KList<IrisStructurePlacement> structures = new KList<>();
-    @Desc("Controls native vanilla & ingested datapack structure generation for this dimension. Defaults to ALL_ON. The 'disabled'/'enabled' lists autocomplete every live vanilla and ingested datapack structure key.")
+    @Desc("Controls native vanilla, mod, and ingested datapack structure generation for this dimension. Every registered structure is enabled by default; 'disabled' is the sole generation deny list and autocompletes live structure keys.")
     private IrisImportedStructureControl importedStructures = new IrisImportedStructureControl();
     @ArrayType(type = String.class, min = 1)
-    @Desc("External datapack imports for this dimension. List Modrinth datapack page URLs ('https://modrinth.com/datapack/<slug>' resolves the latest datapack version, or a specific '.../version/<id>' link pins a version) or a direct .zip URL. Run '/iris datapack ingest' (or '/iris ingest') to download/update them and install them into the world's datapacks folder. Once ingested, their structures behave exactly like vanilla jigsaw structures. To REPLACE a vanilla structure with an imported one, add a 'structures' placement (route IRIS_PLACED) referencing the imported structure key (which carries the matching 'vanillaSource', e.g. 'minecraft:stronghold'): its vanilla counterpart is then automatically suppressed, so it never double-generates - no 'importedStructures.disabled' entry needed. Use 'importedStructures.disabled' only to turn a vanilla structure OFF entirely when you are NOT placing a replacement, or place any imported structure key arbitrarily through a 'structures' placement.")
+    @Desc("External datapack sources for this dimension. List Modrinth datapack page URLs or direct zip URLs. Registered datapack structures remain native unless explicitly cloned into Iris resources. Replacing native generation requires a dimension-level Iris structure placement with nativeSuppression set to REPLACE_SOURCE; provenance alone never disables native structures.")
     private KList<String> datapackImports = new KList<>();
     @MinNumber(0)
     @MaxNumber(318)

@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
@@ -34,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ModdedStartup {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
+    private static final AtomicBoolean PREPARED = new AtomicBoolean(false);
     private static final AtomicBoolean STARTED = new AtomicBoolean(false);
     private static final Object PACK_LOCK = new Object();
 
@@ -41,7 +43,15 @@ public final class ModdedStartup {
     }
 
     public static void reset() {
+        PREPARED.set(false);
         STARTED.set(false);
+    }
+
+    public static void prepareForStartup() {
+        if (!PREPARED.compareAndSet(false, true)) {
+            return;
+        }
+        validateAllPacks();
     }
 
     public static void prefetchDefaultPack() {
@@ -56,30 +66,30 @@ public final class ModdedStartup {
     }
 
     public static void runOnce(MinecraftServer server) {
-        if (server == null || !STARTED.compareAndSet(false, true)) {
+        if (server == null) {
+            return;
+        }
+        prepareForStartup();
+        if (!STARTED.compareAndSet(false, true)) {
             return;
         }
         reinjectPersistentDimensions(server);
 
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
         if (scheduler == null) {
-            validateAllPacks();
             ensureDefaultPack();
             return;
         }
-        scheduler.async(() -> {
-            validateAllPacks();
-            ensureDefaultPack();
-        });
+        scheduler.async(ModdedStartup::ensureDefaultPack);
     }
 
     public static void validateAllPacks() {
         File packsRoot = ModdedPackCommands.packsRoot();
         File[] packDirs = packsRoot.listFiles(File::isDirectory);
+        PackValidationRegistry.clear();
         if (packDirs == null || packDirs.length == 0) {
             return;
         }
-        PackValidationRegistry.clear();
         for (File packDir : packDirs) {
             try {
                 PackValidationResult result = PackValidator.validate(packDir);
@@ -99,7 +109,47 @@ public final class ModdedStartup {
                 }
             } catch (Throwable e) {
                 LOGGER.error("Iris pack validation failed for '{}'", packDir.getName(), e);
+                String detail = e.getMessage();
+                if (detail == null || detail.isBlank()) {
+                    detail = e.getClass().getSimpleName();
+                }
+                PackValidationRegistry.publish(new PackValidationResult(
+                        packDir.getName(),
+                        List.of("Pack validation failed with " + e.getClass().getSimpleName() + ": " + detail),
+                        List.of(),
+                        System.currentTimeMillis()));
             }
+        }
+    }
+
+    public static PackValidationResult requirePackForWorldCreation(String pack) {
+        if (pack == null || pack.isBlank()) {
+            throw new IllegalArgumentException("Pack name is required for world creation");
+        }
+        File packDir = new File(ModdedPackCommands.packsRoot(), pack);
+        if (!packDir.isDirectory()) {
+            throw new BrokenPackException(pack, List.of(
+                    "Pack folder does not exist under " + ModdedPackCommands.packsRoot().getAbsolutePath() + "."));
+        }
+        try {
+            PackValidationResult result = PackValidator.validate(packDir);
+            PackValidationRegistry.publish(result);
+            return PackValidationRegistry.requireLoadable(pack);
+        } catch (BrokenPackException e) {
+            throw e;
+        } catch (Throwable e) {
+            LOGGER.error("Iris required world-creation validation failed for '{}'", pack, e);
+            String detail = e.getMessage();
+            if (detail == null || detail.isBlank()) {
+                detail = e.getClass().getSimpleName();
+            }
+            PackValidationResult failure = new PackValidationResult(
+                    pack,
+                    List.of("Pack validation failed with " + e.getClass().getSimpleName() + ": " + detail),
+                    List.of(),
+                    System.currentTimeMillis());
+            PackValidationRegistry.publish(failure);
+            throw new BrokenPackException(pack, failure.getBlockingErrors());
         }
     }
 
@@ -115,6 +165,11 @@ public final class ModdedStartup {
                 injected++;
             } catch (Throwable e) {
                 LOGGER.error("Iris failed to re-inject persistent dimension '{}' (pack={} dim={} seed={})", dimension.id(), dimension.pack(), dimension.dimension(), dimension.seed(), e);
+                if (e instanceof Error fatalError) {
+                    throw fatalError;
+                }
+                throw new IllegalStateException("Iris failed to re-inject persistent dimension '"
+                        + dimension.id() + "' from pack '" + dimension.pack() + "'", e);
             }
         }
         LOGGER.info("Iris re-injected {} persistent dimension(s) at startup", injected);

@@ -18,6 +18,9 @@
 
 package art.arcane.iris.probe;
 
+import art.arcane.iris.engine.object.BlockDataMergeSupport;
+import art.arcane.iris.engine.object.IrisObjectRotation;
+import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.LogLevel;
 import art.arcane.iris.spi.PlatformBiome;
@@ -30,9 +33,12 @@ import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.spi.PlatformScheduler;
 import art.arcane.iris.spi.PlatformStructureHooks;
 import art.arcane.iris.spi.PlatformWorld;
+import art.arcane.iris.util.common.math.IrisBlockVector;
 
 import java.io.File;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
@@ -47,6 +53,25 @@ public final class StubPlatform implements IrisPlatform {
 
     public static void errorSink(Consumer<Throwable> sink) {
         ERROR_SINK = sink;
+    }
+
+    public static void bindGenerationStateHandlers() {
+        IrisObjectRotation.bindPlatformRotator(StubPlatform::rotateState);
+        BlockDataMergeSupport.bindPlatformMerger(StubPlatform::mergeStates);
+        TileData.bindPlatformReader(StubTileData::read);
+        TileData.bindPlatformFactory(StubTileData::fromProperties);
+    }
+
+    static PlatformBlockState rotateForTest(IrisObjectRotation rotation, PlatformBlockState state) {
+        return rotateState(rotation, state, 0, 0, 0);
+    }
+
+    static PlatformBlockState mergeForTest(PlatformBlockState base, PlatformBlockState update) {
+        return mergeStates(base, update);
+    }
+
+    static PlatformBlockState blockStateForTest(String key) {
+        return StubBlockState.of(key);
     }
 
     private final StubRegistries registries = new StubRegistries();
@@ -193,12 +218,192 @@ public final class StubPlatform implements IrisPlatform {
 
         @Override
         public PlatformBlockState withProperty(String name, String value) {
-            return this;
+            ParsedState parsed = ParsedState.parse(key);
+            parsed.properties().put(normalizeProperty(name), normalizeProperty(value));
+            return of(parsed.serialize());
         }
 
         @Override
         public Object nativeHandle() {
             return key;
+        }
+    }
+
+    private static PlatformBlockState rotateState(IrisObjectRotation rotation, PlatformBlockState state,
+                                                   int spinX, int spinY, int spinZ) {
+        if (state == null || rotation == null || !rotation.canRotate()) {
+            return state;
+        }
+        ParsedState parsed = ParsedState.parse(state.key());
+        Map<String, String> properties = parsed.properties();
+        if (properties.containsKey("facing")) {
+            properties.put("facing", rotateFace(rotation, properties.get("facing"), spinX, spinY, spinZ));
+        } else if (properties.containsKey("rotation")) {
+            properties.put("rotation", rotateSegment(rotation, properties.get("rotation"), spinX, spinY, spinZ));
+        } else if (properties.containsKey("axis")) {
+            properties.put("axis", rotateAxis(rotation, properties.get("axis"), spinX, spinY, spinZ));
+        } else {
+            rotateFaceProperties(rotation, properties, spinX, spinY, spinZ);
+        }
+        return StubBlockState.of(parsed.serialize());
+    }
+
+    private static PlatformBlockState mergeStates(PlatformBlockState base, PlatformBlockState update) {
+        if (base == null) {
+            return update;
+        }
+        if (update == null) {
+            return base;
+        }
+        ParsedState parsedBase = ParsedState.parse(base.key());
+        ParsedState parsedUpdate = ParsedState.parse(update.key());
+        if (!parsedBase.blockKey().equals(parsedUpdate.blockKey())) {
+            return update;
+        }
+        parsedBase.properties().putAll(parsedUpdate.properties());
+        return StubBlockState.of(parsedBase.serialize());
+    }
+
+    private static String rotateFace(IrisObjectRotation rotation, String face,
+                                     int spinX, int spinY, int spinZ) {
+        IrisBlockVector vector = faceVector(face);
+        if (vector == null) {
+            return face;
+        }
+        return faceName(rotation.rotate(vector, spinX, spinY, spinZ));
+    }
+
+    private static String rotateAxis(IrisObjectRotation rotation, String axis,
+                                     int spinX, int spinY, int spinZ) {
+        IrisBlockVector vector = switch (axis) {
+            case "x" -> new IrisBlockVector(1, 0, 0);
+            case "y" -> new IrisBlockVector(0, 1, 0);
+            case "z" -> new IrisBlockVector(0, 0, 1);
+            default -> null;
+        };
+        if (vector == null) {
+            return axis;
+        }
+        IrisBlockVector rotated = rotation.rotate(vector, spinX, spinY, spinZ);
+        double x = Math.abs(rotated.getX());
+        double y = Math.abs(rotated.getY());
+        double z = Math.abs(rotated.getZ());
+        if (x >= y && x >= z) {
+            return "x";
+        }
+        return y >= z ? "y" : "z";
+    }
+
+    private static String rotateSegment(IrisObjectRotation rotation, String value,
+                                        int spinX, int spinY, int spinZ) {
+        int segment;
+        try {
+            segment = Math.floorMod(Integer.parseInt(value), 16);
+        } catch (NumberFormatException e) {
+            return value;
+        }
+        double angle = segment * Math.PI * 2D / 16D;
+        IrisBlockVector vector = new IrisBlockVector(-Math.sin(angle), 0D, Math.cos(angle));
+        IrisBlockVector rotated = rotation.rotate(vector, spinX, spinY, spinZ);
+        if (Math.abs(rotated.getY()) > Math.max(Math.abs(rotated.getX()), Math.abs(rotated.getZ()))) {
+            return value;
+        }
+        double rotatedAngle = Math.atan2(-rotated.getX(), rotated.getZ());
+        int rotatedSegment = (int) Math.round(rotatedAngle * 16D / (Math.PI * 2D));
+        return Integer.toString(Math.floorMod(rotatedSegment, 16));
+    }
+
+    private static void rotateFaceProperties(IrisObjectRotation rotation, Map<String, String> properties,
+                                             int spinX, int spinY, int spinZ) {
+        List<String> faces = List.of("north", "east", "south", "west", "up", "down");
+        int present = 0;
+        for (String face : faces) {
+            if (properties.containsKey(face)) {
+                present++;
+            }
+        }
+        if (present < 2) {
+            return;
+        }
+        Map<String, String> rotated = new LinkedHashMap<>();
+        for (String face : faces) {
+            String value = properties.get(face);
+            if (value != null) {
+                rotated.put(rotateFace(rotation, face, spinX, spinY, spinZ), value);
+            }
+        }
+        for (String face : faces) {
+            if (properties.containsKey(face)) {
+                String defaultValue = "true".equals(properties.get(face)) || "false".equals(properties.get(face))
+                        ? "false" : "none";
+                properties.put(face, rotated.getOrDefault(face, defaultValue));
+            }
+        }
+    }
+
+    private static IrisBlockVector faceVector(String face) {
+        return switch (face) {
+            case "north" -> new IrisBlockVector(0, 0, -1);
+            case "east" -> new IrisBlockVector(1, 0, 0);
+            case "south" -> new IrisBlockVector(0, 0, 1);
+            case "west" -> new IrisBlockVector(-1, 0, 0);
+            case "up" -> new IrisBlockVector(0, 1, 0);
+            case "down" -> new IrisBlockVector(0, -1, 0);
+            default -> null;
+        };
+    }
+
+    private static String faceName(IrisBlockVector vector) {
+        double x = Math.abs(vector.getX());
+        double y = Math.abs(vector.getY());
+        double z = Math.abs(vector.getZ());
+        if (x >= y && x >= z) {
+            return vector.getX() >= 0D ? "east" : "west";
+        }
+        if (y >= z) {
+            return vector.getY() >= 0D ? "up" : "down";
+        }
+        return vector.getZ() >= 0D ? "south" : "north";
+    }
+
+    private static String normalizeProperty(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private record ParsedState(String blockKey, LinkedHashMap<String, String> properties) {
+        private static ParsedState parse(String key) {
+            String normalized = key == null ? "minecraft:air" : key.trim().toLowerCase(Locale.ROOT);
+            int open = normalized.indexOf('[');
+            if (open < 0 || !normalized.endsWith("]")) {
+                return new ParsedState(normalized, new LinkedHashMap<>());
+            }
+            LinkedHashMap<String, String> properties = new LinkedHashMap<>();
+            String body = normalized.substring(open + 1, normalized.length() - 1);
+            if (!body.isBlank()) {
+                for (String property : body.split(",")) {
+                    int separator = property.indexOf('=');
+                    if (separator > 0 && separator < property.length() - 1) {
+                        properties.put(property.substring(0, separator), property.substring(separator + 1));
+                    }
+                }
+            }
+            return new ParsedState(normalized.substring(0, open), properties);
+        }
+
+        private String serialize() {
+            if (properties.isEmpty()) {
+                return blockKey;
+            }
+            StringBuilder serialized = new StringBuilder(blockKey).append('[');
+            boolean first = true;
+            for (Map.Entry<String, String> entry : properties.entrySet()) {
+                if (!first) {
+                    serialized.append(',');
+                }
+                serialized.append(entry.getKey()).append('=').append(entry.getValue());
+                first = false;
+            }
+            return serialized.append(']').toString();
         }
     }
 

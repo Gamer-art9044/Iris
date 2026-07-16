@@ -22,12 +22,12 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.volmlib.util.board.Board;
 import art.arcane.volmlib.util.board.BoardProvider;
 import art.arcane.volmlib.util.board.BoardSettings;
 import art.arcane.volmlib.util.board.ScoreDirection;
-import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.iris.util.common.plugin.IrisService;
@@ -35,6 +35,7 @@ import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.matter.MatterCavern;
 import lombok.Data;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -42,18 +43,23 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
-import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
 import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.Team;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class BoardSVC implements IrisService, BoardProvider {
-    private final KMap<Player, PlayerBoard> boards = new KMap<>();
-    private BoardSettings settings;
-    private boolean boardEnabled;
+    private final Map<Player, PlayerBoard> boards = new ConcurrentHashMap<>();
+    private final Set<UUID> hiddenPlayers = ConcurrentHashMap.newKeySet();
+    private volatile BoardSettings settings;
+    private volatile boolean boardEnabled;
 
     @Override
     public void onEnable() {
@@ -80,16 +86,12 @@ public class BoardSVC implements IrisService, BoardProvider {
                 return;
             }
 
-            Objective named = main.getObjective("board");
-            if (named != null) {
-                named.unregister();
+            Objective objective = main.getObjective("board");
+            if (objective == null || !"Iris".equalsIgnoreCase(ChatColor.stripColor(objective.getDisplayName()))) {
+                return;
             }
 
-            Objective sidebar = main.getObjective(DisplaySlot.SIDEBAR);
-            if (sidebar != null && "board".equals(sidebar.getName())) {
-                sidebar.unregister();
-            }
-
+            objective.unregister();
             Team team = main.getTeam("board");
             if (team != null) {
                 team.unregister();
@@ -106,6 +108,7 @@ public class BoardSVC implements IrisService, BoardProvider {
             board.cancel();
         }
         boards.clear();
+        hiddenPlayers.clear();
         settings = null;
     }
 
@@ -122,6 +125,7 @@ public class BoardSVC implements IrisService, BoardProvider {
     @EventHandler
     public void on(PlayerQuitEvent e) {
         remove(e.getPlayer());
+        clearPlayerPreference(e.getPlayer().getUniqueId());
     }
 
     public void updatePlayer(Player p) {
@@ -152,10 +156,17 @@ public class BoardSVC implements IrisService, BoardProvider {
             return;
         }
 
-        var board = boards.remove(player);
+        PlayerBoard board = boards.remove(player);
         if (board != null) {
             board.cancel();
         }
+    }
+
+    public boolean toggle(Player player) {
+        Objects.requireNonNull(player, "player");
+        boolean visible = togglePlayerBoard(player.getUniqueId());
+        updatePlayer(player);
+        return visible;
     }
 
     @Override
@@ -177,31 +188,66 @@ public class BoardSVC implements IrisService, BoardProvider {
             return false;
         }
 
-        World world = player.getWorld();
-        if (!IrisToolbelt.isIrisWorld(world)) {
-            return false;
+        return isPlayerBoardEnabled(player.getUniqueId())
+                && isStudioGeneratorEligible(IrisToolbelt.access(player.getWorld()));
+    }
+
+    static boolean isStudioGeneratorEligible(PlatformChunkGenerator generator) {
+        return generator != null
+                && generator.isStudio()
+                && !generator.isClosing()
+                && generator.getEngine() != null;
+    }
+
+    boolean isPlayerBoardEnabled(UUID playerId) {
+        return playerId != null && !hiddenPlayers.contains(playerId);
+    }
+
+    boolean togglePlayerBoard(UUID playerId) {
+        Objects.requireNonNull(playerId, "playerId");
+        if (hiddenPlayers.remove(playerId)) {
+            return true;
         }
 
-        PlatformChunkGenerator access = IrisToolbelt.access(world);
-        return access != null && access.getEngine() != null;
+        hiddenPlayers.add(playerId);
+        return false;
+    }
+
+    void clearPlayerPreference(UUID playerId) {
+        if (playerId != null) {
+            hiddenPlayers.remove(playerId);
+        }
+    }
+
+    static Scoreboard selectScoreboardToRestore(Scoreboard active, Scoreboard iris, Scoreboard previous) {
+        return Objects.equals(active, iris) ? previous : active;
     }
 
     @Data
     public class PlayerBoard {
         private final Player player;
         private final Board board;
+        private final Scoreboard previousScoreboard;
+        private final Scoreboard irisScoreboard;
         private volatile List<String> lines;
         private volatile boolean cancelled;
 
         public PlayerBoard(Player player) {
             this.player = player;
+            Scoreboard previous = null;
+            Scoreboard assigned = null;
             try {
+                previous = player.getScoreboard();
                 if (Bukkit.getScoreboardManager() != null
-                        && player.getScoreboard().equals(Bukkit.getScoreboardManager().getMainScoreboard())) {
+                        && Objects.equals(previous, Bukkit.getScoreboardManager().getMainScoreboard())) {
                     player.setScoreboard(Bukkit.getScoreboardManager().getNewScoreboard());
                 }
-            } catch (Throwable ignored) {
+                assigned = player.getScoreboard();
+            } catch (Throwable e) {
+                IrisLogging.reportError("Failed to prepare the Studio scoreboard for " + player.getName() + ".", e);
             }
+            this.previousScoreboard = previous;
+            this.irisScoreboard = assigned;
             this.board = new Board(player, settings);
             this.lines = new ArrayList<>();
             this.cancelled = false;
@@ -216,19 +262,13 @@ public class BoardSVC implements IrisService, BoardProvider {
         }
 
         private void tick() {
-            if (!boardEnabled || !player.isOnline()) {
-                return;
-            }
-
-            if (cancelled) {
-                board.remove();
+            if (cancelled || !boardEnabled || !player.isOnline()) {
                 return;
             }
 
             if (!isEligibleWorld(player)) {
-                boards.remove(player);
-                cancelled = true;
-                board.remove();
+                boards.remove(player, this);
+                cancel();
                 return;
             }
 
@@ -243,21 +283,49 @@ public class BoardSVC implements IrisService, BoardProvider {
             }
             cancelled = true;
             if (J.isOwnedByCurrentRegion(player) && player.isOnline()) {
-                board.remove();
+                removeNow();
             } else {
-                J.runEntity(player, board::remove);
+                J.runEntity(player, this::removeNow);
+            }
+        }
+
+        private void removeNow() {
+            Scoreboard activeScoreboard = null;
+            try {
+                activeScoreboard = player.getScoreboard();
+                board.remove();
+                if (!player.isOnline()) {
+                    return;
+                }
+
+                Scoreboard restore = selectScoreboardToRestore(
+                        activeScoreboard,
+                        irisScoreboard,
+                        previousScoreboard);
+                if (restore != null && !Objects.equals(player.getScoreboard(), restore)) {
+                    player.setScoreboard(restore);
+                }
+            } catch (Throwable e) {
+                IrisLogging.reportError("Failed to remove the Studio scoreboard for " + player.getName() + ".", e);
+                if (activeScoreboard != null && player.isOnline()) {
+                    player.setScoreboard(activeScoreboard);
+                }
             }
         }
 
         public void update() {
-            final World world = player.getWorld();
-            final Location loc = player.getLocation();
+            World world = player.getWorld();
+            Location loc = player.getLocation();
 
-            final var access = IrisToolbelt.access(world);
-            if (access == null) return;
+            PlatformChunkGenerator access = IrisToolbelt.access(world);
+            if (access == null) {
+                return;
+            }
 
-            final var engine = access.getEngine();
-            if (engine == null) return;
+            Engine engine = access.getEngine();
+            if (engine == null) {
+                return;
+            }
 
             int x = loc.getBlockX();
             int y = loc.getBlockY() - world.getMinHeight();

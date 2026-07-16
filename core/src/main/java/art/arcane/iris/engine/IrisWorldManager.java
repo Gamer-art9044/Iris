@@ -965,16 +965,15 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             }
 
             IrisMarker mark = getData().getMarkerLoader().load(t.getTag());
+            if (mark == null) {
+                return;
+            }
+
             IrisPosition pos = new IrisPosition((c.getX() << 4) + x, y, (c.getZ() << 4) + z);
 
-            if (mark.isEmptyAbove()) {
-                boolean remove = c.getBlock(x, y + 1, z).getBlockData().getMaterial().isSolid()
-                        || c.getBlock(x, y + 2, z).getBlockData().getMaterial().isSolid();
-
-                if (remove) {
-                    b.add(pos);
-                    return;
-                }
+            if (isMarkerObstructed(c, pos, mark.isEmptyAbove())) {
+                b.add(pos);
+                return;
             }
 
             for (String i : mark.getSpawners()) {
@@ -1096,7 +1095,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
         }
 
         int minY = getEngine().getWorld().minHeight();
-        int markerY = relative.getY() + minY;
+        int markerY = toWorldY(relative.getY(), minY);
         if (markerY + 2 >= chunk.getWorld().getMaxHeight()) {
             return true;
         }
@@ -1145,7 +1144,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             });
 
             KList<ItemStack> d = new KList<>();
-            IrisBiome b = EngineBukkitOps.getBiome(getEngine(), e.getBlock().getLocation().clone().subtract(0, getEngine().getWorld().minHeight(), 0));
+            IrisBiome b = EngineBukkitOps.getBiome(getEngine(), e.getBlock().getLocation());
             List<IrisBlockDrops> dropProviders = filterDrops(b.getBlockDrops(), e, getData());
 
             if (dropProviders.stream().noneMatch(IrisBlockDrops::isSkipParents)) {
@@ -1175,6 +1174,10 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
     static int toMantleY(int worldY, int minHeight) {
         return worldY - minHeight;
+    }
+
+    static int toWorldY(int mantleY, int minHeight) {
+        return mantleY + minHeight;
     }
 
     private List<IrisBlockDrops> filterDrops(KList<IrisBlockDrops> drops, BlockBreakEvent e, IrisData data) {

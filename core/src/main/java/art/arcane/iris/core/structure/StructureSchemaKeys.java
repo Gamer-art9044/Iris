@@ -29,7 +29,7 @@ public final class StructureSchemaKeys {
     private StructureSchemaKeys() {
     }
 
-    public static KList<String> collect(Collection<String> vanillaStructureKeys, Collection<String> importedStructureKeys, Collection<String> jigsawPieceKeys) {
+    public static KList<String> collect(Collection<String> structureKeys, Collection<String> jigsawPieceKeys) {
         Set<String> pieces = new HashSet<>();
         if (jigsawPieceKeys != null) {
             for (String piece : jigsawPieceKeys) {
@@ -40,17 +40,8 @@ public final class StructureSchemaKeys {
         }
 
         TreeSet<String> merged = new TreeSet<>();
-        if (vanillaStructureKeys != null) {
-            for (String key : vanillaStructureKeys) {
-                if (key == null || key.isBlank()) {
-                    continue;
-                }
-                merged.add(StructureImporter.deriveName(key));
-            }
-        }
-
-        if (importedStructureKeys != null) {
-            for (String key : importedStructureKeys) {
+        if (structureKeys != null) {
+            for (String key : structureKeys) {
                 if (key == null || key.isBlank()) {
                     continue;
                 }

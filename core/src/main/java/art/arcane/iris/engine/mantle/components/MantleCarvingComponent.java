@@ -90,23 +90,29 @@ public class MantleCarvingComponent extends IrisMantleComponent {
         PrecisionStopwatch resolveStopwatch = PrecisionStopwatch.start();
         List<WeightedProfile> weightedProfiles = resolveWeightedProfiles(x, z, complex, resolverState);
         getEngineMantle().getEngine().getMetrics().getCarveResolve().put(resolveStopwatch.getMilliseconds());
+        IrisCaveCarver3D.WaterSupportPlan waterSupportPlan = new IrisCaveCarver3D.WaterSupportPlan();
         for (WeightedProfile weightedProfile : weightedProfiles) {
-            carveProfile(weightedProfile, writer, x, z, chunkSurfaceHeights);
+            carveProfile(weightedProfile, writer, x, z, chunkSurfaceHeights, waterSupportPlan);
         }
 
         UpperDimensionContext upperCtx = getEngineMantle().getEngine().getUpperContext();
         if (upperCtx != null && getDimension().isUpperDimensionCarving()) {
-            carveUpperTerrain(upperCtx, weightedProfiles, writer, x, z, chunkSurfaceHeights);
+            carveUpperTerrain(upperCtx, weightedProfiles, writer, x, z, chunkSurfaceHeights, waterSupportPlan);
         }
+        waterSupportPlan.resolve(writer.acquireChunk(x, z));
     }
 
     @ChunkCoordinates
-    private void carveProfile(WeightedProfile weightedProfile, MantleWriter writer, int cx, int cz, int[] chunkSurfaceHeights) {
+    private void carveProfile(WeightedProfile weightedProfile, MantleWriter writer, int cx, int cz,
+                              int[] chunkSurfaceHeights, IrisCaveCarver3D.WaterSupportPlan waterSupportPlan) {
         IrisCaveCarver3D carver = getCarver(weightedProfile.profile);
-        carver.carve(writer, cx, cz, weightedProfile.columnWeights, MIN_WEIGHT, THRESHOLD_PENALTY, weightedProfile.worldYRange, chunkSurfaceHeights);
+        carver.carve(writer, cx, cz, weightedProfile.columnWeights, MIN_WEIGHT, THRESHOLD_PENALTY,
+                weightedProfile.worldYRange, chunkSurfaceHeights, null, waterSupportPlan);
     }
 
-    private void carveUpperTerrain(UpperDimensionContext upperCtx, List<WeightedProfile> normalProfiles, MantleWriter writer, int cx, int cz, int[] lowerSurfaceHeights) {
+    private void carveUpperTerrain(UpperDimensionContext upperCtx, List<WeightedProfile> normalProfiles,
+                                   MantleWriter writer, int cx, int cz, int[] lowerSurfaceHeights,
+                                   IrisCaveCarver3D.WaterSupportPlan waterSupportPlan) {
         int chunkHeight = getEngineMantle().getEngine().getHeight();
         int worldMinHeight = getEngineMantle().getEngine().getWorld().minHeight();
         int gap = getDimension().getUpperDimensionGap();
@@ -154,7 +160,7 @@ public class MantleCarvingComponent extends IrisMantleComponent {
             }
             IrisCaveCarver3D carver = getCarver(weightedProfile.profile);
             carver.carve(writer, cx, cz, weightedProfile.columnWeights, MIN_WEIGHT, THRESHOLD_PENALTY,
-                    constrainedRange, ceilingSurfaceHeights, fullVerticalRange);
+                    constrainedRange, ceilingSurfaceHeights, fullVerticalRange, waterSupportPlan);
         }
     }
 

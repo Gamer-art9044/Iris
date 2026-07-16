@@ -19,8 +19,7 @@
 package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.pack.PackValidationRegistry;
-import art.arcane.iris.core.pack.PackValidationResult;
+import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.MainWorldService;
@@ -29,6 +28,7 @@ import art.arcane.iris.modded.ModdedEngineBootstrap;
 import art.arcane.iris.modded.ModdedModConfig;
 import art.arcane.iris.modded.ModdedPackInstaller;
 import art.arcane.iris.modded.ModdedPrimaryWorldRouter;
+import art.arcane.iris.modded.ModdedStartup;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
@@ -187,10 +187,10 @@ public final class ModdedWorldCommands {
     }
 
     private static int enableInstalled(CommandSourceStack source, MinecraftServer server, String dimensionId, String pack, String packDimension, long seed) {
-        if (!loadPackDimension(source, pack, packDimension)) {
+        if (blockIfPackBroken(source, dimensionId, pack)) {
             return 0;
         }
-        if (blockIfPackBroken(source, dimensionId, pack)) {
+        if (!loadPackDimension(source, pack, packDimension)) {
             return 0;
         }
         try {
@@ -218,10 +218,10 @@ public final class ModdedWorldCommands {
             return 0;
         }
         String dimensionId = DEFAULT_NAMESPACE + ":primary";
-        if (!loadPackDimension(source, pack, packDimension)) {
+        if (blockIfPackBroken(source, dimensionId, pack)) {
             return 0;
         }
-        if (blockIfPackBroken(source, dimensionId, pack)) {
+        if (!loadPackDimension(source, pack, packDimension)) {
             return 0;
         }
         try {
@@ -290,6 +290,9 @@ public final class ModdedWorldCommands {
     }
 
     private static int applyMainWorld(CommandSourceStack source, String pack, String packDimension, String packRef, long seed) {
+        if (blockIfPackBroken(source, "the main world", pack)) {
+            return 0;
+        }
         try {
             if (!loadPackDimension(source, pack, packDimension)) {
                 return 0;
@@ -297,9 +300,6 @@ public final class ModdedWorldCommands {
         } catch (Throwable e) {
             LOGGER.error("Iris main world pack load failed for {} (dim={})", pack, packDimension, e);
             IrisModdedCommands.fail(source, "Pack '" + pack + "' is not ready yet (still loading or validating). Try the command again in a moment.");
-            return 0;
-        }
-        if (blockIfPackBroken(source, "the main world", pack)) {
             return 0;
         }
         ModdedModConfig.setMainWorld(packRef, seed);
@@ -321,16 +321,18 @@ public final class ModdedWorldCommands {
     }
 
     private static boolean blockIfPackBroken(CommandSourceStack source, String dimensionId, String pack) {
-        PackValidationResult validation = PackValidationRegistry.get(pack);
-        if (validation == null || validation.isLoadable()) {
+        try {
+            ModdedStartup.requirePackForWorldCreation(pack);
             return false;
+        } catch (BrokenPackException e) {
+            IrisModdedCommands.fail(source, "Refusing to create world '" + dimensionId
+                    + "' using pack '" + pack + "' because required validation failed:");
+            for (String reason : e.getReasons()) {
+                IrisModdedCommands.fail(source, "  - " + reason);
+            }
+            IrisModdedCommands.fail(source, "Fix the pack and run /iris pack validate " + pack + " to revalidate.");
+            return true;
         }
-        IrisModdedCommands.fail(source, "Refusing to create world '" + dimensionId + "' using broken pack '" + pack + "':");
-        for (String reason : validation.getBlockingErrors()) {
-            IrisModdedCommands.fail(source, "  - " + reason);
-        }
-        IrisModdedCommands.fail(source, "Fix the pack and run /iris pack validate " + pack + " to revalidate.");
-        return true;
     }
 
     private static boolean loadPackDimension(CommandSourceStack source, String pack, String packDimension) {

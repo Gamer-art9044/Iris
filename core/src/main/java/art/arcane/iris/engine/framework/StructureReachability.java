@@ -26,6 +26,8 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -44,20 +46,16 @@ public final class StructureReachability {
     }
 
     public static Set<String> reachableKeys(Engine engine) {
-        if (engine == null) {
-            return Collections.emptySet();
+        Engine activeEngine = Objects.requireNonNull(engine, "Structure reachability requires an engine");
+        if (activeEngine.getData() == null) {
+            throw new IllegalStateException("Structure reachability requires a bound pack data loader");
         }
-        if (engine.getData() == null) {
-            return Collections.emptySet();
-        }
-        return REACHABLE_CACHE.get(engine, ignored -> build(engine));
+        return REACHABLE_CACHE.get(activeEngine, ignored -> build(activeEngine));
     }
 
     public static boolean isReachable(Engine engine, String structureKey) {
-        if (structureKey == null || structureKey.isEmpty()) {
-            return false;
-        }
-        return reachableKeys(engine).contains(structureKey.toLowerCase());
+        String normalizedStructureKey = normalizeStructureKey(structureKey);
+        return reachableKeys(engine).contains(normalizedStructureKey);
     }
 
     public static void invalidate(Engine engine) {
@@ -69,14 +67,18 @@ public final class StructureReachability {
 
     private static Set<String> build(Engine engine) {
         IrisWorld world = engine.getWorld();
-        if (world == null || world.platformWorld() == null) {
-            return Collections.emptySet();
+        if (world == null) {
+            throw new IllegalStateException("Structure reachability requires a bound Iris world");
+        }
+        if (world.platformWorld() == null) {
+            throw new IllegalStateException("Structure reachability requires a bound platform world");
         }
         Set<String> reachable = new LinkedHashSet<>();
         for (String key : IrisPlatforms.get().structureHooks().reachableStructureKeys(world.platformWorld())) {
-            if (key != null && !key.isEmpty()) {
-                reachable.add(key.toLowerCase());
+            if (key == null || key.isBlank()) {
+                throw new IllegalStateException("Platform structure reachability returned a blank registry key");
             }
+            reachable.add(key.toLowerCase(Locale.ROOT));
         }
         return Collections.unmodifiableSet(reachable);
     }
@@ -88,24 +90,38 @@ public final class StructureReachability {
      */
     public static KList<String> missingBiomeKeys(Engine engine, String structureKey) {
         KList<String> missing = new KList<>();
-        if (engine == null || structureKey == null || structureKey.isEmpty()) {
-            return missing;
+        Engine activeEngine = Objects.requireNonNull(engine, "Structure biome diagnostics require an engine");
+        String normalizedStructureKey = normalizeStructureKey(structureKey);
+        IrisWorld world = activeEngine.getWorld();
+        if (world == null) {
+            throw new IllegalStateException("Structure biome diagnostics require a bound Iris world");
         }
-        IrisWorld world = engine.getWorld();
-        if (world == null || world.platformWorld() == null) {
-            return missing;
+        if (world.platformWorld() == null) {
+            throw new IllegalStateException("Structure biome diagnostics require a bound platform world");
         }
         Set<String> possible = new LinkedHashSet<>();
         for (String key : IrisPlatforms.get().structureHooks().possibleBiomeKeys(world.platformWorld())) {
-            if (key != null) {
-                possible.add(key.toLowerCase());
+            if (key == null || key.isBlank()) {
+                throw new IllegalStateException("Platform structure biome query returned a blank possible-biome key");
             }
+            possible.add(key.toLowerCase(Locale.ROOT));
         }
-        for (String biomeKey : IrisPlatforms.get().structureHooks().structureBiomeKeys(structureKey)) {
-            if (biomeKey != null && !possible.contains(biomeKey.toLowerCase())) {
+        for (String biomeKey : IrisPlatforms.get().structureHooks().structureBiomeKeys(normalizedStructureKey)) {
+            if (biomeKey == null || biomeKey.isBlank()) {
+                throw new IllegalStateException("Platform structure biome query returned a blank required-biome key for "
+                        + normalizedStructureKey);
+            }
+            if (!possible.contains(biomeKey.toLowerCase(Locale.ROOT))) {
                 missing.add(biomeKey);
             }
         }
         return missing;
+    }
+
+    private static String normalizeStructureKey(String structureKey) {
+        if (structureKey == null || structureKey.isBlank()) {
+            throw new IllegalArgumentException("Registered structure key must not be blank");
+        }
+        return structureKey.trim().toLowerCase(Locale.ROOT);
     }
 }

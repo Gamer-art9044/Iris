@@ -19,15 +19,19 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
+import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
-import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
-import art.arcane.iris.engine.object.IrisVanillaStructureStiltSettings;
+import art.arcane.iris.engine.object.IrisStructureStiltSettings;
+import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
+import art.arcane.iris.nativegen.NativeStructureGenerationException;
+import art.arcane.iris.nativegen.NativeStructureLocateResults;
 import art.arcane.iris.nativegen.NativeStructurePostProcessor;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBiome;
@@ -99,6 +103,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -208,11 +213,62 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     public synchronized void repoint(String pack, String packDimensionKey, long seed) {
         ServerLevel level = boundLevel();
         if (level != null) {
-            ModdedWorldEngines.evict(level);
+            repointAndBind(level, pack, packDimensionKey, seed);
+            return;
+        }
+        applyUnboundConfiguration(pack, packDimensionKey, seed);
+    }
+
+    synchronized void repointAndBind(ServerLevel level, String pack, String packDimensionKey, long seed) {
+        if (level.getChunkSource().getGenerator() != this) {
+            throw new IllegalArgumentException("ServerLevel does not use Iris generator '" + dimensionKey + "'");
+        }
+        requireGlobalStructureGeneration(
+                level.getServer().getWorldGenSettings().options().generateStructures(), dimensionKey);
+        Engine replacement = ModdedWorldEngines.prepareReplacement(level, pack, packDimensionKey, seed);
+        try {
+            ModdedWorldEngines.installReplacement(level, replacement);
+        } catch (Throwable error) {
+            try {
+                ModdedWorldEngines.closeUnregistered(replacement);
+            } catch (Throwable cleanupError) {
+                error.addSuppressed(cleanupError);
+            }
+            if (error instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (error instanceof Error fatalError) {
+                throw fatalError;
+            }
+            throw new IllegalStateException("Iris generator '" + dimensionKey + "' failed to replace its engine", error);
         }
         this.activePack = pack;
         this.activeDimensionKey = packDimensionKey;
         this.seedOverride = seed;
+        this.engine = replacement;
+        this.configuredStructureBiomeKeys = null;
+        this.configuredPack = null;
+        this.engineBinding.reset();
+        this.engineBinding.complete(replacement);
+        this.announced.set(false);
+        this.structureBiomeSource.clearCaches();
+        this.worldCheckStructureShifts.clear();
+        resetVanillaSpawnBiomes();
+    }
+
+    public synchronized void unbindEngine() {
+        ServerLevel level = boundLevel();
+        unbindEngine(level);
+    }
+
+    synchronized void unbindEngine(ServerLevel level) {
+        if (level != null) {
+            ModdedWorldEngines.evictOrThrow(level);
+        }
+        clearEngineBinding();
+    }
+
+    private void clearEngineBinding() {
         this.engine = null;
         this.configuredStructureBiomeKeys = null;
         this.configuredPack = null;
@@ -223,11 +279,10 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         resetVanillaSpawnBiomes();
     }
 
-    public synchronized void unbindEngine() {
-        ServerLevel level = boundLevel();
-        if (level != null) {
-            ModdedWorldEngines.evict(level);
-        }
+    private void applyUnboundConfiguration(String pack, String packDimensionKey, long seed) {
+        this.activePack = pack;
+        this.activeDimensionKey = packDimensionKey;
+        this.seedOverride = seed;
         this.engine = null;
         this.configuredStructureBiomeKeys = null;
         this.configuredPack = null;
@@ -265,33 +320,14 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     public Pair<BlockPos, Holder<Structure>> findNearestMapStructure(ServerLevel level, HolderSet<Structure> holders,
                                                                      BlockPos pos, int radius,
                                                                      boolean findUnexplored) {
-        Engine current = engineOrNull();
-        if (current == null) {
-            return super.findNearestMapStructure(level, holders, pos, radius, findUnexplored);
-        }
-        try {
-            Pair<BlockPos, Holder<Structure>> irisPlaced = findNearestIrisStructure(
-                    level, holders, pos, Math.max(1, radius), current);
-            if (irisPlaced != null) {
-                return irisPlaced;
-            }
-        } catch (Throwable e) {
-            LOGGER.error("Iris-placed structure locate failed near {},{}", pos.getX(), pos.getZ(), e);
-        }
-        IrisImportedStructureControl control = current.getDimension().getImportedStructures();
-        if (control == null || !control.active()) {
-            return null;
-        }
-        HolderSet<Structure> reachable = filterReachableNativeStructures(level, holders, current, control);
-        if (reachable.size() == 0) {
-            return null;
-        }
-        try {
-            return super.findNearestMapStructure(level, reachable, pos, radius, findUnexplored);
-        } catch (Throwable e) {
-            LOGGER.error("Native structure locate failed near {},{}", pos.getX(), pos.getZ(), e);
-            return null;
-        }
+        Engine current = engine();
+        Pair<BlockPos, Holder<Structure>> irisPlaced = findNearestIrisStructure(
+                level, holders, pos, Math.max(1, radius), findUnexplored, current);
+        HolderSet<Structure> reachable = filterReachableNativeStructures(level, holders, current);
+        Pair<BlockPos, Holder<Structure>> nativeLocated = reachable.size() == 0
+                ? null
+                : super.findNearestMapStructure(level, reachable, pos, radius, findUnexplored);
+        return NativeStructureLocateResults.nearest(pos, irisPlaced, nativeLocated);
     }
 
     public boolean isNativeStructureReachable(Holder<Structure> structure) {
@@ -300,8 +336,11 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
 
     private Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(ServerLevel level,
                                                                        HolderSet<Structure> holders,
-                                                                       BlockPos pos, int radius,
+                                                                       BlockPos pos, int radius, boolean findUnexplored,
                                                                        Engine current) {
+        if (findUnexplored) {
+            return null;
+        }
         Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
         BlockPos best = null;
         Holder<Structure> bestHolder = null;
@@ -309,12 +348,19 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         for (Holder<Structure> holder : holders) {
             Identifier id = registry.getKey(holder.value());
             if (id == null) {
+                throw new IllegalStateException("Native structure locate received an unregistered structure holder");
+            }
+            String structureId = id.toString();
+            IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(current,
+                    structureId, NativeStructurePostProcessor.isUndergroundStep(holder.value().step()));
+            if (decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
                 continue;
             }
             IrisStructureLocator.LocateResult result = IrisStructureLocator.locate(
-                    current, id.toString(), pos.getX(), pos.getZ(), radius);
+                    current, structureId, pos.getX(), pos.getZ(), radius);
             if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
-                continue;
+                throw new IllegalStateException("Iris structure locate reached its safety limit for "
+                        + structureId + " within " + radius + " chunks");
             }
             if (!result.found()) {
                 continue;
@@ -332,28 +378,23 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     private HolderSet<Structure> filterReachableNativeStructures(ServerLevel level, HolderSet<Structure> holders,
-                                                                  Engine current,
-                                                                  IrisImportedStructureControl control) {
-        try {
-            Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
-            List<Holder<Structure>> kept = new ArrayList<>(holders.size());
-            for (Holder<Structure> holder : holders) {
-                Identifier id = registry.getKey(holder.value());
-                String key = id == null ? null : id.toString();
-                IrisNativeStructureDecision decision = control.resolve(
-                        key, NativeStructurePostProcessor.isUndergroundStep(holder.value().step()));
-                if (key == null || !decision.generate()
-                        || IrisStructureLocator.suppressesVanilla(current, key)
-                        || !structureBiomeSource.isStructureReachable(holder)) {
-                    continue;
-                }
-                kept.add(holder);
+                                                                  Engine current) {
+        Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
+        List<Holder<Structure>> kept = new ArrayList<>(holders.size());
+        for (Holder<Structure> holder : holders) {
+            Identifier id = registry.getKey(holder.value());
+            if (id == null) {
+                throw new IllegalStateException("Native structure filtering received an unregistered structure holder");
             }
-            return kept.size() == holders.size() ? holders : HolderSet.direct(kept);
-        } catch (Throwable error) {
-            LOGGER.error("Iris could not resolve native structure biome reachability; native locate failed closed", error);
-            return HolderSet.direct(List.of());
+            String key = id.toString();
+            IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(current,
+                    key, NativeStructurePostProcessor.isUndergroundStep(holder.value().step()));
+            if (!decision.generate() || !structureBiomeSource.isStructureReachable(holder)) {
+                continue;
+            }
+            kept.add(holder);
         }
+        return kept.size() == holders.size() ? holders : HolderSet.direct(kept);
     }
 
     private ServerLevel boundLevel() {
@@ -389,6 +430,13 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     private Engine bindEngine(ServerLevel level) {
+        try {
+            requireGlobalStructureGeneration(
+                    level.getServer().getWorldGenSettings().options().generateStructures(), dimensionKey);
+        } catch (RuntimeException error) {
+            engineBinding.fail(error);
+            throw error;
+        }
         Engine cached = engine;
         if (cached != null && !cached.isClosed() && cached.getComplex() != null) {
             engineBinding.complete(cached);
@@ -424,6 +472,15 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         }
     }
 
+    static void requireGlobalStructureGeneration(boolean enabled, String dimensionKey) {
+        if (enabled) {
+            return;
+        }
+        throw new IllegalStateException("Iris generator '" + dimensionKey
+                + "' cannot bind while generate-structures=false; set generate-structures=true, restart the server, "
+                + "and deny individual structures through importedStructures.disabled");
+    }
+
     private Engine engineOrNull() {
         Engine cached = engine;
         if (cached != null) {
@@ -437,7 +494,13 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     Engine structureEngineOrNull() {
-        return engineOrNull();
+        engineBinding.throwIfFailed(dimensionKey);
+        Engine cached = engine;
+        if (cached != null && !cached.isClosed() && cached.getComplex() != null) {
+            return cached;
+        }
+        ServerLevel level = boundLevel();
+        return level == null ? null : bindEngine(level);
     }
 
     Engine awaitStructureEngine() {
@@ -523,6 +586,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             if (configuredPack != null) {
                 return configuredPack;
             }
+            PackValidationRegistry.requireLoadable(activePack);
             File packDirectory = ModdedWorldEngines.resolvePack(activePack, activeDimensionKey);
             IrisData data = IrisData.get(packDirectory);
             IrisDimension dimension = data.getDimensionLoader().load(activeDimensionKey);
@@ -807,19 +871,15 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
 
     @Override
     public void applyBiomeDecoration(WorldGenLevel level, ChunkAccess chunk, StructureManager structureManager) {
-        if (importedControl().active()) {
-            placeVanillaStructures(level, chunk, structureManager);
-        }
+        placeVanillaStructures(level, chunk, structureManager);
     }
 
     @Override
     public void createStructures(RegistryAccess registryAccess, ChunkGeneratorStructureState structureState, StructureManager structureManager, ChunkAccess chunk, StructureTemplateManager templateManager, ResourceKey<Level> levelKey) {
-        if (!importedControl().active()) {
-            return;
-        }
+        Engine current = engine();
         Map<Structure, StructureStart> previousStarts = new HashMap<>(chunk.getAllStarts());
         super.createStructures(registryAccess, structureState, structureManager, chunk, templateManager, levelKey);
-        adjustGeneratedStructures(registryAccess, chunk, previousStarts);
+        adjustGeneratedStructures(registryAccess, chunk, previousStarts, current);
     }
 
     @Override
@@ -828,9 +888,9 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     private void adjustGeneratedStructures(RegistryAccess registryAccess, ChunkAccess chunk,
-                                           Map<Structure, StructureStart> previousStarts) {
+                                           Map<Structure, StructureStart> previousStarts, Engine current) {
         Registry<Structure> registry = registryAccess.lookupOrThrow(Registries.STRUCTURE);
-        IrisImportedStructureControl control = importedControl();
+        ChunkPos chunkPos = chunk.getPos();
         for (Map.Entry<Structure, StructureStart> entry : chunk.getAllStarts().entrySet()) {
             Structure structure = entry.getKey();
             StructureStart start = entry.getValue();
@@ -839,24 +899,37 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             }
             Identifier id = registry.getKey(structure);
             String structureId = id == null ? null : id.toString();
-            IrisNativeStructureDecision decision = control.resolve(
-                    structureId, NativeStructurePostProcessor.isUndergroundStep(structure.step()));
-            if (!decision.generate() || IrisStructureLocator.suppressesVanilla(engine(), structureId)) {
+            if (structureId == null) {
+                throw NativeStructureGenerationException.failure(
+                        "resolution", null, chunkPos.x(), chunkPos.z());
+            }
+            boolean undergroundStep = NativeStructurePostProcessor.isUndergroundStep(structure.step());
+            IrisNativeStructureDecision decision;
+            try {
+                decision = NativeStructureGenerationPolicy.resolve(current,
+                        structureId, undergroundStep);
+            } catch (Throwable error) {
+                throw NativeStructureGenerationException.failure(
+                        "policy resolution", structureId, chunkPos.x(), chunkPos.z(), error);
+            }
+            if (!decision.generate()) {
                 chunk.setStartForStructure(structure, StructureStart.INVALID_START);
                 continue;
             }
             int offsetY;
             try {
-                offsetY = NativeStructurePostProcessor.applyVerticalShift(
+                offsetY = NativeStructurePostProcessor.applyVerticalPlacement(
                         start,
+                        structureId,
                         decision.yShift(),
+                        getSeaLevel(),
                         chunk.getMinY(),
-                        chunk.getMinY() + chunk.getHeight());
-            } catch (RuntimeException error) {
-                chunk.setStartForStructure(structure, StructureStart.INVALID_START);
-                LOGGER.error("Iris rejected native structure {} in chunk {},{} because its vertical bounds are invalid",
-                        structureId, chunk.getPos().x(), chunk.getPos().z(), error);
-                continue;
+                        chunk.getMinY() + chunk.getHeight(),
+                        undergroundStep,
+                        (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
+            } catch (Throwable error) {
+                throw NativeStructureGenerationException.failure(
+                        "vertical adjustment", structureId, chunkPos.x(), chunkPos.z(), error);
             }
             recordWorldCheckStructureShift(structureId, start.getChunkPos(), offsetY);
         }
@@ -864,7 +937,11 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
 
     private void placeVanillaStructures(WorldGenLevel world, ChunkAccess chunk, StructureManager structureManager) {
         if (!structureManager.shouldGenerateStructures()) {
-            return;
+            ChunkPos disabledChunk = chunk.getPos();
+            throw new IllegalStateException("Iris cannot generate native structures in chunk "
+                    + disabledChunk.x() + "," + disabledChunk.z()
+                    + " because generate-structures=false disables them outside the pack; set generate-structures=true, "
+                    + "restart the server, and deny individual structures through importedStructures.disabled");
         }
         ChunkPos chunkPos = chunk.getPos();
         SectionPos sectionPos = SectionPos.of(chunkPos, world.getMinSectionY());
@@ -875,42 +952,61 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         long decorationSeed = random.setDecorationSeed(world.getSeed(), origin.getX(), origin.getZ());
         BoundingBox area = writableArea(chunk);
         int steps = GenerationStep.Decoration.values().length;
-        IrisImportedStructureControl control = importedControl();
+        Engine current = engine();
         List<NativePlacementGroup> placementGroups = new ArrayList<>();
+        List<StructureStart> nativeStarts = new ArrayList<>();
         List<NativeStructurePostProcessor.VegetationTarget> vegetationTargets = new ArrayList<>();
         for (int step = 0; step < steps; step++) {
             int index = 0;
             for (Structure structure : byStep.get(step)) {
                 Identifier id = registry.getKey(structure);
                 String structureId = id == null ? null : id.toString();
-                IrisNativeStructureDecision decision = control.resolve(
-                        structureId, NativeStructurePostProcessor.isUndergroundStep(structure.step()));
-                if (decision.generate() && !IrisStructureLocator.suppressesVanilla(engine(), structureId)) {
-                    try {
+                if (structureId == null) {
+                    throw NativeStructureGenerationException.failure(
+                            "resolution", null, chunkPos.x(), chunkPos.z());
+                }
+                try {
+                    IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(current,
+                            structureId, NativeStructurePostProcessor.isUndergroundStep(structure.step()));
+                    if (decision.generate()) {
                         List<StructureStart> starts = structureManager.startsForStructure(sectionPos, structure);
                         if (!starts.isEmpty()) {
                             List<StructureStart> resolvedStarts = List.copyOf(starts);
                             placementGroups.add(new NativePlacementGroup(
                                     structureId, decision, index, step, resolvedStarts));
+                            nativeStarts.addAll(resolvedStarts);
+                            boolean clearEntireFootprint = NativeStructurePostProcessor
+                                    .shouldClearEntireVegetationFootprint(
+                                            structure.step(), decision.clearVegetation());
                             for (StructureStart start : resolvedStarts) {
                                 vegetationTargets.add(new NativeStructurePostProcessor.VegetationTarget(
-                                        start, decision.clearVegetation()));
+                                        start, clearEntireFootprint));
                             }
                         }
-                    } catch (Throwable e) {
-                        LOGGER.error("Iris failed to resolve native structure {} in chunk {},{}",
-                                structureId, chunkPos.x(), chunkPos.z(), e);
                     }
+                } catch (Throwable error) {
+                    throw NativeStructureGenerationException.failure(
+                            "resolution", structureId, chunkPos.x(), chunkPos.z(), error);
                 }
                 index++;
             }
         }
         try {
+            NativeStructurePostProcessor.prepareSurfaceStructures(
+                    world, area, nativeStarts,
+                    (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
+        } catch (Throwable error) {
+            throw NativeStructureGenerationException.failure(
+                    "terrain integration", nativeStructureBatchContext(placementGroups),
+                    chunkPos.x(), chunkPos.z(), error);
+        }
+        try {
             NativeStructurePostProcessor.clearIntersectingVegetation(
                     world, chunk, area, vegetationTargets);
-        } catch (Throwable e) {
-            LOGGER.error("Iris failed to clear vegetation from native structures in chunk {},{}",
-                    chunkPos.x(), chunkPos.z(), e);
+        } catch (Throwable error) {
+            throw NativeStructureGenerationException.failure(
+                    "vegetation cleanup", nativeStructureBatchContext(placementGroups),
+                    chunkPos.x(), chunkPos.z(), error);
         }
         for (NativePlacementGroup group : placementGroups) {
             random.setFeatureSeed(decorationSeed, group.featureIndex(), group.step());
@@ -919,11 +1015,25 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
                     placeVanillaStructure(world, structureManager, random, area, chunkPos,
                             group.structureId(), start, group.decision());
                 }
-            } catch (Throwable e) {
-                LOGGER.error("Iris failed to place native structure {} in chunk {},{}",
-                        group.structureId(), chunkPos.x(), chunkPos.z(), e);
+            } catch (Throwable error) {
+                throw NativeStructureGenerationException.failure(
+                        "placement", group.structureId(), chunkPos.x(), chunkPos.z(), error);
             }
         }
+    }
+
+    private static String nativeStructureBatchContext(List<NativePlacementGroup> placementGroups) {
+        if (placementGroups.isEmpty()) {
+            return "<no resolved native structures>";
+        }
+        StringBuilder context = new StringBuilder("[");
+        for (int i = 0; i < placementGroups.size(); i++) {
+            if (i > 0) {
+                context.append(", ");
+            }
+            context.append(placementGroups.get(i).structureId());
+        }
+        return context.append(']').toString();
     }
 
     private void placeVanillaStructure(WorldGenLevel world, StructureManager structureManager,
@@ -978,20 +1088,17 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         return worldCheckStructureShifts.get(new NativeStructureStartKey(structureId, startChunk.pack()));
     }
 
-    private BlockState resolveStiltBlock(IrisVanillaStructureStiltSettings settings, RNG rng,
+    private BlockState resolveStiltBlock(IrisStructureStiltSettings settings, RNG rng,
                                          int x, int y, int z) {
         if (settings.getPalette() == null) {
             return Blocks.COBBLESTONE.defaultBlockState();
         }
         PlatformBlockState platformState = settings.getPalette().get(rng, x, y, z, engine().getData());
         if (platformState == null || !(platformState.nativeHandle() instanceof BlockState blockState)) {
-            return Blocks.COBBLESTONE.defaultBlockState();
+            throw new IllegalStateException("Configured native structure stilt palette did not resolve a Minecraft block at "
+                    + x + "," + y + "," + z);
         }
         return blockState;
-    }
-
-    private IrisImportedStructureControl importedControl() {
-        return engine().getDimension().getImportedStructures();
     }
 
     private BoundingBox writableArea(ChunkAccess chunk) {
@@ -1126,6 +1233,19 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
 
         void fail(Throwable error) {
             future.completeExceptionally(error);
+        }
+
+        void throwIfFailed(String dimensionKey) {
+            CompletableFuture<T> current = future;
+            if (!current.isCompletedExceptionally()) {
+                return;
+            }
+            try {
+                current.join();
+            } catch (CompletionException error) {
+                throw new IllegalStateException("Iris generator '" + dimensionKey + "' failed to bind",
+                        error.getCause());
+            }
         }
 
         void reset() {

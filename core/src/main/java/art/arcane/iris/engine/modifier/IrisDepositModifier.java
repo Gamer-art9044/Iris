@@ -107,14 +107,13 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
 
             int x = rng.i(min, max + 1);
             int z = rng.i(min, max + 1);
-            int height = (he != null ? he.getHeight((cx << 4) + x, (cz << 4) + z) : context.getRoundedHeight(x, z)) - 7;
+            int height = getDepositSurfaceLimit(cx, cz, x, z, he, context);
 
             if (height <= 0)
                 continue;
 
             int minY = Math.max(0, k.getMinHeight());
-            // TODO: WARNING HEIGHT
-            int maxY = Math.min(height, Math.min(getEngine().getHeight(), k.getMaxHeight()));
+            int maxY = Math.min(height, Math.min(getEngine().getHeight() - 1, k.getMaxHeight()));
 
             if (minY >= maxY)
                 continue;
@@ -131,10 +130,19 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                 int ny = j.getBlockY() + y;
                 int nz = j.getBlockZ() + z;
 
-                if (ny > height || nx > 15 || nx < 0 || ny > getEngine().getHeight() || ny < 0 || nz < 0 || nz > 15) {
+                if (nx > 15 || nx < 0 || ny >= getEngine().getHeight() || ny < 0 || nz < 0 || nz > 15) {
                     continue;
                 }
-                if (!k.isReplaceBedrock() && IrisProceduralBlocks.materialKey(data.get(nx, ny, nz)).equals("minecraft:bedrock")) {
+                int columnSurfaceLimit = getDepositSurfaceLimit(cx, cz, nx, nz, he, context);
+                if (ny > columnSurfaceLimit) {
+                    continue;
+                }
+
+                PlatformBlockState current = data.get(nx, ny, nz);
+                if (!canReplaceDepositTarget(current)) {
+                    continue;
+                }
+                if (!k.isReplaceBedrock() && IrisProceduralBlocks.materialKey(current).equals("minecraft:bedrock")) {
                     continue;
                 }
 
@@ -143,20 +151,40 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                     PlatformBlockState remapped = resolveDepositVariant(cx, cz, nx, ny, nz, ore, dimension, context);
                     PlatformBlockState finalBlock = remapped != null
                             ? remapped
-                            : B.toDeepSlateOre(data.get(nx, ny, nz), ore);
+                            : B.toDeepSlateOre(current, ore);
                     data.set(nx, ny, nz, finalBlock);
                 }
             }
         }
     }
 
-    private PlatformBlockState resolveDepositVariant(int cx, int cz, int nx, int ny, int nz, PlatformBlockState ore, IrisDimension dimension, ChunkContext context) {
+    private int getDepositSurfaceLimit(int cx, int cz, int localX, int localZ, HeightMap heightMap, ChunkContext context) {
+        int surfaceY = heightMap != null
+                ? heightMap.getHeight((cx << 4) + localX, (cz << 4) + localZ)
+                : context.getRoundedHeight(localX, localZ);
+        return depositSurfaceLimit(surfaceY);
+    }
+
+    static int depositSurfaceLimit(int surfaceY) {
+        return surfaceY - 7;
+    }
+
+    static int absoluteWorldY(int minHeight, int localY) {
+        return minHeight + localY;
+    }
+
+    static boolean canReplaceDepositTarget(PlatformBlockState state) {
+        return state != null && !state.isAir() && !state.isFluid();
+    }
+
+    private PlatformBlockState resolveDepositVariant(int cx, int cz, int nx, int localY, int nz, PlatformBlockState ore, IrisDimension dimension, ChunkContext context) {
         int worldX = (cx << 4) + nx;
         int worldZ = (cz << 4) + nz;
+        int worldY = absoluteWorldY(getEngine().getMinHeight(), localY);
 
-        IrisBiome biome = getEngine().getBiome(worldX, ny, worldZ);
+        IrisBiome biome = getEngine().getBiome(worldX, localY, worldZ);
         if (biome != null) {
-            PlatformBlockState match = matchDepositVariant(biome.getDepositVariants(), ore, ny);
+            PlatformBlockState match = matchDepositVariant(biome.getDepositVariants(), ore, worldY);
             if (match != null) {
                 return match;
             }
@@ -164,14 +192,14 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
 
         IrisRegion region = context.getRegion().get(nx, nz);
         if (region != null) {
-            PlatformBlockState match = matchDepositVariant(region.getDepositVariants(), ore, ny);
+            PlatformBlockState match = matchDepositVariant(region.getDepositVariants(), ore, worldY);
             if (match != null) {
                 return match;
             }
         }
 
         if (dimension != null) {
-            PlatformBlockState match = matchDepositVariant(dimension.getDepositVariants(), ore, ny);
+            PlatformBlockState match = matchDepositVariant(dimension.getDepositVariants(), ore, worldY);
             if (match != null) {
                 return match;
             }

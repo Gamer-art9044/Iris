@@ -19,6 +19,8 @@
 package art.arcane.iris.probe;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.PackValidationResult;
+import art.arcane.iris.core.pack.PackValidator;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedComponent;
@@ -122,7 +124,7 @@ public final class GenerationProbe {
     }
 
     public static void main(String[] args) throws Exception {
-        IrisPlatforms.bind(new StubPlatform());
+        StubPlatform.bindGenerationStateHandlers();
         StubPlatform.verbose(true);
         StubPlatform.errorSink(REPORTED::add);
         IrisServices.register(PreservationRegistry.class, new InertPreservation());
@@ -132,6 +134,8 @@ public final class GenerationProbe {
 
         File packSource = new File(args[0]);
         int radius = args.length > 1 ? Integer.parseInt(args[1]) : 2;
+        int centerChunkX = args.length > 2 ? Integer.parseInt(args[2]) : 0;
+        int centerChunkZ = args.length > 3 ? Integer.parseInt(args[3]) : 0;
         if (!packSource.isDirectory()) {
             System.out.println("[genprobe] pack folder not found: " + packSource.getAbsolutePath());
             System.exit(1);
@@ -141,7 +145,24 @@ public final class GenerationProbe {
         File pack = clonePack(packSource, workRoot);
         System.out.println("[genprobe] pack: " + packSource.getAbsolutePath());
         System.out.println("[genprobe] work copy: " + pack.getAbsolutePath());
+        System.out.println("[genprobe] center chunk: " + centerChunkX + "," + centerChunkZ);
         System.out.println("[genprobe] radius: " + radius + " (" + ((2 * radius + 1) * (2 * radius + 1)) + " chunks)");
+
+        PackValidationResult validation = PackValidator.validate(pack);
+        for (String warning : validation.getWarnings()) {
+            System.out.println("[genprobe] pack warning: " + warning);
+        }
+        if (!validation.isLoadable()) {
+            for (String error : validation.getBlockingErrors()) {
+                System.out.println("[genprobe] pack error: " + error);
+            }
+            System.out.println("[genprobe] FAIL: pack validation blocked generation");
+            System.exit(1);
+            return;
+        }
+        System.out.println("[genprobe] pack validation: PASS");
+
+        IrisPlatforms.bind(new StubPlatform());
 
         Engine engine;
         try {
@@ -184,8 +205,8 @@ public final class GenerationProbe {
         int ok = 0;
         int failed = 0;
 
-        for (int cz = -radius; cz <= radius; cz++) {
-            for (int cx = -radius; cx <= radius; cx++) {
+        for (int cz = centerChunkZ - radius; cz <= centerChunkZ + radius; cz++) {
+            for (int cx = centerChunkX - radius; cx <= centerChunkX + radius; cx++) {
                 String at = cx + "," + cz;
                 drainReported();
                 List<Throwable> failures = new ArrayList<>();

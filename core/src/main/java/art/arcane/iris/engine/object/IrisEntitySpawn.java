@@ -22,6 +22,7 @@ import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
@@ -29,6 +30,7 @@ import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.format.C;
+import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.math.Vector3d;
 import art.arcane.volmlib.util.matter.MatterMarker;
@@ -70,26 +72,19 @@ public class IrisEntitySpawn implements IRare {
     private transient IrisMarker referenceMarker;
 
     public int spawn(Engine gen, Chunk c, RNG rng) {
-        int spawns = minSpawns == maxSpawns ? minSpawns : rng.i(Math.min(minSpawns, maxSpawns), Math.max(minSpawns, maxSpawns));
+        int spawns = LootResolver.inclusive(rng, minSpawns, maxSpawns);
         int s = 0;
 
         if (spawns > 0) {
             for (int id = 0; id < spawns; id++) {
-                int x = (c.getX() * 16) + rng.i(15);
-                int z = (c.getZ() * 16) + rng.i(15);
+                int x = (c.getX() * 16) + rng.i(16);
+                int z = (c.getZ() * 16) + rng.i(16);
                 World world = BukkitWorldBinding.tryBind(gen.getWorld()) ? BukkitWorldBinding.world(gen.getWorld()) : null;
                 int h = gen.getHeight(x, z, true) + (world == null ? -64 : world.getMinHeight());
                 int hf = gen.getHeight(x, z, false) + (world == null ? -64 : world.getMinHeight());
                 Location l = switch (getReferenceSpawner().getGroup()) {
                     case NORMAL -> new Location(c.getWorld(), x, hf + 1, z);
-                    case CAVE -> {
-                        if (J.isFolia()) {
-                            // Avoid mantle region IO lookups on Folia tick threads.
-                            yield new Location(c.getWorld(), x, h + 1, z);
-                        }
-                        yield gen.getMantle().findMarkers(c.getX(), c.getZ(), MarkerMatter.CAVE_FLOOR)
-                                .convert((i) -> BukkitPlatform.toLocation(i, c.getWorld()).add(0, 1, 0)).getRandom(rng);
-                    }
+                    case CAVE -> findCaveSpawnLocation(gen, c, rng);
                     case UNDERWATER, BEACH -> new Location(c.getWorld(), x, rng.i(h + 1, hf), z);
                 };
 
@@ -113,7 +108,7 @@ public class IrisEntitySpawn implements IRare {
     }
 
     public int spawn(Engine gen, IrisPosition c, RNG rng) {
-        int spawns = minSpawns == maxSpawns ? minSpawns : rng.i(Math.min(minSpawns, maxSpawns), Math.max(minSpawns, maxSpawns));
+        int spawns = LootResolver.inclusive(rng, minSpawns, maxSpawns);
         int s = 0;
 
         if (!BukkitWorldBinding.tryBind(gen.getWorld())) {
@@ -160,11 +155,23 @@ public class IrisEntitySpawn implements IRare {
             return null;
         }
 
-        if (rng.aquire(() -> new RNG(g.getSeedManager().getEntity())).i(1, getRarity()) == 1) {
+        if (LootResolver.oneIn(rng.aquire(() -> new RNG(g.getSeedManager().getEntity())), getRarity())) {
             return spawn100(g, at);
         }
 
         return null;
+    }
+
+    static Location findCaveSpawnLocation(Engine engine, Chunk chunk, RNG rng) {
+        if (J.isFolia()) {
+            return null;
+        }
+        KList<IrisPosition> markers = engine.getMantle().findMarkers(chunk.getX(), chunk.getZ(), MarkerMatter.CAVE_FLOOR);
+        return selectCaveSpawnLocation(markers, chunk.getWorld(), rng);
+    }
+
+    static Location selectCaveSpawnLocation(KList<IrisPosition> markers, World world, RNG rng) {
+        return markers.convert((marker) -> BukkitPlatform.toLocation(marker, world).add(0, 1, 0)).getRandom(rng);
     }
 
     private Entity spawn100(Engine g, Location at) {

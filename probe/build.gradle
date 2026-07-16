@@ -17,6 +17,9 @@ dependencies {
     implementation(project(':core'))
     compileOnly(libs.spigot)
     testImplementation('junit:junit:4.13.2')
+    testImplementation(volmLibCoordinate) {
+        transitive = false
+    }
     compileOnly(volmLibCoordinate) {
         transitive = false
     }
@@ -50,6 +53,8 @@ String probePack = providers.gradleProperty('probePack')
     .orElse('/Users/brianfopiano/Developer/RemoteGit/[Minecraft Server]/consumers/plugin-consumers/instances/purpur-26.2/plugins/Iris/packs/overworld')
     .get()
 String probeRadius = providers.gradleProperty('probeRadius').orElse('2').get()
+String probeCenterChunkX = providers.gradleProperty('probeCenterChunkX').orElse('0').get()
+String probeCenterChunkZ = providers.gradleProperty('probeCenterChunkZ').orElse('0').get()
 
 tasks.register('genProbe', JavaExec) {
     group = 'verification'
@@ -57,7 +62,7 @@ tasks.register('genProbe', JavaExec) {
     mainClass = 'art.arcane.iris.probe.GenerationProbe'
     classpath = sourceSets.main.runtimeClasspath
     jvmArgs('--add-modules', 'jdk.incubator.vector')
-    args(probePack, probeRadius)
+    args(probePack, probeRadius, probeCenterChunkX, probeCenterChunkZ)
     dependsOn(':core:compileJava')
 }
 

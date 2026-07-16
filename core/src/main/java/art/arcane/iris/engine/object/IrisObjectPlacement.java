@@ -23,6 +23,7 @@ import art.arcane.iris.platform.bukkit.BukkitBlockResolution;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
@@ -35,7 +36,6 @@ import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.common.data.DataProvider;
-import art.arcane.volmlib.util.data.WeightedRandom;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
 import com.google.gson.annotations.SerializedName;
@@ -270,7 +270,7 @@ public class IrisObjectPlacement {
         TableCache tc = new TableCache();
 
         for (IObjectLoot loot : list) {
-            if (loot == null)
+            if (loot == null || loot.getWeight() <= 0)
                 continue;
             IrisLootTable table = loader.apply(loot.getName());
             if (table == null) {
@@ -286,7 +286,7 @@ public class IrisObjectPlacement {
                 for (PlatformBlockState filterState : loot.getFilter(manager)) {
                     BlockData filterData = (BlockData) filterState.nativeHandle();
                     if (!tc.basic.containsKey(filterData.getMaterial())) {
-                        tc.basic.put(filterData.getMaterial(), new WeightedRandom<>());
+                        tc.basic.put(filterData.getMaterial(), new WeightedTables());
                     }
 
                     tc.basic.get(filterData.getMaterial()).put(table, loot.getWeight());
@@ -300,7 +300,7 @@ public class IrisObjectPlacement {
                     }
 
                     if (!tc.exact.get(filterData.getMaterial()).containsKey(filterData)) {
-                        tc.exact.get(filterData.getMaterial()).put(filterData, new WeightedRandom<>());
+                        tc.exact.get(filterData.getMaterial()).put(filterData, new WeightedTables());
                     }
 
                     tc.exact.get(filterData.getMaterial()).get(filterData).put(table, loot.getWeight());
@@ -334,7 +334,7 @@ public class IrisObjectPlacement {
                 picked = cache.exact.get(data.getMaterial()).get(data).pullRandom(rng);
             } else if (cache.basic.containsKey(data.getMaterial())) {
                 picked = cache.basic.get(data.getMaterial()).pullRandom(rng);
-            } else if (cache.global.getSize() > 0) {
+            } else if (!cache.global.isEmpty()) {
                 picked = cache.global.pullRandom(rng);
             }
 
@@ -345,14 +345,39 @@ public class IrisObjectPlacement {
     }
 
     private static class TableCache {
-        final transient WeightedRandom<IrisLootTable> global = new WeightedRandom<>();
-        final transient KMap<Material, WeightedRandom<IrisLootTable>> basic = new KMap<>();
-        final transient KMap<Material, KMap<BlockData, WeightedRandom<IrisLootTable>>> exact = new KMap<>();
+        final transient WeightedTables global = new WeightedTables();
+        final transient KMap<Material, WeightedTables> basic = new KMap<>();
+        final transient KMap<Material, KMap<BlockData, WeightedTables>> exact = new KMap<>();
 
         private void merge(TableCache other) {
             global.merge(other.global);
-            basic.merge(other.basic, WeightedRandom::merge);
-            exact.merge(other.exact, (a, b) -> a.merge(b, WeightedRandom::merge));
+            basic.merge(other.basic, WeightedTables::merge);
+            exact.merge(other.exact, (a, b) -> a.merge(b, WeightedTables::merge));
         }
+    }
+
+    private static final class WeightedTables {
+        private final KList<WeightedTable> tables = new KList<>();
+
+        private void put(IrisLootTable table, int weight) {
+            tables.add(new WeightedTable(table, weight));
+        }
+
+        private IrisLootTable pullRandom(RNG rng) {
+            WeightedTable picked = LootResolver.pickWeighted(tables, WeightedTable::weight, rng);
+            return picked == null ? null : picked.table();
+        }
+
+        private boolean isEmpty() {
+            return tables.isEmpty();
+        }
+
+        private WeightedTables merge(WeightedTables other) {
+            tables.addAll(other.tables);
+            return this;
+        }
+    }
+
+    private record WeightedTable(IrisLootTable table, int weight) {
     }
 }

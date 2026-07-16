@@ -66,34 +66,33 @@ public class CustomBiomeSource extends BiomeSource {
         this.cacheDimension = engine.getDimension();
     }
 
-    private static List<Holder<Biome>> getAllBiomes(Registry<Biome> customRegistry, Registry<Biome> registry, Engine engine, Holder<Biome> fallback) {
+    private static List<Holder<Biome>> getAllBiomes(Registry<Biome> customRegistry, Registry<Biome> registry, Engine engine) {
         LinkedHashSet<Holder<Biome>> biomes = new LinkedHashSet<>();
-        boolean resolutionFailed = false;
 
         for (IrisBiome i : engine.getAllBiomes()) {
             Holder<Biome> vanillaHolder = NMSBinding.biomeToBiomeBase(registry, i.getVanillaDerivative());
-            if (vanillaHolder != null) {
-                biomes.add(vanillaHolder);
-            } else if (!i.isCustom()) {
-                resolutionFailed = true;
+            if (vanillaHolder == null) {
+                throw new IllegalStateException("Iris structure biome derivative '"
+                        + i.getVanillaDerivativeKey() + "' is not registered for biome '" + i.getLoadKey() + "'");
             }
+            biomes.add(vanillaHolder);
 
             if (i.isCustom()) {
                 for (IrisBiomeCustom j : i.getCustomDerivitives()) {
                     Holder<Biome> customHolder = resolveCustomBiomeHolder(customRegistry, engine, j.getId());
-                    if (customHolder != null) {
-                        biomes.add(customHolder);
-                    } else {
-                        resolutionFailed = true;
+                    if (customHolder == null) {
+                        throw new IllegalStateException("Iris custom structure biome '"
+                                + engine.getDimension().getLoadKey() + ":" + j.getId() + "' is not registered");
                     }
+                    biomes.add(customHolder);
                 }
             }
         }
 
-        if ((resolutionFailed || biomes.isEmpty()) && fallback != null) {
-            biomes.add(fallback);
+        if (biomes.isEmpty()) {
+            throw new IllegalStateException("Iris pack '" + engine.getName()
+                    + "' has no registered structure biomes");
         }
-
         return new ArrayList<>(biomes);
     }
 
@@ -159,7 +158,7 @@ public class CustomBiomeSource extends BiomeSource {
                 .lookup(Registries.BIOME).orElse(null);
         Registry<Biome> worldRegistry = ((CraftWorld) world).getHandle().registryAccess()
                 .lookup(Registries.BIOME).orElse(null);
-        return Set.copyOf(getAllBiomes(customRegistry, worldRegistry, engine, fallbackBiome));
+        return Set.copyOf(getAllBiomes(customRegistry, worldRegistry, engine));
     }
 
     private KMap<String, Holder<Biome>> fillCustomBiomes(Registry<Biome> customRegistry, Engine engine, Holder<Biome> fallback) {
@@ -310,10 +309,16 @@ public class CustomBiomeSource extends BiomeSource {
         int blockZ = z << 2;
         IrisBiome irisBiome = engine.getComplex().getTrueBiomeStream().get(blockX, blockZ);
         if (irisBiome == null) {
-            return getFallbackBiome();
+            throw new IllegalStateException("Iris returned no surface structure biome at block "
+                    + blockX + "," + blockZ);
         }
         Holder<Biome> holder = NMSBinding.biomeToBiomeBase(biomeRegistry, irisBiome.getVanillaDerivative());
-        return holder == null ? getFallbackBiome() : holder;
+        if (holder == null) {
+            throw new IllegalStateException("Iris structure biome derivative '"
+                    + irisBiome.getVanillaDerivativeKey() + "' is not registered at block "
+                    + blockX + "," + blockZ);
+        }
+        return holder;
     }
 
     public Holder<Biome> getVisibleNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
@@ -362,19 +367,17 @@ public class CustomBiomeSource extends BiomeSource {
     private Holder<Biome> resolveStructureBiomeHolder(int x, int y, int z) {
         BiomeResolution resolution = resolveBiomeResolution(x, y, z);
         if (resolution == null) {
-            return getFallbackBiome();
+            throw new IllegalStateException("Iris returned no structure biome at quart "
+                    + x + "," + y + "," + z);
         }
 
         Holder<Biome> holder = NMSBinding.biomeToBiomeBase(biomeRegistry, resolution.irisBiome.getVanillaDerivative());
-        if (holder != null) {
-            return holder;
+        if (holder == null) {
+            throw new IllegalStateException("Iris structure biome derivative '"
+                    + resolution.irisBiome.getVanillaDerivativeKey() + "' is not registered at block "
+                    + resolution.blockX + "," + resolution.blockY + "," + resolution.blockZ);
         }
-
-        if (resolution.irisBiome.isCustom()) {
-            return resolveCustomHolder(resolution);
-        }
-
-        return getFallbackBiome();
+        return holder;
     }
 
     private Holder<Biome> resolveVisibleBiomeHolder(int x, int y, int z) {

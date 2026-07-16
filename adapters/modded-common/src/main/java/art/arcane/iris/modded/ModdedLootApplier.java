@@ -19,17 +19,14 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.framework.PlacedObject;
 import art.arcane.iris.engine.object.IObjectLoot;
 import art.arcane.iris.engine.object.InventorySlotType;
-import art.arcane.iris.engine.object.IrisBiome;
-import art.arcane.iris.engine.object.IrisLootMode;
-import art.arcane.iris.engine.object.IrisLootReference;
 import art.arcane.iris.engine.object.IrisLootTable;
 import art.arcane.iris.engine.object.IrisObjectLoot;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisObjectVanillaLoot;
-import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.collection.KList;
@@ -42,10 +39,12 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
+import net.minecraft.world.RandomizableContainer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.level.storage.loot.LootTable;
 import net.minecraft.world.level.storage.loot.parameters.LootContextParamSets;
@@ -60,8 +59,13 @@ public final class ModdedLootApplier {
     private ModdedLootApplier() {
     }
 
-    public static void apply(Engine engine, ServerLevel level, BlockPos pos, BlockState state, MantleChunk<Matter> mc, RNG rng, int localX, int localZ) {
-        List<LootSource> sources = resolveSources(engine, level, rng, pos, state, mc);
+    public static void apply(Engine engine, ServerLevel level, BlockPos pos, BlockState state, MantleChunk<Matter> mc) {
+        if (!isCanonicalContainer(pos, state)) {
+            return;
+        }
+        RNG rng = LootResolver.containerRng(engine.getSeedManager().getLoot(), pos.getX(), pos.getY(), pos.getZ());
+        boolean nativeLootDefined = hasNativeLootTable(level, pos, state);
+        List<LootSource> sources = resolveSources(engine, level, rng, pos, state, mc, nativeLootDefined);
         if (sources.isEmpty()) {
             return;
         }
@@ -80,7 +84,7 @@ public final class ModdedLootApplier {
                 if (table == null) {
                     continue;
                 }
-                items.addAll(ModdedItemTranslator.loot(table, rng, InventorySlotType.STORAGE, level, localX, pos.getY(), localZ));
+                items.addAll(ModdedItemTranslator.loot(table, engine.getSeedManager().getLoot(), InventorySlotType.STORAGE, level, pos.getX(), pos.getY(), pos.getZ()));
                 continue;
             }
             if (source instanceof NativeLootSource nativeSource) {
@@ -96,15 +100,18 @@ public final class ModdedLootApplier {
         fillContainer(container, items, rng);
     }
 
-    private static List<LootSource> resolveSources(Engine engine, ServerLevel level, RNG rng, BlockPos pos, BlockState state, MantleChunk<Matter> mc) {
+    private static List<LootSource> resolveSources(Engine engine, ServerLevel level, RNG rng, BlockPos pos, BlockState state, MantleChunk<Matter> mc, boolean nativeLootDefined) {
         int rx = pos.getX();
         int rz = pos.getZ();
         int ry = pos.getY() - engine.getWorld().minHeight();
-        double he = engine.getComplex().getHeightStream().get(rx, rz);
         List<LootSource> sources = new ArrayList<>();
+        boolean objectLootDefined = nativeLootDefined;
 
         PlacedObject po = engine.getObjectPlacement(rx, ry, rz, mc);
         if (po != null && po.getPlacement() != null && ModdedBlockResolution.isStorageChest(state)) {
+            objectLootDefined = objectLootDefined
+                    || po.getPlacement().getLoot().isNotEmpty()
+                    || po.getPlacement().getVanillaLoot().isNotEmpty();
             Candidate picked = pickPlacementTable(engine, level, po.getPlacement(), state, rng);
             if (picked != null) {
                 sources.add(picked.source());
@@ -114,17 +121,16 @@ public final class ModdedLootApplier {
             }
         }
 
-        IrisRegion region = engine.getComplex().getRegionStream().get(rx, rz);
-        IrisBiome biomeSurface = engine.getComplex().getTrueBiomeStream().get(rx, rz);
-        IrisBiome biomeUnder = ry < he ? engine.getCaveBiome(rx, ry, rz) : biomeSurface;
-
-        double multiplier = 1D * engine.getDimension().getLoot().getMultiplier() * region.getLoot().getMultiplier() * biomeSurface.getLoot().getMultiplier() * biomeUnder.getLoot().getMultiplier();
-        boolean fallback = sources.isEmpty();
-        injectReferenceSources(sources, engine.getDimension().getLoot(), engine, fallback);
-        injectReferenceSources(sources, region.getLoot(), engine, fallback);
-        injectReferenceSources(sources, biomeSurface.getLoot(), engine, fallback);
-        injectReferenceSources(sources, biomeUnder.getLoot(), engine, fallback);
-        scaleSources(sources, multiplier, rng);
+        LootResolver.resolveEnvironmentSources(
+                sources,
+                engine,
+                rng,
+                rx,
+                ry,
+                rz,
+                objectLootDefined,
+                IrisLootSource::new
+        );
         return sources;
     }
 
@@ -134,7 +140,7 @@ public final class ModdedLootApplier {
         List<Candidate> global = new ArrayList<>();
 
         for (IrisObjectLoot loot : placement.getLoot()) {
-            if (loot == null) {
+            if (loot == null || loot.getWeight() <= 0) {
                 continue;
             }
             IrisLootTable table = engine.getData().getLootLoader().load(loot.getName());
@@ -146,7 +152,7 @@ public final class ModdedLootApplier {
         }
 
         for (IrisObjectVanillaLoot loot : placement.getVanillaLoot()) {
-            if (loot == null) {
+            if (loot == null || loot.getWeight() <= 0) {
                 continue;
             }
             ResourceKey<LootTable> key = resolveNativeKey(loot.getName(), candidate -> hasNativeTable(level, candidate));
@@ -162,30 +168,7 @@ public final class ModdedLootApplier {
         }
 
         List<Candidate> pool = !exact.isEmpty() ? exact : !basic.isEmpty() ? basic : global;
-        return pickWeighted(pool, rng);
-    }
-
-    static <T> void injectSources(List<T> sources, List<? extends T> additions, IrisLootMode mode, boolean fallback) {
-        if (mode == IrisLootMode.FALLBACK && !fallback) {
-            return;
-        }
-        if (mode == IrisLootMode.CLEAR || mode == IrisLootMode.REPLACE) {
-            sources.clear();
-        }
-        sources.addAll(additions);
-    }
-
-    static <T> void scaleSources(List<T> sources, double multiplier, RNG rng) {
-        if (sources.isEmpty()) {
-            return;
-        }
-        int target = (int) Math.round(sources.size() * multiplier);
-        while (sources.size() < target && !sources.isEmpty()) {
-            sources.add(sources.get(rng.i(sources.size() - 1)));
-        }
-        while (sources.size() > target && !sources.isEmpty()) {
-            sources.remove(rng.i(sources.size() - 1));
-        }
+        return LootResolver.pickWeighted(pool, Candidate::weight, rng);
     }
 
     static ResourceKey<LootTable> resolveNativeKey(String name, Predicate<ResourceKey<LootTable>> registryContains) {
@@ -203,23 +186,6 @@ public final class ModdedLootApplier {
         }
         scramble(container, rng);
         container.setChanged();
-    }
-
-    private static void injectReferenceSources(List<LootSource> sources, IrisLootReference reference, Engine engine, boolean fallback) {
-        IrisLootMode mode = reference.getMode();
-        if (mode == IrisLootMode.FALLBACK && !fallback) {
-            return;
-        }
-        injectSources(sources, irisSources(reference, engine), mode, fallback);
-    }
-
-    private static List<LootSource> irisSources(IrisLootReference reference, Engine engine) {
-        KList<IrisLootTable> tables = reference.getLootTables(engine.getComplex());
-        List<LootSource> sources = new ArrayList<>(tables.size());
-        for (IrisLootTable table : tables) {
-            sources.add(new IrisLootSource(table));
-        }
-        return sources;
     }
 
     private static boolean hasNativeTable(ServerLevel level, ResourceKey<LootTable> key) {
@@ -244,25 +210,43 @@ public final class ModdedLootApplier {
         }
     }
 
-    private static Candidate pickWeighted(List<Candidate> pool, RNG rng) {
-        if (pool.isEmpty()) {
-            return null;
+    static boolean isCanonicalContainer(BlockPos pos, BlockState state) {
+        if (!(state.getBlock() instanceof ChestBlock) || state.getValue(ChestBlock.TYPE) == ChestType.SINGLE) {
+            return true;
         }
-        int total = 0;
-        for (Candidate candidate : pool) {
-            total += Math.max(0, candidate.weight());
+        BlockPos connected = ChestBlock.getConnectedBlockPos(pos, state);
+        if (connected.equals(pos)) {
+            return true;
         }
-        if (total <= 0) {
-            return pool.get(rng.nextInt(pool.size()));
+        return isCanonicalPair(pos, connected);
+    }
+
+    static boolean isCanonicalPair(BlockPos pos, BlockPos connected) {
+        return pos.getX() < connected.getX()
+                || pos.getX() == connected.getX() && pos.getZ() <= connected.getZ();
+    }
+
+    static boolean hasNativeLootTable(ServerLevel level, BlockPos pos, BlockState state) {
+        if (hasNativeLootTableAt(level, pos)) {
+            return true;
         }
-        int pull = rng.nextInt(total);
-        for (Candidate candidate : pool) {
-            pull -= Math.max(0, candidate.weight());
-            if (pull < 0) {
-                return candidate;
-            }
+        if (!(state.getBlock() instanceof ChestBlock) || state.getValue(ChestBlock.TYPE) == ChestType.SINGLE) {
+            return false;
         }
-        return pool.get(pool.size() - 1);
+        BlockPos connected = ChestBlock.getConnectedBlockPos(pos, state);
+        return level.hasChunkAt(connected) && hasNativeLootTableAt(level, connected);
+    }
+
+    private static boolean hasNativeLootTableAt(ServerLevel level, BlockPos pos) {
+        return hasNativeLootTable(level.getBlockEntity(pos));
+    }
+
+    static boolean hasNativeLootTable(BlockEntity blockEntity) {
+        return blockEntity instanceof RandomizableContainer container && hasNativeLootTable(container);
+    }
+
+    static boolean hasNativeLootTable(RandomizableContainer container) {
+        return container != null && container.getLootTable() != null;
     }
 
     private static Container resolveContainer(ServerLevel level, BlockPos pos, BlockState state) {

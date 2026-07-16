@@ -27,16 +27,17 @@ public final class StructurePlacementGrid {
     private StructurePlacementGrid() {
     }
 
-    public static boolean startsInChunk(IrisStructurePlacement placement, int cx, int cz, long seed, int placementOrdinal) {
+    public static boolean startsInChunk(IrisStructurePlacement placement, int cx, int cz, long seed) {
         return switch (placement.getDistribution()) {
-            case RANDOM_SPREAD -> randomSpreadStart(cx, cz, placement.getSpacing(), placement.getSeparation(), placement.getSalt(), seed);
-            case DENSITY -> densityStart(placement, cx, cz, seed, placementOrdinal);
+            case RANDOM_SPREAD -> randomSpreadStart(cx, cz, placement.getSpacing(), placement.getSeparation(),
+                    placementSalt(placement), seed);
+            case DENSITY -> densityStart(placement, cx, cz, seed);
             case CONCENTRIC_RINGS -> concentricRingsStart(cx, cz, placement, seed);
         };
     }
 
-    public static RNG placementRng(IrisStructurePlacement placement, int cx, int cz, long seed, int placementOrdinal) {
-        return new RNG(placementSeed(placement, cx, cz, seed, placementOrdinal));
+    public static RNG placementRng(IrisStructurePlacement placement, int cx, int cz, long seed) {
+        return new RNG(placementSeed(placement, cx, cz, seed));
     }
 
     public static boolean randomSpreadStart(int cx, int cz, int spacing, int separation, int salt, long seed) {
@@ -74,7 +75,7 @@ public final class StructurePlacementGrid {
         int slots = Math.min(spread, count - firstIndex);
         int slot = placementIndex - firstIndex;
         double slotAngle = (2.0 * Math.PI) / slots;
-        double offset = unitDouble(mix(seed, ring, count, placement.getSalt())) * slotAngle;
+        double offset = unitDouble(mix(seed, ring, count, placementSalt(placement))) * slotAngle;
         double angle = offset + (slot * slotAngle);
         long configuredRadius = (long) ring * distance;
         if (configuredRadius > Integer.MAX_VALUE) {
@@ -106,7 +107,7 @@ public final class StructurePlacementGrid {
                 continue;
             }
             double slotAngle = (2.0 * Math.PI) / slots;
-            double offset = unitDouble(mix(seed, ring, count, placement.getSalt())) * slotAngle;
+            double offset = unitDouble(mix(seed, ring, count, placementSalt(placement))) * slotAngle;
             double slotPosition = (Math.atan2(cz, cx) - offset) / slotAngle;
             int nearestSlot = Math.floorMod((int) Math.round(slotPosition), slots);
             for (int delta = -1; delta <= 1; delta++) {
@@ -120,7 +121,7 @@ public final class StructurePlacementGrid {
         return false;
     }
 
-    private static boolean densityStart(IrisStructurePlacement placement, int cx, int cz, long seed, int placementOrdinal) {
+    private static boolean densityStart(IrisStructurePlacement placement, int cx, int cz, long seed) {
         double density = placement.getDensity();
         if (density <= 0.0) {
             return false;
@@ -128,24 +129,81 @@ public final class StructurePlacementGrid {
         if (density >= 1.0) {
             return true;
         }
-        RNG rng = new RNG(placementSeed(placement, cx, cz, seed, placementOrdinal) ^ DENSITY_SIGNATURE);
+        RNG rng = new RNG(placementSeed(placement, cx, cz, seed) ^ DENSITY_SIGNATURE);
         return rng.chance(density);
     }
 
-    private static long placementSeed(IrisStructurePlacement placement, int cx, int cz, long seed, int placementOrdinal) {
+    private static long placementSeed(IrisStructurePlacement placement, int cx, int cz, long seed) {
         long signature = 1469598103934665603L;
-        signature = (signature ^ placement.getDistribution().ordinal()) * 1099511628211L;
-        signature = (signature ^ placement.getSalt()) * 1099511628211L;
-        signature = (signature ^ placementOrdinal) * 1099511628211L;
-        for (String key : placement.getStructures()) {
-            if (key == null) {
-                continue;
-            }
-            for (int i = 0; i < key.length(); i++) {
-                signature = (signature ^ key.charAt(i)) * 1099511628211L;
+        signature = appendLong(signature, placement.getDistribution().ordinal());
+        signature = appendLong(signature, placement.getSalt());
+        String placementId = placement.getPlacementId();
+        if (placementId != null && !placementId.isBlank()) {
+            signature = appendLong(signature, 1L);
+            signature = appendSignature(signature, placementId.trim());
+        } else {
+            signature = appendLong(signature, 0L);
+            signature = appendLong(signature, placement.getSpacing());
+            signature = appendLong(signature, placement.getSeparation());
+            signature = appendLong(signature, Double.doubleToLongBits(placement.getDensity()));
+            signature = appendLong(signature, placement.getRingCount());
+            signature = appendLong(signature, placement.getRingDistance());
+            signature = appendLong(signature, placement.getRingSpread());
+            signature = appendLong(signature, placement.getMinHeight());
+            signature = appendLong(signature, placement.getMaxHeight());
+            signature = appendLong(signature, placement.isUnderground() ? 1L : 0L);
+            signature = appendLong(signature, placement.isUnderwater() ? 1L : 0L);
+            signature = appendLong(signature, placement.getStructures().size());
+            for (String key : placement.getStructures()) {
+                signature = appendSignature(signature, key == null ? "" : key);
             }
         }
-        return mix(seed ^ signature, cx, cz, placement.getSalt() ^ placementOrdinal);
+        int identitySalt = (int) (signature ^ (signature >>> 32));
+        return mix(seed ^ signature, cx, cz, placementSalt(placement) ^ identitySalt);
+    }
+
+    private static long appendSignature(long signature, String value) {
+        long result = appendLong(signature, value.length());
+        for (int index = 0; index < value.length(); index++) {
+            result = (result ^ value.charAt(index)) * 1099511628211L;
+        }
+        return result;
+    }
+
+    private static long appendLong(long signature, long value) {
+        long result = signature;
+        long remaining = value;
+        for (int index = 0; index < Long.BYTES; index++) {
+            result = (result ^ (remaining & 0xffL)) * 1099511628211L;
+            remaining >>>= Byte.SIZE;
+        }
+        return result;
+    }
+
+    static int placementSalt(IrisStructurePlacement placement) {
+        String placementId = placement.getPlacementId();
+        long identity;
+        if (placementId != null && !placementId.isBlank()) {
+            identity = appendSignature(1469598103934665603L, placementId.trim());
+        } else {
+            identity = 1469598103934665603L;
+            identity = appendLong(identity, placement.getDistribution().ordinal());
+            identity = appendLong(identity, placement.getSpacing());
+            identity = appendLong(identity, placement.getSeparation());
+            identity = appendLong(identity, Double.doubleToLongBits(placement.getDensity()));
+            identity = appendLong(identity, placement.getRingCount());
+            identity = appendLong(identity, placement.getRingDistance());
+            identity = appendLong(identity, placement.getRingSpread());
+            identity = appendLong(identity, placement.getMinHeight());
+            identity = appendLong(identity, placement.getMaxHeight());
+            identity = appendLong(identity, placement.isUnderground() ? 1L : 0L);
+            identity = appendLong(identity, placement.isUnderwater() ? 1L : 0L);
+            identity = appendLong(identity, placement.getStructures().size());
+            for (String key : placement.getStructures()) {
+                identity = appendSignature(identity, key == null ? "" : key);
+            }
+        }
+        return placement.getSalt() ^ (int) (identity ^ (identity >>> 32));
     }
 
     private static double unitDouble(long value) {

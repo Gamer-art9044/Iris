@@ -42,6 +42,7 @@ import art.arcane.iris.modded.service.ModdedLogFilterService;
 import art.arcane.iris.modded.service.ModdedPreservationService;
 import art.arcane.iris.modded.service.ModdedSettingsHotloadService;
 import art.arcane.iris.modded.service.ModdedStudioHotloadService;
+import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisServices;
 import net.minecraft.core.BlockPos;
@@ -53,6 +54,8 @@ import net.minecraft.world.level.storage.LevelData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayDeque;
+
 public final class ModdedEngineBootstrap {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String[] CORE_SELF_TEST_CLASSES = {
@@ -61,9 +64,9 @@ public final class ModdedEngineBootstrap {
         "art.arcane.iris.core.loader.IrisData"
     };
     private static final Object LOCK = new Object();
-    private static final ModdedServiceManager SERVICE_MANAGER = new ModdedServiceManager();
+    private static final ModdedServiceManager UNBOUND_SERVICE_MANAGER = new ModdedServiceManager();
     private static volatile ModdedLoader loader;
-    private static volatile ModdedPlatform platform;
+    private static volatile BoundRuntime runtime;
     private static volatile MinecraftServer currentServer;
     private static volatile MinecraftServer spawnCaptureServer;
     private static volatile boolean initialSpawnWasDefault;
@@ -72,19 +75,20 @@ public final class ModdedEngineBootstrap {
     }
 
     public static ModdedServiceManager services() {
-        return SERVICE_MANAGER;
+        BoundRuntime bound = runtime;
+        return bound == null ? UNBOUND_SERVICE_MANAGER : bound.services();
     }
 
     public static ModdedScheduler schedulerOrNull() {
-        ModdedPlatform bound = platform;
-        return bound == null ? null : bound.moddedScheduler();
+        BoundRuntime bound = runtime;
+        return bound == null ? null : bound.platform().moddedScheduler();
     }
 
     public static void tick(MinecraftServer server) {
         ModdedScheduler.tick(server);
         ModdedStartup.runOnce(server);
         ModdedPrimaryWorldRouter.tick(server);
-        SERVICE_MANAGER.tick(server);
+        services().tick(server);
         ModdedPregenBossBar.tick(server);
         ModdedProtocolHandler.tickDimensionSync(server);
     }
@@ -93,14 +97,15 @@ public final class ModdedEngineBootstrap {
         captureInitialSpawn(server);
         currentServer = server;
         bind();
-        bindWorldGenerators(server);
-        ModdedStartup.reset();
         ModdedScheduler scheduler = schedulerOrNull();
         if (scheduler != null) {
             scheduler.reset();
         }
+        ModdedStartup.prepareForStartup();
         IrisModdedChunkGenerator.startGenPool();
-        SERVICE_MANAGER.enableAll();
+        bindWorldGenerators(server);
+        ModdedStartup.runOnce(server);
+        services().enableAll();
         ModdedProtocolHandler.start(server);
         ModdedSentry.start(loader());
     }
@@ -115,6 +120,7 @@ public final class ModdedEngineBootstrap {
 
     public static void serverAboutToStart(MinecraftServer server) {
         captureInitialSpawn(server);
+        ModdedStartup.prepareForStartup();
     }
 
     public static void serverStarted(MinecraftServer server) {
@@ -140,7 +146,7 @@ public final class ModdedEngineBootstrap {
         ModdedStudioCommands.clear();
         ModdedWorldEngines.shutdown();
         ModdedPrimaryWorldRouter.clear();
-        SERVICE_MANAGER.disableAll();
+        services().disableAll();
         ModdedDimensionManager.clear();
         ModdedScheduler scheduler = schedulerOrNull();
         if (scheduler != null) {
@@ -256,45 +262,141 @@ public final class ModdedEngineBootstrap {
     }
 
     public static ModdedPlatform bind() {
-        ModdedPlatform bound = platform;
+        BoundRuntime bound = runtime;
         if (bound != null) {
-            return bound;
+            return bound.platform();
         }
         synchronized (LOCK) {
-            if (platform != null) {
-                return platform;
+            BoundRuntime synchronizedBound = runtime;
+            if (synchronizedBound != null) {
+                return synchronizedBound.platform();
             }
             ModdedLoader boundLoader = loader();
-            GuiHost.suppressDesktop(boundLoader.clientEnvironment());
             ModdedPlatform created = new ModdedPlatform(boundLoader);
-            IrisPlatforms.bind(created);
-            ModdedDimensionManager.bindAccess(new ModdedServerLevels());
-            IrisObjectRotation.bindFallbackRotator(new ModdedStateRotator());
-            BlockDataMergeSupport.bindFallbackMerger(new ModdedStateMerger());
-            TileData.bindFallbackReader(new ModdedTileReader(boundLoader::currentServer));
-            TileData.bindFallbackFactory(ModdedTileData::fromProperties);
-            ModdedGuiHost.install();
-            ModdedDecoratorHooks decoratorHooks = new ModdedDecoratorHooks();
-            DecoratorPlatformHooks.bind(decoratorHooks, decoratorHooks);
-            ModdedPreservationService preservation = SERVICE_MANAGER.register(ModdedPreservationService.class, new ModdedPreservationService());
-            SERVICE_MANAGER.register(ModdedLogFilterService.class, new ModdedLogFilterService());
-            SERVICE_MANAGER.register(ModdedEngineMaintenanceService.class, new ModdedEngineMaintenanceService());
-            SERVICE_MANAGER.register(ModdedSettingsHotloadService.class, new ModdedSettingsHotloadService());
-            ModdedStudioHotloadService studioHotloadService = SERVICE_MANAGER.register(ModdedStudioHotloadService.class, new ModdedStudioHotloadService());
-            SERVICE_MANAGER.register(ModdedChunkUpdateService.class, new ModdedChunkUpdateService());
-            SERVICE_MANAGER.register(ModdedEntitySpawnService.class, new ModdedEntitySpawnService());
-            IrisServices.register(PreservationRegistry.class, preservation);
-            IrisServices.register(EngineEffectsProvider.class, (EngineEffectsProvider) ModdedEngineEffects::new);
-            IrisServices.register(EnginePlatformHooks.class, studioHotloadService);
-            IrisServices.register(EngineWorldManagerProvider.class, (EngineWorldManagerProvider) (Engine engine) -> new ModdedWorldManager(engine));
-            ModdedCustomContentRegistry.discover();
-            platform = created;
-            SERVICE_MANAGER.enableAll();
-            if (boundLoader.clientEnvironment()) {
-                ModdedStartup.prefetchDefaultPack();
+            ModdedServiceManager createdServices = new ModdedServiceManager();
+            BindRollback rollback = new BindRollback();
+            try {
+                boolean previousDesktopSuppression = GuiHost.isDesktopSuppressed();
+                GuiHost.suppressDesktop(boundLoader.clientEnvironment());
+                rollback.add(() -> GuiHost.suppressDesktop(previousDesktopSuppression));
+
+                IrisPlatform previousPlatform = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+                IrisPlatforms.bind(created);
+                rollback.add(() -> restorePlatform(previousPlatform));
+
+                ModdedServerAccess previousServerAccess = ModdedDimensionManager.bindAccess(new ModdedServerLevels());
+                rollback.add(() -> ModdedDimensionManager.restoreAccess(previousServerAccess));
+
+                IrisObjectRotation.StateRotator previousRotator = IrisObjectRotation.bindPlatformRotator(new ModdedStateRotator());
+                rollback.add(() -> IrisObjectRotation.restorePlatformRotator(previousRotator));
+
+                BlockDataMergeSupport.StateMerger previousMerger = BlockDataMergeSupport.bindPlatformMerger(new ModdedStateMerger());
+                rollback.add(() -> BlockDataMergeSupport.restorePlatformMerger(previousMerger));
+
+                TileData.TileReader previousTileReader = TileData.bindPlatformReader(new ModdedTileReader(boundLoader::currentServer));
+                rollback.add(() -> TileData.restorePlatformReader(previousTileReader));
+
+                TileData.TileFactory previousTileFactory = TileData.bindPlatformFactory(ModdedTileData::fromProperties);
+                rollback.add(() -> TileData.restorePlatformFactory(previousTileFactory));
+
+                GuiHost.Provider previousGuiHost = GuiHost.get();
+                ModdedGuiHost.install();
+                rollback.add(() -> GuiHost.set(previousGuiHost));
+
+                ModdedDecoratorHooks decoratorHooks = new ModdedDecoratorHooks();
+                DecoratorPlatformHooks.Bindings previousDecoratorBindings = DecoratorPlatformHooks.bind(decoratorHooks, decoratorHooks);
+                rollback.add(() -> DecoratorPlatformHooks.restore(previousDecoratorBindings));
+
+                ModdedPreservationService preservation = createdServices.register(
+                        ModdedPreservationService.class, new ModdedPreservationService());
+                createdServices.register(ModdedLogFilterService.class, new ModdedLogFilterService());
+                createdServices.register(ModdedEngineMaintenanceService.class, new ModdedEngineMaintenanceService());
+                createdServices.register(ModdedSettingsHotloadService.class, new ModdedSettingsHotloadService());
+                ModdedStudioHotloadService studioHotloadService = createdServices.register(
+                        ModdedStudioHotloadService.class, new ModdedStudioHotloadService());
+                createdServices.register(ModdedChunkUpdateService.class, new ModdedChunkUpdateService());
+                createdServices.register(ModdedEntitySpawnService.class, new ModdedEntitySpawnService());
+
+                bindService(PreservationRegistry.class, preservation, rollback);
+                bindService(EngineEffectsProvider.class,
+                        (EngineEffectsProvider) ModdedEngineEffects::new, rollback);
+                bindService(EnginePlatformHooks.class, studioHotloadService, rollback);
+                bindService(EngineWorldManagerProvider.class,
+                        (EngineWorldManagerProvider) (Engine engine) -> new ModdedWorldManager(engine), rollback);
+
+                ModdedCustomContentRegistry.Discovery customContentDiscovery =
+                        ModdedCustomContentRegistry.discover();
+                rollback.add(customContentDiscovery::rollback);
+                ModdedIrisSplash.print(boundLoader);
+                createdServices.enableAll();
+                runtime = new BoundRuntime(created, createdServices);
+                rollback.clear();
+                return created;
+            } catch (Throwable failure) {
+                createdServices.rollback(failure);
+                rollback.restore(failure);
+                LOGGER.error("Iris modded platform binding failed", failure);
+                if (failure instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                if (failure instanceof Error fatalError) {
+                    throw fatalError;
+                }
+                throw new IllegalStateException("Iris modded platform binding failed", failure);
             }
-            ModdedIrisSplash.print(boundLoader);
-            return created;
+        }
+    }
+
+    private static <T> void bindService(Class<T> type, T service, BindRollback rollback) {
+        T previous = IrisServices.getOrNull(type);
+        IrisServices.register(type, service);
+        rollback.add(() -> restoreService(type, previous));
+    }
+
+    private static <T> void restoreService(Class<T> type, T service) {
+        if (service == null) {
+            IrisServices.remove(type);
+            return;
+        }
+        IrisServices.register(type, service);
+    }
+
+    private static void restorePlatform(IrisPlatform platform) {
+        IrisPlatforms.unbind();
+        if (platform != null) {
+            IrisPlatforms.bind(platform);
+        }
+    }
+
+    private record BoundRuntime(ModdedPlatform platform, ModdedServiceManager services) {
+    }
+
+    @FunctionalInterface
+    private interface RollbackAction {
+        void restore() throws Throwable;
+    }
+
+    private static final class BindRollback {
+        private final ArrayDeque<RollbackAction> actions = new ArrayDeque<>();
+
+        void add(RollbackAction action) {
+            actions.push(action);
+        }
+
+        void restore(Throwable failure) {
+            while (!actions.isEmpty()) {
+                try {
+                    actions.pop().restore();
+                } catch (Throwable rollbackFailure) {
+                    if (rollbackFailure != failure) {
+                        failure.addSuppressed(rollbackFailure);
+                    }
+                }
+            }
+        }
+
+        void clear() {
+            actions.clear();
         }
     }
 }

@@ -293,7 +293,6 @@ public class SchemaBuilder {
                     if (!definitions.containsKey(key)) {
                         JSONObject j = new JSONObject();
                         j.put("enum", new JSONArray(StructureSchemaKeys.collect(
-                                IrisPlatforms.get().registries().structureKeys(),
                                 Arrays.asList(data.getStructureLoader().getPossibleKeys()),
                                 Arrays.asList(data.getJigsawPieceLoader().getPossibleKeys())).toArray(new String[0])));
                         definitions.put(key, j);
@@ -585,7 +584,6 @@ public class SchemaBuilder {
                                 if (!definitions.containsKey(key)) {
                                     JSONObject j = new JSONObject();
                                     j.put("enum", new JSONArray(StructureSchemaKeys.collect(
-                                            IrisPlatforms.get().registries().structureKeys(),
                                             Arrays.asList(data.getStructureLoader().getPossibleKeys()),
                                             Arrays.asList(data.getJigsawPieceLoader().getPossibleKeys())).toArray(new String[0])));
                                     definitions.put(key, j);
@@ -595,6 +593,42 @@ public class SchemaBuilder {
                                 items.put("$ref", "#/definitions/" + key);
                                 prop.put("items", items);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla, datapack, or imported Iris structure (use ctrl+space for auto complete!)");
+                            } else if (k.isAnnotationPresent(RegistryListVanillaStructure.class)) {
+                                fancyType = "List<Vanilla Structure>";
+                                String key = "enum-vanilla-structure";
+
+                                if (!definitions.containsKey(key)) {
+                                    JSONObject j = new JSONObject();
+                                    JSONArray values = new JSONArray();
+                                    for (String structureKey : IrisPlatforms.get().registries().structureKeys()) {
+                                        values.put(structureKey);
+                                    }
+                                    j.put("enum", values);
+                                    definitions.put(key, j);
+                                }
+
+                                JSONObject items = new JSONObject();
+                                items.put("$ref", "#/definitions/" + key);
+                                prop.put("items", items);
+                                description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla/datapack structure key (use ctrl+space for auto complete!)");
+                            } else if (k.isAnnotationPresent(RegistryListVanillaStructureSet.class)) {
+                                fancyType = "List<Vanilla Structure Set>";
+                                String key = "enum-vanilla-structure-set";
+
+                                if (!definitions.containsKey(key)) {
+                                    JSONObject j = new JSONObject();
+                                    JSONArray values = new JSONArray();
+                                    for (String structureSetKey : IrisPlatforms.get().structureHooks().structureSetKeys()) {
+                                        values.put(structureSetKey);
+                                    }
+                                    j.put("enum", values);
+                                    definitions.put(key, j);
+                                }
+
+                                JSONObject items = new JSONObject();
+                                items.put("$ref", "#/definitions/" + key);
+                                prop.put("items", items);
+                                description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla/datapack structure set key (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListBlockType.class)) {
                                 fancyType = "List of Block Types";
                                 String key = "enum-block-type";

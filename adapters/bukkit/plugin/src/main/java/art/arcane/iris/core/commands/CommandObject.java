@@ -22,15 +22,13 @@ import art.arcane.iris.Iris;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.link.WorldEditLink;
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.core.runtime.ObjectStudioActivation;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.core.service.ObjectSVC;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.core.service.WandSVC;
 import art.arcane.iris.core.tools.IrisConverter;
-import art.arcane.iris.core.tools.PlausibilizeMode;
-import art.arcane.iris.core.tools.TreePlausibilizer;
+import art.arcane.iris.core.tools.TreePlausibilizeBatch;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -353,197 +351,61 @@ public class CommandObject implements DirectorExecutor {
         }
     }
 
-    @Director(description = "Make tree leaves vanilla-decay-plausible (every leaf within 6 blocks of a log)",
+    @Director(description = "Grow organic branches through the canopy so every leaf survives vanilla decay",
             origin = DirectorOrigin.BOTH)
     public void plausibilize(
             @Param(description = "Object key, prefix (trees/), or filesystem path",
                     customHandler = ObjectTargetHandler.class)
             String target,
-            @Param(description = "DEFAULT: tentacle logs, delete orphans. NORMALIZE: + flip persistent=false. FOLIAGE_OVERATURE: add leaves to bridge orphans, no deletions. SMOKE: wipe & repaint canopy shell.",
-                    defaultValue = "DEFAULT")
-            PlausibilizeMode mode,
-            @Param(description = "Analyze only, do not write", defaultValue = "false")
+            @Param(name = "dryrun", description = "dryrun=true analyzes only, writes nothing", defaultValue = "false")
             boolean dryRun,
-            @Param(description = "Canopy shell radius (SMOKE only), clamped [0,5]", defaultValue = "2")
-            int radius
+            @Param(name = "reach", description = "reach=N max branch length in blocks from existing wood; farther leaf clusters are pinned persistent instead. reach=0 grows unlimited", defaultValue = "12")
+            int reach
     ) {
-        List<Target> targets = resolveTargets(target);
+        IrisData nearest = data();
+        List<TreePlausibilizeBatch.Target> targets = TreePlausibilizeBatch.resolve(target, nearest);
+        if (targets.isEmpty() && nearest == null) {
+            targets = resolveFromPacks(target);
+        }
         if (targets.isEmpty()) {
             sender().sendMessage(C.RED + "No objects matched: " + target);
             return;
         }
 
-        sender().sendMessage(C.IRIS + "Plausibilize [" + mode.name()
-                + (dryRun ? " DRY" : "")
-                + (mode == PlausibilizeMode.SMOKE ? " r=" + radius : "")
+        sender().sendMessage(C.IRIS + "Plausibilize [reach=" + reach + (dryRun ? ", DRY" : "")
                 + "] queued " + targets.size() + " object(s)");
 
         org.bukkit.command.CommandSender s = sender();
-        J.a(() -> runPlausibilize(targets, dryRun, mode, radius, s));
+        List<TreePlausibilizeBatch.Target> queued = targets;
+        J.a(() -> TreePlausibilizeBatch.run(queued, dryRun, reach, nearest, (String line) ->
+                s.sendMessage(line.startsWith("Done:") || line.startsWith("Totals:") || line.startsWith("[")
+                        ? C.IRIS + line
+                        : C.GRAY + "  " + line)));
     }
 
-    private List<Target> resolveTargets(String target) {
-        List<Target> out = new ArrayList<>();
-        if (target == null || target.isEmpty()) {
-            return out;
-        }
-
-        File direct = new File(target);
-        if (direct.isFile() && target.toLowerCase().endsWith(".iob")) {
-            out.add(new Target(direct.getName().replaceAll("\\.iob$", ""), direct));
-            return out;
-        }
-        if (direct.isDirectory()) {
-            walkIob(direct, direct, out);
-            return out;
-        }
-
-        IrisData irisData = data();
-        if (irisData != null) {
-            ResourceLoader<IrisObject> loader = irisData.getObjectLoader();
-            if (!target.endsWith("/") && loader.findFile(target) != null) {
-                out.add(new Target(target, null));
-                return out;
-            }
-            String prefix = target.endsWith("/") ? target : target + "/";
-            for (String k : loader.getPossibleKeys()) {
-                if (k.startsWith(prefix)) {
-                    out.add(new Target(k, null));
-                }
-            }
-            return out;
-        }
-
+    private static List<TreePlausibilizeBatch.Target> resolveFromPacks(String target) {
+        List<TreePlausibilizeBatch.Target> out = new ArrayList<>();
         File packsFolder = Iris.instance.getDataFolder("packs");
         File[] packs = packsFolder.listFiles(File::isDirectory);
-        if (packs != null) {
-            for (File pack : packs) {
-                File objectsRoot = new File(pack, "objects");
-                if (!objectsRoot.isDirectory()) continue;
-                File candidate = new File(objectsRoot, target + ".iob");
-                if (candidate.isFile()) {
-                    out.add(new Target(pack.getName() + "/" + target, candidate));
-                    continue;
-                }
-                File candidateDir = new File(objectsRoot, target);
-                if (candidateDir.isDirectory()) {
-                    walkIob(candidateDir, objectsRoot, out);
-                }
+        if (packs == null) {
+            return out;
+        }
+        for (File pack : packs) {
+            File objectsRoot = new File(pack, "objects");
+            if (!objectsRoot.isDirectory()) {
+                continue;
+            }
+            File candidate = new File(objectsRoot, target + ".iob");
+            if (candidate.isFile()) {
+                out.add(new TreePlausibilizeBatch.Target(pack.getName() + "/" + target, candidate));
+                continue;
+            }
+            File candidateDir = new File(objectsRoot, target);
+            if (candidateDir.isDirectory()) {
+                TreePlausibilizeBatch.walkIob(candidateDir, objectsRoot, out);
             }
         }
         return out;
-    }
-
-    private static void walkIob(File root, File keyRoot, List<Target> out) {
-        File[] kids = root.listFiles();
-        if (kids == null) return;
-        for (File f : kids) {
-            if (f.isDirectory()) {
-                walkIob(f, keyRoot, out);
-            } else if (f.getName().toLowerCase().endsWith(".iob")) {
-                String rel = keyRoot.toPath().relativize(f.toPath()).toString()
-                        .replace(File.separatorChar, '/')
-                        .replaceAll("\\.iob$", "");
-                out.add(new Target(rel, f));
-            }
-        }
-    }
-
-    private record Target(String key, File file) {
-    }
-
-    private static void runPlausibilize(
-            List<Target> targets,
-            boolean dryRun,
-            PlausibilizeMode mode,
-            int radius,
-            org.bukkit.command.CommandSender s
-    ) {
-        int processed = 0;
-        int skipped = 0;
-        int failed = 0;
-        int changed = 0;
-        long totalLogsAdded = 0L;
-        long totalLeavesAdded = 0L;
-        long totalLeavesRemoved = 0L;
-        long totalNormalized = 0L;
-        long totalUnreachableAfter = 0L;
-
-        int progressStep = Math.max(1, targets.size() / 20);
-        int index = 0;
-
-        for (Target t : targets) {
-            index++;
-            try {
-                IrisObject o = loadTarget(t);
-                if (o == null) {
-                    s.sendMessage(C.YELLOW + "  skip " + t.key() + ": failed to load");
-                    skipped++;
-                    continue;
-                }
-
-                TreePlausibilizer.Result r = dryRun
-                        ? TreePlausibilizer.analyze(o, mode, radius)
-                        : TreePlausibilizer.apply(o, mode, radius);
-
-                if (r.skipReason() != null) {
-                    s.sendMessage(C.YELLOW + "  skip " + t.key() + ": " + r.skipReason());
-                    skipped++;
-                    continue;
-                }
-
-                boolean touched = r.logsAdded() > 0 || r.leavesAdded() > 0
-                        || r.leavesRemoved() > 0 || r.leavesNormalized() > 0;
-                if (!dryRun && touched) {
-                    File dest = o.getLoadFile() != null ? o.getLoadFile() : t.file();
-                    if (dest != null) {
-                        o.write(dest);
-                        changed++;
-                    }
-                }
-
-                processed++;
-                totalLogsAdded += r.logsAdded();
-                totalLeavesAdded += r.leavesAdded();
-                totalLeavesRemoved += r.leavesRemoved();
-                totalNormalized += r.leavesNormalized();
-                totalUnreachableAfter += r.unreachableAfter();
-
-                if (touched || targets.size() == 1) {
-                    s.sendMessage(C.GRAY + "  " + t.key()
-                            + C.WHITE + " +" + r.logsAdded() + " logs"
-                            + C.WHITE + " +" + r.leavesAdded() + " leaves"
-                            + C.WHITE + " -" + r.leavesRemoved() + " removed"
-                            + (r.leavesNormalized() > 0 ? C.WHITE + " ~" + r.leavesNormalized() + " normalized" : "")
-                            + (r.unreachableAfter() > 0 ? C.YELLOW + " " + r.unreachableAfter() + " unreachable" : ""));
-                }
-
-                if (targets.size() > 1 && index % progressStep == 0) {
-                    s.sendMessage(C.IRIS + "  [" + index + "/" + targets.size() + "]");
-                }
-            } catch (Throwable e) {
-                s.sendMessage(C.RED + "  fail " + t.key() + ": " + e.getClass().getSimpleName()
-                        + ": " + e.getMessage());
-                e.printStackTrace();
-                failed++;
-            }
-        }
-
-        s.sendMessage(C.IRIS + "Done: " + processed + " processed, " + changed + " changed, "
-                + skipped + " skipped, " + failed + " failed");
-        s.sendMessage(C.IRIS + "Totals: +" + totalLogsAdded + " logs, +" + totalLeavesAdded + " leaves, -"
-                + totalLeavesRemoved + " removed, ~" + totalNormalized + " normalized, "
-                + totalUnreachableAfter + " unreachable");
-    }
-
-    private static IrisObject loadTarget(Target t) throws IOException {
-        if (t.file() != null) {
-            IrisObject o = new IrisObject();
-            o.read(t.file());
-            o.setLoadFile(t.file());
-            return o;
-        }
-        return IrisData.loadAnyObject(t.key(), null);
     }
 
     @Director(description = "Convert .schem files in the 'convert' folder to .iob files.")

@@ -35,6 +35,7 @@ import java.util.stream.Stream;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class ModdedForcedDatapackTest {
@@ -72,6 +73,71 @@ public class ModdedForcedDatapackTest {
                     + "}\n", Files.readString(modifier, StandardCharsets.UTF_8));
         } finally {
             deleteTree(packDirectory);
+        }
+    }
+
+    @Test
+    public void publishesCompleteStagingDirectoryOverExistingPack() throws IOException {
+        Path root = Files.createTempDirectory("iris-forced-pack-publish");
+        try {
+            Path published = Files.createDirectory(root.resolve("iris"));
+            Files.writeString(published.resolve("old.txt"), "old", StandardCharsets.UTF_8);
+            Path staging = Files.createDirectory(root.resolve("staging"));
+            Files.writeString(staging.resolve("new.txt"), "new", StandardCharsets.UTF_8);
+
+            ModdedForcedDatapack.publishDirectory(staging, published);
+
+            assertFalse(Files.exists(staging));
+            assertFalse(Files.exists(published.resolve("old.txt")));
+            assertEquals("new", Files.readString(published.resolve("new.txt"), StandardCharsets.UTF_8));
+            assertEquals(List.of("iris"), directoryEntries(root));
+        } finally {
+            deleteTree(root);
+        }
+    }
+
+    @Test
+    public void publishesStagingDirectoryWhenNoPriorPackExists() throws IOException {
+        Path root = Files.createTempDirectory("iris-forced-pack-first-publish");
+        try {
+            Path published = root.resolve("iris");
+            Path staging = Files.createDirectory(root.resolve("staging"));
+            Files.writeString(staging.resolve("pack.mcmeta"), "first", StandardCharsets.UTF_8);
+
+            ModdedForcedDatapack.publishDirectory(staging, published);
+
+            assertEquals("first",
+                    Files.readString(published.resolve("pack.mcmeta"), StandardCharsets.UTF_8));
+            assertEquals(List.of("iris"), directoryEntries(root));
+        } finally {
+            deleteTree(root);
+        }
+    }
+
+    @Test
+    public void restoresPublishedPackWhenAtomicStagingMoveFails() throws IOException {
+        Path root = Files.createTempDirectory("iris-forced-pack-rollback");
+        try {
+            Path published = Files.createDirectory(root.resolve("iris"));
+            Files.writeString(published.resolve("pack.mcmeta"), "known-good", StandardCharsets.UTF_8);
+            Path missingStaging = root.resolve("missing-staging");
+
+            assertThrows(IOException.class,
+                    () -> ModdedForcedDatapack.publishDirectory(missingStaging, published));
+
+            assertEquals("known-good",
+                    Files.readString(published.resolve("pack.mcmeta"), StandardCharsets.UTF_8));
+            assertEquals(List.of("iris"), directoryEntries(root));
+        } finally {
+            deleteTree(root);
+        }
+    }
+
+    private List<String> directoryEntries(Path root) throws IOException {
+        try (Stream<Path> entries = Files.list(root)) {
+            return entries.map((Path path) -> path.getFileName().toString())
+                    .sorted()
+                    .toList();
         }
     }
 

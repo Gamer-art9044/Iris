@@ -1,0 +1,249 @@
+package art.arcane.iris.modded;
+
+import org.junit.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+public class ModdedLifecycleFailureContractTest {
+    private static final String SOURCE_ROOT_PROPERTY = "iris.moddedCommonSources";
+
+    @Test
+    public void existingDimensionRepointBindsBeforeHandlePublication() throws IOException {
+        String managerSource = source("ModdedDimensionManager.java");
+        String create = method(managerSource, "public static Handle create(");
+        int existingStart = requiredIndex(create, "if (existing != null");
+        int presentStart = requiredIndex(create, "if (serverAccess.hasLevel(server, key))", existingStart + 1);
+        int injectionStart = requiredIndex(create, "try {", presentStart);
+
+        assertRepointBeforePublication(create.substring(existingStart, presentStart));
+        assertRepointBeforePublication(create.substring(presentStart, injectionStart));
+
+        String generatorSource = source("IrisModdedChunkGenerator.java");
+        String repointAndBind = method(generatorSource, "void repointAndBind(");
+        assertBefore(repointAndBind, "ModdedWorldEngines.prepareReplacement(",
+                "ModdedWorldEngines.installReplacement(");
+        assertBefore(repointAndBind, "ModdedWorldEngines.installReplacement(", "this.activePack = pack;");
+        String failure = catchBlock(repointAndBind);
+        assertTrue(failure.contains("ModdedWorldEngines.closeUnregistered(replacement);"));
+        assertTrue(failure.contains("addSuppressed("));
+
+        String worldEnginesSource = source("ModdedWorldEngines.java");
+        String installReplacement = method(worldEnginesSource, "static void installReplacement(");
+        assertTrue(installReplacement.contains("ENGINES.compute("));
+        assertBefore(installReplacement, "close(current);", "return activeReplacement;");
+        assertFalse(installReplacement.contains("catch ("));
+    }
+
+    @Test
+    public void injectionBindsBeforeRegistrationAndRollsBackEveryFailure() throws IOException {
+        String source = source("ModdedDimensionManager.java");
+        String injection = method(source, "private static Handle inject(");
+
+        assertBefore(injection, "generator.bindLevel(level);", "serverAccess.putLevelIfAbsent(server, key, level);");
+        assertBefore(injection, "serverAccess.putLevelIfAbsent(server, key, level);",
+                "server.getPlayerList().addWorldborderListener(level);");
+        assertFalse(injection.contains("serverAccess.putLevel(server, key, previous);"));
+        String failure = catchBlock(injection);
+        assertBefore(failure, "rollbackInjection(", "throw ");
+
+        String rollback = method(source, "void rollbackInjection(");
+        assertBefore(rollback, "serverAccess.hasLevel(server, key)", "serverAccess.removeLevel(server, key);");
+        assertTrue(rollback.contains("generator.unbindEngine("));
+        assertTrue(rollback.contains("level.close();"));
+        assertTrue(rollback.contains("addSuppressed("));
+    }
+
+    @Test
+    public void persistentReinjectionRethrowsTheOriginalCause() throws IOException {
+        String source = source("ModdedStartup.java");
+        String reinjection = method(source, "private static void reinjectPersistentDimensions(");
+        String failure = catchBlock(reinjection);
+
+        assertTrue(failure.contains("LOGGER.error("));
+        assertFalse(failure.contains("e.toString()"));
+        assertFalse(failure.contains("continue;"));
+        assertTrue(failure.contains("throw new IllegalStateException("));
+        assertTrue(failure.contains(", e);"));
+    }
+
+    @Test
+    public void packDimensionLoadingNeverSuppressesTheFailureAsNull() throws IOException {
+        String source = source("ModdedDimensionManager.java");
+        String loading = method(source, "private static IrisDimension loadPackDimension(");
+
+        assertFalse(loading.contains("return null;"));
+        assertFalse(loading.contains("e.toString()"));
+        int catchIndex = loading.indexOf("catch (");
+        if (catchIndex >= 0) {
+            String failure = blockAt(loading, requiredIndex(loading, "{", catchIndex));
+            assertTrue(failure.contains("throw "));
+            assertTrue(failure.contains(", e);") || failure.contains("throw e;"));
+        }
+    }
+
+    @Test
+    public void productionPackResolutionNeverUsesTheParityProbeAsData() throws IOException {
+        String source = source("ModdedWorldEngines.java");
+        String resolvePack = method(source, "static File resolvePack(");
+
+        assertFalse(source.contains("System.getProperty(\"iris.parity\")"));
+        assertFalse(source.contains("parityPack"));
+        assertFalse(source.contains("falling back to parity pack"));
+        assertTrue(resolvePack.contains("throw new IllegalStateException("));
+    }
+
+    @Test
+    public void engineBootstrapResetsStartupExactlyOnceDuringStop() throws IOException {
+        String source = source("ModdedEngineBootstrap.java");
+        String stop = method(source, "public static void stop(");
+
+        assertEquals(1, occurrences(stop, "ModdedStartup.reset();"));
+    }
+
+    @Test
+    public void engineEvictionRetainsTheMappingUntilCloseSucceeds() throws IOException {
+        String source = source("ModdedWorldEngines.java");
+        String eviction = method(source, "static void evictOrThrow(");
+
+        assertTrue(eviction.contains("ENGINES.computeIfPresent("));
+        assertFalse(eviction.contains("ENGINES.remove("));
+        assertBefore(eviction, "close(current);", "return null;");
+    }
+
+    @Test
+    public void generatorUnbindRetainsOwnershipWhenEvictionFails() throws IOException {
+        String source = source("IrisModdedChunkGenerator.java");
+        String unbind = method(source, "synchronized void unbindEngine(ServerLevel level)");
+
+        assertFalse(unbind.contains("finally"));
+        assertBefore(unbind, "ModdedWorldEngines.evictOrThrow(level);", "clearEngineBinding();");
+    }
+
+    @Test
+    public void engineBootstrapRollsBackEveryPublishedBindingBeforeRethrowing() throws IOException {
+        String source = source("ModdedEngineBootstrap.java");
+        String bind = method(source, "public static ModdedPlatform bind(");
+        String failure = catchBlock(bind);
+
+        assertBefore(bind, "createdServices.enableAll();", "runtime = new BoundRuntime(");
+        assertTrue(bind.contains("rollback.add(() -> GuiHost.suppressDesktop("));
+        assertTrue(bind.contains("rollback.add(() -> restorePlatform("));
+        assertTrue(bind.contains("rollback.add(() -> ModdedDimensionManager.restoreAccess("));
+        assertTrue(bind.contains("rollback.add(() -> IrisObjectRotation.restorePlatformRotator("));
+        assertTrue(bind.contains("rollback.add(() -> BlockDataMergeSupport.restorePlatformMerger("));
+        assertTrue(bind.contains("rollback.add(() -> TileData.restorePlatformReader("));
+        assertTrue(bind.contains("rollback.add(() -> TileData.restorePlatformFactory("));
+        assertTrue(bind.contains("rollback.add(() -> GuiHost.set("));
+        assertTrue(bind.contains("rollback.add(() -> DecoratorPlatformHooks.restore("));
+        assertTrue(bind.contains("bindService(PreservationRegistry.class"));
+        assertTrue(bind.contains("bindService(EngineEffectsProvider.class"));
+        assertTrue(bind.contains("bindService(EnginePlatformHooks.class"));
+        assertTrue(bind.contains("bindService(EngineWorldManagerProvider.class"));
+        assertTrue(bind.contains("rollback.add(customContentDiscovery::rollback);"));
+        assertBefore(failure, "createdServices.rollback(failure);", "rollback.restore(failure);");
+        assertBefore(failure, "rollback.restore(failure);", "throw ");
+    }
+
+    private static void assertRepointBeforePublication(String branch) {
+        assertBefore(branch, "repointAndBind(", "new Handle(");
+        assertBefore(branch, "repointAndBind(", "HANDLES.put(");
+        assertBefore(branch, "repointAndBind(", "return ");
+    }
+
+    private static void assertBefore(String source, String first, String second) {
+        int firstIndex = requiredIndex(source, first);
+        int secondIndex = requiredIndex(source, second);
+        assertTrue(first + " must occur before " + second, firstIndex < secondIndex);
+    }
+
+    private static int requiredIndex(String source, String needle) {
+        return requiredIndex(source, needle, 0);
+    }
+
+    private static int requiredIndex(String source, String needle, int start) {
+        int index = source.indexOf(needle, start);
+        assertTrue("Missing source contract token: " + needle, index >= 0);
+        return index;
+    }
+
+    private static String source(String fileName) throws IOException {
+        String sourceRoot = System.getProperty(SOURCE_ROOT_PROPERTY);
+        assertTrue("Missing system property " + SOURCE_ROOT_PROPERTY,
+                sourceRoot != null && !sourceRoot.isBlank());
+        Path sourcePath = Path.of(sourceRoot, "art", "arcane", "iris", "modded", fileName);
+        return Files.readString(sourcePath);
+    }
+
+    private static String method(String source, String signature) {
+        int start = requiredIndex(source, signature);
+        int openBrace = requiredIndex(source, "{", start);
+        return source.substring(start, matchingBrace(source, openBrace) + 1);
+    }
+
+    private static String catchBlock(String source) {
+        int catchIndex = requiredIndex(source, "catch (");
+        int openBrace = requiredIndex(source, "{", catchIndex);
+        return blockAt(source, openBrace);
+    }
+
+    private static String blockAt(String source, int openBrace) {
+        return source.substring(openBrace, matchingBrace(source, openBrace) + 1);
+    }
+
+    private static int matchingBrace(String source, int openBrace) {
+        int depth = 0;
+        boolean quoted = false;
+        boolean character = false;
+        boolean escaped = false;
+        for (int i = openBrace; i < source.length(); i++) {
+            char current = source.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if ((quoted || character) && current == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (!character && current == '"') {
+                quoted = !quoted;
+                continue;
+            }
+            if (!quoted && current == '\'') {
+                character = !character;
+                continue;
+            }
+            if (quoted || character) {
+                continue;
+            }
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        throw new IllegalArgumentException("Unclosed source block");
+    }
+
+    private static int occurrences(String source, String needle) {
+        int count = 0;
+        int offset = 0;
+        while (true) {
+            int index = source.indexOf(needle, offset);
+            if (index < 0) {
+                return count;
+            }
+            count++;
+            offset = index + needle.length();
+        }
+    }
+}

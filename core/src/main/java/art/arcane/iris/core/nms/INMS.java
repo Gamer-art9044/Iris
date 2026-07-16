@@ -23,17 +23,7 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.nms.v1X.NMSBinding1X;
 import org.bukkit.Bukkit;
 
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
-
 public class INMS {
-    private static final Version CURRENT = new Version(26, 2, 0, "v26_2_R1");
-
-    private static final List<Version> REVISION = List.of(
-            CURRENT
-    );
-
     //@done
     private static final INMSBinding binding = bind();
 
@@ -46,81 +36,39 @@ public class INMS {
             return "BUKKIT";
         }
 
-        try {
-            String name = Bukkit.getServer().getClass().getCanonicalName();
-            if (name.equals("org.bukkit.craftbukkit.CraftServer")) {
-                return getTag(REVISION, "BUKKIT");
-            } else {
-                return name.split("\\Q.\\E")[3];
-            }
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
-            IrisLogging.error("Failed to determine server nms version!");
-            e.printStackTrace();
-        }
-
-        return "BUKKIT";
+        return NmsBindingSelector.select(requireMinecraftVersion());
     }
 
     private static INMSBinding bind() {
-        String code = getNMSTag();
         boolean disableNms = IrisSettings.get().getGeneral().isDisableNMS();
-        List<String> probeCodes = NmsBindingProbeSupport.getBindingProbeCodes(code, disableNms, getFallbackBindingCodes());
-        if ("BUKKIT".equals(code) && !disableNms) {
-            IrisLogging.info("NMS tag resolution fell back to Bukkit; probing supported revision bindings.");
-        }
-
-        for (int i = 0; i < probeCodes.size(); i++) {
-            INMSBinding resolvedBinding = tryBind(probeCodes.get(i), i == 0);
-            if (resolvedBinding != null) {
-                return resolvedBinding;
-            }
-        }
-
         if (disableNms) {
-            IrisLogging.info("Craftbukkit " + code + " <-> " + NMSBinding1X.class.getSimpleName() + " Successfully Bound");
-            IrisLogging.warn("Note: NMS support is disabled. Iris is running in limited Bukkit fallback mode.");
+            IrisLogging.info("Craftbukkit BUKKIT <-> " + NMSBinding1X.class.getSimpleName() + " Successfully Bound");
+            IrisLogging.warn("NMS support is disabled. Iris world creation is unavailable until general.disableNMS=false.");
             return new NMSBinding1X();
         }
-
-        MinecraftVersion detectedVersion = getMinecraftVersion();
-        String serverVersion = detectedVersion == null ? Bukkit.getServer().getVersion() : detectedVersion.value();
-        throw new IllegalStateException("Iris requires Minecraft 26.2. Detected server version: " + serverVersion);
+        return bindExact(getNMSTag());
     }
 
-    private static String getTag(List<Version> versions, String def) {
-        MinecraftVersion detectedVersion = getMinecraftVersion();
-        if (detectedVersion == null) {
-            return def;
-        }
-
-        for (Version p : versions) {
-            if (!detectedVersion.isSameRelease(p.major, p.minor, p.patch)) {
-                continue;
-            }
-            return p.tag;
-        }
-        return def;
-    }
-
-    private static MinecraftVersion getMinecraftVersion() {
+    private static MinecraftVersion requireMinecraftVersion() {
         try {
-            return MinecraftVersion.detect(Bukkit.getServer());
+            MinecraftVersion detected = MinecraftVersion.detect(Bukkit.getServer());
+            if (detected == null) {
+                throw new IllegalStateException("Iris could not determine the exact Minecraft server version");
+            }
+            return detected;
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             IrisLogging.error("Failed to determine server minecraft version!");
             e.printStackTrace();
-            return null;
+            if (e instanceof IllegalStateException illegalStateException) {
+                throw illegalStateException;
+            }
+            throw new IllegalStateException("Iris could not determine the exact Minecraft server version", e);
         }
     }
 
-    private static INMSBinding tryBind(String code, boolean announce) {
-        if (announce) {
-            IrisLogging.info("Locating NMS Binding for " + code);
-        } else {
-            IrisLogging.info("Probing NMS Binding for " + code);
-        }
-
+    private static INMSBinding bindExact(String code) {
+        IrisLogging.info("Locating exact NMS Binding for " + code);
         try {
             Class<?> clazz = Class.forName("art.arcane.iris.core.nms." + code + ".NMSBinding");
             Object candidate = clazz.getConstructor().newInstance();
@@ -128,25 +76,15 @@ public class INMS {
                 IrisLogging.info("Craftbukkit " + code + " <-> " + candidate.getClass().getSimpleName() + " Successfully Bound");
                 return binding;
             }
-        } catch (ClassNotFoundException | NoClassDefFoundError classNotFoundException) {
-            IrisLogging.warn("Failed to load NMS binding class for " + code + ": " + classNotFoundException.getMessage());
+            throw new IllegalStateException("Exact NMS binding class for " + code
+                    + " does not implement " + INMSBinding.class.getName());
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
-        }
-
-        return null;
-    }
-
-    private static Set<String> getFallbackBindingCodes() {
-        Set<String> codes = new LinkedHashSet<>();
-        for (Version version : REVISION) {
-            if (version.tag != null && !version.tag.isBlank()) {
-                codes.add(version.tag);
+            if (e instanceof IllegalStateException illegalStateException) {
+                throw illegalStateException;
             }
+            throw new IllegalStateException("Failed to bind exact NMS revision " + code, e);
         }
-        return codes;
     }
-
-    private record Version(int major, int minor, int patch, String tag) {}
 }

@@ -11,6 +11,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class ModdedStructureHooksTest {
@@ -50,5 +51,48 @@ public class ModdedStructureHooksTest {
     public void platformWorldMaximumHeightIsExclusive() {
         assertEquals(320, ModdedPlatformWorld.exclusiveMaxHeight(-64, 384));
         assertEquals(384, ModdedPlatformWorld.exclusiveMaxHeight(0, 384));
+    }
+
+    @Test
+    public void structureRegistryHooksRejectUnavailableServer() {
+        ModdedStructureHooks hooks = new ModdedStructureHooks(() -> null);
+
+        IllegalStateException structureKeys = assertThrows(
+                IllegalStateException.class, hooks::structureKeys);
+        IllegalStateException structureSetKeys = assertThrows(
+                IllegalStateException.class, hooks::structureSetKeys);
+        IllegalStateException structureBiomeKeys = assertThrows(
+                IllegalStateException.class, () -> hooks.structureBiomeKeys("minecraft:village"));
+
+        assertTrue(structureKeys.getMessage().contains("before the Minecraft server is available"));
+        assertTrue(structureSetKeys.getMessage().contains("before the Minecraft server is available"));
+        assertTrue(structureBiomeKeys.getMessage().contains("before the Minecraft server is available"));
+    }
+
+    @Test
+    public void structureReachabilityHooksRejectUnavailableLevel() {
+        ModdedStructureHooks hooks = new ModdedStructureHooks(() -> null);
+
+        IllegalStateException reachable = assertThrows(
+                IllegalStateException.class, () -> hooks.reachableStructureKeys(null));
+        IllegalStateException possibleBiomes = assertThrows(
+                IllegalStateException.class, () -> hooks.possibleBiomeKeys(null));
+
+        assertTrue(reachable.getMessage().contains("without a bound modded ServerLevel"));
+        assertTrue(possibleBiomes.getMessage().contains("without a bound modded ServerLevel"));
+    }
+
+    @Test
+    public void structureRegistryHooksPreserveServerSupplierFailure() {
+        IllegalStateException cause = new IllegalStateException("server supplier failed");
+        ModdedStructureHooks hooks = new ModdedStructureHooks(() -> {
+            throw cause;
+        });
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class, hooks::structureKeys);
+
+        assertTrue(failure.getMessage().contains("access the Minecraft server"));
+        assertEquals(cause, failure.getCause());
     }
 }

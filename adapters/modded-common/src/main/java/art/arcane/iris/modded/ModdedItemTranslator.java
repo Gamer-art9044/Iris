@@ -18,12 +18,12 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.InventorySlotType;
 import art.arcane.iris.engine.object.IrisAttributeModifier;
 import art.arcane.iris.engine.object.IrisEnchantment;
 import art.arcane.iris.engine.object.IrisLoot;
 import art.arcane.iris.engine.object.IrisLootTable;
-import art.arcane.iris.engine.object.NoiseStyle;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
@@ -76,23 +76,25 @@ public final class ModdedItemTranslator {
     private ModdedItemTranslator() {
     }
 
-    public static KList<ItemStack> loot(IrisLootTable table, RNG rng, InventorySlotType slot, ServerLevel level, int x, int y, int z) {
+    public static KList<ItemStack> loot(IrisLootTable table, long lootSeed, InventorySlotType slot, ServerLevel level, int x, int y, int z) {
         KList<ItemStack> out = new KList<>();
         KList<IrisLoot> entries = table.getLoot();
-        if (entries.isEmpty()) {
+        if (entries.isEmpty() || table.getMaxTries() <= 0) {
             return out;
         }
 
+        RNG rng = LootResolver.tableRng(lootSeed, table, x, y, z);
         int m = 0;
         int c = 0;
-        int mx = rng.i(table.getMinPicked(), table.getMaxPicked());
+        int mx = Math.max(0, LootResolver.inclusive(rng, table.getMinPicked(), table.getMaxPicked()));
 
         while (m < mx && c++ < table.getMaxTries()) {
-            IrisLoot entry = entries.get(rng.i(entries.size()));
-            if (entry.getSlotTypes() != slot) {
+            int entryIndex = rng.nextInt(entries.size());
+            IrisLoot entry = entries.get(entryIndex);
+            if (entry == null || entry.getSlotTypes() != slot) {
                 continue;
             }
-            ItemStack item = item(entry, table, rng, level, x, y, z);
+            ItemStack item = item(entry, table, rng, lootSeed, entryIndex, level, x, y, z);
             if (item != null && !item.isEmpty()) {
                 out.add(item);
                 m++;
@@ -117,8 +119,9 @@ public final class ModdedItemTranslator {
         }
     }
 
-    public static ItemStack item(IrisLoot loot, IrisLootTable table, RNG rng, ServerLevel level, int x, int y, int z) {
-        if (loot.getChance().aquire(() -> NoiseStyle.STATIC.create(rng)).fit(1, loot.getRarity() * table.getRarity(), x, y, z) != 1) {
+    public static ItemStack item(IrisLoot loot, IrisLootTable table, RNG rng, long lootSeed, int entryIndex, ServerLevel level, int x, int y, int z) {
+        long combinedRarity = LootResolver.combinedRarity(loot.getRarity(), table.getRarity());
+        if (!LootResolver.spatialOneIn(lootSeed, table, entryIndex, x, y, z, combinedRarity)) {
             return null;
         }
 
@@ -150,7 +153,7 @@ public final class ModdedItemTranslator {
         }
 
         Item item = BuiltInRegistries.ITEM.getValue(id);
-        return new ItemStack(item, Math.max(1, rng.i(loot.getMinAmount(), loot.getMaxAmount())));
+        return new ItemStack(item, Math.max(1, LootResolver.inclusive(rng, loot.getMinAmount(), loot.getMaxAmount())));
     }
 
     private static void applyComponents(IrisLoot loot, ItemStack stack, RNG rng, ServerLevel level) {

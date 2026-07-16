@@ -19,9 +19,19 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.framework.structure.StructureGraphCatalog;
+import art.arcane.iris.engine.object.IrisDirection;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisJigsawConnector;
+import art.arcane.iris.engine.object.IrisJigsawPiece;
+import art.arcane.iris.engine.object.IrisJigsawPieceEntry;
+import art.arcane.iris.engine.object.IrisJigsawPool;
+import art.arcane.iris.engine.object.IrisObject;
+import art.arcane.iris.engine.object.IrisPosition;
+import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
+import art.arcane.iris.engine.object.NativeStructureSuppression;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
 import art.arcane.iris.engine.object.StructureDistribution;
 import art.arcane.volmlib.util.collection.KList;
@@ -35,6 +45,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -69,6 +82,196 @@ public class IrisStructureLocatorContractTest {
         Engine engine = mock(Engine.class);
         assertFalse(IrisStructureLocator.suppressesVanilla(engine, null));
         assertFalse(IrisStructureLocator.suppressesVanilla(engine, ""));
+    }
+
+    @Test
+    public void vanillaSourceRequiresExplicitDimensionSuppression() {
+        IrisData data = mock(IrisData.class);
+        IrisStructure structure = new IrisStructure();
+        structure.setLoadKey("test:city");
+        structure.setVanillaSource("minecraft:ancient_city");
+        when(data.load(IrisStructure.class, "test:city", false)).thenReturn(structure);
+        registerSinglePieceGraph(data, structure, "test:city");
+
+        IrisStructurePlacement placement = new IrisStructurePlacement();
+        placement.getStructures().add("test:city");
+        IrisDimension dimension = mock(IrisDimension.class);
+        KList<IrisStructurePlacement> placements = new KList<>();
+        placements.add(placement);
+        when(dimension.getStructures()).thenReturn(placements);
+        when(dimension.getAllRegions(any())).thenReturn(new KList<>());
+        when(dimension.getReachableBiomes(any())).thenReturn(new KList<>());
+
+        Engine engine = mock(Engine.class);
+        when(engine.getData()).thenReturn(data);
+        when(engine.getDimension()).thenReturn(dimension);
+
+        assertTrue(IrisStructureLocator.isPlaced(engine, "minecraft:ancient_city"));
+        assertFalse(IrisStructureLocator.suppressesVanilla(engine, "minecraft:ancient_city"));
+        placement.setNativeSuppression(NativeStructureSuppression.REPLACE_SOURCE);
+        IrisStructureLocator.invalidate(engine);
+        assertTrue(IrisStructureLocator.suppressesVanilla(engine, "minecraft:ancient_city"));
+    }
+
+    @Test
+    public void regionReplacementFailsInsteadOfFallingBackToNative() {
+        IrisData data = mock(IrisData.class);
+        IrisStructure structure = new IrisStructure();
+        structure.setLoadKey("test:city");
+        structure.setVanillaSource("minecraft:ancient_city");
+        when(data.load(IrisStructure.class, "test:city", false)).thenReturn(structure);
+        registerSinglePieceGraph(data, structure, "test:city");
+
+        IrisStructurePlacement placement = new IrisStructurePlacement();
+        placement.getStructures().add("test:city");
+        placement.setNativeSuppression(NativeStructureSuppression.REPLACE_SOURCE);
+        IrisRegion region = mock(IrisRegion.class);
+        when(region.getStructures()).thenReturn(new KList<IrisStructurePlacement>().qadd(placement));
+        IrisDimension dimension = mock(IrisDimension.class);
+        when(dimension.getStructures()).thenReturn(new KList<>());
+        when(dimension.getAllRegions(any())).thenReturn(new KList<IrisRegion>().qadd(region));
+        when(dimension.getReachableBiomes(any())).thenReturn(new KList<>());
+
+        Engine engine = mock(Engine.class);
+        when(engine.getData()).thenReturn(data);
+        when(engine.getDimension()).thenReturn(dimension);
+
+        assertReplacementFailure(
+                () -> IrisStructureLocator.suppressesVanilla(engine, "minecraft:ancient_city"),
+                "dimension-level");
+    }
+
+    @Test
+    public void geometryFailureFailsInsteadOfFallingBackToNative() {
+        IrisData data = mock(IrisData.class);
+        IrisStructure structure = new IrisStructure()
+                .setStartPool("test:start")
+                .setMaxDepth(1)
+                .setMaxSizeChunks(1)
+                .setVanillaSource("minecraft:ancient_city");
+        structure.setLoadKey("test:city");
+        IrisJigsawConnector source = new IrisJigsawConnector()
+                .setPosition(new IrisPosition(0, 0, 0))
+                .setDirection(IrisDirection.EAST_POSITIVE_X)
+                .setPool("test:target")
+                .setName("source")
+                .setTargetName("door");
+        IrisJigsawConnector target = new IrisJigsawConnector()
+                .setPosition(new IrisPosition(50, 0, 0))
+                .setDirection(IrisDirection.WEST_NEGATIVE_X)
+                .setPool("test:target")
+                .setName("door")
+                .setTargetName("unused");
+        IrisJigsawPiece startPiece = new IrisJigsawPiece().setObject("test:start-object").setRotatable(false);
+        startPiece.getConnectors().add(source);
+        IrisJigsawPiece targetPiece = new IrisJigsawPiece().setObject("test:target-object").setRotatable(false);
+        targetPiece.getConnectors().add(target);
+        IrisJigsawPool startPool = new IrisJigsawPool();
+        startPool.getPieces().add(new IrisJigsawPieceEntry("test:start-piece", 1));
+        IrisJigsawPool targetPool = new IrisJigsawPool();
+        targetPool.getPieces().add(new IrisJigsawPieceEntry("test:target-piece", 1));
+        IrisObject startObject = mock(IrisObject.class);
+        IrisObject targetObject = mock(IrisObject.class);
+        when(startObject.getW()).thenReturn(1);
+        when(startObject.getH()).thenReturn(1);
+        when(startObject.getD()).thenReturn(1);
+        when(targetObject.getW()).thenReturn(100);
+        when(targetObject.getH()).thenReturn(1);
+        when(targetObject.getD()).thenReturn(1);
+        when(data.load(IrisStructure.class, "test:city", false)).thenReturn(structure);
+        when(data.load(IrisJigsawPool.class, "test:start", false)).thenReturn(startPool);
+        when(data.load(IrisJigsawPool.class, "test:target", false)).thenReturn(targetPool);
+        when(data.load(IrisJigsawPiece.class, "test:start-piece", false)).thenReturn(startPiece);
+        when(data.load(IrisJigsawPiece.class, "test:target-piece", false)).thenReturn(targetPiece);
+        when(data.load(IrisObject.class, "test:start-object", false)).thenReturn(startObject);
+        when(data.load(IrisObject.class, "test:target-object", false)).thenReturn(targetObject);
+        assertTrue(StructureGraphCatalog.compile(data, structure).isAssemblyViable());
+
+        IrisStructurePlacement placement = new IrisStructurePlacement()
+                .setNativeSuppression(NativeStructureSuppression.REPLACE_SOURCE);
+        placement.getStructures().add("test:city");
+        IrisDimension dimension = mock(IrisDimension.class);
+        when(dimension.getStructures()).thenReturn(new KList<IrisStructurePlacement>().qadd(placement));
+        when(dimension.getAllRegions(any())).thenReturn(new KList<>());
+        when(dimension.getReachableBiomes(any())).thenReturn(new KList<>());
+        Engine engine = mock(Engine.class);
+        when(engine.getData()).thenReturn(data);
+        when(engine.getDimension()).thenReturn(dimension);
+
+        assertReplacementFailure(
+                () -> IrisStructureLocator.suppressesVanilla(engine, "minecraft:ancient_city"),
+                "not runtime-viable");
+    }
+
+    @Test
+    public void missingVanillaSourceFailsInsteadOfFallingBackToNative() {
+        IrisData data = mock(IrisData.class);
+        IrisStructure structure = new IrisStructure();
+        structure.setLoadKey("test:city");
+        when(data.load(IrisStructure.class, "test:city", false)).thenReturn(structure);
+        registerSinglePieceGraph(data, structure, "test:city");
+        IrisStructurePlacement placement = new IrisStructurePlacement()
+                .setNativeSuppression(NativeStructureSuppression.REPLACE_SOURCE);
+        placement.getStructures().add("test:city");
+        IrisDimension dimension = mock(IrisDimension.class);
+        when(dimension.getStructures()).thenReturn(new KList<IrisStructurePlacement>().qadd(placement));
+        when(dimension.getAllRegions(any())).thenReturn(new KList<>());
+        when(dimension.getReachableBiomes(any())).thenReturn(new KList<>());
+        Engine engine = mock(Engine.class);
+        when(engine.getData()).thenReturn(data);
+        when(engine.getDimension()).thenReturn(dimension);
+
+        assertReplacementFailure(
+                () -> IrisStructureLocator.suppressesVanilla(engine, "minecraft:ancient_city"),
+                "valid namespaced vanillaSource");
+    }
+
+    @Test
+    public void missingNonReplacementStructureFailsInsteadOfBeingSkipped() {
+        IrisData data = mock(IrisData.class);
+        IrisStructurePlacement placement = new IrisStructurePlacement();
+        placement.getStructures().add("test:missing");
+        IrisDimension dimension = mock(IrisDimension.class);
+        when(dimension.getStructures()).thenReturn(new KList<IrisStructurePlacement>().qadd(placement));
+        when(dimension.getAllRegions(any())).thenReturn(new KList<>());
+        when(dimension.getReachableBiomes(any())).thenReturn(new KList<>());
+        Engine engine = mock(Engine.class);
+        when(engine.getData()).thenReturn(data);
+        when(engine.getDimension()).thenReturn(dimension);
+
+        assertReplacementFailure(
+                () -> IrisStructureLocator.isPlaced(engine, "test:missing"),
+                "references missing structure 'test:missing'");
+    }
+
+    @Test
+    public void placementResolutionRejectsAnUnboundEngine() {
+        assertReplacementFailure(
+                () -> IrisStructureLocator.resolvePlacement(null, new IrisStructurePlacement(), 0, 0),
+                "fully bound engine");
+    }
+
+    @Test
+    public void replacementOutputFailureIncludesStructureAndChunkContext() {
+        IrisStructurePlacement placement = new IrisStructurePlacement()
+                .setNativeSuppression(NativeStructureSuppression.REPLACE_SOURCE);
+        placement.getStructures().add("test:city");
+
+        assertReplacementFailure(
+                () -> IrisStructureLocator.requirePlacementOutput(
+                        placement, "test:city", 12, -7, false, "runtime assembly produced no pieces"),
+                "structure 'test:city' failed in chunk 12,-7: runtime assembly produced no pieces");
+    }
+
+    @Test
+    public void nonReplacementOutputAbsenceRemainsSkippable() {
+        IrisStructurePlacement placement = new IrisStructurePlacement();
+        placement.getStructures().add("test:city");
+
+        assertFalse(IrisStructureLocator.requirePlacementOutput(
+                placement, "test:city", 12, -7, false, "runtime assembly produced no pieces"));
+        assertTrue(IrisStructureLocator.requirePlacementOutput(
+                placement, "test:city", 12, -7, true, "runtime assembly produced no pieces"));
     }
 
     @Test
@@ -230,6 +433,47 @@ public class IrisStructureLocatorContractTest {
     }
 
     @Test
+    public void undergroundAssemblyIsShiftedBelowEveryTerrainColumn() {
+        Engine engine = mock(Engine.class);
+        when(engine.getMinHeight()).thenReturn(-64);
+        when(engine.getHeight(anyInt(), anyInt(), eq(true)))
+                .thenAnswer(invocation -> invocation.<Integer>getArgument(0) == 1 ? 140 : 164);
+        IrisStructurePlacement placement = new IrisStructurePlacement();
+        placement.setUnderground(true);
+        placement.setMinHeight(-64);
+        placement.setMaxHeight(100);
+        KList<PlacedStructurePiece> pieces = new KList<>();
+        pieces.add(piece(0, 60, 0, 1, 80, 0));
+
+        assertEquals(Integer.valueOf(-5), IrisStructureLocator.resolveUndergroundBurialShift(
+                engine, pieces, placement, 60, -63, 319));
+
+        placement.setMinHeight(60);
+        placement.setMaxHeight(60);
+        assertNull(IrisStructureLocator.resolveUndergroundBurialShift(
+                engine, pieces, placement, 60, -63, 319));
+    }
+
+    @Test
+    public void undergroundBurialIncludesOverboreCeiling() {
+        Engine engine = mock(Engine.class);
+        when(engine.getMinHeight()).thenReturn(-64);
+        when(engine.getHeight(anyInt(), anyInt(), eq(true))).thenReturn(164);
+        IrisStructurePlacement placement = new IrisStructurePlacement();
+        placement.setUnderground(true);
+        placement.setMinHeight(-64);
+        placement.setMaxHeight(100);
+        placement.setOverbore(true);
+        placement.setOverboreRadius(2);
+        placement.setOverboreHeight(20);
+        KList<PlacedStructurePiece> pieces = new KList<>();
+        pieces.add(piece(0, 60, 0, 1, 80, 1));
+
+        assertEquals(Integer.valueOf(-17), IrisStructureLocator.resolveUndergroundBurialShift(
+                engine, pieces, placement, 60, -63, 319));
+    }
+
+    @Test
     public void exactYOnlyCoversPlacementPathsWithResolvedAbsoluteAnchors() {
         IrisStructurePlacement placement = new IrisStructurePlacement();
         IrisStructure structure = new IrisStructure();
@@ -280,6 +524,7 @@ public class IrisStructureLocatorContractTest {
         IrisStructure structure = new IrisStructure();
         structure.setLoadKey("test:density");
         when(data.load(IrisStructure.class, "test:density", false)).thenReturn(structure);
+        registerSinglePieceGraph(data, structure, "test:density");
 
         IrisStructurePlacement placement = new IrisStructurePlacement();
         placement.getStructures().add("test:density");
@@ -302,5 +547,33 @@ public class IrisStructureLocatorContractTest {
         when(dimension.getAllRegions(engine)).thenReturn(new KList<>());
         when(dimension.getReachableBiomes(engine)).thenReturn(new KList<>());
         return engine;
+    }
+
+    private void registerSinglePieceGraph(IrisData data, IrisStructure structure, String prefix) {
+        String poolKey = prefix + "/start";
+        String pieceKey = prefix + "/piece";
+        String objectKey = prefix + "/object";
+        structure.setStartPool(poolKey);
+        IrisJigsawPool pool = new IrisJigsawPool();
+        pool.getPieces().add(new IrisJigsawPieceEntry().setPiece(pieceKey).setWeight(1));
+        IrisJigsawPiece piece = new IrisJigsawPiece();
+        piece.setObject(objectKey);
+        IrisObject object = mock(IrisObject.class);
+        when(object.getW()).thenReturn(1);
+        when(object.getH()).thenReturn(1);
+        when(object.getD()).thenReturn(1);
+        when(data.load(IrisJigsawPool.class, poolKey, false)).thenReturn(pool);
+        when(data.load(IrisJigsawPiece.class, pieceKey, false)).thenReturn(piece);
+        when(data.load(IrisObject.class, objectKey, false)).thenReturn(object);
+    }
+
+    private void assertReplacementFailure(Runnable operation, String expectedMessage) {
+        try {
+            operation.run();
+        } catch (IllegalStateException e) {
+            assertTrue(e.getMessage(), e.getMessage().contains(expectedMessage));
+            return;
+        }
+        throw new AssertionError("Expected strict native replacement failure containing '" + expectedMessage + "'");
     }
 }

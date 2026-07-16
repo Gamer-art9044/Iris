@@ -51,6 +51,7 @@ public class SeedManager {
     private final long post;
     private final long bodies;
     private final long mode;
+    private final long loot;
     @Setter(AccessLevel.NONE)
     private long fullMixedSeed;
 
@@ -75,6 +76,7 @@ public class SeedManager {
         post = of("post");
         bodies = of("bodies");
         mode = of("mode");
+        loot = of("loot");
     }
 
     private long of(String name) {

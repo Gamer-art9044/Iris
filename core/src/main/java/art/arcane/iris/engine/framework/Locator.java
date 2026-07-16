@@ -50,15 +50,18 @@ public interface Locator<T> {
     }
 
     static Locator<IrisRegion> region(String loadKey) {
-        return (e, c) -> e.getRegion((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
+        Locator<IrisRegion> exact = (e, c) -> e.getRegion((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
+        return new HintedLocator<>(exact, (engine) -> HintedLocator.regionPlan(engine, loadKey));
     }
 
     static Locator<IrisObject> object(String loadKey) {
-        return (e, c) -> e.getObjectsAt(c.getX(), c.getZ()).contains(loadKey);
+        Locator<IrisObject> exact = (e, c) -> e.getObjectsAt(c.getX(), c.getZ()).contains(loadKey);
+        return new HintedLocator<>(exact, (engine) -> HintedLocator.objectPlan(engine, loadKey));
     }
 
     static Locator<IrisBiome> surfaceBiome(String loadKey) {
-        return (e, c) -> e.getSurfaceBiome((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
+        Locator<IrisBiome> exact = (e, c) -> e.getSurfaceBiome((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
+        return new HintedLocator<>(exact, (engine) -> HintedLocator.biomePlan(engine, loadKey));
     }
 
     static Locator<art.arcane.iris.engine.object.IrisStructure> structure(String key) {
@@ -67,13 +70,14 @@ public interface Locator<T> {
 
     static Locator<BlockPos> poi(String type) {
         return (e, c) -> {
-            Set<Pair<String, BlockPos>> pos = e.getPOIsAt((c.getX() << 4) + 8, (c.getZ() << 4) + 8);
+            Set<Pair<String, BlockPos>> pos = e.getPOIsAt(c.getX(), c.getZ());
             return pos.stream().anyMatch(p -> p.getA().equals(type));
         };
     }
 
     static Locator<IrisBiome> caveBiome(String loadKey) {
-        return (e, c) -> e.getCaveBiome((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
+        Locator<IrisBiome> exact = (e, c) -> e.getCaveBiome((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
+        return new HintedLocator<>(exact, (engine) -> HintedLocator.caveBiomePlan(engine, loadKey));
     }
 
     static Locator<IrisBiome> caveOrMantleBiome(String loadKey) {

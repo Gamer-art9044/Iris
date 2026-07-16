@@ -22,18 +22,20 @@ import org.bukkit.NamespacedKey;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 
 public class StructureImporterModeTest {
     @Test
-    public void parseModeDefaultsToOverwriteForNull() {
-        assertEquals(StructureImporter.Mode.OVERWRITE, StructureImporter.parseMode(null));
+    public void parseModeDefaultsToAddOnlyForNull() {
+        assertEquals(StructureImporter.Mode.ADD_ONLY, StructureImporter.parseMode(null));
     }
 
     @Test
-    public void parseModeDefaultsToOverwriteForUnknownAndEmpty() {
-        assertEquals(StructureImporter.Mode.OVERWRITE, StructureImporter.parseMode(""));
-        assertEquals(StructureImporter.Mode.OVERWRITE, StructureImporter.parseMode("garbage"));
+    public void parseModeDefaultsToAddOnlyForEmptyAndRejectsUnknown() {
+        assertEquals(StructureImporter.Mode.ADD_ONLY, StructureImporter.parseMode(""));
+        assertThrows(IllegalArgumentException.class, () -> StructureImporter.parseMode("garbage"));
         assertEquals(StructureImporter.Mode.OVERWRITE, StructureImporter.parseMode("overwrite"));
+        assertEquals(StructureImporter.Mode.OVERWRITE, StructureImporter.parseMode("replace"));
     }
 
     @Test
@@ -47,8 +49,8 @@ public class StructureImporterModeTest {
     @Test
     public void parseModeIsCaseInsensitive() {
         assertEquals(StructureImporter.Mode.ADD_ONLY, StructureImporter.parseMode("ADD"));
-        assertEquals(StructureImporter.Mode.MERGE, StructureImporter.parseMode("MERGE"));
-        assertEquals(StructureImporter.Mode.MERGE, StructureImporter.parseMode("merge"));
+        assertEquals(StructureImporter.Mode.OVERWRITE, StructureImporter.parseMode("OVERWRITE"));
+        assertThrows(IllegalArgumentException.class, () -> StructureImporter.parseMode("MERGE"));
     }
 
     @Test

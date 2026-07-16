@@ -3,6 +3,7 @@ package art.arcane.iris.util.project.context;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.EngineMetrics;
+import art.arcane.iris.engine.object.FloatingIslandBoundarySampler;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -24,6 +25,7 @@ public class ChunkContext {
     private final ChunkedDataCache<PlatformBlockState> rock;
     private final ChunkedDataCache<PlatformBlockState> fluid;
     private final ChunkedDataCache<IrisRegion> region;
+    private final FloatingIslandBoundarySampler floatingIslandBoundarySampler;
 
     public ChunkContext(int x, int z, IrisComplex complex) {
         this(x, z, complex, 0L, true, PrefillPlan.NO_CAVE, null);
@@ -53,6 +55,7 @@ public class ChunkContext {
         this.rock = new ChunkedDataCache<>(complex.getRockStream(), x, z, cache);
         this.fluid = new ChunkedDataCache<>(complex.getFluidStream(), x, z, cache);
         this.region = new ChunkedDataCache<>(complex.getRegionStream(), x, z, cache);
+        this.floatingIslandBoundarySampler = new FloatingIslandBoundarySampler((wx, wz) -> complex.getTrueBiomeStream().get(wx, wz));
 
         if (cache) {
             PrefillPlan resolvedPlan = prefillPlan == null ? PrefillPlan.NO_CAVE : prefillPlan;
@@ -119,6 +122,10 @@ public class ChunkContext {
 
     public IrisComplex getComplex() {
         return complex;
+    }
+
+    public FloatingIslandBoundarySampler getFloatingIslandBoundarySampler() {
+        return floatingIslandBoundarySampler;
     }
 
     public long getGenerationSessionId() {

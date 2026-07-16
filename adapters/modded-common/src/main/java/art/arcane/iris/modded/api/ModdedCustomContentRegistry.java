@@ -28,9 +28,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -40,11 +42,12 @@ public final class ModdedCustomContentRegistry {
     private static final List<ModdedDataProvider> PROVIDERS = new CopyOnWriteArrayList<>();
     private static final Map<String, BlockState> CUSTOM_BLOCKS = new ConcurrentHashMap<>();
     private static volatile boolean scanned = false;
+    private static DiscoveryBatch discoveryBatch;
 
     private ModdedCustomContentRegistry() {
     }
 
-    public static void registerCustomBlockData(String namespace, String key, String state) {
+    public static synchronized void registerCustomBlockData(String namespace, String key, String state) {
         if (namespace == null || key == null || state == null) {
             return;
         }
@@ -60,12 +63,22 @@ public final class ModdedCustomContentRegistry {
             LOGGER.error("Iris custom block data '{}:{}' has unparseable state '{}'", namespace, key, state, error);
             return;
         }
-        CUSTOM_BLOCKS.put(identifier.toString(), parsed);
+        DiscoveryBatch activeBatch = discoveryBatch;
+        if (activeBatch == null) {
+            CUSTOM_BLOCKS.put(identifier.toString(), parsed);
+        } else {
+            activeBatch.customBlocks.put(identifier.toString(), parsed);
+        }
         LOGGER.info("Iris registered custom block data {}:{} -> {}", namespace, key, state);
     }
 
-    public static void register(ModdedDataProvider provider) {
+    public static synchronized void register(ModdedDataProvider provider) {
         if (provider == null) {
+            return;
+        }
+        DiscoveryBatch activeBatch = discoveryBatch;
+        if (activeBatch != null) {
+            activeBatch.add(provider);
             return;
         }
         for (ModdedDataProvider existing : PROVIDERS) {
@@ -83,15 +96,64 @@ public final class ModdedCustomContentRegistry {
         LOGGER.info("Iris registered custom content provider '{}'", provider.modId());
     }
 
-    public static void discover() {
+    public static synchronized Discovery discover() {
         if (scanned) {
-            return;
+            return Discovery.unchanged();
         }
-        scanned = true;
-        ServiceLoader<ModdedDataProvider> loader = ServiceLoader.load(ModdedDataProvider.class, ModdedCustomContentRegistry.class.getClassLoader());
-        for (ModdedDataProvider provider : loader) {
-            register(provider);
+        return discover(ServiceLoader.load(
+                ModdedDataProvider.class, ModdedCustomContentRegistry.class.getClassLoader()));
+    }
+
+    static synchronized Discovery discover(Iterable<ModdedDataProvider> discoveredProviders) {
+        List<ModdedDataProvider> previousProviders = List.copyOf(PROVIDERS);
+        Map<String, BlockState> previousCustomBlocks = new LinkedHashMap<>(CUSTOM_BLOCKS);
+        boolean previousDiscoveryComplete = scanned;
+        DiscoveryBatch batch = new DiscoveryBatch(previousProviders, previousCustomBlocks);
+        discoveryBatch = batch;
+        try {
+            for (ModdedDataProvider provider : discoveredProviders) {
+                batch.add(provider);
+            }
+            PROVIDERS.addAll(batch.additions);
+            CUSTOM_BLOCKS.putAll(batch.customBlocks);
+            scanned = true;
+            for (ModdedDataProvider provider : batch.additions) {
+                LOGGER.info("Iris registered custom content provider '{}'", provider.modId());
+            }
+            return new Discovery(previousProviders, previousCustomBlocks,
+                    previousDiscoveryComplete, true);
+        } catch (Throwable failure) {
+            try {
+                restore(previousProviders, previousCustomBlocks, previousDiscoveryComplete);
+            } catch (Throwable rollbackFailure) {
+                if (rollbackFailure != failure) {
+                    failure.addSuppressed(rollbackFailure);
+                }
+            }
+            LOGGER.error("Iris custom content provider discovery failed", failure);
+            if (failure instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (failure instanceof Error fatalError) {
+                throw fatalError;
+            }
+            throw new IllegalStateException("Iris custom content provider discovery failed", failure);
+        } finally {
+            discoveryBatch = null;
         }
+    }
+
+    static synchronized boolean hasProvider(String modId) {
+        for (ModdedDataProvider provider : PROVIDERS) {
+            if (Objects.equals(provider.modId(), modId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean discoveryComplete() {
+        return scanned;
     }
 
     public static boolean hasProviders() {
@@ -202,5 +264,69 @@ public final class ModdedCustomContentRegistry {
             state.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
         }
         return state;
+    }
+
+    private static synchronized void restore(List<ModdedDataProvider> providers,
+                                             Map<String, BlockState> customBlocks,
+                                             boolean discoveryComplete) {
+        PROVIDERS.clear();
+        PROVIDERS.addAll(providers);
+        CUSTOM_BLOCKS.clear();
+        CUSTOM_BLOCKS.putAll(customBlocks);
+        scanned = discoveryComplete;
+    }
+
+    public static final class Discovery {
+        private final List<ModdedDataProvider> providers;
+        private final Map<String, BlockState> customBlocks;
+        private final boolean discoveryComplete;
+        private boolean active;
+
+        private Discovery(List<ModdedDataProvider> providers, Map<String, BlockState> customBlocks,
+                          boolean discoveryComplete, boolean active) {
+            this.providers = providers;
+            this.customBlocks = customBlocks;
+            this.discoveryComplete = discoveryComplete;
+            this.active = active;
+        }
+
+        private static Discovery unchanged() {
+            return new Discovery(List.of(), Map.of(), true, false);
+        }
+
+        public synchronized void rollback() {
+            if (!active) {
+                return;
+            }
+            restore(providers, customBlocks, discoveryComplete);
+            active = false;
+        }
+    }
+
+    private static final class DiscoveryBatch {
+        private final List<ModdedDataProvider> providers;
+        private final List<ModdedDataProvider> additions = new ArrayList<>();
+        private final Map<String, BlockState> customBlocks;
+
+        private DiscoveryBatch(List<ModdedDataProvider> providers, Map<String, BlockState> customBlocks) {
+            this.providers = new ArrayList<>(providers);
+            this.customBlocks = new LinkedHashMap<>(customBlocks);
+        }
+
+        private void add(ModdedDataProvider provider) {
+            ModdedDataProvider candidate = Objects.requireNonNull(provider,
+                    "Iris discovered a null custom content provider");
+            String modId = Objects.requireNonNull(candidate.modId(),
+                    "Iris custom content provider returned a null mod id");
+            for (ModdedDataProvider existing : providers) {
+                if (modId.equals(existing.modId())) {
+                    LOGGER.warn("Iris custom content provider for '{}' already registered; ignoring duplicate", modId);
+                    return;
+                }
+            }
+            providers.add(candidate);
+            additions.add(candidate);
+            candidate.init();
+        }
     }
 }

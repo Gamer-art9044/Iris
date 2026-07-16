@@ -38,7 +38,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class ModdedDeathLoot {
     private static final String TAG_PREFIX = "iris_loot|";
-    private static final int LOOT_RNG_SALT = 345911;
     private static final Set<String> WARNED_TABLES = ConcurrentHashMap.newKeySet();
     private static final Set<String> WARNED_ENTITY_TYPES = ConcurrentHashMap.newKeySet();
 
@@ -112,8 +111,7 @@ public final class ModdedDeathLoot {
                 }
                 continue;
             }
-            RNG lootRng = new RNG(binding.seed()).nextParallelRNG(LOOT_RNG_SALT);
-            drops.addAll(ModdedItemTranslator.loot(table, lootRng, InventorySlotType.STORAGE, level,
+            drops.addAll(ModdedItemTranslator.loot(table, engine.getSeedManager().getLoot(), InventorySlotType.STORAGE, level,
                     binding.spawnX(), binding.spawnY(), binding.spawnZ()));
         }
         return drops;

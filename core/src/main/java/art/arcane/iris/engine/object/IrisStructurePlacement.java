@@ -37,8 +37,14 @@ import lombok.experimental.Accessors;
 public class IrisStructurePlacement {
     @ArrayType(type = String.class, min = 1)
     @RegistryListStructure
-    @Desc("Structures to place here. Any vanilla, datapack, or imported Iris structure key (e.g. minecraft_village_plains, minecraft_stronghold). Jigsaw component pieces are not valid here.")
+    @Desc("Editable Iris structure resources to place here. Every key must resolve to a structures/*.json resource in this pack. Live vanilla, mod, and datapack registry keys are controlled through importedStructures unless explicitly cloned into Iris resources.")
     private KList<String> structures = new KList<>();
+
+    @Desc("Stable authored identity for this placement. Set this when multiple placements use the same structure and settings. When empty, Iris derives identity from the placement content so list reordering does not move generated structures.")
+    private String placementId = "";
+
+    @Desc("Controls native replacement for this placement. REPLACE_SOURCE suppresses each selected Iris structure's vanillaSource, and is honored only for dimension-level placements. NONE leaves native generation untouched.")
+    private NativeStructureSuppression nativeSuppression = NativeStructureSuppression.NONE;
 
     @Desc("How start positions are scattered.")
     private StructureDistribution distribution = StructureDistribution.RANDOM_SPREAD;
@@ -104,6 +110,9 @@ public class IrisStructurePlacement {
     @MaxNumber(64)
     @Desc("when overbore=true, how many blocks of terrain to carve below the structure's floor. 0 keeps the floor solid for support; small values recess the cavern floor around the structure.")
     private int overboreFloor = 0;
+
+    @Desc("Optional foundation columns placed beneath the assembled structure's occupied bottom cells. Columns pass through air and fluids until they reach solid ground, up to maxDepth.")
+    private IrisStructureStiltSettings stilt = null;
 
     @Desc("If false, this placement is skipped underwater.")
     private boolean underwater = false;

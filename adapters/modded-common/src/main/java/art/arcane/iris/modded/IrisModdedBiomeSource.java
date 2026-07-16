@@ -75,7 +75,7 @@ final class IrisModdedBiomeSource extends BiomeSource {
         if (registry == null) {
             throw new IllegalStateException("Iris cannot create structure state without the biome registry");
         }
-        Set<String> generatedBiomeKeys = exactStructureBiomeKeys();
+        Set<String> generatedBiomeKeys = requireConfiguredStructureBiomeKeys(exactStructureBiomeKeys());
         Set<String> missingBiomeKeys = new LinkedHashSet<>(generatedBiomeKeys);
         missingBiomeKeys.removeAll(registeredBiomeKeys(registry));
         if (!missingBiomeKeys.isEmpty()) {
@@ -101,21 +101,32 @@ final class IrisModdedBiomeSource extends BiomeSource {
 
     @Override
     protected Stream<Holder<Biome>> collectPossibleBiomes() {
+        Set<String> generatedBiomeKeys = requireConfiguredStructureBiomeKeys(exactStructureBiomeKeys());
         Registry<Biome> registry = biomeRegistry();
-        if (registry == null) {
-            return serializedSource.possibleBiomes().stream();
-        }
-        Set<String> generatedBiomeKeys = possibleStructureBiomeKeys();
         LinkedHashSet<Holder<Biome>> possible = new LinkedHashSet<>();
-        Holder<Biome> fallback = fallbackHolder(registry);
-        registry.listElements().forEach((Holder.Reference<Biome> reference) -> {
-            String key = holderKey(reference);
-            if (isGeneratedBiomeKey(key, generatedBiomeKeys)) {
-                possible.add(reference);
+        if (registry == null) {
+            for (Holder<Biome> biome : serializedSource.possibleBiomes()) {
+                if (isGeneratedBiomeKey(holderKey(biome), generatedBiomeKeys)) {
+                    possible.add(biome);
+                }
             }
-        });
-        if (possible.isEmpty() && fallback != null) {
-            possible.add(fallback);
+        } else {
+            Set<String> missingBiomeKeys = new LinkedHashSet<>(generatedBiomeKeys);
+            missingBiomeKeys.removeAll(registeredBiomeKeys(registry));
+            if (!missingBiomeKeys.isEmpty()) {
+                throw new IllegalStateException("Iris structure biomes are not registered: "
+                        + missingBiomeKeys);
+            }
+            registry.listElements().forEach((Holder.Reference<Biome> reference) -> {
+                if (isGeneratedBiomeKey(holderKey(reference), generatedBiomeKeys)) {
+                    possible.add(reference);
+                }
+            });
+        }
+        if (possible.isEmpty()) {
+            String phase = registry == null ? "serialized biome bootstrap" : "biome registry";
+            throw new IllegalStateException("Iris configured structure biomes are absent from the "
+                    + phase + ": " + generatedBiomeKeys);
         }
         return possible.stream();
     }
@@ -220,31 +231,44 @@ final class IrisModdedBiomeSource extends BiomeSource {
     private Holder<Biome> resolveSurfaceStructureBiome(Engine engine, int quartX, int quartZ,
                                                        Climate.Sampler sampler) {
         Registry<Biome> registry = biomeRegistry();
-        if (!isReady(engine) || registry == null) {
-            return serializedSource.getNoiseBiome(quartX, 0, quartZ, sampler);
+        if (!isReady(engine)) {
+            throw new IllegalStateException("Iris structure biome lookup ran before engine binding");
+        }
+        if (registry == null) {
+            throw new IllegalStateException("Iris structure biome lookup has no biome registry");
         }
         IrisBiome irisBiome = engine.getComplex().getTrueBiomeStream().get(quartX << 2, quartZ << 2);
-        Holder<Biome> resolved = irisBiome == null ? null : resolveHolder(registry, irisBiome.getVanillaDerivativeKey());
-        return resolved == null ? serializedSource.getNoiseBiome(quartX, 0, quartZ, sampler) : resolved;
+        if (irisBiome == null) {
+            throw new IllegalStateException("Iris returned no surface structure biome at quart "
+                    + quartX + "," + quartZ);
+        }
+        Holder<Biome> resolved = resolveHolder(registry, irisBiome.getVanillaDerivativeKey());
+        if (resolved == null) {
+            throw new IllegalStateException("Iris structure biome derivative '"
+                    + irisBiome.getVanillaDerivativeKey() + "' is not registered at quart "
+                    + quartX + "," + quartZ);
+        }
+        return resolved;
     }
 
     private Holder<Biome> resolveStructureBiome(Engine engine, int quartX, int quartY, int quartZ,
                                                 Climate.Sampler sampler) {
         Registry<Biome> registry = biomeRegistry();
         BiomeResolution resolution = resolveBiomeResolution(engine, quartX, quartY, quartZ);
-        if (resolution == null || registry == null) {
-            return serializedSource.getNoiseBiome(quartX, quartY, quartZ, sampler);
+        if (resolution == null) {
+            throw new IllegalStateException("Iris returned no structure biome at quart "
+                    + quartX + "," + quartY + "," + quartZ);
+        }
+        if (registry == null) {
+            throw new IllegalStateException("Iris structure biome lookup has no biome registry");
         }
         Holder<Biome> resolved = resolveHolder(registry, resolution.irisBiome().getVanillaDerivativeKey());
-        if (resolved == null && resolution.irisBiome().isCustom()) {
-            IrisBiomeCustom customBiome = resolution.irisBiome().getCustomBiome(
-                    resolution.rng(), engine, resolution.blockX(), resolution.blockY(), resolution.blockZ());
-            if (customBiome != null) {
-                resolved = resolveHolder(registry, engine.getDimension().getLoadKey().toLowerCase(Locale.ROOT)
-                        + ":" + customBiome.getId().toLowerCase(Locale.ROOT));
-            }
+        if (resolved == null) {
+            throw new IllegalStateException("Iris structure biome derivative '"
+                    + resolution.irisBiome().getVanillaDerivativeKey() + "' is not registered at block "
+                    + resolution.blockX() + "," + resolution.blockY() + "," + resolution.blockZ());
         }
-        return resolved == null ? fallbackBiome(registry, quartX, quartY, quartZ, sampler) : resolved;
+        return resolved;
     }
 
     private Holder<Biome> resolveVisibleBiome(Engine engine, int quartX, int quartY, int quartZ,
@@ -349,6 +373,13 @@ final class IrisModdedBiomeSource extends BiomeSource {
         return key != null && generatedBiomeKeys.contains(key.toLowerCase(Locale.ROOT));
     }
 
+    static Set<String> requireConfiguredStructureBiomeKeys(Set<String> configuredBiomeKeys) {
+        if (configuredBiomeKeys == null || configuredBiomeKeys.isEmpty()) {
+            throw new IllegalStateException("Iris has no configured structure biomes");
+        }
+        return configuredBiomeKeys;
+    }
+
     static boolean isGuaranteedSurfaceBiome(int quartY, int minHeight) {
         int internalY = (quartY << 2) - minHeight;
         int caveSwitchY = Math.max(-8 - minHeight, 40);
@@ -377,15 +408,15 @@ final class IrisModdedBiomeSource extends BiomeSource {
         if (cached != null) {
             return cached;
         }
-        LinkedHashSet<String> possible = new LinkedHashSet<>(exactStructureBiomeKeys());
+        Set<String> possible = requireConfiguredStructureBiomeKeys(exactStructureBiomeKeys());
         Registry<Biome> registry = biomeRegistry();
-        if (registry != null) {
-            Set<String> registered = registeredBiomeKeys(registry);
-            Holder<Biome> fallback = fallbackHolder(registry);
-            String fallbackKey = fallback == null ? null : holderKey(fallback);
-            if (fallbackKey != null && requiresPossibleBiomeFallback(possible, registered)) {
-                possible.add(fallbackKey);
-            }
+        if (registry == null) {
+            throw new IllegalStateException("Iris cannot resolve structure biomes without the biome registry");
+        }
+        Set<String> missing = new LinkedHashSet<>(possible);
+        missing.removeAll(registeredBiomeKeys(registry));
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException("Iris structure biomes are not registered: " + missing);
         }
         Set<String> resolved = Set.copyOf(possible);
         possibleStructureBiomeKeys = resolved;
@@ -393,32 +424,29 @@ final class IrisModdedBiomeSource extends BiomeSource {
     }
 
     private Set<String> exactStructureBiomeKeys() {
+        IrisModdedChunkGenerator current = generator;
+        if (current == null) {
+            return Set.of();
+        }
+        Engine engine = current.structureEngineOrNull();
+        if (!isReady(engine)) {
+            return current.configuredStructureBiomeKeys();
+        }
         LinkedHashSet<String> possible = new LinkedHashSet<>();
-        Engine engine = engineOrNull();
-        if (isReady(engine)) {
-            String namespace = engine.getDimension().getLoadKey().toLowerCase(Locale.ROOT);
-            for (IrisBiome irisBiome : engine.getAllBiomes()) {
-                String derivative = normalizeKey(irisBiome.getVanillaDerivativeKey());
-                if (derivative != null) {
-                    possible.add(derivative);
-                }
-                if (!irisBiome.isCustom()) {
-                    continue;
-                }
-                for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                    possible.add(namespace + ":" + customBiome.getId().toLowerCase(Locale.ROOT));
-                }
+        String namespace = engine.getDimension().getLoadKey().toLowerCase(Locale.ROOT);
+        for (IrisBiome irisBiome : engine.getAllBiomes()) {
+            String derivative = normalizeKey(irisBiome.getVanillaDerivativeKey());
+            if (derivative != null) {
+                possible.add(derivative);
+            }
+            if (!irisBiome.isCustom()) {
+                continue;
+            }
+            for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
+                possible.add(namespace + ":" + customBiome.getId().toLowerCase(Locale.ROOT));
             }
         }
-        IrisModdedChunkGenerator current = generator;
-        if (current != null) {
-            possible.addAll(current.configuredStructureBiomeKeys());
-        }
         return Set.copyOf(possible);
-    }
-
-    static boolean requiresPossibleBiomeFallback(Set<String> configured, Set<String> registered) {
-        return configured.isEmpty() || !registered.containsAll(configured);
     }
 
     private static Set<String> registeredBiomeKeys(Registry<Biome> registry) {
@@ -457,18 +485,6 @@ final class IrisModdedBiomeSource extends BiomeSource {
     private static String normalizeKey(String key) {
         Identifier identifier = key == null ? null : Identifier.tryParse(key);
         return identifier == null ? null : identifier.toString().toLowerCase(Locale.ROOT);
-    }
-
-    private static Holder<Biome> fallbackHolder(Registry<Biome> registry) {
-        if (registry == null) {
-            return null;
-        }
-        Holder<Biome> plains = resolveHolder(registry, "minecraft:plains");
-        if (plains != null) {
-            return plains;
-        }
-        return registry.listElements().findFirst().<Holder<Biome>>map(
-                (Holder.Reference<Biome> reference) -> reference).orElse(null);
     }
 
     private Holder<Biome> fallbackBiome(Registry<Biome> registry, int quartX, int quartY, int quartZ,

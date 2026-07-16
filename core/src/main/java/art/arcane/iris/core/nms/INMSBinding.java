@@ -74,6 +74,8 @@ public interface INMSBinding {
 
     boolean supportsCustomBiomes();
 
+    boolean supportsIrisWorldGeneration();
+
     int getTrueBiomeBaseId(Object biomeBase);
 
     Object getTrueBiomeBase(Location location);
@@ -94,25 +96,15 @@ public interface INMSBinding {
 
     KList<Biome> getBiomes();
 
-    default KList<String> getStructureKeys() {
-        return new KList<>();
-    }
+    KList<String> getStructureKeys();
 
-    default KList<String> getStructureSetKeys() {
-        return new KList<>();
-    }
+    KList<String> getStructureSetKeys();
 
-    default KList<String> getReachableStructureKeys(World world) {
-        return new KList<>();
-    }
+    KList<String> getReachableStructureKeys(World world);
 
-    default KList<String> getStructureBiomeKeys(String structureKey) {
-        return new KList<>();
-    }
+    KList<String> getStructureBiomeKeys(String structureKey);
 
-    default KList<String> getPossibleBiomeKeys(World world) {
-        return new KList<>();
-    }
+    KList<String> getPossibleBiomeKeys(World world);
 
     default KList<String> getObjectFeatureKeys() {
         return new KList<>();
@@ -229,8 +221,15 @@ public interface INMSBinding {
     KMap<Material, List<BlockProperty>> getBlockProperties();
 
     private void validateDimensionTypes(WorldCreator c) {
-        if (c.generator() instanceof PlatformChunkGenerator gen
-                && missingDimensionTypes(gen.getTarget().getDimension().getDimensionTypeKey())) {
+        if (!(c.generator() instanceof PlatformChunkGenerator generator)) {
+            return;
+        }
+        if (!supportsIrisWorldGeneration()) {
+            throw new IllegalStateException("Iris world '" + c.name() + "' cannot be created with limited NMS binding "
+                    + getClass().getSimpleName()
+                    + "; set general.disableNMS=false and use the supported Minecraft 26.2 server runtime");
+        }
+        if (missingDimensionTypes(generator.getTarget().getDimension().getDimensionTypeKey())) {
             throw new IllegalStateException("Missing dimension types to create world");
         }
     }

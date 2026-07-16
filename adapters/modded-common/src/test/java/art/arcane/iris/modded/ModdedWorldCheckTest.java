@@ -5,6 +5,9 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -21,6 +24,29 @@ public class ModdedWorldCheckTest {
         });
 
         assertFalse(thread.isDaemon());
+    }
+
+    @Test
+    public void poiAuditRunsInASecondServerTaskAfterVillageGeneration() throws IOException {
+        Path sourcePath = Path.of(System.getProperty("iris.moddedCommonSources"),
+                "art/arcane/iris/modded/ModdedWorldCheck.java");
+        String source = Files.readString(sourcePath);
+        int preparationSubmit = source.indexOf(
+                "WorldCheckPreparation preparation = serverRef.submit(() -> run(serverRef)).join();");
+        int completionSubmit = source.indexOf(
+                "exitCode = serverRef.submit(() -> runAndRequestStop(", preparationSubmit);
+        int completionMethod = source.indexOf("private static boolean completeWorldCheck");
+        int deferredAudit = source.indexOf("PoiAudit poi = auditStructurePois", completionMethod);
+        int structureMethod = source.indexOf("private static StructureCheckResult checkNativeStructure");
+        int structureMethodEnd = source.indexOf("private static StructureStart resolveStructureStart",
+                structureMethod);
+        String structureSource = source.substring(structureMethod, structureMethodEnd);
+
+        assertTrue(preparationSubmit >= 0);
+        assertTrue(completionSubmit > preparationSubmit);
+        assertTrue(deferredAudit > completionMethod);
+        assertFalse(structureSource.contains("auditStructurePois"));
+        assertFalse(source.contains("prepareDeferredAudits"));
     }
 
     @Test
@@ -113,15 +139,6 @@ public class ModdedWorldCheckTest {
     public void villageFoundationGateRejectsUnsupportedColumns() {
         assertTrue(ModdedWorldCheck.villageFoundationPass(0));
         assertFalse(ModdedWorldCheck.villageFoundationPass(1));
-    }
-
-    @Test
-    public void villageFoundationAuditRejectsMissingBaseAndInvalidSupport() {
-        assertTrue(ModdedWorldCheck.villageFoundationSupported(true, false, true, false));
-        assertTrue(ModdedWorldCheck.villageFoundationSupported(true, true, false, false));
-        assertFalse(ModdedWorldCheck.villageFoundationSupported(false, false, true, false));
-        assertFalse(ModdedWorldCheck.villageFoundationSupported(true, false, false, false));
-        assertFalse(ModdedWorldCheck.villageFoundationSupported(true, false, true, true));
     }
 
     @Test

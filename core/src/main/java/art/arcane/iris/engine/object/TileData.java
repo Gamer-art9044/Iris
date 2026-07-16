@@ -41,6 +41,7 @@ import org.bukkit.block.data.BlockData;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.Objects;
 
 @SuppressWarnings("ALL")
 @Getter
@@ -50,8 +51,8 @@ import java.io.IOException;
 public class TileData implements Cloneable {
     private static final Gson gson = new GsonBuilder().disableHtmlEscaping().setStrictness(Strictness.LENIENT).create();
     private static final boolean BUKKIT_PRESENT = detectBukkit();
-    private static volatile TileReader FALLBACK_READER = null;
-    private static volatile TileFactory FALLBACK_FACTORY = null;
+    private static volatile TileReader PLATFORM_READER = null;
+    private static volatile TileFactory PLATFORM_FACTORY = null;
 
     public interface TileReader {
         TileData read(DataInputStream in) throws IOException;
@@ -61,12 +62,24 @@ public class TileData implements Cloneable {
         TileData create(PlatformBlockState state, KMap<String, Object> properties);
     }
 
-    public static void bindFallbackReader(TileReader reader) {
-        FALLBACK_READER = reader;
+    public static synchronized TileReader bindPlatformReader(TileReader reader) {
+        TileReader previous = PLATFORM_READER;
+        PLATFORM_READER = Objects.requireNonNull(reader, "reader");
+        return previous;
     }
 
-    public static void bindFallbackFactory(TileFactory factory) {
-        FALLBACK_FACTORY = factory;
+    public static synchronized TileFactory bindPlatformFactory(TileFactory factory) {
+        TileFactory previous = PLATFORM_FACTORY;
+        PLATFORM_FACTORY = Objects.requireNonNull(factory, "factory");
+        return previous;
+    }
+
+    public static synchronized void restorePlatformReader(TileReader reader) {
+        PLATFORM_READER = reader;
+    }
+
+    public static synchronized void restorePlatformFactory(TileFactory factory) {
+        PLATFORM_FACTORY = factory;
     }
 
     private static boolean detectBukkit() {
@@ -102,12 +115,8 @@ public class TileData implements Cloneable {
     }
 
     public static TileData of(PlatformBlockState state, KMap<String, Object> properties) {
-        TileFactory factory = FALLBACK_FACTORY;
-        if (factory != null) {
-            return factory.create(state, properties);
-        }
         if (!BUKKIT_PRESENT) {
-            return null;
+            return requirePlatformFactory(PLATFORM_FACTORY).create(state, properties);
         }
         Object handle = state.nativeHandle();
         if (!(handle instanceof BlockData blockData)) {
@@ -117,12 +126,8 @@ public class TileData implements Cloneable {
     }
 
     public static TileData read(DataInputStream in) throws IOException {
-        TileReader reader = FALLBACK_READER;
-        if (reader != null) {
-            return reader.read(in);
-        }
         if (!BUKKIT_PRESENT) {
-            throw new IOException("No tile data reader is available for this platform");
+            return requirePlatformReader(PLATFORM_READER).read(in);
         }
         if (!in.markSupported())
             throw new IOException("Mark not supported");
@@ -137,6 +142,20 @@ public class TileData implements Cloneable {
         } finally {
             in.mark(0);
         }
+    }
+
+    static TileFactory requirePlatformFactory(TileFactory factory) {
+        if (factory == null) {
+            throw new IllegalStateException("No platform tile-data factory is bound");
+        }
+        return factory;
+    }
+
+    static TileReader requirePlatformReader(TileReader reader) throws IOException {
+        if (reader == null) {
+            throw new IOException("No platform tile-data reader is bound");
+        }
+        return reader;
     }
 
     public boolean isApplicable(BlockData data) {

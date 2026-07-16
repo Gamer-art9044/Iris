@@ -19,9 +19,21 @@
 package art.arcane.iris.core.structure;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.structure.authoring.IrisStructureBundleFactory;
+import art.arcane.iris.core.structure.authoring.StructureBackend;
+import art.arcane.iris.core.structure.authoring.StructureCapability;
+import art.arcane.iris.core.structure.authoring.StructureKey;
+import art.arcane.iris.core.structure.authoring.StructureLoss;
+import art.arcane.iris.core.structure.authoring.StructureResourceBundle;
+import art.arcane.iris.core.structure.authoring.StructureSource;
+import art.arcane.iris.core.structure.authoring.StructureTransactionWriter;
+import art.arcane.iris.core.structure.authoring.StructureWriteMode;
+import art.arcane.iris.core.structure.authoring.StructureWriteResult;
+import art.arcane.iris.engine.framework.structure.StructureResourceBundleGraphCompiler;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.LegacyTileData;
-import art.arcane.volmlib.util.io.IO;
+import art.arcane.iris.spi.IrisLogging;
+import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -33,40 +45,62 @@ import org.bukkit.structure.Palette;
 import org.bukkit.structure.Structure;
 import org.bukkit.util.BlockVector;
 
-import java.util.Optional;
-
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
 public final class StructureImporter {
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
     public enum Mode {
         OVERWRITE,
-        ADD_ONLY,
-        MERGE
+        ADD_ONLY
     }
 
-    public record Result(boolean success, String message, int blocks) {
+    public record Result(boolean success, String message, int blocks, List<StructureLoss> losses) {
+        public Result {
+            losses = List.copyOf(losses);
+        }
+    }
+
+    record CapturedStructure(
+            IrisObject object,
+            int blocks,
+            int tiles,
+            int width,
+            int height,
+            int depth,
+            int structureMarkers,
+            List<StructureCapability> capabilities,
+            List<StructureLoss> losses
+    ) {
+        CapturedStructure {
+            Objects.requireNonNull(object);
+            capabilities = List.copyOf(capabilities);
+            losses = List.copyOf(losses);
+        }
     }
 
     private StructureImporter() {
     }
 
     public static Mode parseMode(String s) {
-        if (s == null) {
-            return Mode.OVERWRITE;
+        if (s == null || s.isBlank()) {
+            return Mode.ADD_ONLY;
         }
         return switch (s.toLowerCase().replace('-', '_')) {
             case "add_only", "addonly", "add" -> Mode.ADD_ONLY;
-            case "merge" -> Mode.MERGE;
-            default -> Mode.OVERWRITE;
+            case "overwrite", "replace" -> Mode.OVERWRITE;
+            default -> throw new IllegalArgumentException("Unknown structure import mode: " + s);
         };
     }
 
@@ -83,35 +117,93 @@ public final class StructureImporter {
     }
 
     public static Result importStructure(IrisData data, NamespacedKey key, String name, Mode mode, boolean objectOnly) {
+        Mode activeMode = mode == null ? Mode.ADD_ONLY : mode;
         Structure structure;
         try {
             structure = Bukkit.getStructureManager().loadStructure(key);
         } catch (Throwable e) {
-            return new Result(false, "Failed to load structure " + key + ": " + e.getMessage(), 0);
+            IrisLogging.reportError(e);
+            e.printStackTrace();
+            return new Result(false, "Failed to load structure " + key + ": " + e.getMessage(), 0, List.of());
         }
         if (structure == null || structure.getPalettes().isEmpty()) {
-            return new Result(false, "No loadable structure NBT for key " + key + " (jigsaw structures must be imported by their piece keys)", 0);
+            return new Result(false, "No loadable structure NBT for key " + key + " (jigsaw structures must be imported by their piece keys)", 0, List.of());
         }
 
-        BlockVector size = structure.getSize();
+        CapturedStructure captured;
+        try {
+            captured = captureStructure(structure);
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            e.printStackTrace();
+            return new Result(false, "Failed to capture structure " + key + ": " + e.getMessage(), 0, List.of());
+        }
+
+        IrisObject object = captured.object();
+        int count = captured.blocks();
+        int tiles = captured.tiles();
+        int w = captured.width();
+        int h = captured.height();
+        int d = captured.depth();
+        List<StructureLoss> losses = new ArrayList<>(captured.losses());
+        if (captured.structureMarkers() > 0) {
+            losses.add(StructureLoss.warning(
+                    StructureCapability.CONNECTORS,
+                    "connectors_not_imported",
+                    captured.structureMarkers() + " jigsaw or structure marker(s) were flattened without importing their structure graph."));
+        }
+        String writeNote = "";
+        try {
+            StructureKey sourceKey = StructureKey.parse(key.toString());
+            StructureKey bundleKey = new StructureKey("iris", name);
+            StructureSource.Kind sourceKind = key.getNamespace().equals("minecraft")
+                    ? StructureSource.Kind.VANILLA : StructureSource.Kind.DATAPACK;
+            StructureSource source = StructureSource.of(sourceKind, sourceKey);
+            IrisStructureBundleFactory.SinglePieceOptions options = new IrisStructureBundleFactory.SinglePieceOptions(
+                    bundleKey, source, name, object, Math.max(w, d), "CENTER_HEIGHT", objectOnly,
+                    captured.capabilities(), losses);
+            StructureResourceBundle bundle = IrisStructureBundleFactory.singlePiece(options);
+            if (!objectOnly) {
+                StructureResourceBundleGraphCompiler.requireViable(bundle);
+            }
+            StructureWriteMode writeMode = activeMode == Mode.ADD_ONLY
+                    ? StructureWriteMode.ADD_ONLY : StructureWriteMode.OVERWRITE;
+            StructureWriteResult writeResult = new StructureTransactionWriter(data.getDataFolder().toPath())
+                    .write(bundle, writeMode);
+            reportWriteFailure(writeResult);
+            if (!writeResult.successful()) {
+                return new Result(false, writeFailureMessage(name, activeMode, writeResult), count, losses);
+            }
+            if (writeResult.committed()) {
+                data.invalidateStructureResources();
+            }
+            writeNote = writeResultNote(writeResult);
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            e.printStackTrace();
+            return new Result(false, "Failed writing import for '" + name + "': " + e.getMessage(), count, losses);
+        }
+
+        String lossSummary = losses.isEmpty() ? "" : ", " + losses.size() + " fidelity warning(s) recorded";
+        return new Result(true, "Imported " + key + " as '" + name + "' (" + count + " blocks, " + tiles
+                + " tiles, " + w + "x" + h + "x" + d + lossSummary + ")" + writeNote, count, losses);
+    }
+
+    static CapturedStructure captureStructure(Structure structure) {
+        Structure activeStructure = Objects.requireNonNull(structure);
+        if (activeStructure.getPalettes().isEmpty()) {
+            throw new IllegalArgumentException("Structure has no palettes");
+        }
+
+        BlockVector size = activeStructure.getSize();
         int w = Math.max(1, size.getBlockX());
         int h = Math.max(1, size.getBlockY());
         int d = Math.max(1, size.getBlockZ());
-
-        File objectFile = new File(data.getDataFolder(), "objects/" + name + ".iob");
-        File pieceFile = new File(data.getDataFolder(), "jigsaw-pieces/" + name + ".json");
-        File poolFile = new File(data.getDataFolder(), "jigsaw-pools/" + name + ".json");
-        File structureFile = new File(data.getDataFolder(), "structures/" + name + ".json");
-
-        boolean exists = objectOnly ? objectFile.exists() : (objectFile.exists() || structureFile.exists());
-        if (mode == Mode.ADD_ONLY && exists) {
-            return new Result(false, "Skipped (add-only): '" + name + "' already exists", 0);
-        }
-
         IrisObject object = new IrisObject(w, h, d);
         int count = 0;
         int tiles = 0;
-        Palette palette = structure.getPalettes().get(0);
+        int structureMarkers = 0;
+        Palette palette = activeStructure.getPalettes().get(0);
         for (BlockState block : palette.getBlocks()) {
             Location loc = block.getLocation();
             int x = loc.getBlockX();
@@ -126,6 +218,9 @@ public final class StructureImporter {
                 continue;
             }
             boolean structural = mat == Material.JIGSAW || mat == Material.STRUCTURE_BLOCK;
+            if (structural) {
+                structureMarkers++;
+            }
             if (mat == Material.JIGSAW) {
                 BlockData resolved = readJigsawFinalState(block);
                 if (resolved == null || isAir(resolved)) {
@@ -146,27 +241,76 @@ public final class StructureImporter {
             }
         }
 
-        try {
-            objectFile.getParentFile().mkdirs();
-            object.write(objectFile);
-            writeJson(pieceFile, pieceJson(name));
-            if (objectOnly) {
-                IO.deleteUp(poolFile);
-                IO.deleteUp(structureFile);
-            } else {
-                writeJson(poolFile, poolJson(name));
-                writeJson(structureFile, structureJson(name, key.toString(), Math.max(w, d)));
-            }
-        } catch (Throwable e) {
-            return new Result(false, "Failed writing import for '" + name + "': " + e.getMessage(), count);
+        List<StructureCapability> capabilities = new ArrayList<>();
+        capabilities.add(StructureCapability.BLOCKS);
+        if (tiles > 0) {
+            capabilities.add(StructureCapability.BLOCK_ENTITIES);
         }
-
-        return new Result(true, "Imported " + key + " as '" + name + "' (" + count + " blocks, " + tiles + " tiles, " + w + "x" + h + "x" + d + ")", count);
+        return new CapturedStructure(
+                object,
+                count,
+                tiles,
+                w,
+                h,
+                d,
+                structureMarkers,
+                capabilities,
+                importLosses(activeStructure, structureMarkers)
+        );
     }
 
     private static boolean isAir(BlockData data) {
         Material m = data.getMaterial();
         return m == Material.AIR || m == Material.CAVE_AIR || m == Material.VOID_AIR;
+    }
+
+    private static List<StructureLoss> importLosses(Structure structure, int structureMarkers) {
+        List<StructureLoss> losses = new ArrayList<>();
+        if (structure.getPaletteCount() > 1) {
+            losses.add(StructureLoss.warning(
+                    StructureCapability.BLOCKS,
+                    "palette_variants_not_imported",
+                    "Only palette 0 was converted; " + (structure.getPaletteCount() - 1) + " additional palette(s) remain native-only."));
+        }
+        if (structure.getEntityCount() > 0) {
+            losses.add(StructureLoss.warning(
+                    StructureCapability.ENTITIES,
+                    "entities_not_imported",
+                    structure.getEntityCount() + " structure entit" + (structure.getEntityCount() == 1 ? "y was" : "ies were")
+                            + " not converted into the Iris snapshot."));
+        }
+        if (structureMarkers > 0) {
+            losses.add(StructureLoss.warning(
+                    StructureCapability.BLOCKS,
+                    "structure_markers_resolved",
+                    structureMarkers + " jigsaw or structure marker(s) were resolved to final blocks or omitted from the Iris snapshot."));
+        }
+        return losses;
+    }
+
+    private static void reportWriteFailure(StructureWriteResult result) {
+        result.failure().ifPresent((Throwable failure) -> {
+            IrisLogging.reportError(failure);
+            failure.printStackTrace();
+        });
+    }
+
+    private static String writeResultNote(StructureWriteResult result) {
+        return result.status() == StructureWriteResult.Status.COMMITTED_CLEANUP_REQUIRED
+                ? " (committed; staging cleanup is required, see console)" : "";
+    }
+
+    private static String writeFailureMessage(String name, Mode mode, StructureWriteResult result) {
+        if (result.status() == StructureWriteResult.Status.ADD_ONLY_CONFLICT) {
+            return "Skipped (add-only): '" + name + "' already exists";
+        }
+        if (!result.conflicts().isEmpty()) {
+            StructureWriteResult.Conflict conflict = result.conflicts().getFirst();
+            return "Import conflict for '" + name + "': " + conflict.relativePath() + " is "
+                    + conflict.reason().name().toLowerCase() + ". Existing authored files were preserved.";
+        }
+        String failure = result.failure().map(Throwable::getMessage).orElse(result.status().name());
+        return "Failed writing import for '" + name + "' in " + mode.name().toLowerCase() + " mode: " + failure;
     }
 
     private static BlockData readJigsawFinalState(BlockState block) {
@@ -187,6 +331,8 @@ public final class StructureImporter {
             }
             return Bukkit.createBlockData(finalState);
         } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            e.printStackTrace();
             return null;
         }
     }
@@ -195,27 +341,26 @@ public final class StructureImporter {
         try {
             return LegacyTileData.fromBukkit(block);
         } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            e.printStackTrace();
             return null;
         }
     }
 
     public static Result importTemplateGroup(IrisData data, String groupName, String vanillaSource, String prefix, Mode mode) {
+        Mode activeMode = mode == null ? Mode.ADD_ONLY : mode;
         File objectsRoot = new File(data.getDataFolder(), "objects");
         File prefixDir = new File(objectsRoot, prefix);
         if (!prefixDir.isDirectory()) {
-            return new Result(false, "No imported templates under objects/" + prefix + " for " + groupName, 0);
+            return new Result(false, "No imported templates under objects/" + prefix + " for " + groupName, 0, List.of());
         }
 
         List<File> iobs = new ArrayList<>();
         collectIob(prefixDir, iobs);
         if (iobs.isEmpty()) {
-            return new Result(false, "No .iob templates under objects/" + prefix + " for " + groupName, 0);
+            return new Result(false, "No .iob templates under objects/" + prefix + " for " + groupName, 0, List.of());
         }
-
-        File structureFile = new File(data.getDataFolder(), "structures/" + groupName + ".json");
-        if (mode == Mode.ADD_ONLY && structureFile.exists()) {
-            return new Result(false, "Skipped (add-only): structure '" + groupName + "' already exists", 0);
-        }
+        iobs.sort(Comparator.comparing(File::getAbsolutePath));
 
         String rootPath = objectsRoot.getAbsolutePath() + File.separator;
         List<String> pieceNames = new ArrayList<>();
@@ -226,20 +371,55 @@ public final class StructureImporter {
                 rel = rel.substring(0, rel.length() - ".iob".length());
             }
             pieceNames.add(rel);
-            maxSpan = Math.max(maxSpan, readObjectSpan(iob));
+            try {
+                maxSpan = Math.max(maxSpan, readObjectSpan(iob));
+            } catch (IOException e) {
+                IrisLogging.reportError(e);
+                e.printStackTrace();
+                return new Result(false, "Cannot read imported object '" + rel + "': " + e.getMessage(), 0, List.of());
+            }
         }
 
         try {
             for (String piece : pieceNames) {
-                writeJson(new File(data.getDataFolder(), "jigsaw-pieces/" + piece + ".json"), pieceJson(piece));
+                File pieceFile = new File(data.getDataFolder(), "jigsaw-pieces/" + piece + ".json");
+                if (!pieceFile.isFile()) {
+                    return new Result(false, "Missing imported jigsaw piece '" + piece
+                            + "'; import the source templates before building group '" + groupName + "'", 0, List.of());
+                }
             }
-            writeJson(new File(data.getDataFolder(), "jigsaw-pools/" + groupName + ".json"), poolJsonMulti(pieceNames));
-            writeJson(structureFile, structureJson(groupName, vanillaSource, maxSpan));
+
+            StructureKey sourceKey = StructureKey.parse(vanillaSource, "minecraft");
+            StructureSource.Kind sourceKind = sourceKey.namespace().equals("minecraft")
+                    ? StructureSource.Kind.VANILLA : StructureSource.Kind.DATAPACK;
+            StructureResourceBundle bundle = StructureResourceBundle.builder(new StructureKey("iris", groupName))
+                    .source(StructureSource.of(sourceKind, sourceKey))
+                    .backend(StructureBackend.IRIS_ASSEMBLY)
+                    .capability(StructureCapability.BLOCKS)
+                    .capability(StructureCapability.IRIS_PLACEMENT)
+                    .textResource("jigsaw-pools/" + groupName + ".json", GSON.toJson(poolJsonMulti(pieceNames)))
+                    .textResource("structures/" + groupName + ".json",
+                            GSON.toJson(structureJson(groupName, vanillaSource, maxSpan)))
+                    .build();
+            StructureWriteMode writeMode = activeMode == Mode.ADD_ONLY
+                    ? StructureWriteMode.ADD_ONLY : StructureWriteMode.OVERWRITE;
+            StructureWriteResult writeResult = new StructureTransactionWriter(data.getDataFolder().toPath())
+                    .write(bundle, writeMode);
+            reportWriteFailure(writeResult);
+            if (!writeResult.successful()) {
+                return new Result(false, writeFailureMessage(groupName, activeMode, writeResult), 0, List.of());
+            }
+            if (writeResult.committed()) {
+                data.invalidateStructureResources();
+            }
+            return new Result(true, "Built structure '" + groupName + "' from " + pieceNames.size()
+                    + " template variants" + writeResultNote(writeResult), pieceNames.size(), List.of());
         } catch (Throwable e) {
-            return new Result(false, "Failed writing group structure '" + groupName + "': " + e.getMessage(), 0);
+            IrisLogging.reportError(e);
+            e.printStackTrace();
+            return new Result(false, "Failed writing group structure '" + groupName + "': " + e.getMessage(), 0, List.of());
         }
 
-        return new Result(true, "Built structure '" + groupName + "' from " + pieceNames.size() + " template variants", pieceNames.size());
     }
 
     private static void collectIob(File dir, List<File> out) {
@@ -256,14 +436,15 @@ public final class StructureImporter {
         }
     }
 
-    private static int readObjectSpan(File iob) {
+    private static int readObjectSpan(File iob) throws IOException {
         try (DataInputStream din = new DataInputStream(new BufferedInputStream(new FileInputStream(iob)))) {
             int w = din.readInt();
-            din.readInt();
+            int h = din.readInt();
             int d = din.readInt();
-            return Math.max(1, Math.max(w, d));
-        } catch (Throwable e) {
-            return 1;
+            if (w < 1 || h < 1 || d < 1) {
+                throw new IOException("Invalid IOB dimensions " + w + "x" + h + "x" + d + " in " + iob);
+            }
+            return Math.max(w, d);
         }
     }
 
@@ -280,33 +461,50 @@ public final class StructureImporter {
         return pool;
     }
 
-    private static Map<String, Object> pieceJson(String name) {
-        Map<String, Object> piece = new LinkedHashMap<>();
-        piece.put("object", name);
-        piece.put("connectors", new ArrayList<>());
-        piece.put("rotatable", true);
-        return piece;
-    }
-
-    private static Map<String, Object> poolJson(String name) {
-        Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("piece", name);
-        entry.put("weight", 1);
-        List<Object> pieces = new ArrayList<>();
-        pieces.add(entry);
-        Map<String, Object> pool = new LinkedHashMap<>();
-        pool.put("pieces", pieces);
-        return pool;
-    }
-
-    public static void writeSinglePieceStructure(IrisData data, String name, String vanillaSource, int maxSpan, String placeMode) throws Exception {
-        writeJson(new File(data.getDataFolder(), "jigsaw-pieces/" + name + ".json"), pieceJson(name));
-        writeJson(new File(data.getDataFolder(), "jigsaw-pools/" + name + ".json"), poolJson(name));
-        Map<String, Object> structure = structureJson(name, vanillaSource, maxSpan);
-        if (placeMode != null && !placeMode.isEmpty()) {
-            structure.put("placeMode", placeMode);
+    public static Result writeSinglePieceStructure(
+            IrisData data,
+            String name,
+            String vanillaSource,
+            IrisObject object,
+            String placeMode,
+            Mode mode
+    ) {
+        Mode activeMode = mode == null ? Mode.ADD_ONLY : mode;
+        int span = Math.max(object.getW(), object.getD());
+        try {
+            StructureKey sourceKey = StructureKey.parse(vanillaSource, "minecraft");
+            StructureSource.Kind sourceKind = sourceKey.namespace().equals("minecraft")
+                    ? StructureSource.Kind.VANILLA : StructureSource.Kind.DATAPACK;
+            IrisStructureBundleFactory.SinglePieceOptions options = new IrisStructureBundleFactory.SinglePieceOptions(
+                    new StructureKey("iris", name),
+                    StructureSource.of(sourceKind, sourceKey),
+                    name,
+                    object,
+                    span,
+                    placeMode,
+                    false,
+                    List.of(StructureCapability.BLOCKS, StructureCapability.IRIS_PLACEMENT),
+                    List.of());
+            StructureResourceBundle bundle = IrisStructureBundleFactory.singlePiece(options);
+            StructureResourceBundleGraphCompiler.requireViable(bundle);
+            StructureWriteMode writeMode = activeMode == Mode.ADD_ONLY
+                    ? StructureWriteMode.ADD_ONLY : StructureWriteMode.OVERWRITE;
+            StructureWriteResult writeResult = new StructureTransactionWriter(data.getDataFolder().toPath())
+                    .write(bundle, writeMode);
+            reportWriteFailure(writeResult);
+            if (!writeResult.successful()) {
+                return new Result(false, writeFailureMessage(name, activeMode, writeResult), 0, List.of());
+            }
+            if (writeResult.committed()) {
+                data.invalidateStructureResources();
+            }
+            return new Result(true, "Captured '" + vanillaSource + "' as '" + name + "'"
+                    + writeResultNote(writeResult), object.getBlocks().size(), List.of());
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            e.printStackTrace();
+            return new Result(false, "Failed writing capture for '" + name + "': " + e.getMessage(), 0, List.of());
         }
-        writeJson(new File(data.getDataFolder(), "structures/" + name + ".json"), structure);
     }
 
     private static Map<String, Object> structureJson(String name, String source, int maxSpan) {
@@ -319,9 +517,4 @@ public final class StructureImporter {
         return root;
     }
 
-    private static void writeJson(File file, Map<String, Object> content) throws Exception {
-        file.getParentFile().mkdirs();
-        String json = new GsonBuilder().setPrettyPrinting().create().toJson(content);
-        Files.writeString(file.toPath(), json, StandardCharsets.UTF_8);
-    }
 }

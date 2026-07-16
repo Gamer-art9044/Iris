@@ -68,7 +68,13 @@ public final class ModdedDimensionManager {
     private ModdedDimensionManager() {
     }
 
-    public static void bindAccess(ModdedServerAccess serverAccess) {
+    public static synchronized ModdedServerAccess bindAccess(ModdedServerAccess serverAccess) {
+        ModdedServerAccess previous = access;
+        access = serverAccess;
+        return previous;
+    }
+
+    public static synchronized void restoreAccess(ModdedServerAccess serverAccess) {
         access = serverAccess;
     }
 
@@ -110,12 +116,13 @@ public final class ModdedDimensionManager {
     }
 
     public static Handle create(MinecraftServer server, String dimensionId, String pack, String packDimensionKey, long seed) {
+        ModdedStartup.requirePackForWorldCreation(pack);
         ModdedServerAccess serverAccess = requireAccess();
         synchronized (LOCK) {
             ResourceKey<Level> key = levelKey(dimensionId);
             Handle existing = HANDLES.get(dimensionId);
             if (existing != null && serverAccess.hasLevel(server, key)) {
-                existing.generator().repoint(pack, packDimensionKey, seed);
+                existing.generator().repointAndBind(existing.level(), pack, packDimensionKey, seed);
                 Handle refreshed = new Handle(dimensionId, pack, packDimensionKey, seed, existing.level(), existing.generator());
                 HANDLES.put(dimensionId, refreshed);
                 return refreshed;
@@ -126,7 +133,7 @@ public final class ModdedDimensionManager {
                     throw new IllegalStateException("Iris cannot inject dimension '" + dimensionId + "': a non-Iris level with that id is already loaded");
                 }
                 LOGGER.warn("Iris dimension '{}' is already present in the running server; reusing it", dimensionId);
-                generator.repoint(pack, packDimensionKey, seed);
+                generator.repointAndBind(present, pack, packDimensionKey, seed);
                 Handle handle = new Handle(dimensionId, pack, packDimensionKey, seed, present, generator);
                 HANDLES.put(dimensionId, handle);
                 return handle;
@@ -231,10 +238,6 @@ public final class ModdedDimensionManager {
     private static Holder<DimensionType> resolveDimensionType(RegistryAccess registryAccess, String pack, String packDimensionKey) {
         Registry<DimensionType> registry = registryAccess.lookupOrThrow(Registries.DIMENSION_TYPE);
         IrisDimension dimension = loadPackDimension(pack, packDimensionKey);
-        if (dimension == null) {
-            throw new IllegalStateException("Iris cannot resolve dimension type for missing pack dimension '"
-                    + packDimensionKey + "' in pack '" + pack + "'");
-        }
         String typeRef = ModdedForcedDatapack.dimensionTypeRef(dimension);
         ResourceKey<DimensionType> typeKey = ResourceKey.create(Registries.DIMENSION_TYPE, Identifier.parse(typeRef));
         Holder.Reference<DimensionType> packType = ModdedForcedDatapack.requireRegisteredDimensionType(
@@ -246,12 +249,22 @@ public final class ModdedDimensionManager {
         try {
             File packFolder = ModdedWorldEngines.packFolder(pack);
             if (!packFolder.isDirectory()) {
-                return null;
+                throw new IllegalStateException("Iris pack directory is missing: " + packFolder.getAbsolutePath());
             }
-            return IrisData.get(packFolder).getDimensionLoader().load(packDimensionKey);
+            IrisDimension dimension = IrisData.get(packFolder).getDimensionLoader().load(packDimensionKey);
+            if (dimension == null) {
+                throw new IllegalStateException("Iris pack '" + pack
+                        + "' does not contain dimension '" + packDimensionKey + "'");
+            }
+            return dimension;
         } catch (Throwable e) {
-            LOGGER.warn("Iris could not load pack '{}' dimension '{}' for dimension type resolution: {}", pack, packDimensionKey, e.toString());
-            return null;
+            LOGGER.error("Iris could not load pack '{}' dimension '{}' for dimension type resolution",
+                    pack, packDimensionKey, e);
+            if (e instanceof Error fatalError) {
+                throw fatalError;
+            }
+            throw new IllegalStateException("Iris could not load pack '" + pack + "' dimension '"
+                    + packDimensionKey + "' for dimension type resolution", e);
         }
     }
 
@@ -285,10 +298,56 @@ public final class ModdedDimensionManager {
                 List.of(),
                 false);
 
-        serverAccess.putLevel(server, key, level);
-        generator.bindLevel(level);
-        server.getPlayerList().addWorldborderListener(level);
-        return new Handle(dimensionId, pack, packDimensionKey, seed, level, generator);
+        try {
+            generator.bindLevel(level);
+            Handle handle = new Handle(dimensionId, pack, packDimensionKey, seed, level, generator);
+            ServerLevel previous = serverAccess.putLevelIfAbsent(server, key, level);
+            if (previous != null) {
+                throw new IllegalStateException("Iris cannot inject dimension '" + dimensionId
+                        + "': the level was registered concurrently");
+            }
+            server.getPlayerList().addWorldborderListener(level);
+            return handle;
+        } catch (Throwable error) {
+            rollbackInjection(server, serverAccess, key, level, generator, error);
+            if (error instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (error instanceof Error fatalError) {
+                throw fatalError;
+            }
+            throw new IllegalStateException("Iris runtime dimension injection failed for " + dimensionId, error);
+        }
+    }
+
+    private static void rollbackInjection(MinecraftServer server, ModdedServerAccess serverAccess,
+                                          ResourceKey<Level> key, ServerLevel level,
+                                          IrisModdedChunkGenerator generator, Throwable failure) {
+        try {
+            if (serverAccess.hasLevel(server, key)) {
+                ServerLevel removed = serverAccess.removeLevel(server, key);
+                if (removed != null && removed != level) {
+                    serverAccess.putLevel(server, key, removed);
+                    throw new IllegalStateException("Iris injection rollback encountered another registered level for "
+                            + key.identifier());
+                }
+            }
+        } catch (Throwable cleanupError) {
+            failure.addSuppressed(cleanupError);
+            LOGGER.error("Iris failed to remove a partially injected level for {}", key.identifier(), cleanupError);
+        }
+        try {
+            generator.unbindEngine(level);
+        } catch (Throwable cleanupError) {
+            failure.addSuppressed(cleanupError);
+            LOGGER.error("Iris failed to close a partially bound engine for {}", key.identifier(), cleanupError);
+        }
+        try {
+            level.close();
+        } catch (Throwable cleanupError) {
+            failure.addSuppressed(cleanupError);
+            LOGGER.error("Iris failed to close a partially injected level for {}", key.identifier(), cleanupError);
+        }
     }
 
     public static int evacuate(MinecraftServer server, ServerLevel from) {

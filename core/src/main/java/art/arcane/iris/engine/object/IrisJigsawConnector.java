@@ -41,11 +41,15 @@ public class IrisJigsawConnector {
     private IrisDirection direction = IrisDirection.NORTH_NEGATIVE_Z;
 
     @Required
+    @Desc("The connector's authored top direction, used to preserve aligned vanilla jigsaw orientation.")
+    private IrisDirection top = IrisDirection.UP_POSITIVE_Y;
+
+    @Required
     @RegistryListResource(IrisJigsawPool.class)
     @Desc("The jigsaw pool to draw the connecting piece from.")
     private String pool = "";
 
-    @Desc("The name of this connector. A connector only joins to a connector on another piece whose targetName equals this name (and whose name equals this connector's targetName).")
+    @Desc("The identity exposed by this connector. Another connector can attach when its targetName equals this name, matching Minecraft's jigsaw target-to-name contract.")
     private String name = "";
 
     @Desc("The name this connector wants to connect to on the other piece.")

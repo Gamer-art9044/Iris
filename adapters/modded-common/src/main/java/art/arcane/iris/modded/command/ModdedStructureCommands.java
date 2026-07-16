@@ -24,6 +24,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.framework.StructureAssembler;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
+import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
 import art.arcane.volmlib.util.collection.KList;
@@ -137,12 +138,13 @@ public final class ModdedStructureCommands {
             return 0;
         }
         String key = keyRaw.trim();
-        IrisStructure structure = IrisData.loadAnyStructure(key, data);
+        IrisStructure structure = data.load(IrisStructure.class, key, false);
         if (structure == null) {
             IrisModdedCommands.fail(source, "No iris structure '" + key + "' in this pack");
             return 0;
         }
-        StructureAssembler assembler = new StructureAssembler(data, structure, 0, 64, 0);
+        StructureAssembler assembler = StructureAssembler.forData(
+                data, structure, new IrisPosition(0, 64, 0));
         KList<PlacedStructurePiece> pieces = assembler.assemble(new RNG(1234));
         if (pieces == null || pieces.isEmpty()) {
             IrisModdedCommands.fail(source, "Structure '" + key + "' assembled 0 pieces (check startPool '" + structure.getStartPool() + "')");
@@ -176,7 +178,7 @@ public final class ModdedStructureCommands {
             return 0;
         }
         String key = keyRaw.trim();
-        IrisStructure structure = IrisData.loadAnyStructure(key, data);
+        IrisStructure structure = data.load(IrisStructure.class, key, false);
         if (structure == null) {
             IrisModdedCommands.fail(source, "No iris structure '" + key + "' in this pack");
             return 0;
@@ -184,7 +186,8 @@ public final class ModdedStructureCommands {
         int originX = player.blockPosition().getX();
         int originY = player.blockPosition().getY();
         int originZ = player.blockPosition().getZ();
-        StructureAssembler assembler = new StructureAssembler(data, structure, originX, originY, originZ);
+        StructureAssembler assembler = StructureAssembler.forData(
+                data, structure, new IrisPosition(originX, originY, originZ));
         RNG rng = new RNG((long) originX * 341873128712L + originZ);
         KList<PlacedStructurePiece> pieces = assembler.assemble(rng);
         if (pieces == null || pieces.isEmpty()) {

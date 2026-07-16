@@ -40,7 +40,13 @@ public final class ModdedServiceManager {
         }
         services.put(type, service);
         if (enabled) {
-            enableService(service);
+            try {
+                service.onEnable();
+            } catch (Throwable failure) {
+                services.remove(type);
+                disableAfterFailure(service, failure);
+                throw serviceFailure(service, failure);
+            }
         }
         return service;
     }
@@ -55,8 +61,18 @@ public final class ModdedServiceManager {
             return;
         }
         enabled = true;
-        for (ModdedService service : services.values()) {
-            enableService(service);
+        ModdedService[] ordered = services.values().toArray(new ModdedService[0]);
+        for (int i = 0; i < ordered.length; i++) {
+            ModdedService service = ordered[i];
+            try {
+                service.onEnable();
+            } catch (Throwable failure) {
+                enabled = false;
+                for (int rollbackIndex = i; rollbackIndex >= 0; rollbackIndex--) {
+                    disableAfterFailure(ordered[rollbackIndex], failure);
+                }
+                throw serviceFailure(service, failure);
+            }
         }
     }
 
@@ -79,12 +95,15 @@ public final class ModdedServiceManager {
         forEachReversed(this::disableService);
     }
 
-    private void enableService(ModdedService service) {
-        try {
-            service.onEnable();
-        } catch (Throwable error) {
-            LOGGER.error("Iris service onEnable failed for {}", service.getClass().getName(), error);
+    synchronized void rollback(Throwable failure) {
+        if (enabled) {
+            enabled = false;
+            ModdedService[] ordered = services.values().toArray(new ModdedService[0]);
+            for (int i = ordered.length - 1; i >= 0; i--) {
+                disableAfterFailure(ordered[i], failure);
+            }
         }
+        services.clear();
     }
 
     private void disableService(ModdedService service) {
@@ -101,6 +120,28 @@ public final class ModdedServiceManager {
         } catch (Throwable error) {
             LOGGER.error("Iris service tick failed for {}", service.getClass().getName(), error);
         }
+    }
+
+    private void disableAfterFailure(ModdedService service, Throwable failure) {
+        try {
+            service.onDisable();
+        } catch (Throwable cleanupError) {
+            if (cleanupError != failure) {
+                failure.addSuppressed(cleanupError);
+            }
+            LOGGER.error("Iris service rollback failed for {}", service.getClass().getName(), cleanupError);
+        }
+    }
+
+    private RuntimeException serviceFailure(ModdedService service, Throwable failure) {
+        LOGGER.error("Iris service onEnable failed for {}", service.getClass().getName(), failure);
+        if (failure instanceof RuntimeException runtimeException) {
+            return runtimeException;
+        }
+        if (failure instanceof Error fatalError) {
+            throw fatalError;
+        }
+        return new IllegalStateException("Iris service failed to enable: " + service.getClass().getName(), failure);
     }
 
     private void forEachReversed(Consumer<ModdedService> action) {

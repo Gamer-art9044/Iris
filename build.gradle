@@ -105,6 +105,7 @@ nmsBindings.each { key, value ->
             compileOnly(rootProject.libs.annotations)
             compileOnly(rootProject.libs.byteBuddy.core)
             testImplementation('junit:junit:4.13.2')
+            testRuntimeOnly(project(':core'))
         }
 
         tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {

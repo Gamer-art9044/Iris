@@ -43,7 +43,7 @@ public class IrisJigsawPool extends IrisRegistrant {
     private KList<IrisJigsawPieceEntry> pieces = new KList<>();
 
     @RegistryListResource(IrisJigsawPool.class)
-    @Desc("The pool to fall back to when the structure's max depth is reached. Use this for terminal pieces (caps, dead ends). Leave empty to simply stop expanding.")
+    @Desc("The direct fallback pool tried after this pool, or used alone at maximum depth. The fallback pool's own fallback is not part of the same selection. Leave empty to stop expanding at maximum depth.")
     private String fallback = "";
 
     @Override

@@ -41,9 +41,7 @@ public final class FloatingIslandSample {
     public static final int REJECT_COUNT = 7;
     public static final int REJECT_CLUSTER = REJECT_NO_SEED;
 
-    private static final double EDGE_ROUNDING_BAND = 0.28;
-    private static final double FOOTPRINT_PINHOLE_REPAIR_MARGIN = 0.16;
-    private static final int PINHOLE_CARDINAL_FILL = 4;
+    private static final int PINHOLE_CARDINAL_FILL = 3;
     private static final int PINHOLE_TOTAL_FILL = 7;
     private static final int CARVE_CARDINAL_SUPPORT = 2;
     private static final int CARVE_TOTAL_SUPPORT = 4;
@@ -75,13 +73,13 @@ public final class FloatingIslandSample {
         FOOTPRINT_MEMO.get().clear();
     }
 
-    public static FloatingIslandSample sampleMemoized(IrisBiome parent, int wx, int wz, int chunkHeight, long baseSeed, IrisData data, Engine engine) {
+    public static FloatingIslandSample sampleMemoized(IrisBiome parent, int wx, int wz, int chunkHeight, long baseSeed, IrisData data, Engine engine, FloatingIslandBoundarySampler boundarySampler) {
         long key = (((long) wx) << 32) ^ (wz & 0xFFFFFFFFL);
         HashMap<Long, FloatingIslandSample> memo = CHUNK_MEMO.get();
         if (memo.containsKey(key)) {
             return memo.get(key);
         }
-        FloatingIslandSample result = sample(parent, wx, wz, chunkHeight, baseSeed, data, engine);
+        FloatingIslandSample result = sample(parent, wx, wz, chunkHeight, baseSeed, data, engine, boundarySampler);
         memo.put(key, result);
         return result;
     }
@@ -172,17 +170,42 @@ public final class FloatingIslandSample {
         return baseSeed ^ ((long) wx * 341873128712L) ^ ((long) wz * 132897987541L);
     }
 
-    public static FloatingIslandSample sample(IrisBiome parent, int wx, int wz, int chunkHeight, long baseSeed, IrisData data, Engine engine) {
+    private static int maximumEdgeFieldWidth(KList<IrisFloatingChildBiomes> entries, long baseSeed,
+                                             IrisData data, IrisBiome parent) {
+        int maximumWidth = FloatingIslandEdgeProfile.MIN_WIDTH;
+        for (IrisFloatingChildBiomes entry : entries) {
+            FloatingIslandEdgeProfile profile = resolveEdgeProfile(entry, baseSeed, data, parent);
+            maximumWidth = Math.max(maximumWidth, profile.fieldWidth());
+        }
+        return maximumWidth;
+    }
+
+    private static FloatingIslandEdgeProfile resolveEdgeProfile(IrisFloatingChildBiomes entry, long baseSeed,
+                                                                IrisData data, IrisBiome parent) {
+        FloatingIslandEdgeProfile profile = entry.getEdgeTaperProfile(baseSeed, data);
+        if (profile != null) {
+            return profile;
+        }
+        warnNullCng("edgeTaperVariationStyle", parent);
+        return FloatingIslandEdgeProfile.DEFAULT;
+    }
+
+    public static FloatingIslandSample sample(IrisBiome parent, int wx, int wz, int chunkHeight, long baseSeed, IrisData data, Engine engine, FloatingIslandBoundarySampler boundarySampler) {
         KList<IrisFloatingChildBiomes> entries = parent.getFloatingChildBiomes();
         if (entries == null || entries.isEmpty()) {
             return reject(REJECT_NO_ENTRIES);
         }
 
+        int boundaryFieldWidth = maximumEdgeFieldWidth(entries, baseSeed, data, parent);
+        int parentBoundaryDistance = boundarySampler.edgeDistance(parent, wx, wz, boundaryFieldWidth);
+
         if (parent.isMergeFloatingChildBiomes()) {
-            return sampleMerged(parent, entries, wx, wz, chunkHeight, baseSeed, data, engine);
+            return sampleMerged(parent, entries, wx, wz, chunkHeight, baseSeed, data, engine, boundarySampler,
+                    parentBoundaryDistance, boundaryFieldWidth);
         }
 
         IrisFloatingChildBiomes entry;
+        int ownershipBoundaryDistance = boundaryFieldWidth + 1;
         if (entries.size() == 1) {
             entry = entries.getFirst();
         } else {
@@ -192,24 +215,30 @@ public final class FloatingIslandSample {
                 warnNullCng("pickerStyle", parent);
                 return reject(REJECT_NO_PICK);
             }
-            double pickerValue = picker.noise(wx, wz);
-            double clamped = Math.max(0, Math.min(1, pickerValue));
-            entry = IRare.pick(entries, clamped);
+            FloatingIslandBoundarySampler.OwnershipSample ownership = boundarySampler.ownership(
+                    entries, picker, wx, wz, boundaryFieldWidth);
+            entry = ownership.owner();
             if (entry == null) {
                 return reject(REJECT_NO_PICK);
             }
+            ownershipBoundaryDistance = ownership.boundaryDistance();
         }
 
-        return sampleEntry(parent, entry, wx, wz, chunkHeight, baseSeed, data, engine);
+        return sampleEntry(parent, entry, wx, wz, chunkHeight, baseSeed, data, engine, boundarySampler,
+                parentBoundaryDistance, ownershipBoundaryDistance);
     }
 
-    private static FloatingIslandSample sampleMerged(IrisBiome parent, KList<IrisFloatingChildBiomes> entries, int wx, int wz, int chunkHeight, long baseSeed, IrisData data, Engine engine) {
+    private static FloatingIslandSample sampleMerged(IrisBiome parent, KList<IrisFloatingChildBiomes> entries,
+                                                     int wx, int wz, int chunkHeight, long baseSeed, IrisData data,
+                                                     Engine engine, FloatingIslandBoundarySampler boundarySampler,
+                                                     int parentBoundaryDistance, int boundaryFieldWidth) {
         KList<FloatingIslandSample> samples = new KList<>();
         int minY = Integer.MAX_VALUE;
         int maxY = Integer.MIN_VALUE;
 
         for (IrisFloatingChildBiomes entry : entries) {
-            FloatingIslandSample sample = sampleEntry(parent, entry, wx, wz, chunkHeight, baseSeed, data, engine);
+            FloatingIslandSample sample = sampleEntry(parent, entry, wx, wz, chunkHeight, baseSeed, data, engine,
+                    boundarySampler, parentBoundaryDistance, boundaryFieldWidth + 1);
             if (sample == null) {
                 continue;
             }
@@ -270,30 +299,36 @@ public final class FloatingIslandSample {
         return new FloatingIslandSample(topEntry, minY, thickness, topIdx, solidCount, solidMask, entryMask);
     }
 
-    private static FloatingIslandSample sampleEntry(IrisBiome parent, IrisFloatingChildBiomes entry, int wx, int wz, int chunkHeight, long baseSeed, IrisData data, Engine engine) {
+    private static FloatingIslandSample sampleEntry(IrisBiome parent, IrisFloatingChildBiomes entry, int wx, int wz,
+                                                    int chunkHeight, long baseSeed, IrisData data, Engine engine,
+                                                    FloatingIslandBoundarySampler boundarySampler,
+                                                    int parentBoundaryDistance, int ownershipBoundaryDistance) {
+        FloatingIslandEdgeProfile edgeProfile = resolveEdgeProfile(entry, baseSeed, data, parent);
         CNG footprintCng = entry.getFootprintCng(baseSeed, data);
         if (footprintCng == null) {
             warnNullCng("footprintStyle", parent);
             return reject(REJECT_NO_SEED);
         }
-        double signed = footprintSigned(footprintCng, wx, wz);
         double threshold = Math.max(0, Math.min(1, entry.getFootprintThreshold()));
         double signedCut = (threshold * 2.0) - 1.0;
+        FloatingIslandBoundarySampler.FootprintSample footprint = boundarySampler.footprint(
+                footprintCng, wx, wz, signedCut, edgeProfile.fieldWidth());
+        double signed = footprint.signed();
 
         double[] diag = LAST_DENSITY.get();
         diag[0] = signed;
         diag[1] = signedCut;
 
-        NeighborSupport footprintSupport = footprintNeighborSupport(footprintCng, wx, wz, signedCut);
-        boolean footprintSolid = signed > signedCut;
-        boolean repairedFootprint = !footprintSolid && isFootprintPinholeRepairable(signed, signedCut, footprintSupport);
-        if (!footprintSolid && !repairedFootprint) {
+        NeighborSupport footprintSupport = new NeighborSupport(footprint.cardinalSupport(), footprint.diagonalSupport());
+        if (!footprint.accepted()) {
             return reject(REJECT_NO_SEED);
         }
-        if (footprintSolid && !footprintSupport.hasSolidSupport()) {
-            return reject(REJECT_NO_SEED);
+        int boundaryDistance = Math.min(footprint.boundaryDistance(),
+                Math.min(parentBoundaryDistance, ownershipBoundaryDistance));
+        double edgeFade = edgeProfile.fade(boundaryDistance, wx, wz);
+        if (edgeFade <= 0.0D) {
+            return reject(REJECT_NO_THICKNESS);
         }
-        double shapeSigned = repairedFootprint ? signedCut + FOOTPRINT_PINHOLE_REPAIR_MARGIN : signed;
 
         CNG altitudeCng = entry.getAltitudeCng(baseSeed, data);
         if (altitudeCng == null) {
@@ -307,10 +342,9 @@ public final class FloatingIslandSample {
         int maxAlt = Math.max(minAlt, entry.getMaxHeightAboveSurface() - worldMin);
         int baseY = minAlt + (int) Math.round(altClamped * (maxAlt - minAlt));
 
-        double edgeFade = edgeFade(shapeSigned, signedCut);
         IrisBiome target = entry.getRealBiome(parent, data);
-        int topH = roundedEdgeHeight(computeTopHeight(entry, target, engine, baseSeed, wx, wz, data), edgeFade);
-        int topY = baseY + topH;
+        int fullTopHeight = computeTopHeight(entry, target, engine, baseSeed, wx, wz, data);
+        int topH = roundedEdgeHeight(fullTopHeight, edgeFade);
 
         CNG bottomCng = entry.getBottomCng(baseSeed, data);
         if (bottomCng == null) {
@@ -323,6 +357,17 @@ public final class FloatingIslandSample {
         int minDepth = Math.max(0, entry.getBottomDepthMin());
         int maxDepth = Math.max(minDepth, entry.getBottomDepthMax());
         int depth = roundedEdgeDepth(minDepth, maxDepth, bottomShaped, edgeFade);
+        if (topH == 0 && depth == 0) {
+            double fullDepth = minDepth + (bottomShaped * (maxDepth - minDepth));
+            if (fullDepth > 0.0D) {
+                depth = 1;
+            } else if (fullTopHeight > 0) {
+                topH = 1;
+            } else {
+                return reject(REJECT_NO_THICKNESS);
+            }
+        }
+        int topY = baseY + topH;
         int botY = baseY - depth;
 
         Integer minAbsoluteY = entry.getMinAbsoluteY();
@@ -360,18 +405,21 @@ public final class FloatingIslandSample {
         boolean[] solidMask = new boolean[thickness];
         CNG wallWarp = entry.getWallWarpCng(baseSeed, data);
         double warpAmp = Math.max(0, entry.getWallWarpAmplitude());
+        double effectiveWarpAmp = effectiveWallWarpAmplitude(warpAmp, edgeFade);
         IrisCaveProfileSampler carvingProfileSampler = entry.getCarvingProfileSampler(engine, data);
         CNG carve = carvingProfileSampler == null && !entry.hasCarvingReference() ? entry.getCarveCng(baseSeed, data) : null;
         double carveThreshold = entry.getCarveThreshold();
-        boolean useWarp = wallWarp != null && warpAmp > 0;
+        boolean useWarp = wallWarp != null && effectiveWarpAmp > 0;
         boolean useProfileCarve = carvingProfileSampler != null;
         boolean useCarve = directCarveEnabled(entry, carvingProfileSampler, carve, carveThreshold);
+        boolean[] lateralCarveMask = useProfileCarve || useCarve ? new boolean[thickness] : null;
+        boolean baseCarveInterior = lateralCarveMask != null && canCarveLaterally(edgeFade, footprintSupport);
 
         if (useWarp) {
             for (int k = 0; k < thickness; k++) {
                 int wy = botY + k;
-                boolean layerSolid = layerFootprintSolid(footprintCng, wallWarp, true, warpAmp, wx, wy, wz, signedCut);
-                NeighborSupport layerSupport = layerNeighborSupport(footprintCng, wallWarp, true, warpAmp, wx, wy, wz, signedCut);
+                boolean layerSolid = layerFootprintSolid(footprintCng, wallWarp, true, effectiveWarpAmp, wx, wy, wz, signedCut);
+                NeighborSupport layerSupport = layerNeighborSupport(footprintCng, wallWarp, true, effectiveWarpAmp, wx, wy, wz, signedCut);
                 if (layerSolid && !layerSupport.hasSolidSupport()) {
                     continue;
                 }
@@ -379,16 +427,22 @@ public final class FloatingIslandSample {
                     continue;
                 }
                 solidMask[k] = true;
+                if (lateralCarveMask != null) {
+                    lateralCarveMask[k] = baseCarveInterior && layerSolid && layerSupport.isFullySurrounded();
+                }
             }
         } else {
             Arrays.fill(solidMask, true);
+            if (baseCarveInterior) {
+                Arrays.fill(lateralCarveMask, true);
+            }
         }
 
         int solidCount = solidifyUncarvedInterior(solidMask);
         if (useProfileCarve) {
-            solidCount = carveSolidInterior(solidMask, botY, wx, wz, carvingProfileSampler, carveThreshold);
+            solidCount = carveSolidInterior(solidMask, lateralCarveMask, botY, wx, wz, carvingProfileSampler, carveThreshold);
         } else if (useCarve) {
-            solidCount = carveSolidInterior(solidMask, botY, wx, wz, carve, carveThreshold);
+            solidCount = carveSolidInterior(solidMask, lateralCarveMask, botY, wx, wz, carve, carveThreshold);
         }
         int highestSolidIdx = highestSolidIndex(solidMask);
 
@@ -400,12 +454,6 @@ public final class FloatingIslandSample {
 
         LAST_REJECT.get()[0] = REJECT_NONE;
         return new FloatingIslandSample(entry, botY, thickness, topIdx, solidCount, solidMask);
-    }
-
-    static double edgeFade(double signed, double signedCut) {
-        double edge = (signed - signedCut) / EDGE_ROUNDING_BAND;
-        double edgeClamped = Math.max(0, Math.min(1, edge));
-        return edgeClamped * edgeClamped * (3.0 - 2.0 * edgeClamped);
     }
 
     static int roundedEdgeHeight(int topHeight, double edgeFade) {
@@ -421,23 +469,33 @@ public final class FloatingIslandSample {
         return (int) Math.round(fullDepth * fade);
     }
 
+    static double effectiveWallWarpAmplitude(double wallWarpAmplitude, double edgeFade) {
+        double amplitude = Math.max(0, wallWarpAmplitude);
+        double fade = Math.max(0, Math.min(1, edgeFade));
+        return amplitude * fade;
+    }
+
     static boolean directCarveEnabled(IrisFloatingChildBiomes entry, IrisCaveProfileSampler carvingProfileSampler, CNG carve, double carveThreshold) {
         return carvingProfileSampler == null && (entry == null || !entry.hasCarvingReference()) && carve != null && carveThreshold < 1.0;
     }
 
-    static int carveSolidInterior(boolean[] solidMask, int botY, int wx, int wz, CNG carve, double carveThreshold) {
-        return carveSolidInterior(solidMask, botY, wx, wz, (x, y, z) -> {
+    static boolean canCarveLaterally(double edgeFade, NeighborSupport support) {
+        return edgeFade >= 1.0 && support.isFullySurrounded();
+    }
+
+    static int carveSolidInterior(boolean[] solidMask, boolean[] lateralCarveMask, int botY, int wx, int wz, CNG carve, double carveThreshold) {
+        return carveSolidInterior(solidMask, lateralCarveMask, botY, wx, wz, (x, y, z) -> {
             double carveNoise = carve.noise(x, y, z);
             double carveClamped = Math.max(0, Math.min(1, carveNoise));
             return carveClamped > carveThreshold;
         });
     }
 
-    static int carveSolidInterior(boolean[] solidMask, int botY, int wx, int wz, IrisCaveProfileSampler carve, double carveThreshold) {
-        return carveSolidInterior(solidMask, botY, wx, wz, (x, y, z) -> carve.shouldCarve(x, y, z, carveThreshold));
+    static int carveSolidInterior(boolean[] solidMask, boolean[] lateralCarveMask, int botY, int wx, int wz, IrisCaveProfileSampler carve, double carveThreshold) {
+        return carveSolidInterior(solidMask, lateralCarveMask, botY, wx, wz, (x, y, z) -> carve.shouldCarve(x, y, z, carveThreshold));
     }
 
-    private static int carveSolidInterior(boolean[] solidMask, int botY, int wx, int wz, CarveSampler carve) {
+    private static int carveSolidInterior(boolean[] solidMask, boolean[] lateralCarveMask, int botY, int wx, int wz, CarveSampler carve) {
         int firstSolid = -1;
         int lastSolid = -1;
         for (int i = 0; i < solidMask.length; i++) {
@@ -459,7 +517,7 @@ public final class FloatingIslandSample {
         boolean[] carveMask = new boolean[solidMask.length];
         if (carveStart <= carveEnd) {
             for (int i = carveStart; i <= carveEnd; i++) {
-                if (!solidMask[i]) {
+                if (!solidMask[i] || !lateralCarveMask[i]) {
                     continue;
                 }
 
@@ -549,8 +607,8 @@ public final class FloatingIslandSample {
         return footprintNeighborSupport(footprintCng, wx, wz, signedCut).hasSolidSupport();
     }
 
-    static boolean isFootprintPinholeRepairable(double signed, double signedCut, NeighborSupport support) {
-        return signed >= signedCut - FOOTPRINT_PINHOLE_REPAIR_MARGIN && support.canFillPinhole();
+    static boolean isFootprintPinholeRepairable(NeighborSupport support) {
+        return support.canFillPinhole();
     }
 
     static NeighborSupport footprintNeighborSupport(CNG footprintCng, int wx, int wz, double signedCut) {
@@ -678,7 +736,7 @@ public final class FloatingIslandSample {
         private final int cardinal;
         private final int diagonal;
 
-        private NeighborSupport(int cardinal, int diagonal) {
+        NeighborSupport(int cardinal, int diagonal) {
             this.cardinal = cardinal;
             this.diagonal = diagonal;
         }
@@ -701,6 +759,10 @@ public final class FloatingIslandSample {
 
         boolean canFillPinhole() {
             return cardinal >= PINHOLE_CARDINAL_FILL && total() >= PINHOLE_TOTAL_FILL;
+        }
+
+        boolean isFullySurrounded() {
+            return cardinal == 4 && diagonal == 4;
         }
     }
 

@@ -36,9 +36,6 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionCarvingEntry;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
 import art.arcane.iris.engine.object.IrisEngineData;
-import art.arcane.iris.engine.object.IrisLootMode;
-import art.arcane.iris.engine.object.IrisLootReference;
-import art.arcane.iris.engine.object.IrisLootTable;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisPosition;
@@ -83,7 +80,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdater, Renderer, Hotloadable {
+public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, Hotloadable {
     IrisComplex getComplex();
 
     default @Nullable UpperDimensionContext getUpperContext() {
@@ -318,18 +315,6 @@ public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdat
     }
 
     void blockUpdatedMetric();
-
-    @Override
-    default void injectTables(KList<IrisLootTable> list, IrisLootReference r, boolean fallback) {
-        if (r.getMode().equals(IrisLootMode.FALLBACK) && !fallback)
-            return;
-
-        if (r.getMode().equals(IrisLootMode.CLEAR) || r.getMode().equals(IrisLootMode.REPLACE)) {
-            list.clear();
-        }
-
-        list.addAll(r.getLootTables(getComplex()));
-    }
 
     EngineEffects getEffects();
 
@@ -591,7 +576,7 @@ public interface Engine extends DataProvider, Fallible, LootProvider, BlockUpdat
 
         if (marker.structureAware()) {
             IrisObject placedObject = getData().getObjectLoader().load(object);
-            IrisStructure structure = IrisData.loadAnyStructure(marker.structureKey(), getData());
+            IrisStructure structure = getData().load(IrisStructure.class, marker.structureKey(), false);
             IrisObjectPlacement placement = placedObject == null || structure == null
                     ? null
                     : structure.createLootPlacement(object);

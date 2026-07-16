@@ -19,6 +19,7 @@
 package art.arcane.iris.core.pack;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -40,6 +41,21 @@ public final class PackValidationRegistry {
             return null;
         }
         return RESULTS.get(packName);
+    }
+
+    public static PackValidationResult requireLoadable(String packName) {
+        if (packName == null || packName.isBlank()) {
+            throw new IllegalArgumentException("Pack name is required for validation");
+        }
+        PackValidationResult result = get(packName);
+        if (result == null) {
+            throw new BrokenPackException(packName, List.of(
+                    "Required pack validation has not completed. World creation fails closed until validation succeeds."));
+        }
+        if (!result.isLoadable()) {
+            throw new BrokenPackException(packName, result.getBlockingErrors());
+        }
+        return result;
     }
 
     public static boolean isBroken(String packName) {

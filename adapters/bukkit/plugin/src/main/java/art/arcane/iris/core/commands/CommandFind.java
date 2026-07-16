@@ -21,12 +21,16 @@ package art.arcane.iris.core.commands;
 import art.arcane.iris.Iris;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.service.ObjectStudioSaveService;
+import art.arcane.iris.core.structure.NativeStructureLocateCapability;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
+import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.engine.framework.StructureReachability;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.util.common.director.DirectorExecutor;
 import art.arcane.iris.util.common.director.specialhandlers.ObjectHandler;
 import art.arcane.iris.util.common.director.specialhandlers.StructureHandler;
@@ -117,13 +121,34 @@ public class CommandFind implements DirectorExecutor {
             return;
         }
 
-        if (IrisStructureLocator.isPlaced(e, structure)) {
-            locateIrisStructure(e, structure, commandSender);
+        String structureKey = structure == null ? "" : structure.trim();
+        Structure nativeStructure = resolveNativeStructure(structureKey);
+        if (nativeStructure != null) {
+            IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(
+                    e, structureKey, false);
+            if (!decision.generate()
+                    && decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+                commandSender.sendMessage(C.RED + NativeStructureGenerationPolicy.generationStatusMessage(
+                        structureKey, decision.status()));
+                return;
+            }
+            if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+                locateIrisStructure(e, structureKey, commandSender);
+                return;
+            }
+            if (NativeStructureLocateCapability.isPaperUnavailable(structureKey)) {
+                commandSender.sendMessage(C.RED + NativeStructureLocateCapability.unavailableMessage());
+                return;
+            }
+        }
+
+        if (nativeStructure == null && IrisStructureLocator.isPlaced(e, structureKey)) {
+            locateIrisStructure(e, structureKey, commandSender);
             return;
         }
 
-        if (BukkitNativeStructureLocatePolicy.isUnavailable(structure)) {
-            commandSender.sendMessage(C.RED + BukkitNativeStructureLocatePolicy.unavailableMessage());
+        if (nativeStructure == null) {
+            commandSender.sendMessage(C.RED + "Unknown structure: " + structureKey);
             return;
         }
 
@@ -135,40 +160,42 @@ public class CommandFind implements DirectorExecutor {
 
         World targetWorld = target.getWorld();
         Location origin = target.getLocation();
-        commandSender.sendMessage(C.GRAY + "Locating " + structure + "...");
+        commandSender.sendMessage(C.GRAY + "Locating " + structureKey + "...");
         J.s(() -> {
             try {
-                Registry<Structure> structureRegistry = RegistryAccess.registryAccess().getRegistry(RegistryKey.STRUCTURE);
-                Structure match = null;
-                for (Structure candidate : structureRegistry) {
-                    NamespacedKey key = structureRegistry.getKey(candidate);
-                    if (key != null && key.toString().equalsIgnoreCase(structure)) {
-                        match = candidate;
-                        break;
-                    }
-                }
-                if (match == null) {
-                    sendStructureMessage(target, commandSender, C.RED + "Unknown structure: " + structure);
-                    return;
-                }
-                if (!StructureReachability.isReachable(e, structure)) {
-                    KList<String> miss = StructureReachability.missingBiomeKeys(e, structure);
+                if (!StructureReachability.isReachable(e, structureKey)) {
+                    KList<String> miss = StructureReachability.missingBiomeKeys(e, structureKey);
                     sendStructureMessage(target, commandSender,
-                            C.YELLOW + structure + " cannot generate in this world (its required biomes are not produced by this pack"
+                            C.YELLOW + structureKey + " cannot generate in this world (its required biomes are not produced by this pack"
                                     + (miss.isEmpty() ? "" : ": needs " + String.join("/", miss)) + ").");
                     return;
                 }
-                StructureSearchResult result = targetWorld.locateNearestStructure(origin, match, 100, false);
+                StructureSearchResult result = targetWorld.locateNearestStructure(
+                        origin, nativeStructure, 100, false);
                 if (result == null || result.getLocation() == null) {
-                    sendStructureMessage(target, commandSender, C.YELLOW + "No " + structure + " found within range of you.");
+                    sendStructureMessage(target, commandSender,
+                            C.YELLOW + "No " + structureKey + " found within range of you.");
                     return;
                 }
-                prepareStructureTeleport(target, targetWorld, commandSender, structure, result.getLocation(), false);
+                prepareStructureTeleport(
+                        target, targetWorld, commandSender, structureKey, result.getLocation(), false);
             } catch (Throwable t) {
-                sendStructureMessage(target, commandSender, C.RED + "Could not locate " + structure + ": " + t.getClass().getSimpleName());
-                Iris.reportError("Could not locate structure '" + structure + "'.", t);
+                sendStructureMessage(target, commandSender,
+                        C.RED + "Could not locate " + structureKey + ": " + t.getClass().getSimpleName());
+                Iris.reportError("Could not locate structure '" + structureKey + "'.", t);
             }
         });
+    }
+
+    private static Structure resolveNativeStructure(String structureKey) {
+        Registry<Structure> structureRegistry = RegistryAccess.registryAccess().getRegistry(RegistryKey.STRUCTURE);
+        for (Structure candidate : structureRegistry) {
+            NamespacedKey key = structureRegistry.getKey(candidate);
+            if (key != null && key.toString().equalsIgnoreCase(structureKey)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private void locateIrisStructure(Engine engine, String structure, VolmitSender commandSender) {

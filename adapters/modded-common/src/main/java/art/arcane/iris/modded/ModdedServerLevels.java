@@ -43,6 +43,11 @@ public final class ModdedServerLevels implements ModdedServerAccess {
     }
 
     @Override
+    public ServerLevel putLevelIfAbsent(MinecraftServer server, ResourceKey<Level> key, ServerLevel level) {
+        return server.levels.putIfAbsent(key, level);
+    }
+
+    @Override
     public ServerLevel removeLevel(MinecraftServer server, ResourceKey<Level> key) {
         return server.levels.remove(key);
     }

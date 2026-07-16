@@ -19,6 +19,10 @@
 package art.arcane.iris.core.pack;
 
 import art.arcane.iris.engine.object.IrisBiomeCustomSpawnType;
+import art.arcane.iris.engine.object.IrisLoot;
+import art.arcane.iris.engine.object.IrisLootReference;
+import art.arcane.iris.engine.object.IrisLootTable;
+import art.arcane.iris.engine.object.ObjectPlaceMode;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformEntityType;
@@ -35,6 +39,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -51,11 +56,13 @@ public final class PackValidator {
     private static final String DATAPACKS_FOLDER = "datapacks";
     private static final String CACHE_FOLDER = "cache";
     private static final String OBJECTS_FOLDER = "objects";
+    private static final String LOOT_FOLDER = "loot";
     private static final String DIMENSIONS_FOLDER = "dimensions";
     private static final String STRUCTURES_FOLDER = "structures";
     private static final String JIGSAW_POOLS_FOLDER = "jigsaw-pools";
     private static final String JIGSAW_PIECES_FOLDER = "jigsaw-pieces";
     private static final List<String> STRUCTURE_HOST_FOLDERS = List.of(DIMENSIONS_FOLDER, "regions", "biomes");
+    private static final List<String> REMOVED_WORLDGEN_FIELDS = List.of("fluidBodies");
     private static final List<String> UNSUPPORTED_STRUCTURE_TRANSFORM_FIELDS = List.of("rotation", "translate", "scale");
     private static final Pattern RESOURCE_KEY_PATTERN = Pattern.compile("[a-z0-9_.-]+:[a-z0-9/._-]+");
 
@@ -86,8 +93,19 @@ public final class PackValidator {
         }
 
         validateDimensions(packFolder, dimensionFiles, blockingErrors, warnings);
+        blockingErrors.addAll(validateLootGraph(packFolder));
+        blockingErrors.addAll(validateRemovedWorldgenFields(packFolder));
         blockingErrors.addAll(validateUnsupportedStructureTransforms(packFolder));
         blockingErrors.addAll(validateStructureGraph(packFolder));
+        StructureGraphPackValidator.Validation compiledStructures =
+                StructureGraphPackValidator.validate(
+                        packFolder.toPath(), collectPlacedStructureKeys(packFolder));
+        addDistinct(blockingErrors, compiledStructures.errors());
+        addDistinct(warnings, compiledStructures.warnings());
+        blockingErrors.addAll(validateNativeStructureReplacements(
+                packFolder,
+                compiledStructures.replacementOutputStructures(),
+                compiledStructures.sampledVerticalEnvelopes()));
         blockingErrors.addAll(validateSpawnerEntityReferences(
                 new File(packFolder, "spawners"), new File(packFolder, "entities")));
         blockingErrors.addAll(validateCustomBiomeSpawns(
@@ -96,6 +114,54 @@ public final class PackValidator {
         runContentKeyValidation(packFolder, warnings);
 
         return new PackValidationResult(packName, blockingErrors, warnings, validatedAt);
+    }
+
+    private static void addDistinct(List<String> destination, List<String> additions) {
+        for (String addition : additions) {
+            if (!destination.contains(addition)) {
+                destination.add(addition);
+            }
+        }
+    }
+
+    static Set<String> collectPlacedStructureKeys(File packFolder) {
+        Set<String> structureKeys = new LinkedHashSet<>();
+        if (packFolder == null || !packFolder.isDirectory()) {
+            return structureKeys;
+        }
+        for (String folderName : STRUCTURE_HOST_FOLDERS) {
+            File resourceFolder = new File(packFolder, folderName);
+            if (!resourceFolder.isDirectory()) {
+                continue;
+            }
+            for (File resourceFile : listJsonRecursive(resourceFolder)) {
+                JSONObject resource = readJson(resourceFile);
+                if (resource == null) {
+                    continue;
+                }
+                JSONArray placements = resource.optJSONArray("structures");
+                if (placements == null) {
+                    continue;
+                }
+                for (int placementIndex = 0; placementIndex < placements.length(); placementIndex++) {
+                    JSONObject placement = placements.optJSONObject(placementIndex);
+                    if (placement == null) {
+                        continue;
+                    }
+                    JSONArray references = placement.optJSONArray("structures");
+                    if (references == null) {
+                        continue;
+                    }
+                    for (int referenceIndex = 0; referenceIndex < references.length(); referenceIndex++) {
+                        Object rawReference = references.opt(referenceIndex);
+                        if (rawReference instanceof String structureKey && !structureKey.isBlank()) {
+                            structureKeys.add(structureKey);
+                        }
+                    }
+                }
+            }
+        }
+        return Set.copyOf(structureKeys);
     }
 
     static List<String> validateUnsupportedStructureTransforms(File packFolder) {
@@ -163,6 +229,535 @@ public final class PackValidator {
         validateJigsawPools(poolsFolder, poolKeys, pieceKeys, blockingErrors);
         validateJigsawPieces(piecesFolder, poolKeys, objectKeys, blockingErrors);
         return blockingErrors;
+    }
+
+    static List<String> validateLootGraph(File packFolder) {
+        List<String> blockingErrors = new ArrayList<>();
+        if (packFolder == null || !packFolder.isDirectory()) {
+            return blockingErrors;
+        }
+
+        File lootFolder = new File(packFolder, LOOT_FOLDER);
+        Set<String> lootKeys = deriveRegistrantKeysExact(lootFolder);
+        if (lootFolder.isDirectory()) {
+            List<File> lootFiles = listJsonRecursive(lootFolder);
+            lootFiles.sort(Comparator.comparing(File::getPath));
+            for (File lootFile : lootFiles) {
+                String lootKey = deriveKey(lootFolder, lootFile);
+                JSONObject table = readGraphJson(lootFile, "Loot table", lootKey, blockingErrors);
+                if (table != null) {
+                    validateLootTable(lootKey, table, blockingErrors);
+                }
+            }
+        }
+
+        for (String folderName : STRUCTURE_HOST_FOLDERS) {
+            File resourceFolder = new File(packFolder, folderName);
+            if (!resourceFolder.isDirectory()) {
+                continue;
+            }
+            List<File> resourceFiles = listJsonRecursive(resourceFolder);
+            resourceFiles.sort(Comparator.comparing(File::getPath));
+            for (File resourceFile : resourceFiles) {
+                JSONObject resource = readJson(resourceFile);
+                if (resource == null || !resource.has("loot")) {
+                    continue;
+                }
+                String resourceType = structureHostType(folderName);
+                String resourceKey = deriveKey(resourceFolder, resourceFile);
+                validateLootReference(resourceType, resourceKey, resource.opt("loot"), lootKeys, blockingErrors);
+            }
+        }
+        return blockingErrors;
+    }
+
+    static List<String> validateRemovedWorldgenFields(File packFolder) {
+        List<String> blockingErrors = new ArrayList<>();
+        if (packFolder == null || !packFolder.isDirectory()) {
+            return blockingErrors;
+        }
+
+        for (String folderName : STRUCTURE_HOST_FOLDERS) {
+            File resourceFolder = new File(packFolder, folderName);
+            if (!resourceFolder.isDirectory()) {
+                continue;
+            }
+            List<File> resourceFiles = listJsonRecursive(resourceFolder);
+            resourceFiles.sort(Comparator.comparing(File::getPath));
+            String resourceType = structureHostType(folderName);
+            for (File resourceFile : resourceFiles) {
+                JSONObject resource = readJson(resourceFile);
+                if (resource == null) {
+                    continue;
+                }
+                String resourceKey = deriveKey(resourceFolder, resourceFile);
+                for (String field : REMOVED_WORLDGEN_FIELDS) {
+                    if (resource.has(field)) {
+                        blockingErrors.add(resourceType + " '" + resourceKey + "' declares removed field '"
+                                + field + "'. Remove it because fluid-body generation is not supported.");
+                    }
+                }
+            }
+        }
+        return blockingErrors;
+    }
+
+    private static void validateLootTable(String lootKey, JSONObject table, List<String> blockingErrors) {
+        String path = "Loot table '" + lootKey + "'";
+        Integer rarity = lootInteger(table, "rarity", 1, path, blockingErrors);
+        Integer minimumPicked = lootInteger(table, "minPicked", 1, path, blockingErrors);
+        Integer maximumPicked = lootInteger(table, "maxPicked", 5, path, blockingErrors);
+        Integer maximumTries = lootInteger(table, "maxTries", 10, path, blockingErrors);
+        requireMinimum(path + ".rarity", rarity, 1, blockingErrors);
+        requireMinimum(path + ".minPicked", minimumPicked, 0, blockingErrors);
+        requireMinimum(path + ".maxPicked", maximumPicked, 1, blockingErrors);
+        requireMinimum(path + ".maxTries", maximumTries, 1, blockingErrors);
+        requireMaximum(path + ".minPicked", minimumPicked, IrisLootTable.MAX_PICKED, blockingErrors);
+        requireMaximum(path + ".maxPicked", maximumPicked, IrisLootTable.MAX_PICKED, blockingErrors);
+        requireMaximum(path + ".maxTries", maximumTries, IrisLootTable.MAX_TRIES, blockingErrors);
+        requireOrdered(path + ".minPicked", minimumPicked, path + ".maxPicked", maximumPicked, blockingErrors);
+
+        JSONArray entries = table.optJSONArray("loot");
+        if (entries == null || entries.length() == 0) {
+            blockingErrors.add(path + ".loot must be a non-empty array.");
+            return;
+        }
+        for (int entryIndex = 0; entryIndex < entries.length(); entryIndex++) {
+            JSONObject entry = entries.optJSONObject(entryIndex);
+            String entryPath = path + ".loot[" + entryIndex + "]";
+            if (entry == null) {
+                blockingErrors.add(entryPath + " must be an object.");
+                continue;
+            }
+            String type = entry.optString("type", "").trim();
+            if (type.isEmpty()) {
+                blockingErrors.add(entryPath + ".type must not be blank.");
+            }
+            Integer entryRarity = lootInteger(entry, "rarity", 1, entryPath, blockingErrors);
+            Integer minimumAmount = lootInteger(entry, "minAmount", 1, entryPath, blockingErrors);
+            Integer maximumAmount = lootInteger(entry, "maxAmount", 1, entryPath, blockingErrors);
+            requireMinimum(entryPath + ".rarity", entryRarity, 1, blockingErrors);
+            requireMinimum(entryPath + ".minAmount", minimumAmount, 1, blockingErrors);
+            requireMinimum(entryPath + ".maxAmount", maximumAmount, 1, blockingErrors);
+            requireMaximum(entryPath + ".minAmount", minimumAmount, IrisLoot.MAX_AMOUNT, blockingErrors);
+            requireMaximum(entryPath + ".maxAmount", maximumAmount, IrisLoot.MAX_AMOUNT, blockingErrors);
+            requireOrdered(entryPath + ".minAmount", minimumAmount,
+                    entryPath + ".maxAmount", maximumAmount, blockingErrors);
+            validateLootEnchantments(entryPath, entry.opt("enchantments"), blockingErrors);
+        }
+    }
+
+    private static void validateLootEnchantments(String entryPath, Object rawEnchantments,
+                                                  List<String> blockingErrors) {
+        if (rawEnchantments == null || rawEnchantments == JSONObject.NULL) {
+            return;
+        }
+        if (!(rawEnchantments instanceof JSONArray enchantments)) {
+            blockingErrors.add(entryPath + ".enchantments must be an array.");
+            return;
+        }
+        for (int enchantmentIndex = 0; enchantmentIndex < enchantments.length(); enchantmentIndex++) {
+            JSONObject enchantment = enchantments.optJSONObject(enchantmentIndex);
+            String enchantmentPath = entryPath + ".enchantments[" + enchantmentIndex + "]";
+            if (enchantment == null) {
+                blockingErrors.add(enchantmentPath + " must be an object.");
+                continue;
+            }
+            if (enchantment.optString("enchantment", "").isBlank()) {
+                blockingErrors.add(enchantmentPath + ".enchantment must not be blank.");
+            }
+            Integer minimumLevel = lootInteger(enchantment, "minLevel", 1, enchantmentPath, blockingErrors);
+            Integer maximumLevel = lootInteger(enchantment, "maxLevel", 1, enchantmentPath, blockingErrors);
+            requireMinimum(enchantmentPath + ".minLevel", minimumLevel, 1, blockingErrors);
+            requireMinimum(enchantmentPath + ".maxLevel", maximumLevel, 1, blockingErrors);
+            requireOrdered(enchantmentPath + ".minLevel", minimumLevel,
+                    enchantmentPath + ".maxLevel", maximumLevel, blockingErrors);
+            if (enchantment.has("chance")) {
+                Object rawChance = enchantment.opt("chance");
+                if (!(rawChance instanceof Number number)
+                        || !Double.isFinite(number.doubleValue())
+                        || number.doubleValue() < 0D
+                        || number.doubleValue() > 1D) {
+                    blockingErrors.add(enchantmentPath + ".chance must be a finite number from 0 to 1.");
+                }
+            }
+        }
+    }
+
+    private static void validateLootReference(String resourceType, String resourceKey, Object rawLoot,
+                                              Set<String> lootKeys, List<String> blockingErrors) {
+        String path = resourceType + " '" + resourceKey + "'.loot";
+        if (!(rawLoot instanceof JSONObject reference)) {
+            blockingErrors.add(path + " must be an object.");
+            return;
+        }
+        if (reference.has("mode")) {
+            Object rawMode = reference.opt("mode");
+            if (!(rawMode instanceof String mode)
+                    || !Set.of("ADD", "CLEAR", "REPLACE", "FALLBACK").contains(mode)) {
+                blockingErrors.add(path + ".mode must be ADD, CLEAR, REPLACE, or FALLBACK.");
+            }
+        }
+        if (reference.has("multiplier")) {
+            Object rawMultiplier = reference.opt("multiplier");
+            if (!(rawMultiplier instanceof Number multiplier)
+                    || !Double.isFinite(multiplier.doubleValue())
+                    || multiplier.doubleValue() < 0D
+                    || multiplier.doubleValue() > IrisLootReference.MAX_MULTIPLIER) {
+                blockingErrors.add(path + ".multiplier must be a finite number from 0 to "
+                        + (int) IrisLootReference.MAX_MULTIPLIER + ".");
+            }
+        }
+        if (!reference.has("tables")) {
+            return;
+        }
+        JSONArray tables = reference.optJSONArray("tables");
+        if (tables == null) {
+            blockingErrors.add(path + ".tables must be an array.");
+            return;
+        }
+        for (int tableIndex = 0; tableIndex < tables.length(); tableIndex++) {
+            Object rawTableKey = tables.opt(tableIndex);
+            if (!(rawTableKey instanceof String tableKey) || tableKey.isBlank()) {
+                blockingErrors.add(path + ".tables[" + tableIndex + "] must name a loot table.");
+            } else if (!lootKeys.contains(tableKey)) {
+                blockingErrors.add(path + ".tables[" + tableIndex
+                        + "] references missing loot table '" + tableKey + "'.");
+            }
+        }
+    }
+
+    private static Integer lootInteger(JSONObject object, String field, int defaultValue,
+                                       String path, List<String> blockingErrors) {
+        if (!object.has(field)) {
+            return defaultValue;
+        }
+        Object rawValue = object.opt(field);
+        if (!(rawValue instanceof Number number)
+                || !Double.isFinite(number.doubleValue())
+                || number.doubleValue() != Math.rint(number.doubleValue())
+                || number.longValue() < Integer.MIN_VALUE
+                || number.longValue() > Integer.MAX_VALUE) {
+            blockingErrors.add(path + "." + field + " must be an integer.");
+            return null;
+        }
+        return number.intValue();
+    }
+
+    private static void requireMinimum(String fieldPath, Integer value, int minimum,
+                                       List<String> blockingErrors) {
+        if (value != null && value < minimum) {
+            blockingErrors.add(fieldPath + " must be at least " + minimum + ".");
+        }
+    }
+
+    private static void requireMaximum(String fieldPath, Integer value, int maximum,
+                                       List<String> blockingErrors) {
+        if (value != null && value > maximum) {
+            blockingErrors.add(fieldPath + " must be at most " + maximum + ".");
+        }
+    }
+
+    private static void requireOrdered(String minimumPath, Integer minimum, String maximumPath,
+                                       Integer maximum, List<String> blockingErrors) {
+        if (minimum != null && maximum != null && minimum > maximum) {
+            blockingErrors.add(minimumPath + " must not exceed " + maximumPath + ".");
+        }
+    }
+
+    static List<String> validateNativeStructureReplacements(
+            File packFolder,
+            Set<String> replacementOutputStructures,
+            Map<String, List<StructureGraphPackValidator.SampledVerticalEnvelope>> sampledVerticalEnvelopes
+    ) {
+        List<String> blockingErrors = new ArrayList<>();
+        if (packFolder == null || !packFolder.isDirectory()) {
+            return blockingErrors;
+        }
+        Set<String> viableStructures = replacementOutputStructures == null
+                ? Set.of() : replacementOutputStructures;
+        Map<String, List<StructureGraphPackValidator.SampledVerticalEnvelope>> verticalEnvelopes =
+                sampledVerticalEnvelopes == null ? Map.of() : sampledVerticalEnvelopes;
+        File structuresFolder = new File(packFolder, STRUCTURES_FOLDER);
+        Map<String, JSONObject> structures = new HashMap<>();
+        for (File structureFile : listJsonRecursive(structuresFolder)) {
+            JSONObject structure = readJson(structureFile);
+            if (structure != null) {
+                structures.put(deriveKey(structuresFolder, structureFile), structure);
+            }
+        }
+
+        for (String folderName : STRUCTURE_HOST_FOLDERS) {
+            File resourceFolder = new File(packFolder, folderName);
+            if (!resourceFolder.isDirectory()) {
+                continue;
+            }
+            List<File> resourceFiles = listJsonRecursive(resourceFolder);
+            resourceFiles.sort(Comparator.comparing(File::getPath));
+            String resourceType = structureHostType(folderName);
+            for (File resourceFile : resourceFiles) {
+                JSONObject resource = readJson(resourceFile);
+                if (resource == null) {
+                    continue;
+                }
+                JSONArray placements = resource.optJSONArray("structures");
+                if (placements == null) {
+                    continue;
+                }
+                String resourceKey = deriveKey(resourceFolder, resourceFile);
+                for (int placementIndex = 0; placementIndex < placements.length(); placementIndex++) {
+                    JSONObject placement = placements.optJSONObject(placementIndex);
+                    if (placement == null || !placement.has("nativeSuppression")) {
+                        continue;
+                    }
+                    Object rawSuppression = placement.opt("nativeSuppression");
+                    if (!(rawSuppression instanceof String suppression)) {
+                        blockingErrors.add(resourceType + " '" + resourceKey + "' structures["
+                                + placementIndex + "].nativeSuppression must be NONE or REPLACE_SOURCE.");
+                        continue;
+                    }
+                    if ("NONE".equals(suppression)) {
+                        continue;
+                    }
+                    if (!"REPLACE_SOURCE".equals(suppression)) {
+                        blockingErrors.add(resourceType + " '" + resourceKey + "' structures["
+                                + placementIndex + "].nativeSuppression has unsupported value '"
+                                + suppression + "'. Use NONE or REPLACE_SOURCE.");
+                        continue;
+                    }
+                    if (!DIMENSIONS_FOLDER.equals(folderName)) {
+                        blockingErrors.add(resourceType + " '" + resourceKey + "' structures["
+                                + placementIndex + "] requests REPLACE_SOURCE, but native replacement is only"
+                                + " valid on dimension-level placements.");
+                        continue;
+                    }
+                    JSONArray references = placement.optJSONArray("structures");
+                    if (references == null || references.length() == 0) {
+                        blockingErrors.add("Dimension '" + resourceKey + "' structures[" + placementIndex
+                                + "] requests REPLACE_SOURCE without any Iris structure references.");
+                        continue;
+                    }
+                    for (int referenceIndex = 0; referenceIndex < references.length(); referenceIndex++) {
+                        Object rawReference = references.opt(referenceIndex);
+                        if (!(rawReference instanceof String structureKey) || structureKey.isBlank()) {
+                            blockingErrors.add("Dimension '" + resourceKey + "' structures[" + placementIndex
+                                    + "].structures[" + referenceIndex
+                                    + "] must name an Iris structure for REPLACE_SOURCE.");
+                            continue;
+                        }
+                        JSONObject structure = structures.get(structureKey);
+                        if (structure == null) {
+                            blockingErrors.add("Dimension '" + resourceKey + "' structures[" + placementIndex
+                                    + "] cannot REPLACE_SOURCE with missing or invalid structure '"
+                                    + structureKey + "'.");
+                            continue;
+                        }
+                        String vanillaSource = structure.optString("vanillaSource", "").trim();
+                        if (!RESOURCE_KEY_PATTERN.matcher(vanillaSource).matches()) {
+                            blockingErrors.add("Dimension '" + resourceKey + "' structures[" + placementIndex
+                                    + "] requests REPLACE_SOURCE for structure '" + structureKey
+                                    + "', but its vanillaSource is not a valid namespaced registry key.");
+                        }
+                        if (!viableStructures.contains(structureKey)) {
+                            blockingErrors.add("Dimension '" + resourceKey + "' structures[" + placementIndex
+                                    + "] requests REPLACE_SOURCE for structure '" + structureKey
+                                    + "', but that structure is not runtime-viable. Native generation will not"
+                                    + " be used as a fallback.");
+                            continue;
+                        }
+                        validateReplacementVerticalEnvelope(
+                                resourceKey,
+                                resource,
+                                placementIndex,
+                                placement,
+                                structureKey,
+                                structure,
+                                verticalEnvelopes.get(structureKey),
+                                blockingErrors);
+                    }
+                }
+            }
+        }
+        return blockingErrors;
+    }
+
+    private static void validateReplacementVerticalEnvelope(
+            String dimensionKey,
+            JSONObject dimension,
+            int placementIndex,
+            JSONObject placement,
+            String structureKey,
+            JSONObject structure,
+            List<StructureGraphPackValidator.SampledVerticalEnvelope> sampledVerticalEnvelopes,
+            List<String> blockingErrors
+    ) {
+        String context = "Dimension '" + dimensionKey + "' structures[" + placementIndex
+                + "] REPLACE_SOURCE structure '" + structureKey + "'";
+        if (sampledVerticalEnvelopes == null || sampledVerticalEnvelopes.isEmpty()) {
+            blockingErrors.add(context + " has no sampled vertical envelope. Native generation will not"
+                    + " be used as a fallback.");
+            return;
+        }
+
+        DimensionVerticalBounds worldBounds = resolveDimensionVerticalBounds(dimension, context, blockingErrors);
+        PlacementVerticalBounds placementBounds = resolvePlacementVerticalBounds(placement, context, blockingErrors);
+        ObjectPlaceMode placeMode = resolvePlaceMode(structure, context, blockingErrors);
+        if (worldBounds == null || placementBounds == null || placeMode == null) {
+            return;
+        }
+
+        for (StructureGraphPackValidator.SampledVerticalEnvelope sampled : sampledVerticalEnvelopes) {
+            boolean exactY = placementBounds.underground()
+                    || sampled.pieceCount() > 1
+                    || placeMode == ObjectPlaceMode.STRUCTURE_PIECE
+                    || placeMode == ObjectPlaceMode.FLOATING;
+            if (!exactY) {
+                continue;
+            }
+
+            long minimumYOffset = sampled.minimumYOffset();
+            long maximumYOffset = sampled.maximumYOffset();
+            boolean surfaceAligned = !placementBounds.underground()
+                    && sampled.pieceCount() > 1
+                    && placeMode != ObjectPlaceMode.STRUCTURE_PIECE
+                    && placeMode != ObjectPlaceMode.FLOATING;
+            if (surfaceAligned) {
+                maximumYOffset -= minimumYOffset;
+                minimumYOffset = 0L;
+            }
+
+            boolean fitsConfiguredRange;
+            if (placementBounds.underground()) {
+                long minimumAnchor = Math.max(
+                        Math.max(placementBounds.minimumY(), worldBounds.minimumY()),
+                        worldBounds.minimumY() - minimumYOffset);
+                long maximumAnchor = Math.min(
+                        Math.min(placementBounds.maximumY(), worldBounds.maximumY()),
+                        worldBounds.maximumY() - maximumYOffset);
+                fitsConfiguredRange = minimumAnchor <= maximumAnchor;
+            } else {
+                long minimumTerrainY = Math.max(placementBounds.minimumY(), worldBounds.minimumY());
+                long maximumTerrainY = Math.min(placementBounds.maximumY(), worldBounds.maximumY());
+                fitsConfiguredRange = minimumTerrainY <= maximumTerrainY
+                        && minimumTerrainY + minimumYOffset >= worldBounds.minimumY()
+                        && maximumTerrainY + maximumYOffset <= worldBounds.maximumY();
+            }
+            if (fitsConfiguredRange) {
+                continue;
+            }
+
+            String alignment = surfaceAligned ? "surface-aligned " : "";
+            blockingErrors.add(context + " sampled seed " + sampled.seed() + " has an " + alignment
+                    + "exact-Y piece envelope " + minimumYOffset + ".." + maximumYOffset
+                    + " relative to its anchor, which cannot fit placement band "
+                    + placementBounds.minimumY() + ".." + placementBounds.maximumY()
+                    + " inside writable world " + worldBounds.minimumY() + ".." + worldBounds.maximumY()
+                    + ". Native generation will not be used as a fallback.");
+            return;
+        }
+    }
+
+    private static DimensionVerticalBounds resolveDimensionVerticalBounds(
+            JSONObject dimension,
+            String context,
+            List<String> blockingErrors
+    ) {
+        long dimensionMinimum = -64L;
+        long dimensionMaximum = 320L;
+        if (dimension.has("dimensionHeight")) {
+            JSONObject dimensionHeight = dimension.optJSONObject("dimensionHeight");
+            if (dimensionHeight == null) {
+                blockingErrors.add(context + " cannot validate its vertical envelope because dimensionHeight"
+                        + " must be an object.");
+                return null;
+            }
+            Long configuredMinimum = integralJsonNumber(dimensionHeight, "min", 16L);
+            Long configuredMaximum = integralJsonNumber(dimensionHeight, "max", 32L);
+            if (configuredMinimum == null || configuredMaximum == null) {
+                blockingErrors.add(context + " cannot validate its vertical envelope because dimensionHeight"
+                        + " min and max must be finite integer values.");
+                return null;
+            }
+            dimensionMinimum = configuredMinimum;
+            dimensionMaximum = configuredMaximum;
+        }
+
+        long writableMinimum = dimensionMinimum + 1L;
+        long writableMaximum = dimensionMaximum - 1L;
+        if (writableMinimum > writableMaximum) {
+            blockingErrors.add(context + " cannot validate its vertical envelope because dimensionHeight "
+                    + dimensionMinimum + ".." + dimensionMaximum + " has no writable structure range.");
+            return null;
+        }
+        return new DimensionVerticalBounds(writableMinimum, writableMaximum);
+    }
+
+    private static PlacementVerticalBounds resolvePlacementVerticalBounds(
+            JSONObject placement,
+            String context,
+            List<String> blockingErrors
+    ) {
+        boolean underground = false;
+        if (placement.has("underground")) {
+            Object rawUnderground = placement.opt("underground");
+            if (!(rawUnderground instanceof Boolean configuredUnderground)) {
+                blockingErrors.add(context + " cannot validate its vertical envelope because underground"
+                        + " must be true or false.");
+                return null;
+            }
+            underground = configuredUnderground;
+        }
+        Long configuredMinimum = integralJsonNumber(placement, "minHeight", -2032L);
+        Long configuredMaximum = integralJsonNumber(placement, "maxHeight", 2032L);
+        if (configuredMinimum == null || configuredMaximum == null) {
+            blockingErrors.add(context + " cannot validate its vertical envelope because minHeight and"
+                    + " maxHeight must be finite integer values.");
+            return null;
+        }
+        long minimumY = underground
+                ? Math.min(configuredMinimum, configuredMaximum) : configuredMinimum;
+        long maximumY = underground
+                ? Math.max(configuredMinimum, configuredMaximum) : configuredMaximum;
+        return new PlacementVerticalBounds(minimumY, maximumY, underground);
+    }
+
+    private static ObjectPlaceMode resolvePlaceMode(
+            JSONObject structure,
+            String context,
+            List<String> blockingErrors
+    ) {
+        if (!structure.has("placeMode")) {
+            return ObjectPlaceMode.STRUCTURE_PIECE;
+        }
+        Object rawPlaceMode = structure.opt("placeMode");
+        if (!(rawPlaceMode instanceof String placeModeName)) {
+            blockingErrors.add(context + " cannot validate its vertical envelope because placeMode must name"
+                    + " an Iris object place mode.");
+            return null;
+        }
+        try {
+            return ObjectPlaceMode.valueOf(placeModeName);
+        } catch (IllegalArgumentException exception) {
+            blockingErrors.add(context + " cannot validate its vertical envelope because placeMode '"
+                    + placeModeName + "' is not supported.");
+            return null;
+        }
+    }
+
+    private static Long integralJsonNumber(JSONObject owner, String field, long defaultValue) {
+        if (!owner.has(field)) {
+            return defaultValue;
+        }
+        Object rawValue = owner.opt(field);
+        if (!(rawValue instanceof Number number)) {
+            return null;
+        }
+        double value = number.doubleValue();
+        if (!Double.isFinite(value) || value != Math.rint(value)
+                || value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+            return null;
+        }
+        return (long) value;
     }
 
     private static void validateStructurePlacements(File packFolder,
@@ -786,6 +1381,12 @@ public final class PackValidator {
     private record ReferencedContentKeys(Set<String> blocks, Set<String> items, Set<String> entities) {
     }
 
+    private record DimensionVerticalBounds(long minimumY, long maximumY) {
+    }
+
+    private record PlacementVerticalBounds(long minimumY, long maximumY, boolean underground) {
+    }
+
     record SpawnCategoryResolution(boolean entityKnown, String category) {
         static SpawnCategoryResolution unknown() {
             return new SpawnCategoryResolution(false, null);
@@ -809,6 +1410,8 @@ public final class PackValidator {
                 blockingErrors.add("Dimension '" + dimensionKey + "' has invalid JSON: " + e.getMessage());
                 continue;
             }
+
+            validateImportedStructurePolicy(dimensionKey, dimJson, blockingErrors);
 
             JSONArray regionsArray = dimJson.optJSONArray("regions");
             if (regionsArray == null || regionsArray.length() == 0) {
@@ -849,6 +1452,68 @@ public final class PackValidator {
 
             if (resolvedRegions == 0) {
                 blockingErrors.add("Dimension '" + dimensionKey + "' has no resolvable regions.");
+            }
+        }
+    }
+
+    static void validateImportedStructurePolicy(String dimensionKey, JSONObject dimension,
+                                                List<String> blockingErrors) {
+        if (!dimension.has("importedStructures")) {
+            return;
+        }
+        if (dimension.isNull("importedStructures")) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' importedStructures must be an object.");
+            return;
+        }
+        JSONObject policy = dimension.optJSONObject("importedStructures");
+        if (policy == null) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' importedStructures must be an object.");
+            return;
+        }
+        if (policy.has("mode")) {
+            blockingErrors.add("Dimension '" + dimensionKey
+                    + "' importedStructures.mode is not supported. Native structures are enabled by default; list explicit denials in importedStructures.disabled.");
+        }
+        if (policy.has("enabled")) {
+            blockingErrors.add("Dimension '" + dimensionKey
+                    + "' importedStructures.enabled is not supported. Native structures are enabled by default; list explicit denials in importedStructures.disabled.");
+        }
+        validateStructureKeyList(dimensionKey, policy, "disabled", blockingErrors);
+        JSONArray adjustments = policy.optJSONArray("adjustments");
+        if (adjustments == null) {
+            if (policy.has("adjustments")) {
+                blockingErrors.add("Dimension '" + dimensionKey
+                        + "' importedStructures.adjustments must be an array.");
+            }
+            return;
+        }
+        for (int index = 0; index < adjustments.length(); index++) {
+            JSONObject adjustment = adjustments.optJSONObject(index);
+            if (adjustment == null) {
+                blockingErrors.add("Dimension '" + dimensionKey
+                        + "' importedStructures.adjustments has a non-object entry at index " + index + ".");
+                continue;
+            }
+            validateStructureKeyList(dimensionKey, adjustment, "match", blockingErrors);
+        }
+    }
+
+    private static void validateStructureKeyList(String dimensionKey, JSONObject owner, String field,
+                                                 List<String> blockingErrors) {
+        if (!owner.has(field)) {
+            return;
+        }
+        JSONArray keys = owner.optJSONArray(field);
+        if (keys == null) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' structure policy field '"
+                    + field + "' must be an array.");
+            return;
+        }
+        for (int index = 0; index < keys.length(); index++) {
+            Object value = keys.opt(index);
+            if (!(value instanceof String key) || key.isBlank()) {
+                blockingErrors.add("Dimension '" + dimensionKey + "' structure policy field '"
+                        + field + "' has a blank or non-string entry at index " + index + ".");
             }
         }
     }

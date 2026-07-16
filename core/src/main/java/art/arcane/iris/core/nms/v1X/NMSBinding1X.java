@@ -98,7 +98,8 @@ public class NMSBinding1X implements INMSBinding {
 
     @Override
     public void inject(long seed, Engine engine, World world) throws NoSuchFieldException, IllegalAccessException {
-
+        throw new IllegalStateException("Iris world generation requires the supported NMS binding; "
+                + "general.disableNMS=true cannot create or initialize an Iris world");
     }
 
     public Vector3d getBoundingbox() {
@@ -160,6 +161,11 @@ public class NMSBinding1X implements INMSBinding {
     }
 
     @Override
+    public boolean supportsIrisWorldGeneration() {
+        return false;
+    }
+
+    @Override
     public int getTrueBiomeBaseId(Object biomeBase) {
         return 0;
     }
@@ -213,6 +219,31 @@ public class NMSBinding1X implements INMSBinding {
     }
 
     @Override
+    public KList<String> getStructureKeys() {
+        throw unsupportedStructureHook("read registered structure keys");
+    }
+
+    @Override
+    public KList<String> getStructureSetKeys() {
+        throw unsupportedStructureHook("read registered structure-set keys");
+    }
+
+    @Override
+    public KList<String> getReachableStructureKeys(World world) {
+        throw unsupportedStructureHook("resolve reachable structures");
+    }
+
+    @Override
+    public KList<String> getStructureBiomeKeys(String structureKey) {
+        throw unsupportedStructureHook("resolve structure biome keys");
+    }
+
+    @Override
+    public KList<String> getPossibleBiomeKeys(World world) {
+        throw unsupportedStructureHook("resolve possible biome keys");
+    }
+
+    @Override
     public DataVersion getDataVersion() {
         return DataVersion.UNSUPPORTED;
     }
@@ -257,5 +288,11 @@ public class NMSBinding1X implements INMSBinding {
     public MCAPaletteAccess createPalette() {
         IrisLogging.error("Cannot use the global data palette! Iris is incapable of using MCA generation on this version of minecraft!");
         return null;
+    }
+
+    private IllegalStateException unsupportedStructureHook(String operation) {
+        return new IllegalStateException("Iris cannot " + operation + " with limited NMS binding "
+                + getClass().getSimpleName()
+                + "; set general.disableNMS=false and use the supported Minecraft 26.2 server runtime");
     }
 }

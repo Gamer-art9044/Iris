@@ -1,6 +1,7 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 import lombok.Data;
@@ -49,7 +50,8 @@ public class IrisVanillaLootTable extends IrisLootTable {
     }
 
     @Override
-    public KList<ItemStack> getLoot(boolean debug, RNG rng, InventorySlotType slot, World world, int x, int y, int z) {
+    public KList<ItemStack> getLoot(boolean debug, long lootSeed, InventorySlotType slot, World world, int x, int y, int z) {
+        RNG rng = LootResolver.tableRng(lootSeed, this, x, y, z);
         return new KList<>(lootTable.populateLoot(rng, new LootContext.Builder(new Location(world, x, y, z)).build()));
     }
 

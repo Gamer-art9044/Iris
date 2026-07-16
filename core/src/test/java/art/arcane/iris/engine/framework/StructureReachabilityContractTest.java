@@ -18,62 +18,129 @@
 
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.object.IrisWorld;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformStructureHooks;
+import art.arcane.iris.spi.PlatformWorld;
 import org.junit.Test;
 
-import static org.junit.Assert.assertFalse;
+import java.util.List;
+
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class StructureReachabilityContractTest {
     @Test
-    public void reachableKeysIsEmptyForNullEngine() {
-        assertTrue(StructureReachability.reachableKeys(null).isEmpty());
+    public void reachableKeysRejectsNullEngine() {
+        assertThrows(NullPointerException.class, () -> StructureReachability.reachableKeys(null));
     }
 
     @Test
-    public void reachableKeysIsEmptyWhenEngineHasNoData() {
+    public void reachableKeysRejectsEngineWithoutData() {
         Engine engine = mock(Engine.class);
-        assertTrue(StructureReachability.reachableKeys(engine).isEmpty());
+        assertThrows(IllegalStateException.class, () -> StructureReachability.reachableKeys(engine));
     }
 
     @Test
-    public void isReachableIsFalseForNullEngine() {
-        assertFalse(StructureReachability.isReachable(null, "minecraft:village_taiga"));
+    public void isReachableRejectsNullEngine() {
+        assertThrows(NullPointerException.class,
+                () -> StructureReachability.isReachable(null, "minecraft:village_taiga"));
     }
 
     @Test
-    public void isReachableIsFalseForNullOrEmptyKey() {
+    public void isReachableRejectsNullOrEmptyKey() {
         Engine engine = mock(Engine.class);
-        assertFalse(StructureReachability.isReachable(engine, null));
-        assertFalse(StructureReachability.isReachable(engine, ""));
+        assertThrows(IllegalArgumentException.class, () -> StructureReachability.isReachable(engine, null));
+        assertThrows(IllegalArgumentException.class, () -> StructureReachability.isReachable(engine, ""));
     }
 
     @Test
-    public void isReachableIsFalseWhenNothingIsReachable() {
+    public void isReachableRejectsEngineWithoutData() {
         Engine engine = mock(Engine.class);
-        assertFalse(StructureReachability.isReachable(engine, "minecraft:village_taiga"));
+        assertThrows(IllegalStateException.class,
+                () -> StructureReachability.isReachable(engine, "minecraft:village_taiga"));
     }
 
     @Test
-    public void missingBiomeKeysIsEmptyForNullEngine() {
-        assertTrue(StructureReachability.missingBiomeKeys(null, "minecraft:village_taiga").isEmpty());
+    public void missingBiomeKeysRejectsNullEngine() {
+        assertThrows(NullPointerException.class,
+                () -> StructureReachability.missingBiomeKeys(null, "minecraft:village_taiga"));
     }
 
     @Test
-    public void missingBiomeKeysIsEmptyForNullKey() {
+    public void missingBiomeKeysRejectsNullKey() {
         Engine engine = mock(Engine.class);
-        assertTrue(StructureReachability.missingBiomeKeys(engine, null).isEmpty());
+        assertThrows(IllegalArgumentException.class,
+                () -> StructureReachability.missingBiomeKeys(engine, null));
     }
 
     @Test
-    public void missingBiomeKeysIsEmptyWhenWorldUnavailable() {
+    public void missingBiomeKeysRejectsUnavailableWorld() {
         Engine engine = mock(Engine.class);
-        assertTrue(StructureReachability.missingBiomeKeys(engine, "minecraft:village_taiga").isEmpty());
+        when(engine.getData()).thenReturn(mock(IrisData.class));
+        assertThrows(IllegalStateException.class,
+                () -> StructureReachability.missingBiomeKeys(engine, "minecraft:village_taiga"));
     }
 
     @Test
     public void invalidateIsNullSafe() {
         StructureReachability.invalidate(null);
         StructureReachability.invalidate(mock(Engine.class));
+    }
+
+    @Test
+    public void failedReachabilityBuildIsNotCachedAsEmpty() {
+        Engine engine = mock(Engine.class);
+        IrisWorld world = mock(IrisWorld.class);
+        PlatformWorld platformWorld = mock(PlatformWorld.class);
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformStructureHooks hooks = mock(PlatformStructureHooks.class);
+        IllegalStateException cause = new IllegalStateException("registry unavailable");
+        when(engine.getData()).thenReturn(mock(IrisData.class));
+        when(engine.getWorld()).thenReturn(world);
+        when(world.platformWorld()).thenReturn(platformWorld);
+        when(platform.structureHooks()).thenReturn(hooks);
+        when(hooks.reachableStructureKeys(platformWorld))
+                .thenThrow(cause)
+                .thenReturn(List.of("minecraft:monument"));
+
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(platform);
+        try {
+            assertThrows(IllegalStateException.class, () -> StructureReachability.reachableKeys(engine));
+            assertTrue(StructureReachability.reachableKeys(engine).contains("minecraft:monument"));
+        } finally {
+            StructureReachability.invalidate(engine);
+            IrisPlatforms.unbind();
+        }
+    }
+
+    @Test
+    public void missingBiomeKeysForwardsCanonicalStructureKey() {
+        Engine engine = mock(Engine.class);
+        IrisWorld world = mock(IrisWorld.class);
+        PlatformWorld platformWorld = mock(PlatformWorld.class);
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformStructureHooks hooks = mock(PlatformStructureHooks.class);
+        when(engine.getWorld()).thenReturn(world);
+        when(world.platformWorld()).thenReturn(platformWorld);
+        when(platform.structureHooks()).thenReturn(hooks);
+        when(hooks.possibleBiomeKeys(platformWorld)).thenReturn(List.of("minecraft:deep_ocean"));
+        when(hooks.structureBiomeKeys("minecraft:monument")).thenReturn(List.of("minecraft:deep_ocean"));
+
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(platform);
+        try {
+            assertTrue(StructureReachability.missingBiomeKeys(
+                    engine, "  MINECRAFT:MONUMENT  ").isEmpty());
+            verify(hooks).structureBiomeKeys("minecraft:monument");
+        } finally {
+            IrisPlatforms.unbind();
+        }
     }
 }

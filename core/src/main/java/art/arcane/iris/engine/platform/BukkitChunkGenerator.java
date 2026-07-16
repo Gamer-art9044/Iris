@@ -635,17 +635,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         if (initializationFailure != null) {
             return false;
         }
-        try {
-            Engine e = this.engine;
-            if (e == null) {
-                return true;
-            }
-            return e.getDimension().getImportedStructures().active();
-        } catch (Throwable t) {
-            IrisLogging.reportError("Iris could not resolve native structure generation policy for "
-                    + world.name() + ".", t);
-            return false;
-        }
+        return true;
     }
 
     @Override

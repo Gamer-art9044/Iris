@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
@@ -83,6 +84,6 @@ public class IrisEnchantment {
     }
 
     public int getLevel(RNG rng) {
-        return rng.i(getMinLevel(), getMaxLevel());
+        return LootResolver.inclusive(rng, getMinLevel(), getMaxLevel());
     }
 }

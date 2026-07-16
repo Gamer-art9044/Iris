@@ -48,6 +48,7 @@ public final class StructureCaptureImporter {
     }
 
     public static Report importAllStructures(IrisData data, StructureImporter.Mode mode, VolmitSender sender) {
+        StructureImporter.Mode activeMode = mode == null ? StructureImporter.Mode.ADD_ONLY : mode;
         if (!INMS.get().supportsStructureCapture()) {
             sender.sendMessage(C.YELLOW + "Structure capture is not supported by the active NMS binding; skipping the capture pass.");
             return new Report(0, 0, 0, 0);
@@ -65,7 +66,7 @@ public final class StructureCaptureImporter {
             }
             String name = StructureImporter.deriveName(key);
             File structureFile = new File(data.getDataFolder(), "structures/" + name + ".json");
-            if (structureFile.exists()) {
+            if (structureFile.exists() && activeMode != StructureImporter.Mode.OVERWRITE) {
                 continue;
             }
             targets.add(key);
@@ -100,17 +101,20 @@ public final class StructureCaptureImporter {
                         continue;
                     }
                     object.shrinkwrap();
-                    int span = Math.max(object.getW(), object.getD());
-                    File objectFile = new File(data.getDataFolder(), "objects/" + name + ".iob");
-                    objectFile.getParentFile().mkdirs();
-                    object.write(objectFile);
-                    StructureImporter.writeSinglePieceStructure(data, name, key, span, "CENTER_HEIGHT");
+                    StructureImporter.Result result = StructureImporter.writeSinglePieceStructure(
+                            data, name, key, object, "CENTER_HEIGHT", activeMode);
+                    if (!result.success()) {
+                        failed++;
+                        sender.sendMessage(C.RED + "[fail] " + key + ": " + result.message());
+                        continue;
+                    }
                     imported++;
                     sender.sendMessage(C.GRAY + "[capture] " + key + " -> objects/" + name + ".iob (" + object.getW() + "x" + object.getH() + "x" + object.getD() + ")");
                 } catch (Throwable e) {
                     failed++;
                     sender.sendMessage(C.RED + "[fail] " + key + ": " + e.getMessage());
                     IrisLogging.reportError(e);
+                    e.printStackTrace();
                 }
 
                 int processed = imported + skipped + failed;
@@ -187,22 +191,33 @@ public final class StructureCaptureImporter {
         });
 
         if (!scheduled) {
-            return null;
+            throw captureFailure(key, anchorChunkX, anchorChunkZ,
+                    "region task was not accepted", null);
         }
 
         try {
             if (!latch.await(REGION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                return null;
+                throw captureFailure(key, anchorChunkX, anchorChunkZ,
+                        "region task did not complete within " + REGION_TIMEOUT_SECONDS + " seconds", null);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return null;
+            throw captureFailure(key, anchorChunkX, anchorChunkZ,
+                    "interrupted while waiting for the region task", e);
         }
 
-        if (errorRef.get() != null) {
-            IrisLogging.reportError(errorRef.get());
-            return null;
+        Throwable error = errorRef.get();
+        if (error != null) {
+            throw captureFailure(key, anchorChunkX, anchorChunkZ,
+                    "platform placement failed", error);
         }
         return objectRef.get();
+    }
+
+    static IllegalStateException captureFailure(String key, int chunkX, int chunkZ,
+                                                String detail, Throwable cause) {
+        String message = "Structure capture failed for '" + key + "' at chunk "
+                + chunkX + "," + chunkZ + ": " + detail;
+        return cause == null ? new IllegalStateException(message) : new IllegalStateException(message, cause);
     }
 }

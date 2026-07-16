@@ -20,6 +20,7 @@ package art.arcane.iris.modded;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.IrisAttributeModifier;
 import art.arcane.iris.engine.object.IrisEntity;
 import art.arcane.iris.engine.object.IrisEffect;
@@ -241,7 +242,7 @@ public final class ModdedEntitySpawner {
     }
 
     private static void setSlot(LivingEntity living, EquipmentSlot slot, IrisLoot loot, ServerLevel level, RNG rng) {
-        if (loot == null || rng.i(1, loot.getRarity()) != 1) {
+        if (loot == null || !LootResolver.oneIn(rng, loot.getRarity())) {
             return;
         }
         ItemStack stack = ModdedItemTranslator.stack(loot, rng, level);

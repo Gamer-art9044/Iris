@@ -39,8 +39,8 @@ public class ModdedTileParityTest {
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
         registries = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
-        TileData.bindFallbackReader(new ModdedTileReader(() -> null));
-        TileData.bindFallbackFactory(ModdedTileData::fromProperties);
+        TileData.bindPlatformReader(new ModdedTileReader(() -> null));
+        TileData.bindPlatformFactory(ModdedTileData::fromProperties);
     }
 
     @Test

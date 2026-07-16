@@ -26,6 +26,7 @@ import art.arcane.iris.core.gui.NoiseExplorerGUI;
 import art.arcane.iris.core.gui.VisionGUI;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.project.IrisProject;
+import art.arcane.iris.core.service.BoardSVC;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.core.structure.BulkStructureImporter;
 import art.arcane.iris.core.structure.FeatureImporter;
@@ -193,6 +194,25 @@ public class CommandStudio implements DirectorExecutor {
         }));
     }
 
+    @Director(description = "Toggle your Studio debug scoreboard", aliases = {"board", "sidebar", "sb"}, origin = DirectorOrigin.PLAYER)
+    public void scoreboard() {
+        Player target = player();
+        VolmitSender commandSender = sender();
+        if (!J.runEntity(target, () -> {
+            PlatformChunkGenerator generator = IrisToolbelt.access(target.getWorld());
+            if (generator == null || !generator.isStudio()) {
+                commandSender.sendMessage(C.RED + "You must be in a Studio world to toggle the debug scoreboard.");
+                return;
+            }
+
+            boolean visible = Iris.service(BoardSVC.class).toggle(target);
+            commandSender.sendMessage((visible ? C.GREEN : C.YELLOW)
+                    + "Studio debug scoreboard " + (visible ? "enabled." : "disabled."));
+        })) {
+            commandSender.sendMessage(C.RED + "Could not update the Studio debug scoreboard right now.");
+        }
+    }
+
     @Director(description = "Create a new studio project", aliases = "+", sync = true)
     public void create(
             @Param(description = "The name of this new Iris Project.", defaultValue = "studio")
@@ -259,7 +279,7 @@ public class CommandStudio implements DirectorExecutor {
         Inventory inv = Bukkit.createInventory(null, 27 * 2);
 
         try {
-            EngineBukkitOps.addItems(engine(), true, inv, RNG.r, tables, InventorySlotType.STORAGE, player().getWorld(), player().getLocation().getBlockX(), player().getLocation().getBlockY(), player().getLocation().getBlockZ(), 1);
+            EngineBukkitOps.addItems(engine(), true, inv, tables, InventorySlotType.STORAGE, player().getWorld(), player().getLocation().getBlockX(), player().getLocation().getBlockY(), player().getLocation().getBlockZ());
         } catch (Throwable e) {
             Iris.reportError(e);
             sender().sendMessage(C.RED + "Cannot add items to virtual inventory because of: " + e.getMessage());
@@ -286,7 +306,7 @@ public class CommandStudio implements DirectorExecutor {
                 inv.clear();
             }
 
-            EngineBukkitOps.addItems(engine, true, inv, new RNG(RNG.r.imax()), tables, InventorySlotType.STORAGE, player.getWorld(), player.getLocation().getBlockX(), player.getLocation().getBlockY(), player.getLocation().getBlockZ(), 1);
+            EngineBukkitOps.addItems(engine, true, inv, tables, InventorySlotType.STORAGE, player.getWorld(), player.getLocation().getBlockX(), player.getLocation().getBlockY(), player.getLocation().getBlockZ());
         }, fast ? 5 : 35));
 
         sender().sendMessage(C.GREEN + "Opening inventory now!");
@@ -829,7 +849,7 @@ public class CommandStudio implements DirectorExecutor {
             sender().sendMessage(C.RED + "No studio world is open!");
             return true;
         }
-        if (!engine().isStudio()) {
+        if (!IrisToolbelt.isStudio(world())) {
             sender().sendMessage(C.RED + "You must be in a studio world!");
             return true;
         }

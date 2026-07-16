@@ -19,8 +19,10 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisRegistrant;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
+import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.volmlib.util.collection.KList;
@@ -43,6 +45,9 @@ import org.bukkit.inventory.ItemStack;
 @Data
 @EqualsAndHashCode(callSuper = false)
 public class IrisLootTable extends IrisRegistrant {
+    public static final int MAX_PICKED = 64;
+    public static final int MAX_TRIES = 256;
+
     @Required
     @Desc("The name of this loot table")
     @MinNumber(2)
@@ -53,35 +58,42 @@ public class IrisLootTable extends IrisRegistrant {
     private int rarity = 1;
 
     @MinNumber(1)
-    @Desc("The maximum amount of loot that can be picked in this table at a time.")
+    @MaxNumber(MAX_PICKED)
+    @Desc("The maximum amount of loot that can be picked in this table at a time, from 1 to 64")
     private int maxPicked = 5;
 
     @MinNumber(0)
-    @Desc("The minimum amount of loot that can be picked in this table at a time.")
+    @MaxNumber(MAX_PICKED)
+    @Desc("The minimum amount of loot that can be picked in this table at a time, from 0 to 64")
     private int minPicked = 1;
 
     @MinNumber(1)
-    @Desc("The maximum amount of tries to generate loot")
+    @MaxNumber(MAX_TRIES)
+    @Desc("The maximum amount of tries to generate loot, from 1 to 256")
     private int maxTries = 10;
 
     @Desc("The loot in this table")
     @ArrayType(min = 1, type = IrisLoot.class)
     private KList<IrisLoot> loot = new KList<>();
 
-    public KList<ItemStack> getLoot(boolean debug, RNG rng, InventorySlotType slot, World world, int x, int y, int z) {
+    public KList<ItemStack> getLoot(boolean debug, long lootSeed, InventorySlotType slot, World world, int x, int y, int z) {
         KList<ItemStack> lootf = new KList<>();
+        if (loot.isEmpty() || maxTries <= 0) {
+            return lootf;
+        }
 
+        RNG rng = LootResolver.tableRng(lootSeed, this, x, y, z);
         int m = 0;
         int c = 0;
-        int mx = rng.i(getMinPicked(), getMaxPicked());
+        int mx = Math.max(0, LootResolver.inclusive(rng, getMinPicked(), getMaxPicked()));
 
         while (m < mx && c++ < getMaxTries()) {
-            int num = rng.i(loot.size());
+            int num = rng.nextInt(loot.size());
 
             IrisLoot l = loot.get(num);
 
-            if (l.getSlotTypes() == slot) {
-                ItemStack item = l.get(debug, false, this, rng, x, y, z);
+            if (l != null && l.getSlotTypes() == slot) {
+                ItemStack item = l.get(debug, this, rng, lootSeed, num, x, y, z);
 
                 if (item != null && item.getType() != Material.AIR) {
                     lootf.add(item);

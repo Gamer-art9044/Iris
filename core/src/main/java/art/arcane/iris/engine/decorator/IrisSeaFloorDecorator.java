@@ -51,7 +51,7 @@ public class IrisSeaFloorDecorator extends IrisEngineDecorator {
                     && !decorator.getSlopeCondition().isValid(getComplex().getSlopeStream().get(realX, realZ))) {
                 return;
             }
-            if (height >= 0 || height < getEngine().getHeight()) {
+            if (height >= 0 && height < getEngine().getHeight()) {
                 data.set(x, height, z, decorator.getBlockData100(biome, rng, realX, height, realZ, getData()));
             }
             return;

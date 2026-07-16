@@ -21,28 +21,20 @@ package art.arcane.iris.fabric;
 import art.arcane.iris.modded.ModdedForcedDatapack;
 import net.minecraft.server.packs.repository.PackRepository;
 import net.minecraft.server.packs.repository.RepositorySource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 
 public final class FabricForcedDatapackSources {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
-
     private FabricForcedDatapackSources() {
     }
 
     public static void attach(PackRepository repository) {
-        if (repository == null) {
-            return;
-        }
-        try {
-            Set<RepositorySource> merged = new LinkedHashSet<>(repository.sources);
-            merged.add(ModdedForcedDatapack.repositorySource());
-            repository.sources = merged;
-        } catch (Throwable e) {
-            LOGGER.error("Iris failed to attach the forced startup datapack source to the server data pack repository", e);
-        }
+        PackRepository activeRepository = Objects.requireNonNull(repository,
+                "Iris cannot attach the forced startup datapack source to a null repository");
+        Set<RepositorySource> merged = new LinkedHashSet<>(activeRepository.sources);
+        merged.add(ModdedForcedDatapack.repositorySource());
+        activeRepository.sources = merged;
     }
 }

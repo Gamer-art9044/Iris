@@ -18,21 +18,16 @@
 
 package art.arcane.iris.core.tools;
 
-import art.arcane.iris.platform.bukkit.BukkitBlockResolution;
-
 import art.arcane.iris.engine.object.IrisObject;
-import art.arcane.iris.util.common.data.VectorMap;
-import org.bukkit.Axis;
-import org.bukkit.Tag;
-import art.arcane.iris.platform.bukkit.BukkitBlockState;
+import art.arcane.iris.engine.object.IrisProceduralBlocks;
 import art.arcane.iris.spi.PlatformBlockState;
-import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.Orientable;
-import org.bukkit.block.data.type.Leaves;
+import art.arcane.iris.util.common.data.VectorMap;
 import art.arcane.iris.util.common.math.IrisBlockVector;
+import art.arcane.volmlib.util.math.RNG;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -42,532 +37,307 @@ import java.util.Set;
 
 public final class TreePlausibilizer {
     public static final int MAX_DISTANCE = 6;
-    public static final int DEFAULT_SHELL_RADIUS = 2;
+    public static final int DEFAULT_REACH = 12;
+    public static final int STOP_SHORT = 3;
+    private static final int MAX_TENDRILS_PER_CLUSTER = 24;
+    private static final int MAX_STALLS_PER_CLUSTER = 2;
+    private static final int SCATTER_CLUSTER_LIMIT = 256;
+    private static final double MAX_HELIX_AMPLITUDE = 1.6D;
+    private static final long GOLDEN_GAMMA = 0x9E3779B97F4A7C15L;
     private static final int[][] NEIGHBORS = {
             {1, 0, 0}, {-1, 0, 0},
             {0, 1, 0}, {0, -1, 0},
             {0, 0, 1}, {0, 0, -1}
     };
-    private static final BlockData FALLBACK_LOG = BukkitBlockResolution.get("minecraft:oak_log[axis=y]");
-    private static final BlockData FALLBACK_LEAF = BukkitBlockResolution.get("minecraft:oak_leaves[distance=1,persistent=false,waterlogged=false]");
+    private static final Set<String> STEM_WOOD = Set.of(
+            "minecraft:bamboo_block",
+            "minecraft:stripped_bamboo_block",
+            "minecraft:crimson_stem",
+            "minecraft:stripped_crimson_stem",
+            "minecraft:warped_stem",
+            "minecraft:stripped_warped_stem"
+    );
 
     private TreePlausibilizer() {
     }
 
     public record Result(
             int totalLeaves,
-            int persistentLeavesInput,
-            int reachableBefore,
-            int logsAdded,
-            int leavesAdded,
-            int leavesRemoved,
-            int leavesNormalized,
-            int unreachableAfter,
-            String skipReason
+            int unreachableBefore,
+            int clusters,
+            int branchesGrown,
+            int woodPlaced,
+            int leavesConvertedToWood,
+            int leavesPinnedPersistent,
+            int distancesRewritten,
+            int unreachableAfter
     ) {
-        public static Result skipped(String reason) {
-            return new Result(0, 0, 0, 0, 0, 0, 0, 0, reason);
+        public boolean mutated() {
+            return woodPlaced + leavesConvertedToWood + distancesRewritten > 0;
         }
     }
 
-    public static Result analyze(IrisObject obj, PlausibilizeMode mode, int shellRadius) {
-        return run(obj, false, mode, shellRadius);
+    public static long seedOf(String key) {
+        long hash = 0xCBF29CE484222325L;
+        for (int i = 0; i < key.length(); i++) {
+            hash ^= key.charAt(i);
+            hash *= 0x100000001B3L;
+        }
+        return hash;
     }
 
-    public static Result apply(IrisObject obj, PlausibilizeMode mode, int shellRadius) {
-        return run(obj, true, mode, shellRadius);
+    public static Result analyze(IrisObject obj, long seed, int reach) {
+        return run(obj, false, seed, reach);
     }
 
-    private static Result run(IrisObject obj, boolean mutate, PlausibilizeMode mode, int shellRadius) {
-        boolean normalize = mode == PlausibilizeMode.NORMALIZE;
-        boolean smoke = mode == PlausibilizeMode.SMOKE;
-        boolean foliageOverature = mode == PlausibilizeMode.FOLIAGE_OVERATURE;
+    public static Result apply(IrisObject obj, long seed, int reach) {
+        return run(obj, true, seed, reach);
+    }
+
+    private static Result run(IrisObject obj, boolean mutate, long seed, int reach) {
         VectorMap<PlatformBlockState> blocks = obj.getBlocks();
-        Map<Long, BlockData> positions = new HashMap<>(blocks.size() * 2);
-        Set<Long> logPositions = new HashSet<>();
-        Set<Long> originalLeafPositions = new HashSet<>();
-        Set<Long> persistentLeafPositions = new HashSet<>();
-        Map<BlockData, Integer> leafTypeCounts = new HashMap<>();
+        Workspace ws = new Workspace(blocks);
 
-        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        int totalLeaves = ws.leaves.size();
+        if (totalLeaves == 0) {
+            return new Result(0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
 
-        for (Map.Entry<IrisBlockVector, PlatformBlockState> entry : blocks) {
-            IrisBlockVector pos = entry.getKey();
-            BlockData data = (BlockData) entry.getValue().nativeHandle();
-            long key = packKey(pos);
-            positions.put(key, data);
-            int x = pos.getBlockX();
-            int y = pos.getBlockY();
-            int z = pos.getBlockZ();
-            if (x < minX) minX = x;
-            if (y < minY) minY = y;
-            if (z < minZ) minZ = z;
-            if (x > maxX) maxX = x;
-            if (y > maxY) maxY = y;
-            if (z > maxZ) maxZ = z;
-            if (isLog(data)) {
-                logPositions.add(key);
-                continue;
-            }
-            if (isLeaf(data)) {
-                boolean persistent = data instanceof Leaves leaves && leaves.isPersistent();
-                if (persistent) {
-                    persistentLeafPositions.add(key);
+        ws.template = pickBranchTemplate(ws.positions, ws.wood);
+        ws.distances = seedDistances(ws.wood, ws.leaves);
+        ws.unreached = new HashSet<>(ws.leaves);
+        ws.unreached.removeAll(ws.distances.keySet());
+        int unreachableBefore = ws.unreached.size();
+
+        List<List<Long>> clusters = clusterize(ws.unreached);
+        int clusterCount = clusters.size();
+
+        if (ws.template != null && clusters.size() <= SCATTER_CLUSTER_LIMIT) {
+            int ordinal = 0;
+            for (List<Long> cluster : clusters) {
+                long clusterSeed = seed ^ (ordinal * GOLDEN_GAMMA);
+                ordinal++;
+                GapTracker tracker = new GapTracker(cluster, ws.wood);
+                if (reach > 0 && tracker.minGap() > reach) {
+                    continue;
                 }
-                originalLeafPositions.add(key);
-                leafTypeCounts.merge(data, 1, Integer::sum);
+                ws.growCluster(cluster, clusterSeed, tracker);
             }
         }
 
-        int persistentInput = persistentLeafPositions.size();
-        int totalLeavesInitial = originalLeafPositions.size();
-
-        if (logPositions.isEmpty() && !originalLeafPositions.isEmpty()) {
-            return Result.skipped("leaves present but no logs to bridge from");
-        }
-        if (logPositions.isEmpty() && !smoke) {
-            return new Result(0, 0, 0, 0, 0, 0, 0, 0, null);
-        }
-
-        Set<Long> leafPositions;
-        int leavesRemoved = 0;
-        List<Long> removedLeafKeys = new ArrayList<>();
-
-        if (smoke) {
-            leafPositions = new HashSet<>();
-            for (long key : originalLeafPositions) {
-                removedLeafKeys.add(key);
-                positions.remove(key);
-            }
-            leavesRemoved = removedLeafKeys.size();
-            int r = Math.max(0, Math.min(shellRadius, 5));
-            BlockData leafTemplate = pickDominantLeaf(leafTypeCounts);
-            paintShell(
-                    logPositions, positions, leafPositions,
-                    leafTemplate, r,
-                    minX, minY, minZ, maxX, maxY, maxZ
-            );
-        } else if (normalize) {
-            leafPositions = new HashSet<>(originalLeafPositions);
-        } else {
-            leafPositions = new HashSet<>(originalLeafPositions);
-            leafPositions.removeAll(persistentLeafPositions);
-        }
-
-        int reachableBefore;
-        int logsAdded = 0;
-        Set<Long> unreached;
-        Map<Long, Integer> distances;
-        List<LogInsertion> inserts = new ArrayList<>();
-        Set<Long> orphanRemovals = new HashSet<>();
-        List<LeafAddition> leafAdds = new ArrayList<>();
-
-        if (!leafPositions.isEmpty() && !logPositions.isEmpty()) {
-            Set<Long> connectivityLeaves;
-            if (!normalize && !smoke) {
-                connectivityLeaves = new HashSet<>(leafPositions);
-                connectivityLeaves.addAll(persistentLeafPositions);
+        Map<Long, Integer> finalDistances = seedDistances(ws.wood, ws.leaves);
+        List<LeafRewrite> rewrites = new ArrayList<>();
+        int pinned = 0;
+        int unreachableAfter = 0;
+        List<Long> sortedLeaves = new ArrayList<>(ws.leaves);
+        Collections.sort(sortedLeaves);
+        for (long leaf : sortedLeaves) {
+            PlatformBlockState state = ws.positions.get(leaf);
+            Integer d = finalDistances.get(leaf);
+            PlatformBlockState next;
+            if (d != null) {
+                next = state.withProperty("persistent", "false")
+                        .withProperty("distance", String.valueOf(Math.max(1, Math.min(MAX_DISTANCE, d))));
             } else {
-                connectivityLeaves = leafPositions;
+                next = state.withProperty("persistent", "true").withProperty("distance", "7");
+                pinned++;
+                unreachableAfter++;
             }
-
-            distances = seedDistances(logPositions, connectivityLeaves);
-            reachableBefore = countReachable(leafPositions, distances);
-            unreached = new HashSet<>(leafPositions);
-            unreached.removeAll(distances.keySet());
-
-            if (foliageOverature && !smoke && !unreached.isEmpty()) {
-                BlockData bridgeLeaf = pickDominantLeaf(leafTypeCounts);
-                foliageBridge(
-                        unreached, logPositions, distances,
-                        leafPositions, connectivityLeaves, positions,
-                        bridgeLeaf, leafAdds,
-                        minX, minY, minZ, maxX, maxY, maxZ
-                );
-                distances = seedDistances(logPositions, connectivityLeaves);
-                unreached = new HashSet<>(leafPositions);
-                unreached.removeAll(distances.keySet());
-            }
-
-            logsAdded = tentacleGrow(
-                    unreached, distances,
-                    logPositions, leafPositions, connectivityLeaves, positions,
-                    inserts, orphanRemovals, !foliageOverature
-            );
-        } else {
-            distances = new HashMap<>();
-            unreached = new HashSet<>();
-            reachableBefore = 0;
-        }
-
-        leavesRemoved += orphanRemovals.size();
-
-        int leavesAdded = leafAdds.size();
-        if (smoke) {
-            BlockData leafTemplate = pickDominantLeaf(leafTypeCounts);
-            for (long key : leafPositions) {
-                leafAdds.add(new LeafAddition(key, leafTemplate));
-            }
-            leavesAdded = leafAdds.size();
-        }
-
-        int leavesNormalized = 0;
-        List<LeafRewrite> normalizeRewrites = new ArrayList<>();
-        if (normalize && !smoke) {
-            for (long pos : leafPositions) {
-                BlockData data = positions.get(pos);
-                if (data instanceof Leaves leaves && leaves.isPersistent()) {
-                    BlockData cloned = data.clone();
-                    ((Leaves) cloned).setPersistent(false);
-                    normalizeRewrites.add(new LeafRewrite(pos, cloned));
-                    leavesNormalized++;
-                }
+            if (!next.key().equals(state.key())) {
+                rewrites.add(new LeafRewrite(leaf, next));
             }
         }
 
         if (mutate) {
-            if (smoke) {
-                for (long key : removedLeafKeys) {
-                    if (!positions.containsKey(key)) {
-                        blocks.remove(unpackKey(key));
-                    }
-                }
+            for (WoodPlacement placement : ws.placements) {
+                blocks.put(unpackKey(placement.key()), placement.state());
             }
-            for (long key : orphanRemovals) {
-                blocks.remove(unpackKey(key));
+            for (LeafRewrite rewrite : rewrites) {
+                blocks.put(unpackKey(rewrite.key()), rewrite.state());
             }
-            for (LeafAddition addition : leafAdds) {
-                blocks.put(unpackKey(addition.key()), BukkitBlockState.of(addition.data()));
-            }
-            for (LogInsertion insertion : inserts) {
-                blocks.put(unpackKey(insertion.key()), BukkitBlockState.of(insertion.data()));
-            }
-            for (LeafRewrite rewrite : normalizeRewrites) {
-                blocks.put(unpackKey(rewrite.key()), BukkitBlockState.of(rewrite.data()));
-            }
-        }
-
-        int finalLeafCount = leafPositions.size();
-        if (!normalize && !smoke) {
-            finalLeafCount += persistentInput;
         }
 
         return new Result(
-                smoke ? leavesAdded : totalLeavesInitial,
-                persistentInput,
-                reachableBefore,
-                logsAdded,
-                leavesAdded,
-                leavesRemoved,
-                leavesNormalized,
-                unreached.size(),
-                null
+                totalLeaves,
+                unreachableBefore,
+                clusterCount,
+                ws.branches,
+                ws.woodPlaced,
+                ws.converted,
+                pinned,
+                rewrites.size(),
+                unreachableAfter
         );
     }
 
-    private static void paintShell(
-            Set<Long> logPositions,
-            Map<Long, BlockData> positions,
-            Set<Long> leafPositions,
-            BlockData leafTemplate,
-            int radius,
-            int minX, int minY, int minZ, int maxX, int maxY, int maxZ
-    ) {
-        if (radius <= 0) {
-            return;
+    private static PlatformBlockState pickBranchTemplate(Map<Long, PlatformBlockState> positions, Set<Long> wood) {
+        if (wood.isEmpty()) {
+            return null;
         }
-        int r2 = radius * radius;
-        int bxMin = minX;
-        int byMin = minY;
-        int bzMin = minZ;
-        int bxMax = maxX;
-        int byMax = maxY;
-        int bzMax = maxZ;
-
-        for (long log : logPositions) {
-            int[] lx = unpack(log);
-            for (int dx = -radius; dx <= radius; dx++) {
-                int ax = lx[0] + dx;
-                if (ax < bxMin || ax > bxMax) continue;
-                int dx2 = dx * dx;
-                for (int dy = -radius; dy <= radius; dy++) {
-                    int ay = lx[1] + dy;
-                    if (ay < byMin || ay > byMax) continue;
-                    int dy2 = dy * dy;
-                    int partial = dx2 + dy2;
-                    if (partial > r2) continue;
-                    for (int dz = -radius; dz <= radius; dz++) {
-                        if (partial + dz * dz > r2) continue;
-                        int az = lx[2] + dz;
-                        if (az < bzMin || az > bzMax) continue;
-                        long nk = packXYZ(ax, ay, az);
-                        if (logPositions.contains(nk)) continue;
-                        if (positions.containsKey(nk)) continue;
-                        positions.put(nk, leafTemplate);
-                        leafPositions.add(nk);
-                    }
-                }
+        Map<String, Integer> materialCounts = new HashMap<>();
+        for (long key : wood) {
+            materialCounts.merge(IrisProceduralBlocks.materialKey(positions.get(key)), 1, Integer::sum);
+        }
+        String dominant = null;
+        int dominantCount = -1;
+        for (Map.Entry<String, Integer> e : materialCounts.entrySet()) {
+            if (e.getValue() > dominantCount
+                    || (e.getValue() == dominantCount && e.getKey().compareTo(dominant) < 0)) {
+                dominantCount = e.getValue();
+                dominant = e.getKey();
             }
         }
-    }
-
-    private static int tentacleGrow(
-            Set<Long> unreached,
-            Map<Long, Integer> distances,
-            Set<Long> logPositions,
-            Set<Long> leafPositions,
-            Set<Long> connectivityLeaves,
-            Map<Long, BlockData> positions,
-            List<LogInsertion> inserts,
-            Set<Long> orphanRemovals,
-            boolean deleteOrphans
-    ) {
-        int logsAdded = 0;
-        int safetyLimit = unreached.size() * 2 + 32;
-        long currentTarget = -1L;
-
-        while (!unreached.isEmpty() && logsAdded < safetyLimit) {
-            if (currentTarget == -1L || !unreached.contains(currentTarget)) {
-                currentTarget = unreached.iterator().next();
-            }
-
-            long extensionLeaf = findWoodAdjacentLeafFrom(currentTarget, connectivityLeaves, logPositions);
-
-            if (extensionLeaf == -1L) {
-                if (deleteOrphans) {
-                    removeOrphanCluster(currentTarget, connectivityLeaves, leafPositions, unreached, distances, positions, orphanRemovals);
-                } else {
-                    skipOrphanCluster(currentTarget, unreached, connectivityLeaves);
-                }
-                currentTarget = -1L;
+        Map<String, Integer> stateCounts = new HashMap<>();
+        Map<String, PlatformBlockState> statesByKey = new HashMap<>();
+        for (long key : wood) {
+            PlatformBlockState state = positions.get(key);
+            if (!IrisProceduralBlocks.materialKey(state).equals(dominant)) {
                 continue;
             }
-
-            BlockData logData = pickLogVariant(extensionLeaf, positions, logPositions);
-            inserts.add(new LogInsertion(extensionLeaf, logData));
-
-            logPositions.add(extensionLeaf);
-            leafPositions.remove(extensionLeaf);
-            connectivityLeaves.remove(extensionLeaf);
-            distances.remove(extensionLeaf);
-            unreached.remove(extensionLeaf);
-            positions.put(extensionLeaf, logData);
-            logsAdded++;
-
-            propagateFromLog(extensionLeaf, distances, connectivityLeaves, unreached);
+            stateCounts.merge(state.key(), 1, Integer::sum);
+            statesByKey.putIfAbsent(state.key(), state);
         }
-        return logsAdded;
-    }
-
-    private static long findWoodAdjacentLeafFrom(long start, Set<Long> leafPositions, Set<Long> logPositions) {
-        if (!leafPositions.contains(start)) return -1L;
-        if (hasLogNeighbor(start, logPositions)) return start;
-
-        Set<Long> visited = new HashSet<>();
-        Deque<Long> queue = new ArrayDeque<>();
-        queue.add(start);
-        visited.add(start);
-
-        while (!queue.isEmpty()) {
-            long pos = queue.poll();
-            int[] xyz = unpack(pos);
-            for (int[] n : NEIGHBORS) {
-                long nk = packXYZ(xyz[0] + n[0], xyz[1] + n[1], xyz[2] + n[2]);
-                if (!leafPositions.contains(nk) || !visited.add(nk)) continue;
-                if (hasLogNeighbor(nk, logPositions)) return nk;
-                queue.add(nk);
+        String best = null;
+        int bestCount = -1;
+        for (Map.Entry<String, Integer> e : stateCounts.entrySet()) {
+            if (e.getValue() > bestCount
+                    || (e.getValue() == bestCount && e.getKey().compareTo(best) < 0)) {
+                bestCount = e.getValue();
+                best = e.getKey();
             }
         }
-        return -1L;
+        return statesByKey.get(best);
     }
 
-    private static boolean hasLogNeighbor(long key, Set<Long> logPositions) {
-        int[] xyz = unpack(key);
-        for (int[] n : NEIGHBORS) {
-            long nk = packXYZ(xyz[0] + n[0], xyz[1] + n[1], xyz[2] + n[2]);
-            if (logPositions.contains(nk)) return true;
-        }
-        return false;
-    }
-
-    private static void propagateFromLog(
-            long logKey, Map<Long, Integer> distances,
-            Set<Long> connectivityLeaves, Set<Long> unreached
-    ) {
-        int[] cx = unpack(logKey);
-        Deque<Long> q = new ArrayDeque<>();
-        for (int[] n : NEIGHBORS) {
-            long nk = packXYZ(cx[0] + n[0], cx[1] + n[1], cx[2] + n[2]);
-            if (connectivityLeaves.contains(nk)) {
-                Integer cur = distances.get(nk);
-                if (cur == null || cur > 1) {
-                    if (cur == null) unreached.remove(nk);
-                    distances.put(nk, 1);
-                    q.add(nk);
-                }
+    private static List<List<Long>> clusterize(Set<Long> unreached) {
+        List<List<Long>> clusters = new ArrayList<>();
+        List<Long> sorted = new ArrayList<>(unreached);
+        Collections.sort(sorted);
+        Set<Long> assigned = new HashSet<>();
+        for (long seedKey : sorted) {
+            if (assigned.contains(seedKey)) {
+                continue;
             }
-        }
-        while (!q.isEmpty()) {
-            long pos = q.poll();
-            int d = distances.get(pos);
-            if (d >= MAX_DISTANCE) continue;
-            int[] px = unpack(pos);
-            for (int[] n : NEIGHBORS) {
-                long nk = packXYZ(px[0] + n[0], px[1] + n[1], px[2] + n[2]);
-                if (connectivityLeaves.contains(nk)) {
-                    Integer cur = distances.get(nk);
-                    if (cur == null || cur > d + 1) {
-                        if (cur == null) unreached.remove(nk);
-                        distances.put(nk, d + 1);
-                        q.add(nk);
-                    }
-                }
-            }
-        }
-    }
-
-    private static void foliageBridge(
-            Set<Long> unreached,
-            Set<Long> logPositions,
-            Map<Long, Integer> distances,
-            Set<Long> leafPositions,
-            Set<Long> connectivityLeaves,
-            Map<Long, BlockData> positions,
-            BlockData leafTemplate,
-            List<LeafAddition> leafAdds,
-            int minX, int minY, int minZ, int maxX, int maxY, int maxZ
-    ) {
-        Set<Long> pending = new HashSet<>(unreached);
-        while (!pending.isEmpty()) {
-            long seed = pending.iterator().next();
-            Set<Long> cluster = new HashSet<>();
-            Deque<Long> cq = new ArrayDeque<>();
-            cq.add(seed);
-            cluster.add(seed);
-            while (!cq.isEmpty()) {
-                long p = cq.poll();
-                int[] xyz = unpack(p);
+            List<Long> cluster = new ArrayList<>();
+            Deque<Long> queue = new ArrayDeque<>();
+            queue.add(seedKey);
+            assigned.add(seedKey);
+            while (!queue.isEmpty()) {
+                long pos = queue.poll();
+                cluster.add(pos);
+                int[] xyz = unpack(pos);
                 for (int[] n : NEIGHBORS) {
                     long nk = packXYZ(xyz[0] + n[0], xyz[1] + n[1], xyz[2] + n[2]);
-                    if (pending.contains(nk) && cluster.add(nk)) {
-                        cq.add(nk);
+                    if (unreached.contains(nk) && assigned.add(nk)) {
+                        queue.add(nk);
                     }
                 }
             }
-
-            Map<Long, Long> parent = new HashMap<>();
-            Deque<Long> q = new ArrayDeque<>();
-            for (long c : cluster) {
-                parent.put(c, -1L);
-                q.add(c);
-            }
-
-            long pathEnd = -1L;
-            while (!q.isEmpty() && pathEnd == -1L) {
-                long p = q.poll();
-                int[] xyz = unpack(p);
-                for (int[] n : NEIGHBORS) {
-                    int nx = xyz[0] + n[0];
-                    int ny = xyz[1] + n[1];
-                    int nz = xyz[2] + n[2];
-                    if (nx < minX || nx > maxX) continue;
-                    if (ny < minY || ny > maxY) continue;
-                    if (nz < minZ || nz > maxZ) continue;
-                    long nk = packXYZ(nx, ny, nz);
-                    if (parent.containsKey(nk)) continue;
-                    if (logPositions.contains(nk) || distances.containsKey(nk)) {
-                        pathEnd = p;
-                        break;
-                    }
-                    if (positions.containsKey(nk)) continue;
-                    parent.put(nk, p);
-                    q.add(nk);
-                }
-            }
-
-            pending.removeAll(cluster);
-
-            if (pathEnd == -1L) {
-                continue;
-            }
-
-            long cur = pathEnd;
-            while (cur != -1L && !cluster.contains(cur)) {
-                if (!positions.containsKey(cur)) {
-                    BlockData clone = leafTemplate.clone();
-                    positions.put(cur, clone);
-                    leafPositions.add(cur);
-                    connectivityLeaves.add(cur);
-                    leafAdds.add(new LeafAddition(cur, clone));
-                }
-                cur = parent.get(cur);
-            }
+            Collections.sort(cluster);
+            clusters.add(cluster);
         }
+        return clusters;
     }
 
-    private static void skipOrphanCluster(long seed, Set<Long> unreached, Set<Long> connectivityLeaves) {
-        Deque<Long> queue = new ArrayDeque<>();
-        Set<Long> visited = new HashSet<>();
-        queue.add(seed);
-        visited.add(seed);
-        while (!queue.isEmpty()) {
-            long pos = queue.poll();
-            unreached.remove(pos);
-            int[] xyz = unpack(pos);
-            for (int[] n : NEIGHBORS) {
-                long nk = packXYZ(xyz[0] + n[0], xyz[1] + n[1], xyz[2] + n[2]);
-                if (visited.add(nk) && unreached.contains(nk) && connectivityLeaves.contains(nk)) {
-                    queue.add(nk);
+    private static final class GapTracker {
+        private final Map<Long, int[]> leafCells = new HashMap<>();
+        private final Map<Long, Integer> gaps = new HashMap<>();
+        private final Map<Long, Long> anchors = new HashMap<>();
+        private final Map<Long, Long> anchorDistances = new HashMap<>();
+
+        private GapTracker(List<Long> cluster, Set<Long> wood) {
+            for (long leaf : cluster) {
+                leafCells.put(leaf, unpack(leaf));
+                gaps.put(leaf, Integer.MAX_VALUE);
+                anchors.put(leaf, -1L);
+                anchorDistances.put(leaf, Long.MAX_VALUE);
+            }
+            for (long w : wood) {
+                onWoodPlaced(w);
+            }
+        }
+
+        private void onWoodPlaced(long woodKey) {
+            int[] wx = unpack(woodKey);
+            for (Map.Entry<Long, int[]> entry : leafCells.entrySet()) {
+                long leaf = entry.getKey();
+                int[] lx = entry.getValue();
+                int cheb = chebyshev(lx, wx);
+                if (cheb < gaps.get(leaf)) {
+                    gaps.put(leaf, cheb);
+                }
+                long dx = lx[0] - wx[0];
+                long dy = lx[1] - wx[1];
+                long dz = lx[2] - wx[2];
+                long d2 = dx * dx + dy * dy + dz * dz;
+                long bestD2 = anchorDistances.get(leaf);
+                long bestAnchor = anchors.get(leaf);
+                if (d2 < bestD2 || (d2 == bestD2 && woodKey < bestAnchor)) {
+                    anchorDistances.put(leaf, d2);
+                    anchors.put(leaf, woodKey);
                 }
             }
         }
-    }
 
-    private static void removeOrphanCluster(
-            long seed,
-            Set<Long> connectivityLeaves, Set<Long> leafPositions, Set<Long> unreached,
-            Map<Long, Integer> distances, Map<Long, BlockData> positions, Set<Long> orphanRemovals
-    ) {
-        Deque<Long> queue = new ArrayDeque<>();
-        Set<Long> visited = new HashSet<>();
-        queue.add(seed);
-        visited.add(seed);
+        private void drop(long leaf) {
+            leafCells.remove(leaf);
+            gaps.remove(leaf);
+            anchors.remove(leaf);
+            anchorDistances.remove(leaf);
+        }
 
-        while (!queue.isEmpty()) {
-            long pos = queue.poll();
-            int[] xyz = unpack(pos);
-            for (int[] n : NEIGHBORS) {
-                long nk = packXYZ(xyz[0] + n[0], xyz[1] + n[1], xyz[2] + n[2]);
-                if (visited.add(nk) && connectivityLeaves.contains(nk)) {
-                    queue.add(nk);
+        private int minGap() {
+            int best = Integer.MAX_VALUE;
+            for (int gap : gaps.values()) {
+                if (gap < best) {
+                    best = gap;
                 }
             }
-            orphanRemovals.add(pos);
-            connectivityLeaves.remove(pos);
-            leafPositions.remove(pos);
-            unreached.remove(pos);
-            distances.remove(pos);
-            positions.remove(pos);
+            return best;
+        }
+
+        private long worst(Set<Long> unreached) {
+            long worst = -1L;
+            int worstGap = -1;
+            for (Map.Entry<Long, Integer> entry : gaps.entrySet()) {
+                long leaf = entry.getKey();
+                if (!unreached.contains(leaf)) {
+                    continue;
+                }
+                int gap = entry.getValue();
+                if (gap > worstGap || (gap == worstGap && leaf < worst)) {
+                    worstGap = gap;
+                    worst = leaf;
+                }
+            }
+            return worst;
+        }
+
+        private long anchor(long leaf) {
+            Long anchor = anchors.get(leaf);
+            return anchor == null ? -1L : anchor;
+        }
+
+        private int gapOf(long leaf) {
+            Integer gap = gaps.get(leaf);
+            return gap == null ? Integer.MAX_VALUE : gap;
         }
     }
 
-    private static Map<Long, Integer> seedDistances(Set<Long> logPositions, Set<Long> leafPositions) {
+    private static Map<Long, Integer> seedDistances(Set<Long> wood, Set<Long> leaves) {
         Map<Long, Integer> dist = new HashMap<>();
         Deque<Long> queue = new ArrayDeque<>();
-
-        for (long leaf : leafPositions) {
+        for (long leaf : leaves) {
             int[] xyz = unpack(leaf);
             for (int[] n : NEIGHBORS) {
                 long nk = packXYZ(xyz[0] + n[0], xyz[1] + n[1], xyz[2] + n[2]);
-                if (logPositions.contains(nk)) {
+                if (wood.contains(nk)) {
                     dist.put(leaf, 1);
                     queue.add(leaf);
                     break;
                 }
             }
         }
-
         while (!queue.isEmpty()) {
             long pos = queue.poll();
             int d = dist.get(pos);
@@ -577,80 +347,63 @@ public final class TreePlausibilizer {
             int[] xyz = unpack(pos);
             for (int[] n : NEIGHBORS) {
                 long nk = packXYZ(xyz[0] + n[0], xyz[1] + n[1], xyz[2] + n[2]);
-                if (leafPositions.contains(nk) && !dist.containsKey(nk)) {
+                if (leaves.contains(nk) && !dist.containsKey(nk)) {
                     dist.put(nk, d + 1);
                     queue.add(nk);
                 }
             }
         }
-
         return dist;
     }
 
-    private static int countReachable(Set<Long> leafPositions, Map<Long, Integer> distances) {
-        int count = 0;
-        for (long leaf : leafPositions) {
-            if (distances.containsKey(leaf)) {
-                count++;
-            }
-        }
-        return count;
+    private static boolean isWood(PlatformBlockState state) {
+        String material = IrisProceduralBlocks.materialKey(state);
+        return material.endsWith("_log")
+                || material.endsWith("_wood")
+                || material.endsWith("_hyphae")
+                || STEM_WOOD.contains(material);
     }
 
-    private static BlockData pickDominantLeaf(Map<BlockData, Integer> leafTypeCounts) {
-        BlockData best = null;
-        int bestCount = -1;
-        for (Map.Entry<BlockData, Integer> e : leafTypeCounts.entrySet()) {
-            if (e.getValue() > bestCount) {
-                bestCount = e.getValue();
-                best = e.getKey();
-            }
-        }
-        if (best == null) {
-            return FALLBACK_LEAF.clone();
-        }
-        BlockData clone = best.clone();
-        if (clone instanceof Leaves leaves) {
-            leaves.setPersistent(false);
-        }
-        return clone;
+    private static boolean isDecayableLeaf(PlatformBlockState state) {
+        return IrisProceduralBlocks.hasProperty(state, "distance")
+                && IrisProceduralBlocks.hasProperty(state, "persistent");
     }
 
-    private static BlockData pickLogVariant(long target, Map<Long, BlockData> positions, Set<Long> logPositions) {
-        if (logPositions.isEmpty()) {
-            return FALLBACK_LOG.clone();
+    private static PlatformBlockState axisVariant(PlatformBlockState template, int dx, int dy, int dz) {
+        if (!IrisProceduralBlocks.hasProperty(template, "axis")) {
+            return template;
         }
-        int[] tx = unpack(target);
-        long nearest = -1L;
-        long nearestDistSq = Long.MAX_VALUE;
-        for (long lp : logPositions) {
-            int[] lx = unpack(lp);
-            long dx = tx[0] - lx[0];
-            long dy = tx[1] - lx[1];
-            long dz = tx[2] - lx[2];
-            long d2 = dx * dx + dy * dy + dz * dz;
-            if (d2 < nearestDistSq) {
-                nearestDistSq = d2;
-                nearest = lp;
-            }
+        double weightedY = Math.abs(dy) * 1.8D;
+        String axis;
+        if (weightedY >= Math.abs(dx) && weightedY >= Math.abs(dz)) {
+            axis = "y";
+        } else if (Math.abs(dx) >= Math.abs(dz)) {
+            axis = "x";
+        } else {
+            axis = "z";
         }
-        BlockData source = positions.get(nearest);
-        if (source == null) {
-            return FALLBACK_LOG.clone();
-        }
-        BlockData clone = source.clone();
-        if (clone instanceof Orientable orientable) {
-            orientable.setAxis(Axis.Y);
-        }
-        return clone;
+        return template.withProperty("axis", axis);
     }
 
-    private static boolean isLog(BlockData data) {
-        return Tag.LOGS.isTagged(data.getMaterial());
+    private static int chebyshev(int[] a, int[] b) {
+        return Math.max(Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])), Math.abs(a[2] - b[2]));
     }
 
-    private static boolean isLeaf(BlockData data) {
-        return Tag.LEAVES.isTagged(data.getMaterial()) || data instanceof Leaves;
+    private static double[] cross(double[] a, double[] b) {
+        return new double[]{
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0]
+        };
+    }
+
+    private static double lengthOf(double[] a) {
+        return Math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+    }
+
+    private static double[] normalize(double[] a) {
+        double len = lengthOf(a);
+        return new double[]{a[0] / len, a[1] / len, a[2] / len};
     }
 
     private static long packKey(IrisBlockVector pos) {
@@ -676,12 +429,294 @@ public final class TreePlausibilizer {
         return new IrisBlockVector(xyz[0], xyz[1], xyz[2]);
     }
 
-    private record LogInsertion(long key, BlockData data) {
+    private record WoodPlacement(long key, PlatformBlockState state) {
     }
 
-    private record LeafAddition(long key, BlockData data) {
+    private record LeafRewrite(long key, PlatformBlockState state) {
     }
 
-    private record LeafRewrite(long key, BlockData data) {
+    private static final class Workspace {
+        private final Map<Long, PlatformBlockState> positions;
+        private final Set<Long> wood = new HashSet<>();
+        private final Set<Long> leaves = new HashSet<>();
+        private final List<WoodPlacement> placements = new ArrayList<>();
+        private Map<Long, Integer> distances = new HashMap<>();
+        private Set<Long> unreached = new HashSet<>();
+        private PlatformBlockState template;
+        private GapTracker tracker;
+        private int minX = Integer.MAX_VALUE;
+        private int minY = Integer.MAX_VALUE;
+        private int minZ = Integer.MAX_VALUE;
+        private int maxX = Integer.MIN_VALUE;
+        private int maxY = Integer.MIN_VALUE;
+        private int maxZ = Integer.MIN_VALUE;
+        private int woodPlaced;
+        private int converted;
+        private int branches;
+
+        private Workspace(VectorMap<PlatformBlockState> blocks) {
+            positions = new HashMap<>(blocks.size() * 2);
+            for (Map.Entry<IrisBlockVector, PlatformBlockState> entry : blocks) {
+                IrisBlockVector pos = entry.getKey();
+                PlatformBlockState state = entry.getValue();
+                long key = packKey(pos);
+                positions.put(key, state);
+                int x = pos.getBlockX();
+                int y = pos.getBlockY();
+                int z = pos.getBlockZ();
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (z < minZ) minZ = z;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+                if (z > maxZ) maxZ = z;
+                if (isWood(state)) {
+                    wood.add(key);
+                } else if (isDecayableLeaf(state)) {
+                    leaves.add(key);
+                }
+            }
+        }
+
+        private void growCluster(List<Long> cluster, long clusterSeed, GapTracker gapTracker) {
+            tracker = gapTracker;
+            try {
+                int stalls = 0;
+                int budget = Math.max(MAX_TENDRILS_PER_CLUSTER, cluster.size() / 8);
+                for (int tendril = 0; tendril < budget; tendril++) {
+                    long target = gapTracker.worst(unreached);
+                    if (target == -1L) {
+                        return;
+                    }
+                    long anchor = gapTracker.anchor(target);
+                    if (anchor == -1L) {
+                        return;
+                    }
+                    int placedBefore = placements.size();
+                    int unreachedBefore = unreachedInCluster(cluster);
+                    RNG rng = new RNG(clusterSeed).nextParallelRNG(tendril);
+                    growTendril(anchor, target, rng);
+                    boolean progressed = placements.size() > placedBefore || unreachedInCluster(cluster) < unreachedBefore;
+                    if (placements.size() > placedBefore) {
+                        branches++;
+                    }
+                    if (progressed) {
+                        stalls = 0;
+                        continue;
+                    }
+                    stalls++;
+                    if (stalls >= MAX_STALLS_PER_CLUSTER) {
+                        break;
+                    }
+                }
+                directConnect(cluster);
+            } finally {
+                tracker = null;
+            }
+        }
+
+        private void growTendril(long anchorKey, long targetKey, RNG rng) {
+            int[] anchor = unpack(anchorKey);
+            int[] target = unpack(targetKey);
+            double[] delta = new double[]{target[0] - anchor[0], target[1] - anchor[1], target[2] - anchor[2]};
+            double length = lengthOf(delta);
+            if (length < 1.0D) {
+                return;
+            }
+            double[] direction = normalize(delta);
+            double[] side = cross(direction, new double[]{0.0D, 1.0D, 0.0D});
+            if (lengthOf(side) < 0.05D) {
+                side = cross(direction, new double[]{1.0D, 0.0D, 0.0D});
+            }
+            side = normalize(side);
+            double[] up = cross(direction, side);
+
+            double amplitudeMax = Math.min(MAX_HELIX_AMPLITUDE, length / 5.0D);
+            double totalTwist = (1.25D + rng.d()) * Math.PI;
+            double phase = rng.d() * 2.0D * Math.PI;
+            double handedness = rng.b() ? 1.0D : -1.0D;
+            double drawLength = Math.max(1.0D, length - STOP_SHORT);
+            int steps = (int) Math.ceil(drawLength * 2.0D);
+
+            int[] previous = anchor;
+            for (int i = 1; i <= steps; i++) {
+                double arc = drawLength * i / steps;
+                double fraction = arc / drawLength;
+                double amplitude = amplitudeMax * Math.sin(Math.PI * fraction);
+                double theta = phase + handedness * totalTwist * (arc / length);
+                double offsetSide = amplitude * Math.cos(theta);
+                double offsetUp = amplitude * Math.sin(theta);
+                int cx = clamp((int) Math.round(anchor[0] + direction[0] * arc + side[0] * offsetSide + up[0] * offsetUp), minX, maxX);
+                int cy = clamp((int) Math.round(anchor[1] + direction[1] * arc + side[1] * offsetSide + up[1] * offsetUp), minY, maxY);
+                int cz = clamp((int) Math.round(anchor[2] + direction[2] * arc + side[2] * offsetSide + up[2] * offsetUp), minZ, maxZ);
+                int[] cell = new int[]{cx, cy, cz};
+                bridge(previous, cell);
+                previous = cell;
+            }
+        }
+
+        private void directConnect(List<Long> cluster) {
+            List<Long> ordered = new ArrayList<>(cluster);
+            if (tracker != null) {
+                GapTracker gapTracker = tracker;
+                ordered.sort((Long a, Long b) -> {
+                    int ga = gapTracker.gapOf(a);
+                    int gb = gapTracker.gapOf(b);
+                    if (ga != gb) {
+                        return Integer.compare(ga, gb);
+                    }
+                    return Long.compare(a, b);
+                });
+            }
+            for (long target : ordered) {
+                if (!unreached.contains(target)) {
+                    continue;
+                }
+                long anchor = tracker == null ? -1L : tracker.anchor(target);
+                if (anchor == -1L) {
+                    return;
+                }
+                int placedBefore = placements.size();
+                int[] pos = unpack(anchor);
+                int[] t = unpack(target);
+                int guard = chebyshev(pos, t) * 4 + 8;
+                while (guard-- > 0 && unreached.contains(target) && !distances.containsKey(target)) {
+                    int dx = Integer.signum(t[0] - pos[0]);
+                    int dy = Integer.signum(t[1] - pos[1]);
+                    int dz = Integer.signum(t[2] - pos[2]);
+                    if (dx == 0 && dy == 0 && dz == 0) {
+                        break;
+                    }
+                    boolean landsOnTarget = pos[0] + dx == t[0] && pos[1] + dy == t[1] && pos[2] + dz == t[2];
+                    boolean diagonal = Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 1;
+                    if (landsOnTarget && diagonal) {
+                        if (dx != 0) {
+                            dy = 0;
+                            dz = 0;
+                        } else if (dy != 0) {
+                            dz = 0;
+                        }
+                    }
+                    int[] step = new int[]{dx, dy, dz};
+                    int[][] candidates = {{dx, dy, dz}, {dx, 0, 0}, {0, dy, 0}, {0, 0, dz}};
+                    for (int[] candidate : candidates) {
+                        if (candidate[0] == 0 && candidate[1] == 0 && candidate[2] == 0) {
+                            continue;
+                        }
+                        int nx = pos[0] + candidate[0];
+                        int ny = pos[1] + candidate[1];
+                        int nz = pos[2] + candidate[2];
+                        if (nx == t[0] && ny == t[1] && nz == t[2]) {
+                            continue;
+                        }
+                        if (leaves.contains(packXYZ(nx, ny, nz))) {
+                            step = candidate;
+                            break;
+                        }
+                    }
+                    pos = new int[]{pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]};
+                    placeCell(pos[0], pos[1], pos[2], step[0], step[1], step[2]);
+                }
+                if (placements.size() > placedBefore) {
+                    branches++;
+                }
+            }
+        }
+
+        private void bridge(int[] from, int[] to) {
+            int[] pos = from;
+            int guard = chebyshev(from, to) * 3 + 4;
+            while (guard-- > 0 && (pos[0] != to[0] || pos[1] != to[1] || pos[2] != to[2])) {
+                int dx = Integer.signum(to[0] - pos[0]);
+                int dy = Integer.signum(to[1] - pos[1]);
+                int dz = Integer.signum(to[2] - pos[2]);
+                pos = new int[]{pos[0] + dx, pos[1] + dy, pos[2] + dz};
+                placeCell(pos[0], pos[1], pos[2], dx, dy, dz);
+            }
+        }
+
+        private void placeCell(int x, int y, int z, int dx, int dy, int dz) {
+            long key = packXYZ(x, y, z);
+            if (wood.contains(key)) {
+                return;
+            }
+            PlatformBlockState existing = positions.get(key);
+            boolean convertLeaf = existing != null && leaves.contains(key);
+            if (existing != null && !convertLeaf) {
+                return;
+            }
+            PlatformBlockState state = axisVariant(template, dx, dy, dz);
+            positions.put(key, state);
+            wood.add(key);
+            if (convertLeaf) {
+                leaves.remove(key);
+                unreached.remove(key);
+                distances.remove(key);
+                converted++;
+                if (tracker != null) {
+                    tracker.drop(key);
+                }
+            } else {
+                woodPlaced++;
+            }
+            placements.add(new WoodPlacement(key, state));
+            if (tracker != null) {
+                tracker.onWoodPlaced(key);
+            }
+            propagate(key);
+        }
+
+        private void propagate(long woodKey) {
+            int[] center = unpack(woodKey);
+            Deque<Long> queue = new ArrayDeque<>();
+            for (int[] n : NEIGHBORS) {
+                long nk = packXYZ(center[0] + n[0], center[1] + n[1], center[2] + n[2]);
+                if (leaves.contains(nk)) {
+                    Integer current = distances.get(nk);
+                    if (current == null || current > 1) {
+                        if (current == null) {
+                            unreached.remove(nk);
+                        }
+                        distances.put(nk, 1);
+                        queue.add(nk);
+                    }
+                }
+            }
+            while (!queue.isEmpty()) {
+                long pos = queue.poll();
+                int d = distances.get(pos);
+                if (d >= MAX_DISTANCE) {
+                    continue;
+                }
+                int[] xyz = unpack(pos);
+                for (int[] n : NEIGHBORS) {
+                    long nk = packXYZ(xyz[0] + n[0], xyz[1] + n[1], xyz[2] + n[2]);
+                    if (leaves.contains(nk)) {
+                        Integer current = distances.get(nk);
+                        if (current == null || current > d + 1) {
+                            if (current == null) {
+                                unreached.remove(nk);
+                            }
+                            distances.put(nk, d + 1);
+                            queue.add(nk);
+                        }
+                    }
+                }
+            }
+        }
+
+        private int unreachedInCluster(List<Long> cluster) {
+            int count = 0;
+            for (long leaf : cluster) {
+                if (unreached.contains(leaf)) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private static int clamp(int value, int min, int max) {
+            return Math.max(min, Math.min(max, value));
+        }
     }
 }

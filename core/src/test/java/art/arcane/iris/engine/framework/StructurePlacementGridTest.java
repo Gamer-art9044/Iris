@@ -107,29 +107,32 @@ public class StructurePlacementGridTest {
     }
 
     @Test
-    public void densityStartIsDeterministicAndOrdinalScoped() {
+    public void densityStartIsDeterministicAndPlacementIdScoped() {
         IrisStructurePlacement placement = placement(StructureDistribution.DENSITY);
         placement.setDensity(0.35);
-        boolean differsByOrdinal = false;
+        IrisStructurePlacement secondPlacement = placement(StructureDistribution.DENSITY);
+        secondPlacement.setDensity(0.35);
+        secondPlacement.setPlacementId("second");
+        boolean differsById = false;
         for (int cx = -32; cx <= 32; cx++) {
             for (int cz = -32; cz <= 32; cz++) {
-                boolean first = StructurePlacementGrid.startsInChunk(placement, cx, cz, 912345L, 0);
-                boolean repeated = StructurePlacementGrid.startsInChunk(placement, cx, cz, 912345L, 0);
-                boolean secondPlacement = StructurePlacementGrid.startsInChunk(placement, cx, cz, 912345L, 1);
+                boolean first = StructurePlacementGrid.startsInChunk(placement, cx, cz, 912345L);
+                boolean repeated = StructurePlacementGrid.startsInChunk(placement, cx, cz, 912345L);
+                boolean second = StructurePlacementGrid.startsInChunk(secondPlacement, cx, cz, 912345L);
                 assertEquals(first, repeated);
-                differsByOrdinal |= first != secondPlacement;
+                differsById |= first != second;
             }
         }
-        assertTrue(differsByOrdinal);
+        assertTrue(differsById);
     }
 
     @Test
     public void densityBoundariesNeverAndAlwaysStart() {
         IrisStructurePlacement placement = placement(StructureDistribution.DENSITY);
         placement.setDensity(0.0);
-        assertFalse(StructurePlacementGrid.startsInChunk(placement, 4, -9, 77L, 0));
+        assertFalse(StructurePlacementGrid.startsInChunk(placement, 4, -9, 77L));
         placement.setDensity(1.0);
-        assertTrue(StructurePlacementGrid.startsInChunk(placement, 4, -9, 77L, 0));
+        assertTrue(StructurePlacementGrid.startsInChunk(placement, 4, -9, 77L));
     }
 
     @Test
@@ -144,7 +147,7 @@ public class StructurePlacementGridTest {
         int starts = 0;
         for (int cx = -scanRadius; cx <= scanRadius; cx++) {
             for (int cz = -scanRadius; cz <= scanRadius; cz++) {
-                if (StructurePlacementGrid.startsInChunk(placement, cx, cz, seed, 0)) {
+                if (StructurePlacementGrid.startsInChunk(placement, cx, cz, seed)) {
                     starts++;
                 }
             }
@@ -154,13 +157,98 @@ public class StructurePlacementGridTest {
     }
 
     @Test
-    public void placementRngIsStableAndOrdinalScoped() {
+    public void placementRngIsStableAndPlacementIdScoped() {
         IrisStructurePlacement placement = placement(StructureDistribution.RANDOM_SPREAD);
-        long first = StructurePlacementGrid.placementRng(placement, 7, -11, 123L, 0).getSeed();
-        long repeated = StructurePlacementGrid.placementRng(placement, 7, -11, 123L, 0).getSeed();
-        long secondPlacement = StructurePlacementGrid.placementRng(placement, 7, -11, 123L, 1).getSeed();
+        long first = StructurePlacementGrid.placementRng(placement, 7, -11, 123L).getSeed();
+        long repeated = StructurePlacementGrid.placementRng(placement, 7, -11, 123L).getSeed();
+        placement.setPlacementId("second");
+        long secondPlacement = StructurePlacementGrid.placementRng(placement, 7, -11, 123L).getSeed();
         assertEquals(first, repeated);
         assertNotEquals(first, secondPlacement);
+    }
+
+    @Test
+    public void authoredPlacementIdSeparatesRandomSpreadStarts() {
+        IrisStructurePlacement first = placement(StructureDistribution.RANDOM_SPREAD);
+        first.setPlacementId("first");
+        IrisStructurePlacement second = placement(StructureDistribution.RANDOM_SPREAD);
+        second.setPlacementId("second");
+        int[] firstStart = StructurePlacementGrid.randomSpreadCellChunk(
+                8, -3, first.getSpacing(), first.getSeparation(), StructurePlacementGrid.placementSalt(first), 31337L);
+        int[] secondStart = StructurePlacementGrid.randomSpreadCellChunk(
+                8, -3, second.getSpacing(), second.getSeparation(), StructurePlacementGrid.placementSalt(second), 31337L);
+        assertFalse(firstStart[0] == secondStart[0] && firstStart[1] == secondStart[1]);
+    }
+
+    @Test
+    public void blankIdsDeriveDistinctStableRandomSpreadGridsFromContent() {
+        IrisStructurePlacement first = placement(StructureDistribution.RANDOM_SPREAD);
+        IrisStructurePlacement recreatedFirst = placement(StructureDistribution.RANDOM_SPREAD);
+        IrisStructurePlacement second = placement(StructureDistribution.RANDOM_SPREAD);
+        second.getStructures().clear();
+        second.getStructures().add("test:other");
+
+        assertEquals(StructurePlacementGrid.placementSalt(first),
+                StructurePlacementGrid.placementSalt(recreatedFirst));
+        assertNotEquals(StructurePlacementGrid.placementSalt(first),
+                StructurePlacementGrid.placementSalt(second));
+        boolean differs = false;
+        for (int cell = -8; cell <= 8; cell++) {
+            int[] firstStart = StructurePlacementGrid.randomSpreadCellChunk(
+                    cell, cell + 3, first.getSpacing(), first.getSeparation(),
+                    StructurePlacementGrid.placementSalt(first), 31337L);
+            int[] secondStart = StructurePlacementGrid.randomSpreadCellChunk(
+                    cell, cell + 3, second.getSpacing(), second.getSeparation(),
+                    StructurePlacementGrid.placementSalt(second), 31337L);
+            differs |= firstStart[0] != secondStart[0] || firstStart[1] != secondStart[1];
+        }
+        assertTrue(differs);
+    }
+
+    @Test
+    public void blankIdsDeriveDistinctStableConcentricRingsFromContent() {
+        IrisStructurePlacement first = placement(StructureDistribution.CONCENTRIC_RINGS);
+        IrisStructurePlacement recreatedFirst = placement(StructureDistribution.CONCENTRIC_RINGS);
+        IrisStructurePlacement second = placement(StructureDistribution.CONCENTRIC_RINGS);
+        second.getStructures().clear();
+        second.getStructures().add("test:other");
+        first.setRingCount(12);
+        recreatedFirst.setRingCount(12);
+        second.setRingCount(12);
+
+        boolean differs = false;
+        for (int index = 0; index < first.getRingCount(); index++) {
+            int[] firstPoint = StructurePlacementGrid.concentricRingChunk(first, index, 77123L);
+            int[] recreatedPoint = StructurePlacementGrid.concentricRingChunk(recreatedFirst, index, 77123L);
+            int[] secondPoint = StructurePlacementGrid.concentricRingChunk(second, index, 77123L);
+            assertEquals(firstPoint[0], recreatedPoint[0]);
+            assertEquals(firstPoint[1], recreatedPoint[1]);
+            differs |= firstPoint[0] != secondPoint[0] || firstPoint[1] != secondPoint[1];
+        }
+        assertTrue(differs);
+    }
+
+    @Test
+    public void derivedPlacementIdentityIncludesPlacementSettings() {
+        IrisStructurePlacement first = placement(StructureDistribution.DENSITY);
+        IrisStructurePlacement second = placement(StructureDistribution.DENSITY);
+        second.setMinHeight(first.getMinHeight() + 1);
+        long firstSeed = StructurePlacementGrid.placementRng(first, 9, 14, 42L).getSeed();
+        long secondSeed = StructurePlacementGrid.placementRng(second, 9, 14, 42L).getSeed();
+        assertNotEquals(firstSeed, secondSeed);
+    }
+
+    @Test
+    public void explicitPlacementIdentityKeepsRngStableAcrossSettingEdits() {
+        IrisStructurePlacement first = placement(StructureDistribution.DENSITY);
+        first.setPlacementId("stable");
+        IrisStructurePlacement second = placement(StructureDistribution.DENSITY);
+        second.setPlacementId("stable");
+        second.setMinHeight(first.getMinHeight() + 1);
+        second.setDensity(0.75);
+        long firstSeed = StructurePlacementGrid.placementRng(first, 9, 14, 42L).getSeed();
+        long secondSeed = StructurePlacementGrid.placementRng(second, 9, 14, 42L).getSeed();
+        assertEquals(firstSeed, secondSeed);
     }
 
     private IrisStructurePlacement placement(StructureDistribution distribution) {

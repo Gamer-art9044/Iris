@@ -66,7 +66,15 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
         }
 
         if (!decorator.isStacking()) {
-            data.set(x, height + 1, z, decorator.getBlockData100(biome, rng, realX, height, realZ, getData()));
+            int targetY = height + 1;
+            if (targetY >= data.getHeight()
+                    || !DecoratorCore.canReplaceStackTarget(data.get(x, targetY, z), false)) {
+                return;
+            }
+            PlatformBlockState block = decorator.getBlockData100(biome, rng, realX, height, realZ, getData());
+            if (block != null) {
+                data.set(x, targetY, z, block);
+            }
             return;
         }
 
@@ -78,16 +86,33 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
         }
 
         if (stack == 1) {
-            data.set(x, height, z, decorator.getBlockDataForTop(biome, rng, realX, height, realZ, getData()));
+            int targetY = height + 1;
+            if (targetY >= data.getHeight() || !DecoratorCore.canReplaceStackTarget(data.get(x, targetY, z), false)) {
+                return;
+            }
+
+            PlatformBlockState block = decorator.getBlockDataForTop(biome, rng, realX, height, realZ, getData());
+            if (block != null) {
+                data.set(x, targetY, z, block);
+            }
             return;
         }
 
         for (int i = 0; i < stack; i++) {
             int h = height + i;
+            int targetY = h + 1;
+            if (targetY >= data.getHeight()
+                    || !DecoratorCore.canReplaceStackTarget(data.get(x, targetY, z), false)) {
+                break;
+            }
             double threshold = ((double) i) / (stack - 1);
-            data.set(x, h + 1, z, threshold >= decorator.getTopThreshold()
+            PlatformBlockState block = threshold >= decorator.getTopThreshold()
                     ? decorator.getBlockDataForTop(biome, rng, realX, h, realZ, getData())
-                    : decorator.getBlockData100(biome, rng, realX, h, realZ, getData()));
+                    : decorator.getBlockData100(biome, rng, realX, h, realZ, getData());
+            if (block == null) {
+                break;
+            }
+            data.set(x, targetY, z, block);
         }
     }
 }

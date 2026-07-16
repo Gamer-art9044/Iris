@@ -4,7 +4,11 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDecorationPart;
 import art.arcane.iris.engine.object.IrisDecorator;
+import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.math.RNG;
+import org.bukkit.block.BlockSupport;
+import org.bukkit.block.data.BlockData;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -16,6 +20,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -133,5 +138,269 @@ public class DecoratorCoreTest {
             assertTrue("Decorator " + i + " selected " + counts[i] + " times; expected ~" + (int) expected
                     + " (deviation " + String.format("%.0f%%", deviation * 100) + ")", deviation < 0.20);
         }
+    }
+
+    @Test
+    public void singleStackTargetsBlockAboveSupport() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState support = sturdyState();
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        PlatformBlockState decorant = mock(PlatformBlockState.class);
+        when(air.isAir()).thenReturn(true);
+        when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(1);
+        when(decorator.pickBlockDataTop(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 4, 1);
+        output.set(0, 1, 0, support);
+        output.set(0, 2, 0, air);
+        DecoratorCore.PlaceOpts opts = new DecoratorCore.PlaceOpts();
+
+        DecoratorCore.placeStackUp(decorator, 0, 0, 0, 0, 1, 3, output, new RNG(1L), data, opts);
+
+        assertSame(support, output.get(0, 1, 0));
+        assertSame(decorant, output.get(0, 2, 0));
+    }
+
+    @Test
+    public void singleStackDoesNotOverwriteOccupiedTarget() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState support = sturdyState();
+        PlatformBlockState occupied = mock(PlatformBlockState.class);
+        PlatformBlockState decorant = mock(PlatformBlockState.class);
+        when(occupied.isAir()).thenReturn(false);
+        when(occupied.isFluid()).thenReturn(false);
+        when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(1);
+        when(decorator.pickBlockDataTop(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 4, 1);
+        output.set(0, 1, 0, support);
+        output.set(0, 2, 0, occupied);
+        DecoratorCore.PlaceOpts opts = new DecoratorCore.PlaceOpts();
+
+        DecoratorCore.placeStackUp(decorator, 0, 0, 0, 0, 1, 3, output, new RNG(1L), data, opts);
+
+        assertSame(support, output.get(0, 1, 0));
+        assertSame(occupied, output.get(0, 2, 0));
+    }
+
+    @Test
+    public void multiStackStopsBeforeOccupiedTarget() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState support = sturdyState();
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        PlatformBlockState occupied = mock(PlatformBlockState.class);
+        PlatformBlockState decorant = mock(PlatformBlockState.class);
+        when(air.isAir()).thenReturn(true);
+        when(occupied.isAir()).thenReturn(false);
+        when(occupied.isFluid()).thenReturn(false);
+        when(decorant.key()).thenReturn("minecraft:tall_grass");
+        when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(3);
+        when(decorator.getTopThreshold()).thenReturn(0.75);
+        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
+        when(decorator.pickBlockDataTop(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 5, 1);
+        output.set(0, 1, 0, support);
+        output.set(0, 2, 0, air);
+        output.set(0, 3, 0, occupied);
+        output.set(0, 4, 0, air);
+        DecoratorCore.PlaceOpts opts = new DecoratorCore.PlaceOpts();
+
+        DecoratorCore.placeStackUp(decorator, 0, 0, 0, 0, 1, 4, output, new RNG(1L), data, opts);
+
+        assertSame(decorant, output.get(0, 2, 0));
+        assertSame(occupied, output.get(0, 3, 0));
+        assertSame(air, output.get(0, 4, 0));
+    }
+
+    @Test
+    public void descendingStackStopsAtLocalWorldFloor() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState decorant = mock(PlatformBlockState.class);
+        when(decorant.key()).thenReturn("minecraft:stone");
+        when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(2);
+        when(decorator.getTopThreshold()).thenReturn(1.0);
+        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
+        when(decorator.pickBlockDataTop(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 2, 1);
+        DecoratorCore.PlaceOpts opts = new DecoratorCore.PlaceOpts();
+
+        DecoratorCore.placeStackDown(
+                decorator, 0, 0, 0, 0, 0, -64, output, new RNG(1L), data, 2, opts, null);
+
+        assertSame(decorant, output.get(0, 0, 0));
+    }
+
+    @Test
+    public void singleDescendingStackPreservesTargetWhenPickIsNull() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState existing = mock(PlatformBlockState.class);
+        when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(1);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 2, 1);
+        output.set(0, 0, 0, existing);
+        DecoratorCore.PlaceOpts opts = new DecoratorCore.PlaceOpts();
+
+        DecoratorCore.placeStackDown(
+                decorator, 0, 0, 0, 0, 0, 0, output, new RNG(1L), data, 1, opts, null);
+
+        assertSame(existing, output.get(0, 0, 0));
+    }
+
+    @Test
+    public void multiDescendingStackStopsWhenPickIsNull() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState lowerExisting = mock(PlatformBlockState.class);
+        PlatformBlockState upperExisting = mock(PlatformBlockState.class);
+        when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(2);
+        when(decorator.getTopThreshold()).thenReturn(1.0);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 2, 1);
+        output.set(0, 0, 0, lowerExisting);
+        output.set(0, 1, 0, upperExisting);
+        DecoratorCore.PlaceOpts opts = new DecoratorCore.PlaceOpts();
+
+        DecoratorCore.placeStackDown(
+                decorator, 0, 0, 0, 0, 1, 0, output, new RNG(1L), data, 2, opts, null);
+
+        assertSame(lowerExisting, output.get(0, 0, 0));
+        assertSame(upperExisting, output.get(0, 1, 0));
+    }
+
+    @Test
+    public void floatingStackStopsAtHunkCeiling() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState decorant = mock(PlatformBlockState.class);
+        when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(3);
+        when(decorator.getTopThreshold()).thenReturn(1.0);
+        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
+        when(decorator.pickBlockDataTop(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 2, 1);
+        int placed = DecoratorCore.placeFloatingStacked(
+                decorator, 0, 0, 0, 0, 0, 3, output, new RNG(1L), data);
+
+        assertEquals(1, placed);
+        assertSame(decorant, output.get(0, 1, 0));
+    }
+
+    @Test
+    public void tallSurfacePlantDoesNotPlaceWhenUpperTargetIsOccupied() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState support = sturdyState();
+        PlatformBlockState air = airState();
+        PlatformBlockState occupied = mock(PlatformBlockState.class);
+        PlatformBlockState plant = tallPlantState();
+        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(plant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 4, 1);
+        output.set(0, 0, 0, support);
+        output.set(0, 1, 0, air);
+        output.set(0, 2, 0, occupied);
+
+        DecoratorCore.placeSurfaceSingle(
+                decorator, 0, 0, 0, 0, 0, output, new RNG(1L), data, false, false, null);
+
+        assertSame(air, output.get(0, 1, 0));
+        assertSame(occupied, output.get(0, 2, 0));
+    }
+
+    @Test
+    public void tallSinglePlantDoesNotPlaceWhenLowerTargetIsOccupied() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState occupied = mock(PlatformBlockState.class);
+        PlatformBlockState air = airState();
+        PlatformBlockState plant = tallPlantState();
+        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(plant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 4, 1);
+        output.set(0, 1, 0, occupied);
+        output.set(0, 2, 0, air);
+
+        DecoratorCore.placeSingleUp(
+                decorator, 0, 0, 0, 0, 0, output, new RNG(1L), data, false, null);
+
+        assertSame(occupied, output.get(0, 1, 0));
+        assertSame(air, output.get(0, 2, 0));
+    }
+
+    @Test
+    public void tallFloatingPlantDoesNotPlaceWhenUpperTargetIsOccupied() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState air = airState();
+        PlatformBlockState occupied = mock(PlatformBlockState.class);
+        PlatformBlockState plant = tallPlantState();
+        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(plant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 4, 1);
+        output.set(0, 1, 0, air);
+        output.set(0, 2, 0, occupied);
+
+        DecoratorCore.placeFloatingSimple(
+                decorator, 0, 0, 0, 0, 0, 3, output, new RNG(1L), data);
+
+        assertSame(air, output.get(0, 1, 0));
+        assertSame(occupied, output.get(0, 2, 0));
+    }
+
+    @Test
+    public void tallSurfacePlantPlacesBothHalvesTogether() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState support = sturdyState();
+        PlatformBlockState lowerAir = airState();
+        PlatformBlockState upperAir = airState();
+        PlatformBlockState lower = mock(PlatformBlockState.class);
+        PlatformBlockState upper = mock(PlatformBlockState.class);
+        PlatformBlockState plant = tallPlantState(lower, upper);
+        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(plant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 4, 1);
+        output.set(0, 0, 0, support);
+        output.set(0, 1, 0, lowerAir);
+        output.set(0, 2, 0, upperAir);
+
+        DecoratorCore.placeSurfaceSingle(
+                decorator, 0, 0, 0, 0, 0, output, new RNG(1L), data, false, false, null);
+
+        assertSame(lower, output.get(0, 1, 0));
+        assertSame(upper, output.get(0, 2, 0));
+    }
+
+    private PlatformBlockState airState() {
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        when(air.isAir()).thenReturn(true);
+        return air;
+    }
+
+    private PlatformBlockState tallPlantState() {
+        return tallPlantState(mock(PlatformBlockState.class), mock(PlatformBlockState.class));
+    }
+
+    private PlatformBlockState tallPlantState(PlatformBlockState lower, PlatformBlockState upper) {
+        PlatformBlockState plant = mock(PlatformBlockState.class);
+        when(plant.key()).thenReturn("minecraft:tall_grass[half=lower]");
+        when(plant.withProperty("half", "lower")).thenReturn(lower);
+        when(plant.withProperty("half", "upper")).thenReturn(upper);
+        return plant;
+    }
+
+    private PlatformBlockState sturdyState() {
+        PlatformBlockState support = mock(PlatformBlockState.class);
+        BlockData blockData = mock(BlockData.class);
+        when(support.nativeHandle()).thenReturn(blockData);
+        when(blockData.isFaceSturdy(any(), eq(BlockSupport.FULL))).thenReturn(true);
+        return support;
     }
 }

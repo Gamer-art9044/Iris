@@ -22,7 +22,6 @@ import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
-import art.arcane.iris.core.tools.PlausibilizeMode;
 import art.arcane.iris.core.tools.TreePlausibilizer;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.util.common.format.C;
@@ -106,7 +105,7 @@ public final class FeatureImporter {
                         object.shrinkwrap();
                         if (row.group().equals("trees") || row.group().equals("fallen_trees")) {
                             try {
-                                TreePlausibilizer.apply(object, PlausibilizeMode.NORMALIZE, TreePlausibilizer.DEFAULT_SHELL_RADIUS);
+                                TreePlausibilizer.apply(object, TreePlausibilizer.seedOf(row.key() + "#" + written), TreePlausibilizer.DEFAULT_REACH);
                             } catch (Throwable e) {
                                 IrisLogging.reportError(e);
                             }

@@ -19,18 +19,28 @@
 package art.arcane.iris.core.structure;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.structure.authoring.StructureBackend;
+import art.arcane.iris.core.structure.authoring.StructureCapability;
+import art.arcane.iris.core.structure.authoring.StructureKey;
+import art.arcane.iris.core.structure.authoring.StructureLoss;
+import art.arcane.iris.core.structure.authoring.StructureResourceBundle;
+import art.arcane.iris.core.structure.authoring.StructureSource;
+import art.arcane.iris.core.structure.authoring.StructureTransactionWriter;
+import art.arcane.iris.core.structure.authoring.StructureWriteMode;
+import art.arcane.iris.core.structure.authoring.StructureWriteResult;
+import art.arcane.iris.engine.framework.structure.StructureResourceBundleGraphCompiler;
 import art.arcane.iris.engine.object.IrisObject;
-import art.arcane.volmlib.util.io.IO;
+import art.arcane.iris.spi.IrisLogging;
+import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.bukkit.Bukkit;
-import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.structure.Structure;
 
-import java.io.File;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -41,16 +51,24 @@ import java.util.Map;
 import java.util.Set;
 
 public final class VillageImporter {
-    public record Result(boolean success, String message, int pools, int pieces) {
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    public record Result(boolean success, String message, int pools, int pieces, List<StructureLoss> losses) {
+        public Result {
+            losses = List.copyOf(losses);
+        }
     }
 
     private VillageImporter() {
     }
 
     public static Result importVillage(IrisData data, NamespacedKey structureKey, String name, StructureImporter.Mode mode) {
+        StructureImporter.Mode activeMode = mode == null ? StructureImporter.Mode.ADD_ONLY : mode;
+        List<StructureLoss> losses = new ArrayList<>();
         Object server;
         Object registryAccess;
         Object structureManager;
+        String writeNote = "";
         try {
             Object craftServer = Bukkit.getServer();
             Object dedicated = invoke(craftServer, "getHandle");
@@ -58,28 +76,33 @@ public final class VillageImporter {
             registryAccess = resolveRegistryAccess(server);
             structureManager = invoke(server, "getStructureManager");
         } catch (Throwable e) {
-            return new Result(false, "Failed to access server registries via reflection: " + e, 0, 0);
+            reportFailure(e);
+            return failed("Failed to access server registries via reflection: " + e, losses);
         }
         if (registryAccess == null) {
-            return new Result(false, "Could not resolve RegistryAccess from the server", 0, 0);
+            return failed("Could not resolve RegistryAccess from the server", losses);
         }
 
         Object startPool;
         int maxDepth;
+        int maxDistanceFromCenter;
         try {
             Object structureRegistry = lookupRegistry(registryAccess, "STRUCTURE");
             Object structure = registryGet(structureRegistry, structureKey);
             if (structure == null) {
-                return new Result(false, "No structure registered for key " + structureKey, 0, 0);
+                return failed("No structure registered for key " + structureKey, losses);
             }
             if (!structure.getClass().getName().endsWith("JigsawStructure")) {
-                return new Result(false, "Structure " + structureKey + " is not a jigsaw structure (" + structure.getClass().getSimpleName() + "); use 'import' for single-template structures", 0, 0);
+                return failed("Structure " + structureKey + " is not a jigsaw structure ("
+                        + structure.getClass().getSimpleName() + "); use 'import' for single-template structures", losses);
             }
             Object startPoolHolder = invoke(structure, "getStartPool");
             startPool = unwrapHolder(startPoolHolder);
-            maxDepth = readIntField(structure, "maxDepth", 7);
+            maxDepth = readIntMember(structure, "maxDepth");
+            maxDistanceFromCenter = readIntMember(structure, "maxDistanceFromCenter");
         } catch (Throwable e) {
-            return new Result(false, "Failed to read jigsaw structure graph: " + e, 0, 0);
+            reportFailure(e);
+            return failed("Failed to read jigsaw structure graph: " + e, losses);
         }
 
         Object templatePoolRegistry;
@@ -88,32 +111,37 @@ public final class VillageImporter {
             templatePoolRegistry = lookupRegistry(registryAccess, "TEMPLATE_POOL");
             random = new java.util.Random(structureKey.hashCode());
         } catch (Throwable e) {
-            return new Result(false, "Failed to access TEMPLATE_POOL registry: " + e, 0, 0);
+            reportFailure(e);
+            return failed("Failed to access TEMPLATE_POOL registry: " + e, losses);
         }
 
         String startPoolKey;
         try {
             startPoolKey = registryKeyOf(templatePoolRegistry, startPool);
         } catch (Throwable e) {
-            startPoolKey = null;
+            reportFailure(e);
+            return failed("Could not resolve the start pool key for " + structureKey + ": " + e, losses);
         }
         if (startPoolKey == null) {
-            return new Result(false, "Could not resolve the start pool key for " + structureKey, 0, 0);
-        }
-
-        if (mode == StructureImporter.Mode.ADD_ONLY && new File(data.getDataFolder(), "structures/" + name + ".json").exists()) {
-            return new Result(false, "Skipped (add-only): '" + name + "' already exists", 0, 0);
+            return failed("Could not resolve the start pool key for " + structureKey, losses);
         }
 
         Set<String> visitedPools = new HashSet<>();
-        Set<String> importedPieces = new HashSet<>();
         Deque<String> poolQueue = new ArrayDeque<>();
         poolQueue.add(startPoolKey);
 
         Map<String, Map<String, Object>> emittedPools = new LinkedHashMap<>();
         Map<String, Map<String, Object>> emittedPieces = new LinkedHashMap<>();
-        List<String> errors = new ArrayList<>();
-        String emptyPieceName = null;
+        Map<String, IrisObject> emittedObjects = new LinkedHashMap<>();
+        Set<StructureCapability> capabilities = new HashSet<>();
+        capabilities.add(StructureCapability.BLOCKS);
+        capabilities.add(StructureCapability.CONNECTORS);
+        capabilities.add(StructureCapability.IRIS_PLACEMENT);
+        List<String> fatalErrors = new ArrayList<>();
+        losses.add(StructureLoss.warning(
+                StructureCapability.NATIVE_PLACEMENT,
+                "native_placement_settings_not_imported",
+                "Native jigsaw placement settings other than the start pool, maximum depth, and maximum distance are not represented by the Iris assembly."));
         int pieceBlocks = 0;
 
         while (!poolQueue.isEmpty()) {
@@ -125,10 +153,12 @@ public final class VillageImporter {
             try {
                 pool = registryGetByKey(templatePoolRegistry, poolKey);
             } catch (Throwable e) {
-                errors.add("pool " + poolKey + ": " + e.getMessage());
+                reportFailure(e);
+                fatalErrors.add("pool " + poolKey + ": " + e.getMessage());
                 continue;
             }
             if (pool == null) {
+                fatalErrors.add("pool " + poolKey + " is not registered");
                 continue;
             }
 
@@ -140,7 +170,13 @@ public final class VillageImporter {
                 Object fallbackHolder = invoke(pool, "getFallback");
                 Object fallbackPool = unwrapHolder(fallbackHolder);
                 fallbackKey = registryKeyOf(templatePoolRegistry, fallbackPool);
-            } catch (Throwable ignored) {
+            } catch (Throwable e) {
+                reportFailure(e);
+                losses.add(StructureLoss.warning(
+                        StructureCapability.CONNECTORS,
+                        "fallback_pool_not_imported",
+                        "The fallback for source pool " + poolKey + " could not be resolved: " + failureDetail(e))
+                        .affecting("jigsaw-pools/" + irisPoolName + ".json"));
             }
             if (fallbackKey != null && !fallbackKey.equals(poolKey)) {
                 poolQueue.add(fallbackKey);
@@ -150,7 +186,8 @@ public final class VillageImporter {
             try {
                 templates = (List<?>) invoke(pool, "getTemplates");
             } catch (Throwable e) {
-                errors.add("templates " + poolKey + ": " + e.getMessage());
+                reportFailure(e);
+                fatalErrors.add("templates " + poolKey + ": " + e.getMessage());
                 templates = List.of();
             }
 
@@ -162,55 +199,94 @@ public final class VillageImporter {
                     Object second = invoke(pair, "getSecond");
                     weight = second instanceof Number ? Math.max(1, ((Number) second).intValue()) : 1;
                 } catch (Throwable e) {
+                    reportFailure(e);
+                    losses.add(StructureLoss.warning(
+                            StructureCapability.LIST_ELEMENTS,
+                            "pool_entry_not_imported",
+                            "A source entry in pool " + poolKey + " could not be read: " + failureDetail(e))
+                            .affecting("jigsaw-pools/" + irisPoolName + ".json"));
                     continue;
                 }
                 if (element == null) {
                     continue;
                 }
-                String templateLocation = templateLocationOf(element);
+                String templateLocation;
+                try {
+                    templateLocation = templateLocationOf(element);
+                } catch (Throwable e) {
+                    reportFailure(e);
+                    losses.add(StructureLoss.warning(
+                            StructureCapability.BLOCKS,
+                            "template_location_not_imported",
+                            "A source template location in pool " + poolKey + " could not be read: " + failureDetail(e))
+                            .affecting("jigsaw-pools/" + irisPoolName + ".json"));
+                    continue;
+                }
                 if (templateLocation == null) {
                     String elementType = element.getClass().getSimpleName();
                     if (elementType.endsWith("EmptyPoolElement")) {
-                        if (emptyPieceName == null) {
-                            emptyPieceName = name + "/piece/empty";
-                            if (importedPieces.add(emptyPieceName) && writeEmptyPiece(data, emptyPieceName)) {
-                                emittedPieces.put(emptyPieceName, pieceJson(emptyPieceName, new ArrayList<Map<String, Object>>()));
-                            }
-                        }
                         Map<String, Object> emptyEntry = new LinkedHashMap<>();
-                        emptyEntry.put("piece", emptyPieceName);
+                        emptyEntry.put("empty", true);
                         emptyEntry.put("weight", weight);
                         pieceEntries.add(emptyEntry);
                     } else {
-                        errors.add("skipped unsupported element " + elementType + " in pool " + poolKey);
+                        StructureCapability unsupportedCapability = unsupportedCapability(elementType);
+                        losses.add(StructureLoss.warning(
+                                unsupportedCapability,
+                                "unsupported_pool_element",
+                                "Skipped unsupported " + elementType + " in source pool " + poolKey + ".")
+                                .affecting("jigsaw-pools/" + irisPoolName + ".json"));
                     }
                     continue;
                 }
                 NamespacedKey pieceNbtKey = NamespacedKey.fromString(templateLocation.toLowerCase());
                 if (pieceNbtKey == null) {
-                    errors.add("bad piece key " + templateLocation);
+                    fatalErrors.add("invalid piece key " + templateLocation + " in pool " + poolKey);
                     continue;
                 }
                 String irisPieceName = pieceName(name, templateLocation);
 
-                if (importedPieces.add(irisPieceName)) {
-                    StructureImporter.Result imported = StructureImporter.importStructure(data, pieceNbtKey, irisPieceName, mode);
-                    if (!imported.success()) {
-                        errors.add(templateLocation + ": " + imported.message());
+                if (!emittedPieces.containsKey(irisPieceName)) {
+                    Structure sourceTemplate;
+                    try {
+                        sourceTemplate = Bukkit.getStructureManager().loadStructure(pieceNbtKey);
+                    } catch (Throwable e) {
+                        reportFailure(e);
+                        fatalErrors.add(templateLocation + ": failed to load structure template: " + failureDetail(e));
                         continue;
                     }
-                    pieceBlocks += imported.blocks();
-                    removeStrayPieceArtifacts(data, irisPieceName);
+                    if (sourceTemplate == null || sourceTemplate.getPalettes().isEmpty()) {
+                        fatalErrors.add(templateLocation + ": no loadable structure template was registered");
+                        continue;
+                    }
 
-                    Connectors result = readConnectors(element, structureManager, random, name);
+                    StructureImporter.CapturedStructure captured;
+                    try {
+                        captured = StructureImporter.captureStructure(sourceTemplate);
+                    } catch (Throwable e) {
+                        reportFailure(e);
+                        fatalErrors.add(templateLocation + ": failed to capture structure template: " + failureDetail(e));
+                        continue;
+                    }
+                    pieceBlocks += captured.blocks();
+                    capabilities.addAll(captured.capabilities());
+                    for (StructureLoss loss : captured.losses()) {
+                        losses.add(loss.affecting("objects/" + irisPieceName + ".iob"));
+                    }
+                    emittedObjects.put(irisPieceName, captured.object());
+
+                    Connectors result = readConnectors(element, structureManager, random, name, irisPieceName);
                     emittedPieces.put(irisPieceName, pieceJson(irisPieceName, result.json()));
                     poolQueue.addAll(result.targetPoolKeys());
+                    losses.addAll(result.losses());
                 }
 
-                Map<String, Object> entry = new LinkedHashMap<>();
-                entry.put("piece", irisPieceName);
-                entry.put("weight", weight);
-                pieceEntries.add(entry);
+                if (emittedPieces.containsKey(irisPieceName)) {
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("piece", irisPieceName);
+                    entry.put("weight", weight);
+                    pieceEntries.add(entry);
+                }
             }
 
             Map<String, Object> poolJson = new LinkedHashMap<>();
@@ -221,112 +297,222 @@ public final class VillageImporter {
             emittedPools.put(irisPoolName, poolJson);
         }
 
+        if (!fatalErrors.isEmpty()) {
+            return failed("Failed to capture the complete graph for " + structureKey + ": " + fatalErrors.getFirst()
+                    + (fatalErrors.size() == 1 ? "" : " (" + (fatalErrors.size() - 1) + " more)"), losses);
+        }
         if (emittedPieces.isEmpty()) {
-            return new Result(false, "Imported 0 pieces for " + structureKey + (errors.isEmpty() ? "" : " (" + errors.get(0) + ")"), 0, 0);
+            return failed("Imported 0 pieces for " + structureKey, losses);
+        }
+        for (StructureLoss loss : losses) {
+            if (loss.capability() == StructureCapability.CONNECTORS) {
+                capabilities.remove(StructureCapability.CONNECTORS);
+                break;
+            }
         }
 
         try {
-            for (Map.Entry<String, Map<String, Object>> e : emittedPieces.entrySet()) {
-                writeJson(new File(data.getDataFolder(), "jigsaw-pieces/" + e.getKey() + ".json"), e.getValue());
+            StructureKey sourceKey = StructureKey.parse(structureKey.toString());
+            StructureSource.Kind sourceKind = structureKey.getNamespace().equals("minecraft")
+                    ? StructureSource.Kind.VANILLA : StructureSource.Kind.DATAPACK;
+            StructureSource source = new StructureSource(sourceKind, sourceKey, Bukkit.getBukkitVersion(), "");
+            Map<String, byte[]> objectResources = new LinkedHashMap<>();
+            for (Map.Entry<String, IrisObject> entry : emittedObjects.entrySet()) {
+                objectResources.put(entry.getKey(), serialize(entry.getValue()));
             }
-            for (Map.Entry<String, Map<String, Object>> e : emittedPools.entrySet()) {
-                writeJson(new File(data.getDataFolder(), "jigsaw-pools/" + e.getKey() + ".json"), e.getValue());
+            Map<String, Object> rootStructure = structureJson(
+                    structureKey.toString(),
+                    poolName(name, startPoolKey),
+                    maxDepth,
+                    maxDistanceFromCenter);
+            StructureResourceBundle bundle = buildBundle(
+                    new StructureKey("iris", name),
+                    source,
+                    objectResources,
+                    emittedPieces,
+                    emittedPools,
+                    rootStructure,
+                    capabilities,
+                    losses);
+            StructureResourceBundleGraphCompiler.requireViable(bundle);
+            StructureWriteMode writeMode = activeMode == StructureImporter.Mode.OVERWRITE
+                    ? StructureWriteMode.OVERWRITE : StructureWriteMode.ADD_ONLY;
+            StructureWriteResult writeResult = new StructureTransactionWriter(data.getDataFolder().toPath())
+                    .write(bundle, writeMode);
+            reportWriteFailure(writeResult);
+            if (!writeResult.successful()) {
+                return new Result(false, writeFailureMessage(name, writeResult), emittedPools.size(),
+                        emittedPieces.size(), losses);
             }
-            writeJson(new File(data.getDataFolder(), "structures/" + name + ".json"), structureJson(name, structureKey.toString(), poolName(name, startPoolKey), maxDepth));
+            if (writeResult.committed()) {
+                data.invalidateStructureResources();
+            }
+            writeNote = writeResultNote(writeResult);
         } catch (Throwable e) {
-            return new Result(false, "Failed writing jigsaw resources for '" + name + "': " + e, emittedPools.size(), emittedPieces.size());
+            reportFailure(e);
+            return new Result(false, "Failed writing jigsaw resources for '" + name + "': " + e,
+                    emittedPools.size(), emittedPieces.size(), losses);
         }
 
         String msg = "Imported village " + structureKey + " as '" + name + "': " + emittedPieces.size() + " pieces, " + emittedPools.size() + " pools, " + pieceBlocks + " blocks";
-        if (!errors.isEmpty()) {
-            msg += " (" + errors.size() + " piece(s) skipped; first: " + errors.get(0) + ")";
+        if (!losses.isEmpty()) {
+            msg += " (" + losses.size() + " fidelity warning(s) recorded)";
         }
-        return new Result(true, msg, emittedPools.size(), emittedPieces.size());
+        return new Result(true, msg + writeNote, emittedPools.size(), emittedPieces.size(), losses);
     }
 
-    private record Connectors(List<Map<String, Object>> json, Set<String> targetPoolKeys) {
+    static StructureResourceBundle buildBundle(
+            StructureKey bundleKey,
+            StructureSource source,
+            Map<String, byte[]> objects,
+            Map<String, Map<String, Object>> pieces,
+            Map<String, Map<String, Object>> pools,
+            Map<String, Object> structure,
+            Set<StructureCapability> capabilities,
+            List<StructureLoss> losses
+    ) {
+        StructureResourceBundle.Builder bundle = StructureResourceBundle.builder(bundleKey)
+                .source(source)
+                .backend(StructureBackend.IRIS_ASSEMBLY)
+                .capabilities(capabilities)
+                .losses(losses);
+        for (Map.Entry<String, byte[]> entry : objects.entrySet()) {
+            bundle.resource("objects/" + entry.getKey() + ".iob", entry.getValue());
+        }
+        for (Map.Entry<String, Map<String, Object>> entry : pieces.entrySet()) {
+            bundle.textResource("jigsaw-pieces/" + entry.getKey() + ".json", GSON.toJson(entry.getValue()));
+        }
+        for (Map.Entry<String, Map<String, Object>> entry : pools.entrySet()) {
+            bundle.textResource("jigsaw-pools/" + entry.getKey() + ".json", GSON.toJson(entry.getValue()));
+        }
+        bundle.textResource("structures/" + bundleKey.path() + ".json", GSON.toJson(structure));
+        return bundle.build();
     }
 
-    private static Connectors readConnectors(Object element, Object structureManager, java.util.Random random, String baseName) {
+    private record Connectors(
+            List<Map<String, Object>> json,
+            Set<String> targetPoolKeys,
+            List<StructureLoss> losses
+    ) {
+    }
+
+    private static Connectors readConnectors(
+            Object element,
+            Object structureManager,
+            java.util.Random random,
+            String baseName,
+            String pieceName
+    ) {
         List<Map<String, Object>> connectors = new ArrayList<>();
         Set<String> targets = new HashSet<>();
+        List<StructureLoss> losses = new ArrayList<>();
+        String affectedResource = "jigsaw-pieces/" + pieceName + ".json";
         try {
             Object zero = staticField("net.minecraft.core.BlockPos", "ZERO");
             Object rotationNone = staticField("net.minecraft.world.level.block.Rotation", "NONE");
             Method m = findMethod4(element.getClass(), "getShuffledJigsawBlocks");
             if (m == null) {
-                return new Connectors(connectors, targets);
+                losses.add(StructureLoss.warning(
+                        StructureCapability.CONNECTORS,
+                        "connector_extraction_unavailable",
+                        "The source pool element does not expose jigsaw connector extraction on this server version.")
+                        .affecting(affectedResource));
+                return new Connectors(connectors, targets, losses);
             }
             m.setAccessible(true);
             Object random0 = freshRandomSource(random);
             List<?> blocks = (List<?>) m.invoke(element, structureManager, zero, rotationNone, random0);
             if (blocks == null) {
-                return new Connectors(connectors, targets);
+                losses.add(StructureLoss.warning(
+                        StructureCapability.CONNECTORS,
+                        "connector_extraction_returned_null",
+                        "The source pool element returned no connector collection.")
+                        .affecting(affectedResource));
+                return new Connectors(connectors, targets, losses);
             }
             for (Object jigsaw : blocks) {
                 String[] rawPoolKey = new String[1];
-                Map<String, Object> connector = connectorFrom(jigsaw, baseName, rawPoolKey);
-                if (connector != null) {
+                try {
+                    Map<String, Object> connector = connectorFrom(jigsaw, baseName, rawPoolKey);
                     connectors.add(connector);
                     if (rawPoolKey[0] != null && !rawPoolKey[0].isEmpty()) {
                         targets.add(rawPoolKey[0]);
                     }
+                } catch (Throwable e) {
+                    reportFailure(e);
+                    losses.add(StructureLoss.warning(
+                            StructureCapability.CONNECTORS,
+                            "connector_not_imported",
+                            "A source jigsaw connector could not be converted: " + failureDetail(e))
+                            .affecting(affectedResource));
                 }
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable e) {
+            reportFailure(e);
+            losses.add(StructureLoss.warning(
+                    StructureCapability.CONNECTORS,
+                    "connector_extraction_failed",
+                    "Source jigsaw connectors could not be extracted: " + failureDetail(e))
+                    .affecting(affectedResource));
         }
-        return new Connectors(connectors, targets);
+        return new Connectors(connectors, targets, losses);
     }
 
-    private static Map<String, Object> connectorFrom(Object jigsaw, String baseName, String[] rawPoolKeyOut) {
-        try {
-            Object info = invoke(jigsaw, "info");
-            Object pos = invoke(info, "pos");
-            Object blockState = invoke(info, "state");
-            int x = readInt(pos, "getX");
-            int y = readInt(pos, "getY");
-            int z = readInt(pos, "getZ");
+    private static Map<String, Object> connectorFrom(Object jigsaw, String baseName, String[] rawPoolKeyOut) throws Exception {
+        Object info = invoke(jigsaw, "info");
+        Object pos = invoke(info, "pos");
+        Object blockState = invoke(info, "state");
+        int x = readInt(pos, "getX");
+        int y = readInt(pos, "getY");
+        int z = readInt(pos, "getZ");
 
-            Object poolKey = invoke(jigsaw, "pool");
-            String poolId = identifierString(invoke(poolKey, "identifier"));
-            Object nameId = invoke(jigsaw, "name");
-            Object targetId = invoke(jigsaw, "target");
-            Object jointType = invoke(jigsaw, "jointType");
+        Object poolKey = invoke(jigsaw, "pool");
+        String poolId = identifierString(invoke(poolKey, "identifier"));
+        Object nameId = invoke(jigsaw, "name");
+        Object targetId = invoke(jigsaw, "target");
+        Object jointType = invoke(jigsaw, "jointType");
 
-            String front = frontFacing(blockState);
-            rawPoolKeyOut[0] = poolId;
+        String front = frontFacing(blockState);
+        String top = topFacing(blockState);
+        rawPoolKeyOut[0] = poolId;
 
-            Map<String, Object> connector = new LinkedHashMap<>();
-            Map<String, Object> position = new LinkedHashMap<>();
-            position.put("x", x);
-            position.put("y", y);
-            position.put("z", z);
-            connector.put("position", position);
-            connector.put("direction", irisDirection(front));
-            connector.put("pool", poolId == null ? "" : poolName(baseName, poolId));
-            connector.put("name", identifierString(nameId));
-            connector.put("targetName", identifierString(targetId));
-            connector.put("joint", jointType != null && jointType.toString().toUpperCase().contains("ALIGN") ? "ALIGNED" : "ROLLABLE");
-            return connector;
-        } catch (Throwable e) {
-            return null;
-        }
+        Map<String, Object> connector = new LinkedHashMap<>();
+        Map<String, Object> position = new LinkedHashMap<>();
+        position.put("x", x);
+        position.put("y", y);
+        position.put("z", z);
+        connector.put("position", position);
+        connector.put("direction", irisDirection(front));
+        connector.put("top", irisDirection(top));
+        connector.put("pool", poolId == null ? "" : poolName(baseName, poolId));
+        connector.put("name", identifierString(nameId));
+        connector.put("targetName", identifierString(targetId));
+        connector.put("joint", jointType != null && jointType.toString().toUpperCase().contains("ALIGN") ? "ALIGNED" : "ROLLABLE");
+        return connector;
     }
 
-    private static String frontFacing(Object blockState) {
-        try {
-            Class<?> jigsawBlock = Class.forName("net.minecraft.world.level.block.JigsawBlock");
-            Method getFront = jigsawBlock.getMethod("getFrontFacing", Class.forName("net.minecraft.world.level.block.state.BlockState"));
-            Object direction = getFront.invoke(null, blockState);
-            if (direction == null) {
-                return "north";
-            }
-            Method getName = direction.getClass().getMethod("getName");
-            getName.setAccessible(true);
-            return String.valueOf(getName.invoke(direction)).toLowerCase();
-        } catch (Throwable e) {
+    private static String frontFacing(Object blockState) throws Exception {
+        Class<?> jigsawBlock = Class.forName("net.minecraft.world.level.block.JigsawBlock");
+        Method getFront = jigsawBlock.getMethod("getFrontFacing", Class.forName("net.minecraft.world.level.block.state.BlockState"));
+        Object direction = getFront.invoke(null, blockState);
+        if (direction == null) {
             return "north";
         }
+        Method getName = direction.getClass().getMethod("getName");
+        getName.setAccessible(true);
+        return String.valueOf(getName.invoke(direction)).toLowerCase();
+    }
+
+    private static String topFacing(Object blockState) throws Exception {
+        Class<?> jigsawBlock = Class.forName("net.minecraft.world.level.block.JigsawBlock");
+        Method getTop = jigsawBlock.getMethod("getTopFacing", Class.forName("net.minecraft.world.level.block.state.BlockState"));
+        Object direction = getTop.invoke(null, blockState);
+        if (direction == null) {
+            return "up";
+        }
+        Method getName = direction.getClass().getMethod("getName");
+        getName.setAccessible(true);
+        return String.valueOf(getName.invoke(direction)).toLowerCase();
     }
 
     private static String irisDirection(String front) {
@@ -340,18 +526,14 @@ public final class VillageImporter {
         };
     }
 
-    private static String templateLocationOf(Object element) {
-        try {
-            Method m = findMethod(element.getClass(), "getTemplateLocation");
-            if (m == null) {
-                return null;
-            }
-            m.setAccessible(true);
-            Object id = m.invoke(element);
-            return identifierString(id);
-        } catch (Throwable e) {
+    private static String templateLocationOf(Object element) throws Exception {
+        Method m = findMethod(element.getClass(), "getTemplateLocation");
+        if (m == null) {
             return null;
         }
+        m.setAccessible(true);
+        Object id = m.invoke(element);
+        return identifierString(id);
     }
 
     private static Object resolveRegistryAccess(Object server) {
@@ -376,7 +558,8 @@ public final class VillageImporter {
                     }
                 }
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable e) {
+            reportFailure(e);
         }
         return null;
     }
@@ -503,14 +686,27 @@ public final class VillageImporter {
         return opt;
     }
 
-    private static int readIntField(Object o, String fieldName, int fallback) {
-        try {
-            Field f = o.getClass().getDeclaredField(fieldName);
-            f.setAccessible(true);
-            return f.getInt(o);
-        } catch (Throwable e) {
-            return fallback;
+    private static int readIntMember(Object value, String memberName) throws Exception {
+        Class<?> type = value.getClass();
+        while (type != null) {
+            try {
+                Field field = type.getDeclaredField(memberName);
+                field.setAccessible(true);
+                return field.getInt(value);
+            } catch (NoSuchFieldException ignored) {
+                type = type.getSuperclass();
+            }
         }
+        Method method = findMethod(value.getClass(), memberName);
+        if (method != null && Number.class.isAssignableFrom(boxedType(method.getReturnType()))) {
+            method.setAccessible(true);
+            return ((Number) method.invoke(value)).intValue();
+        }
+        throw new NoSuchFieldException(memberName + " on " + value.getClass().getName());
+    }
+
+    private static Class<?> boxedType(Class<?> type) {
+        return type == int.class ? Integer.class : type;
     }
 
     private static int readInt(Object o, String method) throws Exception {
@@ -576,16 +772,14 @@ public final class VillageImporter {
         return create.invoke(null, random.nextLong());
     }
 
-    private static String poolName(String base, String poolKey) {
-        return base + "/pool/" + sanitize(poolKey);
+    static String poolName(String base, String poolKey) {
+        StructureKey key = StructureKey.parse(poolKey);
+        return base + "/pool/" + key.namespace() + "/" + key.path();
     }
 
-    private static String pieceName(String base, String templateLocation) {
-        return base + "/piece/" + sanitize(templateLocation);
-    }
-
-    private static String sanitize(String key) {
-        return key.replace(':', '_').replace('/', '_');
+    static String pieceName(String base, String templateLocation) {
+        StructureKey key = StructureKey.parse(templateLocation);
+        return base + "/piece/" + key.namespace() + "/" + key.path();
     }
 
     private static Map<String, Object> pieceJson(String pieceName, List<Map<String, Object>> connectors) {
@@ -596,37 +790,71 @@ public final class VillageImporter {
         return piece;
     }
 
-    private static Map<String, Object> structureJson(String name, String source, String startPool, int maxDepth) {
+    static Map<String, Object> structureJson(
+            String source,
+            String startPool,
+            int maxDepth,
+            int maxDistanceFromCenter
+    ) {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("startPool", startPool);
         root.put("maxDepth", Math.max(1, Math.min(30, maxDepth)));
-        root.put("maxSizeChunks", 8);
+        int maxSizeChunks = Math.max(1, Math.min(32, (Math.max(1, maxDistanceFromCenter) + 15) / 16));
+        root.put("maxSizeChunks", maxSizeChunks);
         root.put("placeMode", "STRUCTURE_PIECE");
         root.put("vanillaSource", source);
         return root;
     }
 
-    private static void removeStrayPieceArtifacts(IrisData data, String pieceName) {
-        IO.deleteUp(new File(data.getDataFolder(), "jigsaw-pools/" + pieceName + ".json"));
-        IO.deleteUp(new File(data.getDataFolder(), "structures/" + pieceName + ".json"));
-    }
-
-    private static boolean writeEmptyPiece(IrisData data, String pieceName) {
-        try {
-            File objectFile = new File(data.getDataFolder(), "objects/" + pieceName + ".iob");
-            objectFile.getParentFile().mkdirs();
-            IrisObject object = new IrisObject(1, 1, 1);
-            object.setUnsigned(0, 0, 0, art.arcane.iris.platform.bukkit.BukkitBlockState.of(Material.AIR.createBlockData()));
-            object.write(objectFile);
-            return true;
-        } catch (Throwable e) {
-            return false;
+    private static StructureCapability unsupportedCapability(String elementType) {
+        if (elementType.endsWith("ListPoolElement")) {
+            return StructureCapability.LIST_ELEMENTS;
         }
+        if (elementType.endsWith("FeaturePoolElement")) {
+            return StructureCapability.FEATURE_ELEMENTS;
+        }
+        return StructureCapability.BLOCKS;
     }
 
-    private static void writeJson(File file, Map<String, Object> content) throws Exception {
-        file.getParentFile().mkdirs();
-        String json = new GsonBuilder().setPrettyPrinting().create().toJson(content);
-        Files.writeString(file.toPath(), json, StandardCharsets.UTF_8);
+    private static byte[] serialize(IrisObject object) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        object.write(output);
+        return output.toByteArray();
+    }
+
+    private static Result failed(String message, List<StructureLoss> losses) {
+        return new Result(false, message, 0, 0, losses);
+    }
+
+    private static void reportFailure(Throwable failure) {
+        IrisLogging.reportError(failure);
+        failure.printStackTrace();
+    }
+
+    private static void reportWriteFailure(StructureWriteResult result) {
+        result.failure().ifPresent(VillageImporter::reportFailure);
+    }
+
+    private static String writeResultNote(StructureWriteResult result) {
+        return result.status() == StructureWriteResult.Status.COMMITTED_CLEANUP_REQUIRED
+                ? " (committed; staging cleanup is required, see console)" : "";
+    }
+
+    private static String writeFailureMessage(String name, StructureWriteResult result) {
+        if (result.status() == StructureWriteResult.Status.ADD_ONLY_CONFLICT) {
+            return "Skipped (add-only): '" + name + "' already exists";
+        }
+        if (!result.conflicts().isEmpty()) {
+            StructureWriteResult.Conflict conflict = result.conflicts().getFirst();
+            return "Import conflict for '" + name + "': " + conflict.relativePath() + " is "
+                    + conflict.reason().name().toLowerCase() + ". Existing authored files were preserved.";
+        }
+        String failure = result.failure().map(VillageImporter::failureDetail).orElse(result.status().name());
+        return "Failed writing jigsaw import for '" + name + "': " + failure;
+    }
+
+    private static String failureDetail(Throwable failure) {
+        String message = failure.getMessage();
+        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
     }
 }

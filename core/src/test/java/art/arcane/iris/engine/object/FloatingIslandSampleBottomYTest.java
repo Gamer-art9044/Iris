@@ -111,26 +111,27 @@ public class FloatingIslandSampleBottomYTest {
     }
 
     @Test
+    public void roundedEdgeDepth_fixedDepthFollowsOnlyFootprintFade() {
+        assertEquals(0, FloatingIslandSample.roundedEdgeDepth(20, 20, 0.0, 0.0));
+        assertEquals(5, FloatingIslandSample.roundedEdgeDepth(20, 20, 0.0, 0.25));
+        assertEquals(10, FloatingIslandSample.roundedEdgeDepth(20, 20, 1.0, 0.5));
+        assertEquals(20, FloatingIslandSample.roundedEdgeDepth(20, 20, 0.0, 1.0));
+    }
+
+    @Test
+    public void effectiveWallWarpAmplitude_fadesWarpOutAtRoundedRim() {
+        assertEquals(0.0, FloatingIslandSample.effectiveWallWarpAmplitude(5.0, 0.0), 0.0);
+        assertEquals(2.5, FloatingIslandSample.effectiveWallWarpAmplitude(5.0, 0.5), 0.0);
+        assertEquals(5.0, FloatingIslandSample.effectiveWallWarpAmplitude(5.0, 1.0), 0.0);
+    }
+
+    @Test
     public void carveSolidInterior_preservesOuterShell() {
         boolean[] mask = {false, true, true, true, true, false};
-        CNG carve = new CNG(new RNG(1), new NoiseGenerator() {
-            @Override
-            public double noise(double x) {
-                return 1.0;
-            }
+        boolean[] lateralCarveMask = {true, true, true, true, true, true};
+        CNG carve = constantCng(1.0);
 
-            @Override
-            public double noise(double x, double z) {
-                return 1.0;
-            }
-
-            @Override
-            public double noise(double x, double y, double z) {
-                return 1.0;
-            }
-        }, 1.0, 1);
-
-        int count = FloatingIslandSample.carveSolidInterior(mask, 100, 0, 0, carve, 0.5);
+        int count = FloatingIslandSample.carveSolidInterior(mask, lateralCarveMask, 100, 0, 0, carve, 0.5);
 
         assertEquals(2, count);
         assertEquals(false, mask[0]);
@@ -139,6 +140,41 @@ public class FloatingIslandSampleBottomYTest {
         assertEquals(false, mask[3]);
         assertEquals(true, mask[4]);
         assertEquals(false, mask[5]);
+    }
+
+    @Test
+    public void carveSolidInterior_preservesLateralPerimeter() {
+        boolean[] mask = {true, true, true, true, true, true};
+        boolean[] lateralCarveMask = {false, false, false, false, false, false};
+
+        int count = FloatingIslandSample.carveSolidInterior(mask, lateralCarveMask, 100, 0, 0, constantCng(1.0), 0.5);
+
+        assertEquals(6, count);
+        for (boolean solid : mask) {
+            assertTrue(solid);
+        }
+    }
+
+    @Test
+    public void lateralCarving_requiresRoundedInteriorAndFullNeighborRing() {
+        CNG fullRing = constantCng(1.0);
+        FloatingIslandSample.NeighborSupport fullSupport = FloatingIslandSample.footprintNeighborSupport(fullRing, 0, 0, 0.0);
+        CNG missingDiagonal = new CNG(new RNG(11)) {
+            @Override
+            public double noise(double x, double z) {
+                return x == 1 && z == 1 ? 0.0 : 1.0;
+            }
+
+            @Override
+            public double noise(double x, double y, double z) {
+                return noise(x, z);
+            }
+        };
+        FloatingIslandSample.NeighborSupport partialSupport = FloatingIslandSample.footprintNeighborSupport(missingDiagonal, 0, 0, 0.0);
+
+        assertTrue(FloatingIslandSample.canCarveLaterally(1.0, fullSupport));
+        assertFalse(FloatingIslandSample.canCarveLaterally(0.99, fullSupport));
+        assertFalse(FloatingIslandSample.canCarveLaterally(1.0, partialSupport));
     }
 
     @Test
@@ -156,7 +192,7 @@ public class FloatingIslandSampleBottomYTest {
         };
 
         FloatingIslandSample.NeighborSupport support = FloatingIslandSample.footprintNeighborSupport(footprint, 0, 0, 0.0);
-        assertTrue(FloatingIslandSample.isFootprintPinholeRepairable(-0.08, 0.0, support));
+        assertTrue(FloatingIslandSample.isFootprintPinholeRepairable(support));
     }
 
     @Test
@@ -174,7 +210,7 @@ public class FloatingIslandSampleBottomYTest {
         };
 
         FloatingIslandSample.NeighborSupport support = FloatingIslandSample.footprintNeighborSupport(footprint, 0, 0, 0.0);
-        assertFalse(FloatingIslandSample.isFootprintPinholeRepairable(-1.0, 0.0, support));
+        assertFalse(FloatingIslandSample.isFootprintPinholeRepairable(support));
     }
 
     @Test
@@ -233,7 +269,8 @@ public class FloatingIslandSampleBottomYTest {
             }
         }, 1.0, 1);
 
-        int count = FloatingIslandSample.carveSolidInterior(mask, 100, 0, 0, carve, 0.5);
+        boolean[] lateralCarveMask = {true, true, true, true, true};
+        int count = FloatingIslandSample.carveSolidInterior(mask, lateralCarveMask, 100, 0, 0, carve, 0.5);
 
         assertEquals(5, count);
         assertEquals(true, mask[1]);
@@ -244,27 +281,14 @@ public class FloatingIslandSampleBottomYTest {
     @Test
     public void carveSolidInterior_capsBroadVerticalCarveSheet() {
         boolean[] mask = new boolean[30];
+        boolean[] lateralCarveMask = new boolean[30];
         for (int i = 0; i < mask.length; i++) {
             mask[i] = true;
+            lateralCarveMask[i] = true;
         }
-        CNG carve = new CNG(new RNG(10), new NoiseGenerator() {
-            @Override
-            public double noise(double x) {
-                return 1.0;
-            }
+        CNG carve = constantCng(1.0);
 
-            @Override
-            public double noise(double x, double z) {
-                return 1.0;
-            }
-
-            @Override
-            public double noise(double x, double y, double z) {
-                return 1.0;
-            }
-        }, 1.0, 1);
-
-        int count = FloatingIslandSample.carveSolidInterior(mask, 100, 0, 0, carve, 0.5);
+        int count = FloatingIslandSample.carveSolidInterior(mask, lateralCarveMask, 100, 0, 0, carve, 0.5);
 
         assertEquals(25, count);
         for (int i = 0; i < FloatingIslandSample.carveShellThickness(mask.length); i++) {
@@ -340,5 +364,24 @@ public class FloatingIslandSampleBottomYTest {
         };
 
         assertEquals(true, FloatingIslandSample.hasFootprintNeighborSupport(footprint, 0, 0, 0.0));
+    }
+
+    private CNG constantCng(double value) {
+        return new CNG(new RNG(12), new NoiseGenerator() {
+            @Override
+            public double noise(double x) {
+                return value;
+            }
+
+            @Override
+            public double noise(double x, double z) {
+                return value;
+            }
+
+            @Override
+            public double noise(double x, double y, double z) {
+                return value;
+            }
+        }, 1.0, 1);
     }
 }

@@ -11,4 +11,11 @@ public class IrisWorldManagerMarkerTest {
         assertEquals(319, IrisWorldManager.toMantleY(255, -64));
         assertEquals(42, IrisWorldManager.toMantleY(42, 0));
     }
+
+    @Test
+    public void mantleHeightIsTranslatedToWorldBlockHeight() {
+        assertEquals(0, IrisWorldManager.toWorldY(64, -64));
+        assertEquals(255, IrisWorldManager.toWorldY(319, -64));
+        assertEquals(42, IrisWorldManager.toWorldY(42, 0));
+    }
 }

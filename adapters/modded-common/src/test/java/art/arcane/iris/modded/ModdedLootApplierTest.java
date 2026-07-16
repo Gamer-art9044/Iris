@@ -1,9 +1,13 @@
 package art.arcane.iris.modded;
 
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.IrisLootMode;
 import art.arcane.volmlib.util.math.RNG;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.world.RandomizableContainer;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.storage.loot.LootTable;
@@ -12,6 +16,7 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.lang.reflect.Proxy;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertEquals;
@@ -25,7 +30,7 @@ public class ModdedLootApplierTest {
     public void addAppendsSourcesInOrder() {
         List<String> sources = new ArrayList<>(List.of("placement-native"));
 
-        ModdedLootApplier.injectSources(sources, List.of("dimension-iris", "region-iris"), IrisLootMode.ADD, false);
+        LootResolver.injectSources(sources, List.of("dimension-iris", "region-iris"), IrisLootMode.ADD, false);
 
         assertEquals(List.of("placement-native", "dimension-iris", "region-iris"), sources);
     }
@@ -34,7 +39,7 @@ public class ModdedLootApplierTest {
     public void clearRemovesNativeAndIrisSourcesBeforeAdding() {
         List<String> sources = new ArrayList<>(List.of("placement-native", "dimension-iris"));
 
-        ModdedLootApplier.injectSources(sources, List.of("biome-iris"), IrisLootMode.CLEAR, false);
+        LootResolver.injectSources(sources, List.of("biome-iris"), IrisLootMode.CLEAR, false);
 
         assertEquals(List.of("biome-iris"), sources);
     }
@@ -43,7 +48,7 @@ public class ModdedLootApplierTest {
     public void replaceRemovesNativeAndIrisSourcesBeforeAdding() {
         List<String> sources = new ArrayList<>(List.of("placement-native", "dimension-iris"));
 
-        ModdedLootApplier.injectSources(sources, List.of("biome-iris"), IrisLootMode.REPLACE, false);
+        LootResolver.injectSources(sources, List.of("biome-iris"), IrisLootMode.REPLACE, false);
 
         assertEquals(List.of("biome-iris"), sources);
     }
@@ -58,7 +63,7 @@ public class ModdedLootApplierTest {
     public void fallbackDoesNotOverrideExistingNativeOrIrisSources() {
         List<String> sources = new ArrayList<>(List.of("placement-native", "dimension-iris"));
 
-        ModdedLootApplier.injectSources(sources, List.of("fallback-iris"), IrisLootMode.FALLBACK, false);
+        LootResolver.injectSources(sources, List.of("fallback-iris"), IrisLootMode.FALLBACK, false);
 
         assertEquals(List.of("placement-native", "dimension-iris"), sources);
     }
@@ -67,7 +72,7 @@ public class ModdedLootApplierTest {
     public void fallbackAddsSourcesWhenPlacementIsEmpty() {
         List<String> sources = new ArrayList<>();
 
-        ModdedLootApplier.injectSources(sources, List.of("fallback-iris"), IrisLootMode.FALLBACK, true);
+        LootResolver.injectSources(sources, List.of("fallback-iris"), IrisLootMode.FALLBACK, true);
 
         assertEquals(List.of("fallback-iris"), sources);
     }
@@ -76,7 +81,7 @@ public class ModdedLootApplierTest {
     public void zeroMultiplierRemovesNativeAndIrisSources() {
         List<String> sources = new ArrayList<>(List.of("placement-native", "dimension-iris"));
 
-        ModdedLootApplier.scaleSources(sources, 0D, new RNG(17L));
+        LootResolver.scaleSources(sources, 0D, new RNG(17L));
 
         assertTrue(sources.isEmpty());
     }
@@ -85,7 +90,7 @@ public class ModdedLootApplierTest {
     public void unitMultiplierPreservesNativeAndIrisSources() {
         List<String> sources = new ArrayList<>(List.of("placement-native", "dimension-iris"));
 
-        ModdedLootApplier.scaleSources(sources, 1D, new RNG(17L));
+        LootResolver.scaleSources(sources, 1D, new RNG(17L));
 
         assertEquals(List.of("placement-native", "dimension-iris"), sources);
     }
@@ -94,7 +99,7 @@ public class ModdedLootApplierTest {
     public void doubleMultiplierScalesTheUnifiedSourceList() {
         List<String> sources = new ArrayList<>(List.of("placement-native", "dimension-iris"));
 
-        ModdedLootApplier.scaleSources(sources, 2D, new RNG(17L));
+        LootResolver.scaleSources(sources, 2D, new RNG(17L));
 
         assertEquals(4, sources.size());
         assertEquals("placement-native", sources.get(0));
@@ -140,6 +145,51 @@ public class ModdedLootApplierTest {
         ModdedLootApplier.fillContainer(container, List.<ItemStack>of(), new RNG(17L));
 
         assertTrue(container.changed);
+    }
+
+    @Test
+    public void doubleChestHasExactlyOneCanonicalHalf() {
+        BlockPos leftPos = new BlockPos(0, 64, 0);
+        BlockPos rightPos = new BlockPos(1, 64, 0);
+
+        assertTrue(ModdedLootApplier.isCanonicalPair(leftPos, rightPos));
+        assertFalse(ModdedLootApplier.isCanonicalPair(rightPos, leftPos));
+    }
+
+    @Test
+    public void nativeLootTableIsDetectedBeforeContainerAccess() {
+        ResourceKey<LootTable> key = ResourceKey.create(
+                Registries.LOOT_TABLE,
+                Identifier.parse("minecraft:chests/simple_dungeon")
+        );
+        RandomizableContainer empty = containerWithLootTable(null);
+        RandomizableContainer nativeLoot = containerWithLootTable(key);
+
+        assertFalse(ModdedLootApplier.hasNativeLootTable(empty));
+        assertTrue(ModdedLootApplier.hasNativeLootTable(nativeLoot));
+    }
+
+    private RandomizableContainer containerWithLootTable(ResourceKey<LootTable> key) {
+        return (RandomizableContainer) Proxy.newProxyInstance(
+                RandomizableContainer.class.getClassLoader(),
+                new Class<?>[]{RandomizableContainer.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("getLootTable")) {
+                        return key;
+                    }
+                    Class<?> returnType = method.getReturnType();
+                    if (returnType == boolean.class) {
+                        return false;
+                    }
+                    if (returnType == int.class) {
+                        return 0;
+                    }
+                    if (returnType == long.class) {
+                        return 0L;
+                    }
+                    return null;
+                }
+        );
     }
 
     private static final class TrackingContainer extends SimpleContainer {

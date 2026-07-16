@@ -4,11 +4,12 @@ import art.arcane.iris.platform.bukkit.BukkitBlockResolution;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.IrisToolbelt;
-import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.core.events.IrisLootEvent;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
+import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.InventorySlotType;
 import art.arcane.iris.engine.object.IrisLootTable;
@@ -16,6 +17,7 @@ import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.platform.bukkit.BukkitBlockState;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.data.IrisCustomData;
 import art.arcane.volmlib.util.math.RNG;
@@ -37,7 +39,7 @@ public class WorldObjectPlacer implements IObjectPlacer {
     private final EngineMantle mantle;
 
     public WorldObjectPlacer(World world) {
-        var a = IrisToolbelt.access(world);
+        PlatformChunkGenerator a = IrisToolbelt.access(world);
         if (a == null || a.getEngine() == null) throw new IllegalStateException(world.getName() + " is not an Iris World!");
         this.world = world;
         this.engine = a.getEngine();
@@ -62,34 +64,37 @@ public class WorldObjectPlacer implements IObjectPlacer {
         Block block = world.getBlockAt(x, worldY, z);
 
         if (block.getType() == Material.BEDROCK) return;
-        InventorySlotType slot = null;
-        if (BukkitBlockResolution.isStorageChest(d)) {
-            slot = InventorySlotType.STORAGE;
-        }
+        boolean storageChest = BukkitBlockResolution.isStorageChest(d);
 
         if (d instanceof IrisCustomData data) {
             block.setBlockData(data.getBase(), false);
             IrisLogging.warn("Tried to place custom block at " + x + ", " + y + ", " + z + " which is not supported!");
         } else block.setBlockData(d, false);
 
-        if (slot != null) {
-            RNG rx = new RNG(Cache.key(x, z));
-            KList<IrisLootTable> tables = EngineBukkitOps.getLootTables(engine, rx, block);
+        if (storageChest && !J.runRegion(world, x >> 4, z >> 4, () -> fillLoot(block), 1)) {
+            IrisLogging.warn("Failed to schedule loot resolution at " + x + ", " + worldY + ", " + z);
+        }
+    }
 
-            try {
-                Bukkit.getPluginManager().callEvent(new IrisLootEvent(engine, block, slot, tables));
+    private void fillLoot(Block block) {
+        if (!BukkitBlockResolution.isStorageChest(block.getBlockData()) || !EngineBukkitOps.isCanonicalContainer(block)) {
+            return;
+        }
+        int x = block.getX();
+        int y = block.getY();
+        int z = block.getZ();
+        RNG rng = LootResolver.containerRng(engine.getSeedManager().getLoot(), x, y, z);
+        KList<IrisLootTable> tables = EngineBukkitOps.getLootTables(engine, rng, block);
 
-                if (!tables.isEmpty()){
-                    IrisLogging.debug("IrisLootEvent has been accessed");
-                }
-
-                if (tables.isEmpty())
-                    return;
-                InventoryHolder m = (InventoryHolder) block.getState();
-                EngineBukkitOps.addItems(engine, false, m.getInventory(), rx, tables, slot, world, x, y, z, 15);
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
+        try {
+            Bukkit.getPluginManager().callEvent(new IrisLootEvent(engine, block, InventorySlotType.STORAGE, tables));
+            if (tables.isEmpty()) {
+                return;
             }
+            InventoryHolder holder = (InventoryHolder) block.getState();
+            EngineBukkitOps.addItems(engine, false, holder.getInventory(), tables, InventorySlotType.STORAGE, world, x, y, z);
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
         }
     }
 
@@ -137,10 +142,17 @@ public class WorldObjectPlacer implements IObjectPlacer {
 
     @Override
     public <T> void setData(int xx, int yy, int zz, T data) {
+        if (data == null || yy < 0 || yy >= engine.getHeight()) {
+            return;
+        }
+        mantle.getMantle().set(xx, yy, zz, data);
     }
 
     @Override
     public <T> T getData(int xx, int yy, int zz, Class<T> t) {
-        return null;
+        if (yy < 0 || yy >= engine.getHeight()) {
+            return null;
+        }
+        return mantle.getMantle().get(xx, yy, zz, t);
     }
 }

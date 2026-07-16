@@ -87,9 +87,9 @@ public class IrisObject extends IrisRegistrant {
         static final PlatformBlockState AIR = B.getState("CAVE_AIR");
         static final PlatformBlockState STONE = B.getState("STONE");
         static final PlatformBlockState VAIR = B.getState("VOID_AIR");
+        static final PlatformBlockState VAIR_DEBUG = B.getState("COBWEB");
+        static final PlatformBlockState[] SNOW_LAYERS = new PlatformBlockState[]{B.getState("minecraft:snow[layers=1]"), B.getState("minecraft:snow[layers=2]"), B.getState("minecraft:snow[layers=3]"), B.getState("minecraft:snow[layers=4]"), B.getState("minecraft:snow[layers=5]"), B.getState("minecraft:snow[layers=6]"), B.getState("minecraft:snow[layers=7]"), B.getState("minecraft:snow[layers=8]")};
     }
-    protected static final PlatformBlockState VAIR_DEBUG = B.getState("COBWEB");
-    protected static final PlatformBlockState[] SNOW_LAYERS = new PlatformBlockState[]{B.getState("minecraft:snow[layers=1]"), B.getState("minecraft:snow[layers=2]"), B.getState("minecraft:snow[layers=3]"), B.getState("minecraft:snow[layers=4]"), B.getState("minecraft:snow[layers=5]"), B.getState("minecraft:snow[layers=6]"), B.getState("minecraft:snow[layers=7]"), B.getState("minecraft:snow[layers=8]")};
     private static final long IMPLAUSIBLE_BEDROCK_WARN_THROTTLE_MS = 5000L;
     private static final long VACUUM_WAVE_SEED = 7392113L;
     private static final java.util.concurrent.ConcurrentHashMap<String, Long> IMPLAUSIBLE_BEDROCK_WARNS = new java.util.concurrent.ConcurrentHashMap<>();
@@ -195,7 +195,7 @@ public class IrisObject extends IrisRegistrant {
         }
 
         PrecisionStopwatch p = PrecisionStopwatch.start();
-        PlatformBlockState vair = debug ? VAIR_DEBUG : States.VAIR;
+        PlatformBlockState vair = debug ? States.VAIR_DEBUG : States.VAIR;
         writeLock.lock();
         AtomicInteger applied = new AtomicInteger();
         if (blocks.isEmpty()) {
@@ -961,7 +961,7 @@ public class IrisObject extends IrisRegistrant {
             IrisBlockVector offset = new IrisBlockVector(config.getTranslate().getX(), config.getTranslate().getY(), config.getTranslate().getZ());
             for (int i = x - Math.floorDiv(w, 2) + (int) offset.getX(); i <= x + Math.floorDiv(w, 2) - (w % 2 == 0 ? 1 : 0) + (int) offset.getX(); i++) {
                 for (int j = y - Math.floorDiv(h, 2)  + (int) offset.getY(); j <= y + Math.floorDiv(h, 2) - (h % 2 == 0 ? 1 : 0) + (int) offset.getY(); j++) {
-                    for (int k = z - Math.floorDiv(d, 2) + (int) offset.getZ(); k <= z + Math.floorDiv(d, 2) - (d % 2 == 0 ? 1 : 0) + (int) offset.getX(); k++) {
+                    for (int k = z - Math.floorDiv(d, 2) + (int) offset.getZ(); k <= z + Math.floorDiv(d, 2) - (d % 2 == 0 ? 1 : 0) + (int) offset.getZ(); k++) {
                         PlacedObject p = engine.getObjectPlacement(i, j, k);
                         if (p == null) continue;
                         IrisObject o = p.getObject();
@@ -981,7 +981,7 @@ public class IrisObject extends IrisRegistrant {
             IrisBlockVector offset = new IrisBlockVector(config.getTranslate().getX(), config.getTranslate().getY(), config.getTranslate().getZ());
             for (int i = x - Math.floorDiv(w, 2) + (int) offset.getX(); i <= x + Math.floorDiv(w, 2) - (w % 2 == 0 ? 1 : 0) + (int) offset.getX(); i++) {
                 for (int j = y - Math.floorDiv(h, 2) - config.getBoreExtendMinY() + (int) offset.getY(); j <= y + Math.floorDiv(h, 2) + config.getBoreExtendMaxY() - (h % 2 == 0 ? 1 : 0) + (int) offset.getY(); j++) {
-                    for (int k = z - Math.floorDiv(d, 2) + (int) offset.getZ(); k <= z + Math.floorDiv(d, 2) - (d % 2 == 0 ? 1 : 0) + (int) offset.getX(); k++) {
+                    for (int k = z - Math.floorDiv(d, 2) + (int) offset.getZ(); k <= z + Math.floorDiv(d, 2) - (d % 2 == 0 ? 1 : 0) + (int) offset.getZ(); k++) {
                         placer.set(i, j, k, States.AIR);
                     }
                 }
@@ -1139,23 +1139,22 @@ public class IrisObject extends IrisRegistrant {
                     data = attachVineFaces(placer, data, xx, yy, zz);
                 }
 
-                if (listener != null) {
-                    listener.accept(new BlockPosition(xx, yy, zz), data);
-                }
-
-                if (markers != null && markers.containsKey(g)) {
-                    placer.getEngine().getMantle().getMantle().set(xx, yy, zz, new MatterMarker(markers.get(g)));
-                }
-
                 PlatformBlockState existingState = placer.get(xx, yy, zz);
                 boolean wouldReplace = B.isSolid(existingState) && B.isVineBlock(data);
                 String material = materialKey(data);
-                boolean place = !material.equals("minecraft:air") && !material.equals("minecraft:cave_air") && !wouldReplace;
+                boolean air = material.equals("minecraft:air") || material.equals("minecraft:cave_air");
+                boolean place = shouldPlaceObjectBlock(rawStructurePiece, air, wouldReplace);
 
                 if (data.isCustom() || place) {
                     placer.set(xx, yy, zz, data);
                     if (tile != null) {
                         placer.setTile(xx, yy, zz, tile);
+                    }
+                    if (markers != null && markers.containsKey(g)) {
+                        placer.setData(xx, yy, zz, new MatterMarker(markers.get(g)));
+                    }
+                    if (listener != null) {
+                        listener.accept(new BlockPosition(xx, yy, zz), data);
                     }
                     if (vacuuming && yy < vacuumLowest) {
                         vacuumLowest = yy;
@@ -1413,12 +1412,16 @@ public class IrisObject extends IrisRegistrant {
 
                 if (config.getSnow() > 0) {
                     int height = rngx.i(0, (int) (config.getSnow() * 7));
-                    placer.set(vx, vy + 1, vz, SNOW_LAYERS[Math.max(Math.min(height, 7), 0)]);
+                    placer.set(vx, vy + 1, vz, States.SNOW_LAYERS[Math.max(Math.min(height, 7), 0)]);
                 }
             }
         }
 
         return y;
+    }
+
+    static boolean shouldPlaceObjectBlock(boolean rawStructurePiece, boolean air, boolean wouldReplace) {
+        return !wouldReplace && (rawStructurePiece || !air);
     }
 
     private void warnImplausibleBedrockPlacement(IObjectPlacer placer, IrisObjectPlacement config, int x, int y, int z) {

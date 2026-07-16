@@ -25,9 +25,11 @@ import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.Locator;
+import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.IrisBiome;
-import art.arcane.iris.engine.object.IrisImportedStructureControl;
+import art.arcane.iris.engine.object.IrisNativeStructureDecision;
+import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
@@ -889,16 +891,27 @@ public final class IrisModdedCommands {
             fail(source, "This command can only be used by players.");
             return 0;
         }
-        if (IrisStructureLocator.isPlaced(engine, key)) {
-            locateIrisStructure(source, level, engine, player, key);
-            return 1;
-        }
         Optional<NativeStructureTarget> resolved = resolveNativeStructure(source, level, engine, key);
         if (resolved.isEmpty()) {
+            if (IrisStructureLocator.isPlaced(engine, key)) {
+                locateIrisStructure(source, level, engine, player, key);
+                return 1;
+            }
             fail(source, "Unknown structure '" + key + "'. Use tab completion to choose an Iris placement or a registered native/datapack structure.");
             return 0;
         }
         NativeStructureTarget target = resolved.get();
+        IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine, target.key(), false);
+        if (!decision.generate()
+                && decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            fail(source, NativeStructureGenerationPolicy.generationStatusMessage(
+                    target.key(), decision.status()));
+            return 0;
+        }
+        if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            locateIrisStructure(source, level, engine, player, target.key());
+            return 1;
+        }
         if (target.availability() != NativeStructureAvailability.AVAILABLE) {
             fail(source, nativeUnavailableMessage(target.key(), target.availability()));
             return 0;
@@ -1035,7 +1048,7 @@ public final class IrisModdedCommands {
             }
         }
         int irisPlaced = IrisStructureLocator.placedKeys(engine).size();
-        ok(source, "Structure reachability: " + available + " native locatable, " + irisPlaced
+        ok(source, "Structure reachability: " + available + " native generation-eligible, " + irisPlaced
                 + " Iris-placed, " + disabled + " native disabled, " + suppressed
                 + " native replaced by Iris placements, " + unreachableBiomes
                 + " native excluded by this pack's biomes, and " + unsupported
@@ -1044,16 +1057,22 @@ public final class IrisModdedCommands {
     }
 
     private static int verifyStructure(CommandSourceStack source, ServerLevel level, Engine engine, String key) {
-        if (IrisStructureLocator.isPlaced(engine, key)) {
-            ok(source, "Structure " + key + " is Iris-placed and locatable with /iris goto structure " + key + ".");
-            return 1;
-        }
         Optional<NativeStructureTarget> target = resolveNativeStructure(source, level, engine, key);
         if (target.isEmpty()) {
+            if (IrisStructureLocator.isPlaced(engine, key)) {
+                ok(source, "Structure " + key + " is Iris-placed and locatable with /iris goto structure " + key + ".");
+                return 1;
+            }
             fail(source, "Unknown structure '" + key + "'. It is neither Iris-placed nor registered by vanilla or a datapack.");
             return 0;
         }
         NativeStructureTarget resolved = target.get();
+        if (resolved.availability() == NativeStructureAvailability.IRIS_SUPPRESSED) {
+            ok(source, "Structure " + resolved.key()
+                    + " is explicitly replaced by an Iris placement and locatable with /iris goto structure "
+                    + resolved.key() + ".");
+            return 1;
+        }
         if (resolved.availability() != NativeStructureAvailability.AVAILABLE) {
             fail(source, nativeUnavailableMessage(resolved.key(), resolved.availability()));
             return 0;
@@ -1084,9 +1103,9 @@ public final class IrisModdedCommands {
                                                                    Engine engine, String key,
                                                                    Holder.Reference<Structure> holder) {
         boolean worldEnabled = source.getServer().getWorldGenSettings().options().generateStructures();
-        IrisImportedStructureControl control = engine.getDimension().getImportedStructures();
-        boolean selected = control != null && control.active() && control.shouldGenerate(key);
-        boolean suppressed = IrisStructureLocator.suppressesVanilla(engine, key);
+        IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine, key, false);
+        boolean selected = decision.status() != NativeStructureGenerationStatus.DISABLED_BY_PACK;
+        boolean suppressed = decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS;
         ChunkGenerator chunkGenerator = level.getChunkSource().getGenerator();
         boolean biomeReachable = chunkGenerator instanceof IrisModdedChunkGenerator irisGenerator
                 && irisGenerator.isNativeStructureReachable(holder);
@@ -1121,8 +1140,10 @@ public final class IrisModdedCommands {
     private static String nativeUnavailableMessage(String key, NativeStructureAvailability availability) {
         return switch (availability) {
             case WORLD_DISABLED -> "Native structure generation is disabled for this world, so " + key + " cannot generate or be located.";
-            case FILTERED -> "Native structure " + key + " is disabled by this dimension's importedStructures settings.";
-            case IRIS_SUPPRESSED -> "Native structure " + key + " is replaced by an Iris placement in this pack; locate the Iris key instead.";
+            case FILTERED -> NativeStructureGenerationPolicy.generationStatusMessage(
+                    key, NativeStructureGenerationStatus.DISABLED_BY_PACK);
+            case IRIS_SUPPRESSED -> NativeStructureGenerationPolicy.generationStatusMessage(
+                    key, NativeStructureGenerationStatus.REPLACED_BY_IRIS);
             case BIOME_UNREACHABLE -> "Native structure " + key + " cannot generate because none of its required biomes are produced by this Iris pack.";
             case NO_PLACEMENT -> "Native structure " + key + " is registered, but its structure set has no placement supported by this dimension's generator state.";
             case AVAILABLE -> "Native structure " + key + " is available.";

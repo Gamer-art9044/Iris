@@ -25,6 +25,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class IrisImportedStructureControlTest {
@@ -37,15 +38,17 @@ public class IrisImportedStructureControlTest {
     }
 
     @Test
-    public void defaultModeGeneratesEveryVanillaStructure() {
+    public void defaultPolicyGeneratesEveryRegisteredStructureKey() {
         IrisImportedStructureControl control = new IrisImportedStructureControl();
         assertTrue(control.shouldGenerate("minecraft:village_plains"));
         assertTrue(control.shouldGenerate("minecraft:stronghold"));
-        assertTrue(control.shouldGenerate("minecraft:ocean_monument"));
+        assertTrue(control.shouldGenerate("minecraft:monument"));
+        assertEquals(NativeStructureGenerationStatus.GENERATE_NATIVE,
+                control.resolve("minecraft:monument", false).status());
     }
 
     @Test
-    public void defaultModeGeneratesDatapackStructures() {
+    public void defaultPolicyGeneratesDatapackStructures() {
         IrisImportedStructureControl control = new IrisImportedStructureControl();
         assertTrue(control.isDatapackOverrides());
         assertTrue(control.shouldGenerate("nova_structures:desert_temple"));
@@ -70,26 +73,6 @@ public class IrisImportedStructureControlTest {
     }
 
     @Test
-    public void allOffWhitelistMatchesExactKey() {
-        IrisImportedStructureControl control = new IrisImportedStructureControl()
-                .setMode(VanillaStructureMode.ALL_OFF)
-                .setEnabled(keys("minecraft:village_plains"));
-        assertTrue(control.shouldGenerate("minecraft:village_plains"));
-        assertFalse(control.shouldGenerate("minecraft:village_taiga"));
-        assertFalse(control.shouldGenerate("minecraft:stronghold"));
-    }
-
-    @Test
-    public void allOffWhitelistMatchesNamespacePrefix() {
-        IrisImportedStructureControl control = new IrisImportedStructureControl()
-                .setMode(VanillaStructureMode.ALL_OFF)
-                .setEnabled(keys("minecraft:village"));
-        assertTrue(control.shouldGenerate("minecraft:village_taiga"));
-        assertTrue(control.shouldGenerate("minecraft:village_desert"));
-        assertFalse(control.shouldGenerate("minecraft:stronghold"));
-    }
-
-    @Test
     public void datapackOverridesFalseDoesNotDisableModOrDatapackNamespaces() {
         IrisImportedStructureControl control = new IrisImportedStructureControl()
                 .setDatapackOverrides(false);
@@ -99,10 +82,9 @@ public class IrisImportedStructureControlTest {
     }
 
     @Test
-    public void allOffWhitelistStillControlsThirdPartyStructuresWhenOverridesAreFalse() {
+    public void disabledListControlsThirdPartyStructuresWhenOverridesAreFalse() {
         IrisImportedStructureControl control = new IrisImportedStructureControl()
-                .setMode(VanillaStructureMode.ALL_OFF)
-                .setEnabled(keys("nova_structures:desert_temple", "minecraft:village_plains"))
+                .setDisabled(keys("aquaculture:treasure_vault"))
                 .setDatapackOverrides(false);
         assertTrue(control.shouldGenerate("nova_structures:desert_temple"));
         assertTrue(control.shouldGenerate("minecraft:village_plains"));
@@ -110,7 +92,7 @@ public class IrisImportedStructureControlTest {
     }
 
     @Test
-    public void datapackOverridesTrueAllowsDatapackKeysWhileAllOn() {
+    public void datapackOverridesTrueAllowsDatapackKeysByDefault() {
         IrisImportedStructureControl control = new IrisImportedStructureControl()
                 .setDatapackOverrides(true);
         assertTrue(control.shouldGenerate("nova_structures:desert_temple"));
@@ -131,26 +113,6 @@ public class IrisImportedStructureControlTest {
     }
 
     @Test
-    public void activeTrueWhenAllOn() {
-        assertTrue(new IrisImportedStructureControl().active());
-    }
-
-    @Test
-    public void activeFalseWhenAllOffWithoutWhitelist() {
-        IrisImportedStructureControl control = new IrisImportedStructureControl()
-                .setMode(VanillaStructureMode.ALL_OFF);
-        assertFalse(control.active());
-    }
-
-    @Test
-    public void activeTrueWhenAllOffWithWhitelist() {
-        IrisImportedStructureControl control = new IrisImportedStructureControl()
-                .setMode(VanillaStructureMode.ALL_OFF)
-                .setEnabled(keys("minecraft:village_plains"));
-        assertTrue(control.active());
-    }
-
-    @Test
     public void emptyOrNullListEntriesNeverMatchEveryKey() {
         IrisImportedStructureControl control = new IrisImportedStructureControl()
                 .setDisabled(keys("", null));
@@ -159,11 +121,11 @@ public class IrisImportedStructureControlTest {
     }
 
     @Test
-    public void nullKeyIsNullSafeAndNotWhitelisted() {
-        IrisImportedStructureControl control = new IrisImportedStructureControl()
-                .setMode(VanillaStructureMode.ALL_OFF)
-                .setEnabled(keys("minecraft:village_plains"));
+    public void nullKeyIsRejectedAsAnInvalidRegistryKey() {
+        IrisImportedStructureControl control = new IrisImportedStructureControl();
         assertFalse(control.shouldGenerate(null));
+        assertEquals(NativeStructureGenerationStatus.INVALID_REGISTRY_KEY,
+                control.resolve(null, false).status());
     }
 
     @Test
@@ -205,7 +167,7 @@ public class IrisImportedStructureControlTest {
 
     @Test
     public void postprocessingUsesPrefixMatches() {
-        IrisVanillaStructureStiltSettings stilt = new IrisVanillaStructureStiltSettings();
+        IrisStructureStiltSettings stilt = new IrisStructureStiltSettings();
         IrisVanillaStructureAdjustment adjustment = new IrisVanillaStructureAdjustment()
                 .setMatch(keys("minecraft:village"))
                 .setClearVegetation(true)
@@ -221,8 +183,8 @@ public class IrisImportedStructureControlTest {
 
     @Test
     public void multipleMatchesMergeVegetationAndUseLastConfiguredStilt() {
-        IrisVanillaStructureStiltSettings broadStilt = new IrisVanillaStructureStiltSettings().setMaxDepth(32);
-        IrisVanillaStructureStiltSettings specificStilt = new IrisVanillaStructureStiltSettings().setMaxDepth(96);
+        IrisStructureStiltSettings broadStilt = new IrisStructureStiltSettings().setMaxDepth(32);
+        IrisStructureStiltSettings specificStilt = new IrisStructureStiltSettings().setMaxDepth(96);
         IrisVanillaStructureAdjustment broad = new IrisVanillaStructureAdjustment()
                 .setMatch(keys("minecraft:village"))
                 .setClearVegetation(true)
@@ -261,5 +223,19 @@ public class IrisImportedStructureControlTest {
 
         assertFalse(control.shouldGenerate("example:castle"));
         assertTrue(control.shouldGenerate("other:castle"));
+    }
+
+    @Test
+    public void malformedNullPolicyListsFailWithTheirExactField() {
+        IrisImportedStructureControl nullDisabled = new IrisImportedStructureControl().setDisabled(null);
+        IrisImportedStructureControl nullAdjustments = new IrisImportedStructureControl().setAdjustments(null);
+
+        NullPointerException disabled = assertThrows(NullPointerException.class,
+                () -> nullDisabled.shouldGenerate("minecraft:monument"));
+        NullPointerException adjustments = assertThrows(NullPointerException.class,
+                () -> nullAdjustments.resolve("minecraft:monument", false));
+
+        assertTrue(disabled.getMessage().contains("importedStructures.disabled"));
+        assertTrue(adjustments.getMessage().contains("importedStructures.adjustments"));
     }
 }

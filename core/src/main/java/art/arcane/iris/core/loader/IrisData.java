@@ -33,6 +33,10 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.IrisStructureLocator;
+import art.arcane.iris.engine.framework.structure.StructureGraphCatalog;
+import art.arcane.iris.core.structure.authoring.StructureRecoveryResult;
+import art.arcane.iris.core.structure.authoring.StructureTransactionWriter;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBlockData;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -209,10 +213,6 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         return loadAny(IrisGenerator.class, key, nearest);
     }
 
-    public static IrisStructure loadAnyStructure(String key, @Nullable IrisData nearest) {
-        return loadAny(IrisStructure.class, key, nearest);
-    }
-
     public static IrisJigsawPool loadAnyJigsawPool(String key, @Nullable IrisData nearest) {
         return loadAny(IrisJigsawPool.class, key, nearest);
     }
@@ -330,6 +330,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     }
 
     public synchronized void hotloaded() {
+        StructureGraphCatalog.invalidate(this);
         closed = false;
         possibleSnippets = new KMap<>();
         builder = new GsonBuilder()
@@ -342,6 +343,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         loaders.clear();
         File packs = dataFolder;
         packs.mkdirs();
+        recoverStructureTransactions();
         this.lootLoader = registerLoader(IrisLootTable.class);
         this.spawnerLoader = registerLoader(IrisSpawner.class);
         this.entityLoader = registerLoader(IrisEntity.class);
@@ -380,6 +382,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
                 .setPrettyPrinting();
         loaders.clear();
         dataFolder.mkdirs();
+        recoverStructureTransactions();
         biomeLoader = registerLoader(IrisBiome.class);
         dimensionLoader = registerLoader(IrisDimension.class);
         builder.registerTypeAdapterFactory(KeyedType::createTypeAdapter);
@@ -390,9 +393,44 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     }
 
     public void dump() {
+        StructureGraphCatalog.invalidate(this);
         for (ResourceLoader<?> i : loaders.values()) {
             i.clearCache();
         }
+    }
+
+    public synchronized void invalidateStructureResources() {
+        StructureGraphCatalog.invalidate(this);
+        invalidateLoader(objectLoader);
+        invalidateLoader(structureLoader);
+        invalidateLoader(jigsawPoolLoader);
+        invalidateLoader(jigsawPieceLoader);
+        if (engine != null) {
+            IrisStructureLocator.invalidate(engine);
+        }
+    }
+
+    private void recoverStructureTransactions() {
+        StructureRecoveryResult recovery = new StructureTransactionWriter(dataFolder.toPath())
+                .recoverIncompleteTransactions();
+        if (recovery.successful()) {
+            if (recovery.recoveredTransactions() > 0) {
+                IrisLogging.warn("Recovered " + recovery.recoveredTransactions()
+                        + " interrupted structure authoring transaction(s) in " + dataFolder);
+            }
+            return;
+        }
+        IllegalStateException failure = new IllegalStateException(
+                "Unable to recover interrupted structure authoring transactions in " + dataFolder);
+        for (StructureRecoveryResult.Failure recoveryFailure : recovery.failures()) {
+            failure.addSuppressed(new IOException(
+                    "Recovery failed for " + recoveryFailure.transactionRoot(),
+                    recoveryFailure.cause()
+            ));
+        }
+        IrisLogging.reportError(failure);
+        failure.printStackTrace();
+        throw failure;
     }
 
     public void clearLists() {
@@ -400,6 +438,14 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             i.clearList();
         }
         possibleSnippets.clear();
+    }
+
+    private void invalidateLoader(ResourceLoader<?> loader) {
+        if (loader == null) {
+            return;
+        }
+        loader.clearCache();
+        loader.clearList();
     }
 
     public Set<Class<?>> resolveSnippets() {

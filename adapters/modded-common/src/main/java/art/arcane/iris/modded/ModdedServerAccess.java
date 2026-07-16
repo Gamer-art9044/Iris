@@ -33,6 +33,8 @@ public interface ModdedServerAccess {
 
     ServerLevel putLevel(MinecraftServer server, ResourceKey<Level> key, ServerLevel level);
 
+    ServerLevel putLevelIfAbsent(MinecraftServer server, ResourceKey<Level> key, ServerLevel level);
+
     ServerLevel removeLevel(MinecraftServer server, ResourceKey<Level> key);
 
     boolean hasLevel(MinecraftServer server, ResourceKey<Level> key);

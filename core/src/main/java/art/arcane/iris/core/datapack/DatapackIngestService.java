@@ -142,7 +142,7 @@ public final class DatapackIngestService {
         if (report.changed()) {
             message(sender, C.YELLOW + "New datapack structures were installed. A server restart is required for them to register and generate.");
             message(sender, C.GRAY + "After the restart their jigsaw pools, pieces & objects are imported automatically (set general.autoImportDatapackStructures=false to disable), or run /iris structure import <dimension> to import everything on demand. Reference an imported key from a 'structures' placement to position it manually.");
-            message(sender, C.GRAY + "Datapacks replace matching vanilla structure keys by default. Set 'importedStructures.datapackOverrides' to false to keep minecraft-namespaced structure definitions untouched; control non-minecraft datapack and mod structures with importedStructures.enabled/disabled.");
+            message(sender, C.GRAY + "Datapacks replace matching vanilla structure keys by default. Set 'importedStructures.datapackOverrides' to false to keep minecraft-namespaced structure definitions untouched; deny non-minecraft datapack and mod structures explicitly with importedStructures.disabled.");
             if (restart) {
                 ServerConfigurator.restart();
             } else {
@@ -401,28 +401,46 @@ public final class DatapackIngestService {
         }
 
         IrisLogging.info("Importing datapack structures (jigsaw pools, pieces & objects) into packs that declare datapackImports...");
-        AtomicInteger packs = new AtomicInteger();
+        AtomicInteger attemptedPacks = new AtomicInteger();
+        AtomicInteger completedPacks = new AtomicInteger();
         try (Stream<IrisData> stream = ServerConfigurator.allPacks()) {
             stream.forEach(data -> {
                 if (data == null || !hasImports(data)) {
                     return;
                 }
+                attemptedPacks.incrementAndGet();
                 try {
-                    BulkStructureImporter.importDatapackStructures(data, StructureImporter.Mode.ADD_ONLY, BukkitPlatform.console());
-                    packs.incrementAndGet();
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
+                    BulkStructureImporter.Report report = BulkStructureImporter.importDatapackStructures(
+                            data, StructureImporter.Mode.ADD_ONLY, BukkitPlatform.console());
+                    if (report.failed() > 0) {
+                        IrisLogging.error("Datapack structure import for pack '%s' reported %d failure(s); the manifest remains pending for retry.",
+                                data.getDataFolder().getPath(), report.failed());
+                        return;
+                    }
+                    completedPacks.incrementAndGet();
+                } catch (RuntimeException e) {
+                    IrisLogging.reportError("Datapack structure import failed for pack '"
+                            + data.getDataFolder().getPath() + "'; the manifest remains pending for retry.", e);
                 }
             });
         }
 
-        for (Entry entry : manifest.entries) {
-            entry.structuresImported = true;
+        if (!markStructuresImportedIfComplete(
+                manifest.entries, attemptedPacks.get(), completedPacks.get())) {
+            return;
         }
         writeManifest(root, manifest);
-        if (packs.get() > 0) {
-            IrisLogging.info("Datapack structure import finished for " + packs.get() + " pack(s). Reference the imported keys from a 'structures' placement to position them manually.");
+        IrisLogging.info("Datapack structure import finished for " + completedPacks.get() + " pack(s). Reference the imported keys from a 'structures' placement to position them manually.");
+    }
+
+    static boolean markStructuresImportedIfComplete(List<Entry> entries, int attemptedPacks, int completedPacks) {
+        if (attemptedPacks < 1 || completedPacks != attemptedPacks) {
+            return false;
         }
+        for (Entry entry : entries) {
+            entry.structuresImported = true;
+        }
+        return true;
     }
 
     private static void flattenIfWrapped(File dir) throws IOException {

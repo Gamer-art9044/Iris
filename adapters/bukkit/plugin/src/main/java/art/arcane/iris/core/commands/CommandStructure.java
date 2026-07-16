@@ -21,18 +21,23 @@ package art.arcane.iris.core.commands;
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.structure.BulkStructureImporter;
+import art.arcane.iris.core.structure.NativeStructureLocateCapability;
 import art.arcane.iris.core.structure.StructureCaptureImporter;
 import art.arcane.iris.core.structure.StructureImporter;
 import art.arcane.iris.core.structure.StructureIndexService;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
+import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.framework.StructureAssembler;
 import art.arcane.iris.engine.framework.StructureReachability;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
+import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisStructure;
+import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.director.DirectorExecutor;
@@ -158,14 +163,23 @@ public class CommandStructure implements DirectorExecutor {
     private void runVerification(Engine engine, KList<String> structureKeys, int centerX, int centerZ,
                                  int searchRadius, VolmitSender commandSender, Player target) {
         KList<String> messages = new KList<>();
-        Set<String> reachable;
-        try {
-            reachable = StructureReachability.reachableKeys(engine);
-        } catch (Throwable error) {
-            messages.add(C.RED + "Structure verification could not resolve native biome reachability.");
-            sendVerificationMessages(commandSender, target, messages);
-            Iris.reportError("Could not resolve native structure biome reachability for verification.", error);
-            return;
+        Map<String, IrisNativeStructureDecision> decisions = new HashMap<>(structureKeys.size());
+        boolean requiresNativeReachability = false;
+        for (String keyName : structureKeys) {
+            IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine, keyName, false);
+            decisions.put(keyName, decision);
+            requiresNativeReachability |= decision.generate();
+        }
+        Set<String> reachable = Set.of();
+        if (requiresNativeReachability) {
+            try {
+                reachable = StructureReachability.reachableKeys(engine);
+            } catch (Throwable error) {
+                messages.add(C.RED + "Structure verification could not resolve native biome reachability.");
+                sendVerificationMessages(commandSender, target, messages);
+                Iris.reportError("Could not resolve native structure biome reachability for verification.", error);
+                return;
+            }
         }
         int located = 0;
         int nativeEligible = 0;
@@ -175,8 +189,8 @@ public class CommandStructure implements DirectorExecutor {
         int searchLimited = 0;
         int errors = 0;
         for (String keyName : structureKeys) {
-            boolean irisPlaced = IrisStructureLocator.isPlaced(engine, keyName);
-            if (irisPlaced) {
+            IrisNativeStructureDecision decision = decisions.get(keyName);
+            if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
                 try {
                     IrisStructureLocator.LocateResult result =
                             IrisStructureLocator.locate(engine, keyName, centerX, centerZ, searchRadius);
@@ -201,7 +215,7 @@ public class CommandStructure implements DirectorExecutor {
                 }
                 continue;
             }
-            if (!engine.getDimension().getImportedStructures().shouldGenerate(keyName)) {
+            if (!decision.generate()) {
                 disabled++;
                 messages.add(C.GRAY + "[disabled] " + C.WHITE + keyName);
                 continue;
@@ -213,20 +227,20 @@ public class CommandStructure implements DirectorExecutor {
                         + (missing.isEmpty() ? "" : C.YELLOW + " needs " + String.join("/", missing)));
                 continue;
             }
-            if (BukkitNativeStructureLocatePolicy.isUnavailable(keyName)) {
+            nativeEligible++;
+            if (NativeStructureLocateCapability.isPaperUnavailable(keyName)) {
                 unavailable++;
-                messages.add(C.RED + "[unavailable] " + C.WHITE + keyName + C.RED + ": "
-                        + BukkitNativeStructureLocatePolicy.unavailableMessage());
+                messages.add(C.YELLOW + "[native-eligible/locate-unavailable] " + C.WHITE + keyName + C.YELLOW + ": "
+                        + NativeStructureLocateCapability.unavailableMessage());
                 continue;
             }
-            nativeEligible++;
             messages.add(C.GREEN + "[native-eligible] " + C.WHITE + keyName);
         }
         messages.add(C.GREEN + "Structure verify: " + C.WHITE + located + C.GREEN + " Iris placements located, "
                 + C.WHITE + nativeEligible + C.GREEN + " native structures eligible, "
                 + C.WHITE + disabled + C.GREEN + " disabled by policy, "
                 + C.WHITE + unreachable + C.GREEN + " biome-unreachable, "
-                + C.WHITE + unavailable + C.GREEN + " unavailable on this platform, "
+                + C.WHITE + unavailable + C.GREEN + " generation-eligible but unavailable to synchronous locate, "
                 + C.WHITE + searchLimited + C.GREEN + " density searches safety-limited, "
                 + C.WHITE + errors + C.GREEN + " errors. Native eligibility is checked without running blocking live locates.");
         sendVerificationMessages(commandSender, target, messages);
@@ -285,12 +299,13 @@ public class CommandStructure implements DirectorExecutor {
             sender().sendMessage(C.RED + "Could not resolve the pack for dimension " + dimension.getLoadKey());
             return;
         }
-        IrisStructure s = IrisData.loadAnyStructure(structure, data);
+        IrisStructure s = data.load(IrisStructure.class, structure, false);
         if (s == null) {
             sender().sendMessage(C.RED + "No iris structure '" + structure + "' in this pack");
             return;
         }
-        StructureAssembler assembler = new StructureAssembler(data, s, 0, 64, 0);
+        StructureAssembler assembler = StructureAssembler.forData(
+                data, s, new IrisPosition(0, 64, 0));
         KList<PlacedStructurePiece> pieces = assembler.assemble(new RNG(1234));
         if (pieces == null || pieces.isEmpty()) {
             sender().sendMessage(C.RED + "Structure '" + structure + "' assembled 0 pieces (check startPool '" + s.getStartPool() + "')");
@@ -321,13 +336,14 @@ public class CommandStructure implements DirectorExecutor {
             sender().sendMessage(C.RED + "Could not resolve the pack for dimension " + dimension.getLoadKey());
             return;
         }
-        IrisStructure s = IrisData.loadAnyStructure(structure, data);
+        IrisStructure s = data.load(IrisStructure.class, structure, false);
         if (s == null) {
             sender().sendMessage(C.RED + "No iris structure '" + structure + "' in this pack");
             return;
         }
         Location loc = player().getLocation();
-        StructureAssembler assembler = new StructureAssembler(data, s, loc.getBlockX(), loc.getBlockY(), loc.getBlockZ());
+        StructureAssembler assembler = StructureAssembler.forData(
+                data, s, new IrisPosition(loc.getBlockX(), loc.getBlockY(), loc.getBlockZ()));
         RNG rng = new RNG((long) loc.getBlockX() * 341873128712L + loc.getBlockZ());
         KList<PlacedStructurePiece> pieces = assembler.assemble(rng);
         if (pieces == null || pieces.isEmpty()) {

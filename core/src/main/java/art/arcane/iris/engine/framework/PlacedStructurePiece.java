@@ -41,8 +41,14 @@ public class PlacedStructurePiece {
     private final int maxZ;
 
     public boolean intersects(PlacedStructurePiece o) {
-        return minX < o.maxX && maxX > o.minX
-                && minY < o.maxY && maxY > o.minY
-                && minZ < o.maxZ && maxZ > o.minZ;
+        long maxExclusiveX = (long) maxX + 1L;
+        long maxExclusiveY = (long) maxY + 1L;
+        long maxExclusiveZ = (long) maxZ + 1L;
+        long otherMaxExclusiveX = (long) o.maxX + 1L;
+        long otherMaxExclusiveY = (long) o.maxY + 1L;
+        long otherMaxExclusiveZ = (long) o.maxZ + 1L;
+        return minX < otherMaxExclusiveX && maxExclusiveX > o.minX
+                && minY < otherMaxExclusiveY && maxExclusiveY > o.minY
+                && minZ < otherMaxExclusiveZ && maxExclusiveZ > o.minZ;
     }
 }

@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.nativegen.NativeStructureGenerationException;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformStructureHooks;
 import art.arcane.iris.spi.PlatformWorld;
@@ -51,6 +52,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -59,7 +61,7 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
     private final Supplier<MinecraftServer> server;
 
     public ModdedStructureHooks(Supplier<MinecraftServer> server) {
-        this.server = server;
+        this.server = Objects.requireNonNull(server);
     }
 
     @Override
@@ -75,19 +77,16 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
     @Override
     public List<String> structureBiomeKeys(String structureKey) {
         List<String> keys = new ArrayList<>();
+        MinecraftServer instance = requireServer("resolve biome keys for registered structure '" + structureKey + "'");
         try {
-            MinecraftServer instance = server.get();
-            if (instance == null) {
-                return keys;
-            }
             Identifier identifier = Identifier.tryParse(structureKey);
             if (identifier == null) {
-                return keys;
+                throw new IllegalArgumentException("Registered structure key is invalid: " + structureKey);
             }
             Registry<Structure> registry = instance.registryAccess().lookupOrThrow(Registries.STRUCTURE);
             Structure structure = registry.getValue(identifier);
             if (structure == null) {
-                return keys;
+                throw new IllegalArgumentException("Registered structure does not exist: " + structureKey);
             }
             for (Holder<Biome> holder : structure.biomes()) {
                 Optional<ResourceKey<Biome>> key = holder.unwrapKey();
@@ -95,8 +94,13 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
                     keys.add(key.get().identifier().toString());
                 }
             }
-        } catch (Throwable error) {
-            IrisLogging.reportError(error);
+            if (keys.isEmpty()) {
+                throw new IllegalStateException("Registered structure '" + structureKey
+                        + "' exposes no registered biome keys");
+            }
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to resolve biome keys for registered structure '"
+                    + structureKey + "' from the modded structure registry", error);
         }
         return keys;
     }
@@ -129,24 +133,19 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
     @Override
     public List<String> reachableStructureKeys(PlatformWorld world) {
         List<String> keys = new ArrayList<>();
+        ServerLevel level = requireLevel(world, "resolve reachable structures");
         try {
-            ServerLevel level = level(world);
-            if (level == null) {
-                return keys;
-            }
             BiomeSource source = level.getChunkSource().getGenerator().getBiomeSource();
             Set<String> possibleBiomes = possibleBiomeKeys(source);
-            if (possibleBiomes.isEmpty()) {
-                return keys;
-            }
             Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
             for (Map.Entry<ResourceKey<Structure>, Structure> entry : registry.entrySet()) {
                 if (hasPossibleBiome(entry.getValue(), possibleBiomes)) {
                     keys.add(entry.getKey().identifier().toString());
                 }
             }
-        } catch (Throwable error) {
-            IrisLogging.reportError(error);
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to resolve reachable structures for modded level '"
+                    + level.dimension().identifier() + "'", error);
         }
         return keys;
     }
@@ -154,14 +153,12 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
     @Override
     public List<String> possibleBiomeKeys(PlatformWorld world) {
         List<String> keys = new ArrayList<>();
+        ServerLevel level = requireLevel(world, "resolve possible structure biome keys");
         try {
-            ServerLevel level = level(world);
-            if (level == null) {
-                return keys;
-            }
             keys.addAll(possibleBiomeKeys(level.getChunkSource().getGenerator().getBiomeSource()));
-        } catch (Throwable error) {
-            IrisLogging.reportError(error);
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to resolve possible structure biome keys for modded level '"
+                    + level.dimension().identifier() + "'", error);
         }
         return keys;
     }
@@ -230,9 +227,9 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
             }
             placeChunks(level, structureManager, generator, start, box, seed);
             return bounds(box);
-        } catch (Throwable error) {
-            IrisLogging.reportError(error);
-            return null;
+        } catch (RuntimeException error) {
+            throw NativeStructureGenerationException.failure(
+                    "capture placement", structureKey, chunkX, chunkZ, error);
         }
     }
 
@@ -264,15 +261,18 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
     }
 
     private static Set<String> possibleBiomeKeys(BiomeSource source) {
-        Set<String> keys = new LinkedHashSet<>();
         if (source == null) {
-            return keys;
+            throw new IllegalStateException("Minecraft chunk generator has no biome source");
         }
+        Set<String> keys = new LinkedHashSet<>();
         for (Holder<Biome> holder : source.possibleBiomes()) {
             Optional<ResourceKey<Biome>> key = holder.unwrapKey();
             if (key.isPresent()) {
                 keys.add(key.get().identifier().toString());
             }
+        }
+        if (keys.isEmpty()) {
+            throw new IllegalStateException("Minecraft biome source exposes no registered possible biomes");
         }
         return keys;
     }
@@ -312,18 +312,38 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
 
     private <T> List<String> registryKeys(ResourceKey<Registry<T>> registryKey) {
         List<String> keys = new ArrayList<>();
+        MinecraftServer instance = requireServer("read registry '" + registryKey.identifier() + "'");
         try {
-            MinecraftServer instance = server.get();
-            if (instance == null) {
-                return keys;
-            }
             Registry<T> registry = instance.registryAccess().lookupOrThrow(registryKey);
             for (Identifier identifier : registry.keySet()) {
                 keys.add(identifier.toString());
             }
-        } catch (Throwable error) {
-            IrisLogging.reportError(error);
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to read modded registry '"
+                    + registryKey.identifier() + "'", error);
         }
         return keys;
+    }
+
+    private MinecraftServer requireServer(String operation) {
+        MinecraftServer instance;
+        try {
+            instance = server.get();
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to access the Minecraft server to " + operation, error);
+        }
+        if (instance == null) {
+            throw new IllegalStateException("Iris cannot " + operation + " before the Minecraft server is available");
+        }
+        return instance;
+    }
+
+    private static ServerLevel requireLevel(PlatformWorld world, String operation) {
+        ServerLevel level = level(world);
+        if (level == null) {
+            throw new IllegalStateException("Iris cannot " + operation
+                    + " without a bound modded ServerLevel");
+        }
+        return level;
     }
 }

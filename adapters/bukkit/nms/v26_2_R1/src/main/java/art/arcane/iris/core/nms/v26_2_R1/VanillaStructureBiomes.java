@@ -21,10 +21,10 @@ final class VanillaStructureBiomes {
     }
 
     static Set<String> possibleBiomeKeys(BiomeSource source) {
-        Set<String> keys = new LinkedHashSet<>();
         if (source == null) {
-            return keys;
+            throw new IllegalStateException("Minecraft chunk generator has no biome source");
         }
+        Set<String> keys = new LinkedHashSet<>();
         Set<Holder<Biome>> possibleBiomes = source instanceof CustomBiomeSource customBiomeSource
                 ? customBiomeSource.possibleStructureBiomes()
                 : source.possibleBiomes();
@@ -34,18 +34,24 @@ final class VanillaStructureBiomes {
                 keys.add(key.get().identifier().toString());
             }
         }
+        if (keys.isEmpty()) {
+            throw new IllegalStateException("Minecraft biome source exposes no registered possible biomes");
+        }
         return keys;
     }
 
     static Set<String> structureBiomeKeys(RegistryAccess access, String structureKey) {
-        Set<String> keys = new LinkedHashSet<>();
-        if (access == null || structureKey == null || structureKey.isEmpty()) {
-            return keys;
+        if (access == null) {
+            throw new IllegalStateException("Minecraft registry access is unavailable");
         }
+        if (structureKey == null || structureKey.isBlank()) {
+            throw new IllegalArgumentException("Registered structure key must not be blank");
+        }
+        Set<String> keys = new LinkedHashSet<>();
         Registry<Structure> registry = access.lookupOrThrow(Registries.STRUCTURE);
         Structure structure = registry.getValue(Identifier.parse(structureKey));
         if (structure == null) {
-            return keys;
+            throw new IllegalArgumentException("Registered structure does not exist: " + structureKey);
         }
         for (Holder<Biome> holder : structure.biomes()) {
             Optional<ResourceKey<Biome>> key = holder.unwrapKey();
@@ -53,18 +59,19 @@ final class VanillaStructureBiomes {
                 keys.add(key.get().identifier().toString());
             }
         }
+        if (keys.isEmpty()) {
+            throw new IllegalStateException("Registered structure '" + structureKey
+                    + "' exposes no registered biome keys");
+        }
         return keys;
     }
 
     static Set<String> reachableStructureKeys(ServerLevel level, BiomeSource source) {
+        if (level == null) {
+            throw new IllegalStateException("Minecraft server level is unavailable");
+        }
         Set<String> reachable = new LinkedHashSet<>();
-        if (level == null || source == null) {
-            return reachable;
-        }
         Set<String> possible = possibleBiomeKeys(source);
-        if (possible.isEmpty()) {
-            return reachable;
-        }
         Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
         for (Map.Entry<ResourceKey<Structure>, Structure> entry : registry.entrySet()) {
             for (Holder<Biome> holder : entry.getValue().biomes()) {

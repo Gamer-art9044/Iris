@@ -41,12 +41,15 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -62,9 +65,7 @@ public final class ModdedForcedDatapack {
     public static RepositorySource repositorySource() {
         return (Consumer<Pack> consumer) -> {
             Pack pack = buildPack();
-            if (pack != null) {
-                consumer.accept(pack);
-            }
+            consumer.accept(pack);
         };
     }
 
@@ -78,9 +79,10 @@ public final class ModdedForcedDatapack {
 
     private static Pack buildPack() {
         Path directory = regenerate();
-        if (directory == null) {
-            return null;
-        }
+        return requireReadablePack(directory);
+    }
+
+    private static Pack requireReadablePack(Path directory) {
         PackLocationInfo location = new PackLocationInfo(
                 PACK_ID,
                 Component.literal("Iris World Generation"),
@@ -90,7 +92,8 @@ public final class ModdedForcedDatapack {
         PathPackResources.PathResourcesSupplier supplier = new PathPackResources.PathResourcesSupplier(directory);
         Pack pack = Pack.readMetaAndCreate(location, supplier, PackType.SERVER_DATA, selection);
         if (pack == null) {
-            LOGGER.error("Iris forced datapack at {} produced no readable pack metadata", directory);
+            throw new IllegalStateException("Iris forced datapack at " + directory
+                    + " produced no readable pack metadata");
         }
         return pack;
     }
@@ -99,24 +102,41 @@ public final class ModdedForcedDatapack {
         synchronized (LOCK) {
             try {
                 return write();
-            } catch (IOException e) {
+            } catch (Throwable e) {
                 LOGGER.error("Iris failed to generate the forced startup datapack", e);
-                return null;
+                if (e instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                if (e instanceof Error fatalError) {
+                    throw fatalError;
+                }
+                throw new IllegalStateException("Iris failed to generate the forced startup datapack", e);
             }
         }
     }
 
     private static Path write() throws IOException {
+        ModdedStartup.ensureDefaultPack();
+        Path datapackRoot = datapackRoot();
+        Files.createDirectories(datapackRoot);
+        Path stagingDirectory = Files.createTempDirectory(datapackRoot, PACK_FOLDER + ".staging-");
         try {
-            ModdedStartup.ensureDefaultPack();
-        } catch (Throwable e) {
-            LOGGER.warn("Iris could not ensure the default pack before building the forced datapack", e);
+            writeStagedPack(stagingDirectory);
+            requireReadablePack(stagingDirectory);
+            publishDirectory(stagingDirectory, packDirectory());
+            return packDirectory();
+        } catch (IOException | RuntimeException | Error failure) {
+            try {
+                clean(stagingDirectory);
+            } catch (Throwable cleanupError) {
+                failure.addSuppressed(cleanupError);
+            }
+            throw failure;
         }
-        Path packDirectory = packDirectory();
-        clean(packDirectory);
-        Files.createDirectories(packDirectory);
+    }
 
-        File packFolder = packDirectory.toFile();
+    private static void writeStagedPack(Path stagingDirectory) throws IOException {
+        File packFolder = stagingDirectory.toFile();
         KList<File> folders = new KList<>();
         folders.add(packFolder);
         Map<String, KSet<String>> seenBiomes = new LinkedHashMap<>();
@@ -124,8 +144,13 @@ public final class ModdedForcedDatapack {
 
         int packCount = 0;
         KList<String> presetIds = new KList<>();
-        File[] packs = packsRoot().toFile().listFiles(File::isDirectory);
+        File root = packsRoot().toFile();
+        File[] packs = root.listFiles(File::isDirectory);
+        if (packs == null && root.exists()) {
+            throw new IOException("Iris could not read installed pack directory " + root.getAbsolutePath());
+        }
         if (packs != null) {
+            Arrays.sort(packs, Comparator.comparing(File::getName));
             for (File pack : packs) {
                 if (installPack(pack, fixer, folders, seenBiomes, presetIds)) {
                     packCount++;
@@ -133,46 +158,52 @@ public final class ModdedForcedDatapack {
             }
         }
 
-        writePackMeta(packDirectory);
+        writePackMeta(stagingDirectory);
         if ("forge".equalsIgnoreCase(ModdedEngineBootstrap.loader().platformName())) {
-            writeForgeBlockLootModifier(packDirectory);
+            writeForgeBlockLootModifier(stagingDirectory);
         }
         if (!presetIds.isEmpty()) {
-            writeWorldPresetTag(packDirectory, presetIds);
+            writeWorldPresetTag(stagingDirectory, presetIds);
         }
-        LOGGER.info("Iris forced startup datapack regenerated: {} pack(s), {} world preset(s), {} custom biome(s) at {}", packCount, presetIds.size(), countBiomes(seenBiomes), packDirectory);
+        LOGGER.info("Iris forced startup datapack staged: {} pack(s), {} world preset(s), {} custom biome(s) at {}", packCount, presetIds.size(), countBiomes(seenBiomes), stagingDirectory);
         if (packCount == 0) {
             LOGGER.warn("Iris installed NO worldgen packs into the forced datapack - custom biomes and their colors will NOT generate. Install a pack (e.g. /iris download overworld) and restart the server before creating an Iris world.");
         }
-        return packDirectory;
     }
 
-    private static boolean installPack(File packFolder, IDataFixer fixer, KList<File> folders, Map<String, KSet<String>> seenBiomes, KList<String> presetIds) {
+    private static boolean installPack(File packFolder, IDataFixer fixer, KList<File> folders,
+                                       Map<String, KSet<String>> seenBiomes,
+                                       KList<String> presetIds) throws IOException {
         String packName = packFolder.getName();
-        File[] dimensionFiles = new File(packFolder, "dimensions").listFiles((File file) -> file.isFile() && file.getName().endsWith(".json"));
-        if (dimensionFiles == null || dimensionFiles.length == 0) {
+        File dimensionsDirectory = new File(packFolder, "dimensions");
+        if (!dimensionsDirectory.isDirectory()) {
             return false;
         }
-        boolean installed = false;
+        File[] dimensionFiles = dimensionsDirectory.listFiles(
+                (File file) -> file.isFile() && file.getName().endsWith(".json"));
+        if (dimensionFiles == null) {
+            throw new IOException("Iris could not read dimensions for pack '" + packName + "'");
+        }
+        if (dimensionFiles.length == 0) {
+            return false;
+        }
+        Arrays.sort(dimensionFiles, Comparator.comparing(File::getName));
+        IrisData data = IrisData.get(packFolder);
         for (File dimensionFile : dimensionFiles) {
             String dimensionKey = dimensionFile.getName().substring(0, dimensionFile.getName().length() - ".json".length());
-            try {
-                IrisData data = IrisData.get(packFolder);
-                IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
-                if (dimension == null) {
-                    continue;
-                }
-                dimension.installBiomes(fixer, () -> data, folders, biomesForNamespace(seenBiomes, dimension.getLoadKey()));
-                writeDimensionType(folders, fixer, dimension);
-                String presetKey = dimensionKey.equals(packName) ? packName : packName + "_" + dimensionKey;
-                writeWorldPreset(folders, dimension, packName, dimensionKey, presetKey);
-                presetIds.add("irisworldgen:" + presetKey);
-                installed = true;
-            } catch (Throwable e) {
-                LOGGER.error("Iris failed to install forced datapack content for pack '{}' dimension '{}'", packName, dimensionKey, e);
+            IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
+            if (dimension == null) {
+                throw new IllegalStateException("Iris pack '" + packName + "' dimension '"
+                        + dimensionKey + "' did not load while building the forced datapack");
             }
+            dimension.installBiomes(fixer, () -> data, folders,
+                    biomesForNamespace(seenBiomes, dimension.getLoadKey()));
+            writeDimensionType(folders, fixer, dimension);
+            String presetKey = dimensionKey.equals(packName) ? packName : packName + "_" + dimensionKey;
+            writeWorldPreset(folders, dimension, packName, dimensionKey, presetKey);
+            presetIds.add("irisworldgen:" + presetKey);
         }
-        return installed;
+        return true;
     }
 
     static KSet<String> biomesForNamespace(Map<String, KSet<String>> biomes, String namespace) {
@@ -316,6 +347,35 @@ public final class ModdedForcedDatapack {
         }
         for (Path entry : entries) {
             Files.deleteIfExists(entry);
+        }
+    }
+
+    static void publishDirectory(Path stagingDirectory, Path publishedDirectory) throws IOException {
+        Path backupDirectory = publishedDirectory.resolveSibling(
+                publishedDirectory.getFileName() + ".backup-" + UUID.randomUUID());
+        boolean hadPublishedDirectory = Files.exists(publishedDirectory);
+        if (hadPublishedDirectory) {
+            Files.move(publishedDirectory, backupDirectory, StandardCopyOption.ATOMIC_MOVE);
+        }
+        try {
+            Files.move(stagingDirectory, publishedDirectory, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException | RuntimeException | Error failure) {
+            if (hadPublishedDirectory) {
+                try {
+                    Files.move(backupDirectory, publishedDirectory, StandardCopyOption.ATOMIC_MOVE);
+                } catch (Throwable rollbackError) {
+                    failure.addSuppressed(rollbackError);
+                }
+            }
+            throw failure;
+        }
+        if (hadPublishedDirectory) {
+            try {
+                clean(backupDirectory);
+            } catch (Throwable cleanupError) {
+                LOGGER.warn("Iris published the forced datapack but could not remove backup {}",
+                        backupDirectory, cleanupError);
+            }
         }
     }
 

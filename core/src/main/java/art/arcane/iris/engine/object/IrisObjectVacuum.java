@@ -93,21 +93,27 @@ public final class IrisObjectVacuum {
 
     public static int columnTargetY(int dx, int dz, int lowX, int highX, int lowZ, int highZ,
                                     double effectiveRadius, double falloff, int originalY, int meetY) {
+        double factor = columnInfluence(
+                dx, dz, lowX, highX, lowZ, highZ, effectiveRadius, falloff);
+        return (int) Math.round(originalY + (((double) meetY - originalY) * factor));
+    }
+
+    public static double columnInfluence(int dx, int dz, int lowX, int highX, int lowZ, int highZ,
+                                         double effectiveRadius, double falloff) {
         int outX = outset(dx, lowX, highX);
         int outZ = outset(dz, lowZ, highZ);
-        double distance = Math.sqrt((double) (outX * outX) + (double) (outZ * outZ));
+        double distance = Math.sqrt((double) outX * outX + (double) outZ * outZ);
         if (effectiveRadius <= 0) {
-            return distance <= 0 ? meetY : originalY;
+            return distance <= 0 ? 1.0 : 0.0;
         }
-        if (distance > effectiveRadius) {
-            return originalY;
+        if (distance >= effectiveRadius) {
+            return 0.0;
         }
         double t = 1.0 - (distance / effectiveRadius);
         if (t <= 0) {
-            return originalY;
+            return 0.0;
         }
-        double factor = Math.pow(t, Math.max(0.25, falloff));
-        return (int) Math.round(originalY + ((meetY - originalY) * factor));
+        return Math.pow(t, Math.max(0.25, falloff));
     }
 
     public static int waveOffset(double distance, double effectiveRadius, double signedNoise, double amplitude) {

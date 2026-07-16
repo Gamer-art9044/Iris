@@ -25,6 +25,7 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.core.pack.StructurePackageClosure;
 import art.arcane.iris.core.runtime.StudioOpenCoordinator;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -37,6 +38,7 @@ import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisSpawner;
+import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.volmlib.util.collection.KList;
@@ -69,7 +71,9 @@ import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
 import java.io.File;
 import java.io.IOException;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -623,7 +627,13 @@ public class IrisProject {
         IrisData dm = IrisData.get(path);
         IrisDimension dimension = dm.getDimensionLoader().load(dimm);
         File folder = new File(IrisPlatforms.get().dataFolder(), "exports/" + dimension.getLoadKey());
-        folder.mkdirs();
+        IO.delete(folder);
+        if (folder.exists()) {
+            throw new IllegalStateException("Failed to clear structure package staging folder " + folder.getAbsolutePath());
+        }
+        if (!folder.mkdirs() && !folder.isDirectory()) {
+            throw new IllegalStateException("Failed to create structure package staging folder " + folder.getAbsolutePath());
+        }
         IrisLogging.info("Packaging Dimension " + dimension.getName() + " " + (obfuscate ? "(Obfuscated)" : ""));
         KSet<IrisRegion> regions = new KSet<>();
         KSet<IrisBiome> biomes = new KSet<>();
@@ -647,6 +657,10 @@ public class IrisProject {
         biomes.forEach((r) -> r.getLoot().getTables().forEach((i) -> loot.add(dm.getLootLoader().load(i))));
         biomes.forEach((r) -> r.getEntitySpawners().forEach((sp) -> spawners.add(dm.getSpawnerLoader().load(sp))));
         collectSpawnerEntityKeys(spawners).forEach((i) -> entities.add(dm.getEntityLoader().load(i)));
+        Set<String> structureKeys = new LinkedHashSet<>();
+        collectStructureKeys(structureKeys, dimension.getStructures());
+        regions.forEach((region) -> collectStructureKeys(structureKeys, region.getStructures()));
+        biomes.forEach((biome) -> collectStructureKeys(structureKeys, biome.getStructures()));
         KMap<String, String> renameObjects = new KMap<>();
         String a;
         StringBuilder b = new StringBuilder();
@@ -704,6 +718,11 @@ public class IrisProject {
         IrisLogging.info("Writing Dimensional Scaffold");
 
         try {
+            StructurePackageClosure structureClosure = StructurePackageClosure.collect(path, structureKeys);
+            if (!structureClosure.isValid()) {
+                throw new IOException("Structure package closure is invalid: " + String.join("; ", structureClosure.errors()));
+            }
+            b.append(structureClosure.writeTo(folder, minify));
             a = new JSONObject(new Gson().toJson(dimension)).toString(minify ? 0 : 4);
             IO.writeAll(new File(folder, "dimensions/" + dimension.getLoadKey() + ".json"), a);
             b.append(IO.hash(a));
@@ -776,6 +795,20 @@ public class IrisProject {
             spawner.getInitialSpawns().forEach((spawn) -> entityKeys.add(spawn.getEntity()));
         }
         return entityKeys;
+    }
+
+    private static void collectStructureKeys(Set<String> keys, KList<IrisStructurePlacement> placements) {
+        if (placements == null) {
+            return;
+        }
+        for (IrisStructurePlacement placement : placements) {
+            if (placement == null || placement.getStructures() == null) {
+                continue;
+            }
+            for (String structureKey : placement.getStructures()) {
+                keys.add(structureKey);
+            }
+        }
     }
 
     public void compile(VolmitSender sender) {

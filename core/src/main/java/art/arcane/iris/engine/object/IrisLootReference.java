@@ -21,6 +21,7 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
+import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import art.arcane.iris.engine.object.annotations.Snippet;
@@ -38,6 +39,8 @@ import lombok.experimental.Accessors;
 @Desc("Represents a loot entry")
 @Data
 public class IrisLootReference {
+    public static final double MAX_MULTIPLIER = 16D;
+
     private final transient AtomicCache<KList<IrisLootTable>> tt = new AtomicCache<>();
     @Desc("Add = add on top of parent tables, Replace = clear first then add these. Clear = Remove all and dont add loot from this or parent.")
     private IrisLootMode mode = IrisLootMode.ADD;
@@ -46,7 +49,8 @@ public class IrisLootReference {
     @Desc("Add loot table registries here")
     private KList<String> tables = new KList<>();
     @MinNumber(0)
-    @Desc("Increase the chance of loot in this area")
+    @MaxNumber(MAX_MULTIPLIER)
+    @Desc("Scale loot sources in this area from 0 to 16 times their normal count")
     private double multiplier = 1D;
 
     public KList<IrisLootTable> getLootTables(DataProvider g) {

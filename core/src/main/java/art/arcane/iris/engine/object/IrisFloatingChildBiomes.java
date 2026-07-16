@@ -46,6 +46,7 @@ import lombok.experimental.Accessors;
 public class IrisFloatingChildBiomes implements IRare {
     private final transient AtomicCache<IrisBiome> resolvedBiome = new AtomicCache<>();
     private final transient AtomicCache<CNG> footprintCache = new AtomicCache<>();
+    private final transient AtomicCache<FloatingIslandEdgeProfile> edgeTaperProfileCache = new AtomicCache<>();
     private final transient AtomicCache<CNG> pickerCache = new AtomicCache<>();
     private final transient AtomicCache<CNG> altitudeCache = new AtomicCache<>();
     private final transient AtomicCache<CNG> topShapeCache = new AtomicCache<>();
@@ -57,6 +58,19 @@ public class IrisFloatingChildBiomes implements IRare {
 
     public CNG getFootprintCng(long baseSeed, IrisData data) {
         return footprintCache.aquire(() -> getFootprintStyle().create(new RNG(baseSeed ^ 0xF007B17DL), data));
+    }
+
+    public FloatingIslandEdgeProfile getEdgeTaperProfile(long baseSeed, IrisData data) {
+        return edgeTaperProfileCache.aquire(() -> {
+            int width = FloatingIslandEdgeProfile.clampWidth(getEdgeTaperWidth());
+            double amplitude = FloatingIslandEdgeProfile.clampVariationAmplitude(
+                    getEdgeTaperVariationAmplitude(), width);
+            IrisGeneratorStyle style = getEdgeTaperVariationStyle();
+            CNG variation = amplitude > 0.0D && style != null
+                    ? style.create(new RNG(baseSeed ^ 0xED6E7A9E5L), data)
+                    : null;
+            return new FloatingIslandEdgeProfile(width, getEdgeTaperExponent(), amplitude, variation);
+        });
     }
 
     public CNG getPickerCng(long baseSeed, IrisData data) {
@@ -146,6 +160,24 @@ public class IrisFloatingChildBiomes implements IRare {
     @MaxNumber(1)
     @Desc("Coverage threshold (0..1). Roughly the fraction of the world that is NOT island: 0.0 = every column becomes island, 0.5 ≈ 50% of columns, 0.8 ≈ sparse scattered ~20% coverage, 1.0 = no islands at all. Values near 0.5 feel most natural.")
     private double footprintThreshold = 0.5;
+
+    @MinNumber(2)
+    @MaxNumber(32)
+    @Desc("Width in blocks of the rounded transition from the floating island contour to its full thickness. Smaller values make a tighter edge; larger values make a broader rounded underside.")
+    private int edgeTaperWidth = FloatingIslandEdgeProfile.DEFAULT_WIDTH;
+
+    @MinNumber(0.25)
+    @MaxNumber(4)
+    @Desc("Shape exponent for the rounded edge. Values below 1 fill into a softer, fuller curve; values above 1 keep the rim thinner before rising into the island interior.")
+    private double edgeTaperExponent = FloatingIslandEdgeProfile.DEFAULT_EXPONENT;
+
+    @Desc("Broad 2D noise that organically varies the rounded edge without changing the island footprint. Low-frequency SIMPLEX or PERLIN styles give coherent natural contours; high-frequency or cellular styles can look speckled.")
+    private IrisGeneratorStyle edgeTaperVariationStyle = NoiseStyle.SIMPLEX.style().zoomed(0.18D);
+
+    @MinNumber(0)
+    @MaxNumber(8)
+    @Desc("Maximum number of blocks by which edgeTaperVariationStyle locally widens or narrows the rounded transition. 0 disables variation. Runtime keeps the resulting local width between 2 and 32 blocks so every protected rim column remains connected.")
+    private double edgeTaperVariationAmplitude = 0.0D;
 
     @Desc("Picker noise used when multiple floating child entries exist. Samples once per column to deterministically choose which entry's footprint is tested there. Use a large style zoom (e.g. zoom: 4 for ~400-block regions) so each entry owns broad coherent areas.")
     private IrisGeneratorStyle pickerStyle = NoiseStyle.SIMPLEX.style();

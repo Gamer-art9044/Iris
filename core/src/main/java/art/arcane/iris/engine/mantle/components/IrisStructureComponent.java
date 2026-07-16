@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.mantle.components;
 
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
@@ -30,12 +31,14 @@ import art.arcane.iris.engine.mantle.IrisMantleComponent;
 import art.arcane.iris.engine.mantle.MantleWriter;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
+import art.arcane.iris.engine.object.IrisStructureStiltSettings;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.noise.CNG;
@@ -45,8 +48,11 @@ import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.volmlib.util.matter.MatterCavern;
 import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
 import art.arcane.volmlib.util.math.RNG;
+import it.unimi.dsi.fastutil.longs.Long2IntMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 
 @ComponentFlag(ReservedFlag.JIGSAW)
@@ -81,15 +87,15 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
         placements.addAll(getDimension().getStructures());
 
-        for (int placementOrdinal = 0; placementOrdinal < placements.size(); placementOrdinal++) {
-            placeFromPlacement(writer, placements.get(placementOrdinal), x, z, placementOrdinal);
+        for (IrisStructurePlacement placement : placements) {
+            placeFromPlacement(writer, placement, x, z);
         }
     }
 
     @ChunkCoordinates
-    private void placeFromPlacement(MantleWriter writer, IrisStructurePlacement placement, int cx, int cz, int placementOrdinal) {
+    private void placeFromPlacement(MantleWriter writer, IrisStructurePlacement placement, int cx, int cz) {
         IrisStructureLocator.ResolvedPlacement resolved = IrisStructureLocator.resolvePlacement(
-                getEngineMantle().getEngine(), placement, cx, cz, placementOrdinal);
+                getEngineMantle().getEngine(), placement, cx, cz);
         if (resolved == null) {
             return;
         }
@@ -102,7 +108,10 @@ public class IrisStructureComponent extends IrisMantleComponent {
 
         String key = resolved.structureKey();
         IrisStructure structure = resolved.structure();
-        KList<PlacedStructurePiece> pieces = resolved.pieces();
+        KList<PlacedStructurePiece> pieces = resolvedPiecesOrNull(resolved, cx, cz);
+        if (pieces == null) {
+            return;
+        }
         RNG rng = resolved.rng();
         int baseY = resolved.baseY();
         if (trace) {
@@ -120,23 +129,108 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
 
         ObjectPlaceMode mode = structure.getPlaceMode();
+        int failedPieces = 0;
+        Long2IntOpenHashMap foundationColumns = placement.getStilt() == null
+                ? null : new Long2IntOpenHashMap();
         if (placement.isUnderground()) {
             ObjectPlaceMode undergroundMode = (mode == ObjectPlaceMode.ORGANIC_STILT || mode == ObjectPlaceMode.CEILING_HANG)
                     ? mode : ObjectPlaceMode.STRUCTURE_PIECE;
             for (PlacedStructurePiece p : pieces) {
-                placeObject(writer, structure, p, undergroundMode, p.getY(), rng);
+                if (placeObject(writer, structure, p, undergroundMode, p.getY(), rng, foundationColumns) == -1) {
+                    failedPieces++;
+                }
             }
         } else if (mode == ObjectPlaceMode.STRUCTURE_PIECE || mode == ObjectPlaceMode.FLOATING) {
             for (PlacedStructurePiece p : pieces) {
-                placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY(), rng);
+                if (placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY(), rng, foundationColumns) == -1) {
+                    failedPieces++;
+                }
             }
         } else if (pieces.size() == 1) {
-            placeObject(writer, structure, pieces.getFirst(), mode, -1, rng);
+            if (placeObject(writer, structure, pieces.getFirst(), mode, -1, rng, foundationColumns) == -1) {
+                failedPieces++;
+            }
         } else {
             for (PlacedStructurePiece p : pieces) {
-                placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY(), rng);
+                if (placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY(), rng, foundationColumns) == -1) {
+                    failedPieces++;
+                }
             }
         }
+        requireAppliedPieces(resolved, cx, cz, failedPieces);
+        if (failedPieces == 0 && placement.getStilt() != null) {
+            placeFoundation(writer, foundationColumns, placement.getStilt(), rng);
+        }
+    }
+
+    private void placeFoundation(MantleWriter writer, Long2IntOpenHashMap columns,
+                                 IrisStructureStiltSettings settings, RNG rng) {
+        IrisMaterialPalette palette = Objects.requireNonNull(
+                settings.getPalette(), "Structure stilt palette must not be null");
+        int mantleOffset = getEngineMantle().getEngine().getMinHeight();
+        int maxDepth = Math.max(1, settings.getMaxDepth());
+        for (Long2IntMap.Entry column : columns.long2IntEntrySet()) {
+            int worldX = StructureFoundationPlanner.unpackX(column.getLongKey());
+            int worldZ = StructureFoundationPlanner.unpackZ(column.getLongKey());
+            int foundationY = column.getIntValue();
+            PlatformBlockState foundationState = writer.getDataIfPresent(
+                    worldX, foundationY, worldZ, PlatformBlockState.class);
+            if (foundationState == null || !foundationState.isSolid()) {
+                continue;
+            }
+            int terrainHeight = getEngineMantle().trueHeight(worldX, worldZ);
+            int groundY = StructureFoundationPlanner.findGroundY(
+                    foundationY, maxDepth, 0,
+                    y -> StructureFoundationPlanner.isGroundSolid(
+                            writer.getDataIfPresent(worldX, y, worldZ, PlatformBlockState.class),
+                            writer.getDataIfPresent(worldX, y, worldZ, MatterCavern.class) != null,
+                            y, terrainHeight));
+            if (groundY == StructureFoundationPlanner.NO_GROUND) {
+                continue;
+            }
+            StructureFoundationPlanner.fillSupportColumn(foundationY, groundY, y -> {
+                writeFoundationSupport(
+                        writer, palette, rng, getData(), worldX, y, worldZ, mantleOffset);
+            });
+        }
+    }
+
+    static void writeFoundationSupport(MantleWriter writer, IrisMaterialPalette palette, RNG rng,
+                                       IrisData data, int worldX, int mantleY, int worldZ,
+                                       int mantleOffset) {
+        int worldY = mantleY + mantleOffset;
+        PlatformBlockState support = palette.get(rng, worldX, worldY, worldZ, data);
+        if (support == null) {
+            throw new IllegalStateException("Structure stilt palette resolved no block at "
+                    + worldX + "," + worldY + "," + worldZ);
+        }
+        writer.clearData(worldX, mantleY, worldZ, MatterCavern.class);
+        writer.set(worldX, mantleY, worldZ, support);
+    }
+
+    static KList<PlacedStructurePiece> resolvedPiecesOrNull(
+            IrisStructureLocator.ResolvedPlacement resolved,
+            int chunkX,
+            int chunkZ
+    ) {
+        if (resolved == null) {
+            return null;
+        }
+        KList<PlacedStructurePiece> pieces = resolved.pieces();
+        if (!IrisStructureLocator.requirePlacementOutput(
+                resolved.placement(), resolved.structureKey(), chunkX, chunkZ,
+                pieces != null && !pieces.isEmpty(), "placement application received no assembled pieces")) {
+            return null;
+        }
+        return pieces;
+    }
+
+    static void requireAppliedPieces(IrisStructureLocator.ResolvedPlacement resolved,
+                                     int chunkX, int chunkZ, int failedPieces) {
+        IrisStructureLocator.requirePlacementOutput(
+                resolved.placement(), resolved.structureKey(), chunkX, chunkZ, failedPieces == 0,
+                "object placement rejected " + failedPieces + " of " + resolved.pieces().size()
+                        + " assembled piece(s)");
     }
 
     private void boreStructure(MantleWriter writer, KList<PlacedStructurePiece> pieces, int padding) {
@@ -377,7 +471,8 @@ public class IrisStructureComponent extends IrisMantleComponent {
         return new int[]{minX, minY, minZ, maxX, maxY, maxZ};
     }
 
-    private void placeObject(MantleWriter writer, IrisStructure structure, PlacedStructurePiece p, ObjectPlaceMode mode, int y, RNG rng) {
+    private int placeObject(MantleWriter writer, IrisStructure structure, PlacedStructurePiece p,
+                            ObjectPlaceMode mode, int y, RNG rng, Long2IntOpenHashMap foundationColumns) {
         IrisObject object = p.getObject();
         String objectKey = object.getLoadKey();
         IrisObjectPlacement config = structure.createLootPlacement(objectKey);
@@ -391,7 +486,9 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
         int placeY = (y == -1) ? -1 : y - getEngineMantle().getEngine().getMinHeight();
         String marker = structurePlacementMarker(structure, p, objectKey);
-        object.place(p.getX(), placeY, p.getZ(), writer, config, rng, (position, state) -> {
+        return object.place(p.getX(), placeY, p.getZ(), writer, config, rng, (position, state) -> {
+            StructureFoundationPlanner.recordBaseCell(
+                    foundationColumns, position.getX(), position.getY(), position.getZ(), state);
             if (marker != null && shouldWriteStructureMarker(state)) {
                 writer.setData(position.getX(), position.getY(), position.getZ(), marker);
             }
@@ -443,7 +540,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
             int carvePadding = placement.isOverbore() ? Math.max(0, placement.getOverboreRadius())
                     : placement.isBore() ? Math.max(0, placement.getBorePadding()) : 0;
             for (String key : placement.getStructures()) {
-                IrisStructure structure = art.arcane.iris.core.loader.IrisData.loadAnyStructure(key, getData());
+                IrisStructure structure = getData().load(IrisStructure.class, key, false);
                 if (structure != null) {
                     max = Math.max(max, Math.max(1, structure.getMaxSizeChunks()) * 16 + carvePadding);
                 }

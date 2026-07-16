@@ -19,6 +19,8 @@
 package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.tools.TreePlausibilizeBatch;
+import art.arcane.iris.core.tools.TreePlausibilizer;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
@@ -27,6 +29,7 @@ import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.modded.ModdedBlockState;
 import art.arcane.iris.modded.ModdedTileData;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.math.RNG;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -43,6 +46,7 @@ import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtUtils;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Blocks;
@@ -157,7 +161,9 @@ public final class ModdedObjectCommands {
         root.then(bukkitOnly("we", "WorldEdit selection import requires the Bukkit plugin with WorldEdit installed."));
         root.then(bukkitOnly("studio", "The object studio world requires the Bukkit studio toolchain; it is not available on modded servers."));
         root.then(bukkitOnly("convert", "Schematic conversion (.schem -> .iob) requires the Bukkit plugin."));
-        root.then(bukkitOnly("plausibilize", "Tree plausibilization requires the Bukkit plugin (its block-data tooling is not ported to modded yet)."));
+        root.then(Commands.literal("plausibilize")
+                .then(Commands.argument("args", StringArgumentType.greedyString()).suggests(OBJECT_KEYS)
+                        .executes((CommandContext<CommandSourceStack> context) -> plausibilize(context.getSource(), StringArgumentType.getString(context, "args")))));
 
         return root;
     }
@@ -642,6 +648,48 @@ public final class ModdedObjectCommands {
             IrisModdedCommands.fail(source, "Failed to save object " + file.getName() + ": " + e.getMessage());
             return 0;
         }
+        return 1;
+    }
+
+    private static int plausibilize(CommandSourceStack source, String raw) {
+        Engine engine = IrisModdedCommands.engineFor(source.getLevel());
+        IrisData data = engine == null ? null : engine.getData();
+        boolean dryRun = false;
+        int reach = TreePlausibilizer.DEFAULT_REACH;
+        StringBuilder targetBuilder = new StringBuilder();
+        for (String token : raw.trim().split("\\s+")) {
+            String lower = token.toLowerCase(Locale.ROOT);
+            if (lower.startsWith("dryrun=")) {
+                dryRun = Boolean.parseBoolean(lower.substring("dryrun=".length()));
+                continue;
+            }
+            if (lower.startsWith("reach=")) {
+                try {
+                    reach = Integer.parseInt(lower.substring("reach=".length()));
+                } catch (NumberFormatException e) {
+                    IrisModdedCommands.fail(source, "Invalid reach: " + token);
+                    return 0;
+                }
+                continue;
+            }
+            if (!targetBuilder.isEmpty()) {
+                targetBuilder.append(' ');
+            }
+            targetBuilder.append(token);
+        }
+        String target = targetBuilder.toString();
+        List<TreePlausibilizeBatch.Target> targets = TreePlausibilizeBatch.resolve(target, data);
+        if (targets.isEmpty()) {
+            IrisModdedCommands.fail(source, "No objects matched: " + target);
+            return 0;
+        }
+        IrisModdedCommands.ok(source, "Plausibilize [reach=" + reach + (dryRun ? ", DRY" : "")
+                + "] queued " + targets.size() + " object(s)");
+        boolean dry = dryRun;
+        int reachFinal = reach;
+        MinecraftServer server = source.getServer();
+        J.a(() -> TreePlausibilizeBatch.run(targets, dry, reachFinal, data, (String line) ->
+                server.execute(() -> IrisModdedCommands.ok(source, line))));
         return 1;
     }
 

@@ -20,6 +20,7 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.Required;
@@ -82,7 +83,7 @@ public class IrisBlockDrops {
 
     public void fillDrops(boolean debug, KList<ItemStack> d) {
         for (IrisLoot i : getDrops()) {
-            if (RNG.r.i(1, i.getRarity()) == i.getRarity()) {
+            if (LootResolver.oneIn(RNG.r, i.getRarity())) {
                 d.add(i.get(debug, RNG.r));
             }
         }

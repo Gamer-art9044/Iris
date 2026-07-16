@@ -27,6 +27,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedModifier;
 import art.arcane.iris.engine.framework.EngineDecorator;
 import art.arcane.iris.engine.object.FloatingBottomPaletteMode;
+import art.arcane.iris.engine.object.FloatingIslandBoundarySampler;
 import art.arcane.iris.engine.object.FloatingIslandSample;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomePaletteLayer;
@@ -212,16 +213,18 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
         IrisDimension dimension = getDimension();
         IrisComplex complex = getComplex();
         long baseSeed = getEngine().getSeedManager().getTerrain() ^ FLOATING_BASE_SEED_SALT;
+        FloatingIslandBoundarySampler boundarySampler = context.getFloatingIslandBoundarySampler();
+        FloatingIslandSample.clearChunkMemo();
 
         for (int xf = 0; xf < 16; xf++) {
             for (int zf = 0; zf < 16; zf++) {
                 int wx = x + xf;
                 int wz = z + zf;
-                IrisBiome parent = complex.getTrueBiomeStream().get(wx, wz);
+                IrisBiome parent = boundarySampler.parent(wx, wz);
                 if (parent == null || parent.getFloatingChildBiomes() == null || parent.getFloatingChildBiomes().isEmpty()) {
                     continue;
                 }
-                FloatingIslandSample sample = FloatingIslandSample.sampleMemoized(parent, wx, wz, chunkHeight, baseSeed, data, getEngine());
+                FloatingIslandSample sample = FloatingIslandSample.sampleMemoized(parent, wx, wz, chunkHeight, baseSeed, data, getEngine(), boundarySampler);
                 if (sample == null) {
                     continue;
                 }
@@ -295,16 +298,17 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
         IrisData data = getData();
         IrisComplex complex = getComplex();
         long baseSeed = getEngine().getSeedManager().getTerrain() ^ FLOATING_BASE_SEED_SALT;
+        FloatingIslandBoundarySampler boundarySampler = context.getFloatingIslandBoundarySampler();
 
         for (int xf = 0; xf < 16; xf++) {
             for (int zf = 0; zf < 16; zf++) {
                 int wx = x + xf;
                 int wz = z + zf;
-                IrisBiome parent = complex.getTrueBiomeStream().get(wx, wz);
+                IrisBiome parent = boundarySampler.parent(wx, wz);
                 if (parent == null || parent.getFloatingChildBiomes() == null || parent.getFloatingChildBiomes().isEmpty()) {
                     continue;
                 }
-                FloatingIslandSample sample = FloatingIslandSample.sampleMemoized(parent, wx, wz, chunkHeight, baseSeed, data, getEngine());
+                FloatingIslandSample sample = FloatingIslandSample.sampleMemoized(parent, wx, wz, chunkHeight, baseSeed, data, getEngine(), boundarySampler);
                 if (sample == null) {
                     continue;
                 }

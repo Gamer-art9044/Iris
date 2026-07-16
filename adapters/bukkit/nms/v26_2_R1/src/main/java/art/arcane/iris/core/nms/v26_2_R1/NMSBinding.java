@@ -15,6 +15,7 @@ import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.nativegen.NativeStructureGenerationException;
 import art.arcane.iris.util.project.agent.Agent;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
@@ -397,6 +398,11 @@ public class NMSBinding implements INMSBinding {
     }
 
     @Override
+    public boolean supportsIrisWorldGeneration() {
+        return true;
+    }
+
+    @Override
     public int getTrueBiomeBaseId(Object biomeBase) {
         return getCustomBiomeRegistry().getId(((Holder<net.minecraft.world.level.biome.Biome>) biomeBase).value());
     }
@@ -470,8 +476,8 @@ public class NMSBinding implements INMSBinding {
         KList<String> keys = new KList<>();
         try {
             registry().lookupOrThrow(Registries.STRUCTURE).keySet().forEach(k -> keys.add(k.toString()));
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Iris failed to read registered structure keys from the Minecraft registry", e);
         }
         return keys;
     }
@@ -481,8 +487,8 @@ public class NMSBinding implements INMSBinding {
         KList<String> keys = new KList<>();
         try {
             registry().lookupOrThrow(Registries.STRUCTURE_SET).keySet().forEach(k -> keys.add(k.toString()));
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Iris failed to read registered structure-set keys from the Minecraft registry", e);
         }
         return keys;
     }
@@ -494,8 +500,9 @@ public class NMSBinding implements INMSBinding {
             ServerLevel level = ((CraftWorld) world).getHandle();
             BiomeSource source = level.getChunkSource().getGenerator().getBiomeSource();
             keys.addAll(VanillaStructureBiomes.reachableStructureKeys(level, source));
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Iris failed to resolve reachable structures for Bukkit world '"
+                    + (world == null ? "<null>" : world.getName()) + "'", e);
         }
         return keys;
     }
@@ -504,9 +511,14 @@ public class NMSBinding implements INMSBinding {
     public KList<String> getStructureBiomeKeys(String structureKey) {
         KList<String> keys = new KList<>();
         try {
-            keys.addAll(VanillaStructureBiomes.structureBiomeKeys(registry(), structureKey));
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
+            RegistryAccess access = registry();
+            if (access == null) {
+                throw new IllegalStateException("Minecraft registry access is unavailable");
+            }
+            keys.addAll(VanillaStructureBiomes.structureBiomeKeys(access, structureKey));
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Iris failed to resolve biome keys for registered structure '"
+                    + structureKey + "'", e);
         }
         return keys;
     }
@@ -518,8 +530,9 @@ public class NMSBinding implements INMSBinding {
             ServerLevel level = ((CraftWorld) world).getHandle();
             BiomeSource source = level.getChunkSource().getGenerator().getBiomeSource();
             keys.addAll(VanillaStructureBiomes.possibleBiomeKeys(source));
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Iris failed to resolve possible structure biome keys for Bukkit world '"
+                    + (world == null ? "<null>" : world.getName()) + "'", e);
         }
         return keys;
     }
@@ -636,9 +649,9 @@ public class NMSBinding implements INMSBinding {
                 }
             }
             return new int[]{box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()};
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
-            return null;
+        } catch (RuntimeException e) {
+            throw NativeStructureGenerationException.failure(
+                    "capture placement", structureKey, chunkX, chunkZ, e);
         }
     }
 

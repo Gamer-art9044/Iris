@@ -19,6 +19,7 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.nms.datapack.DataVersion;
+import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.StructureVerticalBounds;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
@@ -27,7 +28,6 @@ import art.arcane.volmlib.util.json.JSONObject;
 import com.mojang.datafixers.util.Pair;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
-import net.minecraft.core.HolderSet;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -43,14 +43,17 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
-import net.minecraft.world.level.levelgen.structure.PoolElementStructurePiece;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
+import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
+import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
+import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,6 +77,7 @@ public final class ModdedWorldCheck {
     private static final int EXIT_FAILURE = 1;
     private static final int MAX_FOOTPRINT_CHUNKS = 96;
     private static final int MAX_START_REFERENCE_CHUNKS = 16;
+    private static final int MAX_STRUCTURE_CANDIDATES = 1024;
     private static final long SERVER_WAIT_TIMEOUT_MILLIS = 600000L;
     private static final long SERVER_WAIT_INTERVAL_MILLIS = 250L;
     private static final List<StructureCheck> STRUCTURE_CHECKS = List.of(
@@ -136,8 +140,9 @@ public final class ModdedWorldCheck {
             }
 
             MinecraftServer serverRef = server;
+            WorldCheckPreparation preparation = serverRef.submit(() -> run(serverRef)).join();
             exitCode = serverRef.submit(() -> runAndRequestStop(
-                    () -> run(serverRef),
+                    () -> completeWorldCheck(preparation),
                     () -> {
                         stopRequested.set(true);
                         serverRef.halt(false);
@@ -195,11 +200,12 @@ public final class ModdedWorldCheck {
         processExit.exit(exitCode);
     }
 
-    private static boolean run(MinecraftServer server) {
+    private static WorldCheckPreparation run(MinecraftServer server) {
         ServerLevel level = targetLevel(server);
         if (level == null) {
             LOGGER.error("[worldcheck] no Iris dimension is loaded");
-            return false;
+            return new WorldCheckPreparation(false, false, false, false,
+                    new NativeStructureGate(false, 0, false, null));
         }
 
         String levelId = level.dimension().identifier().toString();
@@ -268,16 +274,43 @@ public final class ModdedWorldCheck {
         }
 
         boolean entityMixinsOk = checkEntityMixins(level);
-        boolean structureOk = false;
-        if (generator != null) {
-            structureOk = checkNativeStructures(level, generator, spawn);
-        }
+        NativeStructureGate structureGate = generator == null
+                ? new NativeStructureGate(false, 0, false, null)
+                : checkNativeStructures(level, generator, spawn);
+        boolean terrainOk = sectionsOk && varietyOk;
+        boolean nonStructurePass = irisGenerator && dimensionTypeOk && terrainOk && entityMixinsOk;
+        return new WorldCheckPreparation(nonStructurePass, terrainOk, dimensionTypeOk,
+                entityMixinsOk, structureGate);
+    }
 
-        boolean pass = irisGenerator && dimensionTypeOk && sectionsOk && varietyOk && entityMixinsOk && structureOk;
+    private static boolean completeWorldCheck(WorldCheckPreparation preparation) {
+        NativeStructureGate structureGate = preparation.structureGate();
+        boolean poiOk = false;
+        PendingVillagePoi pendingPoi = structureGate.pendingPoi();
+        if (pendingPoi != null) {
+            PoiAudit poi = auditStructurePois(pendingPoi.level(), pendingPoi.start());
+            poiOk = villagePoiPass(poi.inBounds(), poi.outOfBounds());
+            qaEvent("village_poi_metric", "village", poiOk,
+                    "inBounds=" + poi.inBounds() + ",outOfBounds=" + poi.outOfBounds());
+            if (!poiOk) {
+                LOGGER.error("[worldcheck] village POI audit failed: inBounds={} outOfBounds={}",
+                        poi.inBounds(), poi.outOfBounds());
+            }
+        } else {
+            qaEvent("village_poi_metric", "village", false, "skipped=structure");
+        }
+        int passed = structureGate.nonVillagePassed()
+                + (structureGate.villagePassBeforePoi() && poiOk ? 1 : 0);
+        boolean structurePass = structureGate.passBeforePoi() && poiOk;
+        LOGGER.info("[worldcheck] native structure gate: {}/{} passed", passed, STRUCTURE_CHECKS.size());
+        qaEvent("structure_aggregate", "all", structurePass,
+                "passed=" + passed + ",total=" + STRUCTURE_CHECKS.size());
+        boolean pass = preparation.nonStructurePass() && structurePass;
         LOGGER.info("[worldcheck] {}", pass ? "PASS" : "FAIL");
         qaEvent("worldcheck_final", "all", pass,
-                "structures=" + STRUCTURE_CHECKS.size() + ",terrain=" + (sectionsOk && varietyOk)
-                        + ",dimensionType=" + dimensionTypeOk + ",entityMixins=" + entityMixinsOk);
+                "structures=" + STRUCTURE_CHECKS.size() + ",terrain=" + preparation.terrainOk()
+                        + ",dimensionType=" + preparation.dimensionTypeOk()
+                        + ",entityMixins=" + preparation.entityMixinsOk());
         return pass;
     }
 
@@ -354,25 +387,32 @@ public final class ModdedWorldCheck {
         return pass;
     }
 
-    private static boolean checkNativeStructures(ServerLevel level, IrisModdedChunkGenerator generator, BlockPos origin) {
+    private static NativeStructureGate checkNativeStructures(ServerLevel level,
+                                                             IrisModdedChunkGenerator generator,
+                                                             BlockPos origin) {
         boolean pass = true;
-        int passed = 0;
+        int nonVillagePassed = 0;
+        boolean villagePass = false;
+        PendingVillagePoi pendingPoi = null;
         for (StructureCheck check : STRUCTURE_CHECKS) {
-            boolean structurePass = checkNativeStructure(level, generator, origin, check);
-            if (structurePass) {
-                passed++;
-            } else {
+            StructureCheckResult result = checkNativeStructure(level, generator, origin, check);
+            if (!result.pass()) {
                 pass = false;
             }
+            if (check.label().equals("village")) {
+                villagePass = result.pass();
+                pendingPoi = result.pendingPoi();
+            } else if (result.pass()) {
+                nonVillagePassed++;
+            }
         }
-        LOGGER.info("[worldcheck] native structure gate: {}/{} passed", passed, STRUCTURE_CHECKS.size());
-        qaEvent("structure_aggregate", "all", pass,
-                "passed=" + passed + ",total=" + STRUCTURE_CHECKS.size());
-        return pass;
+        return new NativeStructureGate(pass, nonVillagePassed, villagePass, pendingPoi);
     }
 
-    private static boolean checkNativeStructure(ServerLevel level, IrisModdedChunkGenerator generator,
-                                                BlockPos origin, StructureCheck check) {
+    private static StructureCheckResult checkNativeStructure(ServerLevel level,
+                                                             IrisModdedChunkGenerator generator,
+                                                             BlockPos origin,
+                                                             StructureCheck check) {
         Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
         List<Holder<Structure>> registered = new ArrayList<>(check.registryKeys().size());
         LinkedHashSet<String> registeredKeys = new LinkedHashSet<>();
@@ -398,7 +438,7 @@ public final class ModdedWorldCheck {
             emitSkipped(check, "registry", "structure_reachability", "structure_locate",
                     "structure_start_reference", "structure_footprint", "structure_material",
                     "structure_block_entity");
-            return false;
+            return new StructureCheckResult(false, null);
         }
 
         List<Holder<Structure>> reachable = new ArrayList<>(registered.size());
@@ -422,35 +462,35 @@ public final class ModdedWorldCheck {
             LOGGER.error("[worldcheck] {} cannot generate in any biome produced by this Iris pack", check.label());
             emitSkipped(check, "reachability", "structure_locate", "structure_start_reference",
                     "structure_footprint", "structure_material", "structure_block_entity");
-            return false;
+            return new StructureCheckResult(false, null);
         }
 
         long locateStart = System.nanoTime();
-        Pair<BlockPos, Holder<Structure>> found = generator.findNearestMapStructure(
-                level, HolderSet.direct(reachable), origin, check.locateRadius(), false);
+        Pair<BlockPos, Holder<Structure>> found = findGeneratedStructureCandidate(
+                level, reachable, origin, check.locateRadius());
         long locateMillis = (System.nanoTime() - locateStart) / 1_000_000L;
         Identifier foundKey = found == null ? null : registry.getKey(found.getSecond().value());
         boolean locateOk = found != null && foundKey != null && reachableKeys.contains(foundKey.toString());
         qaEvent("structure_locate", check.label(), locateOk,
-                "millis=" + locateMillis + ",radius=" + check.locateRadius()
+                "method=placement_candidates,millis=" + locateMillis + ",radius=" + check.locateRadius()
                         + ",result=" + (foundKey == null ? "none" : foundKey));
         if (found == null) {
-            LOGGER.error("[worldcheck] {} locate found no result within {} chunks after {}ms",
+            LOGGER.error("[worldcheck] {} native placement candidates produced no valid start within {} rings after {}ms",
                     check.label(), check.locateRadius(), locateMillis);
             emitSkipped(check, "locate", "structure_start_reference", "structure_footprint",
                     "structure_material", "structure_block_entity");
-            return false;
+            return new StructureCheckResult(false, null);
         }
 
         BlockPos position = found.getFirst();
-        LOGGER.info("[worldcheck] {} locate: {} {} {} in {}ms (radius={}, unexplored=false, result={})",
+        LOGGER.info("[worldcheck] {} generated candidate: {} {} {} in {}ms (radius={}, result={})",
                 check.label(), position.getX(), position.getY(), position.getZ(), locateMillis,
                 check.locateRadius(), foundKey);
         if (!locateOk) {
-            LOGGER.error("[worldcheck] {} locate returned unexpected structure {}", check.label(), foundKey);
+            LOGGER.error("[worldcheck] {} candidate scan returned unexpected structure {}", check.label(), foundKey);
             emitSkipped(check, "locate", "structure_start_reference", "structure_footprint",
                     "structure_material", "structure_block_entity");
-            return false;
+            return new StructureCheckResult(false, null);
         }
 
         int chunkX = position.getX() >> 4;
@@ -471,11 +511,12 @@ public final class ModdedWorldCheck {
                     check.label(), chunkX, chunkZ);
             emitSkipped(check, "start_reference", "structure_footprint", "structure_material",
                     "structure_block_entity");
-            return false;
+            return new StructureCheckResult(false, null);
         }
 
-        IrisNativeStructureDecision decision = generator.commandEngine().getDimension().getImportedStructures()
-                .resolve(foundKey.toString(), NativeStructurePostProcessor.isUndergroundStep(structure.step()));
+        IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(
+                generator.commandEngine(), foundKey.toString(),
+                NativeStructurePostProcessor.isUndergroundStep(structure.step()));
         Integer appliedShift = generator.worldCheckStructureShift(foundKey.toString(), start.getChunkPos());
         BoundingBox shiftedBounds = start.getBoundingBox();
         boolean verticalShiftOk = verticalShiftMatches(
@@ -522,22 +563,17 @@ public final class ModdedWorldCheck {
         }
 
         boolean foundationOk = true;
-        boolean poiOk = true;
+        PendingVillagePoi pendingPoi = null;
         if (check.label().equals("village")) {
             foundationOk = villageFoundationPass(footprint.foundationGapColumns());
-            LOGGER.info("[worldcheck] village foundation metric: cobblestone below piece bases={} columns={} unsupported={}",
-                    footprint.foundationBlocks(), footprint.foundationColumns(), footprint.foundationGapColumns());
+            LOGGER.info("[worldcheck] village foundation metric: bases={} cobblestone={} columns={} unsupported={}",
+                    footprint.foundationBaseColumns(), footprint.foundationBlocks(),
+                    footprint.foundationColumns(), footprint.foundationGapColumns());
             qaEvent("village_foundation_metric", check.label(), foundationOk,
-                    "cobblestoneBelowBase=" + footprint.foundationBlocks() + ",columns="
+                    "bases=" + footprint.foundationBaseColumns() + ",cobblestoneBelowBase="
+                            + footprint.foundationBlocks() + ",columns="
                             + footprint.foundationColumns() + ",unsupported=" + footprint.foundationGapColumns());
-            PoiAudit poi = auditStructurePois(level, start);
-            poiOk = villagePoiPass(poi.inBounds(), poi.outOfBounds());
-            qaEvent("village_poi_metric", check.label(), poiOk,
-                    "inBounds=" + poi.inBounds() + ",outOfBounds=" + poi.outOfBounds());
-            if (!poiOk) {
-                LOGGER.error("[worldcheck] village POI audit failed: inBounds={} outOfBounds={}",
-                        poi.inBounds(), poi.outOfBounds());
-            }
+            pendingPoi = new PendingVillagePoi(level, start);
         }
 
         boolean blockEntityOk = footprint.blockEntityStates() == footprint.blockEntitiesPresent();
@@ -562,8 +598,9 @@ public final class ModdedWorldCheck {
         if (!foundationOk) {
             LOGGER.error("[worldcheck] village has unsupported foundation columns after stilt placement");
         }
-        return verticalShiftOk && footprintOk && materialOk && blockEntityOk
-                && vegetationOk && foundationOk && poiOk;
+        boolean pass = verticalShiftOk && footprintOk && materialOk && blockEntityOk
+                && vegetationOk && foundationOk;
+        return new StructureCheckResult(pass, pass ? pendingPoi : null);
     }
 
     private static StructureStart resolveStructureStart(ServerLevel level, ChunkAccess targetChunk,
@@ -586,6 +623,96 @@ public final class ModdedWorldCheck {
         return direct;
     }
 
+    private static Pair<BlockPos, Holder<Structure>> findGeneratedStructureCandidate(
+            ServerLevel level, List<Holder<Structure>> structures, BlockPos origin, int maxRadius) {
+        ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
+        Set<Long> attempted = new LinkedHashSet<>();
+        for (Holder<Structure> structure : structures) {
+            for (StructurePlacement placement : state.getPlacementsForStructure(structure)) {
+                if (!(placement instanceof ConcentricRingsStructurePlacement rings)) {
+                    continue;
+                }
+                List<ChunkPos> positions = state.getRingPositionsFor(rings);
+                if (positions == null) {
+                    continue;
+                }
+                List<ChunkPos> sorted = new ArrayList<>(positions);
+                sorted.sort(Comparator.comparingLong(position -> distanceSquared(origin, position)));
+                for (ChunkPos position : sorted) {
+                    Pair<BlockPos, Holder<Structure>> found = inspectStructureCandidate(
+                            level, structures, placement, position, attempted);
+                    if (found != null) {
+                        return found;
+                    }
+                    if (attempted.size() >= MAX_STRUCTURE_CANDIDATES) {
+                        return null;
+                    }
+                }
+            }
+        }
+
+        int originChunkX = origin.getX() >> 4;
+        int originChunkZ = origin.getZ() >> 4;
+        for (int radius = 0; radius <= maxRadius; radius++) {
+            for (Holder<Structure> structure : structures) {
+                for (StructurePlacement placement : state.getPlacementsForStructure(structure)) {
+                    if (!(placement instanceof RandomSpreadStructurePlacement randomSpread)) {
+                        continue;
+                    }
+                    for (int x = -radius; x <= radius; x++) {
+                        boolean xEdge = x == -radius || x == radius;
+                        for (int z = -radius; z <= radius; z++) {
+                            if (!xEdge && z != -radius && z != radius) {
+                                continue;
+                            }
+                            int sectorX = originChunkX + randomSpread.spacing() * x;
+                            int sectorZ = originChunkZ + randomSpread.spacing() * z;
+                            ChunkPos candidate = randomSpread.getPotentialStructureChunk(
+                                    state.getLevelSeed(), sectorX, sectorZ);
+                            if (!placement.isStructureChunk(state, candidate.x(), candidate.z())) {
+                                continue;
+                            }
+                            Pair<BlockPos, Holder<Structure>> found = inspectStructureCandidate(
+                                    level, structures, placement, candidate, attempted);
+                            if (found != null) {
+                                return found;
+                            }
+                            if (attempted.size() >= MAX_STRUCTURE_CANDIDATES) {
+                                return null;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Pair<BlockPos, Holder<Structure>> inspectStructureCandidate(
+            ServerLevel level, List<Holder<Structure>> structures, StructurePlacement placement,
+            ChunkPos candidate, Set<Long> attempted) {
+        if (!attempted.add(candidate.pack())) {
+            return null;
+        }
+        ChunkAccess chunk = level.getChunk(candidate.x(), candidate.z());
+        for (Holder<Structure> structure : structures) {
+            StructureStart start = resolveStructureStart(level, chunk, structure.value());
+            if (start == null || !start.isValid()) {
+                continue;
+            }
+            BlockPos locate = placement.getLocatePos(start.getChunkPos());
+            BlockPos resolved = new BlockPos(locate.getX(), start.getBoundingBox().minY(), locate.getZ());
+            return Pair.of(resolved, structure);
+        }
+        return null;
+    }
+
+    private static long distanceSquared(BlockPos origin, ChunkPos position) {
+        long x = (long) position.getMinBlockX() - origin.getX();
+        long z = (long) position.getMinBlockZ() - origin.getZ();
+        return x * x + z * z;
+    }
+
     private static FootprintAudit auditFootprint(ServerLevel level, Structure structure, StructureStart start,
                                                  StructureCheck check, Identifier structureKey) {
         List<StructurePiece> pieces = start.getPieces();
@@ -600,11 +727,11 @@ public final class ModdedWorldCheck {
         int characteristicChunks = 0;
         int vegetationBlocks = 0;
         int vegetationColumns = 0;
+        int foundationBaseColumns = 0;
         int foundationBlocks = 0;
         int foundationColumns = 0;
         int foundationGapColumns = 0;
         BitSet visited = new BitSet(level.getHeight() << 8);
-        int[] minimumPieceY = new int[256];
         int[] maximumPieceY = new int[256];
         for (ChunkPos chunkPos : selected) {
             ChunkAccess chunk = level.getChunk(chunkPos.x(), chunkPos.z());
@@ -617,8 +744,8 @@ public final class ModdedWorldCheck {
             BlockEntityAudit blockEntities = auditBlockEntities(level, chunk);
             blockEntityStates += blockEntities.states();
             blockEntitiesPresent += blockEntities.present();
-            StructureMaterialAudit material = auditStructureMaterial(level, chunk, pieces, check,
-                    structureKey, visited, minimumPieceY, maximumPieceY);
+            StructureMaterialAudit material = auditStructureMaterial(level, chunk, start, check,
+                    structureKey, visited, maximumPieceY);
             if (material.scanned()) {
                 materialScannedChunks++;
             }
@@ -628,6 +755,7 @@ public final class ModdedWorldCheck {
             }
             vegetationBlocks += material.vegetationBlocks();
             vegetationColumns += material.vegetationColumns();
+            foundationBaseColumns += material.foundationBaseColumns();
             foundationBlocks += material.foundationBlocks();
             foundationColumns += material.foundationColumns();
             foundationGapColumns += material.foundationGapColumns();
@@ -648,19 +776,18 @@ public final class ModdedWorldCheck {
         return new FootprintAudit(selected.size(), availableChunks, evidenceChunks,
                 coveredPieces, pieces.size(), blockEntityStates, blockEntitiesPresent,
                 materialScannedChunks, characteristicBlocks, characteristicChunks,
-                vegetationBlocks, vegetationColumns, foundationBlocks, foundationColumns,
-                foundationGapColumns);
+                vegetationBlocks, vegetationColumns, foundationBaseColumns, foundationBlocks,
+                foundationColumns, foundationGapColumns);
     }
 
     private static StructureMaterialAudit auditStructureMaterial(ServerLevel level, ChunkAccess chunk,
-                                                                  List<StructurePiece> pieces,
+                                                                  StructureStart start,
                                                                   StructureCheck check,
                                                                   Identifier structureKey,
                                                                   BitSet visited,
-                                                                  int[] minimumPieceY,
                                                                   int[] maximumPieceY) {
+        List<StructurePiece> pieces = start.getPieces();
         visited.clear();
-        Arrays.fill(minimumPieceY, Integer.MAX_VALUE);
         Arrays.fill(maximumPieceY, Integer.MIN_VALUE);
         int characteristicBlocks = 0;
         int minimumWorldY = level.getMinY();
@@ -683,20 +810,10 @@ public final class ModdedWorldCheck {
                 continue;
             }
             scanned = true;
-            int metricMinimumY = minimumY;
-            boolean metricBaseValid = true;
-            if (check.label().equals("village") && piece instanceof PoolElementStructurePiece poolPiece) {
-                int groundY = bounds.minY() + poolPiece.getGroundLevelDelta();
-                metricBaseValid = groundY >= bounds.minY();
-                metricMinimumY = Math.max(minimumWorldY, Math.min(maximumWorldY, groundY));
-            }
             for (int z = minimumZ; z <= maximumZ; z++) {
                 int localZ = z - minimumChunkZ;
                 for (int x = minimumX; x <= maximumX; x++) {
                     int column = (localZ << 4) | (x - minimumChunkX);
-                    if (metricBaseValid) {
-                        minimumPieceY[column] = Math.min(minimumPieceY[column], metricMinimumY);
-                    }
                     maximumPieceY[column] = Math.max(maximumPieceY[column], maximumY);
                 }
             }
@@ -747,55 +864,26 @@ public final class ModdedWorldCheck {
             }
         }
 
+        int foundationBaseColumns = 0;
         int foundationBlocks = 0;
         int foundationColumns = 0;
         int foundationGapColumns = 0;
         if (check.label().equals("village")) {
-            for (int column = 0; column < minimumPieceY.length; column++) {
-                int minimumY = minimumPieceY[column];
-                if (minimumY == Integer.MAX_VALUE) {
-                    continue;
-                }
-                boolean foundationColumn = false;
-                int x = minimumChunkX + (column & 15);
-                int z = minimumChunkZ + (column >> 4);
-                int foundationY = Integer.MIN_VALUE;
-                int foundationMaximumY = Math.min(maximumWorldY, minimumY + 1);
-                for (int y = minimumY; y <= foundationMaximumY; y++) {
-                    if (chunk.getBlockState(position.set(x, y, z)).isSolid()) {
-                        foundationY = y;
-                        break;
-                    }
-                }
-                boolean basePresent = foundationY != Integer.MIN_VALUE;
-                boolean supportSolid = false;
-                boolean vegetationSupport = false;
-                if (basePresent && foundationY > minimumWorldY) {
-                    BlockState support = chunk.getBlockState(position.set(x, foundationY - 1, z));
-                    supportSolid = support.isSolid();
-                    vegetationSupport = support.is(BlockTags.LOGS) || support.is(BlockTags.LEAVES);
-                }
-                boolean worldFloorBase = basePresent && foundationY == minimumWorldY;
-                if (!villageFoundationSupported(basePresent, worldFloorBase, supportSolid, vegetationSupport)) {
-                    foundationGapColumns++;
-                    continue;
-                }
-                for (int y = foundationY - 1; y >= minimumWorldY; y--) {
-                    BlockState state = chunk.getBlockState(position.set(x, y, z));
-                    if (!state.is(Blocks.COBBLESTONE)) {
-                        break;
-                    }
-                    foundationBlocks++;
-                    foundationColumn = true;
-                }
-                if (foundationColumn) {
-                    foundationColumns++;
-                }
-            }
+            BoundingBox area = new BoundingBox(
+                    minimumChunkX, minimumWorldY, minimumChunkZ,
+                    maximumChunkX, maximumWorldY, maximumChunkZ);
+            NativeStructurePostProcessor.StiltSupportAudit foundation =
+                    NativeStructurePostProcessor.auditStiltSupport(
+                            level, area, start, Blocks.COBBLESTONE.defaultBlockState());
+            foundationBaseColumns = foundation.baseColumns();
+            foundationBlocks = foundation.stiltBlocks();
+            foundationColumns = foundation.stiltColumns();
+            foundationGapColumns = foundation.unsupportedColumns();
         }
 
         return new StructureMaterialAudit(scanned, characteristicBlocks, vegetationBlocks,
-                vegetationColumns, foundationBlocks, foundationColumns, foundationGapColumns);
+                vegetationColumns, foundationBaseColumns, foundationBlocks, foundationColumns,
+                foundationGapColumns);
     }
 
     private static List<ChunkPos> selectFootprintChunks(StructureStart start, int limit) {
@@ -1036,11 +1124,6 @@ public final class ModdedWorldCheck {
         return vegetation && blockY > highestPieceY;
     }
 
-    static boolean villageFoundationSupported(boolean basePresent, boolean worldFloorBase,
-                                              boolean supportSolid, boolean vegetationSupport) {
-        return basePresent && (worldFloorBase || (supportSolid && !vegetationSupport));
-    }
-
     static boolean villageFoundationPass(int unsupportedColumns) {
         return unsupportedColumns == 0;
     }
@@ -1194,12 +1277,27 @@ public final class ModdedWorldCheck {
     private record StructureCheck(String label, List<String> registryKeys, int locateRadius) {
     }
 
+    private record WorldCheckPreparation(boolean nonStructurePass, boolean terrainOk,
+                                         boolean dimensionTypeOk, boolean entityMixinsOk,
+                                         NativeStructureGate structureGate) {
+    }
+
+    private record NativeStructureGate(boolean passBeforePoi, int nonVillagePassed,
+                                       boolean villagePassBeforePoi, PendingVillagePoi pendingPoi) {
+    }
+
+    private record StructureCheckResult(boolean pass, PendingVillagePoi pendingPoi) {
+    }
+
+    private record PendingVillagePoi(ServerLevel level, StructureStart start) {
+    }
+
     private record FootprintAudit(int inspectedChunks, int availableChunks, int evidenceChunks,
                                   int coveredPieces, int totalPieces, int blockEntityStates,
                                   int blockEntitiesPresent, int materialScannedChunks,
                                   int characteristicBlocks, int characteristicChunks,
                                   int vegetationBlocks, int vegetationColumns,
-                                  int foundationBlocks, int foundationColumns,
+                                  int foundationBaseColumns, int foundationBlocks, int foundationColumns,
                                   int foundationGapColumns) {
     }
 
@@ -1208,7 +1306,8 @@ public final class ModdedWorldCheck {
 
     private record StructureMaterialAudit(boolean scanned, int characteristicBlocks,
                                           int vegetationBlocks, int vegetationColumns,
-                                          int foundationBlocks, int foundationColumns,
+                                          int foundationBaseColumns, int foundationBlocks,
+                                          int foundationColumns,
                                           int foundationGapColumns) {
     }
 

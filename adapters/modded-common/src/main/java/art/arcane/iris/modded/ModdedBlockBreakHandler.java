@@ -20,6 +20,7 @@ package art.arcane.iris.modded;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBlockData;
 import art.arcane.iris.engine.object.IrisBlockDrops;
@@ -145,7 +146,7 @@ public final class ModdedBlockBreakHandler {
         for (IrisBlockDrops provider : providers) {
             replaceVanillaDrops |= provider.isReplaceVanillaDrops();
             for (IrisLoot loot : provider.getDrops()) {
-                if (RNG.r.i(1, loot.getRarity()) != loot.getRarity()) {
+                if (!LootResolver.oneIn(RNG.r, loot.getRarity())) {
                     continue;
                 }
                 ItemStack stack = ModdedItemTranslator.stack(loot, RNG.r, level);

@@ -23,6 +23,7 @@ import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineWorldManager;
+import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.IRare;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisEntity;
@@ -492,7 +493,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
 
         int min = entry.getMinSpawns();
         int max = entry.getMaxSpawns();
-        int count = min == max ? min : RNG.r.i(Math.min(min, max), Math.max(min, max));
+        int count = LootResolver.inclusive(RNG.r, min, max);
         if (count <= 0) {
             return 0;
         }
@@ -516,8 +517,8 @@ public final class ModdedWorldManager implements EngineWorldManager {
                 worldY = caveFloor.getY() + 1;
                 worldZ = caveFloor.getZ();
             } else {
-                worldX = (chunkX << 4) + RNG.r.i(15);
-                worldZ = (chunkZ << 4) + RNG.r.i(15);
+                worldX = (chunkX << 4) + RNG.r.i(16);
+                worldZ = (chunkZ << 4) + RNG.r.i(16);
                 int surfaceY = level.getMinY() + engine.getHeight(worldX, worldZ, false);
                 int solidY = level.getMinY() + engine.getHeight(worldX, worldZ, true);
                 worldY = group == IrisSpawnGroup.NORMAL
@@ -525,6 +526,9 @@ public final class ModdedWorldManager implements EngineWorldManager {
                         : RNG.r.i(solidY + 1, surfaceY);
             }
             if (worldY <= level.getMinY() || worldY >= level.getMaxY()) {
+                continue;
+            }
+            if (!LootResolver.oneIn(entityRng, entry.getRarity())) {
                 continue;
             }
             if (!lightAllowed(spawner, level, worldX, worldY, worldZ)) {
@@ -551,7 +555,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
 
         int min = entry.getMinSpawns();
         int max = entry.getMaxSpawns();
-        int count = min == max ? min : RNG.r.i(Math.min(min, max), Math.max(min, max));
+        int count = LootResolver.inclusive(RNG.r, min, max);
         if (count <= 0) {
             return 0;
         }
@@ -564,6 +568,9 @@ public final class ModdedWorldManager implements EngineWorldManager {
         int worldZ = position.getZ();
         int spawned = 0;
         for (int i = 0; i < count; i++) {
+            if (!LootResolver.oneIn(entityRng, entry.getRarity())) {
+                continue;
+            }
             if (!lightAllowed(spawner, level, worldX, worldY, worldZ)) {
                 continue;
             }

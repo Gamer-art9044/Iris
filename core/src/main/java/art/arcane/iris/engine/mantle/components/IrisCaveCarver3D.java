@@ -35,10 +35,14 @@ import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class IrisCaveCarver3D {
     private static final byte LIQUID_AIR = 0;
+    private static final byte LIQUID_WATER = 1;
     private static final byte LIQUID_LAVA = 2;
     private static final byte LIQUID_FORCED_AIR = 3;
     private static final int ADAPTIVE_MIN_PLANE_COLUMNS = 16;
@@ -58,6 +62,7 @@ public class IrisCaveCarver3D {
     private final ModuleState[] modules;
     private final double inverseNormalization;
     private final MatterCavern carveAir;
+    private final MatterCavern carveWater;
     private final MatterCavern carveLava;
     private final MatterCavern carveForcedAir;
     private final double normalizationFactor;
@@ -76,6 +81,7 @@ public class IrisCaveCarver3D {
         this.data = engine.getData();
         this.profile = profile;
         this.carveAir = new MatterCavern(true, "", LIQUID_AIR);
+        this.carveWater = new MatterCavern(true, "", LIQUID_WATER);
         this.carveLava = new MatterCavern(true, "", LIQUID_LAVA);
         this.carveForcedAir = new MatterCavern(true, "", LIQUID_FORCED_AIR);
         List<ModuleState> moduleStates = new ArrayList<>();
@@ -167,6 +173,25 @@ public class IrisCaveCarver3D {
             int[] precomputedSurfaceHeights,
             IrisRange overrideVerticalRange
     ) {
+        WaterSupportPlan waterSupportPlan = new WaterSupportPlan();
+        int carved = carve(writer, chunkX, chunkZ, columnWeights, minWeight, thresholdPenalty,
+                worldYRange, precomputedSurfaceHeights, overrideVerticalRange, waterSupportPlan);
+        waterSupportPlan.resolve(writer.acquireChunk(chunkX, chunkZ));
+        return carved;
+    }
+
+    int carve(
+            MantleWriter writer,
+            int chunkX,
+            int chunkZ,
+            double[] columnWeights,
+            double minWeight,
+            double thresholdPenalty,
+            IrisRange worldYRange,
+            int[] precomputedSurfaceHeights,
+            IrisRange overrideVerticalRange,
+            WaterSupportPlan waterSupportPlan
+    ) {
         PrecisionStopwatch applyStopwatch = PrecisionStopwatch.start();
         try {
             Scratch scratch = scratchCache.get();
@@ -213,6 +238,7 @@ public class IrisCaveCarver3D {
             int x0 = PowerOfTwoCoordinates.chunkToBlock(chunkX);
             int z0 = PowerOfTwoCoordinates.chunkToBlock(chunkZ);
             int[] columnMaxY = scratch.columnMaxY;
+            int[] waterMaxY = scratch.waterMaxY;
             int[] surfaceBreakFloorY = scratch.surfaceBreakFloorY;
             boolean[] surfaceBreakColumn = scratch.surfaceBreakColumn;
             double[] columnThreshold = scratch.columnThreshold;
@@ -240,6 +266,7 @@ public class IrisCaveCarver3D {
                             : clearanceTopY;
 
                     columnMaxY[index] = columnTopY;
+                    waterMaxY[index] = resolveWaterMaxY(columnSurfaceY);
                     surfaceBreakFloorY[index] = Math.max(minY, columnSurfaceY - surfaceBreakDepth);
                     surfaceBreakColumn[index] = breakColumn;
                     columnThreshold[index] = profile.getDensityThreshold().get(thresholdRng, x, z, data) - profile.getThresholdBias();
@@ -260,12 +287,14 @@ public class IrisCaveCarver3D {
                             adaptiveThresholdMargin,
                             surfaceBreakThresholdBoost,
                             columnMaxY,
+                            waterMaxY,
                             surfaceBreakFloorY,
                             surfaceBreakColumn,
                             columnThreshold,
                             clampedWeights,
                             verticalEdgeFade,
                             matterByY,
+                            profile.isWaterRequiresFloor() ? waterSupportPlan : null,
                             resolvedMinWeight,
                             resolvedThresholdPenalty,
                             0D,
@@ -280,12 +309,14 @@ public class IrisCaveCarver3D {
                             maxY,
                             surfaceBreakThresholdBoost,
                             columnMaxY,
+                            waterMaxY,
                             surfaceBreakFloorY,
                             surfaceBreakColumn,
                             columnThreshold,
                             clampedWeights,
                             verticalEdgeFade,
                             matterByY,
+                            profile.isWaterRequiresFloor() ? waterSupportPlan : null,
                             resolvedMinWeight,
                             resolvedThresholdPenalty,
                             0D,
@@ -303,12 +334,14 @@ public class IrisCaveCarver3D {
                         latticeStep,
                         surfaceBreakThresholdBoost,
                         columnMaxY,
+                        waterMaxY,
                         surfaceBreakFloorY,
                         surfaceBreakColumn,
                         columnThreshold,
                         clampedWeights,
                         verticalEdgeFade,
                         matterByY,
+                        profile.isWaterRequiresFloor() ? waterSupportPlan : null,
                         resolvedMinWeight,
                         resolvedThresholdPenalty,
                         0D,
@@ -324,12 +357,14 @@ public class IrisCaveCarver3D {
                             sampleStep,
                             surfaceBreakThresholdBoost,
                             columnMaxY,
+                            waterMaxY,
                             surfaceBreakFloorY,
                             surfaceBreakColumn,
                             columnThreshold,
                             clampedWeights,
                             verticalEdgeFade,
                             matterByY,
+                            profile.isWaterRequiresFloor() ? waterSupportPlan : null,
                             resolvedMinWeight,
                             resolvedThresholdPenalty,
                             0D,
@@ -352,12 +387,14 @@ public class IrisCaveCarver3D {
             int maxY,
             double surfaceBreakThresholdBoost,
             int[] columnMaxY,
+            int[] waterMaxY,
             int[] surfaceBreakFloorY,
             boolean[] surfaceBreakColumn,
             double[] columnThreshold,
             double[] clampedWeights,
             double[] verticalEdgeFade,
             MatterCavern[] matterByY,
+            WaterSupportPlan waterSupportPlan,
             double minWeight,
             double thresholdPenalty,
             double thresholdBoost,
@@ -423,7 +460,7 @@ public class IrisCaveCarver3D {
                 classifyDensityPlane(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
                 int fadeIndex = y - minY;
                 int localY = y & 15;
-                MatterCavern matter = matterByY[fadeIndex];
+                MatterCavern verticalMatter = matterByY[fadeIndex];
 
                 if (skipExistingCarved) {
                     for (int planeIndex = 0; planeIndex < planeCount; planeIndex++) {
@@ -438,7 +475,10 @@ public class IrisCaveCarver3D {
                             continue;
                         }
 
-                        cavernSlice.set(localX, localY, localZ, matter);
+                        double localThreshold = planeThresholdLimit[planeIndex] * inverseNormalization;
+                        MatterCavern matter = resolveMatter(verticalMatter, x0 + localX, y, z0 + localZ,
+                                columnIndex, waterMaxY, localThreshold);
+                        writeCavern(cavernSlice, localX, y, localZ, matter, waterSupportPlan);
                         carved++;
                     }
                     continue;
@@ -452,7 +492,10 @@ public class IrisCaveCarver3D {
                     int columnIndex = planeColumnIndices[planeIndex];
                     int localX = PowerOfTwoCoordinates.unpackLocal16X(columnIndex);
                     int localZ = columnIndex & 15;
-                    cavernSlice.set(localX, localY, localZ, matter);
+                    double localThreshold = planeThresholdLimit[planeIndex] * inverseNormalization;
+                    MatterCavern matter = resolveMatter(verticalMatter, x0 + localX, y, z0 + localZ,
+                            columnIndex, waterMaxY, localThreshold);
+                    writeCavern(cavernSlice, localX, y, localZ, matter, waterSupportPlan);
                     carved++;
                 }
             }
@@ -471,12 +514,14 @@ public class IrisCaveCarver3D {
             double adaptiveThresholdMargin,
             double surfaceBreakThresholdBoost,
             int[] columnMaxY,
+            int[] waterMaxY,
             int[] surfaceBreakFloorY,
             boolean[] surfaceBreakColumn,
             double[] columnThreshold,
             double[] clampedWeights,
             double[] verticalEdgeFade,
             MatterCavern[] matterByY,
+            WaterSupportPlan waterSupportPlan,
             double minWeight,
             double thresholdPenalty,
             double thresholdBoost,
@@ -558,7 +603,7 @@ public class IrisCaveCarver3D {
                 );
                 int fadeIndex = y - minY;
                 int localY = y & 15;
-                MatterCavern matter = matterByY[fadeIndex];
+                MatterCavern verticalMatter = matterByY[fadeIndex];
 
                 if (skipExistingCarved) {
                     for (int planeIndex = 0; planeIndex < planeCount; planeIndex++) {
@@ -573,7 +618,10 @@ public class IrisCaveCarver3D {
                             continue;
                         }
 
-                        cavernSlice.set(localX, localY, localZ, matter);
+                        double localThreshold = planeThresholdLimit[planeIndex] * inverseNormalization;
+                        MatterCavern matter = resolveMatter(verticalMatter, x0 + localX, y, z0 + localZ,
+                                columnIndex, waterMaxY, localThreshold);
+                        writeCavern(cavernSlice, localX, y, localZ, matter, waterSupportPlan);
                         carved++;
                     }
                     continue;
@@ -587,7 +635,10 @@ public class IrisCaveCarver3D {
                     int columnIndex = planeColumnIndices[planeIndex];
                     int localX = PowerOfTwoCoordinates.unpackLocal16X(columnIndex);
                     int localZ = columnIndex & 15;
-                    cavernSlice.set(localX, localY, localZ, matter);
+                    double localThreshold = planeThresholdLimit[planeIndex] * inverseNormalization;
+                    MatterCavern matter = resolveMatter(verticalMatter, x0 + localX, y, z0 + localZ,
+                            columnIndex, waterMaxY, localThreshold);
+                    writeCavern(cavernSlice, localX, y, localZ, matter, waterSupportPlan);
                     carved++;
                 }
             }
@@ -627,12 +678,14 @@ public class IrisCaveCarver3D {
             int latticeStep,
             double surfaceBreakThresholdBoost,
             int[] columnMaxY,
+            int[] waterMaxY,
             int[] surfaceBreakFloorY,
             boolean[] surfaceBreakColumn,
             double[] columnThreshold,
             double[] clampedWeights,
             double[] verticalEdgeFade,
             MatterCavern[] matterByY,
+            WaterSupportPlan waterSupportPlan,
             double minWeight,
             double thresholdPenalty,
             double thresholdBoost,
@@ -717,7 +770,7 @@ public class IrisCaveCarver3D {
                     double density = sampleDensityOptimized(x, y, z);
                     int stampMaxY = Math.min(maxY, y + 1);
                     for (int yy = y; yy <= stampMaxY; yy++) {
-                        MatterCavern matter = matterByY[yy - minY];
+                        MatterCavern verticalMatter = matterByY[yy - minY];
                         MatterSlice<MatterCavern> cavernSlice = resolveCavernSlice(scratch, chunk, PowerOfTwoCoordinates.floorDivPow2(yy, 4));
                         int localY = yy & 15;
                         int fadeIndex = yy - minY;
@@ -738,15 +791,19 @@ public class IrisCaveCarver3D {
 
                             int localX = tileLocalX[columnIndex];
                             int localZ = tileLocalZ[columnIndex];
+                            int worldX = x0 + localX;
+                            int worldZ = z0 + localZ;
+                            MatterCavern matter = resolveMatter(verticalMatter, worldX, yy, worldZ,
+                                    index, waterMaxY, localThreshold);
                             if (skipExistingCarved) {
                                 if (cavernSlice.get(localX, localY, localZ) == null) {
-                                    cavernSlice.set(localX, localY, localZ, matter);
+                                    writeCavern(cavernSlice, localX, yy, localZ, matter, waterSupportPlan);
                                     carved++;
                                 }
                                 continue;
                             }
 
-                            cavernSlice.set(localX, localY, localZ, matter);
+                            writeCavern(cavernSlice, localX, yy, localZ, matter, waterSupportPlan);
                             carved++;
                         }
                     }
@@ -766,12 +823,14 @@ public class IrisCaveCarver3D {
             int sampleStep,
             double surfaceBreakThresholdBoost,
             int[] columnMaxY,
+            int[] waterMaxY,
             int[] surfaceBreakFloorY,
             boolean[] surfaceBreakColumn,
             double[] columnThreshold,
             double[] clampedWeights,
             double[] verticalEdgeFade,
             MatterCavern[] matterByY,
+            WaterSupportPlan waterSupportPlan,
             double minWeight,
             double thresholdPenalty,
             double thresholdBoost,
@@ -812,18 +871,20 @@ public class IrisCaveCarver3D {
 
                     int carveMaxY = Math.min(columnTopY, y + sampleStep - 1);
                     for (int yy = y; yy <= carveMaxY; yy++) {
-                        MatterCavern matter = matterByY[yy - minY];
+                        MatterCavern verticalMatter = matterByY[yy - minY];
+                        MatterCavern matter = resolveMatter(verticalMatter, x, yy, z,
+                                index, waterMaxY, localThreshold);
                         MatterSlice<MatterCavern> cavernSlice = resolveCavernSlice(scratch, chunk, PowerOfTwoCoordinates.floorDivPow2(yy, 4));
                         int localY = yy & 15;
                         if (skipExistingCarved) {
                             if (cavernSlice.get(lx, localY, lz) == null) {
-                                cavernSlice.set(lx, localY, lz, matter);
+                                writeCavern(cavernSlice, lx, yy, lz, matter, waterSupportPlan);
                                 carved++;
                             }
                             continue;
                         }
 
-                        cavernSlice.set(lx, localY, lz, matter);
+                        writeCavern(cavernSlice, lx, yy, lz, matter, waterSupportPlan);
                         carved++;
                     }
                 }
@@ -2046,18 +2107,12 @@ public class IrisCaveCarver3D {
 
         MatterCavern[] matterByY = scratch.matterByY;
         boolean allowLava = profile.isAllowLava();
-        boolean allowWater = profile.isAllowWater();
         int lavaHeight = engine.getDimension().getCaveLavaHeight();
-        int fluidHeight = engine.getDimension().getFluidHeight();
 
         for (int y = minY; y <= maxY; y++) {
             int offset = y - minY;
             if (allowLava && y <= lavaHeight) {
                 matterByY[offset] = carveLava;
-                continue;
-            }
-            if (allowWater && y <= fluidHeight) {
-                matterByY[offset] = carveAir;
                 continue;
             }
             if (!allowLava && y <= lavaHeight) {
@@ -2069,6 +2124,77 @@ public class IrisCaveCarver3D {
         }
 
         return matterByY;
+    }
+
+    private int resolveWaterMaxY(int columnSurfaceY) {
+        if (!profile.isAllowWater()) {
+            return Integer.MIN_VALUE;
+        }
+
+        int minDepth = Math.max(0, profile.getWaterMinDepthBelowSurface());
+        return Math.min(engine.getDimension().getFluidHeight(), columnSurfaceY - minDepth);
+    }
+
+    private MatterCavern resolveMatter(MatterCavern verticalMatter, int x, int y, int z,
+                                       int columnIndex, int[] waterMaxY, double localThreshold) {
+        if (verticalMatter != carveLava
+                && y <= waterMaxY[columnIndex]
+                && isAquiferCandidate(x, y, z, localThreshold)) {
+            return carveWater;
+        }
+        return verticalMatter;
+    }
+
+    private boolean isAquiferCandidate(int x, int y, int z, double localThreshold) {
+        int fluidHeight = engine.getDimension().getFluidHeight();
+        double depthFactor = Math.max(0D, Math.min(1.5D, (fluidHeight - y) / 48D));
+        double cutoff = 0.35D + (depthFactor * 0.2D);
+        if (detailDensity.noiseFastSigned3D(x, y * 0.5D, z) <= cutoff) {
+            return false;
+        }
+        return !profile.isWaterRequiresFloor() || hasAquiferCupSupport(x, y, z, localThreshold);
+    }
+
+    private boolean hasAquiferCupSupport(int x, int y, int z, double threshold) {
+        int floorY = Math.max(0, y - 1);
+        int deepFloorY = Math.max(0, y - 2);
+        int aboveY = Math.min(engine.getHeight() - 1, y + 1);
+        if (!isDensitySolid(x, floorY, z, threshold)) {
+            return false;
+        }
+        if (!isDensitySolid(x, deepFloorY, z, threshold - 0.05D)) {
+            return false;
+        }
+
+        int support = 0;
+        if (isDensitySolid(x + 1, y, z, threshold)) {
+            support++;
+        }
+        if (isDensitySolid(x - 1, y, z, threshold)) {
+            support++;
+        }
+        if (isDensitySolid(x, y, z + 1, threshold)) {
+            support++;
+        }
+        if (isDensitySolid(x, y, z - 1, threshold)) {
+            support++;
+        }
+        if (isDensitySolid(x, aboveY, z, threshold)) {
+            support++;
+        }
+        return support >= 4;
+    }
+
+    private boolean isDensitySolid(int x, int y, int z, double threshold) {
+        return sampleDensityOptimized(x, y, z) > threshold;
+    }
+
+    private void writeCavern(MatterSlice<MatterCavern> cavernSlice, int localX, int y, int localZ,
+                             MatterCavern matter, WaterSupportPlan waterSupportPlan) {
+        cavernSlice.set(localX, y & 15, localZ, matter);
+        if (waterSupportPlan != null && matter == carveWater) {
+            waterSupportPlan.add(localX, y, localZ, carveWater, carveAir);
+        }
     }
 
     private void prepareSectionCaches(Scratch scratch, int minY, int maxY) {
@@ -2139,6 +2265,97 @@ public class IrisCaveCarver3D {
         return verticalEdgeFade;
     }
 
+    static final class WaterSupportPlan {
+        private final IdentityHashMap<MatterCavern, WaterCandidateGroup> groups = new IdentityHashMap<>();
+
+        void add(int localX, int y, int localZ, MatterCavern water, MatterCavern air) {
+            WaterCandidateGroup group = groups.computeIfAbsent(water, key -> new WaterCandidateGroup(water, air));
+            int columnIndex = PowerOfTwoCoordinates.packLocal16(localX, localZ);
+            group.positions.set((y << 8) | columnIndex);
+        }
+
+        void resolve(MantleChunk<Matter> chunk) {
+            if (chunk == null) {
+                groups.clear();
+                return;
+            }
+
+            for (Map.Entry<MatterCavern, WaterCandidateGroup> entry : groups.entrySet()) {
+                WaterCandidateGroup group = entry.getValue();
+                for (int position = group.positions.nextSetBit(0); position >= 0; position = group.positions.nextSetBit(position + 1)) {
+                    int y = position >>> 8;
+                    int columnIndex = position & 255;
+                    int localX = PowerOfTwoCoordinates.unpackLocal16X(columnIndex);
+                    int localZ = columnIndex & 15;
+                    MatterCavern current = getCavern(chunk, localX, y, localZ);
+                    if (current != group.water || hasCupSupport(chunk, localX, y, localZ)) {
+                        continue;
+                    }
+
+                    Matter section = chunk.get(y >> 4);
+                    MatterSlice<MatterCavern> cavernSlice = section.getSlice(MatterCavern.class);
+                    cavernSlice.set(localX, y & 15, localZ, group.air);
+                }
+            }
+            groups.clear();
+        }
+
+        private static boolean hasCupSupport(MantleChunk<Matter> chunk, int localX, int y, int localZ) {
+            if (localX <= 0 || localX >= 15 || localZ <= 0 || localZ >= 15
+                    || y <= 1 || !isSolid(chunk, localX, y - 1, localZ)
+                    || !isSolid(chunk, localX, y - 2, localZ)) {
+                return false;
+            }
+
+            int support = 0;
+            if (isSolid(chunk, localX + 1, y, localZ)) {
+                support++;
+            }
+            if (isSolid(chunk, localX - 1, y, localZ)) {
+                support++;
+            }
+            if (isSolid(chunk, localX, y, localZ + 1)) {
+                support++;
+            }
+            if (isSolid(chunk, localX, y, localZ - 1)) {
+                support++;
+            }
+            if (isSolid(chunk, localX, y + 1, localZ)) {
+                support++;
+            }
+            return support >= 4;
+        }
+
+        private static boolean isSolid(MantleChunk<Matter> chunk, int localX, int y, int localZ) {
+            if (localX < 0 || localX >= 16 || localZ < 0 || localZ >= 16) {
+                return false;
+            }
+            MatterCavern cavern = getCavern(chunk, localX, y, localZ);
+            return cavern == null || !cavern.isCavern();
+        }
+
+        private static MatterCavern getCavern(MantleChunk<Matter> chunk, int localX, int y, int localZ) {
+            Matter section = chunk.get(y >> 4);
+            if (section == null) {
+                return null;
+            }
+
+            MatterSlice<MatterCavern> cavernSlice = section.getSlice(MatterCavern.class);
+            return cavernSlice == null ? null : cavernSlice.get(localX, y & 15, localZ);
+        }
+    }
+
+    private static final class WaterCandidateGroup {
+        private final MatterCavern water;
+        private final MatterCavern air;
+        private final BitSet positions = new BitSet();
+
+        private WaterCandidateGroup(MatterCavern water, MatterCavern air) {
+            this.water = water;
+            this.air = air;
+        }
+    }
+
     private static final class ModuleState {
         private final CNG density;
         private final int minY;
@@ -2176,6 +2393,7 @@ public class IrisCaveCarver3D {
 
     private static final class Scratch {
         private final int[] columnMaxY = new int[256];
+        private final int[] waterMaxY = new int[256];
         private final int[] surfaceBreakFloorY = new int[256];
         private final boolean[] surfaceBreakColumn = new boolean[256];
         private final double[] columnThreshold = new double[256];

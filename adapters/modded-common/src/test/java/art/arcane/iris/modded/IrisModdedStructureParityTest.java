@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class IrisModdedStructureParityTest {
@@ -120,14 +121,18 @@ public class IrisModdedStructureParityTest {
     }
 
     @Test
-    public void possibleBiomeFallbackIsOnlyRequiredForMissingOrEmptyConfigurations() {
-        Set<String> registered = Set.of("minecraft:deep_ocean", "minecraft:dark_forest", "minecraft:plains");
+    public void structureBiomeContractRejectsAnEmptyConfiguredSet() {
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> IrisModdedBiomeSource.requireConfiguredStructureBiomeKeys(Set.of()));
 
-        assertFalse(IrisModdedBiomeSource.requiresPossibleBiomeFallback(
-                Set.of("minecraft:deep_ocean", "minecraft:dark_forest"), registered));
-        assertTrue(IrisModdedBiomeSource.requiresPossibleBiomeFallback(
-                Set.of("minecraft:deep_ocean", "overworld:missing"), registered));
-        assertTrue(IrisModdedBiomeSource.requiresPossibleBiomeFallback(Set.of(), registered));
+        assertEquals("Iris has no configured structure biomes", error.getMessage());
+    }
+
+    @Test
+    public void structureBiomeContractPreservesConfiguredKeysDuringBootstrap() {
+        Set<String> configured = Set.of("minecraft:deep_ocean", "minecraft:dark_forest");
+
+        assertSame(configured, IrisModdedBiomeSource.requireConfiguredStructureBiomeKeys(configured));
     }
 
     @Test
@@ -183,6 +188,27 @@ public class IrisModdedStructureParityTest {
             return;
         }
         throw new AssertionError("Expected failed engine binding to propagate");
+    }
+
+    @Test
+    public void structureBiomeBootstrapAllowsOnlyPendingBindingsToUseMetadata() {
+        IrisModdedChunkGenerator.EngineBinding<String> binding =
+                new IrisModdedChunkGenerator.EngineBinding<>(1L, TimeUnit.SECONDS);
+
+        binding.throwIfFailed("overworld:overworld");
+    }
+
+    @Test
+    public void structureBiomeBootstrapPropagatesBindingFailure() {
+        IrisModdedChunkGenerator.EngineBinding<String> binding =
+                new IrisModdedChunkGenerator.EngineBinding<>(1L, TimeUnit.SECONDS);
+        IllegalArgumentException failure = new IllegalArgumentException("broken pack");
+        binding.fail(failure);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> binding.throwIfFailed("overworld:overworld"));
+
+        assertSame(failure, error.getCause());
     }
 
     @Test

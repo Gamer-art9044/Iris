@@ -69,6 +69,6 @@ public class IrisCeilingDecorator extends IrisEngineDecorator {
         DecoratorCore.PlaceOpts opts = DecoratorCore.SCRATCH_OPTS.get();
         opts.reset();
         opts.caveSkipFluid = caveSkipFluid;
-        DecoratorCore.placeStackDown(decorator, x, z, realX, realZ, height, getEngine().getMinHeight(), data, rng, getData(), max, opts, getEngine().getMantle());
+        DecoratorCore.placeStackDown(decorator, x, z, realX, realZ, height, 0, data, rng, getData(), max, opts, getEngine().getMantle());
     }
 }

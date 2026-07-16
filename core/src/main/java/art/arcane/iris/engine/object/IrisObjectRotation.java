@@ -43,6 +43,7 @@ import org.bukkit.block.data.type.Wall;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 @Snippet("object-rotator")
@@ -53,14 +54,20 @@ import java.util.Set;
 @Data
 public class IrisObjectRotation {
     private static final boolean BUKKIT_PRESENT = detectBukkit();
-    private static volatile StateRotator FALLBACK_ROTATOR = null;
+    private static volatile StateRotator PLATFORM_ROTATOR = null;
 
     public interface StateRotator {
         PlatformBlockState rotate(IrisObjectRotation rotation, PlatformBlockState state, int spinx, int spiny, int spinz);
     }
 
-    public static void bindFallbackRotator(StateRotator rotator) {
-        FALLBACK_ROTATOR = rotator;
+    public static synchronized StateRotator bindPlatformRotator(StateRotator rotator) {
+        StateRotator previous = PLATFORM_ROTATOR;
+        PLATFORM_ROTATOR = Objects.requireNonNull(rotator, "rotator");
+        return previous;
+    }
+
+    public static synchronized void restorePlatformRotator(StateRotator rotator) {
+        PLATFORM_ROTATOR = rotator;
     }
 
     private static boolean detectBukkit() {
@@ -292,8 +299,8 @@ public class IrisObjectRotation {
         }
 
         if (!BUKKIT_PRESENT) {
-            StateRotator rotator = FALLBACK_ROTATOR;
-            return rotator == null ? state : rotator.rotate(this, state, spinx, spiny, spinz);
+            StateRotator rotator = requirePlatformRotator(PLATFORM_ROTATOR);
+            return rotator.rotate(this, state, spinx, spiny, spinz);
         }
 
         BlockData original = (BlockData) state.nativeHandle();
@@ -304,6 +311,13 @@ public class IrisObjectRotation {
         BlockData raw = original.clone();
         BlockData rotated = rotate(raw, spinx, spiny, spinz);
         return rotated == null ? null : BukkitBlockState.of(rotated);
+    }
+
+    static StateRotator requirePlatformRotator(StateRotator rotator) {
+        if (rotator == null) {
+            throw new IllegalStateException("No platform block-state rotator is bound");
+        }
+        return rotator;
     }
 
     private static boolean canRotateBlockData(BlockData data) {

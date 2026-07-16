@@ -23,6 +23,7 @@ import art.arcane.iris.core.gui.GuiHost;
 import art.arcane.iris.core.gui.NoiseExplorerGUI;
 import art.arcane.iris.core.gui.VisionGUI;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.StructurePackageClosure;
 import art.arcane.iris.core.project.IrisProjectCopier;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -33,6 +34,7 @@ import art.arcane.iris.engine.object.IrisGenerator;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisSpawner;
+import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
 import art.arcane.iris.modded.ModdedPackInstaller;
@@ -635,10 +637,12 @@ public final class ModdedStudioCommands {
         LinkedHashSet<String> generatorKeys = new LinkedHashSet<>();
         LinkedHashSet<String> lootKeys = new LinkedHashSet<>();
         LinkedHashSet<String> objectKeys = new LinkedHashSet<>();
+        LinkedHashSet<String> structureKeys = new LinkedHashSet<>();
 
         regionKeys.addAll(dimension.getRegions());
         lootKeys.addAll(dimension.getLoot().getTables());
         spawnerKeys.addAll(dimension.getEntitySpawners());
+        collectStructureKeys(structureKeys, dimension.getStructures());
 
         for (String regionKey : regionKeys) {
             IrisRegion region = dm.getRegionLoader().load(regionKey);
@@ -652,6 +656,7 @@ public final class ModdedStudioCommands {
             });
             lootKeys.addAll(region.getLoot().getTables());
             spawnerKeys.addAll(region.getEntitySpawners());
+            collectStructureKeys(structureKeys, region.getStructures());
         }
         for (String biomeKey : biomeKeys) {
             IrisBiome biome = dm.getBiomeLoader().load(biomeKey);
@@ -661,6 +666,7 @@ public final class ModdedStudioCommands {
             biome.getGenerators().forEach((IrisBiomeGeneratorLink link) -> generatorKeys.add(link.getGenerator()));
             lootKeys.addAll(biome.getLoot().getTables());
             spawnerKeys.addAll(biome.getEntitySpawners());
+            collectStructureKeys(structureKeys, biome.getStructures());
             for (IrisObjectPlacement placement : biome.getObjects()) {
                 objectKeys.addAll(placement.getPlace());
             }
@@ -674,6 +680,11 @@ public final class ModdedStudioCommands {
         }
 
         StringBuilder hashes = new StringBuilder();
+        StructurePackageClosure structureClosure = StructurePackageClosure.collect(packFolder, structureKeys);
+        if (!structureClosure.isValid()) {
+            throw new IOException("Structure package closure is invalid: " + String.join("; ", structureClosure.errors()));
+        }
+        hashes.append(structureClosure.writeTo(folder, true));
         for (String objectKey : objectKeys) {
             try {
                 File objectFile = dm.getObjectLoader().findFile(objectKey);
@@ -714,6 +725,20 @@ public final class ModdedStudioCommands {
         ZipUtil.pack(folder, output, 9);
         IO.delete(folder);
         return output;
+    }
+
+    private static void collectStructureKeys(LinkedHashSet<String> keys, List<IrisStructurePlacement> placements) {
+        if (placements == null) {
+            return;
+        }
+        for (IrisStructurePlacement placement : placements) {
+            if (placement == null || placement.getStructures() == null) {
+                continue;
+            }
+            for (String structureKey : placement.getStructures()) {
+                keys.add(structureKey);
+            }
+        }
     }
 
     private static String copyJson(File folder, String category, String key, File file) {

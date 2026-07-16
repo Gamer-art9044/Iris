@@ -19,9 +19,16 @@
 package art.arcane.iris.engine.object;
 
 public record IrisNativeStructureDecision(
-        boolean generate,
+        NativeStructureGenerationStatus status,
         int yShift,
         boolean clearVegetation,
-        IrisVanillaStructureStiltSettings stilt
+        IrisStructureStiltSettings stilt
 ) {
+    public boolean generate() {
+        return status == NativeStructureGenerationStatus.GENERATE_NATIVE;
+    }
+
+    public IrisNativeStructureDecision withStatus(NativeStructureGenerationStatus replacement) {
+        return new IrisNativeStructureDecision(replacement, yShift, clearVegetation, stilt);
+    }
 }

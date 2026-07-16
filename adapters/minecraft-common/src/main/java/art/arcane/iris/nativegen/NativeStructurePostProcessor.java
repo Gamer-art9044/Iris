@@ -60,13 +60,15 @@ public final class NativeStructurePostProcessor {
     public static void place(WorldGenLevel world, StructureManager structureManager, ChunkGenerator generator,
                              WorldgenRandom random, BoundingBox area, ChunkPos chunkPos, String structureId,
                              StructureStart start, IrisNativeStructureDecision decision,
-                             StiltBlockResolver stiltBlockResolver) {
+                             StiltBlockResolver stiltBlockResolver,
+                             IntBinaryOperator surfaceHeight) {
         IrisStructureStiltSettings stilt = decision.stilt();
         ensureMonumentSeaLevelAlignment(start, structureId, decision.yShift(), generator.getSeaLevel(),
                 area.minY(), area.maxY() + 1);
         start.placeInChunk(world, structureManager, generator, random, area, chunkPos);
         if (stilt != null) {
-            placeStilts(world, area, structureId, start, stilt, stiltBlockResolver);
+            placeStilts(world, area, structureId, start, stilt, stiltBlockResolver, surfaceHeight,
+                    !isUndergroundStep(start.getStructure().step()));
         }
     }
 
@@ -798,7 +800,10 @@ public final class NativeStructurePostProcessor {
 
     private static void placeStilts(WorldGenLevel world, BoundingBox area, String structureId,
                                     StructureStart start, IrisStructureStiltSettings settings,
-                                    StiltBlockResolver stiltBlockResolver) {
+                                    StiltBlockResolver stiltBlockResolver,
+                                    IntBinaryOperator surfaceHeight,
+                                    boolean surfaceStructure) {
+        Objects.requireNonNull(surfaceHeight, "Structure stilts require an Iris terrain height resolver");
         BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
         int structureHash = structureId == null ? 0 : structureId.hashCode();
         RNG rng = new RNG(world.getSeed() ^ structureHash);
@@ -807,8 +812,12 @@ public final class NativeStructurePostProcessor {
             if (foundationY == Integer.MIN_VALUE) {
                 continue;
             }
+            int terrainY = surfaceStructure
+                    ? Math.max(area.minY(), Math.min(
+                            area.maxY(), surfaceHeight.applyAsInt(column.x(), column.z())))
+                    : area.minY() - 1;
             for (int depth = 0, y = foundationY - 1;
-                 depth < settings.getMaxDepth() && y >= area.minY(); depth++, y--) {
+                 depth < settings.getMaxDepth() && y > terrainY; depth++, y--) {
                 position.set(column.x(), y, column.z());
                 BlockState existingState = world.getBlockState(position);
                 boolean vegetation = existingState.is(BlockTags.LOGS) || existingState.is(BlockTags.LEAVES);
@@ -825,8 +834,10 @@ public final class NativeStructurePostProcessor {
     }
 
     public static StiltSupportAudit auditStiltSupport(WorldGenLevel world, BoundingBox area,
-                                                       StructureStart start, BlockState expectedStilt) {
+                                                       StructureStart start, BlockState expectedStilt,
+                                                       IntBinaryOperator surfaceHeight) {
         Objects.requireNonNull(expectedStilt, "Expected stilt state must not be null");
+        Objects.requireNonNull(surfaceHeight, "Structure stilt audit requires an Iris terrain height resolver");
         BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
         int baseColumns = 0;
         int stiltBlocks = 0;
@@ -838,9 +849,15 @@ public final class NativeStructurePostProcessor {
                 continue;
             }
             baseColumns++;
-            boolean grounded = foundationY == area.minY();
+            int terrainY = Math.max(area.minY(), Math.min(
+                    area.maxY(), surfaceHeight.applyAsInt(column.x(), column.z())));
+            boolean grounded = foundationY <= terrainY + 1;
             boolean stiltColumn = false;
             for (int y = foundationY - 1; y >= area.minY(); y--) {
+                if (y <= terrainY) {
+                    grounded = true;
+                    break;
+                }
                 BlockState state = world.getBlockState(position.set(column.x(), y, column.z()));
                 if (state.is(expectedStilt.getBlock())) {
                     stiltBlocks++;

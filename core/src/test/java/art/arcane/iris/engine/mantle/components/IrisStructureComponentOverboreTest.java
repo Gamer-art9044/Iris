@@ -58,4 +58,26 @@ public class IrisStructureComponentOverboreTest {
                 "@iris-structure:v1:dHJlZXMvb2Fr:42:bWluZWNyYWZ0Om1hbnNpb24"));
         assertFalse(IrisStructureComponent.isOrdinaryObjectMarker("not-a-marker"));
     }
+
+    @Test
+    public void collidingObjectSearchCoversTheWholeMarkerOwnedObject() {
+        IrisStructureComponent.ObjectMarkerBounds bounds = IrisStructureComponent.markerSearchBounds(
+                20, 64, -8, 21, 66, -7, 7, 12, 384);
+
+        assertEquals(14, bounds.minX());
+        assertEquals(53, bounds.minY());
+        assertEquals(-14, bounds.minZ());
+        assertEquals(27, bounds.maxX());
+        assertEquals(77, bounds.maxY());
+        assertEquals(-1, bounds.maxZ());
+    }
+
+    @Test
+    public void collidingObjectSearchClampsToTheWorldHeight() {
+        IrisStructureComponent.ObjectMarkerBounds bounds = IrisStructureComponent.markerSearchBounds(
+                0, 2, 0, 0, 379, 0, 1, 12, 384);
+
+        assertEquals(0, bounds.minY());
+        assertEquals(383, bounds.maxY());
+    }
 }

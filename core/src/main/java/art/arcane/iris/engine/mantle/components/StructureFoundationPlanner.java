@@ -47,6 +47,11 @@ final class StructureFoundationPlanner {
         return !carved && mantleY <= terrainHeight;
     }
 
+    static boolean isSurfaceSupportBoundary(PlatformBlockState overlay, boolean carved,
+                                            int mantleY, int terrainHeight) {
+        return carved || isGroundSolid(overlay, false, mantleY, terrainHeight);
+    }
+
     static int fillSupportColumn(int foundationY, int groundY, IntConsumer supportAtY) {
         if (groundY == NO_GROUND || groundY >= foundationY - 1) {
             return 0;

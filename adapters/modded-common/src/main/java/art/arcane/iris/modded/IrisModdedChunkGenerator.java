@@ -1041,7 +1041,8 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
                                        String structureId, StructureStart start,
                                        IrisNativeStructureDecision decision) {
         NativeStructurePostProcessor.place(world, structureManager, this, random, area, chunkPos,
-                structureId, start, decision, this::resolveStiltBlock);
+                structureId, start, decision, this::resolveStiltBlock,
+                (x, z) -> engine().getHeight(x, z, true) + engine().getMinHeight());
     }
 
     private List<List<Structure>> structuresByStep(Registry<Structure> registry) {

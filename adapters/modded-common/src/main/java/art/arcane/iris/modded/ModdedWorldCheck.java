@@ -19,6 +19,7 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.nms.datapack.DataVersion;
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.StructureVerticalBounds;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -44,6 +45,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
+import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -71,6 +73,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
+import java.util.function.IntBinaryOperator;
 
 public final class ModdedWorldCheck {
     private static final int EXIT_PASS = 0;
@@ -872,9 +875,16 @@ public final class ModdedWorldCheck {
             BoundingBox area = new BoundingBox(
                     minimumChunkX, minimumWorldY, minimumChunkZ,
                     maximumChunkX, maximumWorldY, maximumChunkZ);
+            ChunkGenerator chunkGenerator = level.getChunkSource().getGenerator();
+            if (!(chunkGenerator instanceof IrisModdedChunkGenerator irisGenerator)) {
+                throw new IllegalStateException("Iris structure audit requires the Iris chunk generator");
+            }
+            Engine engine = irisGenerator.commandEngine();
+            IntBinaryOperator surfaceHeight = (x, z) ->
+                    engine.getHeight(x, z, true) + engine.getMinHeight();
             NativeStructurePostProcessor.StiltSupportAudit foundation =
                     NativeStructurePostProcessor.auditStiltSupport(
-                            level, area, start, Blocks.COBBLESTONE.defaultBlockState());
+                            level, area, start, Blocks.COBBLESTONE.defaultBlockState(), surfaceHeight);
             foundationBaseColumns = foundation.baseColumns();
             foundationBlocks = foundation.stiltBlocks();
             foundationColumns = foundation.stiltColumns();

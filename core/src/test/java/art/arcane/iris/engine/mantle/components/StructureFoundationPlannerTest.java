@@ -60,6 +60,19 @@ public class StructureFoundationPlannerTest {
     }
 
     @Test
+    public void surfaceSupportStopsAtCarvedCaveBoundary() {
+        PlatformBlockState solid = mock(PlatformBlockState.class);
+        when(solid.isSolid()).thenReturn(true);
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        when(air.isSolid()).thenReturn(false);
+
+        assertTrue(StructureFoundationPlanner.isSurfaceSupportBoundary(null, true, 18, 24));
+        assertTrue(StructureFoundationPlanner.isSurfaceSupportBoundary(solid, false, 30, 24));
+        assertFalse(StructureFoundationPlanner.isSurfaceSupportBoundary(air, false, 30, 24));
+        assertTrue(StructureFoundationPlanner.isSurfaceSupportBoundary(null, false, 24, 24));
+    }
+
+    @Test
     public void fillsOnlyTheGapBetweenTheFoundationAndGround() {
         List<Integer> written = new ArrayList<>();
 

@@ -41,19 +41,23 @@ import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.IrisStructureStiltSettings;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.project.matter.TileWrapper;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
+import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
+import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterCavern;
+import art.arcane.volmlib.util.matter.MatterStructurePOI;
 import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
 import art.arcane.volmlib.util.math.RNG;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 
-import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 @ComponentFlag(ReservedFlag.JIGSAW)
 public class IrisStructureComponent extends IrisMantleComponent {
@@ -159,12 +163,13 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
         requireAppliedPieces(resolved, cx, cz, failedPieces);
         if (failedPieces == 0 && placement.getStilt() != null) {
-            placeFoundation(writer, foundationColumns, placement.getStilt(), rng);
+            placeFoundation(writer, foundationColumns, placement.getStilt(), rng, !placement.isUnderground());
         }
     }
 
     private void placeFoundation(MantleWriter writer, Long2IntOpenHashMap columns,
-                                 IrisStructureStiltSettings settings, RNG rng) {
+                                 IrisStructureStiltSettings settings, RNG rng,
+                                 boolean surfaceStructure) {
         IrisMaterialPalette palette = Objects.requireNonNull(
                 settings.getPalette(), "Structure stilt palette must not be null");
         int mantleOffset = getEngineMantle().getEngine().getMinHeight();
@@ -181,10 +186,17 @@ public class IrisStructureComponent extends IrisMantleComponent {
             int terrainHeight = getEngineMantle().trueHeight(worldX, worldZ);
             int groundY = StructureFoundationPlanner.findGroundY(
                     foundationY, maxDepth, 0,
-                    y -> StructureFoundationPlanner.isGroundSolid(
-                            writer.getDataIfPresent(worldX, y, worldZ, PlatformBlockState.class),
-                            writer.getDataIfPresent(worldX, y, worldZ, MatterCavern.class) != null,
-                            y, terrainHeight));
+                    y -> {
+                        PlatformBlockState overlay = writer.getDataIfPresent(
+                                worldX, y, worldZ, PlatformBlockState.class);
+                        boolean carved = writer.getDataIfPresent(
+                                worldX, y, worldZ, MatterCavern.class) != null;
+                        return surfaceStructure
+                                ? StructureFoundationPlanner.isSurfaceSupportBoundary(
+                                        overlay, carved, y, terrainHeight)
+                                : StructureFoundationPlanner.isGroundSolid(
+                                        overlay, carved, y, terrainHeight);
+                    });
             if (groundY == StructureFoundationPlanner.NO_GROUND) {
                 continue;
             }
@@ -398,6 +410,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
         int mantleOffset = getEngineMantle().getEngine().getMinHeight();
         int worldHeight = getEngineMantle().getEngine().getHeight();
         int verticalTolerance = resolved.exactY() ? 0 : DYNAMIC_STRUCTURE_Y_TOLERANCE;
+        Map<String, ObjectMarkerBounds> intersectingObjects = new HashMap<>();
         for (PlacedStructurePiece piece : resolved.pieces()) {
             int minY = Math.max(0, piece.getMinY() - mantleOffset - verticalTolerance);
             int maxY = Math.min(worldHeight - 1, piece.getMaxY() - mantleOffset + verticalTolerance);
@@ -406,15 +419,19 @@ public class IrisStructureComponent extends IrisMantleComponent {
             }
             for (int x = piece.getMinX(); x <= piece.getMaxX(); x++) {
                 for (int z = piece.getMinZ(); z <= piece.getMaxZ(); z++) {
-                    clearIntersectingObjectTreeColumn(writer, x, z, minY, maxY, worldHeight);
+                    collectIntersectingObjectTreeMarkers(
+                            writer, x, z, minY, maxY, intersectingObjects);
                 }
             }
         }
+        for (Map.Entry<String, ObjectMarkerBounds> entry : intersectingObjects.entrySet()) {
+            clearMarkerOwnedObject(writer, entry.getKey(), entry.getValue(), worldHeight);
+        }
     }
 
-    private void clearIntersectingObjectTreeColumn(MantleWriter writer, int x, int z,
-                                                   int minY, int maxY, int worldHeight) {
-        Set<String> intersectingMarkers = null;
+    private void collectIntersectingObjectTreeMarkers(MantleWriter writer, int x, int z,
+                                                      int minY, int maxY,
+                                                      Map<String, ObjectMarkerBounds> intersectingObjects) {
         for (int y = minY; y <= maxY; y++) {
             PlatformBlockState state = writer.getDataIfPresent(x, y, z, PlatformBlockState.class);
             if (state == null || !state.isTreeBlock()) {
@@ -422,32 +439,73 @@ public class IrisStructureComponent extends IrisMantleComponent {
             }
             String marker = writer.getDataIfPresent(x, y, z, String.class);
             if (isOrdinaryObjectMarker(marker)) {
-                if (intersectingMarkers == null) {
-                    intersectingMarkers = new HashSet<>();
-                }
-                intersectingMarkers.add(marker);
+                intersectingObjects.computeIfAbsent(marker, ignored -> new ObjectMarkerBounds())
+                        .include(x, y, z);
             }
         }
-        if (intersectingMarkers == null) {
+    }
+
+    private void clearMarkerOwnedObject(MantleWriter writer, String marker,
+                                        ObjectMarkerBounds intersections, int worldHeight) {
+        StructurePlacementMarker.Decoded decoded = StructurePlacementMarker.decode(marker);
+        if (decoded == null) {
             return;
         }
-        for (int y = 0; y < worldHeight; y++) {
-            String marker = writer.getDataIfPresent(x, y, z, String.class);
-            if (!intersectingMarkers.contains(marker)) {
-                continue;
+        IrisObject object = getData().load(IrisObject.class, decoded.objectKey(), false);
+        if (object == null) {
+            return;
+        }
+        int horizontalSpan = Math.max(1, Math.max(object.getW(), object.getD()));
+        int verticalSpan = Math.max(1, object.getH());
+        ObjectMarkerBounds search = intersections.expand(horizontalSpan - 1, verticalSpan - 1, worldHeight);
+        KList<ObjectBlockPosition> positions = new KList<>();
+        int minChunkX = Math.floorDiv(search.minX, 16);
+        int maxChunkX = Math.floorDiv(search.maxX, 16);
+        int minChunkZ = Math.floorDiv(search.minZ, 16);
+        int maxChunkZ = Math.floorDiv(search.maxZ, 16);
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                MantleChunk<Matter> chunk = writer.acquireChunk(chunkX, chunkZ);
+                if (chunk == null) {
+                    continue;
+                }
+                int blockX = chunkX << 4;
+                int blockZ = chunkZ << 4;
+                chunk.iterate(String.class, (localX, y, localZ, value) -> {
+                    int x = blockX + localX;
+                    int z = blockZ + localZ;
+                    if (marker.equals(value) && search.contains(x, y, z)) {
+                        positions.add(new ObjectBlockPosition(x, y, z));
+                    }
+                });
             }
-            PlatformBlockState state = writer.getDataIfPresent(x, y, z, PlatformBlockState.class);
-            if (state == null || !state.isTreeBlock()) {
-                continue;
-            }
-            writer.clearBlock(x, y, z);
-            writer.clearData(x, y, z, String.class);
+        }
+        for (ObjectBlockPosition position : positions) {
+            writer.clearBlock(position.x(), position.y(), position.z());
+            writer.clearData(position.x(), position.y(), position.z(), String.class);
+            writer.clearData(position.x(), position.y(), position.z(), TileWrapper.class);
+            writer.clearData(position.x(), position.y(), position.z(), MatterStructurePOI.class);
         }
     }
 
     static boolean isOrdinaryObjectMarker(String marker) {
         StructurePlacementMarker.Decoded decoded = StructurePlacementMarker.decode(marker);
         return decoded != null && !decoded.structureAware();
+    }
+
+    static ObjectMarkerBounds markerSearchBounds(int minX, int minY, int minZ,
+                                                 int maxX, int maxY, int maxZ,
+                                                 int horizontalSpan, int verticalSpan,
+                                                 int worldHeight) {
+        ObjectMarkerBounds bounds = new ObjectMarkerBounds();
+        bounds.minX = minX;
+        bounds.minY = minY;
+        bounds.minZ = minZ;
+        bounds.maxX = maxX;
+        bounds.maxY = maxY;
+        bounds.maxZ = maxZ;
+        return bounds.expand(
+                Math.max(0, horizontalSpan - 1), Math.max(0, verticalSpan - 1), worldHeight);
     }
 
     private int[] computePieceBounds(KList<PlacedStructurePiece> pieces) {
@@ -547,5 +605,67 @@ public class IrisStructureComponent extends IrisMantleComponent {
             }
         }
         return max;
+    }
+
+    static final class ObjectMarkerBounds {
+        private int minX = Integer.MAX_VALUE;
+        private int minY = Integer.MAX_VALUE;
+        private int minZ = Integer.MAX_VALUE;
+        private int maxX = Integer.MIN_VALUE;
+        private int maxY = Integer.MIN_VALUE;
+        private int maxZ = Integer.MIN_VALUE;
+
+        void include(int x, int y, int z) {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            minZ = Math.min(minZ, z);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+            maxZ = Math.max(maxZ, z);
+        }
+
+        ObjectMarkerBounds expand(int horizontal, int vertical, int worldHeight) {
+            ObjectMarkerBounds expanded = new ObjectMarkerBounds();
+            expanded.minX = minX - horizontal;
+            expanded.minY = Math.max(0, minY - vertical);
+            expanded.minZ = minZ - horizontal;
+            expanded.maxX = maxX + horizontal;
+            expanded.maxY = Math.min(worldHeight - 1, maxY + vertical);
+            expanded.maxZ = maxZ + horizontal;
+            return expanded;
+        }
+
+        boolean contains(int x, int y, int z) {
+            return x >= minX && x <= maxX
+                    && y >= minY && y <= maxY
+                    && z >= minZ && z <= maxZ;
+        }
+
+        int minX() {
+            return minX;
+        }
+
+        int minY() {
+            return minY;
+        }
+
+        int minZ() {
+            return minZ;
+        }
+
+        int maxX() {
+            return maxX;
+        }
+
+        int maxY() {
+            return maxY;
+        }
+
+        int maxZ() {
+            return maxZ;
+        }
+    }
+
+    private record ObjectBlockPosition(int x, int y, int z) {
     }
 }

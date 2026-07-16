@@ -85,10 +85,12 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
         int placement = source.indexOf("start.placeInChunk(world, structureManager, generator");
         int stiltPlacement = source.indexOf("placeStilts(world, area, structureId, start", placement);
         int occupancyCheck = source.indexOf("if (state.isSolid())", stiltPlacement);
+        int terrainFloor = source.indexOf("y > terrainY", stiltPlacement);
 
         assertTrue(placement >= 0);
         assertTrue(stiltPlacement > placement);
         assertTrue(occupancyCheck > stiltPlacement);
+        assertTrue(terrainFloor > stiltPlacement);
         assertFalse(source.contains("state.equals("));
         assertFalse(source.contains("snapshot.states"));
     }

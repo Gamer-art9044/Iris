@@ -3,7 +3,7 @@ def mainClass = 'art.arcane.iris.Iris'
 def bootstrapperClass = 'art.arcane.iris.IrisBootstrap'
 
 String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
-    .orElse('com.github.VolmitSoftware:VolmLib:4c38988b344792a79f925f57f8a675bc85fc1bed')
+    .orElse('com.github.VolmitSoftware:VolmLib:d9026a7c8ebc391c8109f401ce79a0ce65df3969')
     .get()
 
 dependencies {

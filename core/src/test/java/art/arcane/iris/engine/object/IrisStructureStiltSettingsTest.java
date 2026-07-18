@@ -7,6 +7,7 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 
 public class IrisStructureStiltSettingsTest {
@@ -15,6 +16,7 @@ public class IrisStructureStiltSettingsTest {
         IrisStructureStiltSettings settings = new IrisStructureStiltSettings();
 
         assertEquals(64, settings.getMaxDepth());
+        assertFalse(settings.isSupportNonOccluding());
         assertNotNull(settings.getPalette());
         assertEquals(1, settings.getPalette().getPalette().size());
         assertEquals("minecraft:cobblestone", settings.getPalette().getPalette().get(0).getBlock());

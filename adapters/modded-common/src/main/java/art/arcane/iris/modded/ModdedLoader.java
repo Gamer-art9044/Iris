@@ -32,6 +32,8 @@ public interface ModdedLoader {
 
     MinecraftServer currentServer();
 
+    void invalidateLevelCache(MinecraftServer server);
+
     boolean clientEnvironment();
 
     Path configDir();

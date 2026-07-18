@@ -158,6 +158,7 @@ public class SchemaBuilderParityTest {
         assertTrue(properties.has("distribution"));
         assertEquals("object", stilt.getString("type"));
         assertTrue(stiltProperties.has("palette"));
+        assertTrue(stiltProperties.has("supportNonOccluding"));
         assertEquals(1, maxDepth.getInt("minimum"));
         assertEquals(4064, maxDepth.getInt("maximum"));
         assertFalse(properties.has("rotation"));

@@ -27,16 +27,18 @@ import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
+import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.math.IrisBlockVector;
 import art.arcane.iris.util.common.math.Vector3i;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.volmlib.util.math.BlockPosition;
 import art.arcane.volmlib.util.math.RNG;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import art.arcane.iris.spi.PlatformBlockState;
 import lombok.experimental.Accessors;
 
 @Snippet("deposit")
@@ -46,8 +48,10 @@ import lombok.experimental.Accessors;
 @Desc("Creates ore & other block deposits underground")
 @Data
 public class IrisDepositGenerator {
-    private final transient AtomicCache<KList<IrisObject>> objects = new AtomicCache<>();
+    private final transient ConcurrentMap<ClumpCacheKey, KList<IrisObject>> objects = new ConcurrentHashMap<>();
     private final transient AtomicCache<KList<PlatformBlockState>> blockData = new AtomicCache<>();
+    private final transient AtomicCache<Boolean> ore = new AtomicCache<>();
+    private final transient ConcurrentMap<ClumpCacheKey, KList<IrisObject>> scaledObjects = new ConcurrentHashMap<>();
     @Required
     @MinNumber(0)
     @MaxNumber(8192) // TODO: WARNING HEIGHT
@@ -98,16 +102,41 @@ public class IrisDepositGenerator {
     private boolean replaceBedrock = false;
 
     public IrisObject getClump(Engine engine, RNG rng, IrisData rdata) {
-        KList<IrisObject> objects = this.objects.aquire(() ->
-        {
-            RNG rngv = new RNG(engine.getSeedManager().getDeposit() + hashCode());
+        ClumpCacheKey cacheKey = new ClumpCacheKey(engine.getSeedManager().getDeposit(), minSize, maxSize);
+        KList<IrisObject> objects = this.objects.computeIfAbsent(cacheKey, key -> {
+            RNG rngv = new RNG(key.depositSeed() + hashCode());
             KList<IrisObject> objectsf = new KList<>();
 
             for (int i = 0; i < varience; i++) {
-                objectsf.add(generateClumpObject(rngv.nextParallelRNG(2349 * i + 3598), rdata));
+                objectsf.add(generateClumpObject(
+                        rngv.nextParallelRNG(2349 * i + 3598), rdata, key.minSize(), key.maxSize()));
             }
 
             return objectsf;
+        });
+        return objects.get(rng.i(0, objects.size()));
+    }
+
+    public IrisObject getClump(Engine engine, RNG rng, IrisData rdata, double sizeMultiplier) {
+        if (sizeMultiplier == 1D) {
+            return getClump(engine, rng, rdata);
+        }
+
+        int scaledMinSize = scaledDepositSize(minSize, sizeMultiplier);
+        int scaledMaxSize = scaledDepositSize(maxSize, sizeMultiplier);
+        ClumpCacheKey cacheKey = new ClumpCacheKey(
+                engine.getSeedManager().getDeposit(), scaledMinSize, scaledMaxSize);
+        KList<IrisObject> objects = scaledObjects.computeIfAbsent(cacheKey, key -> {
+            long sizeSeed = ((long) key.minSize() << 32) ^ (key.maxSize() & 0xffffffffL);
+            RNG rngv = new RNG(key.depositSeed() + hashCode() + sizeSeed);
+            KList<IrisObject> generated = new KList<>();
+
+            for (int i = 0; i < varience; i++) {
+                generated.add(generateClumpObject(
+                        rngv.nextParallelRNG(2349 * i + 3598), rdata, key.minSize(), key.maxSize()));
+            }
+
+            return generated;
         });
         return objects.get(rng.i(0, objects.size()));
     }
@@ -116,8 +145,12 @@ public class IrisDepositGenerator {
         return Math.min(11, (int) Math.ceil(Math.cbrt(maxSize)));
     }
 
-    private IrisObject generateClumpObject(RNG rngv, IrisData rdata) {
-        int s = rngv.i(minSize, maxSize + 1);
+    static int scaledDepositSize(int size, double multiplier) {
+        return Math.max(0, Math.min(8192, (int) Math.round(size * multiplier)));
+    }
+
+    private IrisObject generateClumpObject(RNG rngv, IrisData rdata, int clumpMinSize, int clumpMaxSize) {
+        int s = rngv.i(clumpMinSize, clumpMaxSize + 1);
         if (s == 1) {
             IrisObject o = new IrisObject(1, 1, 1);
             Vector3i center = o.getCenter();
@@ -183,5 +216,20 @@ public class IrisDepositGenerator {
 
             return blockData;
         });
+    }
+
+    public boolean isOre(IrisData rdata) {
+        return ore.aquire(() -> {
+            for (PlatformBlockState block : getBlockData(rdata)) {
+                if (block.isOre()) {
+                    return true;
+                }
+            }
+
+            return false;
+        });
+    }
+
+    record ClumpCacheKey(long depositSeed, int minSize, int maxSize) {
     }
 }

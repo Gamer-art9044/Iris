@@ -52,7 +52,7 @@ String fabricLoaderVersion = providers.gradleProperty('fabricLoaderVersion').get
 String forgeVersion = providers.gradleProperty('forgeVersion').getOrElse('26.2-65.0.4')
 String neoForgeVersion = providers.gradleProperty('neoForgeVersion').getOrElse('26.2.0.12-beta')
 String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
-    .orElse('com.github.VolmitSoftware:VolmLib:4c38988b344792a79f925f57f8a675bc85fc1bed')
+    .orElse('com.github.VolmitSoftware:VolmLib:d9026a7c8ebc391c8109f401ce79a0ce65df3969')
     .get()
 String useLocalVolmLib = providers.gradleProperty('useLocalVolmLib').getOrElse('true')
 String localVolmLibDirectory = providers.gradleProperty('localVolmLibDirectory').getOrNull()
@@ -276,6 +276,75 @@ tasks.named('neoforgeJar').configure {
     mustRunAfter(tasks.named('forgeJar'))
 }
 
+List<String> commonModdedArtifactEntries = [
+    'art/arcane/iris/engine/IrisEngine.class',
+    'art/arcane/iris/spi/IrisPlatform.class',
+    'art/arcane/volmlib/util/mantle/io/Lz4IOWorkerCodecSupport.class',
+    'art/arcane/iris/util/common/misc/getHardware.class'
+]
+
+tasks.register('verifyFabricArtifact') {
+    group = 'verification'
+    dependsOn('fabricJar')
+    File artifact = layout.projectDirectory.file("adapters/fabric/build/libs/${fabricArtifactName}").asFile
+    inputs.file(artifact)
+    doLast {
+        List<String> requiredEntries = commonModdedArtifactEntries + [
+            'fabric.mod.json',
+            'art/arcane/iris/fabric/IrisFabricBootstrap.class'
+        ]
+        ModdedArtifactVerifier.verify(artifact, requiredEntries)
+        logger.lifecycle("Verified ${artifact.name} uses Minecraft-provided LZ4, OSHI, and JNA")
+    }
+}
+
+tasks.register('verifyForgeArtifact') {
+    group = 'verification'
+    dependsOn('forgeJar')
+    File artifact = layout.projectDirectory.file("adapters/forge/build/libs/${forgeArtifactName}").asFile
+    inputs.file(artifact)
+    doLast {
+        List<String> requiredEntries = commonModdedArtifactEntries + [
+            'META-INF/mods.toml',
+            'art/arcane/iris/forge/IrisForgeBootstrap.class'
+        ]
+        ModdedArtifactVerifier.verify(artifact, requiredEntries)
+        logger.lifecycle("Verified ${artifact.name} uses Minecraft-provided LZ4, OSHI, and JNA")
+    }
+}
+
+tasks.register('verifyNeoforgeArtifact') {
+    group = 'verification'
+    dependsOn('neoforgeJar')
+    File artifact = layout.projectDirectory.file("adapters/neoforge/build/libs/${neoForgeArtifactName}").asFile
+    inputs.file(artifact)
+    doLast {
+        List<String> requiredEntries = commonModdedArtifactEntries + [
+            'META-INF/neoforge.mods.toml',
+            'art/arcane/iris/neoforge/IrisNeoForgeBootstrap.class'
+        ]
+        ModdedArtifactVerifier.verify(artifact, requiredEntries)
+        logger.lifecycle("Verified ${artifact.name} uses Minecraft-provided LZ4, OSHI, and JNA")
+    }
+}
+
+tasks.register('verifyModdedArtifacts') {
+    group = 'verification'
+    dependsOn('verifyFabricArtifact', 'verifyForgeArtifact', 'verifyNeoforgeArtifact')
+}
+
+tasks.named('buildFabric').configure {
+    dependsOn('verifyFabricArtifact')
+}
+
+tasks.named('buildForge').configure {
+    dependsOn('verifyForgeArtifact')
+}
+
+tasks.named('buildNeoforge').configure {
+    dependsOn('verifyNeoforgeArtifact')
+}
+
 tasks.register('buildAllToOut') {
     group = 'iris'
     dependsOn('buildBukkit', 'buildFabric', 'buildForge', 'buildNeoforge', ':spi:jar')
@@ -295,7 +364,7 @@ tasks.register('buildAllToOut') {
 tasks.register('buildAll') {
     group = 'iris'
     outputs.upToDateWhen { false }
-    dependsOn('iris', 'fabricJar', 'forgeJar', 'neoforgeJar')
+    dependsOn('iris', 'verifyModdedArtifacts')
     doLast {
         delete(
             file("${bukkitConsumerPath}/Iris-Fabric.jar"),

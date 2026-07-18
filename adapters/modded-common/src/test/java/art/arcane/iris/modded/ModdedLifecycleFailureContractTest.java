@@ -73,6 +73,44 @@ public class ModdedLifecycleFailureContractTest {
     }
 
     @Test
+    public void persistentReinjectionWaitsForPlayerServicesAndServerStarted() throws IOException {
+        String bootstrapSource = source("ModdedEngineBootstrap.java");
+        String start = method(bootstrapSource, "public static void start(");
+        String serverAboutToStart = method(bootstrapSource, "public static void serverAboutToStart(");
+        String serverStarted = method(bootstrapSource, "public static void serverStarted(");
+
+        assertFalse(start.contains("ModdedStartup.runOnce(server);"));
+        assertFalse(serverAboutToStart.contains("ModdedStartup.runOnce(server);"));
+        assertEquals(1, occurrences(serverStarted, "ModdedStartup.runOnce(server);"));
+        assertBefore(serverStarted, "bindWorldGenerators(server);", "ModdedStartup.runOnce(server);");
+        assertBefore(serverStarted, "ModdedStartup.runOnce(server);", "reconcileSpawn(server);");
+
+        String startupSource = source("ModdedStartup.java");
+        String runOnce = method(startupSource, "public static void runOnce(");
+        assertBefore(runOnce, "server.getPlayerList() == null", "STARTED.compareAndSet(false, true)");
+    }
+
+    @Test
+    public void dynamicLevelMutationsInvalidateLoaderTickCaches() throws IOException {
+        String levelsSource = source("ModdedServerLevels.java");
+        String put = method(levelsSource, "public ServerLevel putLevel(");
+        String putIfAbsent = method(levelsSource, "public ServerLevel putLevelIfAbsent(");
+        String remove = method(levelsSource, "public ServerLevel removeLevel(");
+
+        assertBefore(put, "server.levels.put(key, level);", "levelCacheInvalidator.accept(server);");
+        assertTrue(put.contains("if (previous != level)"));
+        assertBefore(putIfAbsent, "server.levels.putIfAbsent(key, level);", "levelCacheInvalidator.accept(server);");
+        assertTrue(putIfAbsent.contains("if (previous == null)"));
+        assertBefore(remove, "server.levels.remove(key);", "levelCacheInvalidator.accept(server);");
+        assertTrue(remove.contains("if (removed != null)"));
+
+        String loaderSource = source("ModdedLoader.java");
+        assertTrue(loaderSource.contains("void invalidateLevelCache(MinecraftServer server);"));
+        String bootstrapSource = source("ModdedEngineBootstrap.java");
+        assertTrue(bootstrapSource.contains("new ModdedServerLevels(boundLoader::invalidateLevelCache)"));
+    }
+
+    @Test
     public void packDimensionLoadingNeverSuppressesTheFailureAsNull() throws IOException {
         String source = source("ModdedDimensionManager.java");
         String loading = method(source, "private static IrisDimension loadPackDimension(");

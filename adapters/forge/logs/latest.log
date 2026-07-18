@@ -1,5 +1,5 @@
-[16Jul2026 05:44:26.716] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_deferred_test'
-[16Jul2026 05:44:26.771] [Test worker/ERROR] [Iris/]: Iris service rollback failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
+[18Jul2026 17:42:18.043] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_deferred_test'
+[18Jul2026 17:42:18.104] [Test worker/ERROR] [Iris/]: Iris service rollback failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
 java.lang.RuntimeException: cleanup failed
 	at art.arcane.iris.modded.ModdedServiceManagerTest.rollsBackEnabledServicesAndPreservesCleanupFailures(ModdedServiceManagerTest.java:32) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -44,7 +44,7 @@ java.lang.RuntimeException: cleanup failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[16Jul2026 05:44:26.779] [Test worker/ERROR] [Iris/]: Iris service onEnable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
+[18Jul2026 17:42:18.110] [Test worker/ERROR] [Iris/]: Iris service onEnable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
 java.lang.RuntimeException: enable failed
 	at art.arcane.iris.modded.ModdedServiceManagerTest.rollsBackEnabledServicesAndPreservesCleanupFailures(ModdedServiceManagerTest.java:31) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -92,10 +92,10 @@ java.lang.RuntimeException: enable failed
 	Suppressed: java.lang.RuntimeException: cleanup failed
 		at art.arcane.iris.modded.ModdedServiceManagerTest.rollsBackEnabledServicesAndPreservesCleanupFailures(ModdedServiceManagerTest.java:32) ~[test/:?]
 		... 42 more
-[16Jul2026 05:44:26.814] [Test worker/ERROR] [Iris/]: [worldcheck] server stop request failed
+[18Jul2026 17:42:18.144] [Test worker/ERROR] [Iris/]: [worldcheck] server stop request failed
 java.lang.IllegalStateException: stop request failed
 	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$stopRequestFailureForcesNonzeroResult$1(ModdedWorldCheckTest.java:235) ~[test/:?]
-	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:176) ~[main/:?]
+	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:179) ~[main/:?]
 	at art.arcane.iris.modded.ModdedWorldCheckTest.stopRequestFailureForcesNonzeroResult(ModdedWorldCheckTest.java:232) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
@@ -139,10 +139,10 @@ java.lang.IllegalStateException: stop request failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[16Jul2026 05:44:26.821] [Test worker/ERROR] [Iris/]: [worldcheck] waiting for server shutdown failed
+[18Jul2026 17:42:18.147] [Test worker/ERROR] [Iris/]: [worldcheck] waiting for server shutdown failed
 java.lang.IllegalStateException: shutdown wait failed
 	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$shutdownWaitFailureForcesNonzeroExit$0(ModdedWorldCheckTest.java:261) ~[test/:?]
-	at art.arcane.iris.modded.ModdedWorldCheck.awaitStopAndExit(ModdedWorldCheck.java:191) ~[main/:?]
+	at art.arcane.iris.modded.ModdedWorldCheck.awaitStopAndExit(ModdedWorldCheck.java:194) ~[main/:?]
 	at art.arcane.iris.modded.ModdedWorldCheckTest.shutdownWaitFailureForcesNonzeroExit(ModdedWorldCheckTest.java:259) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
@@ -186,10 +186,10 @@ java.lang.IllegalStateException: shutdown wait failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[16Jul2026 05:44:26.826] [Test worker/ERROR] [Iris/]: [worldcheck] check failed
+[18Jul2026 17:42:18.154] [Test worker/ERROR] [Iris/]: [worldcheck] check failed
 java.lang.IllegalStateException: check failed
 	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$thrownCheckStillRequestsStop$0(ModdedWorldCheckTest.java:221) ~[test/:?]
-	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:171) ~[main/:?]
+	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:174) ~[main/:?]
 	at art.arcane.iris.modded.ModdedWorldCheckTest.thrownCheckStillRequestsStop(ModdedWorldCheckTest.java:219) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
@@ -233,8 +233,8 @@ java.lang.IllegalStateException: check failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[16Jul2026 05:44:26.832] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_discovery_success'
-[16Jul2026 05:44:26.833] [Test worker/ERROR] [Iris/]: Iris custom content provider discovery failed
+[18Jul2026 17:42:18.160] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_discovery_success'
+[18Jul2026 17:42:18.161] [Test worker/ERROR] [Iris/]: Iris custom content provider discovery failed
 java.lang.RuntimeException: provider init failed
 	at art.arcane.iris.modded.api.ModdedCustomContentRegistryTest.failedDiscoveryPublishesNothingAndPreservesTheCause(ModdedCustomContentRegistryTest.java:39) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]

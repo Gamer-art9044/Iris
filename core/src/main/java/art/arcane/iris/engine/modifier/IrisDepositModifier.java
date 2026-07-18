@@ -24,6 +24,7 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDepositGenerator;
 import art.arcane.iris.engine.object.IrisDepositVariant;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisProceduralBlocks;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -87,6 +88,7 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
     }
 
     public void generate(IrisDepositGenerator k, MantleChunk chunk, Hunk<PlatformBlockState> data, RNG rng, int cx, int cz, boolean safe, HeightMap he, ChunkContext context) {
+        IrisDimensionCarvingResolver.State carvingState = new IrisDimensionCarvingResolver.State();
         if (k.getSpawnChance() < rng.d())
             return;
 
@@ -123,6 +125,29 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
             if (y > k.getMaxHeight() || y < k.getMinHeight() || y > height - 2)
                 continue;
 
+            if (k.isOre(getData())) {
+                IrisBiome depositBiome = getEngine().getCaveBiome(
+                        (cx << 4) + x, y, (cz << 4) + z, carvingState);
+
+                if (depositBiome != null) {
+                    double frequencyMultiplier = depositBiome.getOreDepositFrequencyMultiplier();
+                    if (frequencyMultiplier < 1D
+                            && !passesOreFrequency(frequencyMultiplier, rng.d())) {
+                        continue;
+                    }
+
+                    double sizeMultiplier = depositBiome.getOreDepositSizeMultiplier();
+                    if (sizeMultiplier != 1D) {
+                        IrisObject scaledClump = k.getClump(getEngine(), rng, getData(), sizeMultiplier);
+                        int scaledDimension = scaledClump.getW();
+                        x = clampDepositCenter(x, scaledDimension, 16);
+                        y = clampDepositCenter(y, scaledDimension, getEngine().getHeight());
+                        z = clampDepositCenter(z, scaledDimension, 16);
+                        clump = scaledClump;
+                    }
+                }
+            }
+
             IrisDimension dimension = getDimension();
 
             for (art.arcane.iris.util.common.math.IrisBlockVector j : clump.getBlocks().keys()) {
@@ -148,7 +173,8 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
 
                 if (chunk.get(nx, ny, nz, MatterCavern.class) == null) {
                     PlatformBlockState ore = clump.getBlocks().get(j);
-                    PlatformBlockState remapped = resolveDepositVariant(cx, cz, nx, ny, nz, ore, dimension, context);
+                    PlatformBlockState remapped = resolveDepositVariant(
+                            cx, cz, nx, ny, nz, ore, dimension, context, carvingState);
                     PlatformBlockState finalBlock = remapped != null
                             ? remapped
                             : B.toDeepSlateOre(current, ore);
@@ -177,12 +203,22 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
         return state != null && !state.isAir() && !state.isFluid();
     }
 
-    private PlatformBlockState resolveDepositVariant(int cx, int cz, int nx, int localY, int nz, PlatformBlockState ore, IrisDimension dimension, ChunkContext context) {
+    static boolean passesOreFrequency(double multiplier, double sample) {
+        return multiplier >= 1D || sample < Math.max(0D, multiplier);
+    }
+
+    static int clampDepositCenter(int center, int dimension, int limit) {
+        int minimum = dimension / 2;
+        int maximum = (int) (limit - dimension / 2D);
+        return Math.max(minimum, Math.min(center, maximum));
+    }
+
+    private PlatformBlockState resolveDepositVariant(int cx, int cz, int nx, int localY, int nz, PlatformBlockState ore, IrisDimension dimension, ChunkContext context, IrisDimensionCarvingResolver.State carvingState) {
         int worldX = (cx << 4) + nx;
         int worldZ = (cz << 4) + nz;
         int worldY = absoluteWorldY(getEngine().getMinHeight(), localY);
 
-        IrisBiome biome = getEngine().getBiome(worldX, localY, worldZ);
+        IrisBiome biome = getEngine().getCaveBiome(worldX, localY, worldZ, carvingState);
         if (biome != null) {
             PlatformBlockState match = matchDepositVariant(biome.getDepositVariants(), ore, worldY);
             if (match != null) {

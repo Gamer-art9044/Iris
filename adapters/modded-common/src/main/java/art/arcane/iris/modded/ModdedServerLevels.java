@@ -24,9 +24,17 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelStorageSource;
 
+import java.util.Objects;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 public final class ModdedServerLevels implements ModdedServerAccess {
+    private final Consumer<MinecraftServer> levelCacheInvalidator;
+
+    public ModdedServerLevels(Consumer<MinecraftServer> levelCacheInvalidator) {
+        this.levelCacheInvalidator = Objects.requireNonNull(levelCacheInvalidator);
+    }
+
     @Override
     public Executor levelExecutor(MinecraftServer server) {
         return server.executor;
@@ -39,17 +47,29 @@ public final class ModdedServerLevels implements ModdedServerAccess {
 
     @Override
     public ServerLevel putLevel(MinecraftServer server, ResourceKey<Level> key, ServerLevel level) {
-        return server.levels.put(key, level);
+        ServerLevel previous = server.levels.put(key, level);
+        if (previous != level) {
+            levelCacheInvalidator.accept(server);
+        }
+        return previous;
     }
 
     @Override
     public ServerLevel putLevelIfAbsent(MinecraftServer server, ResourceKey<Level> key, ServerLevel level) {
-        return server.levels.putIfAbsent(key, level);
+        ServerLevel previous = server.levels.putIfAbsent(key, level);
+        if (previous == null) {
+            levelCacheInvalidator.accept(server);
+        }
+        return previous;
     }
 
     @Override
     public ServerLevel removeLevel(MinecraftServer server, ResourceKey<Level> key) {
-        return server.levels.remove(key);
+        ServerLevel removed = server.levels.remove(key);
+        if (removed != null) {
+            levelCacheInvalidator.accept(server);
+        }
+        return removed;
     }
 
     @Override

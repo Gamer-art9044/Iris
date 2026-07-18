@@ -21,4 +21,7 @@ public class IrisStructureStiltSettings {
 
     @Desc("Block palette used for foundation columns.")
     private IrisMaterialPalette palette = new IrisMaterialPalette().qclear().qadd("minecraft:cobblestone");
+
+    @Desc("For Iris-authored structures, whether solid partial blocks such as slabs, stairs, and walls may seed foundation columns instead of requiring a fully occluding base block.")
+    private boolean supportNonOccluding = false;
 }

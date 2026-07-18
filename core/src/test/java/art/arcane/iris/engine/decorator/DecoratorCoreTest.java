@@ -2,6 +2,7 @@ package art.arcane.iris.engine.decorator;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisBlockData;
 import art.arcane.iris.engine.object.IrisDecorationPart;
 import art.arcane.iris.engine.object.IrisDecorator;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -376,6 +377,31 @@ public class DecoratorCoreTest {
 
         assertSame(lower, output.get(0, 1, 0));
         assertSame(upper, output.get(0, 2, 0));
+    }
+
+    @Test
+    public void forcedSurfaceBlockStillPlacesDecorantAboveIt() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisBlockData forcedBlock = mock(IrisBlockData.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState support = sturdyState();
+        PlatformBlockState farmland = sturdyState();
+        PlatformBlockState air = airState();
+        PlatformBlockState wheat = mock(PlatformBlockState.class);
+        when(wheat.key()).thenReturn("minecraft:wheat[age=7]");
+        when(decorator.getForceBlock()).thenReturn(forcedBlock);
+        when(forcedBlock.getBlockData(data)).thenReturn(farmland);
+        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(wheat);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 3, 1);
+        output.set(0, 0, 0, support);
+        output.set(0, 1, 0, air);
+
+        DecoratorCore.placeSurfaceSingle(
+                decorator, 0, 0, 0, 0, 0, output, new RNG(1L), data, false, false, null);
+
+        assertSame(farmland, output.get(0, 0, 0));
+        assertSame(wheat, output.get(0, 1, 0));
     }
 
     private PlatformBlockState airState() {

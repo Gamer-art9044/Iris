@@ -163,7 +163,6 @@ final class DecoratorCore {
             }
             data.set(x, height, z, fixFacesForHunk(
                     decorator.getForceBlock().getBlockData(irisData), data, x, z, realX, height, realZ, mantle));
-            return;
         }
 
         if (!decorator.isForcePlace()) {

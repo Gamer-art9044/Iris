@@ -54,6 +54,11 @@ public final class ForgeModdedLoader implements ModdedLoader {
     }
 
     @Override
+    public void invalidateLevelCache(MinecraftServer server) {
+        server.markWorldsDirty();
+    }
+
+    @Override
     public boolean clientEnvironment() {
         return FMLEnvironment.dist.isClient();
     }

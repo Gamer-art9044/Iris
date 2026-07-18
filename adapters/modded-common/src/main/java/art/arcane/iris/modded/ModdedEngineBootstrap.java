@@ -104,7 +104,6 @@ public final class ModdedEngineBootstrap {
         ModdedStartup.prepareForStartup();
         IrisModdedChunkGenerator.startGenPool();
         bindWorldGenerators(server);
-        ModdedStartup.runOnce(server);
         services().enableAll();
         ModdedProtocolHandler.start(server);
         ModdedSentry.start(loader());
@@ -125,6 +124,7 @@ public final class ModdedEngineBootstrap {
 
     public static void serverStarted(MinecraftServer server) {
         bindWorldGenerators(server);
+        ModdedStartup.runOnce(server);
         reconcileSpawn(server);
         ModdedWorldCheck.serverStarted(server);
     }
@@ -284,7 +284,8 @@ public final class ModdedEngineBootstrap {
                 IrisPlatforms.bind(created);
                 rollback.add(() -> restorePlatform(previousPlatform));
 
-                ModdedServerAccess previousServerAccess = ModdedDimensionManager.bindAccess(new ModdedServerLevels());
+                ModdedServerAccess previousServerAccess = ModdedDimensionManager.bindAccess(
+                        new ModdedServerLevels(boundLoader::invalidateLevelCache));
                 rollback.add(() -> ModdedDimensionManager.restoreAccess(previousServerAccess));
 
                 IrisObjectRotation.StateRotator previousRotator = IrisObjectRotation.bindPlatformRotator(new ModdedStateRotator());

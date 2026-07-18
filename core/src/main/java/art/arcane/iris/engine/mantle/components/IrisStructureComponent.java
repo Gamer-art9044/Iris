@@ -135,36 +135,42 @@ public class IrisStructureComponent extends IrisMantleComponent {
 
         ObjectPlaceMode mode = structure.getPlaceMode();
         int failedPieces = 0;
-        Long2IntOpenHashMap foundationColumns = placement.getStilt() == null
+        IrisStructureStiltSettings stilt = placement.getStilt();
+        Long2IntOpenHashMap foundationColumns = stilt == null
                 ? null : new Long2IntOpenHashMap();
+        boolean supportNonOccluding = stilt != null && stilt.isSupportNonOccluding();
         if (placement.isUnderground()) {
             ObjectPlaceMode undergroundMode = (mode == ObjectPlaceMode.ORGANIC_STILT || mode == ObjectPlaceMode.CEILING_HANG)
                     ? mode : ObjectPlaceMode.STRUCTURE_PIECE;
             for (PlacedStructurePiece p : pieces) {
-                if (placeObject(writer, structure, p, undergroundMode, p.getY(), rng, foundationColumns) == -1) {
+                if (placeObject(writer, structure, p, undergroundMode, p.getY(), rng,
+                        foundationColumns, supportNonOccluding) == -1) {
                     failedPieces++;
                 }
             }
         } else if (mode == ObjectPlaceMode.STRUCTURE_PIECE || mode == ObjectPlaceMode.FLOATING) {
             for (PlacedStructurePiece p : pieces) {
-                if (placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY(), rng, foundationColumns) == -1) {
+                if (placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY(), rng,
+                        foundationColumns, supportNonOccluding) == -1) {
                     failedPieces++;
                 }
             }
         } else if (pieces.size() == 1) {
-            if (placeObject(writer, structure, pieces.getFirst(), mode, -1, rng, foundationColumns) == -1) {
+            if (placeObject(writer, structure, pieces.getFirst(), mode, -1, rng,
+                    foundationColumns, supportNonOccluding) == -1) {
                 failedPieces++;
             }
         } else {
             for (PlacedStructurePiece p : pieces) {
-                if (placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY(), rng, foundationColumns) == -1) {
+                if (placeObject(writer, structure, p, ObjectPlaceMode.STRUCTURE_PIECE, p.getY(), rng,
+                        foundationColumns, supportNonOccluding) == -1) {
                     failedPieces++;
                 }
             }
         }
         requireAppliedPieces(resolved, cx, cz, failedPieces);
-        if (failedPieces == 0 && placement.getStilt() != null) {
-            placeFoundation(writer, foundationColumns, placement.getStilt(), rng, !placement.isUnderground());
+        if (failedPieces == 0 && stilt != null) {
+            placeFoundation(writer, foundationColumns, stilt, rng, !placement.isUnderground());
         }
     }
 
@@ -533,7 +539,8 @@ public class IrisStructureComponent extends IrisMantleComponent {
     }
 
     private int placeObject(MantleWriter writer, IrisStructure structure, PlacedStructurePiece p,
-                            ObjectPlaceMode mode, int y, RNG rng, Long2IntOpenHashMap foundationColumns) {
+                            ObjectPlaceMode mode, int y, RNG rng, Long2IntOpenHashMap foundationColumns,
+                            boolean supportNonOccluding) {
         IrisObject object = p.getObject();
         String objectKey = object.getLoadKey();
         IrisObjectPlacement config = structure.createLootPlacement(objectKey);
@@ -549,7 +556,8 @@ public class IrisStructureComponent extends IrisMantleComponent {
         String marker = structurePlacementMarker(structure, p, objectKey);
         return object.place(p.getX(), placeY, p.getZ(), writer, config, rng, (position, state) -> {
             StructureFoundationPlanner.recordBaseCell(
-                    foundationColumns, position.getX(), position.getY(), position.getZ(), state);
+                    foundationColumns, position.getX(), position.getY(), position.getZ(), state,
+                    supportNonOccluding);
             if (marker != null && shouldWriteStructureMarker(state)) {
                 writer.setData(position.getX(), position.getY(), position.getZ(), marker);
             }

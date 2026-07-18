@@ -54,6 +54,10 @@ public final class FabricModdedLoader implements ModdedLoader {
     }
 
     @Override
+    public void invalidateLevelCache(MinecraftServer server) {
+    }
+
+    @Override
     public boolean clientEnvironment() {
         return FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT;
     }

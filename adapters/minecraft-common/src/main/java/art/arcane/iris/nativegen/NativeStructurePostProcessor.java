@@ -22,6 +22,7 @@ import net.minecraft.world.level.levelgen.GenerationStep;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.PoolElementStructurePiece;
+import net.minecraft.world.level.levelgen.structure.ScatteredFeaturePiece;
 import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.TerrainAdjustment;
@@ -31,6 +32,8 @@ import net.minecraft.world.level.levelgen.structure.pools.ListPoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.StructurePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.StructureTemplatePool;
+import net.minecraft.world.level.levelgen.structure.structures.DesertPyramidPiece;
+import net.minecraft.world.level.levelgen.structure.structures.JungleTemplePiece;
 import net.minecraft.world.level.levelgen.structure.structures.OceanMonumentPieces;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
@@ -46,7 +49,9 @@ import java.util.Objects;
 import java.util.function.IntBinaryOperator;
 
 public final class NativeStructurePostProcessor {
+    private static final String DESERT_PYRAMID_ID = "minecraft:desert_pyramid";
     private static final int FOUNDATION_VERTICAL_TOLERANCE = 1;
+    private static final String JUNGLE_PYRAMID_ID = "minecraft:jungle_pyramid";
     private static final int MAX_BURIAL_COLUMNS = 2_000_000;
     private static final int MONUMENT_BASE_BELOW_SEA_LEVEL = 24;
     private static final String OCEAN_MONUMENT_ID = "minecraft:monument";
@@ -80,8 +85,32 @@ public final class NativeStructurePostProcessor {
             return alignOceanMonumentToSeaLevel(
                     start, requestedOffset, seaLevel, worldMinY, worldMaxYExclusive);
         }
+        if (isRaisedScatteredStructure(structureId)) {
+            return alignScatteredStructureToSurface(
+                    start, structureId, requestedOffset, worldMinY, worldMaxYExclusive, surfaceHeight);
+        }
         return applyVerticalShift(
                 start, requestedOffset, worldMinY, worldMaxYExclusive, underground, surfaceHeight);
+    }
+
+    static int alignScatteredStructureToSurface(StructureStart start, String structureId,
+                                                  int configuredOffset, int worldMinY,
+                                                  int worldMaxYExclusive,
+                                                  IntBinaryOperator surfaceHeight) {
+        Objects.requireNonNull(surfaceHeight, "Scattered native structure requires a terrain height resolver");
+        ScatteredFeaturePiece piece = requireRaisedScatteredPiece(start, structureId);
+        BoundingBox bounds = start.getBoundingBox();
+        BoundingBox pieceBounds = piece.getBoundingBox();
+        int surfaceY = highestSurfaceY(pieceBounds, surfaceHeight);
+        int targetMinY = Math.addExact(Math.addExact(surfaceY, 1), configuredOffset);
+        int requestedMove = Math.subtractExact(targetMinY, pieceBounds.minY());
+        int offsetY = StructureVerticalBounds.clampOffset(
+                bounds.minY(), bounds.maxY(), requestedMove, worldMinY, worldMaxYExclusive);
+        if (offsetY != 0) {
+            moveStructureStart(start, bounds, offsetY);
+        }
+        setScatteredHeightPosition(piece, Math.max(0, piece.getBoundingBox().minY()));
+        return offsetY;
     }
 
     public static int applyVerticalShift(StructureStart start, int requestedOffset, int worldMinY,
@@ -135,6 +164,72 @@ public final class NativeStructurePostProcessor {
 
     private static boolean isOceanMonument(String structureId) {
         return OCEAN_MONUMENT_ID.equals(structureId);
+    }
+
+    private static boolean isRaisedScatteredStructure(String structureId) {
+        return DESERT_PYRAMID_ID.equals(structureId) || JUNGLE_PYRAMID_ID.equals(structureId);
+    }
+
+    private static ScatteredFeaturePiece requireRaisedScatteredPiece(StructureStart start,
+                                                                      String structureId) {
+        Objects.requireNonNull(start, "Scattered native structure start must not be null");
+        List<StructurePiece> pieces = start.getPieces();
+        if (pieces.size() != 1) {
+            throw new IllegalStateException(structureId + " must contain exactly one scattered piece, found "
+                    + pieces.size());
+        }
+        StructurePiece piece = pieces.get(0);
+        if (DESERT_PYRAMID_ID.equals(structureId) && piece instanceof DesertPyramidPiece desertPyramid) {
+            return desertPyramid;
+        }
+        if (JUNGLE_PYRAMID_ID.equals(structureId) && piece instanceof JungleTemplePiece jungleTemple) {
+            return jungleTemple;
+        }
+        throw new IllegalStateException(structureId + " contains unexpected piece "
+                + piece.getClass().getName());
+    }
+
+    private static int highestSurfaceY(BoundingBox bounds, IntBinaryOperator surfaceHeight) {
+        int highestY = Integer.MIN_VALUE;
+        for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
+            for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
+                highestY = Math.max(highestY, surfaceHeight.applyAsInt(x, z));
+            }
+        }
+        if (highestY == Integer.MIN_VALUE) {
+            throw new IllegalStateException("Scattered native structure has an empty terrain footprint");
+        }
+        return highestY;
+    }
+
+    private static void setScatteredHeightPosition(ScatteredFeaturePiece piece, int heightPosition) {
+        try {
+            ScatteredHeightPositionAccess.FIELD.setInt(piece, heightPosition);
+        } catch (IllegalAccessException error) {
+            throw new IllegalStateException("Cannot lock scattered native structure height", error);
+        }
+    }
+
+    static Field resolveScatteredHeightPositionField() {
+        Field resolved = null;
+        for (Field field : ScatteredFeaturePiece.class.getDeclaredFields()) {
+            int modifiers = field.getModifiers();
+            if (Modifier.isStatic(modifiers) || field.getType() != int.class
+                    || !Modifier.isProtected(modifiers) || Modifier.isFinal(modifiers)) {
+                continue;
+            }
+            if (resolved != null) {
+                throw new IllegalStateException("ScatteredFeaturePiece has multiple mutable protected int fields");
+            }
+            resolved = field;
+        }
+        if (resolved == null) {
+            throw new IllegalStateException("ScatteredFeaturePiece height-position field is missing");
+        }
+        if (!resolved.trySetAccessible()) {
+            throw new IllegalStateException("ScatteredFeaturePiece height-position field is inaccessible");
+        }
+        return resolved;
     }
 
     private static OceanMonumentPieces.MonumentBuilding requireOceanMonumentBuilding(StructureStart start) {
@@ -383,11 +478,21 @@ public final class NativeStructurePostProcessor {
         return List.copyOf(anchors);
     }
 
-    private static boolean requiresSurfaceTerrain(StructureStart start) {
+    static boolean requiresSurfaceTerrain(StructureStart start) {
         return start != null
                 && start.isValid()
-                && shouldPrepareSurfaceTerrain(
-                        start.getStructure().terrainAdaptation(), start.getStructure().step());
+                && (shouldPrepareSurfaceTerrain(
+                        start.getStructure().terrainAdaptation(), start.getStructure().step())
+                || containsRaisedScatteredPiece(start));
+    }
+
+    private static boolean containsRaisedScatteredPiece(StructureStart start) {
+        for (StructurePiece piece : start.getPieces()) {
+            if (piece instanceof DesertPyramidPiece || piece instanceof JungleTemplePiece) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void fitSurfaceTerrain(WorldGenLevel world, BoundingBox area,
@@ -924,6 +1029,13 @@ public final class NativeStructurePostProcessor {
         private static final Field FIELD = resolveMonumentChildPiecesField();
 
         private MonumentChildPiecesAccess() {
+        }
+    }
+
+    private static final class ScatteredHeightPositionAccess {
+        private static final Field FIELD = resolveScatteredHeightPositionField();
+
+        private ScatteredHeightPositionAccess() {
         }
     }
 

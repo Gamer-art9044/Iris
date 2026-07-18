@@ -29,3 +29,7 @@ jobs:
         run: ./gradlew :core:check :adapters:bukkit:plugin:test :spi:build :probe:test :probe:run :probe:deserializationProbe -PuseLocalVolmLib=false --console=plain --stacktrace
       - name: Run modded shared tests
         run: ./gradlew -p adapters/fabric test -PuseLocalVolmLib=false --console=plain --stacktrace
+      - name: Test modded artifact verifier
+        run: ./gradlew -p buildSrc test --console=plain --stacktrace
+      - name: Verify modded artifacts
+        run: ./gradlew verifyModdedArtifacts --no-parallel -PuseLocalVolmLib=false --console=plain --stacktrace

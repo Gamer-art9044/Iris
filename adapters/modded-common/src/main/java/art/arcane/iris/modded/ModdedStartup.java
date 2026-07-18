@@ -66,7 +66,7 @@ public final class ModdedStartup {
     }
 
     public static void runOnce(MinecraftServer server) {
-        if (server == null) {
+        if (server == null || server.getPlayerList() == null) {
             return;
         }
         prepareForStartup();

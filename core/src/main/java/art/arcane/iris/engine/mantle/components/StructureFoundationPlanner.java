@@ -13,8 +13,9 @@ final class StructureFoundationPlanner {
     }
 
     static void recordBaseCell(Long2IntOpenHashMap columns, int x, int y, int z,
-                               PlatformBlockState state) {
-        if (columns == null || state == null || !state.isOccluding()) {
+                               PlatformBlockState state, boolean supportNonOccluding) {
+        if (columns == null || state == null
+                || !(supportNonOccluding ? state.isSolid() : state.isOccluding())) {
             return;
         }
         long columnKey = pack(x, z);

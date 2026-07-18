@@ -31,7 +31,7 @@ file('../../gradle.properties').withInputStream { InputStream stream -> rootProp
 String irisVersion = providers.gradleProperty('irisVersion').getOrElse(rootProperties.getProperty('irisVersion', '4.0.0-26.2'))
 String minecraftVersion = providers.gradleProperty('minecraftVersion').getOrElse(rootProperties.getProperty('minecraftVersion', '26.2'))
 String neoForgeVersion = providers.gradleProperty('neoForgeVersion').getOrElse(rootProperties.getProperty('neoForgeVersion', '26.2.0.12-beta'))
-String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate').getOrElse(rootProperties.getProperty('volmLibCoordinate', 'com.github.VolmitSoftware:VolmLib:4c38988b344792a79f925f57f8a675bc85fc1bed'))
+String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate').getOrElse(rootProperties.getProperty('volmLibCoordinate', 'com.github.VolmitSoftware:VolmLib:d9026a7c8ebc391c8109f401ce79a0ce65df3969'))
 Closure<String> irisArtifactName = { String platform, String targetVersion ->
     return "Iris v${project.version} [${platform}] ${targetVersion}.jar"
 }
@@ -201,6 +201,9 @@ processResources {
 
 tasks.named('shadowJar', ShadowJar).configure {
     doFirst {
+        delete(fileTree(layout.buildDirectory.dir('libs')) {
+            include('Iris v* [NeoForge] *.jar')
+        })
         delete(layout.buildDirectory.file("libs/Iris-${project.version}+mc${minecraftVersion}-neoforge.jar"))
     }
     archiveFileName.set(irisArtifactName('NeoForge', "${minecraftVersion}+${neoForgeVersion}"))
@@ -215,10 +218,6 @@ tasks.named('shadowJar', ShadowJar).configure {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     relocate('org.objectweb.asm', 'art.arcane.iris.shadow.asm')
     relocate('io.sentry', 'art.arcane.iris.shadow.sentry')
-    relocate('com.sun.jna', 'art.arcane.iris.shadow.jna')
-    relocate('oshi', 'art.arcane.iris.shadow.oshi')
-    relocate('net.jpountz', 'art.arcane.iris.shadow.jpountz')
-    exclude('oshi.properties')
     exclude('org/jspecify/**')
     exclude('com/google/errorprone/**')
     exclude('com/google/j2objc/**')

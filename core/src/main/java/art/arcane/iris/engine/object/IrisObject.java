@@ -69,6 +69,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
@@ -100,7 +101,7 @@ public class IrisObject extends IrisRegistrant {
     protected transient volatile boolean smartBored = false;
     @Setter
     protected transient AtomicCache<AxisAlignedBB> aabb = new AtomicCache<>();
-    private transient final AtomicCache<Boolean> treeBlockPresence = new AtomicCache<>();
+    private transient final AtomicCache<KList<IrisBlockVector>> surfaceSupportOffsets = new AtomicCache<>();
     @Getter
     private VectorMap<PlatformBlockState> blocks;
     @Getter
@@ -326,7 +327,7 @@ public class IrisObject extends IrisRegistrant {
     }
 
     public void readLegacy(InputStream in) throws IOException {
-        treeBlockPresence.reset();
+        surfaceSupportOffsets.reset();
         DataInputStream din = new DataInputStream(in);
         this.w = din.readInt();
         this.h = din.readInt();
@@ -358,7 +359,7 @@ public class IrisObject extends IrisRegistrant {
     }
 
     public void read(InputStream in) throws Throwable {
-        treeBlockPresence.reset();
+        surfaceSupportOffsets.reset();
         DataInputStream din = new DataInputStream(in);
         this.w = din.readInt();
         this.h = din.readInt();
@@ -602,6 +603,7 @@ public class IrisObject extends IrisRegistrant {
         shrinkOffset = offset;
         blocks = b;
         states = s;
+        surfaceSupportOffsets.reset();
     }
 
     public void clean() {
@@ -613,6 +615,7 @@ public class IrisObject extends IrisRegistrant {
 
         blocks = d;
         states = dx;
+        surfaceSupportOffsets.reset();
     }
 
     public IrisBlockVector getSigned(int x, int y, int z) {
@@ -624,7 +627,7 @@ public class IrisObject extends IrisRegistrant {
     }
 
     public void setUnsigned(int x, int y, int z, PlatformBlockState block) {
-        treeBlockPresence.reset();
+        surfaceSupportOffsets.reset();
         IrisBlockVector v = getSigned(x, y, z);
 
         if (block == null) {
@@ -646,7 +649,7 @@ public class IrisObject extends IrisRegistrant {
     }
 
     public void setUnsigned(int x, int y, int z, Block block, boolean legacy) {
-        treeBlockPresence.reset();
+        surfaceSupportOffsets.reset();
         IrisBlockVector v = getSigned(x, y, z);
 
         if (block == null) {
@@ -932,9 +935,8 @@ public class IrisObject extends IrisRegistrant {
                 && !config.isUnderwater()
                 && !config.isOnwater()
                 && config.getCarvingSupport().supportsSurface()
-                && hasTreeBlocks()
                 && IrisSurfaceOpening.isOpen(oplacer, getLoader(), x, z, config.getTranslate(),
-                        config.getRotation(), spinx, spiny, spinz)) {
+                        config.getRotation(), spinx, spiny, spinz, getSurfaceSupportOffsets())) {
             return -1;
         }
 
@@ -1511,16 +1513,32 @@ public class IrisObject extends IrisRegistrant {
         };
     }
 
-    boolean hasTreeBlocks() {
-        Boolean present = treeBlockPresence.aquire(() -> {
+    KList<IrisBlockVector> getSurfaceSupportOffsets() {
+        return surfaceSupportOffsets.aquire(() -> {
             readLock.lock();
             try {
-                return IrisSurfaceOpening.containsTreeBlocks(blocks.values());
+                int lowestY = Integer.MAX_VALUE;
+                KList<IrisBlockVector> offsets = new KList<>();
+                for (Map.Entry<IrisBlockVector, PlatformBlockState> entry : blocks) {
+                    PlatformBlockState state = entry.getValue();
+                    if (state == null || !state.isSolid() || state.isFoliage()) {
+                        continue;
+                    }
+                    IrisBlockVector position = entry.getKey();
+                    int blockY = position.getBlockY();
+                    if (blockY < lowestY) {
+                        lowestY = blockY;
+                        offsets.clear();
+                    }
+                    if (blockY == lowestY) {
+                        offsets.add(position.clone());
+                    }
+                }
+                return offsets;
             } finally {
                 readLock.unlock();
             }
         });
-        return Boolean.TRUE.equals(present);
     }
 
     private boolean isCarvedCaveAnchor(IObjectPlacer placer, int x, int y, int z) {
@@ -1584,6 +1602,7 @@ public class IrisObject extends IrisRegistrant {
 
         blocks = d;
         states = dx;
+        surfaceSupportOffsets.reset();
         shrinkwrap();
         writeLock.unlock();
     }
@@ -1713,6 +1732,7 @@ public class IrisObject extends IrisRegistrant {
         }
 
         blocks = b;
+        surfaceSupportOffsets.reset();
         writeLock.unlock();
     }
 
@@ -1744,6 +1764,7 @@ public class IrisObject extends IrisRegistrant {
         }
 
         blocks = b;
+        surfaceSupportOffsets.reset();
         writeLock.unlock();
     }
 
@@ -1779,6 +1800,7 @@ public class IrisObject extends IrisRegistrant {
         }
 
         blocks = b;
+        surfaceSupportOffsets.reset();
         writeLock.unlock();
     }
 

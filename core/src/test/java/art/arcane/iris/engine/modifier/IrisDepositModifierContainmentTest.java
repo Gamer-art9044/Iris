@@ -53,4 +53,21 @@ public class IrisDepositModifierContainmentTest {
         assertFalse(IrisDepositModifier.canReplaceDepositTarget(fluid));
         assertFalse(IrisDepositModifier.canReplaceDepositTarget(null));
     }
+
+    @Test
+    public void oreFrequencyMultiplierKeepsConfiguredShareOfVeins() {
+        assertTrue(IrisDepositModifier.passesOreFrequency(0.4D, 0.399D));
+        assertFalse(IrisDepositModifier.passesOreFrequency(0.4D, 0.4D));
+        assertTrue(IrisDepositModifier.passesOreFrequency(1D, 0.999D));
+        assertFalse(IrisDepositModifier.passesOreFrequency(0D, 0D));
+    }
+
+    @Test
+    public void largerVeinsRemainCenteredAndInsideTheChunk() {
+        assertEquals(6, IrisDepositModifier.clampDepositCenter(6, 5, 16));
+        assertEquals(2, IrisDepositModifier.clampDepositCenter(1, 5, 16));
+        assertEquals(13, IrisDepositModifier.clampDepositCenter(14, 5, 16));
+        assertEquals(2, IrisDepositModifier.clampDepositCenter(1, 4, 16));
+        assertEquals(14, IrisDepositModifier.clampDepositCenter(15, 4, 16));
+    }
 }

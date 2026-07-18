@@ -205,6 +205,14 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     @ArrayType(min = 1, type = IrisDepositGenerator.class)
     @Desc("Define biome deposit generators that add onto the existing regional and global deposit generators")
     private KList<IrisDepositGenerator> deposits = new KList<>();
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("Multiplier applied to the frequency of every ore deposit whose center is inside this biome. A value of 0.4 keeps 40% of ore veins while leaving non-ore deposits unchanged.")
+    private double oreDepositFrequencyMultiplier = 1D;
+    @MinNumber(0.01)
+    @MaxNumber(16)
+    @Desc("Multiplier applied to the block count of every ore deposit whose center is inside this biome. Non-ore deposits are unchanged.")
+    private double oreDepositSizeMultiplier = 1D;
     @ArrayType(min = 1, type = IrisDepositVariant.class)
     @Desc("Deposit ore remap rules scoped to this biome. Each entry declares a vertical band and a source->replacement block id map. Applied before regional and dimension rules; first matching biome rule wins.")
     private KList<IrisDepositVariant> depositVariants = new KList<>();

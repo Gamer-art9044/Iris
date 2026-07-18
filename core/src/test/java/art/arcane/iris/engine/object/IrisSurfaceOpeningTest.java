@@ -3,6 +3,7 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.math.IrisBlockVector;
 import org.junit.Test;
 
 import java.util.HashMap;
@@ -23,7 +24,8 @@ public class IrisSurfaceOpeningTest {
         SurfacePlacer placer = new SurfacePlacer(80);
         placer.carve(1, 80, 1);
 
-        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0));
+        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
+                List.of(new IrisBlockVector(0, 0, 0))));
         assertEquals(9, placer.heightQueries());
     }
 
@@ -34,7 +36,8 @@ public class IrisSurfaceOpeningTest {
         placer.carve(0, 78, 0);
         placer.carve(0, 77, 0);
 
-        assertFalse(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0));
+        assertFalse(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
+                List.of(new IrisBlockVector(0, 0, 0))));
     }
 
     @Test
@@ -47,7 +50,8 @@ public class IrisSurfaceOpeningTest {
         }
         placer.carve(1, 82, 1);
 
-        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0));
+        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
+                List.of(new IrisBlockVector(0, 0, 0))));
     }
 
     @Test
@@ -55,36 +59,63 @@ public class IrisSurfaceOpeningTest {
         SurfacePlacer placer = new SurfacePlacer(80);
         placer.carve(2, 80, 0);
 
-        assertFalse(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0));
+        assertFalse(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
+                List.of(new IrisBlockVector(0, 0, 0))));
     }
 
     @Test
-    public void placementTranslationMovesSupportStencil() {
+    public void offsetSupportFootprintMovesSupportStencil() {
         SurfacePlacer placer = new SurfacePlacer(80);
-        IrisObjectTranslate translate = new IrisObjectTranslate().setX(5).setZ(-3);
         placer.carve(5, 80, -3);
 
-        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, translate, null, 0, 0, 0));
+        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
+                List.of(new IrisBlockVector(5, 0, -3))));
     }
 
     @Test
-    public void placementTranslationUsesTheSameRotationAsObjectBlocks() {
+    public void placementTranslationAndRotationMatchObjectBlocks() {
         SurfacePlacer placer = new SurfacePlacer(80);
         IrisObjectTranslate translate = new IrisObjectTranslate().setX(5).setZ(-3);
         IrisObjectRotation rotation = IrisObjectRotation.of(0, 90, 0);
-        placer.carve(-3, 80, -5);
+        placer.carve(-3, 80, -7);
 
-        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, translate, rotation, 0, 0, 0));
+        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, translate, rotation, 0, 0, 0,
+                List.of(new IrisBlockVector(2, 0, 0))));
     }
 
     @Test
-    public void treeBlockClassificationDoesNotMatchUnrelatedObjects() {
-        PlatformBlockState stone = mock(PlatformBlockState.class);
-        PlatformBlockState log = mock(PlatformBlockState.class);
-        when(log.isTreeBlock()).thenReturn(true);
+    public void emptyFootprintFallsBackToPlacementOrigin() {
+        SurfacePlacer placer = new SurfacePlacer(80);
+        IrisObjectTranslate translate = new IrisObjectTranslate().setX(4).setZ(-2);
+        placer.carve(4, 80, -2);
 
-        assertFalse(IrisSurfaceOpening.containsTreeBlocks(List.of(stone)));
-        assertTrue(IrisSurfaceOpening.containsTreeBlocks(List.of(stone, log)));
+        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, translate, null, 0, 0, 0, List.of()));
+    }
+
+    @Test
+    public void objectCachesItsLowestNonFoliageSupportBlocks() {
+        PlatformBlockState solid = mock(PlatformBlockState.class);
+        PlatformBlockState foliage = mock(PlatformBlockState.class);
+        when(solid.isSolid()).thenReturn(true);
+        when(foliage.isSolid()).thenReturn(true);
+        when(foliage.isFoliage()).thenReturn(true);
+
+        IrisObject object = new IrisObject(9, 9, 9);
+        object.setUnsigned(7, 1, 4, solid);
+        object.setUnsigned(4, 0, 4, foliage);
+        object.setUnsigned(4, 5, 4, solid);
+
+        List<IrisBlockVector> initial = object.getSurfaceSupportOffsets();
+        assertEquals(1, initial.size());
+        assertEquals(3, initial.getFirst().getBlockX());
+        assertEquals(-3, initial.getFirst().getBlockY());
+
+        object.setUnsigned(2, 0, 4, solid);
+
+        List<IrisBlockVector> updated = object.getSurfaceSupportOffsets();
+        assertEquals(1, updated.size());
+        assertEquals(-2, updated.getFirst().getBlockX());
+        assertEquals(-4, updated.getFirst().getBlockY());
     }
 
     private static final class SurfacePlacer implements IObjectPlacer {

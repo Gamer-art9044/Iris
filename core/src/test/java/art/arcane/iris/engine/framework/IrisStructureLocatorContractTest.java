@@ -30,6 +30,7 @@ import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
+import art.arcane.iris.engine.object.IrisStructureCarveShape;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.NativeStructureSuppression;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
@@ -469,8 +470,41 @@ public class IrisStructureLocatorContractTest {
         KList<PlacedStructurePiece> pieces = new KList<>();
         pieces.add(piece(0, 60, 0, 1, 80, 1));
 
-        assertEquals(Integer.valueOf(-17), IrisStructureLocator.resolveUndergroundBurialShift(
+        assertEquals(Integer.valueOf(-14), IrisStructureLocator.resolveUndergroundBurialShift(
                 engine, pieces, placement, 60, -63, 319));
+
+        placement.setOverboreErosionStrength(0D);
+        assertEquals(Integer.valueOf(-1), IrisStructureLocator.resolveUndergroundBurialShift(
+                engine, pieces, placement, 60, -63, 319));
+
+        placement.setOverboreShape(IrisStructureCarveShape.ROUNDED);
+        assertEquals(Integer.valueOf(-1), IrisStructureLocator.resolveUndergroundBurialShift(
+                engine, pieces, placement, 60, -63, 319));
+
+        placement.setOverboreHeight(0);
+        assertEquals(Integer.valueOf(0), IrisStructureLocator.resolveUndergroundBurialShift(
+                engine, pieces, placement, 60, -63, 319));
+    }
+
+    @Test
+    public void zeroOverboreRadiusDoesNotExpandTheBurialEnvelope() {
+        Engine engine = mock(Engine.class);
+        when(engine.getMinHeight()).thenReturn(-64);
+        when(engine.getHeight(anyInt(), anyInt(), eq(true))).thenReturn(164);
+        IrisStructurePlacement placement = new IrisStructurePlacement()
+                .setUnderground(true)
+                .setMinHeight(-64)
+                .setMaxHeight(100)
+                .setOverbore(true)
+                .setOverboreShape(IrisStructureCarveShape.ROUNDED)
+                .setOverboreRadius(0)
+                .setOverboreHeight(0);
+        KList<PlacedStructurePiece> pieces = new KList<>();
+        pieces.add(piece(4, 60, 7, 4, 80, 7));
+
+        assertEquals(Integer.valueOf(0), IrisStructureLocator.resolveUndergroundBurialShift(
+                engine, pieces, placement, 60, -63, 319));
+        verify(engine, times(1)).getHeight(4, 7, true);
     }
 
     @Test

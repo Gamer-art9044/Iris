@@ -153,9 +153,20 @@ public class SchemaBuilderParityTest {
                 .getJSONObject(stilt.getString("$ref").substring("#/definitions/".length()));
         JSONObject stiltProperties = stiltDefinition.getJSONObject("properties");
         JSONObject maxDepth = stiltProperties.getJSONObject("maxDepth");
+        JSONObject overboreShape = properties.getJSONObject("overboreShape");
+        JSONObject overboreErosionStrength = properties.getJSONObject("overboreErosionStrength");
+        JSONObject overboreErosionFrequency = properties.getJSONObject("overboreErosionFrequency");
+        String overboreShapeDefinition = overboreShape.getString("$ref")
+                .substring("#/definitions/".length());
 
         assertTrue(properties.has("structures"));
         assertTrue(properties.has("distribution"));
+        assertEquals(List.of("BOX", "ROUNDED", "ERODED"), oneOfValues(
+                schema.getJSONObject("definitions"), overboreShapeDefinition));
+        assertEquals(0D, overboreErosionStrength.getDouble("minimum"), 0D);
+        assertEquals(1D, overboreErosionStrength.getDouble("maximum"), 0D);
+        assertEquals(0.001D, overboreErosionFrequency.getDouble("minimum"), 0D);
+        assertEquals(1D, overboreErosionFrequency.getDouble("maximum"), 0D);
         assertEquals("object", stilt.getString("type"));
         assertTrue(stiltProperties.has("palette"));
         assertTrue(stiltProperties.has("supportNonOccluding"));
@@ -186,6 +197,15 @@ public class SchemaBuilderParityTest {
         List<String> values = new ArrayList<>(array.length());
         for (int index = 0; index < array.length(); index++) {
             values.add(array.getString(index));
+        }
+        return values;
+    }
+
+    private static List<String> oneOfValues(JSONObject definitions, String key) {
+        JSONArray array = definitions.getJSONObject(key).getJSONArray("oneOf");
+        List<String> values = new ArrayList<>(array.length());
+        for (int index = 0; index < array.length(); index++) {
+            values.add(array.getJSONObject(index).getString("const"));
         }
         return values;
     }

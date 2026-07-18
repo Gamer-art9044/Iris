@@ -1,5 +1,6 @@
 package art.arcane.iris.engine.mantle.components;
 
+import art.arcane.iris.engine.object.IrisStructureCarveShape;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -8,47 +9,56 @@ import static org.junit.Assert.assertTrue;
 
 public class IrisStructureComponentOverboreTest {
     @Test
-    public void exactPieceInteriorAlwaysCarves() {
-        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(0.0, 0.0));
-        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(0.0, 1.0));
-    }
-
-    @Test
-    public void lowNoiseRemovesTheFormerFlatShell() {
-        double oneBlockAtRadiusSix = 1.0 / 6.0;
+    public void exactStructureFootprintAlwaysCarves() {
         assertTrue(IrisStructureComponent.shouldCarveOverboreCell(
-                oneBlockAtRadiusSix * oneBlockAtRadiusSix, 0.0));
-        assertFalse(IrisStructureComponent.shouldCarveOverboreCell(0.25 * 0.25, 0.0));
+                IrisStructureCarveShape.ERODED, 0D, 0D, 1D));
+        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(
+                IrisStructureCarveShape.ROUNDED, 0D, 0D, 1D));
     }
 
     @Test
-    public void maximumNoiseStopsAtConfiguredReach() {
-        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(1.0, 1.0));
-        assertFalse(IrisStructureComponent.shouldCarveOverboreCell(1.000001, 1.0));
+    public void boxModeKeepsStraightCandidateVolume() {
+        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(
+                IrisStructureCarveShape.BOX, 100D, 0D, 1D));
     }
 
     @Test
-    public void diagonalCornersUseEuclideanFalloff() {
-        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(1.0, 1.0));
-        assertFalse(IrisStructureComponent.shouldCarveOverboreCell(0.8 * 0.8 + 0.8 * 0.8, 1.0));
+    public void roundedModeStopsAtConfiguredReach() {
+        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(
+                IrisStructureCarveShape.ROUNDED, 1D, 0D, 1D));
+        assertFalse(IrisStructureComponent.shouldCarveOverboreCell(
+                IrisStructureCarveShape.ROUNDED, 1.000001D, 1D, 0D));
     }
 
     @Test
-    public void boundaryNoiseIsClampedAndDeterministic() {
-        assertEquals(0.2, IrisStructureComponent.overboreBoundaryLimit(-10.0), 0.0);
-        assertEquals(1.0, IrisStructureComponent.overboreBoundaryLimit(10.0), 0.0);
-        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(0.36, 0.5));
-        assertFalse(IrisStructureComponent.shouldCarveOverboreCell(0.360001, 0.5));
+    public void zeroErosionStrengthMatchesRoundedMode() {
+        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(
+                IrisStructureCarveShape.ERODED, 1D, 0D, 0D));
+        assertFalse(IrisStructureComponent.shouldCarveOverboreCell(
+                IrisStructureCarveShape.ERODED, 1.000001D, 1D, 0D));
     }
 
     @Test
-    public void candidateExtensionsDoNotScanImpossibleOuterShell() {
-        assertEquals(6, IrisStructureComponent.overboreSideExtension(6));
-        assertEquals(18, IrisStructureComponent.overboreUpExtension(10.0));
+    public void zeroConfiguredCeilingHasNoErodedExtension() {
+        assertEquals(0D, IrisStructureComponent.erodedUpReach(null, 0.16D, 1D, 0, 0, 0), 0D);
+    }
 
-        long oldVolume = (41L + 18L) * (31L + 27L) * (35L + 18L);
-        long newVolume = (41L + 12L) * (31L + 18L) * (35L + 12L);
-        assertTrue(newVolume < oldVolume);
+    @Test
+    public void zeroErosionStrengthKeepsTheRoundedCeiling() {
+        assertEquals(10D, IrisStructureComponent.erodedUpReach(null, 0.16D, 0D, 0, 0, 10), 0D);
+    }
+
+    @Test
+    public void erosionStrengthAndNoiseAreClampedDeterministically() {
+        assertEquals(0.2D, IrisStructureComponent.overboreBoundaryLimit(-10D, 0.8D), 1.0E-12D);
+        assertEquals(1D, IrisStructureComponent.overboreBoundaryLimit(10D, 0.8D), 0D);
+        assertEquals(0.5D, IrisStructureComponent.overboreBoundaryLimit(0.5D, 1D), 0D);
+        assertEquals(1D, IrisStructureComponent.overboreBoundaryLimit(0D, -1D), 0D);
+        assertEquals(0D, IrisStructureComponent.overboreBoundaryLimit(0D, 10D), 0D);
+        assertTrue(IrisStructureComponent.shouldCarveOverboreCell(
+                null, 0.25D, 0.5D, 1D));
+        assertFalse(IrisStructureComponent.shouldCarveOverboreCell(
+                null, 0.250001D, 0.5D, 1D));
     }
 
     @Test

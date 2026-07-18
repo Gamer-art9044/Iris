@@ -19,6 +19,7 @@
 package art.arcane.iris.core.tools;
 
 import art.arcane.iris.core.runtime.TransientWorldCleanupSupport;
+import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import com.google.common.util.concurrent.AtomicDouble;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
@@ -46,13 +47,16 @@ import art.arcane.volmlib.util.scheduling.FoliaScheduler;
 import lombok.Data;
 import lombok.experimental.Accessors;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Player;
 
 import java.io.IOException;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -230,6 +234,7 @@ public class IrisCreator {
             addToBukkitYml();
             J.s(() -> IrisServices.get(MultiverseCoreLink.class).updateWorld(world, dimension));
         }
+        scheduleSenderTeleport(world);
 
         if (pregen != null) {
             CompletableFuture<Boolean> ff = new CompletableFuture<>();
@@ -252,6 +257,73 @@ public class IrisCreator {
             }
         }
         return world;
+    }
+
+    static Player createTeleportTarget(VolmitSender sender, boolean studio, boolean benchmark) {
+        if (studio || benchmark || sender == null || !sender.isPlayer()) {
+            return null;
+        }
+        return sender.player();
+    }
+
+    static CompletableFuture<Boolean> teleportSenderToCreatedWorld(
+            Player player,
+            World world,
+            WorldRuntimeControlService runtimeControl
+    ) {
+        Player requiredPlayer = Objects.requireNonNull(player, "player");
+        World requiredWorld = Objects.requireNonNull(world, "world");
+        WorldRuntimeControlService requiredRuntime = Objects.requireNonNull(runtimeControl, "runtimeControl");
+        Location entryAnchor = requiredRuntime.resolveEntryAnchor(requiredWorld);
+        if (entryAnchor == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Unable to resolve the entry anchor for world \"" + requiredWorld.getName() + "\"."));
+        }
+
+        int chunkX = entryAnchor.getBlockX() >> 4;
+        int chunkZ = entryAnchor.getBlockZ() >> 4;
+        return requiredRuntime.requestChunkAsync(requiredWorld, chunkX, chunkZ, true)
+                .thenCompose(chunk -> requiredRuntime.resolveSafeEntry(requiredWorld, entryAnchor))
+                .thenCompose(safeEntry -> {
+                    if (safeEntry == null) {
+                        return CompletableFuture.failedFuture(new IllegalStateException(
+                                "Unable to resolve a safe entry for world \"" + requiredWorld.getName() + "\"."));
+                    }
+                    return requiredRuntime.teleport(requiredPlayer, safeEntry);
+                });
+    }
+
+    private void scheduleSenderTeleport(World world) {
+        Player player = createTeleportTarget(sender, studio, benchmark);
+        if (player == null) {
+            return;
+        }
+
+        CompletableFuture<Boolean> teleportFuture;
+        try {
+            teleportFuture = teleportSenderToCreatedWorld(player, world, WorldRuntimeControlService.get());
+        } catch (Throwable e) {
+            reportSenderTeleportFailure(player, world, e);
+            return;
+        }
+
+        teleportFuture.whenComplete((success, throwable) -> {
+            if (throwable != null) {
+                reportSenderTeleportFailure(player, world, throwable);
+                return;
+            }
+            if (!Boolean.TRUE.equals(success)) {
+                reportSenderTeleportFailure(player, world, new IllegalStateException(
+                        "The runtime teleport operation returned false for player \"" + player.getName() + "\"."));
+            }
+        });
+    }
+
+    private void reportSenderTeleportFailure(Player player, World world, Throwable throwable) {
+        IrisLogging.reportError("World \"" + world.getName()
+                + "\" was created, but automatic teleport failed for player \"" + player.getName() + "\".", throwable);
+        J.runEntity(player, () -> new VolmitSender(player).sendMessage(C.YELLOW
+                + "The world was created, but automatic teleport failed. Try /iris teleport world=" + world.getName()));
     }
 
     private void reportStudioProgress(double progress, String stage) {

@@ -37,6 +37,7 @@ import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
+import art.arcane.iris.engine.object.IrisStructureCarveShape;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.IrisStructureStiltSettings;
 import art.arcane.iris.spi.IrisLogging;
@@ -65,10 +66,8 @@ import java.util.Objects;
 public class IrisStructureComponent extends IrisMantleComponent {
     private static final long MAX_BORE_VOLUME = 6_000_000L;
     private static final long MAX_OVERBORE_VOLUME = 48_000_000L;
-    private static final double OVERBORE_MIN_BOUNDARY = 0.2;
-    private static final double OVERBORE_MIN_BOUNDARY_SQUARED = OVERBORE_MIN_BOUNDARY * OVERBORE_MIN_BOUNDARY;
-    private static final double OVERBORE_BOUNDARY_SPAN = 0.8;
-    private static final double OVERBORE_MAX_UP_REACH = 1.8;
+    private static final int MAX_OVERBORE_FOOTPRINT_COLUMNS = 1_048_576;
+    private static final double OVERBORE_ROLL_FREQUENCY_RATIO = 3D / 7D;
     private static final MatterCavern CARVE_CAVERN = new MatterCavern(true, "", (byte) 3);
 
     public IrisStructureComponent(EngineMantle engineMantle) {
@@ -128,7 +127,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
 
         if (placement.isOverbore()) {
-            overboreStructure(writer, pieces, placement.getOverboreRadius(), placement.getOverboreHeight(), placement.getOverboreFloor());
+            overboreStructure(writer, pieces, placement);
         } else if (placement.isBore()) {
             boreStructure(writer, pieces, placement.getBorePadding());
         }
@@ -286,102 +285,95 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
     }
 
-    private void overboreStructure(MantleWriter writer, KList<PlacedStructurePiece> pieces, int radius, int ceiling, int floorDepth) {
+    private void overboreStructure(MantleWriter writer, KList<PlacedStructurePiece> pieces,
+                                   IrisStructurePlacement placement) {
         int[] bounds = computePieceBounds(pieces);
         if (bounds == null) {
             return;
         }
-        int margin = Math.max(1, radius);
-        int head = Math.max(0, ceiling);
-        int floorCut = Math.max(0, floorDepth);
+        IrisStructureCarveShape shape = placement.resolvedOverboreShape();
+        int margin = Math.max(0, placement.getOverboreRadius());
+        int head = Math.max(0, placement.getOverboreHeight());
+        int floorCut = Math.max(0, placement.getOverboreFloor());
+        double strength = placement.resolvedOverboreErosionStrength();
         int mantleOffset = getEngineMantle().getEngine().getMinHeight();
         int worldMin = getEngineMantle().getEngine().getMinHeight() + 1;
         int worldMax = getEngineMantle().getEngine().getMinHeight() + getEngineMantle().getEngine().getHeight() - 1;
+        int upExtension = shape.maximumCeilingExtension(head, strength);
 
-        double freq = 0.07;
-        double rollFreq = 0.03;
-        double reachSide = margin;
-        double reachUp = head < 1 ? 1.0 : head;
-        double reachDown = floorCut < 1 ? 1.0 : floorCut;
-        double upReachMin = 0.4;
-        double upReachSpan = 1.4;
-        int sideExt = overboreSideExtension(margin);
-        int upExt = overboreUpExtension(reachUp);
-
-        long work = 0L;
-        for (PlacedStructurePiece p : pieces) {
-            long wx = (long) (p.getMaxX() - p.getMinX() + 1) + 2L * sideExt;
-            long wz = (long) (p.getMaxZ() - p.getMinZ() + 1) + 2L * sideExt;
-            long wy = (long) (p.getMaxY() - p.getMinY() + 1) + upExt + floorCut;
-            work += wx * wy * wz;
-        }
-        if (work > MAX_OVERBORE_VOLUME) {
-            IrisLogging.warn("Skipping structure overbore of " + work + " blocks (cap " + MAX_OVERBORE_VOLUME + "); reduce overboreRadius/overboreHeight or use larger spacing.");
+        if (shape == IrisStructureCarveShape.BOX) {
+            carveOverboreBox(writer, bounds, margin, head, floorCut, mantleOffset, worldMin, worldMax);
             return;
         }
 
-        RNG noiseRng = new RNG(seed() + Cache.key(bounds[0], bounds[2]));
-        CNG blob = CNG.signature(noiseRng);
-        CNG roll = CNG.signature(noiseRng.nextParallelRNG(0x2A17));
-
-        if (IrisSettings.get().getGeneral().isDebug()) {
-            IrisLogging.info("Overbore carving organic cavern: pieces=" + pieces.size() + " margin=" + margin + " head=" + head + " floorCut=" + floorCut + " work=" + work);
+        long work = overboreCandidateVolume(bounds, margin, upExtension, floorCut);
+        if (work > MAX_OVERBORE_VOLUME) {
+            warnOverboreVolume(work);
+            return;
+        }
+        StructureCarvingFootprint footprint = StructureCarvingFootprint.from(
+                pieces, margin, MAX_OVERBORE_FOOTPRINT_COLUMNS);
+        if (footprint == null) {
+            IrisLogging.warn("Structure overbore footprint was empty or exceeded "
+                    + MAX_OVERBORE_FOOTPRINT_COLUMNS + " columns; skipping its expanded carve.");
+            return;
         }
 
-        for (PlacedStructurePiece p : pieces) {
-            int pMinX = p.getMinX();
-            int pMinY = p.getMinY();
-            int pMinZ = p.getMinZ();
-            int pMaxX = p.getMaxX();
-            int pMaxY = p.getMaxY();
-            int pMaxZ = p.getMaxZ();
-            int exMinX = pMinX - sideExt;
-            int exMaxX = pMaxX + sideExt;
-            int exMinZ = pMinZ - sideExt;
-            int exMaxZ = pMaxZ + sideExt;
-            int exMinY = Math.max(worldMin, pMinY - floorCut);
-            int exMaxY = Math.min(worldMax, pMaxY + upExt);
-            for (int bx = exMinX; bx <= exMaxX; bx++) {
-                double dx = bx < pMinX ? pMinX - bx : bx > pMaxX ? bx - pMaxX : 0;
-                double nx = dx / reachSide;
-                for (int bz = exMinZ; bz <= exMaxZ; bz++) {
-                    double dz = bz < pMinZ ? pMinZ - bz : bz > pMaxZ ? bz - pMaxZ : 0;
-                    double nz = dz / reachSide;
-                    double nxz = nx * nx + nz * nz;
-                    if (nxz > 1.0) {
+        double frequency = placement.resolvedOverboreErosionFrequency();
+        boolean eroded = shape == IrisStructureCarveShape.ERODED && strength > 0D;
+        CNG blob = null;
+        CNG roll = null;
+        if (eroded) {
+            RNG noiseRng = new RNG(seed() + Cache.key(bounds[0], bounds[2]));
+            blob = CNG.signature(noiseRng);
+            roll = CNG.signature(noiseRng.nextParallelRNG(0x2A17));
+        }
+
+        if (IrisSettings.get().getGeneral().isDebug()) {
+            IrisLogging.info("Overbore carving structure cavern: shape=" + shape + " pieces=" + pieces.size()
+                    + " footprint=" + footprint.width() + "x" + footprint.depth()
+                    + " margin=" + margin + " head=" + head + " floorCut=" + floorCut + " work=" + work);
+        }
+
+        double sideReachSquared = (double) margin * margin;
+        double downReach = Math.max(1D, floorCut);
+        for (int bz = footprint.minZ(); bz <= footprint.maxZ(); bz++) {
+            int footprintIndex = footprint.indexAt(footprint.minX(), bz);
+            for (int bx = footprint.minX(); bx <= footprint.maxX(); bx++, footprintIndex++) {
+                long horizontalDistanceSquared = footprint.distanceSquaredAt(footprintIndex);
+                if (horizontalDistanceSquared < 0L || horizontalDistanceSquared > sideReachSquared) {
+                    continue;
+                }
+                double normalizedHorizontalDistanceSquared = sideReachSquared == 0D
+                        ? 0D : horizontalDistanceSquared / sideReachSquared;
+                int sourceMinY = footprint.sourceMinYAt(footprintIndex);
+                int sourceMaxY = footprint.sourceMaxYAt(footprintIndex);
+                double upReach = eroded
+                        ? erodedUpReach(roll, frequency, strength, bx, bz, head)
+                        : Math.max(1D, head);
+                int columnUpExtension = eroded
+                        ? (int) Math.ceil(upReach) : head;
+                int minY = Math.max(worldMin, sourceMinY - floorCut);
+                int maxY = Math.min(worldMax, sourceMaxY + columnUpExtension);
+                for (int by = minY; by <= maxY; by++) {
+                    double normalizedY = normalizedVerticalDistance(
+                            by, sourceMinY, sourceMaxY, upReach, downReach);
+                    double distanceSquared = normalizedHorizontalDistanceSquared
+                            + normalizedY * normalizedY;
+                    if (distanceSquared <= 0D) {
+                        writer.carveDataIfAbsent(bx, by - mantleOffset, bz, CARVE_CAVERN);
                         continue;
                     }
-                    double w = roll.fitDouble(0.0, 1.0, bx * rollFreq, bz * rollFreq) * 0.7
-                            + roll.fitDouble(0.0, 1.0, bx * rollFreq * 3.0, bz * rollFreq * 3.0) * 0.3;
-                    double contrast = (w - 0.5) * 2.6 + 0.5;
-                    if (contrast < 0.0) {
-                        contrast = 0.0;
-                    } else if (contrast > 1.0) {
-                        contrast = 1.0;
+                    if (distanceSquared > 1D) {
+                        continue;
                     }
-                    double upReach = reachUp * (upReachMin + upReachSpan * contrast);
-                    if (upReach < 1.0) {
-                        upReach = 1.0;
+                    if (!eroded) {
+                        writer.carveDataIfAbsent(bx, by - mantleOffset, bz, CARVE_CAVERN);
+                        continue;
                     }
-                    for (int by = exMinY; by <= exMaxY; by++) {
-                        double ny;
-                        if (by > pMaxY) {
-                            ny = (by - pMaxY) / upReach;
-                        } else if (by < pMinY) {
-                            ny = (pMinY - by) / reachDown;
-                        } else {
-                            ny = 0.0;
-                        }
-                        double distanceSquared = nxz + ny * ny;
-                        if (distanceSquared > 1.0) {
-                            continue;
-                        }
-                        if (distanceSquared > OVERBORE_MIN_BOUNDARY_SQUARED) {
-                            double n = blob.fitDouble(0.0, 1.0, bx * freq, by * freq, bz * freq);
-                            if (!shouldCarveOverboreCell(distanceSquared, n)) {
-                                continue;
-                            }
-                        }
+                    double noise = blob.fitDouble(
+                            0D, 1D, bx * frequency, by * frequency, bz * frequency);
+                    if (shouldCarveOverboreCell(shape, distanceSquared, noise, strength)) {
                         writer.carveDataIfAbsent(bx, by - mantleOffset, bz, CARVE_CAVERN);
                     }
                 }
@@ -389,28 +381,100 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
     }
 
-    static int overboreSideExtension(int radius) {
-        return Math.max(1, radius);
+    private void carveOverboreBox(MantleWriter writer, int[] bounds, int margin, int head, int floorCut,
+                                  int mantleOffset, int worldMin, int worldMax) {
+        int minX = bounds[0] - margin;
+        int minY = Math.max(worldMin, bounds[1] - floorCut);
+        int minZ = bounds[2] - margin;
+        int maxX = bounds[3] + margin;
+        int maxY = Math.min(worldMax, bounds[4] + head);
+        int maxZ = bounds[5] + margin;
+        long volume = inclusiveVolume(minX, minY, minZ, maxX, maxY, maxZ);
+        if (volume > MAX_OVERBORE_VOLUME) {
+            warnOverboreVolume(volume);
+            return;
+        }
+        for (int bx = minX; bx <= maxX; bx++) {
+            for (int by = minY; by <= maxY; by++) {
+                for (int bz = minZ; bz <= maxZ; bz++) {
+                    writer.carveDataIfAbsent(bx, by - mantleOffset, bz, CARVE_CAVERN);
+                }
+            }
+        }
     }
 
-    static int overboreUpExtension(double reachUp) {
-        return (int) Math.ceil(Math.max(1.0, reachUp) * OVERBORE_MAX_UP_REACH);
+    static double erodedUpReach(CNG roll, double frequency, double strength, int x, int z, int head) {
+        if (head <= 0) {
+            return 0D;
+        }
+        double clampedStrength = Math.max(0D, Math.min(1D, strength));
+        if (clampedStrength <= 0D) {
+            return Math.max(1D, head);
+        }
+        double rollFrequency = frequency * OVERBORE_ROLL_FREQUENCY_RATIO;
+        double sample = roll.fitDouble(0D, 1D, x * rollFrequency, z * rollFrequency) * 0.7D
+                + roll.fitDouble(0D, 1D, x * rollFrequency * 3D, z * rollFrequency * 3D) * 0.3D;
+        double contrast = Math.max(0D, Math.min(1D, (sample - 0.5D) * 2.6D + 0.5D));
+        double roundedReach = Math.max(1D, head);
+        double erodedReach = Math.max(1D, head * (0.4D + 1.4D * contrast));
+        return roundedReach + clampedStrength * (erodedReach - roundedReach);
     }
 
-    static double overboreBoundaryLimit(double noise) {
+    private static double normalizedVerticalDistance(int y, int sourceMinY, int sourceMaxY,
+                                                     double upReach, double downReach) {
+        if (y > sourceMaxY) {
+            return (y - sourceMaxY) / upReach;
+        }
+        if (y < sourceMinY) {
+            return (sourceMinY - y) / downReach;
+        }
+        return 0D;
+    }
+
+    private static long overboreCandidateVolume(int[] bounds, int margin, int upExtension,
+                                                int floorCut) {
+        return inclusiveVolume(
+                bounds[0] - margin, bounds[1] - floorCut, bounds[2] - margin,
+                bounds[3] + margin, bounds[4] + upExtension, bounds[5] + margin);
+    }
+
+    private static long inclusiveVolume(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        long width = (long) maxX - minX + 1L;
+        long height = (long) maxY - minY + 1L;
+        long depth = (long) maxZ - minZ + 1L;
+        if (width <= 0L || height <= 0L || depth <= 0L
+                || width > Long.MAX_VALUE / height
+                || width * height > Long.MAX_VALUE / depth) {
+            return Long.MAX_VALUE;
+        }
+        return width * height * depth;
+    }
+
+    private static void warnOverboreVolume(long volume) {
+        IrisLogging.warn("Skipping structure overbore of " + volume + " blocks (cap "
+                + MAX_OVERBORE_VOLUME + "); reduce overboreRadius/overboreHeight or use larger spacing.");
+    }
+
+    static double overboreBoundaryLimit(double noise, double strength) {
         double clampedNoise = Math.max(0.0, Math.min(1.0, noise));
-        return OVERBORE_MIN_BOUNDARY + OVERBORE_BOUNDARY_SPAN * clampedNoise;
+        double clampedStrength = Math.max(0.0, Math.min(1.0, strength));
+        return 1D - clampedStrength * (1D - clampedNoise);
     }
 
-    static boolean shouldCarveOverboreCell(double distanceSquared, double noise) {
+    static boolean shouldCarveOverboreCell(IrisStructureCarveShape shape, double distanceSquared,
+                                           double noise, double strength) {
         if (distanceSquared <= 0.0) {
             return true;
         }
-        if (distanceSquared > 1.0) {
-            return false;
-        }
-        double limit = overboreBoundaryLimit(noise);
-        return distanceSquared <= limit * limit;
+        IrisStructureCarveShape resolvedShape = shape == null ? IrisStructureCarveShape.ERODED : shape;
+        return switch (resolvedShape) {
+            case BOX -> true;
+            case ROUNDED -> distanceSquared <= 1D;
+            case ERODED -> {
+                double limit = overboreBoundaryLimit(noise, strength);
+                yield distanceSquared <= 1D && distanceSquared <= limit * limit;
+            }
+        };
     }
 
     private void clearIntersectingObjectTrees(MantleWriter writer, IrisStructureLocator.ResolvedPlacement resolved) {

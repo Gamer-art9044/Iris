@@ -25,6 +25,7 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
+import art.arcane.iris.engine.object.IrisStructureCarveShape;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.NativeStructureSuppression;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
@@ -403,10 +404,12 @@ public final class IrisStructureLocator {
         }
 
         int sideExtension = placement.isOverbore()
-                ? Math.max(1, placement.getOverboreRadius())
+                ? Math.max(0, placement.getOverboreRadius())
                 : placement.isBore() ? Math.max(0, placement.getBorePadding()) : 0;
+        IrisStructureCarveShape overboreShape = placement.resolvedOverboreShape();
         int topExtension = placement.isOverbore()
-                ? (int) Math.ceil(Math.max(1D, placement.getOverboreHeight()) * 1.8D)
+                ? overboreShape.maximumCeilingExtension(
+                        placement.getOverboreHeight(), placement.resolvedOverboreErosionStrength())
                 : placement.isBore() ? Math.max(0, placement.getBorePadding()) : 0;
         int bottomExtension = placement.isOverbore() ? Math.max(0, placement.getOverboreFloor()) : 0;
         int bandMin = Math.max(worldMin, Math.min(placement.getMinHeight(), placement.getMaxHeight()));
@@ -419,7 +422,8 @@ public final class IrisStructureLocator {
 
         Long2IntOpenHashMap surfaceHeights = new Long2IntOpenHashMap();
         surfaceHeights.defaultReturnValue(Integer.MIN_VALUE);
-        if (placement.isBore() && !placement.isOverbore()) {
+        if ((placement.isBore() && !placement.isOverbore())
+                || (placement.isOverbore() && overboreShape == IrisStructureCarveShape.BOX)) {
             maximumShift = resolveBurialEnvelopeShift(
                     engine,
                     bounds[0] - sideExtension,

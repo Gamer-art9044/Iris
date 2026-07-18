@@ -35,6 +35,11 @@ import lombok.experimental.Accessors;
 @Desc("Attaches structures to a biome, region or dimension and controls where and how often they generate. This is independent of a structure's own native generation, so you can add custom placements in tandem with native generation or instead of it.")
 @Data
 public class IrisStructurePlacement {
+    private static final double DEFAULT_OVERBORE_EROSION_STRENGTH = 0.8D;
+    private static final double DEFAULT_OVERBORE_EROSION_FREQUENCY = 0.07D;
+    private static final double MIN_OVERBORE_EROSION_FREQUENCY = 0.001D;
+    private static final double MAX_OVERBORE_EROSION_FREQUENCY = 1D;
+
     @ArrayType(type = String.class, min = 1)
     @RegistryListStructure
     @Desc("Editable Iris structure resources to place here. Every key must resolve to a structures/*.json resource in this pack. Live vanilla, mod, and datapack registry keys are controlled through importedStructures unless explicitly cloned into Iris resources.")
@@ -98,7 +103,7 @@ public class IrisStructurePlacement {
 
     @MinNumber(0)
     @MaxNumber(128)
-    @Desc("when overbore=true, how many blocks of terrain to carve horizontally outward from the structure's bounding box. Larger values produce a wider open cavern around the structure. Larger values also widen the mantle write window for every chunk near the structure, so increase it deliberately.")
+    @Desc("when overbore=true, how many blocks of terrain to carve horizontally outward. BOX expands the assembled structure bounds; ROUNDED and ERODED expand the transformed non-air block footprint. Larger values produce a wider open cavern and widen the mantle write window for nearby chunks, so increase this deliberately.")
     private int overboreRadius = 24;
 
     @MinNumber(0)
@@ -111,9 +116,41 @@ public class IrisStructurePlacement {
     @Desc("when overbore=true, how many blocks of terrain to carve below the structure's floor. 0 keeps the floor solid for support; small values recess the cavern floor around the structure.")
     private int overboreFloor = 0;
 
+    @Desc("when overbore=true, controls whether the expanded carve has straight, rounded, or noise-eroded boundaries.")
+    private IrisStructureCarveShape overboreShape = IrisStructureCarveShape.ERODED;
+
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("when overboreShape=ERODED, controls how strongly noise cuts into the rounded outer shell. 0 matches ROUNDED; 1 may erode back to the mandatory structure footprint but never remove its required clearance.")
+    private double overboreErosionStrength = DEFAULT_OVERBORE_EROSION_STRENGTH;
+
+    @MinNumber(MIN_OVERBORE_EROSION_FREQUENCY)
+    @MaxNumber(MAX_OVERBORE_EROSION_FREQUENCY)
+    @Desc("when overboreShape=ERODED, controls the spatial frequency of boundary noise. Higher values produce smaller, busier erosion features.")
+    private double overboreErosionFrequency = DEFAULT_OVERBORE_EROSION_FREQUENCY;
+
     @Desc("Optional foundation columns placed beneath the assembled structure's occupied bottom cells. Columns pass through air and fluids until they reach solid ground, up to maxDepth.")
     private IrisStructureStiltSettings stilt = null;
 
     @Desc("If false, this placement is skipped underwater.")
     private boolean underwater = false;
+
+    public IrisStructureCarveShape resolvedOverboreShape() {
+        return overboreShape == null ? IrisStructureCarveShape.ERODED : overboreShape;
+    }
+
+    public double resolvedOverboreErosionStrength() {
+        if (!Double.isFinite(overboreErosionStrength)) {
+            return DEFAULT_OVERBORE_EROSION_STRENGTH;
+        }
+        return Math.max(0D, Math.min(1D, overboreErosionStrength));
+    }
+
+    public double resolvedOverboreErosionFrequency() {
+        if (!Double.isFinite(overboreErosionFrequency)) {
+            return DEFAULT_OVERBORE_EROSION_FREQUENCY;
+        }
+        return Math.max(MIN_OVERBORE_EROSION_FREQUENCY,
+                Math.min(MAX_OVERBORE_EROSION_FREQUENCY, overboreErosionFrequency));
+    }
 }

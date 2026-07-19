@@ -294,11 +294,11 @@ public final class FeatureImporter {
 
     static World createScratchWorld(VolmitSender sender) {
         try {
-            World existing = WorldIdentity.resolve(IrisWorldStorage.keyFromLegacyName(SCRATCH_WORLD_NAME)).orElse(null);
+            World existing = WorldIdentity.resolve(IrisWorldStorage.keyFromName(SCRATCH_WORLD_NAME)).orElse(null);
             if (existing != null) {
                 return existing;
             }
-            WorldCreator creator = WorldCreator.ofKey(IrisWorldStorage.keyFromLegacyName(SCRATCH_WORLD_NAME))
+            WorldCreator creator = WorldCreator.ofKey(IrisWorldStorage.keyFromName(SCRATCH_WORLD_NAME))
                     .environment(World.Environment.NORMAL)
                     .type(WorldType.FLAT)
                     .generateStructures(false);

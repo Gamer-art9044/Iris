@@ -150,7 +150,7 @@ public class IrisPackBenchmarking {
     }
 
     private static World benchmarkWorld() {
-        return WorldIdentity.resolve(IrisWorldStorage.keyFromLegacyName("benchmark")).orElse(null);
+        return WorldIdentity.resolve(IrisWorldStorage.keyFromName("benchmark")).orElse(null);
     }
 
     private double calculateAverage(KList<Integer> list) {

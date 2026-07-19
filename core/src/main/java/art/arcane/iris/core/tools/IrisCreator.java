@@ -155,6 +155,7 @@ public class IrisCreator {
         if (Bukkit.isPrimaryThread()) {
             throw new IrisException("You cannot invoke create() on the main thread.");
         }
+        name = IrisWorldStorage.logicalName(IrisWorldStorage.keyFromName(name));
 
         long createStart = System.currentTimeMillis();
         reportStudioProgress(0.02D, "resolve_dimension");
@@ -323,7 +324,7 @@ public class IrisCreator {
         IrisLogging.reportError("World \"" + world.getName()
                 + "\" was created, but automatic teleport failed for player \"" + player.getName() + "\".", throwable);
         J.runEntity(player, () -> new VolmitSender(player).sendMessage(C.YELLOW
-                + "The world was created, but automatic teleport failed. Try /iris teleport world=" + world.getName()));
+                + "The world was created, but automatic teleport failed. Try /iris teleport world=" + IrisWorldStorage.logicalName(world)));
     }
 
     private void reportStudioProgress(double progress, String stage) {

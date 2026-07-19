@@ -101,19 +101,20 @@ public class CommandIris implements DirectorExecutor {
             @Param(aliases = "main-world", description = "Whether or not to automatically use this world as the main world", defaultValue = "false")
             boolean main
     ) {
-        if (name.equalsIgnoreCase("iris")) {
+        String worldName = IrisWorldStorage.logicalName(IrisWorldStorage.keyFromName(name));
+        if (worldName.equalsIgnoreCase("iris")) {
             sender().sendMessage(C.RED + "You cannot use the world name \"iris\" for creating worlds as Iris uses this directory for studio worlds.");
             sender().sendMessage(C.RED + "May we suggest the name \"IrisWorld\" instead?");
             return;
         }
 
-        if (name.equalsIgnoreCase("benchmark")) {
+        if (worldName.equalsIgnoreCase("benchmark")) {
             sender().sendMessage(C.RED + "You cannot use the world name \"benchmark\" for creating worlds as Iris uses this directory for Benchmarking Packs.");
             sender().sendMessage(C.RED + "May we suggest the name \"IrisWorld\" instead?");
             return;
         }
 
-        if (IrisWorldStorage.dimensionRoot(name).exists()) {
+        if (IrisWorldStorage.dimensionRoot(worldName).exists()) {
             sender().sendMessage(C.RED + "That folder already exists!");
             return;
         }
@@ -131,8 +132,8 @@ public class CommandIris implements DirectorExecutor {
         }
 
         if (J.isFolia()) {
-            if (stageFoliaWorldCreation(name, dimension, seed, main)) {
-                sender().sendMessage(C.GREEN + "World staging completed. Restart the server to generate/load \"" + name + "\".");
+            if (stageFoliaWorldCreation(worldName, dimension, seed, main)) {
+                sender().sendMessage(C.GREEN + "World staging completed. Restart the server to generate/load \"" + worldName + "\".");
             }
             return;
         }
@@ -141,7 +142,7 @@ public class CommandIris implements DirectorExecutor {
             worldCreation = true;
             IrisToolbelt.createWorld()
                     .dimension(resolvedType)
-                    .name(name)
+                    .name(worldName)
                     .seed(seed)
                     .sender(sender())
                     .studio(false)
@@ -149,12 +150,12 @@ public class CommandIris implements DirectorExecutor {
             if (main) {
                 Runtime.getRuntime().addShutdownHook(mainWorld.updateAndGet(old -> {
                     if (old != null) Runtime.getRuntime().removeShutdownHook(old);
-                    return new Thread(() -> updateMainWorld(name));
+                    return new Thread(() -> updateMainWorld(worldName));
                 }));
             }
         } catch (Throwable e) {
             sender().sendMessage(C.RED + "Exception raised during creation. See the console for more details.");
-            Iris.reportError("Exception raised during world creation for \"" + name + "\".", e);
+            Iris.reportError("Exception raised during world creation for \"" + worldName + "\".", e);
             worldCreation = false;
             return;
         }
@@ -173,7 +174,7 @@ public class CommandIris implements DirectorExecutor {
                 data.load(in);
             }
 
-            File sourceDimensionRoot = IrisWorldStorage.dimensionRoot(IrisWorldStorage.keyFromLegacyName(newName));
+            File sourceDimensionRoot = IrisWorldStorage.dimensionRoot(IrisWorldStorage.keyFromName(newName));
             if (!sourceDimensionRoot.isDirectory()) {
                 throw new IllegalStateException("Source dimension folder does not exist: " + sourceDimensionRoot.getAbsolutePath());
             }
@@ -195,7 +196,7 @@ public class CommandIris implements DirectorExecutor {
             File targetDimensionRoot = IrisWorldStorage.dimensionRoot(newLevelRoot, NamespacedKey.minecraft("overworld"));
             IO.copyDirectory(sourceDimensionRoot.toPath(), targetDimensionRoot.toPath());
 
-            World sourceWorld = WorldIdentity.resolve(IrisWorldStorage.keyFromLegacyName(newName)).orElse(null);
+            World sourceWorld = WorldIdentity.resolve(IrisWorldStorage.keyFromName(newName)).orElse(null);
             Long stagedSeed = IrisWorlds.readBukkitWorldSeed(newName);
             if (sourceWorld == null && stagedSeed == null) {
                 throw new IllegalStateException("Cannot determine the promoted world's seed.");
@@ -246,14 +247,15 @@ public class CommandIris implements DirectorExecutor {
     }
 
     private boolean registerWorldInBukkitYml(String worldName, String dimension, Long seed) {
+        String logicalWorldName = IrisWorldStorage.logicalName(IrisWorldStorage.keyFromName(worldName));
         YamlConfiguration yml = YamlConfiguration.loadConfiguration(BUKKIT_YML);
         ConfigurationSection worlds = yml.getConfigurationSection("worlds");
         if (worlds == null) {
             worlds = yml.createSection("worlds");
         }
-        ConfigurationSection worldSection = worlds.getConfigurationSection(worldName);
+        ConfigurationSection worldSection = worlds.getConfigurationSection(logicalWorldName);
         if (worldSection == null) {
-            worldSection = worlds.createSection(worldName);
+            worldSection = worlds.createSection(logicalWorldName);
         }
 
         String generator = "Iris:" + dimension;
@@ -264,7 +266,7 @@ public class CommandIris implements DirectorExecutor {
 
         try {
             yml.save(BUKKIT_YML);
-            Iris.info("Registered \"" + worldName + "\" in bukkit.yml");
+            Iris.info("Registered \"" + logicalWorldName + "\" in bukkit.yml");
             return true;
         } catch (IOException e) {
             sender().sendMessage(C.RED + "Failed to update bukkit.yml: " + e.getMessage());
@@ -518,16 +520,17 @@ public class CommandIris implements DirectorExecutor {
             @Param(description = "The name of the world to load")
             String world
     ) {
-        worldNameToCheck = world;
+        String logicalWorldName = IrisWorldStorage.logicalName(IrisWorldStorage.keyFromName(world));
+        worldNameToCheck = logicalWorldName;
         boolean worldExists = doesWorldExist(worldNameToCheck);
-        WorldEngine = world;
+        WorldEngine = logicalWorldName;
 
         if (!worldExists) {
-            sender().sendMessage(C.YELLOW + world + " Doesnt exist on the server.");
+            sender().sendMessage(C.YELLOW + logicalWorldName + " Doesnt exist on the server.");
             return;
         }
 
-        File directory = new File(IrisWorldStorage.packRoot(IrisWorldStorage.keyFromLegacyName(world)), "dimensions");
+        File directory = new File(IrisWorldStorage.packRoot(IrisWorldStorage.keyFromName(logicalWorldName)), "dimensions");
 
         String dimension = null;
         if (directory.exists() && directory.isDirectory()) {
@@ -544,28 +547,28 @@ public class CommandIris implements DirectorExecutor {
                 }
             }
         } else {
-            sender().sendMessage(C.GOLD + world + " is not an iris world.");
+            sender().sendMessage(C.GOLD + logicalWorldName + " is not an iris world.");
             return;
         }
 
         if (dimension == null) {
-            sender().sendMessage(C.RED + "Could not determine Iris dimension for " + world + ".");
+            sender().sendMessage(C.RED + "Could not determine Iris dimension for " + logicalWorldName + ".");
             return;
         }
 
-        sender().sendMessage(C.GREEN + "Loading world: " + world);
+        sender().sendMessage(C.GREEN + "Loading world: " + logicalWorldName);
 
-        if (!registerWorldInBukkitYml(world, dimension, null)) {
+        if (!registerWorldInBukkitYml(logicalWorldName, dimension, null)) {
             return;
         }
 
         if (J.isFolia()) {
-            sender().sendMessage(C.YELLOW + "Folia cannot load new worlds at runtime. Restart the server to load \"" + world + "\".");
+            sender().sendMessage(C.YELLOW + "Folia cannot load new worlds at runtime. Restart the server to load \"" + logicalWorldName + "\".");
             return;
         }
 
-        Iris.instance.checkForBukkitWorlds(world::equals);
-        sender().sendMessage(C.GREEN + world + " loaded successfully.");
+        Iris.instance.checkForBukkitWorlds(logicalWorldName::equals);
+        sender().sendMessage(C.GREEN + logicalWorldName + " loaded successfully.");
     }
     @Director(description = "Evacuate an iris world", origin = DirectorOrigin.PLAYER, sync = true)
     public void evacuate(

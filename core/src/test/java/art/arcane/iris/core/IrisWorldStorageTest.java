@@ -34,11 +34,19 @@ public class IrisWorldStorageTest {
     }
 
     @Test
-    public void mapsLegacyBukkitNamesToPaperKeys() {
-        assertEquals(NamespacedKey.minecraft("overworld"), IrisWorldStorage.keyFromLegacyName("world", "world"));
-        assertEquals(NamespacedKey.minecraft("the_nether"), IrisWorldStorage.keyFromLegacyName("world_nether", "world"));
-        assertEquals(NamespacedKey.minecraft("the_end"), IrisWorldStorage.keyFromLegacyName("world_the_end", "world"));
-        assertEquals(NamespacedKey.minecraft("iris_world"), IrisWorldStorage.keyFromLegacyName("Iris World", "world"));
+    public void mapsIrisWorldNamesToOwnedPaperKeys() {
+        assertEquals(NamespacedKey.minecraft("overworld"), IrisWorldStorage.keyFromName("world", "world"));
+        assertEquals(NamespacedKey.minecraft("the_nether"), IrisWorldStorage.keyFromName("world_nether", "world"));
+        assertEquals(NamespacedKey.minecraft("the_end"), IrisWorldStorage.keyFromName("world_the_end", "world"));
+        assertEquals(new NamespacedKey("iris", "iris_world"), IrisWorldStorage.keyFromName("Iris World", "world"));
+    }
+
+    @Test
+    public void mapsOwnedPaperKeysBackToLogicalWorldNames() {
+        assertEquals("world", IrisWorldStorage.logicalName(NamespacedKey.minecraft("overworld"), "world"));
+        assertEquals("world_nether", IrisWorldStorage.logicalName(NamespacedKey.minecraft("the_nether"), "world"));
+        assertEquals("world_the_end", IrisWorldStorage.logicalName(NamespacedKey.minecraft("the_end"), "world"));
+        assertEquals("iris_world", IrisWorldStorage.logicalName(new NamespacedKey("iris", "iris_world"), "world"));
     }
 
     @Test

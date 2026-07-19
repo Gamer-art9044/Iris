@@ -35,14 +35,8 @@ public class IrisWorlds {
 
     private IrisWorlds(KMap<String, String> worlds) {
         this.worlds = new KMap<>();
-        worlds.forEach((identity, type) -> {
-            String normalizedIdentity = migrateLoadedIdentity(identity);
-            this.worlds.put(normalizedIdentity, type);
-            if (!normalizedIdentity.equals(identity)) {
-                dirty = true;
-            }
-        });
-        readBukkitWorlds().forEach((name, type) -> put0(IrisWorldStorage.keyFromLegacyName(name).toString(), type));
+        worlds.forEach((identity, type) -> this.worlds.put(WorldIdentity.parse(identity).toString(), type));
+        readBukkitWorlds().forEach((name, type) -> put0(IrisWorldStorage.keyFromName(name).toString(), type));
         save();
     }
 
@@ -82,7 +76,7 @@ public class IrisWorlds {
     public KMap<String, String> getWorlds() {
         clean();
         KMap<String, String> result = new KMap<>();
-        readBukkitWorlds().forEach((name, type) -> result.put(IrisWorldStorage.keyFromLegacyName(name).toString(), type));
+        readBukkitWorlds().forEach((name, type) -> result.put(IrisWorldStorage.keyFromName(name).toString(), type));
         return result.put(worlds);
     }
 
@@ -173,13 +167,5 @@ public class IrisWorlds {
             }
         }
         return dimension;
-    }
-
-    private static String migrateLoadedIdentity(String identity) {
-        try {
-            return WorldIdentity.parse(identity).toString();
-        } catch (IllegalArgumentException e) {
-            return IrisWorldStorage.keyFromLegacyName(identity).toString();
-        }
     }
 }

@@ -25,6 +25,7 @@ import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisRuntimeSchedulerMode;
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pregenerator.PregenPerformanceProfile;
@@ -531,7 +532,7 @@ public class IrisToolbelt {
     }
 
     public static boolean removeWorld(World world) throws IOException {
-        return IrisCreator.removeFromBukkitYml(world.getName());
+        return IrisCreator.removeFromBukkitYml(IrisWorldStorage.logicalName(world));
     }
 
     record PackReference(String pack, String dimension, boolean explicitDimension) {

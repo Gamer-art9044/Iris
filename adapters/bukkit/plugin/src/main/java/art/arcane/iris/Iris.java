@@ -715,7 +715,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             KList<String> deferredStartupWorlds = new KList<>();
             IrisWorlds.readBukkitWorlds().forEach((s, generator) -> {
                 try {
-                    NamespacedKey worldKey = IrisWorldStorage.keyFromLegacyName(s);
+                    NamespacedKey worldKey = IrisWorldStorage.keyFromName(s);
                     if (WorldIdentity.resolve(worldKey).isPresent() || !filter.test(s)) return;
 
                     Iris.info("Loading World: %s | Generator: %s", s, generator);
@@ -824,7 +824,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                     continue;
                 }
 
-                NamespacedKey worldKey = IrisWorldStorage.keyFromLegacyName(worldName);
+                NamespacedKey worldKey = IrisWorldStorage.keyFromName(worldName);
                 World loaded = WorldIdentity.resolve(worldKey).orElse(null);
                 if (loaded != null) {
                     if (TransientWorldCleanupSupport.isTransientStudioWorldName(worldName)) {
@@ -1227,7 +1227,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
 
         Iris.debug("Assuming IrisDimension: " + dim.getName());
-        NamespacedKey worldKey = IrisWorldStorage.keyFromLegacyName(worldName);
+        NamespacedKey worldKey = IrisWorldStorage.keyFromName(worldName);
 
         IrisWorld w = IrisWorld.builder()
                 .platformIdentity(worldKey.toString())
@@ -1289,7 +1289,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     @Nullable
     public static IrisDimension loadDimension(@NonNull String worldName, @NonNull String id) {
-        File pack = IrisWorldStorage.packRoot(IrisWorldStorage.keyFromLegacyName(worldName));
+        File pack = IrisWorldStorage.packRoot(IrisWorldStorage.keyFromName(worldName));
         IrisDimension dimension = pack.isDirectory() ? IrisData.get(pack).getDimensionLoader().load(id) : null;
         if (dimension == null) dimension = IrisData.loadAnyDimension(id, null);
         if (dimension == null) {

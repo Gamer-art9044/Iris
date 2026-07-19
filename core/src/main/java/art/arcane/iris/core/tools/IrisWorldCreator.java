@@ -76,7 +76,7 @@ public class IrisWorldCreator {
 
     public WorldCreator create() {
         IrisDimension dim = dimension == null ? IrisData.loadAnyDimension(dimensionName, null) : dimension;
-        NamespacedKey worldKey = IrisWorldStorage.keyFromLegacyName(name);
+        NamespacedKey worldKey = IrisWorldStorage.keyFromName(name);
         World.Environment environment = findEnvironment();
 
         IrisWorld w = IrisWorld.builder()

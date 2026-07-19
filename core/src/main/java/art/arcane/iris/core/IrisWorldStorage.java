@@ -13,6 +13,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class IrisWorldStorage {
+    private static final String IRIS_NAMESPACE = "iris";
+
     private IrisWorldStorage() {
     }
 
@@ -36,11 +38,11 @@ public final class IrisWorldStorage {
         return dimensionRoot.getAbsoluteFile();
     }
 
-    public static NamespacedKey keyFromLegacyName(String worldName) {
-        return keyFromLegacyName(worldName, levelRoot().getName());
+    public static NamespacedKey keyFromName(String worldName) {
+        return keyFromName(worldName, levelRoot().getName());
     }
 
-    static NamespacedKey keyFromLegacyName(String worldName, String levelName) {
+    static NamespacedKey keyFromName(String worldName, String levelName) {
         String name = Objects.requireNonNull(worldName, "worldName").trim();
         String mainLevelName = Objects.requireNonNull(levelName, "levelName").trim();
         if (name.isEmpty()) {
@@ -57,11 +59,34 @@ public final class IrisWorldStorage {
         }
 
         String key = name.toLowerCase(Locale.ENGLISH).replace(' ', '_');
-        return NamespacedKey.minecraft(key);
+        return new NamespacedKey(IRIS_NAMESPACE, key);
+    }
+
+    public static String logicalName(WorldInfo world) {
+        return logicalName(WorldIdentity.key(world));
+    }
+
+    public static String logicalName(NamespacedKey key) {
+        return logicalName(key, levelRoot().getName());
+    }
+
+    static String logicalName(NamespacedKey key, String levelName) {
+        NamespacedKey worldKey = Objects.requireNonNull(key, "key");
+        String mainLevelName = Objects.requireNonNull(levelName, "levelName").trim();
+        if (NamespacedKey.minecraft("overworld").equals(worldKey)) {
+            return mainLevelName;
+        }
+        if (NamespacedKey.minecraft("the_nether").equals(worldKey)) {
+            return mainLevelName + "_nether";
+        }
+        if (NamespacedKey.minecraft("the_end").equals(worldKey)) {
+            return mainLevelName + "_the_end";
+        }
+        return worldKey.getKey();
     }
 
     public static File dimensionRoot(String worldName) {
-        return dimensionRoot(keyFromLegacyName(worldName));
+        return dimensionRoot(keyFromName(worldName));
     }
 
     public static File dimensionRoot(WorldInfo world) {

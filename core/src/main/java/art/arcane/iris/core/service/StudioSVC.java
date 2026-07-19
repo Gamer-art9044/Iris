@@ -39,6 +39,7 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.volmlib.util.collection.KMap;
+import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.json.JSONException;
@@ -93,7 +94,8 @@ public class StudioSVC implements IrisService {
         if (activeProject != null) {
             PlatformChunkGenerator activeProvider = activeProject.getActiveProvider();
             if (activeProvider != null) {
-                String activeWorldName = activeProvider.getTarget().getWorld().name();
+                String activeWorldName = IrisWorldStorage.logicalName(
+                        WorldIdentity.parse(activeProvider.getTarget().getWorld().identity()));
                 if (activeWorldName != null && !activeWorldName.isBlank()) {
                     worldNamesToDelete.add(activeWorldName);
                 }
@@ -105,7 +107,7 @@ public class StudioSVC implements IrisService {
                 continue;
             }
 
-            worldNamesToDelete.add(i.getName());
+            worldNamesToDelete.add(IrisWorldStorage.logicalName(i));
             PlatformChunkGenerator generator = IrisToolbelt.access(i);
             if (!stopping) {
                 destroyStudioWorld(i, generator);
@@ -422,7 +424,7 @@ public class StudioSVC implements IrisService {
             IrisLogging.reportError("Failed to unload studio world \"" + world.getName() + "\" during shutdown cleanup.", e);
         }
 
-        deleteTransientStudioFolders(world.getName());
+        deleteTransientStudioFolders(IrisWorldStorage.logicalName(world));
     }
 
     private void deleteTransientStudioFolders(String worldName) {

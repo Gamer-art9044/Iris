@@ -76,7 +76,9 @@ public final class StudioOpenCoordinator {
         }
 
         World world = BukkitWorldBinding.world(provider.getTarget().getWorld());
-        String worldName = world == null ? provider.getTarget().getWorld().name() : world.getName();
+        String worldName = world == null
+                ? IrisWorldStorage.logicalName(WorldIdentity.parse(provider.getTarget().getWorld().identity()))
+                : IrisWorldStorage.logicalName(world);
         try {
             return closeWorld(provider, worldName, world, true, project);
         } catch (Throwable e) {
@@ -330,7 +332,7 @@ public final class StudioOpenCoordinator {
         }
 
         for (String familyWorldName : TransientWorldCleanupSupport.worldFamilyNames(worldName)) {
-            World familyWorld = WorldIdentity.resolve(IrisWorldStorage.keyFromLegacyName(familyWorldName)).orElse(null);
+            World familyWorld = WorldIdentity.resolve(IrisWorldStorage.keyFromName(familyWorldName)).orElse(null);
             if (familyWorld == null) {
                 continue;
             }
@@ -387,7 +389,7 @@ public final class StudioOpenCoordinator {
         }
 
         for (String staleWorldName : staleWorldNames) {
-            if (WorldIdentity.resolve(IrisWorldStorage.keyFromLegacyName(staleWorldName)).isPresent()) {
+            if (WorldIdentity.resolve(IrisWorldStorage.keyFromName(staleWorldName)).isPresent()) {
                 continue;
             }
 
@@ -481,7 +483,7 @@ public final class StudioOpenCoordinator {
         }
 
         for (String familyWorldName : TransientWorldCleanupSupport.worldFamilyNames(worldName)) {
-            if (WorldIdentity.resolve(IrisWorldStorage.keyFromLegacyName(familyWorldName)).isPresent()) {
+            if (WorldIdentity.resolve(IrisWorldStorage.keyFromName(familyWorldName)).isPresent()) {
                 return true;
             }
         }

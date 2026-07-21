@@ -35,8 +35,13 @@ import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.File;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 public final class ModdedPregenJob {
+    private static final long SHUTDOWN_TIMEOUT_MILLIS = 10_000L;
+    private static final AtomicReference<ActivePregen> ACTIVE = new AtomicReference<>();
     private static volatile String dimension = "?";
 
     private ModdedPregenJob() {
@@ -54,13 +59,26 @@ public final class ModdedPregenJob {
                 .radiusX(radiusBlocks)
                 .radiusZ(radiusBlocks)
                 .build();
-        PregeneratorMethod method = new ModdedPregenMethod(level, engine, sync);
+        ModdedPregenMethod moddedMethod = new ModdedPregenMethod(level, engine, sync);
+        PregeneratorMethod method = moddedMethod;
         if (cached) {
             method = new CachedPregenMethod(method, PregenCache.create(cacheDirectory(level)).sync(), task);
         }
+        ActivePregen active = new ActivePregen(engine, moddedMethod);
+        ACTIVE.set(active);
         dimension = level.dimension().identifier().toString();
-        new PregeneratorJob(task, method, engine);
-        return true;
+        try {
+            PregeneratorJob job = new PregeneratorJob(task, method, engine);
+            job.whenDone(() -> {
+                if (!moddedMethod.hasPendingFinalSave()) {
+                    ACTIVE.compareAndSet(active, null);
+                }
+            });
+            return true;
+        } catch (Throwable failure) {
+            ACTIVE.compareAndSet(active, null);
+            throw propagate(failure);
+        }
     }
 
     private static File cacheDirectory(ServerLevel level) {
@@ -73,7 +91,17 @@ public final class ModdedPregenJob {
     }
 
     public static void shutdown() {
-        PregeneratorJob.shutdownAndWait(10_000L);
+        ActivePregen active = ACTIVE.get();
+        shutdownAndSave(active, () -> PregeneratorJob.shutdownAndWait(SHUTDOWN_TIMEOUT_MILLIS));
+    }
+
+    public static boolean shutdownForWorld(String worldIdentity) {
+        PregeneratorJob job = PregeneratorJob.getInstance();
+        if (job == null || !job.targetsWorldIdentity(worldIdentity)) {
+            return false;
+        }
+        ActivePregen active = matchingActive(worldIdentity);
+        return shutdownAndSave(active, () -> PregeneratorJob.shutdownInstanceForWorld(worldIdentity));
     }
 
     public static Boolean pauseResume() {
@@ -124,5 +152,65 @@ public final class ModdedPregenJob {
         status.append(Component.literal("\n"));
         status.append(ModdedCommandFeedback.footer());
         return status;
+    }
+
+    private static ActivePregen matchingActive(String worldIdentity) {
+        ActivePregen active = ACTIVE.get();
+        return active != null && active.targets(worldIdentity) ? active : null;
+    }
+
+    private static boolean shutdownAndSave(ActivePregen active, BooleanSupplier shutdown) {
+        boolean deferred = active != null && active.method().deferFinalSaveToServerThread();
+        boolean stopped = false;
+        boolean result = false;
+        Throwable failure = null;
+        try {
+            result = shutdown.getAsBoolean();
+            stopped = result;
+        } catch (Throwable shutdownFailure) {
+            failure = shutdownFailure;
+        }
+
+        if (deferred) {
+            try {
+                if (stopped) {
+                    active.method().completeDeferredFinalSave();
+                } else {
+                    active.method().cancelDeferredFinalSave();
+                }
+            } catch (Throwable saveFailure) {
+                if (failure == null) {
+                    failure = saveFailure;
+                } else if (saveFailure != failure) {
+                    failure.addSuppressed(saveFailure);
+                }
+            }
+        }
+
+        if (failure == null && (stopped || PregeneratorJob.getInstance() == null)) {
+            ACTIVE.compareAndSet(active, null);
+        }
+        if (failure != null) {
+            throw propagate(failure);
+        }
+        return result;
+    }
+
+    private static RuntimeException propagate(Throwable failure) {
+        if (failure instanceof RuntimeException runtimeException) {
+            return runtimeException;
+        }
+        if (failure instanceof Error fatalError) {
+            throw fatalError;
+        }
+        return new IllegalStateException("Iris modded pregenerator shutdown failed", failure);
+    }
+
+    private record ActivePregen(Engine engine, ModdedPregenMethod method) {
+        private boolean targets(String worldIdentity) {
+            return engine != null
+                    && engine.getWorld() != null
+                    && Objects.equals(engine.getWorld().identity(), worldIdentity);
+        }
     }
 }

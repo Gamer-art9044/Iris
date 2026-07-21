@@ -22,6 +22,14 @@ import static org.junit.Assert.assertTrue;
 public class ProceduralTreeGeneratorTest {
 
     @Test
+    public void variantsUseTreeSpecificProceduralOwnershipKeys() {
+        IrisProceduralTree tree = new IrisProceduralTree();
+        tree.setName("towering-oak");
+
+        assertEquals("procedural/tree/towering-oak#3", tree.getVariantLoadKey(3));
+    }
+
+    @Test
     public void trunkBuildsConnectedColumnOfRequestedHeight() {
         IrisProceduralTree tree = new IrisProceduralTree();
         tree.setTrunk("minecraft:oak_log");

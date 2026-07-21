@@ -40,14 +40,18 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class ModdedPregenMethod implements PregeneratorMethod {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final TicketType PREGEN_TICKET = new TicketType(TicketType.NO_TIMEOUT, TicketType.FLAG_LOADING | TicketType.FLAG_KEEP_DIMENSION_ACTIVE);
     private static final int ADAPTIVE_TIMEOUT_STEP = 3;
     private static final long ADAPTIVE_RECOVERY_INTERVAL = 64L;
+    private static final long FINAL_SAVE_TIMEOUT_MILLIS = 10_000L;
+    private static final long FINAL_SAVE_POLL_MILLIS = 50L;
     private static final boolean PARALLEL_CHUNK_SYSTEM = detectParallelChunkSystem();
 
     private final ServerLevel level;
@@ -62,6 +66,10 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
     private final AtomicInteger adaptiveLimit;
     private final AtomicInteger timeoutStreak = new AtomicInteger();
     private final AtomicLong completed = new AtomicLong();
+    private final AtomicBoolean finalSaveOnServerThread = new AtomicBoolean(false);
+    private final AtomicBoolean finalSaveDeferred = new AtomicBoolean(false);
+    private final AtomicBoolean finalSaveCompleted = new AtomicBoolean(false);
+    private final AtomicReference<FinalSaveRequest> queuedFinalSave = new AtomicReference<>();
     private final int timeoutSeconds;
     private final PregenMantleBackpressure backpressure;
 
@@ -114,6 +122,9 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
         }
         LOGGER.info("Iris modded pregen done: dim={} completed={} peakInFlight={} finalLimit={}",
                 level.dimension().identifier(), completed.get(), inFlightPeak.get(), adaptiveLimit.get());
+        if (deferFinalSaveIfRequested()) {
+            return;
+        }
         saveLevel(true);
     }
 
@@ -122,24 +133,156 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
         saveLevel(false);
     }
 
-    private void saveLevel(boolean wait) {
-        CompletableFuture<Void> saved = new CompletableFuture<>();
-        level.getServer().execute(() -> {
-            try {
-                level.save(null, false, false);
-            } finally {
-                saved.complete(null);
+    boolean deferFinalSaveToServerThread() {
+        if (!level.getServer().isSameThread()) {
+            return false;
+        }
+        finalSaveOnServerThread.set(true);
+        return true;
+    }
+
+    void completeDeferredFinalSave() {
+        requireServerThreadForFinalSave();
+        cancelQueuedFinalSave();
+        if (!finalSaveCompleted.get()) {
+            saveLevelOnServerThread();
+            finalSaveCompleted.set(true);
+        }
+        finalSaveDeferred.set(false);
+        finalSaveOnServerThread.set(false);
+    }
+
+    void cancelDeferredFinalSave() {
+        requireServerThreadForFinalSave();
+        finalSaveOnServerThread.set(false);
+        if (finalSaveDeferred.get() || queuedFinalSave.get() != null) {
+            cancelQueuedFinalSave();
+            if (!finalSaveCompleted.get()) {
+                saveLevelOnServerThread();
+                finalSaveCompleted.set(true);
             }
-        });
-        if (!wait) {
+            finalSaveDeferred.set(false);
+        }
+    }
+
+    boolean hasPendingFinalSave() {
+        return finalSaveOnServerThread.get()
+                || finalSaveDeferred.get()
+                || queuedFinalSave.get() != null;
+    }
+
+    private void saveLevel(boolean wait) {
+        if (wait) {
+            saveFinalLevel();
+            return;
+        }
+        MinecraftServer server = level.getServer();
+        if (server.isSameThread()) {
+            saveLevelOnServerThread();
+            return;
+        }
+        server.execute(this::saveLevelOnServerThread);
+    }
+
+    private void saveFinalLevel() {
+        MinecraftServer server = level.getServer();
+        if (server.isSameThread()) {
+            saveLevelOnServerThread();
+            finalSaveCompleted.set(true);
+            return;
+        }
+        if (deferFinalSaveIfRequested()) {
+            return;
+        }
+
+        FinalSaveRequest request = new FinalSaveRequest();
+        if (!queuedFinalSave.compareAndSet(null, request)) {
+            throw new IllegalStateException("Iris pregen final save is already queued for "
+                    + level.dimension().identifier());
+        }
+        try {
+            server.execute(() -> executeFinalSave(request));
+        } catch (RuntimeException | Error failure) {
+            queuedFinalSave.compareAndSet(request, null);
+            request.fail(failure);
+            throw failure;
+        }
+        awaitFinalSave(request);
+    }
+
+    private void executeFinalSave(FinalSaveRequest request) {
+        if (!request.claim()) {
             return;
         }
         try {
-            saved.get(10, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (TimeoutException | ExecutionException e) {
-            LOGGER.warn("Iris pregen level save did not complete in time for {}", level.dimension().identifier());
+            saveLevelOnServerThread();
+            finalSaveCompleted.set(true);
+            request.complete();
+        } catch (RuntimeException | Error failure) {
+            request.fail(failure);
+            throw failure;
+        } finally {
+            queuedFinalSave.compareAndSet(request, null);
+        }
+    }
+
+    private void awaitFinalSave(FinalSaveRequest request) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(FINAL_SAVE_TIMEOUT_MILLIS);
+        while (true) {
+            if (deferFinalSaveIfRequested()) {
+                return;
+            }
+            long remainingNanos = deadline - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                LOGGER.warn("Iris pregen level save did not complete in time for {}", level.dimension().identifier());
+                return;
+            }
+            long waitMillis = Math.max(1L, Math.min(FINAL_SAVE_POLL_MILLIS,
+                    TimeUnit.NANOSECONDS.toMillis(remainingNanos)));
+            try {
+                request.completion().get(waitMillis, TimeUnit.MILLISECONDS);
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (TimeoutException e) {
+                continue;
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                LOGGER.error("Iris pregen level save failed for {}", level.dimension().identifier(), cause);
+                throw new IllegalStateException("Iris pregen level save failed for "
+                        + level.dimension().identifier(), cause);
+            }
+        }
+    }
+
+    private boolean deferFinalSaveIfRequested() {
+        if (!finalSaveOnServerThread.get()) {
+            return false;
+        }
+        finalSaveDeferred.set(true);
+        if (finalSaveOnServerThread.get()) {
+            return true;
+        }
+        finalSaveDeferred.set(false);
+        return false;
+    }
+
+    private void cancelQueuedFinalSave() {
+        FinalSaveRequest request = queuedFinalSave.getAndSet(null);
+        if (request != null) {
+            request.cancel();
+        }
+    }
+
+    private void saveLevelOnServerThread() {
+        level.save(null, false, false);
+    }
+
+    private void requireServerThreadForFinalSave() {
+        if (!level.getServer().isSameThread()) {
+            throw new IllegalStateException("Iris pregen final save must run on the Minecraft server thread for "
+                    + level.dimension().identifier());
         }
     }
 
@@ -360,5 +503,32 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
     @Override
     public Mantle getMantle() {
         return engine.getMantle().getMantle();
+    }
+
+    private static final class FinalSaveRequest {
+        private final CompletableFuture<Void> completion = new CompletableFuture<>();
+        private final AtomicBoolean active = new AtomicBoolean(true);
+
+        private boolean claim() {
+            return active.compareAndSet(true, false);
+        }
+
+        private void complete() {
+            completion.complete(null);
+        }
+
+        private void fail(Throwable failure) {
+            active.set(false);
+            completion.completeExceptionally(failure);
+        }
+
+        private void cancel() {
+            active.set(false);
+            completion.complete(null);
+        }
+
+        private CompletableFuture<Void> completion() {
+            return completion;
+        }
     }
 }

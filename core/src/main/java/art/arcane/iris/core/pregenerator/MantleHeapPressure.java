@@ -65,6 +65,16 @@ public final class MantleHeapPressure {
         return false;
     }
 
+    public static double reclaimUrgency(double fraction) {
+        if (!Double.isFinite(fraction) || fraction <= LOW_WATER) {
+            return 0D;
+        }
+        if (fraction >= HIGH_WATER) {
+            return 1D;
+        }
+        return (fraction - LOW_WATER) / (HIGH_WATER - LOW_WATER);
+    }
+
     public static boolean overPanicWater() {
         return usedFraction() >= PANIC_WATER;
     }

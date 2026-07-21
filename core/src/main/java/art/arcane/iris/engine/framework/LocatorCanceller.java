@@ -18,6 +18,49 @@
 
 package art.arcane.iris.engine.framework;
 
-public class LocatorCanceller {
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public final class LocatorCanceller {
     protected static Runnable cancel = null;
+
+    private LocatorCanceller() {
+    }
+
+    static <T> CompletableFuture<T> requestScoped(CompletableFuture<T> future, AtomicBoolean stop) {
+        return new RequestFuture<>(Objects.requireNonNull(future), Objects.requireNonNull(stop));
+    }
+
+    private static final class RequestFuture<T> extends CompletableFuture<T> {
+        private final CompletableFuture<T> delegate;
+        private final AtomicBoolean stop;
+
+        private RequestFuture(CompletableFuture<T> delegate, AtomicBoolean stop) {
+            this.delegate = delegate;
+            this.stop = stop;
+            delegate.whenComplete((value, exception) -> {
+                if (isDone()) {
+                    return;
+                }
+                if (exception == null) {
+                    complete(value);
+                } else {
+                    completeExceptionally(exception);
+                }
+            });
+        }
+
+        @Override
+        public boolean cancel(boolean mayInterruptIfRunning) {
+            if (isDone()) {
+                return false;
+            }
+
+            stop.set(true);
+            boolean cancelled = super.cancel(mayInterruptIfRunning);
+            delegate.cancel(mayInterruptIfRunning);
+            return cancelled;
+        }
+    }
 }

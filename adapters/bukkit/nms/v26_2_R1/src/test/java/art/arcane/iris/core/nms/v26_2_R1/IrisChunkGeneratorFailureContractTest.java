@@ -54,4 +54,14 @@ public class IrisChunkGeneratorFailureContractTest {
                 < placement.indexOf("for (NativePlacementGroup group"));
         assertFalse(placement.contains("IrisLogging.reportError"));
     }
+
+    @Test
+    public void heightmapRuntimeReadsAreGenerationLeased() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+
+        assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_heightmaps\")"));
+        assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_base_height\")"));
+        assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_base_column\")"));
+        assertTrue(source.contains("catch (GenerationSessionException e)"));
+    }
 }

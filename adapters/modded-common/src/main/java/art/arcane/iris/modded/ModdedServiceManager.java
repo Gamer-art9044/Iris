@@ -26,7 +26,6 @@ import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.function.Consumer;
 
 public final class ModdedServiceManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
@@ -92,7 +91,24 @@ public final class ModdedServiceManager {
             return;
         }
         enabled = false;
-        forEachReversed(this::disableService);
+        Throwable failure = null;
+        ModdedService[] ordered = services.values().toArray(new ModdedService[0]);
+        for (int i = ordered.length - 1; i >= 0; i--) {
+            ModdedService service = ordered[i];
+            try {
+                service.onDisable();
+            } catch (Throwable serviceFailure) {
+                LOGGER.error("Iris service onDisable failed for {}", service.getClass().getName(), serviceFailure);
+                if (failure == null) {
+                    failure = serviceFailure;
+                } else if (serviceFailure != failure) {
+                    failure.addSuppressed(serviceFailure);
+                }
+            }
+        }
+        if (failure != null) {
+            throw new IllegalStateException("One or more Iris services failed to disable", failure);
+        }
     }
 
     synchronized void rollback(Throwable failure) {
@@ -104,14 +120,6 @@ public final class ModdedServiceManager {
             }
         }
         services.clear();
-    }
-
-    private void disableService(ModdedService service) {
-        try {
-            service.onDisable();
-        } catch (Throwable error) {
-            LOGGER.error("Iris service onDisable failed for {}", service.getClass().getName(), error);
-        }
     }
 
     private void tickService(ModdedTickableService service, MinecraftServer server) {
@@ -144,10 +152,4 @@ public final class ModdedServiceManager {
         return new IllegalStateException("Iris service failed to enable: " + service.getClass().getName(), failure);
     }
 
-    private void forEachReversed(Consumer<ModdedService> action) {
-        ModdedService[] ordered = services.values().toArray(new ModdedService[0]);
-        for (int i = ordered.length - 1; i >= 0; i--) {
-            action.accept(ordered[i]);
-        }
-    }
 }

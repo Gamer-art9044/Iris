@@ -25,6 +25,7 @@ import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.framework.StructurePlacementMarker;
+import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.mantle.ComponentFlag;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.IrisMantleComponent;
@@ -556,6 +557,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
         for (ObjectBlockPosition position : positions) {
             writer.clearBlock(position.x(), position.y(), position.z());
             writer.clearData(position.x(), position.y(), position.z(), String.class);
+            writer.clearData(position.x(), position.y(), position.z(), TreeBlockMaterial.class);
             writer.clearData(position.x(), position.y(), position.z(), TileWrapper.class);
             writer.clearData(position.x(), position.y(), position.z(), MatterStructurePOI.class);
         }

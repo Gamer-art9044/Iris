@@ -2,6 +2,8 @@ package art.arcane.iris;
 
 import org.bukkit.plugin.PluginDescriptionFile;
 import org.bukkit.plugin.PluginLoadOrder;
+import org.bukkit.permissions.Permission;
+import org.bukkit.permissions.PermissionDefault;
 import org.junit.Test;
 
 import java.io.InputStream;
@@ -54,6 +56,9 @@ public class PaperPluginMetadataTest {
         assertTrue(metadata.contains("folia-supported: true"));
         assertTrue(metadata.contains("load: STARTUP"));
         assertFalse(metadata.contains("commands:"));
+        assertTrue(metadata.contains("permissions:\n  iris.treefeller:\n"
+                + "    description: Allows survival players to fell Iris-managed trees with an axe.\n"
+                + "    default: op"));
         for (String pluginId : JOINED_PLUGIN_IDS) {
             assertTrue(metadata.contains(optionalDependencyBlock(pluginId, "BEFORE", true)));
         }
@@ -76,6 +81,13 @@ public class PaperPluginMetadataTest {
         assertEquals(List.of("ir", "irs"), commands.get("iris").get("aliases"));
         assertEquals(BUKKIT_SOFT_DEPEND_IDS, metadata.getSoftDepend());
         assertEquals(List.of("Multiverse-Core"), metadata.getLoadBeforePlugins());
+        Permission treeFeller = metadata.getPermissions().stream()
+                .filter(permission -> "iris.treefeller".equals(permission.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(treeFeller);
+        assertEquals("Allows survival players to fell Iris-managed trees with an axe.", treeFeller.getDescription());
+        assertEquals(PermissionDefault.OP, treeFeller.getDefault());
     }
 
     @Test

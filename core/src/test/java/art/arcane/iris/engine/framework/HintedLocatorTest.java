@@ -22,6 +22,9 @@ import java.io.File;
 import java.nio.file.Files;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
@@ -74,7 +77,7 @@ public class HintedLocatorTest {
 
     @Before
     @SuppressWarnings("unchecked")
-    public void setup() {
+    public void setup() throws Exception {
         engine = mock(Engine.class);
         dimension = mock(IrisDimension.class);
         complex = mock(IrisComplex.class);
@@ -86,6 +89,7 @@ public class HintedLocatorTest {
         when(engine.getFocus()).thenReturn(null);
         when(engine.getFocusRegion()).thenReturn(null);
         when(engine.isClosed()).thenReturn(false);
+        when(engine.acquireGenerationLease(any(String.class))).thenReturn(GenerationSessionLease.noop());
         when(data.getBiomeLoader()).thenReturn(biomeLoader);
     }
 
@@ -369,6 +373,35 @@ public class HintedLocatorTest {
 
         assertNull(result);
         assertTrue(elapsed < 10_000);
+    }
+
+    @Test
+    public void startingAnotherSearchDoesNotCancelTheActiveRequest() throws Exception {
+        CountDownLatch planning = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Position2 origin = new Position2(4, -7);
+        Locator<String> firstLocator = new HintedLocator<>((ignoredEngine, chunk) -> chunk.equals(origin), ignoredEngine -> {
+            planning.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return HintedLocator.SearchPlan.impossible();
+            }
+            return HintedLocator.SearchPlan.unpruned();
+        });
+        Locator<String> secondLocator = new HintedLocator<>((ignoredEngine, chunk) -> false,
+                ignoredEngine -> HintedLocator.SearchPlan.impossible());
+
+        Future<Position2> first = firstLocator.find(engine, origin, 60_000, (Integer count) -> {
+        });
+        assertTrue(planning.await(10, TimeUnit.SECONDS));
+        Future<Position2> second = secondLocator.find(engine, origin, 60_000, (Integer count) -> {
+        });
+        release.countDown();
+
+        assertNull(second.get(10, TimeUnit.SECONDS));
+        assertEquals(origin, first.get(10, TimeUnit.SECONDS));
     }
 
     @Test

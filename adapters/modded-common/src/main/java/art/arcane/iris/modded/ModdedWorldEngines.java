@@ -102,7 +102,7 @@ public final class ModdedWorldEngines {
         ModdedEngineBootstrap.bind();
         PackValidationRegistry.requireLoadable(pack);
         File packDir = resolvePack(pack, dimensionKey);
-        IrisData data = IrisData.get(packDir);
+        IrisData data = IrisData.openRuntime(packDir);
         IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
         if (dimension == null) {
             LOGGER.error("Iris pack '{}' at {} does not contain dimension '{}' (expected dimensions/{}.json). Install a matching Iris pack and restart.",
@@ -184,17 +184,28 @@ public final class ModdedWorldEngines {
     }
 
     public static void shutdown() {
-        for (Map.Entry<ServerLevel, Engine> entry : ENGINES.entrySet()) {
+        Throwable failure = null;
+        for (Map.Entry<ServerLevel, Engine> entry : new ArrayList<>(ENGINES.entrySet())) {
+            ServerLevel level = entry.getKey();
             Engine engine = entry.getValue();
             try {
-                if (!engine.isClosed()) {
-                    engine.close();
+                close(engine);
+                if (!ENGINES.remove(level, engine) && ENGINES.containsKey(level)) {
+                    throw new IllegalStateException("Iris engine mapping changed during shutdown for "
+                            + level.dimension().identifier());
                 }
-                LOGGER.info("Iris engine closed for {}", entry.getKey().dimension().identifier());
+                LOGGER.info("Iris engine closed for {}", level.dimension().identifier());
             } catch (Throwable e) {
-                LOGGER.error("Iris engine close failed for {}", entry.getKey().dimension().identifier(), e);
+                LOGGER.error("Iris engine close failed for {}", level.dimension().identifier(), e);
+                if (failure == null) {
+                    failure = e;
+                } else if (e != failure) {
+                    failure.addSuppressed(e);
+                }
             }
         }
-        ENGINES.clear();
+        if (failure != null) {
+            throw new IllegalStateException("One or more Iris engines failed to close; failed mappings were retained", failure);
+        }
     }
 }

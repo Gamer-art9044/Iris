@@ -44,12 +44,15 @@ import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.common.loot.IGlobalLootModifier;
+import net.minecraftforge.common.util.BlockSnapshot;
+import net.minecraftforge.eventbus.api.listener.Priority;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import net.minecraftforge.fml.loading.FMLEnvironment;
 import net.minecraftforge.fml.loading.FMLLoader;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraftforge.server.permission.events.PermissionGatherEvent;
 
 import java.util.function.Predicate;
 
@@ -80,6 +83,11 @@ public final class IrisForgeBootstrap {
                 ModdedEngineBootstrap.levelLoaded(level);
             }
         });
+        LevelEvent.Unload.BUS.addListener((LevelEvent.Unload event) -> {
+            if (event.getLevel() instanceof ServerLevel level) {
+                ModdedEngineBootstrap.levelUnloaded(level);
+            }
+        });
         PlayerEvent.PlayerLoggedInEvent.BUS.addListener((PlayerEvent.PlayerLoggedInEvent event) -> {
             if (event.getEntity() instanceof ServerPlayer player) {
                 ModdedProtocolHandler.onPlayerJoin(player);
@@ -96,11 +104,32 @@ public final class IrisForgeBootstrap {
             }
         });
         RegisterCommandsEvent.BUS.addListener((RegisterCommandsEvent event) -> IrisModdedCommands.register(event.getDispatcher()));
+        PermissionGatherEvent.Nodes.BUS.addListener((PermissionGatherEvent.Nodes event) ->
+                event.addNodes(ForgeModdedLoader.TREE_FELLER_PERMISSION));
         BlockEvent.BreakEvent.BUS.addListener((BlockEvent.BreakEvent event) -> {
-            if (event.getLevel() instanceof ServerLevel level && !event.getResult().isDenied()) {
-                ModdedBlockBreakHandler.prepare(level, event.getPos(), event.getState());
+            if (event.getLevel() instanceof ServerLevel level
+                    && event.getPlayer() instanceof ServerPlayer player
+                    && !event.getResult().isDenied()) {
+                ModdedBlockBreakHandler.prepare(level, player, event.getPos(), event.getState());
             }
         });
+        BlockEvent.EntityPlaceEvent.BUS.addListener(Priority.MONITOR, false, (BlockEvent.EntityPlaceEvent event) -> {
+            if (!(event instanceof BlockEvent.EntityMultiPlaceEvent)
+                    && event.getLevel() instanceof ServerLevel level) {
+                ModdedBlockBreakHandler.clearPlacedProvenance(level, event.getPos());
+            }
+        });
+        BlockEvent.EntityMultiPlaceEvent.BUS.addListener(
+                Priority.MONITOR,
+                false,
+                (BlockEvent.EntityMultiPlaceEvent event) -> {
+                    for (BlockSnapshot snapshot : event.getReplacedBlockSnapshots()) {
+                        if (snapshot.getLevel() instanceof ServerLevel level) {
+                            ModdedBlockBreakHandler.clearPlacedProvenance(level, snapshot.getPos());
+                        }
+                    }
+                }
+        );
         PlayerInteractEvent.LeftClickBlock.BUS.addListener((Predicate<PlayerInteractEvent.LeftClickBlock>) (PlayerInteractEvent.LeftClickBlock event) ->
                 ModdedWandService.attackBlock(event.getEntity(), event.getLevel(), event.getHand(), event.getPos()));
         PlayerInteractEvent.RightClickBlock.BUS.addListener((Predicate<PlayerInteractEvent.RightClickBlock>) (PlayerInteractEvent.RightClickBlock event) ->

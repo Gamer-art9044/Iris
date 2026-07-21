@@ -36,19 +36,23 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class IrisEngineEffects extends EngineAssignedComponent implements EngineEffects {
     private static final long EFFECT_BUDGET_NANOS = 1_500_000L;
+    private static final long EMPTY_PLAYER_REFRESH_NANOS = 1_000_000_000L;
 
     private final ConcurrentHashMap<UUID, EnginePlayer> players;
     private final Semaphore limit;
     private final AtomicBoolean playerMapUpdateQueued;
+    private final AtomicLong nextEmptyRefresh;
 
     public IrisEngineEffects(Engine engine) {
         super(engine, "FX");
         players = new ConcurrentHashMap<>();
         limit = new Semaphore(1);
         playerMapUpdateQueued = new AtomicBoolean(false);
+        nextEmptyRefresh = new AtomicLong(0L);
     }
 
     @Override
@@ -93,7 +97,15 @@ public class IrisEngineEffects extends EngineAssignedComponent implements Engine
             return;
         }
         try {
-            if (players.isEmpty() || M.r(0.02)) {
+            if (players.isEmpty()) {
+                long now = System.nanoTime();
+                long next = nextEmptyRefresh.get();
+                if (now >= next && nextEmptyRefresh.compareAndSet(next, now + EMPTY_PLAYER_REFRESH_NANOS)) {
+                    updatePlayerMap();
+                }
+                return;
+            }
+            if (M.r(0.02)) {
                 updatePlayerMap();
                 return;
             }

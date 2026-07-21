@@ -5,8 +5,11 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.volmlib.util.parallel.MultiBurstSupport;
 import art.arcane.volmlib.util.math.M;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
+import java.util.concurrent.Future;
 import java.util.function.IntSupplier;
 
 public class MultiBurst extends MultiBurstSupport {
@@ -42,6 +45,29 @@ public class MultiBurst extends MultiBurstSupport {
         }
 
         return worker.getPool() == pool;
+    }
+
+    public <T> CompletableFuture<T> completeValueAsync(Callable<T> task) {
+        CompletableFuture<T> completion = new CompletableFuture<>();
+        Future<?> submitted;
+        try {
+            submitted = service().submit(() -> {
+                try {
+                    completion.complete(task.call());
+                } catch (Throwable exception) {
+                    completion.completeExceptionally(exception);
+                }
+            });
+        } catch (Throwable exception) {
+            completion.completeExceptionally(exception);
+            return completion;
+        }
+        completion.whenComplete((value, exception) -> {
+            if (completion.isCancelled()) {
+                submitted.cancel(true);
+            }
+        });
+        return completion;
     }
 
     @Override

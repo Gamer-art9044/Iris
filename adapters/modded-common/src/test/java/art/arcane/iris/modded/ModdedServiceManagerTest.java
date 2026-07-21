@@ -48,7 +48,28 @@ public class ModdedServiceManagerTest {
         assertNull(manager.service(SecondService.class));
     }
 
+    @Test
+    public void disableAttemptsEveryServiceInReverseOrderAndAggregatesFailures() {
+        ModdedServiceManager manager = new ModdedServiceManager();
+        RuntimeException firstFailure = new RuntimeException("first disable failed");
+        RuntimeException secondFailure = new RuntimeException("second disable failed");
+        FirstService first = manager.register(FirstService.class, new FirstService());
+        first.disableFailure = firstFailure;
+        SecondService second = manager.register(
+                SecondService.class, new SecondService(null, secondFailure));
+
+        manager.enableAll();
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, manager::disableAll);
+
+        assertEquals(1, first.disableCount);
+        assertEquals(1, second.disableCount);
+        assertSame(secondFailure, thrown.getCause());
+        assertEquals(1, secondFailure.getSuppressed().length);
+        assertSame(firstFailure, secondFailure.getSuppressed()[0]);
+    }
+
     private static final class FirstService implements ModdedService {
+        private RuntimeException disableFailure;
         private int enableCount;
         private int disableCount;
 
@@ -60,6 +81,9 @@ public class ModdedServiceManagerTest {
         @Override
         public void onDisable() {
             disableCount++;
+            if (disableFailure != null) {
+                throw disableFailure;
+            }
         }
     }
 

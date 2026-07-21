@@ -175,12 +175,18 @@ public final class ModdedDimensionManager {
                 }
                 return false;
             }
+            IrisModdedChunkGenerator generator = level.getChunkSource().getGenerator()
+                    instanceof IrisModdedChunkGenerator irisGenerator
+                    ? irisGenerator
+                    : null;
+            boolean generatorUnbound = false;
             try {
                 evacuate(server, level);
-                if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator) {
-                    generator.unbindEngine();
+                if (generator != null) {
+                    generator.unbindEngine(level);
+                    generatorUnbound = true;
                 }
-                ModdedWorldEngines.evict(level);
+                ModdedWorldEngines.evictOrThrow(level);
                 level.save(null, true, false);
                 serverAccess.removeLevel(server, key);
                 level.close();
@@ -191,9 +197,28 @@ public final class ModdedDimensionManager {
                 LOGGER.info("Iris removed runtime dimension '{}'", dimensionId);
                 return true;
             } catch (Throwable e) {
+                rollbackRemoval(server, serverAccess, key, level, generator, generatorUnbound, e);
                 LOGGER.error("Iris failed to remove runtime dimension '{}'", dimensionId, e);
                 throw new IllegalStateException("Iris runtime dimension removal failed for " + dimensionId, e);
             }
+        }
+    }
+
+    private static void rollbackRemoval(MinecraftServer server, ModdedServerAccess serverAccess,
+                                        ResourceKey<Level> key, ServerLevel level,
+                                        IrisModdedChunkGenerator generator, boolean generatorUnbound,
+                                        Throwable failure) {
+        try {
+            if (!generatorUnbound || generator == null || !serverAccess.hasLevel(server, key)) {
+                return;
+            }
+            generator.bindLevel(level);
+        } catch (Throwable rollbackFailure) {
+            if (rollbackFailure != failure) {
+                failure.addSuppressed(rollbackFailure);
+            }
+            LOGGER.error("Iris failed to restore the engine for retained runtime dimension '{}'",
+                    key.identifier(), rollbackFailure);
         }
     }
 

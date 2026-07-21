@@ -18,7 +18,11 @@
 
 package art.arcane.iris.modded;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -39,4 +43,8 @@ public interface ModdedLoader {
     Path configDir();
 
     File modJar();
+
+    boolean hasTreeFellerPermission(ServerPlayer player);
+
+    boolean canTreeFellerBreak(ServerLevel level, ServerPlayer player, BlockPos position, BlockState state);
 }

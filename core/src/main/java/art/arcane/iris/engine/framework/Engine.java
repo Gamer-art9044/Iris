@@ -48,6 +48,7 @@ import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.project.context.ChunkContext;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
@@ -125,6 +126,15 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
         GenerationSessionManager generationSessions = getGenerationSessions();
         if (generationSessions == null) {
             return GenerationSessionLease.noop();
+        }
+
+        IrisContext context = IrisContext.get();
+        if (context != null && context.getEngine() == this && context.getGenerationSessionId() != 0L) {
+            return generationSessions.continueSession(operation, context.getGenerationSessionId());
+        }
+        if (isClosing() || isClosed()) {
+            throw new GenerationSessionException("Generation session rejected new work for " + operation
+                    + " while the Iris engine is closing.", isClosed());
         }
 
         return generationSessions.acquire(operation);

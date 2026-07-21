@@ -22,6 +22,9 @@ import art.arcane.volmlib.util.atomics.AtomicRollingSequence;
 import art.arcane.volmlib.util.collection.KMap;
 import lombok.Data;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 @Data
 public class EngineMetrics {
     private final AtomicRollingSequence total;
@@ -110,5 +113,25 @@ public class EngineMetrics {
         v.put("pregen.wait.adaptive", pregenWaitAdaptive.getAverage());
 
         return v;
+    }
+
+    public Map<String, Double> telemetryAverages() {
+        Map<String, Double> averages = new LinkedHashMap<>();
+        averages.put("total", total.getAverage());
+        averages.put("updates", updates.getAverage());
+        averages.put("terrain", terrain.getAverage());
+        averages.put("biome", biome.getAverage());
+        averages.put("post", post.getAverage());
+        averages.put("perfection", perfection.getAverage());
+        averages.put("decoration", decoration.getAverage());
+        averages.put("cave", cave.getAverage());
+        averages.put("deposit", deposit.getAverage());
+        averages.put("carve.resolve", carveResolve.getAverage());
+        averages.put("carve.apply", carveApply.getAverage());
+        averages.put("context.prefill", contextPrefill.getAverage());
+        averages.put("pregen.wait.permit", pregenWaitPermit.getAverage());
+        averages.put("pregen.wait.adaptive", pregenWaitAdaptive.getAverage());
+        averages.entrySet().removeIf(entry -> !Double.isFinite(entry.getValue()) || entry.getValue() < 0D);
+        return Map.copyOf(averages);
     }
 }

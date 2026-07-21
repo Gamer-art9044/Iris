@@ -21,11 +21,13 @@ package art.arcane.iris.engine.platform.studio.generators;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.platform.studio.EnginedStudioGenerator;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.B;
+import art.arcane.iris.util.project.context.IrisContext;
 
 import java.util.Objects;
 
@@ -43,21 +45,28 @@ public class BiomeBuffetGenerator extends EnginedStudioGenerator {
     }
 
     @Override
-    public void generateChunk(Engine engine, TerrainChunk tc, int x, int z) throws WrongEngineBroException {
+    public synchronized void generateChunk(Engine engine, TerrainChunk tc, int x, int z) throws WrongEngineBroException {
         int id = Cache.to1D(x / biomeSize, 0, z / biomeSize, width, 1);
 
-        if (id >= 0 && id < biomes.length) {
-            IrisBiome biome = biomes[id];
-            String foc = engine.getDimension().getFocus();
-
-            if (!Objects.equals(foc, biome.getLoadKey())) {
-                engine.getDimension().setFocus(biome.getLoadKey());
-                engine.hotloadComplex();
+        if (id < 0 || id >= biomes.length) {
+            try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_biome_buffet_stage");
+                 IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                tc.setRegion(0, 0, 0, 16, 1, 16, FLOOR);
             }
+            return;
+        }
 
+        IrisBiome biome = biomes[id];
+        String focus = engine.getDimension().getFocus();
+
+        if (!Objects.equals(focus, biome.getLoadKey())) {
+            engine.getDimension().setFocus(biome.getLoadKey());
+            engine.hotloadComplex();
+        }
+
+        try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_biome_buffet_stage");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             engine.generate(x << 4, z << 4, tc, true);
-        } else {
-            tc.setRegion(0, 0, 0, 16, 1, 16, FLOOR);
         }
     }
 }

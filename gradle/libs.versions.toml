@@ -61,6 +61,7 @@ fabricApi-eventsInteraction = "5.2.6+8f57f7ee9e"
 fabricApi-networking = "6.3.3+72073ef09e"
 fabricApi-rendering = "25.3.1+6988455e9e"
 fabricApi-keyMapping = "2.0.5+e2bdee789e"
+fabricApi-permission = "1.0.3+b7020ca29e"
 
 [libraries]
 # Core Libraries
@@ -121,6 +122,7 @@ fabricApi-eventsInteraction = { module = "net.fabricmc.fabric-api:fabric-events-
 fabricApi-networking = { module = "net.fabricmc.fabric-api:fabric-networking-api-v1", version.ref = "fabricApi-networking" }
 fabricApi-rendering = { module = "net.fabricmc.fabric-api:fabric-rendering-v1", version.ref = "fabricApi-rendering" }
 fabricApi-keyMapping = { module = "net.fabricmc.fabric-api:fabric-key-mapping-api-v1", version.ref = "fabricApi-keyMapping" }
+fabricApi-permission = { module = "net.fabricmc.fabric-api:fabric-permission-api-v1", version.ref = "fabricApi-permission" }
 
 [plugins]
 shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }

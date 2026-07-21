@@ -42,6 +42,7 @@ import art.arcane.iris.modded.service.ModdedLogFilterService;
 import art.arcane.iris.modded.service.ModdedPreservationService;
 import art.arcane.iris.modded.service.ModdedSettingsHotloadService;
 import art.arcane.iris.modded.service.ModdedStudioHotloadService;
+import art.arcane.iris.modded.service.ModdedTreeFellerService;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisServices;
@@ -135,29 +136,82 @@ public final class ModdedEngineBootstrap {
         }
     }
 
+    public static void levelUnloaded(ServerLevel level) {
+        if (!(level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator)) {
+            return;
+        }
+
+        try {
+            generator.unbindEngine(level);
+        } catch (Throwable exception) {
+            LOGGER.error("Iris engine unload failed for {}", level.dimension().identifier(), exception);
+            if (exception instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (exception instanceof Error fatalError) {
+                throw fatalError;
+            }
+            throw new IllegalStateException("Iris engine unload failed for "
+                    + level.dimension().identifier(), exception);
+        }
+    }
+
     public static void stop() {
         MinecraftServer stoppingServer = currentServer;
-        ModdedWorldCheck.serverStopped(stoppingServer);
-        ModdedProtocolHandler.stop();
-        ModdedPregenJob.shutdown();
-        ModdedObjectUndo.clearAll();
-        ModdedWandService.clearAll();
-        ModdedBlockBreakHandler.clear();
-        ModdedStudioCommands.clear();
-        ModdedWorldEngines.shutdown();
-        ModdedPrimaryWorldRouter.clear();
-        services().disableAll();
-        ModdedDimensionManager.clear();
+        Throwable failure = null;
+        failure = runStopStage(failure, "world check", () -> ModdedWorldCheck.serverStopped(stoppingServer));
+        failure = runStopStage(failure, "protocol", ModdedProtocolHandler::stop);
+        failure = runStopStage(failure, "pregenerator", ModdedPregenJob::shutdown);
+        failure = runStopStage(failure, "object undo", ModdedObjectUndo::clearAll);
+        failure = runStopStage(failure, "wand service", ModdedWandService::clearAll);
+        failure = runStopStage(failure, "block break handler", ModdedBlockBreakHandler::clear);
+        failure = runStopStage(failure, "studio commands", ModdedStudioCommands::clear);
+        failure = runStopStage(failure, "services", () -> services().disableAll());
+        failure = runStopStage(failure, "world engines", ModdedWorldEngines::shutdown);
+        failure = runStopStage(failure, "primary world router", ModdedPrimaryWorldRouter::clear);
+        failure = runStopStage(failure, "dimension manager", ModdedDimensionManager::clear);
         ModdedScheduler scheduler = schedulerOrNull();
         if (scheduler != null) {
-            scheduler.shutdown();
+            failure = runStopStage(failure, "scheduler", scheduler::shutdown);
         }
-        IrisModdedChunkGenerator.shutdownGenPool();
-        ModdedSentry.flush();
-        ModdedStartup.reset();
-        currentServer = null;
-        spawnCaptureServer = null;
-        initialSpawnWasDefault = false;
+        failure = runStopStage(failure, "generation pool", IrisModdedChunkGenerator::shutdownGenPool);
+        failure = runStopStage(failure, "sentry", ModdedSentry::flush);
+        failure = runStopStage(failure, "startup state", ModdedStartup::reset);
+        failure = runStopStage(failure, "server state", () -> {
+            currentServer = null;
+            spawnCaptureServer = null;
+            initialSpawnWasDefault = false;
+        });
+        if (failure != null) {
+            LOGGER.error("Iris modded shutdown completed with failures", failure);
+            throw propagateStopFailure(failure);
+        }
+    }
+
+    private static Throwable runStopStage(Throwable failure, String stage, StopAction action) {
+        try {
+            action.run();
+            return failure;
+        } catch (Throwable stageFailure) {
+            LOGGER.error("Iris modded shutdown stage '{}' failed", stage, stageFailure);
+            if (failure == null) {
+                return stageFailure;
+            }
+            if (stageFailure != failure) {
+                failure.addSuppressed(stageFailure);
+            }
+            return failure;
+        }
+    }
+
+    private static RuntimeException propagateStopFailure(Throwable failure) {
+        if (failure instanceof RuntimeException runtimeException) {
+            return runtimeException;
+        }
+        if (failure instanceof Error fatalError) {
+            throw fatalError;
+        }
+        return new IllegalStateException("Iris modded shutdown completed with failures", failure);
     }
 
     private static void captureInitialSpawn(MinecraftServer server) {
@@ -317,6 +371,7 @@ public final class ModdedEngineBootstrap {
                         ModdedStudioHotloadService.class, new ModdedStudioHotloadService());
                 createdServices.register(ModdedChunkUpdateService.class, new ModdedChunkUpdateService());
                 createdServices.register(ModdedEntitySpawnService.class, new ModdedEntitySpawnService());
+                createdServices.register(ModdedTreeFellerService.class, new ModdedTreeFellerService());
 
                 bindService(PreservationRegistry.class, preservation, rollback);
                 bindService(EngineEffectsProvider.class,
@@ -375,6 +430,11 @@ public final class ModdedEngineBootstrap {
     @FunctionalInterface
     private interface RollbackAction {
         void restore() throws Throwable;
+    }
+
+    @FunctionalInterface
+    private interface StopAction {
+        void run() throws Throwable;
     }
 
     private static final class BindRollback {

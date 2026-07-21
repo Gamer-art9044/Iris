@@ -22,7 +22,6 @@ import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.WorldMaintenance;
-import art.arcane.iris.engine.EnginePanic;
 import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
@@ -66,7 +65,9 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 
 @Data
 @EqualsAndHashCode(exclude = "engine")
@@ -182,8 +183,8 @@ public class IrisEngineMantle implements EngineMantle {
         IrisMatterSupport.ensureRegistered();
         File dataFolder = new File(engine.getWorld().worldFolder(), "mantle");
         int worldHeight = engine.getTarget().getHeight();
-        MantleDataAdapter<Matter> adapter = createRuntimeDataAdapter(engine.getData());
-        MantleHooks hooks = createRuntimeHooks();
+        MantleDataAdapter<Matter> adapter = createDataAdapter(engine::getData);
+        MantleHooks hooks = createHooks(EnginePanic.scoped("world " + engine.getWorld().name()));
         art.arcane.volmlib.util.mantle.Mantle.RegionIO<TectonicPlate<Matter>> regionIO =
                 createRegionIO(dataFolder, worldHeight, adapter, hooks);
         return new Mantle<>(
@@ -199,14 +200,14 @@ public class IrisEngineMantle implements EngineMantle {
     }
 
     public static MantleDataAdapter<Matter> createRuntimeDataAdapter(IrisData data) {
-        return createDataAdapter(data);
+        return createDataAdapter(() -> data);
     }
 
     public static MantleHooks createRuntimeHooks() {
-        return createHooks();
+        return createHooks(EnginePanic.scoped("runtime mantle"));
     }
 
-    private static MantleDataAdapter<Matter> createDataAdapter(IrisData data) {
+    private static MantleDataAdapter<Matter> createDataAdapter(Supplier<IrisData> dataSupplier) {
         return new MantleDataAdapter<>() {
             @Override
             public Matter createSection() {
@@ -215,6 +216,7 @@ public class IrisEngineMantle implements EngineMantle {
 
             @Override
             public Matter readSection(art.arcane.volmlib.util.io.CountingDataInputStream din) throws IOException {
+                IrisData data = Objects.requireNonNull(dataSupplier.get(), "Iris mantle data is unavailable.");
                 try (IrisMatterContext.Scope scope = IrisMatterContext.open(data)) {
                     return Matter.readDin(din);
                 }
@@ -285,11 +287,11 @@ public class IrisEngineMantle implements EngineMantle {
         };
     }
 
-    private static MantleHooks createHooks() {
+    private static MantleHooks createHooks(EnginePanic.Diagnostics panic) {
         return new MantleHooks() {
             @Override
             public void onBeforeReadSection(int index) {
-                EnginePanic.add("read.section", "Section[" + index + "]");
+                panic.add("read.section", "Section[" + index + "]");
             }
 
             @Override
@@ -299,22 +301,22 @@ public class IrisEngineMantle implements EngineMantle {
                                              art.arcane.volmlib.util.io.CountingDataInputStream din,
                                              IOException error) {
                 IrisLogging.error("Failed to read chunk section, skipping it.");
-                EnginePanic.add("read.byte.range", start + " " + end);
-                EnginePanic.add("read.byte.current", din.count() + "");
+                panic.add("read.byte.range", start + " " + end);
+                panic.add("read.byte.current", din.count() + "");
                 IrisLogging.reportError(error);
                 error.printStackTrace();
-                EnginePanic.panic();
+                panic.panic();
                 TectonicPlate.addError();
             }
 
             @Override
             public void onBeforeReadChunk(int index) {
-                EnginePanic.add("read-chunk", "Chunk[" + index + "]");
+                panic.add("read-chunk", "Chunk[" + index + "]");
             }
 
             @Override
             public void onAfterReadChunk(int index) {
-                EnginePanic.saveLast();
+                panic.saveLast();
             }
 
             @Override
@@ -324,11 +326,11 @@ public class IrisEngineMantle implements EngineMantle {
                                            art.arcane.volmlib.util.io.CountingDataInputStream din,
                                            Throwable error) {
                 IrisLogging.error("Failed to read chunk, creating a new chunk instead.");
-                EnginePanic.add("read.byte.range", start + " " + end);
-                EnginePanic.add("read.byte.current", din.count() + "");
+                panic.add("read.byte.range", start + " " + end);
+                panic.add("read.byte.current", din.count() + "");
                 IrisLogging.reportError(error);
                 error.printStackTrace();
-                EnginePanic.panic();
+                panic.panic();
             }
 
             @Override

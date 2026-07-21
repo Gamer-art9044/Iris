@@ -30,6 +30,7 @@ import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedForcedDatapack;
 import art.arcane.iris.modded.ModdedWorkspaceGenerator;
+import art.arcane.iris.modded.command.ModdedPregenJob;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.io.ReactiveFolder;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
@@ -180,7 +181,10 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
 
     @Override
     public void shutdownPregenerator(Engine engine) {
-        PregeneratorJob.shutdownInstance();
+        IrisWorld world = engine.getWorld();
+        if (world != null) {
+            ModdedPregenJob.shutdownForWorld(world.identity());
+        }
     }
 
     @Override

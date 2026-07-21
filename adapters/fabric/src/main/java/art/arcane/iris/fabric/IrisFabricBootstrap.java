@@ -42,6 +42,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
@@ -60,12 +61,18 @@ public final class IrisFabricBootstrap implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register((MinecraftServer server) -> ModdedEngineBootstrap.serverStarted(server));
         ServerLifecycleEvents.SERVER_STOPPING.register((MinecraftServer server) -> ModdedEngineBootstrap.stop());
         ServerLevelEvents.LOAD.register((MinecraftServer server, ServerLevel level) -> ModdedEngineBootstrap.levelLoaded(level));
+        ServerLevelEvents.UNLOAD.register((MinecraftServer server, ServerLevel level) -> ModdedEngineBootstrap.levelUnloaded(level));
         CommandRegistrationCallback.EVENT.register((CommandDispatcher<CommandSourceStack> dispatcher, CommandBuildContext buildContext, Commands.CommandSelection selection) -> IrisModdedCommands.register(dispatcher));
         PlayerBlockBreakEvents.BEFORE.register((Level level, Player player, BlockPos pos, BlockState state, BlockEntity blockEntity) -> {
-            if (level instanceof ServerLevel serverLevel) {
-                ModdedBlockBreakHandler.prepare(serverLevel, pos, state);
+            if (level instanceof ServerLevel serverLevel && player instanceof ServerPlayer serverPlayer) {
+                ModdedBlockBreakHandler.prepare(serverLevel, serverPlayer, pos, state);
             }
             return true;
+        });
+        PlayerBlockBreakEvents.CANCELED.register((Level level, Player player, BlockPos pos, BlockState state, BlockEntity blockEntity) -> {
+            if (level instanceof ServerLevel serverLevel) {
+                ModdedBlockBreakHandler.cancel(serverLevel, pos);
+            }
         });
         AttackBlockCallback.EVENT.register((Player player, Level level, InteractionHand hand, BlockPos pos, Direction direction) ->
                 ModdedWandService.attackBlock(player, level, hand, pos) ? InteractionResult.SUCCESS : InteractionResult.PASS);

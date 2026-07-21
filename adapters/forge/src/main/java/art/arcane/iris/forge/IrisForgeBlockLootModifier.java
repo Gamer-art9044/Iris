@@ -65,6 +65,10 @@ public final class IrisForgeBlockLootModifier extends LootModifier {
         if (result == null) {
             return generatedLoot;
         }
+        if (result.routeCombinedDrops(generatedLoot)) {
+            generatedLoot.clear();
+            return generatedLoot;
+        }
         if (result.replaceVanillaDrops()) {
             generatedLoot.clear();
         }

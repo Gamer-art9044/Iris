@@ -26,4 +26,8 @@ public class WrongEngineBroException extends Exception {
     public WrongEngineBroException(String message) {
         super(message);
     }
+
+    public WrongEngineBroException(String message, Throwable cause) {
+        super(message, cause);
+    }
 }

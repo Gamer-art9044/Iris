@@ -22,6 +22,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -37,6 +38,7 @@ import art.arcane.iris.nativegen.NativeStructurePostProcessor;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.math.RNG;
 import com.mojang.datafixers.util.Pair;
@@ -185,6 +187,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     private final ConcurrentHashMap<NativeStructureStartKey, Integer> worldCheckStructureShifts = new ConcurrentHashMap<>();
     private final AtomicBoolean announced = new AtomicBoolean(false);
     private volatile boolean vanillaSpawnBiomesInitialized;
+    private volatile boolean unloading;
     private volatile Engine engine;
     private volatile String activePack;
     private volatile String activeDimensionKey;
@@ -221,6 +224,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     synchronized void repointAndBind(ServerLevel level, String pack, String packDimensionKey, long seed) {
+        requireBindingAllowed();
         if (level.getChunkSource().getGenerator() != this) {
             throw new IllegalArgumentException("ServerLevel does not use Iris generator '" + dimensionKey + "'");
         }
@@ -258,11 +262,13 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     public synchronized void unbindEngine() {
+        unloading = true;
         ServerLevel level = boundLevel();
         unbindEngine(level);
     }
 
     synchronized void unbindEngine(ServerLevel level) {
+        unloading = true;
         if (level != null) {
             ModdedWorldEngines.evictOrThrow(level);
         }
@@ -322,13 +328,16 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
                                                                      BlockPos pos, int radius,
                                                                      boolean findUnexplored) {
         Engine current = engine();
-        Pair<BlockPos, Holder<Structure>> irisPlaced = findNearestIrisStructure(
-                level, holders, pos, Math.max(1, radius), findUnexplored, current);
-        HolderSet<Structure> reachable = filterReachableNativeStructures(level, holders, current);
-        Pair<BlockPos, Holder<Structure>> nativeLocated = reachable.size() == 0
-                ? null
-                : super.findNearestMapStructure(level, reachable, pos, radius, findUnexplored);
-        return NativeStructureLocateResults.nearest(pos, irisPlaced, nativeLocated);
+        try (GenerationSessionLease lease = requireGenerationLease(current, "modded_structure_locate");
+             IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            Pair<BlockPos, Holder<Structure>> irisPlaced = findNearestIrisStructure(
+                    level, holders, pos, Math.max(1, radius), findUnexplored, current);
+            HolderSet<Structure> reachable = filterReachableNativeStructures(level, holders, current);
+            Pair<BlockPos, Holder<Structure>> nativeLocated = reachable.size() == 0
+                    ? null
+                    : super.findNearestMapStructure(level, reachable, pos, radius, findUnexplored);
+            return NativeStructureLocateResults.nearest(pos, irisPlaced, nativeLocated);
+        }
     }
 
     public boolean isNativeStructureReachable(Holder<Structure> structure) {
@@ -412,8 +421,10 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     private Engine engine() {
+        requireBindingAllowed();
         Engine cached = engine;
-        if (cached != null) {
+        requireCompletedShutdown(cached);
+        if (cached != null && !cached.isClosed()) {
             return cached;
         }
         ServerLevel level = boundLevel();
@@ -423,14 +434,17 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         return bindEngine(level);
     }
 
-    void bindLevel(ServerLevel level) {
+    synchronized void bindLevel(ServerLevel level) {
         if (level.getChunkSource().getGenerator() != this) {
             throw new IllegalArgumentException("ServerLevel does not use Iris generator '" + dimensionKey + "'");
         }
+        requireCompletedShutdown(engine);
+        unloading = false;
         bindEngine(level);
     }
 
     private Engine bindEngine(ServerLevel level) {
+        requireBindingAllowed();
         try {
             requireGlobalStructureGeneration(
                     level.getServer().getWorldGenSettings().options().generateStructures(), dimensionKey);
@@ -439,18 +453,22 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             throw error;
         }
         Engine cached = engine;
+        requireCompletedShutdown(cached);
         if (cached != null && !cached.isClosed() && cached.getComplex() != null) {
             engineBinding.complete(cached);
             return cached;
         }
         synchronized (this) {
+            requireBindingAllowed();
             Engine existing = engine;
+            requireCompletedShutdown(existing);
             if (existing != null && !existing.isClosed() && existing.getComplex() != null) {
                 engineBinding.complete(existing);
                 return existing;
             }
             try {
                 Engine created = ModdedWorldEngines.get(level, activePack, activeDimensionKey, seedOverride);
+                requireCompletedShutdown(created);
                 if (created.isClosed() || created.getComplex() == null) {
                     throw new IllegalStateException("Iris generator '" + dimensionKey
                             + "' created an engine without a ready biome complex");
@@ -473,6 +491,19 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         }
     }
 
+    private void requireCompletedShutdown(Engine current) {
+        if (current != null && current.isClosing() && !current.isClosed()) {
+            throw new IllegalStateException("Iris generator '" + dimensionKey
+                    + "' cannot bind while its previous engine shutdown remains incomplete");
+        }
+    }
+
+    private void requireBindingAllowed() {
+        if (unloading) {
+            throw new IllegalStateException("Iris generator '" + dimensionKey + "' is unloading and cannot bind an engine");
+        }
+    }
+
     static void requireGlobalStructureGeneration(boolean enabled, String dimensionKey) {
         if (enabled) {
             return;
@@ -483,8 +514,10 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     private Engine engineOrNull() {
+        requireBindingAllowed();
         Engine cached = engine;
-        if (cached != null) {
+        requireCompletedShutdown(cached);
+        if (cached != null && !cached.isClosed()) {
             return cached;
         }
         try {
@@ -495,8 +528,10 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     Engine structureEngineOrNull() {
+        requireBindingAllowed();
         engineBinding.throwIfFailed(dimensionKey);
         Engine cached = engine;
+        requireCompletedShutdown(cached);
         if (cached != null && !cached.isClosed() && cached.getComplex() != null) {
             return cached;
         }
@@ -505,11 +540,14 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     Engine awaitStructureEngine() {
+        requireBindingAllowed();
         Engine current = engine;
+        requireCompletedShutdown(current);
         if (current != null && !current.isClosed() && current.getComplex() != null) {
             return current;
         }
         Engine bound = engineBinding.await(dimensionKey);
+        requireCompletedShutdown(bound);
         if (bound.isClosed() || bound.getComplex() == null) {
             throw new IllegalStateException("Iris generator '" + dimensionKey
                     + "' completed bootstrap without a ready biome complex");
@@ -518,7 +556,9 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     private Engine requireDataQueryEngine(String operation) {
+        requireBindingAllowed();
         Engine current = engine;
+        requireCompletedShutdown(current);
         if (current != null && !current.isClosed() && current.getComplex() != null) {
             return current;
         }
@@ -561,18 +601,21 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
                 return configuredStructureBiomeKeys;
             }
             Engine current = engine;
-            Iterable<IrisBiome> biomes;
-            String namespace;
-            if (current != null && !current.isClosed()) {
-                biomes = current.getAllBiomes();
-                namespace = current.getDimension().getLoadKey();
-            } else {
-                ConfiguredPack configured = configuredPack();
-                Set<String> resolved = collectConfiguredBiomeKeys(configured.dimension(), configured.data());
-                configuredStructureBiomeKeys = resolved;
-                return resolved;
+            if (current != null && !current.isClosed() && !current.isClosing()) {
+                try (GenerationSessionLease lease = current.acquireGenerationLease("modded_configured_biome_keys");
+                     IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+                    Set<String> resolved = collectConfiguredBiomeKeys(
+                            current.getAllBiomes(), current.getDimension().getLoadKey());
+                    configuredStructureBiomeKeys = resolved;
+                    return resolved;
+                } catch (GenerationSessionException e) {
+                    if (!current.isClosing() && !e.isExpectedTeardown()) {
+                        throw new IllegalStateException("Iris configured biome lookup could not acquire its engine runtime.", e);
+                    }
+                }
             }
-            Set<String> resolved = collectConfiguredBiomeKeys(biomes, namespace);
+            ConfiguredPack configured = configuredPack();
+            Set<String> resolved = collectConfiguredBiomeKeys(configured.dimension(), configured.data());
             configuredStructureBiomeKeys = resolved;
             return resolved;
         }
@@ -654,7 +697,8 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     public Engine engineIfBound() {
-        return engine;
+        Engine current = engine;
+        return unloading || current == null || current.isClosing() || current.isClosed() ? null : current;
     }
 
     public Engine commandEngine() {
@@ -710,23 +754,26 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             return;
         }
 
-        String namespace = current.getDimension().getLoadKey().toLowerCase(Locale.ROOT);
-        for (IrisBiome irisBiome : current.getDimension().getReachableBiomes(current)) {
-            if (irisBiome == null || !irisBiome.isCustom()) {
-                continue;
-            }
-            Holder<Biome> vanillaHolder = resolveBiomeHolder(registry, irisBiome.getVanillaDerivativeKey());
-            if (vanillaHolder == null) {
-                continue;
-            }
-            for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                Holder<Biome> customHolder = resolveBiomeHolder(registry, namespace + ":" + customBiome.getId());
-                if (customHolder != null) {
-                    vanillaSpawnBiomes.putIfAbsent(customHolder.value(), vanillaHolder);
+        try (GenerationSessionLease lease = requireGenerationLease(current, "modded_spawn_biomes");
+             IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            String namespace = current.getDimension().getLoadKey().toLowerCase(Locale.ROOT);
+            for (IrisBiome irisBiome : current.getDimension().getReachableBiomes(current)) {
+                if (irisBiome == null || !irisBiome.isCustom()) {
+                    continue;
+                }
+                Holder<Biome> vanillaHolder = resolveBiomeHolder(registry, irisBiome.getVanillaDerivativeKey());
+                if (vanillaHolder == null) {
+                    continue;
+                }
+                for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
+                    Holder<Biome> customHolder = resolveBiomeHolder(registry, namespace + ":" + customBiome.getId());
+                    if (customHolder != null) {
+                        vanillaSpawnBiomes.putIfAbsent(customHolder.value(), vanillaHolder);
+                    }
                 }
             }
+            vanillaSpawnBiomesInitialized = true;
         }
-        vanillaSpawnBiomesInitialized = true;
     }
 
     private Holder<Biome> resolveBiomeHolder(Registry<Biome> registry, String key) {
@@ -750,8 +797,12 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     @Override
     public CompletableFuture<ChunkAccess> createBiomes(RandomState randomState, Blender blender,
                                                        StructureManager structureManager, ChunkAccess chunk) {
-        chunk.fillBiomesFromNoise(structureBiomeSource::getVisibleNoiseBiome, randomState.sampler());
-        return CompletableFuture.completedFuture(chunk);
+        Engine current = engine();
+        try (GenerationSessionLease lease = requireGenerationLease(current, "modded_create_biomes");
+             IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            chunk.fillBiomesFromNoise(structureBiomeSource::getVisibleNoiseBiome, randomState.sampler());
+            return CompletableFuture.completedFuture(chunk);
+        }
     }
 
     @Override
@@ -759,36 +810,46 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         Engine generationEngine = engine();
         ChunkPos pos = chunk.getPos();
         lastChunkGenAt = System.currentTimeMillis();
-        if (announced.compareAndSet(false, true)) {
-            LOGGER.info("Iris generating {} through IrisModdedChunkGenerator (dim={} first chunk {},{})",
-                    dimensionKey, generationEngine.getDimension().getLoadKey(), pos.x(), pos.z());
-        }
         LOGGER.debug("Iris generating chunk {},{}", pos.x(), pos.z());
 
-        int dimMinY = generationEngine.getMinHeight();
-        int dimMaxY = generationEngine.getMaxHeight();
-        int height = dimMaxY - dimMinY;
         PlatformBlockState air = IrisPlatforms.get().registries().air();
 
         if (PARALLEL_CHUNK_SYSTEM) {
             return CompletableFuture.completedFuture(
-                    generateTerrain(chunk, generationEngine, pos, dimMinY, height, air));
+                    generateTerrain(chunk, generationEngine, pos, air));
         }
         return CompletableFuture.supplyAsync(
-                () -> generateTerrain(chunk, generationEngine, pos, dimMinY, height, air),
+                () -> generateTerrain(chunk, generationEngine, pos, air),
                 genPool);
     }
 
     private ChunkAccess generateTerrain(ChunkAccess chunk, Engine generationEngine, ChunkPos pos,
-                                        int dimMinY, int height, PlatformBlockState air) {
-        ModdedBlockBuffer blocks = new ModdedBlockBuffer(height, air);
-        Hunk<PlatformBiome> biomes = Hunk.newArrayHunk(16, height, 16);
-        try {
+                                        PlatformBlockState air) {
+        try (GenerationSessionLease lease = generationEngine.acquireGenerationLease("modded_chunk_pipeline");
+             IrisContext.Scope ignored = IrisContext.open(generationEngine, lease.sessionId(), null)) {
+            if (announced.compareAndSet(false, true)) {
+                LOGGER.info("Iris generating {} through IrisModdedChunkGenerator (dim={} first chunk {},{})",
+                        dimensionKey, generationEngine.getDimension().getLoadKey(), pos.x(), pos.z());
+            }
+            int dimMinY = generationEngine.getMinHeight();
+            int dimMaxY = generationEngine.getMaxHeight();
+            int height = dimMaxY - dimMinY;
+            ModdedBlockBuffer blocks = new ModdedBlockBuffer(height, air);
+            Hunk<PlatformBiome> biomes = Hunk.newArrayHunk(16, height, 16);
             generationEngine.generate(pos.getMinBlockX(), pos.getMinBlockZ(), blocks, biomes, false);
+
+            writeBlocks(chunk, blocks, dimMinY, height);
+            writeTerrainHeightmaps(chunk, generationEngine, pos, height);
+            Heightmap.primeHeightmaps(chunk, EnumSet.of(
+                    Heightmap.Types.MOTION_BLOCKING,
+                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES));
+            ModdedWorldManager.enqueueGenerated(generationEngine, pos.x(), pos.z());
+            return chunk;
         } catch (GenerationSessionException e) {
-            if (e.isExpectedTeardown()) {
+            if (generationEngine.isClosing() || e.isExpectedTeardown()) {
                 LOGGER.debug("Iris chunk {},{} skipped: engine sealed for hotload/teardown", pos.x(), pos.z());
-                return chunk;
+                throw new IllegalStateException(
+                        "Iris chunk generation was rejected during an engine transition.", e);
             }
             LOGGER.error("Iris failed to generate chunk {},{}", pos.x(), pos.z(), e);
             throw new IllegalStateException("Iris generation failed for chunk " + pos.x() + "," + pos.z(), e);
@@ -796,14 +857,6 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             LOGGER.error("Iris failed to generate chunk {},{}", pos.x(), pos.z(), e);
             throw new IllegalStateException("Iris generation failed for chunk " + pos.x() + "," + pos.z(), e);
         }
-
-        writeBlocks(chunk, blocks, dimMinY, height);
-        writeTerrainHeightmaps(chunk, generationEngine, pos, height);
-        Heightmap.primeHeightmaps(chunk, EnumSet.of(
-                Heightmap.Types.MOTION_BLOCKING,
-                Heightmap.Types.MOTION_BLOCKING_NO_LEAVES));
-        ModdedWorldManager.enqueueGenerated(generationEngine, pos.x(), pos.z());
-        return chunk;
     }
 
     private void writeTerrainHeightmaps(ChunkAccess chunk, Engine generationEngine, ChunkPos pos, int height) {
@@ -885,20 +938,31 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
 
     @Override
     public void applyBiomeDecoration(WorldGenLevel level, ChunkAccess chunk, StructureManager structureManager) {
-        placeVanillaStructures(level, chunk, structureManager);
+        Engine current = engine();
+        try (GenerationSessionLease lease = requireGenerationLease(current, "modded_biome_decoration");
+             IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            placeVanillaStructures(level, chunk, structureManager);
+        }
     }
 
     @Override
     public void createStructures(RegistryAccess registryAccess, ChunkGeneratorStructureState structureState, StructureManager structureManager, ChunkAccess chunk, StructureTemplateManager templateManager, ResourceKey<Level> levelKey) {
         Engine current = engine();
-        Map<Structure, StructureStart> previousStarts = new HashMap<>(chunk.getAllStarts());
-        super.createStructures(registryAccess, structureState, structureManager, chunk, templateManager, levelKey);
-        adjustGeneratedStructures(registryAccess, chunk, previousStarts, current);
+        try (GenerationSessionLease lease = requireGenerationLease(current, "modded_create_structures");
+             IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            Map<Structure, StructureStart> previousStarts = new HashMap<>(chunk.getAllStarts());
+            super.createStructures(registryAccess, structureState, structureManager, chunk, templateManager, levelKey);
+            adjustGeneratedStructures(registryAccess, chunk, previousStarts, current);
+        }
     }
 
     @Override
     public void createReferences(WorldGenLevel level, StructureManager structureManager, ChunkAccess chunk) {
-        super.createReferences(level, structureManager, chunk);
+        Engine current = engine();
+        try (GenerationSessionLease lease = requireGenerationLease(current, "modded_create_references");
+             IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            super.createReferences(level, structureManager, chunk);
+        }
     }
 
     private void adjustGeneratedStructures(RegistryAccess registryAccess, ChunkAccess chunk,
@@ -1168,7 +1232,12 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     public int getBaseHeight(int x, int z, Heightmap.Types type, LevelHeightAccessor heightAccessor, RandomState randomState) {
         Engine current = requireDataQueryEngine("base height");
         boolean ignoreFluid = !type.isOpaque().test(Blocks.WATER.defaultBlockState());
-        return heightAccessor.getMinY() + current.getHeight(x, z, ignoreFluid) + 1;
+        try (GenerationSessionLease lease = current.acquireGenerationLease("modded_base_height");
+             IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            return heightAccessor.getMinY() + current.getHeight(x, z, ignoreFluid) + 1;
+        } catch (GenerationSessionException e) {
+            throw new IllegalStateException("Iris base height query could not acquire its engine runtime.", e);
+        }
     }
 
     @Override
@@ -1176,17 +1245,30 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         int minY = heightAccessor.getMinY();
         BlockState[] states = new BlockState[heightAccessor.getHeight()];
         Engine current = requireDataQueryEngine("base column");
-        BlockState airState = Blocks.AIR.defaultBlockState();
-        int surface = current.getHeight(x, z, true);
-        int fluid = current.getHeight(x, z, false);
-        BlockState stone = Blocks.STONE.defaultBlockState();
-        BlockState water = Blocks.WATER.defaultBlockState();
-        int solidEnd = Math.max(0, Math.min(states.length, surface + 1));
-        int fluidEnd = Math.max(solidEnd, Math.max(0, Math.min(states.length, fluid + 1)));
-        Arrays.fill(states, 0, solidEnd, stone);
-        Arrays.fill(states, solidEnd, fluidEnd, water);
-        Arrays.fill(states, fluidEnd, states.length, airState);
-        return new NoiseColumn(minY, states);
+        try (GenerationSessionLease lease = current.acquireGenerationLease("modded_base_column");
+             IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            BlockState airState = Blocks.AIR.defaultBlockState();
+            int surface = current.getHeight(x, z, true);
+            int fluid = current.getHeight(x, z, false);
+            BlockState stone = Blocks.STONE.defaultBlockState();
+            BlockState water = Blocks.WATER.defaultBlockState();
+            int solidEnd = Math.max(0, Math.min(states.length, surface + 1));
+            int fluidEnd = Math.max(solidEnd, Math.max(0, Math.min(states.length, fluid + 1)));
+            Arrays.fill(states, 0, solidEnd, stone);
+            Arrays.fill(states, solidEnd, fluidEnd, water);
+            Arrays.fill(states, fluidEnd, states.length, airState);
+            return new NoiseColumn(minY, states);
+        } catch (GenerationSessionException e) {
+            throw new IllegalStateException("Iris base column query could not acquire its engine runtime.", e);
+        }
+    }
+
+    private GenerationSessionLease requireGenerationLease(Engine current, String operation) {
+        try {
+            return current.acquireGenerationLease(operation);
+        } catch (GenerationSessionException exception) {
+            throw new IllegalStateException("Iris " + operation + " could not acquire its engine runtime.", exception);
+        }
     }
 
     @Override

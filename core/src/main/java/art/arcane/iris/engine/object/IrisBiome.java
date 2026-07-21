@@ -59,6 +59,7 @@ import org.bukkit.block.Biome;
 
 import java.awt.Color;
 import java.util.EnumMap;
+import java.util.Objects;
 
 @Accessors(chain = true)
 @NoArgsConstructor
@@ -216,7 +217,10 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     @ArrayType(min = 1, type = IrisDepositVariant.class)
     @Desc("Deposit ore remap rules scoped to this biome. Each entry declares a vertical band and a source->replacement block id map. Applied before regional and dimension rules; first matching biome rule wins.")
     private KList<IrisDepositVariant> depositVariants = new KList<>();
-    private transient InferredType inferredType;
+    private transient volatile InferredType inferredType;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final transient EnumMap<InferredType, IrisBiome> inferredVariants = new EnumMap<>(InferredType.class);
     @Desc("Collection of ores to be generated")
     @ArrayType(type = IrisOreGenerator.class, min = 1)
     private KList<IrisOreGenerator> ores = new KList<>();
@@ -240,6 +244,37 @@ public class IrisBiome extends IrisRegistrant implements IRare {
 
     public boolean hasUndergroundOres() {
         return !getUndergroundOres().isEmpty();
+    }
+
+    public synchronized IrisBiome setInferredType(InferredType inferredType) {
+        this.inferredType = inferredType;
+        return this;
+    }
+
+    public synchronized IrisBiome withInferredType(InferredType type) {
+        Objects.requireNonNull(type, "type");
+        if (inferredType == null) {
+            inferredType = type;
+            return this;
+        }
+        if (inferredType == type) {
+            return this;
+        }
+        IrisBiome cached = inferredVariants.get(type);
+        if (cached != null) {
+            return cached;
+        }
+        IrisData data = getLoader();
+        if (data == null) {
+            throw new IllegalStateException("Cannot create an inferred biome variant without an Iris data loader.");
+        }
+        IrisBiome variant = data.getGson().fromJson(data.getGson().toJson(this), IrisBiome.class);
+        variant.setLoader(data);
+        variant.setLoadKey(getLoadKey());
+        variant.setLoadFile(getLoadFile());
+        variant.inferredType = type;
+        inferredVariants.put(type, variant);
+        return variant;
     }
 
     private PlatformBlockState generateOres(KList<IrisOreGenerator> localOres, int x, int y, int z, RNG rng, IrisData data) {

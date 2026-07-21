@@ -48,6 +48,10 @@ public class BlockMixin {
         if (result == null) {
             return;
         }
+        if (result.routeCombinedDrops(info.getReturnValue())) {
+            info.setReturnValue(List.of());
+            return;
+        }
         List<ItemStack> drops = result.replaceVanillaDrops()
                 ? new ArrayList<>()
                 : new ArrayList<>(info.getReturnValue());

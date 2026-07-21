@@ -38,11 +38,15 @@ import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
+import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import com.google.gson.annotations.SerializedName;
+import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import lombok.experimental.Accessors;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -62,7 +66,13 @@ import java.util.function.Function;
 @Desc("Represents an iris object placer. It places objects.")
 @Data
 public class IrisObjectPlacement {
-    private final transient AtomicCache<CNG> surfaceWarp = new AtomicCache<>();
+    private static final int SURFACE_WARP_CACHE_SIZE = 8;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final transient ConcurrentLinkedHashMap<SurfaceWarpCacheKey, CNG> surfaceWarpCache =
+            new ConcurrentLinkedHashMap.Builder<SurfaceWarpCacheKey, CNG>()
+                    .maximumWeightedCapacity(SURFACE_WARP_CACHE_SIZE)
+                    .build();
     @RegistryListResource(IrisObject.class)
     @Required
     @ArrayType(min = 1, type = String.class)
@@ -211,11 +221,14 @@ public class IrisObjectPlacement {
     }
 
     public CNG getSurfaceWarp(RNG rng, IrisData data) {
-        return surfaceWarp.aquire(() -> {
-            Engine engine = data.getEngine();
-            RNG warpRng = engine != null ? new RNG(engine.getSeedManager().getComponent() + 1024) : new RNG(8675309L);
-            return getWarp().create(warpRng, data);
-        });
+        return getSurfaceWarp(rng, data, data.getEngine());
+    }
+
+    public CNG getSurfaceWarp(RNG rng, IrisData data, @Nullable Engine engine) {
+        long seed = engine == null ? rng.getSeed() : engine.getSeedManager().getComponent() + 1024L;
+        SurfaceWarpCacheKey key = new SurfaceWarpCacheKey(data, engine, seed);
+        return surfaceWarpCache.computeIfAbsent(key,
+                ignored -> getWarp().create(new RNG(seed), data, engine));
     }
 
     public double warp(RNG rng, double x, double y, double z, IrisData data) {
@@ -342,6 +355,36 @@ public class IrisObjectPlacement {
         }
 
         return null;
+    }
+
+    private static final class SurfaceWarpCacheKey {
+        private final IrisData data;
+        private final Engine engine;
+        private final long seed;
+
+        private SurfaceWarpCacheKey(IrisData data, Engine engine, long seed) {
+            this.data = data;
+            this.engine = engine;
+            this.seed = seed;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) {
+                return true;
+            }
+            if (!(other instanceof SurfaceWarpCacheKey key)) {
+                return false;
+            }
+            return data == key.data && engine == key.engine && seed == key.seed;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = System.identityHashCode(data);
+            result = 31 * result + System.identityHashCode(engine);
+            return 31 * result + Long.hashCode(seed);
+        }
     }
 
     private static class TableCache {

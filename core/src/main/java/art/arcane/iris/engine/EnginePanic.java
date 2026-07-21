@@ -19,30 +19,87 @@
 package art.arcane.iris.engine;
 
 import art.arcane.iris.spi.IrisLogging;
-import art.arcane.volmlib.util.collection.KMap;
 
-public class EnginePanic {
-    private static final KMap<String, String> stuff = new KMap<>();
-    private static KMap<String, String> last = new KMap<>();
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+
+public final class EnginePanic {
+    private static final Diagnostics GLOBAL = scoped("global");
+
+    private EnginePanic() {
+    }
+
+    public static Diagnostics scoped(String scope) {
+        return new Diagnostics(scope);
+    }
 
     public static void add(String key, String value) {
-        stuff.put(key, value);
+        GLOBAL.add(key, value);
     }
 
     public static void saveLast() {
-        last = stuff.copy();
+        GLOBAL.saveLast();
     }
 
     public static void lastPanic() {
-        for (String i : last.keySet()) {
-            IrisLogging.error("Last Panic " + i + ": " + stuff.get(i));
-        }
+        GLOBAL.lastPanic();
     }
 
     public static void panic() {
-        lastPanic();
-        for (String i : stuff.keySet()) {
-            IrisLogging.error("Engine Panic " + i + ": " + stuff.get(i));
+        GLOBAL.panic();
+    }
+
+    public static final class Diagnostics {
+        private final String scope;
+        private final ThreadLocal<LinkedHashMap<String, String>> current = ThreadLocal.withInitial(LinkedHashMap::new);
+        private final AtomicReference<Map<String, String>> last = new AtomicReference<>(Map.of());
+
+        private Diagnostics(String scope) {
+            this.scope = scope == null || scope.isBlank() ? "unknown" : scope;
+        }
+
+        public void add(String key, String value) {
+            current.get().put(String.valueOf(key), String.valueOf(value));
+        }
+
+        public void saveLast() {
+            last.set(currentSnapshot());
+            current.remove();
+        }
+
+        public void lastPanic() {
+            log("Last Panic", last.get());
+        }
+
+        public void panic() {
+            Map<String, String> currentSnapshot = currentSnapshot();
+            lastPanic();
+            log("Engine Panic", currentSnapshot);
+            current.remove();
+        }
+
+        Map<String, String> currentSnapshot() {
+            return immutableSnapshot(current.get());
+        }
+
+        Map<String, String> lastSnapshot() {
+            return last.get();
+        }
+
+        private void log(String prefix, Map<String, String> snapshot) {
+            for (Map.Entry<String, String> entry : snapshot.entrySet()) {
+                IrisLogging.error(prefix + " [" + scope + "] " + entry.getKey() + ": " + entry.getValue());
+            }
+        }
+
+        private static Map<String, String> immutableSnapshot(Map<String, String> values) {
+            if (values.isEmpty()) {
+                return Map.of();
+            }
+
+            return Collections.unmodifiableMap(new LinkedHashMap<>(values));
         }
     }
 }

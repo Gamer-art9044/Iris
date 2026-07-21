@@ -19,15 +19,27 @@
 package art.arcane.iris.fabric;
 
 import art.arcane.iris.modded.ModdedLoader;
+import art.arcane.iris.modded.service.ModdedTreeFellerService;
 import net.fabricmc.api.EnvType;
+import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
+import net.fabricmc.fabric.api.permission.v1.PermissionContextOwner;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.permissions.PermissionLevel;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.io.File;
 import java.nio.file.Path;
 
 public final class FabricModdedLoader implements ModdedLoader {
+    private static final Identifier TREE_FELLER_PERMISSION = Identifier.fromNamespaceAndPath("iris", "treefeller");
+
     @Override
     public String platformName() {
         return "fabric";
@@ -73,5 +85,25 @@ public final class FabricModdedLoader implements ModdedLoader {
                 .flatMap((ModContainer container) -> container.getOrigin().getPaths().stream().findFirst())
                 .map((Path p) -> p.toFile())
                 .orElse(null);
+    }
+
+    @Override
+    public boolean hasTreeFellerPermission(ServerPlayer player) {
+        return ((PermissionContextOwner) player).checkPermission(
+                TREE_FELLER_PERMISSION,
+                PermissionLevel.GAMEMASTERS
+        );
+    }
+
+    @Override
+    public boolean canTreeFellerBreak(
+            ServerLevel level,
+            ServerPlayer player,
+            BlockPos position,
+            BlockState state
+    ) {
+        BlockEntity blockEntity = state.hasBlockEntity() ? level.getBlockEntity(position) : null;
+        return ModdedTreeFellerService.runBreakProbe(() -> PlayerBlockBreakEvents.BEFORE.invoker()
+                .beforeBlockBreak(level, player, position, state, blockEntity));
     }
 }

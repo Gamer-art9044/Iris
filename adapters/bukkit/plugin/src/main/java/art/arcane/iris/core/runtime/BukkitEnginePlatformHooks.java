@@ -80,7 +80,10 @@ public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
 
     @Override
     public void shutdownPregenerator(Engine engine) {
-        PregeneratorJob.shutdownInstance();
+        IrisWorld world = engine.getWorld();
+        if (world != null) {
+            PregeneratorJob.shutdownInstanceForWorld(world.identity());
+        }
     }
 
     @Override

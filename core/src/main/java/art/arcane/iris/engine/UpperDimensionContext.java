@@ -69,7 +69,7 @@ public class UpperDimensionContext implements DataProvider {
                 engine.getData(),
                 chunkHeight,
                 complex.getHeightStream(),
-                complex.getBaseBiomeStream(),
+                complex.getTrueBiomeStream(),
                 complex.getRegionStream(),
                 complex.getRockStream(),
                 true
@@ -89,6 +89,8 @@ public class UpperDimensionContext implements DataProvider {
 
         Map<IrisInterpolator, Set<IrisGenerator>> generators = new HashMap<>();
         Set<IrisBiome> allBiomes = Collections.newSetFromMap(new IdentityHashMap<>());
+        Map<IrisBiome, IrisComplex.ChildSelectionPlan> childSelectionPlans =
+                Collections.synchronizedMap(new IdentityHashMap<>());
         upperDim.getRegions().forEach(regionKey -> {
             IrisRegion region = upperData.getRegionLoader().load(regionKey);
             if (region != null) {
@@ -135,8 +137,7 @@ public class UpperDimensionContext implements DataProvider {
                         .zoom(upperDim.getBiomeZoom())
                         .zoom(upperDim.getLandZoom())
                         .zoom(r.getLandBiomeZoom())
-                        .selectRarity(upperData.getBiomeLoader().loadAll(r.getLandBiomes(),
-                                t -> t.setInferredType(InferredType.LAND))))
+                        .selectRarity(loadInferredBiomes(upperData, r.getLandBiomes(), InferredType.LAND)))
                 .convertAware2D(ProceduralStream::get);
         ProceduralStream<IrisBiome> seaBiomeStream = regionStream
                 .convert(r -> upperDim.getSeaBiomeStyle()
@@ -144,16 +145,14 @@ public class UpperDimensionContext implements DataProvider {
                         .zoom(upperDim.getBiomeZoom())
                         .zoom(upperDim.getSeaZoom())
                         .zoom(r.getSeaBiomeZoom())
-                        .selectRarity(upperData.getBiomeLoader().loadAll(r.getSeaBiomes(),
-                                t -> t.setInferredType(InferredType.SEA))))
+                        .selectRarity(loadInferredBiomes(upperData, r.getSeaBiomes(), InferredType.SEA)))
                 .convertAware2D(ProceduralStream::get);
         ProceduralStream<IrisBiome> shoreBiomeStream = regionStream
                 .convert(r -> upperDim.getShoreBiomeStyle()
                         .create(rng.nextParallelRNG(InferredType.SHORE.ordinal()), upperData).stream()
                         .zoom(upperDim.getBiomeZoom())
                         .zoom(r.getShoreBiomeZoom())
-                        .selectRarity(upperData.getBiomeLoader().loadAll(r.getShoreBiomes(),
-                                t -> t.setInferredType(InferredType.SHORE))))
+                        .selectRarity(loadInferredBiomes(upperData, r.getShoreBiomes(), InferredType.SHORE)))
                 .convertAware2D(ProceduralStream::get);
 
         Map<InferredType, ProceduralStream<IrisBiome>> inferredStreams = new HashMap<>();
@@ -170,7 +169,9 @@ public class UpperDimensionContext implements DataProvider {
                 .convertAware2D((t, x, z) -> {
                     ProceduralStream<IrisBiome> stream = inferredStreams.get(t);
                     return stream != null ? stream.get(x, z) : inferredStreams.get(InferredType.LAND).get(x, z);
-                });
+                })
+                .convertAware2D((biome, x, z) -> implode(
+                        biome, x, z, rng, dataProvider, childSelectionPlans, 3));
 
         KList<IrisShapedGeneratorStyle> overlayNoise = upperDim.getOverlayNoise();
         ProceduralStream<Double> overlayStream = overlayNoise.isEmpty()
@@ -235,6 +236,23 @@ public class UpperDimensionContext implements DataProvider {
             return Math.max(Math.min(interpolatedHeight + fluidHeight + overlayStream.get(x, z), chunkHeight), 0);
         }, Interpolated.DOUBLE);
 
+        ProceduralStream<IrisBiome> finalBiomeStream = heightStream.convertAware2D((height, x, z) -> {
+            IrisBiome baseBiome = baseBiomeStream.get(x, z);
+            IrisBiome resolved = IrisComplex.resolveSurfaceBiome(
+                    height,
+                    baseBiome,
+                    regionStream.get(x, z),
+                    x,
+                    z,
+                    fluidHeight,
+                    landBiomeStream,
+                    seaBiomeStream,
+                    shoreBiomeStream);
+            return resolved == baseBiome
+                    ? baseBiome
+                    : implode(resolved, x, z, rng, dataProvider, childSelectionPlans, 3);
+        });
+
         ProceduralStream<PlatformBlockState> rockStream = upperDim.getRockPalette()
                 .getLayerGenerator(rng.nextParallelRNG(45), upperData).stream()
                 .select(upperDim.getRockPalette().getBlockData(upperData));
@@ -244,11 +262,65 @@ public class UpperDimensionContext implements DataProvider {
                 upperData,
                 chunkHeight,
                 heightStream,
-                baseBiomeStream,
+                finalBiomeStream,
                 regionStream,
                 rockStream,
                 false
         );
+    }
+
+    private static KList<IrisBiome> loadInferredBiomes(IrisData data, KList<String> keys, InferredType type) {
+        KList<IrisBiome> inferred = new KList<>();
+        for (IrisBiome biome : data.getBiomeLoader().loadAll(keys)) {
+            inferred.add(biome.withInferredType(type));
+        }
+        return inferred;
+    }
+
+    private static IrisBiome implode(
+            IrisBiome biome,
+            double x,
+            double z,
+            RNG rng,
+            DataProvider dataProvider,
+            Map<IrisBiome, IrisComplex.ChildSelectionPlan> childSelectionPlans,
+            int remainingDepth
+    ) {
+        if (biome == null || remainingDepth < 0 || biome.getChildren().isEmpty()) {
+            return biome;
+        }
+
+        IrisComplex.ChildSelectionPlan selectionPlan = childSelectionPlans.get(biome);
+        if (selectionPlan == null) {
+            synchronized (childSelectionPlans) {
+                selectionPlan = childSelectionPlans.get(biome);
+                if (selectionPlan == null) {
+                    KList<IrisBiome> options = new KList<>();
+                    for (IrisBiome child : biome.getRealChildren(dataProvider)) {
+                        if (child != null) {
+                            options.add(child);
+                        }
+                    }
+                    options.add(biome);
+                    selectionPlan = IrisComplex.ChildSelectionPlan.create(options);
+                    childSelectionPlans.put(biome, selectionPlan);
+                }
+            }
+        }
+
+        IrisBiome selected = selectionPlan.select(
+                biome.getChildrenGenerator(rng, 123, biome.getChildShrinkFactor()), x, z);
+        if (selected == null) {
+            return biome;
+        }
+        return implode(
+                selected.withInferredType(biome.getInferredType()),
+                x,
+                z,
+                rng,
+                dataProvider,
+                childSelectionPlans,
+                remainingDepth - 1);
     }
 
     public int getUpperSurfaceY(int x, int z) {

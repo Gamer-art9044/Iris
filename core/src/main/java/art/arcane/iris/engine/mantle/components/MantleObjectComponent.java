@@ -30,6 +30,7 @@ import art.arcane.iris.engine.mantle.IrisMantleComponent;
 import art.arcane.iris.engine.mantle.MantleWriter;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.object.CarvingMode;
 import art.arcane.iris.engine.object.DecayControlPlacer;
 import art.arcane.iris.engine.object.IObjectPlacer;
@@ -45,6 +46,7 @@ import art.arcane.iris.engine.object.IrisObjectTranslate;
 import art.arcane.iris.engine.object.IrisObjectVacuum;
 import art.arcane.iris.engine.object.IrisProceduralObjects;
 import art.arcane.iris.engine.object.IrisProceduralPlacement;
+import art.arcane.iris.engine.object.IrisProceduralTree;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
 import art.arcane.iris.engine.object.TileData;
@@ -136,6 +138,16 @@ public class MantleObjectComponent extends IrisMantleComponent {
             return null;
         }
         return key + "@" + id;
+    }
+
+    private static boolean isTreePlacement(IrisObject object, IrisObjectPlacement placement) {
+        String key = object == null ? null : object.getLoadKey();
+        return (key != null && key.startsWith("trees/"))
+                || (placement != null && placement.getTrees() != null && placement.getTrees().isNotEmpty());
+    }
+
+    private static void writeTreeMaterial(IObjectPlacer placer, int x, int y, int z, PlatformBlockState data) {
+        placer.setData(x, y, z, TreeBlockMaterial.of(data));
     }
 
     @Override
@@ -440,6 +452,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
         boolean golden = isGoldenDebugChunk(x, z);
         CaveAnchorCache caveAnchorCache = new CaveAnchorCache();
         for (IrisProceduralPlacement p : proceduralObjects.getAllPlacements()) {
+            boolean treePlacement = p instanceof IrisProceduralTree;
             boolean chancePassed = rng.chance(p.getChance() + rng.d(-0.005, 0.005));
             if (golden) {
                 IrisLogging.info("Goldendebug procedural chance: chunk=" + x + "," + z
@@ -535,6 +548,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                                 minDepthBelowSurface,
                                 id,
                                 "procedural",
+                                treePlacement,
                                 rng
                         );
                         placeResult = contained.resultY();
@@ -544,6 +558,9 @@ public class MantleObjectComponent extends IrisMantleComponent {
                             String marker = placementMarker(variant, id, "procedural");
                             if (marker != null) {
                                 placer.setData(b.getX(), b.getY(), b.getZ(), marker);
+                            }
+                            if (treePlacement && marker != null) {
+                                writeTreeMaterial(placer, b.getX(), b.getY(), b.getZ(), data);
                             }
                         }, null, getData());
                     }
@@ -608,6 +625,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             int minDepthBelowSurface,
             int id,
             String markerContext,
+            boolean treePlacement,
             RNG rng
     ) {
         CaveObjectPlacementTransaction transaction = new CaveObjectPlacementTransaction(placer, anchorY, minDepthBelowSurface);
@@ -619,6 +637,9 @@ public class MantleObjectComponent extends IrisMantleComponent {
         int result = object.place(x, placeY, z, transaction, placement, rng, (block, data) -> {
             if (marker != null) {
                 transaction.setData(block.getX(), block.getY(), block.getZ(), marker);
+            }
+            if (treePlacement && marker != null) {
+                writeTreeMaterial(transaction, block.getX(), block.getY(), block.getZ(), data);
             }
             if (placement.isDolphinTarget() && placement.isUnderwater() && B.isStorageChest(data)) {
                 transaction.setData(block.getX(), block.getY(), block.getZ(), MatterStructurePOI.BURIED_TREASURE);
@@ -669,6 +690,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             int xx = rng.i(x, x + 16);
             int zz = rng.i(z, z + 16);
             IrisObjectPlacement effectivePlacement = resolveEffectivePlacement(objectPlacement, v);
+            boolean treePlacement = isTreePlacement(v, effectivePlacement);
             int id = rng.i(0, Integer.MAX_VALUE);
             IObjectPlacer placePlacer = golden ? new GoldenDebugPlacer(writer, scope + "/" + v.getLoadKey()) : writer;
             if (golden) {
@@ -685,6 +707,9 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     String marker = placementMarker(v, id, "surface");
                     if (marker != null) {
                         writer.setData(b.getX(), b.getY(), b.getZ(), marker);
+                    }
+                    if (treePlacement && marker != null) {
+                        writeTreeMaterial(writer, b.getX(), b.getY(), b.getZ(), data);
                     }
                     if (effectivePlacement.isDolphinTarget() && effectivePlacement.isUnderwater() && B.isStorageChest(data)) {
                         writer.setData(b.getX(), b.getY(), b.getZ(), MatterStructurePOI.BURIED_TREASURE);
@@ -866,6 +891,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                         objectMinDepthBelowSurface,
                         id,
                         "cave",
+                        isTreePlacement(object, effectivePlacement),
                         rng
                 );
                 int result = contained.resultY();
@@ -1046,11 +1072,15 @@ public class MantleObjectComponent extends IrisMantleComponent {
             if (forcePlace) {
                 placement.setForcePlace(true);
             }
+            boolean treePlacement = isTreePlacement(v, objectPlacement);
 
             int result = v.place(xx, anchorY, zz, writer, placement, rng, (b, data) -> {
                 String marker = placementMarker(v, id, "upper");
                 if (marker != null) {
                     writer.setData(b.getX(), b.getY(), b.getZ(), marker);
+                }
+                if (treePlacement && marker != null) {
+                    writeTreeMaterial(writer, b.getX(), b.getY(), b.getZ(), data);
                 }
                 if (placement.isDolphinTarget() && placement.isUnderwater() && B.isStorageChest(data)) {
                     writer.setData(b.getX(), b.getY(), b.getZ(), MatterStructurePOI.BURIED_TREASURE);

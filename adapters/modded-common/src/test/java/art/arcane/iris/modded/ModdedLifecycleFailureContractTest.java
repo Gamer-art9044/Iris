@@ -141,7 +141,35 @@ public class ModdedLifecycleFailureContractTest {
         String source = source("ModdedEngineBootstrap.java");
         String stop = method(source, "public static void stop(");
 
-        assertEquals(1, occurrences(stop, "ModdedStartup.reset();"));
+        assertEquals(1, occurrences(stop, "ModdedStartup::reset"));
+    }
+
+    @Test
+    public void engineBootstrapAttemptsEveryShutdownStageAndAggregatesFailures() throws IOException {
+        String source = source("ModdedEngineBootstrap.java");
+        String stop = method(source, "public static void stop(");
+
+        assertBefore(stop, "\"services\"", "\"world engines\"");
+        assertBefore(stop, "\"world engines\"", "\"dimension manager\"");
+        assertBefore(stop, "\"server state\"", "if (failure != null)");
+        assertTrue(stop.contains("throw propagateStopFailure(failure);"));
+
+        String runStage = method(source, "private static Throwable runStopStage(");
+        assertTrue(runStage.contains("catch (Throwable stageFailure)"));
+        assertTrue(runStage.contains("failure.addSuppressed(stageFailure);"));
+    }
+
+    @Test
+    public void worldShutdownRemovesOnlySuccessfullyClosedMappings() throws IOException {
+        String source = source("ModdedWorldEngines.java");
+        String shutdown = method(source, "public static void shutdown()");
+
+        assertTrue(shutdown.contains("new ArrayList<>(ENGINES.entrySet())"));
+        assertFalse(shutdown.contains("ENGINES.clear()"));
+        assertBefore(shutdown, "close(engine);", "ENGINES.remove(level, engine)");
+        assertTrue(shutdown.contains("ENGINES.containsKey(level)"));
+        assertTrue(shutdown.contains("failure.addSuppressed(e);"));
+        assertTrue(shutdown.contains("failed mappings were retained"));
     }
 
     @Test
@@ -160,7 +188,37 @@ public class ModdedLifecycleFailureContractTest {
         String unbind = method(source, "synchronized void unbindEngine(ServerLevel level)");
 
         assertFalse(unbind.contains("finally"));
+        assertBefore(unbind, "unloading = true;", "ModdedWorldEngines.evictOrThrow(level);");
         assertBefore(unbind, "ModdedWorldEngines.evictOrThrow(level);", "clearEngineBinding();");
+        String binding = method(source, "private Engine bindEngine(ServerLevel level)");
+        assertTrue(binding.contains("requireBindingAllowed();"));
+        assertTrue(binding.contains("requireCompletedShutdown(cached);"));
+        String bindLevel = method(source, "synchronized void bindLevel(ServerLevel level)");
+        assertBefore(bindLevel, "requireCompletedShutdown(engine);", "unloading = false;");
+        String boundEngine = method(source, "public Engine engineIfBound()");
+        assertTrue(boundEngine.contains("unloading || current == null || current.isClosing() || current.isClosed()"));
+    }
+
+    @Test
+    public void loaderUnloadSurfacesCloseFailureAndDynamicRemovalUsesStrictEviction() throws IOException {
+        String bootstrapSource = source("ModdedEngineBootstrap.java");
+        String unload = method(bootstrapSource, "public static void levelUnloaded(ServerLevel level)");
+        String failure = catchBlock(unload);
+        assertTrue(failure.contains("LOGGER.error("));
+        assertTrue(failure.contains("throw "));
+
+        String managerSource = source("ModdedDimensionManager.java");
+        String remove = method(managerSource, "public static boolean remove(MinecraftServer server, String dimensionId, boolean wipeStorage)");
+        assertTrue(remove.contains("ModdedWorldEngines.evictOrThrow(level);"));
+        assertFalse(remove.contains("ModdedWorldEngines.evict(level);"));
+        assertTrue(remove.contains("generatorUnbound = true;"));
+        assertTrue(remove.contains("rollbackRemoval(server, serverAccess, key, level, generator, generatorUnbound, e);"));
+
+        String rollback = method(managerSource, "private static void rollbackRemoval(");
+        assertTrue(rollback.contains("serverAccess.hasLevel(server, key)"));
+        assertTrue(rollback.contains("generator.bindLevel(level);"));
+        assertTrue(rollback.contains("failure.addSuppressed(rollbackFailure);"));
+        assertTrue(rollback.contains("LOGGER.error("));
     }
 
     @Test

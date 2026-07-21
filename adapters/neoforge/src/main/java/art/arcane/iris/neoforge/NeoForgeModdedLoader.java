@@ -19,18 +19,37 @@
 package art.arcane.iris.neoforge;
 
 import art.arcane.iris.modded.ModdedLoader;
+import art.arcane.iris.modded.service.ModdedTreeFellerService;
+import net.minecraft.commands.Commands;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.level.block.BreakBlockEvent;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.fml.loading.FMLLoader;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.server.ServerLifecycleHooks;
+import net.neoforged.neoforge.server.permission.PermissionAPI;
+import net.neoforged.neoforge.server.permission.nodes.PermissionNode;
+import net.neoforged.neoforge.server.permission.nodes.PermissionTypes;
 import net.neoforged.neoforgespi.language.IModFileInfo;
 
 import java.io.File;
 import java.nio.file.Path;
 
 public final class NeoForgeModdedLoader implements ModdedLoader {
+    public static final PermissionNode<Boolean> TREE_FELLER_PERMISSION = new PermissionNode<>(
+            "iris",
+            "treefeller",
+            PermissionTypes.BOOLEAN,
+            (player, playerId, contexts) ->
+                    player != null && Commands.LEVEL_GAMEMASTERS.check(player.permissions())
+    );
+
     @Override
     public String platformName() {
         return "neoforge";
@@ -72,5 +91,24 @@ public final class NeoForgeModdedLoader implements ModdedLoader {
     public File modJar() {
         IModFileInfo info = ModList.get().getModFileById("irisworldgen");
         return info == null ? null : info.getFile().getFilePath().toFile();
+    }
+
+    @Override
+    public boolean hasTreeFellerPermission(ServerPlayer player) {
+        return PermissionAPI.getPermission(player, TREE_FELLER_PERMISSION);
+    }
+
+    @Override
+    public boolean canTreeFellerBreak(
+            ServerLevel level,
+            ServerPlayer player,
+            BlockPos position,
+            BlockState state
+    ) {
+        return ModdedTreeFellerService.runBreakProbe(() -> {
+            BreakBlockEvent event = new BreakBlockEvent(level, position, state, player);
+            NeoForge.EVENT_BUS.post(event);
+            return !event.isCanceled();
+        });
     }
 }

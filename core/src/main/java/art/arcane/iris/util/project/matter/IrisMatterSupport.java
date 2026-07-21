@@ -26,6 +26,7 @@ import art.arcane.iris.util.project.matter.slices.IdentifierMatter;
 import art.arcane.iris.util.project.matter.slices.PlatformBlockMatter;
 import art.arcane.iris.util.project.matter.slices.SpawnerMatter;
 import art.arcane.iris.util.project.matter.slices.TileMatter;
+import art.arcane.iris.util.project.matter.slices.TreeBlockMaterialMatter;
 import art.arcane.volmlib.util.matter.IrisMatter;
 import art.arcane.volmlib.util.matter.Matter;
 import org.bukkit.block.data.BlockData;
@@ -63,6 +64,7 @@ public final class IrisMatterSupport {
         IrisMatter.registerSliceType(new PlatformBlockMatter());
         IrisMatter.registerSliceType(new SpawnerMatter());
         IrisMatter.registerSliceType(new TileMatter());
+        IrisMatter.registerSliceType(new TreeBlockMaterialMatter());
         registered = true;
     }
 

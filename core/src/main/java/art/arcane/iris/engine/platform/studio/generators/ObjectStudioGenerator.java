@@ -25,6 +25,7 @@ import art.arcane.iris.core.runtime.ObjectStudioLayout.GridCell;
 import art.arcane.iris.core.service.ObjectStudioSaveService;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.platform.studio.EnginedStudioGenerator;
@@ -38,6 +39,7 @@ import art.arcane.iris.util.common.math.Vector3i;
 import org.bukkit.Material;
 import org.bukkit.block.Biome;
 import art.arcane.iris.util.common.math.IrisBlockVector;
+import art.arcane.iris.util.project.context.IrisContext;
 
 import java.io.File;
 import java.util.LinkedHashMap;
@@ -84,6 +86,13 @@ public class ObjectStudioGenerator extends EnginedStudioGenerator {
 
     @Override
     public void generateChunk(Engine engine, TerrainChunk tc, int x, int z) throws WrongEngineBroException {
+        try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_object_studio_stage");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            generateChunkWithinSession(engine, tc, x, z);
+        }
+    }
+
+    private void generateChunkWithinSession(Engine engine, TerrainChunk tc, int x, int z) {
         ensureLayout(engine);
 
         int floorY = Math.max(engine.getMinHeight(), ObjectStudioLayout.FLOOR_Y);

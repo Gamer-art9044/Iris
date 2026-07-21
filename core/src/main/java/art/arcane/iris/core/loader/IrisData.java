@@ -65,7 +65,11 @@ import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.common.reflect.KeyedType;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import art.arcane.iris.util.common.scheduling.J;
+import art.arcane.iris.util.project.context.IrisContext;
+import lombok.AccessLevel;
 import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -73,15 +77,20 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Data
 public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
-    private static final KMap<File, IrisData> dataLoaders = new KMap<>();
+    private static final Map<File, IrisData> dataLoaders = new ConcurrentHashMap<>();
     private final File dataFolder;
     private final int id;
     private final boolean datapackCompiler;
@@ -108,14 +117,15 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     private Gson snippetLoader;
     private GsonBuilder builder;
     private KMap<Class<? extends IrisRegistrant>, ResourceLoader<? extends IrisRegistrant>> loaders = new KMap<>();
-    private Engine engine;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final transient List<Engine> engines = new ArrayList<>();
 
     private IrisData(File dataFolder) {
         this(dataFolder, false);
     }
 
     private IrisData(File dataFolder, boolean datapackCompiler) {
-        this.engine = null;
         this.dataFolder = dataFolder;
         this.id = RNG.r.imax();
         this.datapackCompiler = datapackCompiler;
@@ -128,6 +138,10 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
 
     public static IrisData get(File dataFolder) {
         return dataLoaders.computeIfAbsent(dataFolder, IrisData::new);
+    }
+
+    public static IrisData openRuntime(File dataFolder) {
+        return new IrisData(dataFolder);
     }
 
     public static IrisData openDatapackCompiler(File dataFolder) {
@@ -275,9 +289,72 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     }
 
     public void cleanupEngine() {
-        if (engine != null && engine.isClosed()) {
-            engine = null;
-            IrisLogging.debug("Dereferenced Data<Engine> " + getId() + " " + getDataFolder());
+        int removed;
+        synchronized (engines) {
+            int previousSize = engines.size();
+            removeClosedEngines();
+            removed = previousSize - engines.size();
+        }
+        if (removed > 0) {
+            IrisLogging.debug("Dereferenced " + removed + " Data<Engine> registration(s) " + getId() + " " + getDataFolder());
+        }
+    }
+
+    public Engine getEngine() {
+        IrisContext context = IrisContext.get();
+        if (context != null) {
+            Engine contextEngine = context.getEngine();
+            if (!contextEngine.isClosed() && contextEngine.getData() == this) {
+                return contextEngine;
+            }
+        }
+
+        synchronized (engines) {
+            removeClosedEngines();
+            return engines.size() == 1 ? engines.get(0) : null;
+        }
+    }
+
+    public List<Engine> getEngines() {
+        synchronized (engines) {
+            removeClosedEngines();
+            return List.copyOf(engines);
+        }
+    }
+
+    public void registerEngine(Engine engine) {
+        Objects.requireNonNull(engine, "engine");
+        synchronized (engines) {
+            for (Engine registeredEngine : engines) {
+                if (registeredEngine == engine) {
+                    return;
+                }
+            }
+            engines.add(engine);
+        }
+    }
+
+    public void unregisterEngine(Engine engine) {
+        if (engine == null) {
+            return;
+        }
+        synchronized (engines) {
+            Iterator<Engine> iterator = engines.iterator();
+            while (iterator.hasNext()) {
+                if (iterator.next() == engine) {
+                    iterator.remove();
+                    return;
+                }
+            }
+        }
+    }
+
+    private void removeClosedEngines() {
+        Iterator<Engine> iterator = engines.iterator();
+        while (iterator.hasNext()) {
+            if (iterator.next().isClosed()) {
+                iterator.remove();
+            }
         }
     }
 
@@ -287,6 +364,9 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     public void close() {
         closed = true;
         dump();
+        synchronized (engines) {
+            engines.clear();
+        }
         if (dataLoaders.get(dataFolder) == this) {
             dataLoaders.remove(dataFolder);
         }
@@ -365,7 +445,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
 
         gson = builder.create();
 
-        if (engine != null) {
+        for (Engine engine : getEngines()) {
             engine.hotload();
         }
     }
@@ -405,7 +485,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         invalidateLoader(structureLoader);
         invalidateLoader(jigsawPoolLoader);
         invalidateLoader(jigsawPieceLoader);
-        if (engine != null) {
+        for (Engine engine : getEngines()) {
             IrisStructureLocator.invalidate(engine);
         }
     }

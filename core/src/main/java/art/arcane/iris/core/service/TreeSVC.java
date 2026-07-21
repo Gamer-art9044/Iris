@@ -23,6 +23,7 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -59,6 +60,7 @@ import org.bukkit.event.world.StructureGrowEvent;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Predicate;
 
 public class TreeSVC implements IrisService {
@@ -138,6 +140,7 @@ public class TreeSVC implements IrisService {
 
         saplingPlane.forEach(block -> block.setType(Material.AIR));
         IrisObject object = worldAccess.getData().getObjectLoader().load(placement.getPlace().getRandom(RNG.r));
+        String treeMarker = object.getLoadKey() + "@" + ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         List<BlockState> blockStateList = new KList<>();
         KMap<Location, BlockData> dataCache = new KMap<>();
         // TODO: REAL CLASSES!!!!
@@ -234,7 +237,7 @@ public class TreeSVC implements IrisService {
 
         event.setCancelled(true);
 
-        J.s(() -> {
+        Runnable growTask = () -> {
 
             StructureGrowEvent iGrow = new StructureGrowEvent(event.getLocation(), event.getSpecies(), event.isFromBonemeal(), event.getPlayer(), blockStateList);
             block = true;
@@ -253,9 +256,20 @@ public class TreeSVC implements IrisService {
                         block.setBlockData(data.getBase(), false);
                         IrisServices.get(ExternalDataSVC.class).processUpdate(engine, block, data.getCustom());
                     } else block.setBlockData(d, false);
+                    int mantleY = block.getY() - event.getWorld().getMinHeight();
+                    engine.getMantle().getMantle().set(block.getX(), mantleY, block.getZ(), treeMarker);
+                    engine.getMantle().getMantle().set(
+                            block.getX(),
+                            mantleY,
+                            block.getZ(),
+                            TreeBlockMaterial.of(block.getBlockData().getAsString())
+                    );
                 }
             }
-        });
+        };
+        if (!J.runAt(event.getLocation(), growTask) && !J.isFolia()) {
+            J.s(growTask);
+        }
     }
 
     /**

@@ -275,7 +275,7 @@ public class IrisProceduralTree implements IrisProceduralPlacement {
                 if (object == null || object.getBlocks().isEmpty()) {
                     continue;
                 }
-                object.setLoadKey("procedural/" + name + "#" + i);
+                object.setLoadKey(getVariantLoadKey(i));
                 object.setLoader(data);
                 baked.add(object);
             }
@@ -301,6 +301,13 @@ public class IrisProceduralTree implements IrisProceduralPlacement {
             return null;
         }
         return baked.get(rng.i(baked.size()));
+    }
+
+    public String getVariantLoadKey(int index) {
+        if (index < 0) {
+            throw new IllegalArgumentException("index must not be negative");
+        }
+        return "procedural/tree/" + name + "#" + index;
     }
 
     public IrisObjectPlacement asPlacement() {

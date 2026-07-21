@@ -20,16 +20,23 @@ package art.arcane.iris.engine.object;
 
 import lombok.Data;
 
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+
 @Data
 public class IrisEngineStatistics {
-    private int totalHotloads = 0;
-    private int chunksGenerated = 0;
-    private int IrisToUpgradedVersion = 0;
-    private int IrisCreationVersion = 0;
-    private int MinecraftVersion = 0;
+    private static final AtomicIntegerFieldUpdater<IrisEngineStatistics> TOTAL_HOTLOADS =
+            AtomicIntegerFieldUpdater.newUpdater(IrisEngineStatistics.class, "totalHotloads");
+    private static final AtomicIntegerFieldUpdater<IrisEngineStatistics> CHUNKS_GENERATED =
+            AtomicIntegerFieldUpdater.newUpdater(IrisEngineStatistics.class, "chunksGenerated");
+
+    private volatile int totalHotloads = 0;
+    private volatile int chunksGenerated = 0;
+    private volatile int IrisToUpgradedVersion = 0;
+    private volatile int IrisCreationVersion = 0;
+    private volatile int MinecraftVersion = 0;
 
     public void generatedChunk() {
-        chunksGenerated++;
+        CHUNKS_GENERATED.incrementAndGet(this);
     }
 
     public void setUpgradedVersion(int i) {
@@ -55,6 +62,6 @@ public class IrisEngineStatistics {
     }
 
     public void hotloaded() {
-        totalHotloads++;
+        TOTAL_HOTLOADS.incrementAndGet(this);
     }
 }

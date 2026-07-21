@@ -45,6 +45,7 @@ public class IrisSettings {
     private IrisSettingsPerformance performance = new IrisSettingsPerformance();
     private IrisSettingsPregen pregen = new IrisSettingsPregen();
     private IrisSettingsSentry sentry = new IrisSettingsSentry();
+    private IrisSettingsTreeFeller treeFeller = new IrisSettingsTreeFeller();
 
     public static int getThreadCount(int c) {
         return Math.max(switch (c) {
@@ -229,16 +230,8 @@ public class IrisSettings {
         public int noiseCacheSize = 1_024;
         public int resourceLoaderCacheSize = 1_024;
         public int objectLoaderCacheSize = 4_096;
-        public int tectonicPlateSize = -1;
         public int mantleCleanupDelay = 200;
         public boolean simdKernels = true;
-
-        public int getTectonicPlateSize() {
-            if (tectonicPlateSize > 0)
-                return tectonicPlateSize;
-
-            return (int) (getHardware.getProcessMemory() / 512L);
-        }
     }
 
     @Data
@@ -287,6 +280,16 @@ public class IrisSettings {
     }
 
     @Data
+    public static class IrisSettingsTreeFeller {
+        public boolean enabled = false;
+        public int durabilityPreservationChance = 0;
+
+        public int getDurabilityPreservationChance() {
+            return Math.max(0, Math.min(durabilityPreservationChance, 100));
+        }
+    }
+
+    @Data
     public static class IrisSettingsStudio {
         public boolean studio = true;
         public boolean openVSCode = true;
@@ -300,9 +303,22 @@ public class IrisSettings {
         public boolean useVirtualThreads = true;
         public boolean forceMulticoreWrite = false;
         public int priority = Thread.NORM_PRIORITY;
+        public int parallelism = -1;
 
         public int getPriority() {
             return Math.max(Math.min(priority, Thread.MAX_PRIORITY), Thread.MIN_PRIORITY);
+        }
+
+        public int getParallelism() {
+            int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
+            if (parallelism > 0) {
+                int maximumParallelism = processors > Integer.MAX_VALUE / 2
+                        ? Integer.MAX_VALUE
+                        : processors * 2;
+                return Math.min(parallelism, maximumParallelism);
+            }
+
+            return Math.max(1, (int) Math.ceil(Math.sqrt(processors)));
         }
     }
 }

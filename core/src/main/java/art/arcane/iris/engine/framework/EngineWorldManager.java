@@ -20,6 +20,9 @@ package art.arcane.iris.engine.framework;
 
 @SuppressWarnings("EmptyMethod")
 public interface EngineWorldManager {
+    default void start() {
+    }
+
     void close();
 
     int getEntityCount();

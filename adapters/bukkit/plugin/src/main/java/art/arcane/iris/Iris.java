@@ -55,6 +55,7 @@ import art.arcane.iris.engine.EnginePanic;
 import art.arcane.iris.engine.framework.BlockEditAccess;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.PreservationRegistry;
+import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.object.IrisCompat;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
@@ -634,11 +635,8 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisServices.register(EngineComponentCleanup.class, (EngineComponentCleanup) BukkitPlatform::unregisterListener);
         IrisServices.register(EngineEffectsProvider.class, (EngineEffectsProvider) IrisEngineEffects::new);
         IrisServices.register(EnginePlatformHooks.class, new BukkitEnginePlatformHooks());
-        IrisServices.register(EngineWorldManagerProvider.class, (EngineWorldManagerProvider) (Engine engine) -> {
-            IrisWorldManager manager = new IrisWorldManager(engine);
-            manager.startManager();
-            return manager;
-        });
+        IrisServices.register(EngineWorldManagerProvider.class,
+                (EngineWorldManagerProvider) IrisWorldManager::new);
         IrisServices.register(art.arcane.iris.core.runtime.WorldDeletionQueue.class, (art.arcane.iris.core.runtime.WorldDeletionQueue) Iris::queueWorldDeletionOnStartup);
         settingsFile = getDataFile("settings.json");
         configHotloadEngine = new ConfigHotloadEngine(
@@ -673,6 +671,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             }
             IrisToolbelt.retainMantleDataForSlice(String.class.getCanonicalName());
             IrisToolbelt.retainMantleDataForSlice(BlockData.class.getCanonicalName());
+            IrisToolbelt.retainMantleDataForSlice(TreeBlockMaterial.class.getCanonicalName());
         });
     }
 

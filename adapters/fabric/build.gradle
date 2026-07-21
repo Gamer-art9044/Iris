@@ -120,7 +120,8 @@ dependencies {
         libs.fabricApi.eventsInteraction,
         libs.fabricApi.networking,
         libs.fabricApi.rendering,
-        libs.fabricApi.keyMapping
+        libs.fabricApi.keyMapping,
+        libs.fabricApi.permission
     ]
     fabricApi.each { Object notation ->
         add('jij', notation)

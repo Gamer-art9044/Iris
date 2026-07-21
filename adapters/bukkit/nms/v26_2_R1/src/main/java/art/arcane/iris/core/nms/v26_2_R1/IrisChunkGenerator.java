@@ -1,6 +1,8 @@
 package art.arcane.iris.core.nms.v26_2_R1;
 
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -14,6 +16,7 @@ import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.IrisCustomData;
 import art.arcane.iris.util.common.reflect.WrappedField;
 import art.arcane.iris.util.common.reflect.WrappedReturningMethod;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.math.RNG;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.MapCodec;
@@ -90,6 +93,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     private final CustomBiomeSource customBiomeSource;
     private final int runtimeMinY;
     private final int runtimeHeight;
+    private final int runtimeSeaLevel;
     private final ConcurrentHashMap<SpawnTableKey, WeightedList<MobSpawnSettings.SpawnerData>> mergedSpawnTables = new ConcurrentHashMap<>();
     private volatile ReachableStructureCache reachableStructureCache;
     private volatile StructureStepCache structureStepCache;
@@ -106,17 +110,21 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         ServerLevel level = ((CraftWorld) world).getHandle();
         this.runtimeMinY = level.getMinY();
         this.runtimeHeight = level.getHeight();
+        this.runtimeSeaLevel = runtimeMinY + engine.getDimension().getFluidHeight();
     }
 
     @Override
     public @Nullable Pair<BlockPos, Holder<Structure>> findNearestMapStructure(ServerLevel level, HolderSet<Structure> holders, BlockPos pos, int radius, boolean findUnexplored) {
-        Pair<BlockPos, Holder<Structure>> irisPlaced = findNearestIrisStructure(
-                level, holders, pos, Math.max(1, radius), findUnexplored);
-        HolderSet<Structure> reachable = filterReachableStructures(level, holders);
-        Pair<BlockPos, Holder<Structure>> nativeLocated = reachable == null || reachable.size() == 0
-                ? null
-                : delegate.findNearestMapStructure(level, reachable, pos, radius, findUnexplored);
-        return NativeStructureLocateResults.nearest(pos, irisPlaced, nativeLocated);
+        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_structure_locate");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            Pair<BlockPos, Holder<Structure>> irisPlaced = findNearestIrisStructure(
+                    level, holders, pos, Math.max(1, radius), findUnexplored);
+            HolderSet<Structure> reachable = filterReachableStructures(level, holders);
+            Pair<BlockPos, Holder<Structure>> nativeLocated = reachable == null || reachable.size() == 0
+                    ? null
+                    : delegate.findNearestMapStructure(level, reachable, pos, radius, findUnexplored);
+            return NativeStructureLocateResults.nearest(pos, irisPlaced, nativeLocated);
+        }
     }
 
     private Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(ServerLevel level,
@@ -231,14 +239,17 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public int getSeaLevel() {
-        return runtimeMinY + engine.getDimension().getFluidHeight();
+        return runtimeSeaLevel;
     }
 
     @Override
     public void createStructures(RegistryAccess registryAccess, ChunkGeneratorStructureState structureState, StructureManager structureManager, ChunkAccess access, StructureTemplateManager templateManager, ResourceKey<Level> levelKey) {
-        Map<Structure, StructureStart> previousStarts = new HashMap<>(access.getAllStarts());
-        super.createStructures(registryAccess, structureState, structureManager, access, templateManager, levelKey);
-        adjustGeneratedStructures(registryAccess, access, previousStarts);
+        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_structures");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            Map<Structure, StructureStart> previousStarts = new HashMap<>(access.getAllStarts());
+            super.createStructures(registryAccess, structureState, structureManager, access, templateManager, levelKey);
+            adjustGeneratedStructures(registryAccess, access, previousStarts);
+        }
     }
 
     private void adjustGeneratedStructures(RegistryAccess registryAccess, ChunkAccess access, Map<Structure, StructureStart> previousStarts) {
@@ -298,8 +309,11 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public CompletableFuture<ChunkAccess> createBiomes(RandomState randomstate, Blender blender, StructureManager structuremanager, ChunkAccess ichunkaccess) {
-        ichunkaccess.fillBiomesFromNoise(customBiomeSource::getVisibleNoiseBiome, randomstate.sampler());
-        return CompletableFuture.completedFuture(ichunkaccess);
+        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_biomes");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            ichunkaccess.fillBiomesFromNoise(customBiomeSource::getVisibleNoiseBiome, randomstate.sampler());
+            return CompletableFuture.completedFuture(ichunkaccess);
+        }
     }
 
     @Override
@@ -355,9 +369,12 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void applyBiomeDecoration(WorldGenLevel generatoraccessseed, ChunkAccess ichunkaccess, StructureManager structuremanager, boolean vanilla) {
-        addVanillaDecorations(generatoraccessseed, ichunkaccess, structuremanager);
-        placeVanillaStructures(generatoraccessseed, ichunkaccess, structuremanager);
-        delegate.applyBiomeDecoration(generatoraccessseed, ichunkaccess, structuremanager, false);
+        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_biome_decoration");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            addVanillaDecorations(generatoraccessseed, ichunkaccess, structuremanager);
+            placeVanillaStructures(generatoraccessseed, ichunkaccess, structuremanager);
+            delegate.applyBiomeDecoration(generatoraccessseed, ichunkaccess, structuremanager, false);
+        }
     }
 
     private void placeVanillaStructures(WorldGenLevel world, ChunkAccess chunk, StructureManager structureManager) {
@@ -525,29 +542,35 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void addVanillaDecorations(WorldGenLevel level, ChunkAccess chunkAccess, StructureManager structureManager) {
-        SectionPos sectionPos = SectionPos.of(chunkAccess.getPos(), level.getMinSectionY());
-        BlockPos blockPos = sectionPos.origin();
+        try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_heightmaps");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            SectionPos sectionPos = SectionPos.of(chunkAccess.getPos(), level.getMinSectionY());
+            BlockPos blockPos = sectionPos.origin();
 
-        Heightmap surface = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE_WG);
-        Heightmap ocean = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
-        Heightmap motion = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING);
-        Heightmap motionNoLeaves = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
+            Heightmap surface = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE_WG);
+            Heightmap ocean = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
+            Heightmap motion = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING);
+            Heightmap motionNoLeaves = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
+            int minHeight = engine.getMinHeight();
 
-        for (int x = 0; x < 16; x++) {
-            for (int z = 0; z < 16; z++) {
-                int wX = x + blockPos.getX();
-                int wZ = z + blockPos.getZ();
+            for (int x = 0; x < 16; x++) {
+                for (int z = 0; z < 16; z++) {
+                    int wX = x + blockPos.getX();
+                    int wZ = z + blockPos.getZ();
 
-                int terrainTop = engine.getHeight(wX, wZ, false) + engine.getMinHeight() + 1;
-                int terrainNoFluid = engine.getHeight(wX, wZ, true) + engine.getMinHeight() + 1;
-                SET_HEIGHT.invoke(ocean, x, z, terrainNoFluid);
-                SET_HEIGHT.invoke(surface, x, z, terrainTop);
-                SET_HEIGHT.invoke(motion, x, z, terrainTop);
-                SET_HEIGHT.invoke(motionNoLeaves, x, z, terrainTop);
+                    int terrainTop = engine.getHeight(wX, wZ, false) + minHeight + 1;
+                    int terrainNoFluid = engine.getHeight(wX, wZ, true) + minHeight + 1;
+                    SET_HEIGHT.invoke(ocean, x, z, terrainNoFluid);
+                    SET_HEIGHT.invoke(surface, x, z, terrainTop);
+                    SET_HEIGHT.invoke(motion, x, z, terrainTop);
+                    SET_HEIGHT.invoke(motionNoLeaves, x, z, terrainTop);
+                }
             }
-        }
 
-        Heightmap.primeHeightmaps(chunkAccess, ChunkStatus.FINAL_HEIGHTMAPS);
+            Heightmap.primeHeightmaps(chunkAccess, ChunkStatus.FINAL_HEIGHTMAPS);
+        } catch (GenerationSessionException e) {
+            throw new IllegalStateException("Iris heightmap generation could not acquire its engine runtime.", e);
+        }
     }
 
     @Override
@@ -585,20 +608,44 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public int getBaseHeight(int i, int j, Heightmap.Types heightmap_type, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
-        return levelheightaccessor.getMinY() + engine.getHeight(i, j, !heightmap_type.isOpaque().test(Blocks.WATER.defaultBlockState())) + 1;
+        try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_height");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            return levelheightaccessor.getMinY()
+                    + engine.getHeight(i, j, !heightmap_type.isOpaque().test(Blocks.WATER.defaultBlockState()))
+                    + 1;
+        } catch (GenerationSessionException e) {
+            throw new IllegalStateException("Iris base height query could not acquire its engine runtime.", e);
+        }
     }
 
     @Override
     public NoiseColumn getBaseColumn(int i, int j, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
-        int block = engine.getHeight(i, j, true);
-        int water = engine.getHeight(i, j, false);
-        BlockState[] column = new BlockState[levelheightaccessor.getHeight()];
-        for (int k = 0; k < column.length; k++) {
-            if (k <= block) column[k] = Blocks.STONE.defaultBlockState();
-            else if (k <= water) column[k] = Blocks.WATER.defaultBlockState();
-            else column[k] = Blocks.AIR.defaultBlockState();
+        try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_column");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            int block = engine.getHeight(i, j, true);
+            int water = engine.getHeight(i, j, false);
+            BlockState[] column = new BlockState[levelheightaccessor.getHeight()];
+            for (int k = 0; k < column.length; k++) {
+                if (k <= block) {
+                    column[k] = Blocks.STONE.defaultBlockState();
+                } else if (k <= water) {
+                    column[k] = Blocks.WATER.defaultBlockState();
+                } else {
+                    column[k] = Blocks.AIR.defaultBlockState();
+                }
+            }
+            return new NoiseColumn(levelheightaccessor.getMinY(), column);
+        } catch (GenerationSessionException e) {
+            throw new IllegalStateException("Iris base column query could not acquire its engine runtime.", e);
         }
-        return new NoiseColumn(levelheightaccessor.getMinY(), column);
+    }
+
+    private GenerationSessionLease requireGenerationLease(String operation) {
+        try {
+            return engine.acquireGenerationLease(operation);
+        } catch (GenerationSessionException exception) {
+            throw new IllegalStateException("Iris " + operation + " could not acquire its engine runtime.", exception);
+        }
     }
 
     @Override

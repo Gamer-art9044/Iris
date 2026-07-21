@@ -38,6 +38,23 @@ public final class GenerationSessionManager {
         }
     }
 
+    public GenerationSessionLease continueSession(String operation, long sessionId) throws GenerationSessionException {
+        while (true) {
+            GenerationSessionState state = current.get();
+            if (state == null || state.sessionId() != sessionId) {
+                throw rejected(operation, state);
+            }
+
+            state.activeLeases().incrementAndGet();
+            if (state != current.get()) {
+                releaseLease(state);
+                continue;
+            }
+
+            return new GenerationSessionLease(this, state, state.sessionId());
+        }
+    }
+
     public long currentSessionId() {
         GenerationSessionState state = current.get();
         return state == null ? 0L : state.sessionId();

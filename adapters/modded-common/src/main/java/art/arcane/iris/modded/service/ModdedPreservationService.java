@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.service;
 
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.MeteredCache;
 import art.arcane.iris.engine.framework.PreservationRegistry;
 import org.slf4j.Logger;
@@ -55,6 +56,7 @@ public final class ModdedPreservationService implements ModdedService, Preservat
 
     @Override
     public void dereference() {
+        IrisData.dereference();
         threads.removeIf((Thread thread) -> !thread.isAlive());
         services.removeIf(ExecutorService::isShutdown);
         caches.removeIf((WeakReference<MeteredCache> ref) -> {

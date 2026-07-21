@@ -34,7 +34,7 @@ import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 
 import java.util.Set;
-import java.util.concurrent.Future;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -42,13 +42,6 @@ import java.util.function.Consumer;
 
 @FunctionalInterface
 public interface Locator<T> {
-    static void cancelSearch() {
-        if (LocatorCanceller.cancel != null) {
-            LocatorCanceller.cancel.run();
-            LocatorCanceller.cancel = null;
-        }
-    }
-
     static Locator<IrisRegion> region(String loadKey) {
         Locator<IrisRegion> exact = (e, c) -> e.getRegion((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
         return new HintedLocator<>(exact, (engine) -> HintedLocator.regionPlan(engine, loadKey));
@@ -107,55 +100,54 @@ public interface Locator<T> {
 
     boolean matches(Engine engine, Position2 chunk);
 
-    default Future<Position2> find(Engine engine, Position2 pos, long timeout, Consumer<Integer> checks) throws WrongEngineBroException {
+    default CompletableFuture<Position2> find(Engine engine, Position2 pos, long timeout, Consumer<Integer> checks) throws WrongEngineBroException {
         if (engine.isClosed()) {
             throw new WrongEngineBroException();
         }
 
-        cancelSearch();
+        AtomicBoolean stop = new AtomicBoolean(false);
+        CompletableFuture<Position2> search = MultiBurst.burst.completeValueAsync(() -> {
+            try (GenerationSessionLease lease = engine.acquireGenerationLease("locator_search");
+                 IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                int tc = IrisSettings.getThreadCount(IrisSettings.get().getConcurrency().getParallelism()) * 32;
+                MultiBurst burst = MultiBurst.burst;
+                AtomicBoolean found = new AtomicBoolean(false);
+                AtomicInteger searched = new AtomicInteger();
+                AtomicReference<Position2> foundPos = new AtomicReference<>();
+                PrecisionStopwatch px = PrecisionStopwatch.start();
+                AtomicReference<Position2> next = new AtomicReference<>(pos);
+                Spiraler s = new Spiraler(100000, 100000, (x, z) -> next.set(new Position2(x, z)));
+                s.setOffset(pos.getX(), pos.getZ());
+                s.next();
+                while (!found.get() && !stop.get() && !engine.isClosing() && px.getMilliseconds() < timeout) {
+                    BurstExecutor e = burst.burst(tc);
 
-        return MultiBurst.burst.completeValue(() -> {
-            int tc = IrisSettings.getThreadCount(IrisSettings.get().getConcurrency().getParallelism()) * 32;
-            MultiBurst burst = MultiBurst.burst;
-            AtomicBoolean found = new AtomicBoolean(false);
-            AtomicInteger searched = new AtomicInteger();
-            AtomicBoolean stop = new AtomicBoolean(false);
-            AtomicReference<Position2> foundPos = new AtomicReference<>();
-            PrecisionStopwatch px = PrecisionStopwatch.start();
-            LocatorCanceller.cancel = () -> stop.set(true);
-            AtomicReference<Position2> next = new AtomicReference<>(pos);
-            Spiraler s = new Spiraler(100000, 100000, (x, z) -> next.set(new Position2(x, z)));
-            s.setOffset(pos.getX(), pos.getZ());
-            s.next();
-            while (!found.get() && !stop.get() && px.getMilliseconds() < timeout) {
-                BurstExecutor e = burst.burst(tc);
+                    for (int i = 0; i < tc; i++) {
+                        Position2 p = next.get();
+                        s.next();
+                        e.queue(() -> {
+                            if (found.get() || stop.get() || engine.isClosing()) {
+                                return;
+                            }
+                            if (matches(engine, p)) {
+                                foundPos.compareAndSet(null, p);
+                                found.set(true);
+                            }
+                            searched.incrementAndGet();
+                        });
+                    }
 
-                for (int i = 0; i < tc; i++) {
-                    Position2 p = next.get();
-                    s.next();
-                    e.queue(() -> {
-                        if (found.get()) {
-                            return;
-                        }
-                        if (matches(engine, p)) {
-                            foundPos.compareAndSet(null, p);
-                            found.set(true);
-                        }
-                        searched.incrementAndGet();
-                    });
+                    e.complete();
+                    checks.accept(searched.get());
                 }
 
-                e.complete();
-                checks.accept(searched.get());
+                if (found.get() && foundPos.get() != null) {
+                    return foundPos.get();
+                }
+
+                return null;
             }
-
-            LocatorCanceller.cancel = null;
-
-            if (found.get() && foundPos.get() != null) {
-                return foundPos.get();
-            }
-
-            return null;
         });
+        return LocatorCanceller.requestScoped(search, stop);
     }
 }

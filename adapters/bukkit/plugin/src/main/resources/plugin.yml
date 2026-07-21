@@ -25,4 +25,8 @@ description: More than a Dimension!
 commands:
   iris:
     aliases: [ ir, irs ]
+permissions:
+  iris.treefeller:
+    description: Allows survival players to fell Iris-managed trees with an axe.
+    default: op
 api-version: '${apiVersion}'

@@ -22,6 +22,7 @@ import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.service.tree.BlockDropRouter;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
@@ -82,9 +83,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -95,7 +99,6 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     private static final int MAX_FORCED_CHUNK_UPDATES = 128;
 
     private final Looper looper;
-    private final int id;
     private final KList<Runnable> updateQueue = new KList<>();
     private final ChronoLatch cl;
     private final ChronoLatch clw;
@@ -111,10 +114,15 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     private final Set<Long> chunkUpdateQueue = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean chunkUpdateScanScheduled = new AtomicBoolean();
     private final AtomicBoolean chunkDiscoveryScanScheduled = new AtomicBoolean();
-    private int entityCount = 0;
-    private int actuallySpawned = 0;
+    private final AtomicBoolean entityCountWarningReported = new AtomicBoolean();
+    private final AtomicBoolean entityCountErrorReported = new AtomicBoolean();
+    private boolean looperStopped;
+    private boolean cleanupServiceStopped;
+    private volatile int entityCount = 0;
+    private final AtomicInteger actuallySpawned = new AtomicInteger();
     private int cooldown = 0;
     private int forcedChunkUpdateCursor = 0;
+    private volatile boolean entityCountValid = false;
     private volatile boolean playersPresent = false;
     private KSet<Position2> injectBiomes = new KSet<>();
     private volatile int loadedChunkCount = 0;
@@ -128,7 +136,6 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
         chunkUpdater = null;
         chunkDiscovery = null;
         cleanupService = null;
-        id = -1;
     }
 
     public IrisWorldManager(Engine engine) {
@@ -143,53 +150,80 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             thread.setPriority(Thread.MIN_PRIORITY);
             return thread;
         });
-        id = engine.getCacheID();
         looper = new Looper() {
             @Override
             protected long loop() {
-                if (getEngine().isClosed() || getEngine().getCacheID() != id) {
-                    interrupt();
+                if (!isManagerStarted()) {
+                    return -1L;
                 }
-
-                if (!getEngine().getWorld().hasPlatformWorld() && clw.flip()) {
-                    J.runGlobal(() -> BukkitWorldBinding.tryBind(getEngine().getWorld()));
-                }
-
-                if (getEngine().getWorld().hasPlatformWorld()) {
-                    if (chunkUpdater.flip()) {
-                        updateChunks();
-                    }
-
-                    if (!playersPresent) {
-                        return 5000;
-                    }
-
-                    if (chunkDiscovery.flip()) {
-                        discoverChunks();
-                    }
-
-                    if (cln.flip()) {
-                        engine.getEngineData().cleanup(getEngine());
-                    }
-
-                    if (!IrisSettings.get().getWorld().isMarkerEntitySpawningSystem() && !IrisSettings.get().getWorld().isAmbientEntitySpawningSystem()) {
-                        return 3000;
-                    }
-
-                    onAsyncTick();
-                }
-
-                return IrisSettings.get().getWorld().getAsyncTickIntervalMS();
+                return callManagerTask(
+                        "bukkit_world_manager_loop",
+                        IrisWorldManager.this::runLoop,
+                        250L);
             }
         };
         looper.setPriority(Thread.MIN_PRIORITY);
         looper.setName("Iris World Manager " + getTarget().getWorld().name());
     }
 
-    public void startManager() {
+    private long runLoop() {
+        if (getEngine().isClosed()) {
+            looper.interrupt();
+            return -1L;
+        }
+
+        if (!getEngine().getWorld().hasPlatformWorld() && clw.flip()) {
+            J.runGlobal(() -> runManagerTask(
+                    "bukkit_world_manager_bind",
+                    () -> BukkitWorldBinding.tryBind(getEngine().getWorld())));
+        }
+
+        if (getEngine().getWorld().hasPlatformWorld()) {
+            if (chunkUpdater.flip()) {
+                updateChunks();
+            }
+
+            if (!playersPresent) {
+                return 5000L;
+            }
+
+            if (chunkDiscovery.flip()) {
+                discoverChunks();
+            }
+
+            if (cln.flip()) {
+                getEngine().getEngineData().cleanup(getEngine());
+            }
+
+            if (!IrisSettings.get().getWorld().isMarkerEntitySpawningSystem()
+                    && !IrisSettings.get().getWorld().isAmbientEntitySpawningSystem()) {
+                return 3000L;
+            }
+
+            onAsyncTick();
+        }
+
+        return IrisSettings.get().getWorld().getAsyncTickIntervalMS();
+    }
+
+    @Override
+    public void start() {
+        super.start();
         if (!looper.isAlive()) {
             looper.start();
         }
+    }
+
+    private Runnable managedTask(String operation, Runnable task) {
+        return () -> runManagerTask(operation, task);
+    }
+
+    private Runnable managedTask(String operation, Runnable task, Runnable unavailable) {
+        return () -> {
+            if (!runManagerTask(operation, task)) {
+                unavailable.run();
+            }
+        };
     }
 
     private void discoverChunks() {
@@ -206,7 +240,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return;
         }
 
-        boolean scheduled = J.runGlobal(() -> {
+        boolean scheduled = J.runGlobal(managedTask("bukkit_world_manager_discover_chunks", () -> {
             try {
                 if (getEngine().isClosed() || !world.equals(BukkitWorldBinding.world(getEngine().getWorld()))) {
                     return;
@@ -217,7 +251,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                         continue;
                     }
 
-                    J.runEntity(player, () -> {
+                    J.runEntity(player, managedTask("bukkit_world_manager_discover_player", () -> {
                         if (!player.isOnline() || !world.equals(player.getWorld())) {
                             return;
                         }
@@ -232,14 +266,14 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                                 raiseDiscoveredChunkFlag(world, chunkX, chunkZ);
                             }
                         }
-                    });
+                    }));
                 }
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
             } finally {
                 chunkDiscoveryScanScheduled.set(false);
             }
-        });
+        }, () -> chunkDiscoveryScanScheduled.set(false)));
         if (!scheduled) {
             chunkDiscoveryScanScheduled.set(false);
         }
@@ -260,7 +294,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return;
         }
 
-        J.a(() -> {
+        J.a(managedTask("bukkit_world_manager_discovered_flag", () -> {
             try {
                 Mantle<Matter> mantle = getMantle();
                 if (!mantle.hasFlag(chunkX, chunkZ, MantleFlag.DISCOVERED)) {
@@ -271,7 +305,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             } finally {
                 discoveredFlagQueue.remove(key);
             }
-        });
+        }, () -> discoveredFlagQueue.remove(key)));
     }
 
     private void updateChunks() {
@@ -288,7 +322,10 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return;
         }
 
-        boolean scheduled = J.runGlobal(() -> updateChunksOnGlobal(world));
+        boolean scheduled = J.runGlobal(managedTask(
+                "bukkit_world_manager_update_chunks",
+                () -> updateChunksOnGlobal(world),
+                () -> chunkUpdateScanScheduled.set(false)));
         if (!scheduled) {
             chunkUpdateScanScheduled.set(false);
         }
@@ -308,7 +345,9 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                     continue;
                 }
 
-                J.runEntity(player, () -> schedulePlayerChunkUpdates(world, player));
+                J.runEntity(player, managedTask(
+                        "bukkit_world_manager_player_chunk_updates",
+                        () -> schedulePlayerChunkUpdates(world, player)));
             }
 
             scheduleForcedChunkUpdates(world);
@@ -363,13 +402,13 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
         }
 
         try {
-            boolean scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
+            boolean scheduled = J.runRegion(world, chunkX, chunkZ, managedTask("bukkit_world_manager_chunk_update", () -> {
                 try {
                     updateChunkRegion(world, chunkX, chunkZ);
                 } finally {
                     chunkUpdateQueue.remove(key);
                 }
-            });
+            }, () -> chunkUpdateQueue.remove(key)));
             if (!scheduled) {
                 chunkUpdateQueue.remove(key);
             }
@@ -409,12 +448,12 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
         raiseInitialSpawnMarkerFlag(world, chunkX, chunkZ, () -> {
             int delay = RNG.r.i(5, 200);
-            J.runRegion(world, chunkX, chunkZ, () -> {
+            J.runRegion(world, chunkX, chunkZ, managedTask("bukkit_world_manager_initial_spawn_followup", () -> {
                 if (!world.isChunkLoaded(chunkX, chunkZ)) {
                     return;
                 }
                 spawnIn(world.getChunkAt(chunkX, chunkZ), true);
-            }, delay);
+            }), delay);
 
             Chunk markerChunk = world.getChunkAt(chunkX, chunkZ);
             forEachMarkerSpawner(markerChunk, (block, spawners) -> {
@@ -442,7 +481,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return;
         }
 
-        J.a(() -> {
+        J.a(managedTask("bukkit_world_manager_spawn_marker_flag", () -> {
             boolean raised = false;
             try {
                 Mantle<Matter> mantle = getMantle();
@@ -460,13 +499,13 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                 return;
             }
 
-            J.runRegion(world, chunkX, chunkZ, () -> {
+            J.runRegion(world, chunkX, chunkZ, managedTask("bukkit_world_manager_spawn_marker_callback", () -> {
                 if (!world.isChunkLoaded(chunkX, chunkZ) || !Chunks.isSafe(world, chunkX, chunkZ)) {
                     return;
                 }
                 onFirstRaise.run();
-            });
-        });
+            }));
+        }, () -> markerFlagQueue.remove(key)));
     }
 
     private void warmupMantleChunkAsync(int chunkX, int chunkZ) {
@@ -475,7 +514,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return;
         }
 
-        J.a(() -> {
+        J.a(managedTask("bukkit_world_manager_mantle_warmup", () -> {
             try {
                 getMantle().getChunk(chunkX, chunkZ);
             } catch (Throwable e) {
@@ -483,11 +522,11 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             } finally {
                 mantleWarmupQueue.remove(key);
             }
-        });
+        }, () -> mantleWarmupQueue.remove(key)));
     }
 
     private boolean onAsyncTick() {
-        if (getEngine().isClosed()) {
+        if (getEngine().isClosing() || getEngine().isClosed()) {
             return false;
         }
 
@@ -496,7 +535,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return false;
         }
 
-        actuallySpawned = 0;
+        actuallySpawned.set(0);
 
         if (!getEngine().getWorld().hasPlatformWorld()) {
             IrisLogging.debug("Can't spawn. No real world");
@@ -509,8 +548,16 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                 World realWorld = BukkitWorldBinding.world(getEngine().getWorld());
                 if (realWorld == null) {
                     entityCount = 0;
+                    entityCountValid = false;
                 } else if (J.isFolia()) {
-                    entityCount = getFoliaLivingEntityCount(realWorld);
+                    Integer count = getFoliaLivingEntityCount(realWorld);
+                    if (count != null) {
+                        entityCount = count;
+                        entityCountValid = true;
+                        resetEntityCountFailures();
+                    } else {
+                        entityCountValid = false;
+                    }
                 } else {
                     CompletableFuture<Integer> future = new CompletableFuture<>();
                     boolean scheduled = J.runGlobal(() -> {
@@ -526,12 +573,30 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                             future.completeExceptionally(ex);
                         }
                     });
-                    entityCount = scheduled ? future.get(2, TimeUnit.SECONDS) : 0;
+                    if (scheduled) {
+                        entityCount = future.get(2, TimeUnit.SECONDS);
+                        entityCountValid = true;
+                        resetEntityCountFailures();
+                    } else {
+                        reportEntityCountFailure("Unable to schedule the global entity count; pausing Iris entity spawning until a complete count is available.", null);
+                    }
                 }
+            } catch (InterruptedException e) {
+                entityCountValid = false;
+                Thread.currentThread().interrupt();
+                return false;
+            } catch (TimeoutException e) {
+                reportEntityCountFailure("Timed out while counting entities; pausing Iris entity spawning until a complete count is available.", null);
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                reportEntityCountFailure("Failed to count entities; pausing Iris entity spawning until a complete count is available.", cause);
             } catch (Throwable e) {
-                IrisLogging.reportError(e);
-                close();
+                reportEntityCountFailure("Failed to count entities; pausing Iris entity spawning until a complete count is available.", e);
             }
+        }
+
+        if (!entityCountValid) {
+            return false;
         }
 
         double epx = getEntitySaturation();
@@ -549,16 +614,22 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
         Position2[] cc = getLoadedChunkPositionsSnapshot(world);
         while (spawnBuffer-- > 0) {
+            if (getEngine().isClosing() || getEngine().isClosed()) {
+                return actuallySpawned.get() > 0;
+            }
+
             if (cc.length == 0) {
                 IrisLogging.debug("Can't spawn. No chunks!");
                 return false;
             }
 
             Position2 c = cc[RNG.r.nextInt(cc.length)];
-            spawnChunkSafely(world, c.getX(), c.getZ(), false);
+            if (!spawnChunkSafely(world, c.getX(), c.getZ(), false)) {
+                return actuallySpawned.get() > 0;
+            }
         }
 
-        return actuallySpawned > 0;
+        return actuallySpawned.get() > 0;
     }
 
     private boolean isPregenActiveForThisWorld() {
@@ -604,13 +675,16 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
         try {
             return future.get(2, TimeUnit.SECONDS);
-        } catch (Throwable e) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new Position2[0];
+        } catch (ExecutionException | TimeoutException e) {
             IrisLogging.reportError(e);
             return new Position2[0];
         }
     }
 
-    private int getFoliaLivingEntityCount(World world) {
+    private Integer getFoliaLivingEntityCount(World world) {
         CompletableFuture<List<Player>> playerFuture = new CompletableFuture<>();
         boolean scheduled = J.runGlobal(() -> {
             try {
@@ -620,18 +694,29 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             }
         });
         if (!scheduled) {
-            return 0;
+            reportEntityCountFailure("Unable to schedule the Folia player snapshot; pausing Iris entity spawning until a complete count is available.", null);
+            return null;
         }
 
         List<Player> players;
         try {
             players = playerFuture.get(2, TimeUnit.SECONDS);
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
-            return 0;
+        } catch (InterruptedException e) {
+            entityCountValid = false;
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (TimeoutException e) {
+            reportEntityCountFailure("Timed out while reading the Folia player snapshot; pausing Iris entity spawning until a complete count is available.", null);
+            return null;
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            reportEntityCountFailure("Failed to read the Folia player snapshot; pausing Iris entity spawning until a complete count is available.", cause);
+            return null;
         }
 
         Map<String, Entity> candidates = new ConcurrentHashMap<>();
+        AtomicBoolean incomplete = new AtomicBoolean();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
 
         CountDownLatch latch = new CountDownLatch(players.size());
         for (Player player : players) {
@@ -651,21 +736,28 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                             candidates.put(nearby.getUniqueId().toString(), nearby);
                         }
                     }
+                } catch (Throwable e) {
+                    incomplete.set(true);
+                    failure.compareAndSet(null, e);
                 } finally {
                     latch.countDown();
                 }
             })) {
+                incomplete.set(true);
                 latch.countDown();
             }
         }
 
-        try {
-            latch.await(2, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (!awaitEntityTasks(latch, 2, TimeUnit.SECONDS) || incomplete.get()) {
+            if (!Thread.currentThread().isInterrupted()) {
+                reportEntityCountFailure("The Folia entity candidate scan was incomplete; pausing Iris entity spawning until a complete count is available.", failure.get());
+            }
+            return null;
         }
 
         AtomicInteger count = new AtomicInteger();
+        incomplete.set(false);
+        failure.set(null);
         CountDownLatch entityLatch = new CountDownLatch(candidates.size());
         for (Entity entity : candidates.values()) {
             if (!J.runEntity(entity, () -> {
@@ -673,45 +765,115 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                     if (entity instanceof LivingEntity && world.equals(entity.getWorld()) && !entity.isDead()) {
                         count.incrementAndGet();
                     }
+                } catch (Throwable e) {
+                    incomplete.set(true);
+                    failure.compareAndSet(null, e);
                 } finally {
                     entityLatch.countDown();
                 }
             })) {
+                incomplete.set(true);
                 entityLatch.countDown();
             }
         }
 
-        try {
-            entityLatch.await(2, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (!awaitEntityTasks(entityLatch, 2, TimeUnit.SECONDS) || incomplete.get()) {
+            if (!Thread.currentThread().isInterrupted()) {
+                reportEntityCountFailure("The Folia entity validation scan was incomplete; pausing Iris entity spawning until a complete count is available.", failure.get());
+            }
+            return null;
         }
+
         return count.get();
     }
 
-    private void spawnChunkSafely(World world, int chunkX, int chunkZ, boolean initial) {
+    static boolean awaitEntityTasks(CountDownLatch latch, long timeout, TimeUnit unit) {
+        try {
+            return latch.await(timeout, unit);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private boolean spawnChunkSafely(World world, int chunkX, int chunkZ, boolean initial) {
         if (world == null) {
-            return;
+            return false;
         }
 
         CompletableFuture<Void> future = new CompletableFuture<>();
-        J.runRegion(world, chunkX, chunkZ, () -> {
-            try {
-                if (!world.isChunkLoaded(chunkX, chunkZ) || !Chunks.isSafe(world, chunkX, chunkZ)) {
-                    return;
-                }
-
-                spawnIn(world.getChunkAt(chunkX, chunkZ), initial);
-            } finally {
-                future.complete(null);
+        AtomicBoolean failureReported = new AtomicBoolean();
+        future.whenComplete((ignored, failure) -> {
+            if (failure != null) {
+                reportSpawnFailure(chunkX, chunkZ, failure, failureReported);
             }
         });
+        boolean scheduled;
+        try {
+            scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
+                try {
+                    if (!world.isChunkLoaded(chunkX, chunkZ) || !Chunks.isSafe(world, chunkX, chunkZ)) {
+                        future.complete(null);
+                        return;
+                    }
+
+                    spawnIn(world.getChunkAt(chunkX, chunkZ), initial);
+                    future.complete(null);
+                } catch (Throwable e) {
+                    future.completeExceptionally(e);
+                }
+            });
+        } catch (Throwable e) {
+            IrisLogging.reportError("Failed to schedule an Iris entity spawn for chunk " + chunkX + "," + chunkZ + ".", e);
+            return false;
+        }
+
+        if (!scheduled) {
+            IrisLogging.debug("Skipped Iris entity spawning because the region task was not accepted for chunk " + chunkX + "," + chunkZ + ".");
+            return false;
+        }
 
         try {
             future.get(5, TimeUnit.SECONDS);
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (TimeoutException e) {
+            IrisLogging.warn("Timed out waiting for Iris entity spawning in chunk %d,%d; deferring the remaining spawn buffer.", chunkX, chunkZ);
+            return false;
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            reportSpawnFailure(chunkX, chunkZ, cause, failureReported);
+            return false;
         }
+    }
+
+    private void reportEntityCountFailure(String message, Throwable error) {
+        entityCountValid = false;
+        if (error != null) {
+            if (entityCountErrorReported.compareAndSet(false, true)) {
+                IrisLogging.reportError(message, error);
+            }
+            return;
+        }
+
+        if (entityCountWarningReported.compareAndSet(false, true)) {
+            IrisLogging.warn(message);
+        }
+    }
+
+    private void resetEntityCountFailures() {
+        entityCountWarningReported.set(false);
+        entityCountErrorReported.set(false);
+    }
+
+    private void reportSpawnFailure(int chunkX, int chunkZ, Throwable failure, AtomicBoolean failureReported) {
+        if (!failureReported.compareAndSet(false, true)) {
+            return;
+        }
+        Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+        IrisLogging.reportError("Failed to spawn Iris entities in chunk " + chunkX + "," + chunkZ + ".", cause);
     }
 
     private void spawnIn(Chunk c, boolean initial) {
@@ -736,8 +898,10 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                 }
 
                 spawn(block, s, false);
-                J.runRegion(c.getWorld(), c.getX(), c.getZ(), () -> raiseInitialSpawnMarkerFlag(c.getWorld(), c.getX(), c.getZ(),
-                        () -> spawn(block, s, true)));
+                J.runRegion(c.getWorld(), c.getX(), c.getZ(), managedTask(
+                        "bukkit_world_manager_marker_spawn_followup",
+                        () -> raiseInitialSpawnMarkerFlag(c.getWorld(), c.getX(), c.getZ(),
+                                () -> spawn(block, s, true))));
             });
         }
 
@@ -775,17 +939,13 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
         if (v == null || v.getReferenceSpawner() == null)
             return;
 
-        try {
-            spawn(c, v);
-        } catch (Throwable e) {
-            J.runRegion(c.getWorld(), c.getX(), c.getZ(), () -> spawn(c, v));
-        }
+        spawn(c, v);
     }
 
     private void spawn(Chunk c, IrisEntitySpawn i) {
         IrisSpawner ref = i.getReferenceSpawner();
         int s = i.spawn(getEngine(), c, RNG.r);
-        actuallySpawned += s;
+        actuallySpawned.addAndGet(s);
         if (s > 0) {
             ref.spawn(getEngine(), c.getX(), c.getZ());
         }
@@ -797,7 +957,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return;
 
         int s = i.spawn(getEngine(), pos, RNG.r);
-        actuallySpawned += s;
+        actuallySpawned.addAndGet(s);
         if (s > 0) {
             ref.spawn(getEngine(), PowerOfTwoCoordinates.blockToChunkFloor(pos.getX()), PowerOfTwoCoordinates.blockToChunkFloor(pos.getZ()));
         }
@@ -857,10 +1017,10 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
         int cX = e.getX(), cZ = e.getZ();
         Long key = Cache.key(cX, cZ);
-        cleanup.put(key, cleanupService.schedule(() -> {
+        cleanup.put(key, cleanupService.schedule(managedTask("bukkit_world_manager_chunk_cleanup", () -> {
             cleanup.remove(key);
             getEngine().cleanupMantleChunk(cX, cZ);
-        }, Math.max(IrisSettings.get().getPerformance().mantleCleanupDelay * 50L, 0), TimeUnit.MILLISECONDS));
+        }, () -> cleanup.remove(key)), Math.max(IrisSettings.get().getPerformance().mantleCleanupDelay * 50L, 0), TimeUnit.MILLISECONDS));
     }
 
     @Override
@@ -898,15 +1058,17 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     @Override
     public void teleportAsync(PlayerTeleportEvent e) {
         e.setCancelled(true);
-        warmupAreaAsync(e.getPlayer(), e.getTo(), () -> J.runEntity(e.getPlayer(), () -> {
+        warmupAreaAsync(e.getPlayer(), e.getTo(), () -> J.runEntity(e.getPlayer(), managedTask(
+                "bukkit_world_manager_teleport",
+                () -> {
             ignoreTP.set(true);
             e.getPlayer().teleport(e.getTo(), e.getCause());
             ignoreTP.set(false);
-        }));
+        })));
     }
 
     private void warmupAreaAsync(Player player, Location to, Runnable r) {
-        J.a(() -> {
+        J.a(managedTask("bukkit_world_manager_teleport_warmup", () -> {
             int viewDistance = 2;
             KList<Future<Chunk>> futures = new KList<>();
             for (int i = -viewDistance; i <= viewDistance; i++) {
@@ -945,7 +1107,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                     return "Loading Chunks";
                 }
             }.queue(futures).execute(new VolmitSender(player), true, r);
-        });
+        }));
     }
 
     public Map<IrisPosition, KSet<IrisSpawner>> getSpawnersFromMarkers(Chunk c) {
@@ -1024,14 +1186,14 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return;
         }
 
-        J.a(() -> {
+        J.a(managedTask("bukkit_world_manager_marker_scan", () -> {
             try {
                 Map<IrisPosition, MarkerSpawnData> markerData = collectMarkerSpawnData(chunkX, chunkZ);
                 if (markerData.isEmpty()) {
                     return;
                 }
 
-                J.runRegion(world, chunkX, chunkZ, () -> {
+                J.runRegion(world, chunkX, chunkZ, managedTask("bukkit_world_manager_marker_scan_region", () -> {
                     if (!world.isChunkLoaded(chunkX, chunkZ) || !Chunks.isSafe(world, chunkX, chunkZ)) {
                         return;
                     }
@@ -1050,13 +1212,13 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
                         consumer.accept(new IrisPosition(relative.getX(), relative.getY() + minY, relative.getZ()), data.spawners);
                     });
-                });
+                }));
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
             } finally {
                 markerScanQueue.remove(key);
             }
-        });
+        }, () -> markerScanQueue.remove(key)));
     }
 
     private Map<IrisPosition, MarkerSpawnData> collectMarkerSpawnData(int chunkX, int chunkZ) {
@@ -1107,13 +1269,13 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     }
 
     private void removeMarkerAsync(IrisPosition marker) {
-        J.a(() -> {
+        J.a(managedTask("bukkit_world_manager_remove_marker", () -> {
             try {
                 getMantle().remove(marker.getX(), marker.getY(), marker.getZ(), MatterMarker.class);
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
             }
-        });
+        }));
     }
 
     private static final class MarkerSpawnData {
@@ -1127,21 +1289,6 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             int blockX = e.getBlock().getX();
             int mantleY = toMantleY(e.getBlock().getY(), getEngine().getWorld().minHeight());
             int blockZ = e.getBlock().getZ();
-            J.a(() -> {
-                MatterMarker marker = getMantle().get(blockX, mantleY, blockZ, MatterMarker.class);
-
-                if (marker != null) {
-                    if (marker.getTag().equals("cave_floor") || marker.getTag().equals("cave_ceiling")) {
-                        return;
-                    }
-
-                    IrisMarker mark = getData().getMarkerLoader().load(marker.getTag());
-
-                    if (mark == null || mark.isRemoveOnChange()) {
-                        getMantle().remove(blockX, mantleY, blockZ, MatterMarker.class);
-                    }
-                }
-            });
 
             KList<ItemStack> d = new KList<>();
             IrisBiome b = EngineBukkitOps.getBiome(getEngine(), e.getBlock().getLocation());
@@ -1159,21 +1306,51 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                 e.setDropItems(false);
             }
 
-            if (d.isNotEmpty()) {
-                World w = e.getBlock().getWorld();
-                Location dropLocation = e.getBlock().getLocation().clone().add(.5, .5, .5);
-                Runnable dropTask = () -> d.forEach(item -> w.dropItemNaturally(dropLocation, item));
-                if (!J.runAt(dropLocation, dropTask)) {
-                    if (!J.isFolia()) {
-                        J.s(dropTask);
-                    }
+            World w = e.getBlock().getWorld();
+            Location blockLocation = e.getBlock().getLocation();
+            Location dropLocation = blockLocation.clone().add(.5, .5, .5);
+            BlockDropRouter dropRouter = e instanceof BlockDropRouter router ? router : null;
+            Runnable finalizedBreak = managedTask("bukkit_world_manager_block_break_finalize", () -> {
+                if (e.isCancelled()) {
+                    return;
                 }
+                J.a(managedTask("bukkit_world_manager_block_break_marker", () -> {
+                    MatterMarker marker = getMantle().get(blockX, mantleY, blockZ, MatterMarker.class);
+                    if (marker == null || marker.getTag().equals("cave_floor") || marker.getTag().equals("cave_ceiling")) {
+                        return;
+                    }
+
+                    IrisMarker mark = getData().getMarkerLoader().load(marker.getTag());
+                    if (mark == null || mark.isRemoveOnChange()) {
+                        getMantle().remove(blockX, mantleY, blockZ, MatterMarker.class);
+                    }
+                }));
+                routeDrops(d, dropRouter, item -> w.dropItemNaturally(dropLocation, item));
+            });
+            if (!J.runAt(blockLocation, finalizedBreak, 1) && !J.isFolia()) {
+                J.s(finalizedBreak, 1);
             }
         }
     }
 
     static int toMantleY(int worldY, int minHeight) {
         return worldY - minHeight;
+    }
+
+    static <T> void routeDrops(Iterable<T> drops, BlockDropRouter router, Consumer<T> fallback) {
+        for (T drop : drops) {
+            boolean routed = false;
+            if (router != null) {
+                try {
+                    routed = router.routeDrop(drop);
+                } catch (Throwable error) {
+                    IrisLogging.reportError("Failed to route a deferred Iris block drop.", error);
+                }
+            }
+            if (!routed) {
+                fallback.accept(drop);
+            }
+        }
     }
 
     static int toWorldY(int mantleY, int minHeight) {
@@ -1190,11 +1367,35 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     }
 
     @Override
-    public void close() {
-        super.close();
-        looper.interrupt();
-        if (cleanupService != null) {
-            cleanupService.shutdownNow();
+    public synchronized void close() {
+        Throwable failure = null;
+        try {
+            super.close();
+        } catch (Throwable e) {
+            failure = e;
+        }
+        if (!looperStopped) {
+            try {
+                if (looper != null) {
+                    looper.interrupt();
+                }
+                looperStopped = true;
+            } catch (Throwable e) {
+                failure = appendCloseFailure(failure, e);
+            }
+        }
+        if (!cleanupServiceStopped) {
+            try {
+                if (cleanupService != null) {
+                    cleanupService.shutdownNow();
+                }
+                cleanupServiceStopped = true;
+            } catch (Throwable e) {
+                failure = appendCloseFailure(failure, e);
+            }
+        }
+        if (failure != null) {
+            throw new IllegalStateException("Failed to completely stop the Bukkit Iris world manager.", failure);
         }
     }
 
@@ -1210,6 +1411,16 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
         }
 
         return (double) entityCount / (loadedChunkCount + 1) * 1.28;
+    }
+
+    private static Throwable appendCloseFailure(Throwable failure, Throwable next) {
+        if (failure == null) {
+            return next;
+        }
+        if (failure != next) {
+            failure.addSuppressed(next);
+        }
+        return failure;
     }
 
     @Data

@@ -22,6 +22,7 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.EngineLifecycleTasks;
 import art.arcane.iris.engine.framework.EngineWorldManager;
 import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.IRare;
@@ -79,6 +80,9 @@ public final class ModdedWorldManager implements EngineWorldManager {
     private long lastAmbientAt;
     private long lastCountAt;
     private long lastInitialRecoveryAt;
+    private boolean initialSpawnQueueClosed;
+    private boolean mantleWarmupExecutorStopped;
+    private boolean mantleWarmupsCleared;
     private volatile boolean closed;
     private volatile int cachedEntityCount;
     private volatile int cachedConsideredChunks;
@@ -116,6 +120,10 @@ public final class ModdedWorldManager implements EngineWorldManager {
     }
 
     public void serverTick(ServerLevel level) {
+        EngineLifecycleTasks.run(engine, "modded_world_manager_tick", () -> runServerTick(level));
+    }
+
+    private void runServerTick(ServerLevel level) {
         if (closed || engine.isClosed() || engine.getMantle().getMantle().isClosed()) {
             return;
         }
@@ -239,7 +247,12 @@ public final class ModdedWorldManager implements EngineWorldManager {
             IrisLogging.error("Iris could not schedule the initial entity-spawn follow-up because the modded scheduler is unavailable.");
             return;
         }
-        scheduler.laterGlobal(() -> runInitialFollowUp(level, chunkX, chunkZ), RNG.r.i(5, 200));
+        scheduler.laterGlobal(
+                () -> EngineLifecycleTasks.run(
+                        engine,
+                        "modded_world_manager_initial_spawn_followup",
+                        () -> runInitialFollowUp(level, chunkX, chunkZ)),
+                RNG.r.i(5, 200));
     }
 
     private void runInitialFollowUp(ServerLevel level, int chunkX, int chunkZ) {
@@ -272,7 +285,14 @@ public final class ModdedWorldManager implements EngineWorldManager {
             return;
         }
         try {
-            mantleWarmupExecutor.execute(() -> warmupMantleChunk(key, chunkX, chunkZ));
+            mantleWarmupExecutor.execute(() -> {
+                if (!EngineLifecycleTasks.run(
+                        engine,
+                        "modded_world_manager_mantle_warmup",
+                        () -> warmupMantleChunk(key, chunkX, chunkZ))) {
+                    mantleWarmups.remove(key);
+                }
+            });
         } catch (RejectedExecutionException e) {
             mantleWarmups.remove(key);
         }
@@ -727,11 +747,36 @@ public final class ModdedWorldManager implements EngineWorldManager {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         closed = true;
-        initialSpawnQueue.close();
-        mantleWarmupExecutor.shutdownNow();
-        mantleWarmups.clear();
+        Throwable failure = null;
+        if (!initialSpawnQueueClosed) {
+            try {
+                initialSpawnQueue.close();
+                initialSpawnQueueClosed = true;
+            } catch (Throwable e) {
+                failure = e;
+            }
+        }
+        if (!mantleWarmupExecutorStopped) {
+            try {
+                mantleWarmupExecutor.shutdownNow();
+                mantleWarmupExecutorStopped = true;
+            } catch (Throwable e) {
+                failure = appendCloseFailure(failure, e);
+            }
+        }
+        if (!mantleWarmupsCleared) {
+            try {
+                mantleWarmups.clear();
+                mantleWarmupsCleared = true;
+            } catch (Throwable e) {
+                failure = appendCloseFailure(failure, e);
+            }
+        }
+        if (failure != null) {
+            throw new IllegalStateException("Failed to completely stop the modded Iris world manager.", failure);
+        }
     }
 
     @Override
@@ -756,5 +801,15 @@ public final class ModdedWorldManager implements EngineWorldManager {
     @Override
     public void onSave() {
         engine.getMantle().save();
+    }
+
+    private static Throwable appendCloseFailure(Throwable failure, Throwable next) {
+        if (failure == null) {
+            return next;
+        }
+        if (failure != next) {
+            failure.addSuppressed(next);
+        }
+        return failure;
     }
 }

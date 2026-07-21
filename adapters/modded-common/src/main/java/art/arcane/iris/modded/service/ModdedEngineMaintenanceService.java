@@ -19,13 +19,13 @@
 package art.arcane.iris.modded.service;
 
 import art.arcane.iris.core.IrisSettings;
-import art.arcane.iris.core.gui.PregeneratorJob;
-import art.arcane.iris.core.pregenerator.MantleHeapPressure;
-import art.arcane.iris.core.runtime.GoldenHashEngine;
-import art.arcane.iris.core.tools.WorldMaintenance;
+import art.arcane.iris.core.service.EngineMaintenance;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.modded.ModdedWorldEngines;
 import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.util.project.context.IrisContext;
 import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,71 +33,74 @@ import org.slf4j.LoggerFactory;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.IdentityHashMap;
-import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public final class ModdedEngineMaintenanceService implements ModdedTickableService {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
-    private static final long TRIM_PERIOD_MILLIS = 2_000L;
+    private static final long MAINTENANCE_PERIOD_MILLIS = 2_000L;
     private static final long SAVE_PERIOD_MILLIS = 60_000L;
+    private static final long SHUTDOWN_TIMEOUT_SECONDS = 30L;
+    private static final long INTERRUPT_DRAIN_TIMEOUT_SECONDS = 5L;
 
-    private final AtomicInteger tectonicLimit = new AtomicInteger(30);
     private final Set<Engine> inFlight = Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
+    private final Map<Engine, Long> lastSavedAt = Collections.synchronizedMap(new IdentityHashMap<>());
     private volatile ExecutorService service;
     private long lastMaintenanceAt;
-    private long lastSaveAt;
 
     @Override
     public void onEnable() {
-        if (service != null) {
+        ExecutorService current = service;
+        if (current != null && !current.isShutdown()) {
             return;
         }
-        IrisSettings.IrisSettingsPerformance settings = IrisSettings.get().getPerformance();
-        IrisSettings.IrisSettingsEngineSVC engineSettings = settings.getEngineSVC();
-        ThreadFactory factory = (engineSettings.isUseVirtualThreads()
+
+        IrisSettings.IrisSettingsEngineSVC settings = IrisSettings.get().getPerformance().getEngineSVC();
+        ThreadFactory factory = (settings.isUseVirtualThreads()
                 ? Thread.ofVirtual()
-                : Thread.ofPlatform().priority(engineSettings.getPriority()))
+                : Thread.ofPlatform().priority(settings.getPriority()))
                 .name("Iris EngineSVC-", 0)
                 .factory();
-        service = Executors.newThreadPerTaskExecutor(factory);
-        tectonicLimit.set(settings.getTectonicPlateSize());
+        service = Executors.newFixedThreadPool(EngineMaintenance.workerParallelism(), factory);
         lastMaintenanceAt = 0L;
-        lastSaveAt = System.currentTimeMillis();
+        inFlight.clear();
+        lastSavedAt.clear();
     }
 
     @Override
     public void onDisable() {
         ExecutorService active = service;
         service = null;
-        if (active != null) {
-            active.shutdown();
+        boolean drained = shutdownAndDrain(active);
+        if (drained) {
+            inFlight.clear();
         }
-        inFlight.clear();
+        lastSavedAt.clear();
+        if (!drained) {
+            throw new IllegalStateException("Iris engine maintenance workers remained active during service shutdown");
+        }
     }
 
     @Override
     public void onServerTick(MinecraftServer server) {
         ExecutorService active = service;
-        if (active == null) {
+        if (active == null || active.isShutdown()) {
             return;
         }
+
         long now = System.currentTimeMillis();
-        if (now - lastMaintenanceAt < TRIM_PERIOD_MILLIS) {
+        if (now - lastMaintenanceAt < MAINTENANCE_PERIOD_MILLIS) {
             return;
         }
         lastMaintenanceAt = now;
-        boolean flush = now - lastSaveAt >= SAVE_PERIOD_MILLIS;
-        if (flush) {
-            lastSaveAt = now;
-        }
+
         Collection<Engine> engines = ModdedWorldEngines.activeEngines();
-        int share = tectonicLimit.get() / Math.max(engines.size(), 1);
+        reconcileSaveState(engines, now);
         for (Engine engine : engines) {
             if (!inFlight.add(engine)) {
                 continue;
@@ -105,101 +108,118 @@ public final class ModdedEngineMaintenanceService implements ModdedTickableServi
             try {
                 active.execute(() -> {
                     try {
-                        maintain(engine, share, flush);
+                        maintain(engine, now);
                     } finally {
                         inFlight.remove(engine);
                     }
                 });
-            } catch (RejectedExecutionException rejected) {
+            } catch (RejectedExecutionException exception) {
                 inFlight.remove(engine);
+                if (active == service && !active.isShutdown()) {
+                    LOGGER.error("Iris rejected engine maintenance for {}", engineName(engine), exception);
+                }
             }
         }
     }
 
-    private void maintain(Engine engine, int share, boolean flush) {
-        if (engine == null || engine.isClosed() || engine.getMantle().getMantle().isClosed()) {
+    private void maintain(Engine engine, long scheduledAt) {
+        if (engine == null || engine.isClosing() || engine.isClosed()) {
             return;
         }
-        if (pregenTargets(engine)) {
-            return;
-        }
-        if (flush) {
-            try {
-                engine.save();
-            } catch (Throwable e) {
-                if (isMantleClosed(e)) {
-                    return;
-                }
-                IrisLogging.reportError(e);
-                LOGGER.error("Iris engine save failed for {}", engine.getWorld().name(), e);
-            }
-        }
-        if (!shouldReduce(engine) || shouldSkipForMaintenance(engine) || GoldenHashEngine.isActive()) {
-            return;
-        }
-        try {
-            if (pregenTargets(engine) && MantleHeapPressure.overHighWater()) {
-                engine.getMantle().trim(0L, 0);
-            } else {
-                engine.getMantle().trim(TimeUnit.SECONDS.toMillis(IrisSettings.get().getPerformance().getMantleKeepAlive()), activeTectonicLimit(engine, share));
-            }
-            long unloadStart = System.currentTimeMillis();
-            boolean heapPressure = pregenTargets(engine) && MantleHeapPressure.overHighWater();
-            int unloadLimit = (heapPressure || IrisSettings.get().getPerformance().getEngineSVC().forceMulticoreWrite) ? 0 : activeTectonicLimit(engine, share);
-            int count = engine.getMantle().unloadTectonicPlate(unloadLimit);
-            if (heapPressure && MantleHeapPressure.overPanicWater()) {
-                MantleHeapPressure.requestPanicReclaim();
-            }
-            if (count > 0) {
-                LOGGER.debug("Iris unloaded {} tectonic plates in {}ms for {}", count, System.currentTimeMillis() - unloadStart, engine.getWorld().name());
-            }
-        } catch (Throwable e) {
-            if (isMantleClosed(e)) {
+        try (GenerationSessionLease lease = engine.acquireGenerationLease("modded_engine_maintenance");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!EngineMaintenance.isAvailable(engine)) {
                 return;
             }
-            IrisLogging.reportError(e);
-            LOGGER.error("Iris engine maintenance failed for {}", engine.getWorld().name(), e);
+
+            boolean pregeneratorTargetsWorld = EngineMaintenance.pregeneratorTargets(engine);
+            if (pregeneratorTargetsWorld) {
+                return;
+            }
+
+            saveIfDue(engine, scheduledAt);
+            if (!EngineMaintenance.shouldRun(engine)) {
+                return;
+            }
+
+            EngineMaintenance.Outcome outcome = EngineMaintenance.run(engine);
+            if (outcome.unloadedTectonicPlates() > 0) {
+                LOGGER.debug("Iris unloaded {} tectonic plates in {}ms for {}",
+                        outcome.unloadedTectonicPlates(), outcome.unloadDurationMillis(), engineName(engine));
+            }
+        } catch (GenerationSessionException exception) {
+            if (engine.isClosing() || exception.isExpectedTeardown()) {
+                return;
+            }
+            IrisLogging.reportError(exception);
+            LOGGER.error("Iris engine maintenance session failed for {}", engineName(engine), exception);
+        } catch (Throwable exception) {
+            if (EngineMaintenance.isMantleClosed(exception)) {
+                return;
+            }
+            IrisLogging.reportError(exception);
+            LOGGER.error("Iris engine maintenance failed for {}", engineName(engine), exception);
         }
     }
 
-    private boolean shouldReduce(Engine engine) {
-        if (!engine.isStudio() || IrisSettings.get().getPerformance().isTrimMantleInStudio()) {
+    private void saveIfDue(Engine engine, long scheduledAt) {
+        Long lastSave = lastSavedAt.get(engine);
+        if (lastSave == null || scheduledAt - lastSave < SAVE_PERIOD_MILLIS) {
+            return;
+        }
+
+        try {
+            engine.save();
+            lastSavedAt.put(engine, System.currentTimeMillis());
+        } catch (Throwable exception) {
+            if (EngineMaintenance.isMantleClosed(exception)) {
+                return;
+            }
+            IrisLogging.reportError(exception);
+            LOGGER.error("Iris engine save failed for {}", engineName(engine), exception);
+        }
+    }
+
+    private void reconcileSaveState(Collection<Engine> engines, long now) {
+        Set<Engine> activeEngines = Collections.newSetFromMap(new IdentityHashMap<>());
+        activeEngines.addAll(engines);
+        synchronized (lastSavedAt) {
+            lastSavedAt.keySet().removeIf(engine -> !activeEngines.contains(engine));
+            for (Engine engine : activeEngines) {
+                lastSavedAt.putIfAbsent(engine, now);
+            }
+        }
+    }
+
+    private boolean shutdownAndDrain(ExecutorService active) {
+        if (active == null) {
             return true;
         }
-        return pregenTargets(engine);
-    }
 
-    private boolean shouldSkipForMaintenance(Engine engine) {
-        if (engine.getWorld() == null || !WorldMaintenance.isWorldMaintenanceActive(engine.getWorld().identity())) {
-            return false;
-        }
-        return !pregenTargets(engine);
-    }
-
-    private boolean pregenTargets(Engine engine) {
-        if (engine.getWorld() == null) {
-            return false;
-        }
-        PregeneratorJob job = PregeneratorJob.getInstance();
-        return job != null && job.targetsWorldIdentity(engine.getWorld().identity());
-    }
-
-    private int activeTectonicLimit(Engine engine, int share) {
-        if (!pregenTargets(engine)) {
-            return share;
-        }
-        return Math.max(share, IrisSettings.get().getPregen().getEffectiveResidentTectonicPlates(engine.getHeight()));
-    }
-
-    private static boolean isMantleClosed(Throwable throwable) {
-        Throwable current = throwable;
-        while (current != null) {
-            String message = current.getMessage();
-            if (message != null && message.toLowerCase(Locale.ROOT).contains("mantle is closed")) {
+        active.shutdown();
+        try {
+            if (active.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 return true;
             }
-            current = current.getCause();
+            active.shutdownNow();
+            if (active.awaitTermination(INTERRUPT_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                return true;
+            }
+            IllegalStateException failure = new IllegalStateException(
+                    "Iris engine maintenance workers did not stop after shutdownNow");
+            IrisLogging.reportError(failure);
+            LOGGER.error("Iris engine maintenance did not terminate; active engine lifecycle leases will block unsafe shutdown", failure);
+            return false;
+        } catch (InterruptedException exception) {
+            active.shutdownNow();
+            Thread.currentThread().interrupt();
+            IrisLogging.reportError(exception);
+            LOGGER.error("Interrupted while draining Iris engine maintenance", exception);
+            return false;
         }
-        return false;
+    }
+
+    private static String engineName(Engine engine) {
+        return engine == null || engine.getWorld() == null ? "<unbound>" : engine.getWorld().name();
     }
 }

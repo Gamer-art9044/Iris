@@ -4,25 +4,15 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
-import org.bukkit.Bukkit;
-import org.bukkit.Material;
-import org.bukkit.Server;
-import org.bukkit.block.data.BlockData;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.mockito.invocation.InvocationOnMock;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.logging.Logger;
 
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 
@@ -32,29 +22,11 @@ public class IrisComplexImplodeParityTest {
 
     @BeforeClass
     public static void setup() throws Exception {
-        if (Bukkit.getServer() == null) {
-            Server server = mock(Server.class);
-            doReturn(Logger.getLogger("IrisTest")).when(server).getLogger();
-            doReturn("IrisTestServer").when(server).getName();
-            doReturn("1.0").when(server).getVersion();
-            doReturn("1.0").when(server).getBukkitVersion();
-            doAnswer((InvocationOnMock invocation) -> namedBlockData(invocation.getArgument(0, Material.class).name().toLowerCase(Locale.ROOT))).when(server).createBlockData(any(Material.class));
-            doAnswer((InvocationOnMock invocation) -> namedBlockData(invocation.getArgument(0, String.class))).when(server).createBlockData(anyString());
-            Bukkit.setServer(server);
-        }
-
         Class<?> childSelectionClass = Class.forName("art.arcane.iris.engine.IrisComplex$ChildSelectionPlan");
         childSelectionCreateMethod = childSelectionClass.getDeclaredMethod("create", KList.class);
         childSelectionCreateMethod.setAccessible(true);
         childSelectionSelectMethod = childSelectionClass.getDeclaredMethod("select", CNG.class, double.class, double.class);
         childSelectionSelectMethod.setAccessible(true);
-    }
-
-    private static BlockData namedBlockData(String key) {
-        String canonical = key.indexOf(':') >= 0 ? key : "minecraft:" + key;
-        BlockData data = mock(BlockData.class);
-        doReturn(canonical).when(data).getAsString();
-        return data;
     }
 
     @Test

@@ -25,6 +25,7 @@ import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.util.common.parallel.BurstExecutor;
 import art.arcane.iris.util.common.parallel.MultiBurst;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
@@ -32,7 +33,7 @@ import art.arcane.volmlib.util.math.Position2;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 
 import java.util.ArrayDeque;
-import java.util.concurrent.Future;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -105,18 +106,15 @@ public final class HintedLocator<T> implements Locator<T> {
     }
 
     @Override
-    public Future<Position2> find(Engine engine, Position2 pos, long timeout, Consumer<Integer> checks) throws WrongEngineBroException {
+    public CompletableFuture<Position2> find(Engine engine, Position2 pos, long timeout, Consumer<Integer> checks) throws WrongEngineBroException {
         if (engine.isClosed()) {
             throw new WrongEngineBroException();
         }
 
-        Locator.cancelSearch();
-
-        return MultiBurst.burst.completeValue(() -> {
-            AtomicBoolean stop = new AtomicBoolean(false);
-            LocatorCanceller.cancel = () -> stop.set(true);
-
-            try {
+        AtomicBoolean stop = new AtomicBoolean(false);
+        CompletableFuture<Position2> search = MultiBurst.burst.completeValueAsync(() -> {
+            try (GenerationSessionLease lease = engine.acquireGenerationLease("hinted_locator_search");
+                 IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
                 SearchPlan plan = planner.apply(engine);
 
                 if (!plan.isPossible()) {
@@ -124,10 +122,9 @@ public final class HintedLocator<T> implements Locator<T> {
                 }
 
                 return search(engine, plan, pos, timeout, checks, stop);
-            } finally {
-                LocatorCanceller.cancel = null;
             }
         });
+        return LocatorCanceller.requestScoped(search, stop);
     }
 
     private Position2 search(Engine engine, SearchPlan plan, Position2 pos, long timeout, Consumer<Integer> checks, AtomicBoolean stop) {
@@ -140,7 +137,7 @@ public final class HintedLocator<T> implements Locator<T> {
         KList<Position2> batch = new KList<>();
 
         for (int ring = 0; ring <= maxRing; ring++) {
-            if (stop.get() || stopwatch.getMilliseconds() >= timeout) {
+            if (stop.get() || engine.isClosing() || stopwatch.getMilliseconds() >= timeout) {
                 return null;
             }
 
@@ -173,7 +170,7 @@ public final class HintedLocator<T> implements Locator<T> {
             int index = i;
             Position2 sample = batch.get(i);
             executor.queue(() -> {
-                if (stop.get() || (fine && matched.get())) {
+                if (stop.get() || engine.isClosing() || (fine && matched.get())) {
                     return;
                 }
 
@@ -210,7 +207,7 @@ public final class HintedLocator<T> implements Locator<T> {
                 return batch.get(i);
             }
 
-            if (stop.get() || stopwatch.getMilliseconds() >= timeout) {
+            if (stop.get() || engine.isClosing() || stopwatch.getMilliseconds() >= timeout) {
                 return null;
             }
 
@@ -228,7 +225,7 @@ public final class HintedLocator<T> implements Locator<T> {
         KList<Position2> cells = new KList<>();
 
         for (int ring = 0; ring <= stride; ring++) {
-            if (stop.get() || stopwatch.getMilliseconds() >= timeout) {
+            if (stop.get() || engine.isClosing() || stopwatch.getMilliseconds() >= timeout) {
                 return null;
             }
 
@@ -239,7 +236,7 @@ public final class HintedLocator<T> implements Locator<T> {
 
             for (Position2 cell : cells) {
                 executor.queue(() -> {
-                    if (stop.get() || found.get() != null) {
+                    if (stop.get() || engine.isClosing() || found.get() != null) {
                         return;
                     }
 

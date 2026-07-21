@@ -22,8 +22,8 @@ import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.core.events.IrisLootEvent;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.service.ExternalDataSVC;
-import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.Locator;
 import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.framework.PlacedObject;
@@ -43,6 +43,7 @@ import art.arcane.iris.util.common.reflect.KeyedType;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.iris.util.common.scheduling.jobs.SingleJob;
 import art.arcane.iris.util.project.matter.TileWrapper;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
@@ -74,7 +75,10 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.loot.Lootable;
 
 import java.lang.reflect.Method;
+import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
@@ -83,6 +87,8 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 public final class EngineBukkitOps {
+    private static final ConcurrentHashMap<UUID, CompletableFuture<Position2>> ACTIVE_LOCATE_REQUESTS = new ConcurrentHashMap<>();
+
     private EngineBukkitOps() {
     }
 
@@ -526,11 +532,11 @@ public final class EngineBukkitOps {
     }
 
     public static void gotoBiome(Engine engine, IrisBiome biome, Player player, boolean teleport) {
-        find(Locator.surfaceBiome(biome.getLoadKey()), player, teleport, "Biome " + biome.getName());
+        find(engine, Locator.surfaceBiome(biome.getLoadKey()), player, teleport, "Biome " + biome.getName());
     }
 
     public static void gotoObject(Engine engine, String s, Player player, boolean teleport) {
-        find(Locator.object(s), player, teleport, "Object " + s);
+        find(engine, Locator.object(s), player, teleport, "Object " + s);
     }
 
     public static void gotoRegion(Engine engine, IrisRegion r, Player player, boolean teleport) {
@@ -539,19 +545,19 @@ public final class EngineBukkitOps {
             return;
         }
 
-        find(Locator.region(r.getLoadKey()), player, teleport, "Region " + r.getName());
+        find(engine, Locator.region(r.getLoadKey()), player, teleport, "Region " + r.getName());
     }
 
     public static void gotoPOI(Engine engine, String type, Player p, boolean teleport) {
-        find(Locator.poi(type), p, teleport, "POI " + type);
+        find(engine, Locator.poi(type), p, teleport, "POI " + type);
     }
 
     public static void gotoStructure(Engine engine, String key, Player player, boolean teleport) {
-        find(Locator.structure(key), player, teleport, "Structure " + key);
+        find(engine, Locator.structure(key), player, teleport, "Structure " + key);
     }
 
-    private static void find(Locator<?> locator, Player player, boolean teleport, String message) {
-        find(locator, player, 120_000, location -> {
+    private static void find(Engine engine, Locator<?> locator, Player player, boolean teleport, String message) {
+        find(engine, locator, player, 120_000, location -> {
             if (location == null) {
                 player.sendMessage(C.RED + "Could not find " + message + " within search range.");
                 return;
@@ -565,26 +571,50 @@ public final class EngineBukkitOps {
         });
     }
 
-    private static void find(Locator<?> locator, Player player, long timeout, Consumer<Location> consumer) {
+    private static void find(Engine engine, Locator<?> locator, Player player, long timeout, Consumer<Location> consumer) {
         AtomicLong checks = new AtomicLong();
         long ms = M.ms();
+        World world = player.getWorld();
+        Location origin = player.getLocation();
+        int originChunkX = origin.getBlockX() >> 4;
+        int originChunkZ = origin.getBlockZ() >> 4;
         new SingleJob("Searching", () -> {
+            CompletableFuture<Position2> search = null;
+            boolean resultDispatched = false;
+            UUID playerId = player.getUniqueId();
             try {
-                World world = player.getWorld();
-                Engine engine = IrisToolbelt.access(world).getEngine();
-                Position2 at = locator.find(engine, new Position2(player.getLocation().getBlockX() >> 4, player.getLocation().getBlockZ() >> 4), timeout, checks::set).get();
+                search = locator.find(engine, new Position2(originChunkX, originChunkZ), timeout, checks::set);
+                CompletableFuture<Position2> previous = ACTIVE_LOCATE_REQUESTS.put(playerId, search);
+                if (previous != null && previous != search) {
+                    previous.cancel(true);
+                }
+                Position2 at = search.get();
+                if (ACTIVE_LOCATE_REQUESTS.get(playerId) != search) {
+                    return;
+                }
 
                 if (at != null) {
                     int bx = (at.getX() << 4) + 8;
                     int bz = (at.getZ() << 4) + 8;
-                    consumer.accept(new Location(world, bx,
-                            world.getHighestBlockYAt(bx, bz) + 2,
-                            bz));
+                    try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_locator_result");
+                         IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                        int by = engine.getMinHeight() + engine.getHeight(bx, bz, false) + 2;
+                        resultDispatched = dispatchLocateResult(
+                                player, world, consumer, new Location(world, bx, by, bz), playerId, search);
+                    }
                 } else {
-                    consumer.accept(null);
+                    resultDispatched = dispatchLocateResult(player, world, consumer, null, playerId, search);
                 }
-            } catch (WrongEngineBroException | InterruptedException | ExecutionException e) {
+            } catch (CancellationException ignored) {
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (WrongEngineBroException | ExecutionException e) {
+                IrisLogging.reportError(e);
                 e.printStackTrace();
+            } finally {
+                if (search != null && !resultDispatched) {
+                    ACTIVE_LOCATE_REQUESTS.remove(playerId, search);
+                }
             }
         }) {
             @Override
@@ -602,6 +632,24 @@ public final class EngineBukkitOps {
                 return (int) Math.min(M.ms() - ms, timeout - 1);
             }
         }.execute(new VolmitSender(player));
+    }
+
+    private static boolean dispatchLocateResult(Player player, World world, Consumer<Location> consumer,
+                                                Location location, UUID playerId,
+                                                CompletableFuture<Position2> search) {
+        boolean scheduled = J.runEntity(player, () -> {
+            if (!ACTIVE_LOCATE_REQUESTS.remove(playerId, search)) {
+                return;
+            }
+            if (!player.isOnline() || !world.equals(player.getWorld())) {
+                return;
+            }
+            consumer.accept(location);
+        });
+        if (!scheduled) {
+            IrisLogging.warn("Could not schedule an Iris locator result for " + player.getName() + ".");
+        }
+        return scheduled;
     }
 
     private static void teleportAsyncSafely(Player player, Location location) {

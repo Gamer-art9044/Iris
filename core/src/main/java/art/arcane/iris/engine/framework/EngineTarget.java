@@ -32,8 +32,8 @@ import lombok.ToString;
 public class EngineTarget {
     private final MultiBurst burster;
     private final IrisData data;
-    private IrisDimension dimension;
-    private IrisWorld world;
+    private final IrisDimension dimension;
+    private final IrisWorld world;
 
     public EngineTarget(IrisWorld world, IrisDimension dimension, IrisData data) {
         this.world = world;

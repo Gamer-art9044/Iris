@@ -26,6 +26,7 @@ import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineTarget;
+import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.mantle.components.MantleObjectComponent;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisPosition;
@@ -136,6 +137,10 @@ public interface EngineMantle extends MatterGenerator {
 
     default boolean isDebugSmartBore() {
         return getEngine().getDimension().isDebugSmartBore();
+    }
+
+    default void trim(long duration) {
+        getMantle().trim(duration);
     }
 
     default void trim(long dur, int limit) {
@@ -281,6 +286,7 @@ public interface EngineMantle extends MatterGenerator {
                 chunk.deleteSlices(MatterCavern.class);
                 chunk.deleteSlices(MatterFluidBody.class);
                 chunk.deleteSlices(MatterMarker.class);
+                chunk.deleteSlices(TreeBlockMaterial.class);
                 chunk.trimSlices();
             });
         } finally {

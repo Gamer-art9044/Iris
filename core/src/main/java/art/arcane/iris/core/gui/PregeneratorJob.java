@@ -45,6 +45,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 public class PregeneratorJob implements PregenListener, PregenRenderSource {
+    private static final long WORLD_SHUTDOWN_TIMEOUT_MILLIS = 15_000L;
     private static final Color COLOR_EXISTS = parseColor("#4d7d5b");
     private static final Color COLOR_BLACK = parseColor("#4d7d5b");
     private static final Color COLOR_MANTLE = parseColor("#3c2773");
@@ -130,18 +131,36 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         return true;
     }
 
+    public static boolean shutdownInstanceForWorld(String worldIdentity) {
+        PregeneratorJob inst = instance.get();
+        if (inst == null || !inst.targetsWorldIdentity(worldIdentity)) {
+            return false;
+        }
+
+        return shutdownAndWait(inst, WORLD_SHUTDOWN_TIMEOUT_MILLIS);
+    }
+
     public static boolean shutdownAndWait(long timeoutMs) {
         PregeneratorJob inst = instance.get();
         if (inst == null) {
             return false;
         }
 
+        return shutdownAndWait(inst, timeoutMs);
+    }
+
+    private static boolean shutdownAndWait(PregeneratorJob inst, long timeoutMs) {
         inst.pregenerator.close();
         inst.worker.interrupt();
         try {
-            inst.worker.join(timeoutMs);
+            inst.worker.join(Math.max(1L, timeoutMs));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while stopping the Iris pregenerator.", e);
+        }
+        if (inst.worker.isAlive()) {
+            throw new IllegalStateException("Timed out while stopping the Iris pregenerator after "
+                    + Math.max(1L, timeoutMs) + "ms.");
         }
         instance.compareAndSet(inst, null);
         return true;
@@ -184,7 +203,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         return inst == null ? -1L : Math.max(0L, inst.lastChunksRemaining);
     }
 
-    public record PregenProgress(double percent, long generated, long totalChunks, double chunksPerSecond, long chunksRemaining, long eta, long elapsed, String method, boolean paused, long failed, String worldName) {
+    public record PregenProgress(double percent, long generated, long totalChunks, double chunksPerSecond, long chunksRemaining, long eta, long elapsed, String method, boolean paused, long failed, String worldName, String worldIdentity) {
     }
 
     public static PregenProgress progressSnapshot() {
@@ -205,7 +224,8 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
                 inst.lastMethod,
                 inst.paused(),
                 inst.pregenerator.getFailedChunks(),
-                inst.worldName());
+                inst.worldName(),
+                inst.worldIdentity());
     }
 
     public String worldName() {
@@ -214,6 +234,13 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         }
 
         return engine.getWorld().name();
+    }
+
+    public String worldIdentity() {
+        if (engine == null || engine.getWorld() == null) {
+            return null;
+        }
+        return engine.getWorld().identity();
     }
 
     public boolean targetsWorldIdentity(String worldIdentity) {

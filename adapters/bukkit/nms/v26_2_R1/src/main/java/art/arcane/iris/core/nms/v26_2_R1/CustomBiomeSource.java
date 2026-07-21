@@ -5,9 +5,12 @@ import com.mojang.serialization.MapCodec;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.RNG;
 import net.minecraft.core.Holder;
@@ -148,17 +151,26 @@ public class CustomBiomeSource extends BiomeSource {
     }
 
     Set<Holder<Biome>> possibleStructureBiomes() {
-        ensureCachesCurrent();
-        World world = BukkitWorldBinding.world(engine.getWorld());
-        if (world == null) {
-            throw new IllegalStateException("Iris biome source has no bound Bukkit world");
+        GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_possible_biomes");
+        if (lease == null) {
+            throw new IllegalStateException("Iris possible biome lookup was rejected during an engine transition");
         }
-        Registry<Biome> customRegistry = ((RegistryAccess) getFor(
-                RegistryAccess.Frozen.class, ((CraftServer) Bukkit.getServer()).getHandle().getServer()))
-                .lookup(Registries.BIOME).orElse(null);
-        Registry<Biome> worldRegistry = ((CraftWorld) world).getHandle().registryAccess()
-                .lookup(Registries.BIOME).orElse(null);
-        return Set.copyOf(getAllBiomes(customRegistry, worldRegistry, engine));
+        try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!isRuntimeAvailable()) {
+                throw new IllegalStateException("Iris possible biome lookup has no active engine runtime");
+            }
+            ensureCachesCurrent();
+            World world = BukkitWorldBinding.world(engine.getWorld());
+            if (world == null) {
+                throw new IllegalStateException("Iris biome source has no bound Bukkit world");
+            }
+            Registry<Biome> customRegistry = ((RegistryAccess) getFor(
+                    RegistryAccess.Frozen.class, ((CraftServer) Bukkit.getServer()).getHandle().getServer()))
+                    .lookup(Registries.BIOME).orElse(null);
+            Registry<Biome> worldRegistry = ((CraftWorld) world).getHandle().registryAccess()
+                    .lookup(Registries.BIOME).orElse(null);
+            return Set.copyOf(getAllBiomes(customRegistry, worldRegistry, engine));
+        }
     }
 
     private KMap<String, Holder<Biome>> fillCustomBiomes(Registry<Biome> customRegistry, Engine engine, Holder<Biome> fallback) {
@@ -212,11 +224,20 @@ public class CustomBiomeSource extends BiomeSource {
     }
 
     Holder<Biome> getVanillaSpawnBiome(Holder<Biome> biome) {
-        ensureCachesCurrent();
         if (biome == null) {
             return null;
         }
-        return vanillaSpawnBiomes.get(biome.value());
+        GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_spawn_biome");
+        if (lease == null) {
+            throw new IllegalStateException("Iris spawn biome lookup was rejected during an engine transition");
+        }
+        try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!isRuntimeAvailable()) {
+                throw new IllegalStateException("Iris spawn biome lookup has no active engine runtime");
+            }
+            ensureCachesCurrent();
+            return vanillaSpawnBiomes.get(biome.value());
+        }
     }
 
     private RegistryAccess registry() {
@@ -230,51 +251,69 @@ public class CustomBiomeSource extends BiomeSource {
 
     @Override
     public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
-        ensureCachesCurrent();
-        if (isGuaranteedSurfaceBiome(y)) {
-            return getSurfaceStructureBiomeHolder(x, z);
+        GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_structure_biome");
+        if (lease == null) {
+            throw new IllegalStateException("Iris structure biome lookup was rejected during an engine transition");
         }
+        try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!isRuntimeAvailable()) {
+                throw new IllegalStateException("Iris structure biome lookup has no active engine runtime");
+            }
+            ensureCachesCurrent();
+            if (isGuaranteedSurfaceBiome(y)) {
+                return getSurfaceStructureBiomeHolder(x, z);
+            }
 
-        long cacheKey = packNoiseKey(x, y, z);
-        Holder<Biome> cachedHolder = structureBiomeCache.get(cacheKey);
-        if (cachedHolder != null) {
-            return cachedHolder;
+            long cacheKey = packNoiseKey(x, y, z);
+            Holder<Biome> cachedHolder = structureBiomeCache.get(cacheKey);
+            if (cachedHolder != null) {
+                return cachedHolder;
+            }
+
+            Holder<Biome> resolvedHolder = resolveStructureBiomeHolder(x, y, z);
+            Holder<Biome> existingHolder = structureBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
+            if (existingHolder != null) {
+                return existingHolder;
+            }
+
+            if (structureBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
+                structureBiomeCache.clear();
+            }
+
+            return resolvedHolder;
         }
-
-        Holder<Biome> resolvedHolder = resolveStructureBiomeHolder(x, y, z);
-        Holder<Biome> existingHolder = structureBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
-        if (existingHolder != null) {
-            return existingHolder;
-        }
-
-        if (structureBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
-            structureBiomeCache.clear();
-        }
-
-        return resolvedHolder;
     }
 
     @Override
     public Set<Holder<Biome>> getBiomesWithin(int x, int y, int z, int radius, Climate.Sampler sampler) {
-        ensureCachesCurrent();
-        int minQuartY = QuartPos.fromBlock(y - radius);
-        boolean monumentQuery = radius == 29
-                && y == engine.getMinHeight() + engine.getDimension().getFluidHeight();
-        if (!monumentQuery && !isGuaranteedSurfaceBiome(minQuartY)) {
-            return super.getBiomesWithin(x, y, z, radius, sampler);
+        GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_biomes_within");
+        if (lease == null) {
+            throw new IllegalStateException("Iris biome radius lookup was rejected during an engine transition");
         }
-        int minQuartX = QuartPos.fromBlock(x - radius);
-        int maxQuartX = QuartPos.fromBlock(x + radius);
-        int minQuartZ = QuartPos.fromBlock(z - radius);
-        int maxQuartZ = QuartPos.fromBlock(z + radius);
-        int columns = (maxQuartX - minQuartX + 1) * (maxQuartZ - minQuartZ + 1);
-        Set<Holder<Biome>> biomes = new HashSet<>(columns);
-        for (int quartZ = minQuartZ; quartZ <= maxQuartZ; quartZ++) {
-            for (int quartX = minQuartX; quartX <= maxQuartX; quartX++) {
-                biomes.add(getSurfaceStructureBiomeHolder(quartX, quartZ));
+        try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!isRuntimeAvailable()) {
+                throw new IllegalStateException("Iris biome radius lookup has no active engine runtime");
             }
+            ensureCachesCurrent();
+            int minQuartY = QuartPos.fromBlock(y - radius);
+            boolean monumentQuery = radius == 29
+                    && y == engine.getMinHeight() + engine.getDimension().getFluidHeight();
+            if (!monumentQuery && !isGuaranteedSurfaceBiome(minQuartY)) {
+                return super.getBiomesWithin(x, y, z, radius, sampler);
+            }
+            int minQuartX = QuartPos.fromBlock(x - radius);
+            int maxQuartX = QuartPos.fromBlock(x + radius);
+            int minQuartZ = QuartPos.fromBlock(z - radius);
+            int maxQuartZ = QuartPos.fromBlock(z + radius);
+            int columns = (maxQuartX - minQuartX + 1) * (maxQuartZ - minQuartZ + 1);
+            Set<Holder<Biome>> biomes = new HashSet<>(columns);
+            for (int quartZ = minQuartZ; quartZ <= maxQuartZ; quartZ++) {
+                for (int quartX = minQuartX; quartX <= maxQuartX; quartX++) {
+                    biomes.add(getSurfaceStructureBiomeHolder(quartX, quartZ));
+                }
+            }
+            return biomes;
         }
-        return biomes;
     }
 
     private Holder<Biome> getSurfaceStructureBiomeHolder(int x, int z) {
@@ -322,24 +361,52 @@ public class CustomBiomeSource extends BiomeSource {
     }
 
     public Holder<Biome> getVisibleNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
-        ensureCachesCurrent();
-        long cacheKey = packNoiseKey(x, y, z);
-        Holder<Biome> cachedHolder = noiseBiomeCache.get(cacheKey);
-        if (cachedHolder != null) {
-            return cachedHolder;
+        GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_visible_biome");
+        if (lease == null) {
+            throw new IllegalStateException("Iris visible biome lookup was rejected during an engine transition");
         }
+        try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!isRuntimeAvailable()) {
+                throw new IllegalStateException("Iris visible biome lookup has no active engine runtime");
+            }
+            ensureCachesCurrent();
+            long cacheKey = packNoiseKey(x, y, z);
+            Holder<Biome> cachedHolder = noiseBiomeCache.get(cacheKey);
+            if (cachedHolder != null) {
+                return cachedHolder;
+            }
 
-        Holder<Biome> resolvedHolder = resolveVisibleBiomeHolder(x, y, z);
-        Holder<Biome> existingHolder = noiseBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
-        if (existingHolder != null) {
-            return existingHolder;
+            Holder<Biome> resolvedHolder = resolveVisibleBiomeHolder(x, y, z);
+            Holder<Biome> existingHolder = noiseBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
+            if (existingHolder != null) {
+                return existingHolder;
+            }
+
+            if (noiseBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
+                noiseBiomeCache.clear();
+            }
+
+            return resolvedHolder;
         }
+    }
 
-        if (noiseBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
-            noiseBiomeCache.clear();
+    private GenerationSessionLease tryAcquireGenerationLease(String operation) {
+        if (engine.isClosed()) {
+            return null;
         }
+        try {
+            return engine.acquireGenerationLease(operation);
+        } catch (GenerationSessionException e) {
+            if (engine.isClosing() || e.isExpectedTeardown()) {
+                return null;
+            }
+            throw new IllegalStateException("Iris biome source could not acquire generation session for "
+                    + operation + ".", e);
+        }
+    }
 
-        return resolvedHolder;
+    private boolean isRuntimeAvailable() {
+        return !engine.isClosed() && engine.getComplex() != null;
     }
 
     private void ensureCachesCurrent() {

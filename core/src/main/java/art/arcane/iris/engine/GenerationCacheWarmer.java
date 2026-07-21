@@ -48,7 +48,7 @@ public final class GenerationCacheWarmer {
             KList<IrisBiome> biomes = engine.getAllBiomes();
             biomes.sort(Comparator.comparing(IrisBiome::getLoadKey));
             for (IrisBiome biome : biomes) {
-                warmPlacements(biome.getObjects(), root, counter, data);
+                warmPlacements(biome.getObjects(), root, counter, data, engine);
                 warmDecorators(biome.getDecorators(), root, counter, data);
                 warmOres(biome.getOres(), root, counter, data);
                 warmProcedural(biome.getProceduralObjects(), root, counter, data);
@@ -57,7 +57,7 @@ public final class GenerationCacheWarmer {
             KList<IrisRegion> regions = engine.getDimension().getAllRegions(engine);
             regions.sort(Comparator.comparing(IrisRegion::getLoadKey));
             for (IrisRegion region : regions) {
-                warmPlacements(region.getObjects(), root, counter, data);
+                warmPlacements(region.getObjects(), root, counter, data, engine);
                 warmOres(region.getOres(), root, counter, data);
                 warmProcedural(region.getProceduralObjects(), root, counter, data);
             }
@@ -71,7 +71,8 @@ public final class GenerationCacheWarmer {
         IrisLogging.debug("[IrisEngine timing] cache warm " + counter[0] + " configs=" + (M.ms() - start) + "ms");
     }
 
-    private static void warmPlacements(KList<IrisObjectPlacement> placements, RNG root, int[] counter, IrisData data) {
+    private static void warmPlacements(KList<IrisObjectPlacement> placements, RNG root, int[] counter,
+                                       IrisData data, Engine engine) {
         if (placements == null) {
             return;
         }
@@ -80,7 +81,7 @@ public final class GenerationCacheWarmer {
                 continue;
             }
             RNG rng = root.nextParallelRNG(counter[0]++);
-            placement.getSurfaceWarp(rng, data);
+            placement.getSurfaceWarp(rng, data, engine);
             placement.getDensity(rng, 0, 0, data);
         }
     }

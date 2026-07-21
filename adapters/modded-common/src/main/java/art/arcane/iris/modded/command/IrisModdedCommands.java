@@ -23,6 +23,8 @@ import art.arcane.iris.core.gui.GuiHost;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.Locator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
@@ -40,6 +42,7 @@ import art.arcane.iris.modded.ModdedLoader;
 import art.arcane.iris.modded.ModdedPackInstaller;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.Position2;
 import art.arcane.volmlib.util.matter.MatterMarker;
@@ -95,7 +98,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Predicate;
 
@@ -104,6 +111,7 @@ public final class IrisModdedCommands {
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
     private static final long LOCATE_TIMEOUT_MS = 120000L;
     private static final int NATIVE_STRUCTURE_LOCATE_RADIUS = 100;
+    private static final ConcurrentHashMap<UUID, CompletableFuture<Position2>> ACTIVE_LOCATE_REQUESTS = new ConcurrentHashMap<>();
 
     private static final SuggestionProvider<CommandSourceStack> BIOME_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestBiomeKeys(context, builder);
     private static final SuggestionProvider<CommandSourceStack> REGION_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestRegionKeys(context, builder);
@@ -1172,32 +1180,79 @@ public final class IrisModdedCommands {
         int chunkX = player.blockPosition().getX() >> 4;
         int chunkZ = player.blockPosition().getZ() >> 4;
         ok(source, "Searching for " + label + "...");
-        Thread thread = new Thread(() -> {
-            try {
-                Position2 at = locator.find(engine, new Position2(chunkX, chunkZ), LOCATE_TIMEOUT_MS, (Integer checks) -> {
-                }).get();
-                if (at == null) {
-                    server.execute(() -> fail(source, "Could not find " + label + " within the search timeout."));
-                    return;
+        CompletableFuture<Position2> search;
+        try {
+            search = locator.find(engine, new Position2(chunkX, chunkZ), LOCATE_TIMEOUT_MS, (Integer checks) -> {
+            });
+        } catch (WrongEngineBroException e) {
+            fail(source, "The engine for this world has been closed; rejoin the dimension and try again.");
+            return;
+        }
+        UUID playerId = player.getUUID();
+        CompletableFuture<Position2> previous = ACTIVE_LOCATE_REQUESTS.put(playerId, search);
+        if (previous != null && previous != search) {
+            previous.cancel(true);
+        }
+        search.whenComplete((Position2 at, Throwable error) -> completeLocate(
+                source, level, engine, player, label, server, playerId, search, at, error));
+    }
+
+    private static void completeLocate(CommandSourceStack source, ServerLevel level, Engine engine,
+                                       ServerPlayer player, String label, MinecraftServer server, UUID playerId,
+                                       CompletableFuture<Position2> search, Position2 at, Throwable error) {
+        if (ACTIVE_LOCATE_REQUESTS.get(playerId) != search) {
+            return;
+        }
+        Throwable failure = unwrapCompletionFailure(error);
+        if (failure instanceof CancellationException) {
+            ACTIVE_LOCATE_REQUESTS.remove(playerId, search);
+            return;
+        }
+        if (failure != null) {
+            LOGGER.error("Iris locate failed for {}", label, failure);
+            server.execute(() -> {
+                if (ACTIVE_LOCATE_REQUESTS.remove(playerId, search)) {
+                    fail(source, "Search failed: " + failure);
                 }
-                int blockX = (at.getX() << 4) + 8;
-                int blockZ = (at.getZ() << 4) + 8;
-                int blockY = engine.getMinHeight() + engine.getHeight(blockX, blockZ, false) + 2;
-                server.execute(() -> {
-                    player.teleportTo(level, blockX + 0.5D, blockY, blockZ + 0.5D, Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
-                    ok(source, "Teleported to " + label + " at " + blockX + " " + blockY + " " + blockZ);
-                });
-            } catch (WrongEngineBroException e) {
-                server.execute(() -> fail(source, "The engine for this world has been closed; rejoin the dimension and try again."));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } catch (ExecutionException e) {
-                LOGGER.error("Iris locate failed for {}", label, e);
-                server.execute(() -> fail(source, "Search failed: " + e.getCause()));
+            });
+            return;
+        }
+        if (at == null) {
+            server.execute(() -> {
+                if (ACTIVE_LOCATE_REQUESTS.remove(playerId, search)) {
+                    fail(source, "Could not find " + label + " within the search timeout.");
+                }
+            });
+            return;
+        }
+        server.execute(() -> {
+            if (ACTIVE_LOCATE_REQUESTS.remove(playerId, search)) {
+                teleportToLocateResult(source, level, engine, player, label, at);
             }
-        }, "Iris Locator");
-        thread.setDaemon(true);
-        thread.start();
+        });
+    }
+
+    private static void teleportToLocateResult(CommandSourceStack source, ServerLevel level, Engine engine,
+                                                ServerPlayer player, String label, Position2 at) {
+        int blockX = (at.getX() << 4) + 8;
+        int blockZ = (at.getZ() << 4) + 8;
+        try (GenerationSessionLease lease = engine.acquireGenerationLease("modded_locator_teleport");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            int blockY = engine.getMinHeight() + engine.getHeight(blockX, blockZ, false) + 2;
+            player.teleportTo(level, blockX + 0.5D, blockY, blockZ + 0.5D, Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
+            ok(source, "Teleported to " + label + " at " + blockX + " " + blockY + " " + blockZ);
+        } catch (GenerationSessionException e) {
+            fail(source, "The engine changed while locating " + label + "; try again.");
+        }
+    }
+
+    private static Throwable unwrapCompletionFailure(Throwable error) {
+        Throwable failure = error;
+        while ((failure instanceof CompletionException || failure instanceof ExecutionException)
+                && failure.getCause() != null) {
+            failure = failure.getCause();
+        }
+        return failure;
     }
 
     private static int seed(CommandSourceStack source) {

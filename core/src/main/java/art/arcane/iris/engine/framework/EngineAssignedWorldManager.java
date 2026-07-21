@@ -33,82 +33,194 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.world.ChunkUnloadEvent;
 import org.bukkit.event.world.WorldSaveEvent;
-import org.bukkit.event.world.WorldUnloadEvent;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 public abstract class EngineAssignedWorldManager extends EngineAssignedComponent implements EngineWorldManager, BukkitEngineWorldManager, Listener {
-    private final int taskId;
+    private final Object managerLifecycleLock;
+    private final AtomicBoolean started;
+    private boolean listenerRegistered;
+    private boolean closeRequested;
+    private int taskId;
     protected AtomicBoolean ignoreTP = new AtomicBoolean(false);
 
     public EngineAssignedWorldManager() {
         super(null, null);
+        managerLifecycleLock = new Object();
+        started = new AtomicBoolean(false);
         taskId = -1;
     }
 
     public EngineAssignedWorldManager(Engine engine) {
         super(engine, "World");
-        BukkitPlatform.volmitPlugin().registerListener(this);
-        taskId = J.sr(this::onTick, 1);
+        managerLifecycleLock = new Object();
+        started = new AtomicBoolean(false);
+        taskId = -1;
+    }
+
+    @Override
+    public void start() {
+        synchronized (managerLifecycleLock) {
+            if (started.get()) {
+                return;
+            }
+            if (closeRequested) {
+                throw new IllegalStateException("Cannot restart a closed Iris world manager.");
+            }
+
+            started.set(true);
+            try {
+                listenerRegistered = true;
+                registerManagerListener();
+                taskId = scheduleManagerTick(() -> runManagerTask("bukkit_world_manager_tick", this::onTick));
+            } catch (Throwable e) {
+                started.set(false);
+                closeRequested = true;
+                Throwable cleanupFailure = closeManagerResources();
+                if (cleanupFailure != null) {
+                    e.addSuppressed(cleanupFailure);
+                }
+                throw propagate(e);
+            }
+        }
     }
 
     @EventHandler
     public void on(IrisEngineHotloadEvent e) {
-        for (Player i : BukkitWorldBinding.players(e.getEngine().getWorld())) {
-            i.playSound(i.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_BREAK, 1f, 1.8f);
-            VolmitSender s = new VolmitSender(i);
-            s.sendTitle(C.IRIS + "Engine " + C.AQUA + "<font:minecraft:uniform>Hotloaded", 70, 60, 410);
-        }
+        runManagerTask("bukkit_world_manager_hotload_event", () -> {
+            for (Player i : BukkitWorldBinding.players(e.getEngine().getWorld())) {
+                i.playSound(i.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_BREAK, 1f, 1.8f);
+                VolmitSender s = new VolmitSender(i);
+                s.sendTitle(C.IRIS + "Engine " + C.AQUA + "<font:minecraft:uniform>Hotloaded", 70, 60, 410);
+            }
+        });
     }
 
     @EventHandler
     public void on(WorldSaveEvent e) {
-        if (e.getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
-            getEngine().save();
-        }
-    }
-
-    @EventHandler
-    public void on(WorldUnloadEvent e) {
-        if (e.getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
-            getEngine().close();
-        }
+        runManagerTask("bukkit_world_manager_save", () -> {
+            if (e.getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
+                getEngine().save();
+            }
+        });
     }
 
     @EventHandler
     public void on(BlockBreakEvent e) {
-        if (e.getPlayer().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
-            onBlockBreak(e);
-        }
+        runManagerTask("bukkit_world_manager_block_break", () -> {
+            if (e.getPlayer().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
+                onBlockBreak(e);
+            }
+        });
     }
 
     @EventHandler
     public void on(BlockPlaceEvent e) {
-        if (e.getPlayer().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
-            onBlockPlace(e);
-        }
+        runManagerTask("bukkit_world_manager_block_place", () -> {
+            if (e.getPlayer().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
+                onBlockPlace(e);
+            }
+        });
     }
 
     @EventHandler
     public void on(ChunkLoadEvent e) {
-        if (e.getChunk().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
-            onChunkLoad(e.getChunk(), e.isNewChunk());
-        }
+        runManagerTask("bukkit_world_manager_chunk_load", () -> {
+            if (e.getChunk().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
+                onChunkLoad(e.getChunk(), e.isNewChunk());
+            }
+        });
     }
 
     @EventHandler
     public void on(ChunkUnloadEvent e) {
-        if (e.getChunk().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
-            onChunkUnload(e.getChunk());
-        }
+        runManagerTask("bukkit_world_manager_chunk_unload", () -> {
+            if (e.getChunk().getWorld().equals(BukkitWorldBinding.world(getTarget().getWorld()))) {
+                onChunkUnload(e.getChunk());
+            }
+        });
     }
 
     @Override
     public void close() {
-        super.close();
-        BukkitPlatform.volmitPlugin().unregisterListener(this);
-        if (taskId != -1) {
-            J.csr(taskId);
+        Throwable failure;
+        synchronized (managerLifecycleLock) {
+            closeRequested = true;
+            started.set(false);
+            failure = closeManagerResources();
         }
+        if (failure != null) {
+            throw new IllegalStateException("Failed to completely stop the Iris world manager.", failure);
+        }
+    }
+
+    protected void registerManagerListener() {
+        BukkitPlatform.volmitPlugin().registerListener(this);
+    }
+
+    protected int scheduleManagerTick(Runnable tick) {
+        return J.sr(tick, 1);
+    }
+
+    protected void unregisterManagerListener() {
+        BukkitPlatform.volmitPlugin().unregisterListener(this);
+    }
+
+    protected void cancelManagerTick(int scheduledTaskId) {
+        J.csr(scheduledTaskId);
+    }
+
+    private Throwable closeManagerResources() {
+        Throwable failure = null;
+        if (listenerRegistered) {
+            try {
+                unregisterManagerListener();
+                listenerRegistered = false;
+            } catch (Throwable e) {
+                failure = e;
+            }
+        }
+        if (taskId != -1) {
+            try {
+                cancelManagerTick(taskId);
+                taskId = -1;
+            } catch (Throwable e) {
+                if (failure == null) {
+                    failure = e;
+                } else if (failure != e) {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        return failure;
+    }
+
+    private RuntimeException propagate(Throwable failure) {
+        if (failure instanceof RuntimeException runtimeException) {
+            return runtimeException;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        return new IllegalStateException(failure);
+    }
+
+    protected boolean runManagerTask(String operation, Runnable task) {
+        if (!started.get()) {
+            return false;
+        }
+        return EngineLifecycleTasks.run(getEngine(), operation, task);
+    }
+
+    protected <T> T callManagerTask(String operation, Supplier<T> task, T unavailable) {
+        if (!started.get()) {
+            return unavailable;
+        }
+        return EngineLifecycleTasks.call(getEngine(), operation, task, unavailable);
+    }
+
+    protected boolean isManagerStarted() {
+        return started.get();
     }
 }

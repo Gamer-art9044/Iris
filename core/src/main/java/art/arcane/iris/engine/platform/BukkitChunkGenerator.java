@@ -22,7 +22,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.HeightMap;
 import org.bukkit.Location;
-import org.bukkit.Material;
 import org.bukkit.World;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
@@ -41,6 +40,7 @@ import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.object.IrisDimensionContractException;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
@@ -57,6 +57,7 @@ import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.iris.util.project.hunk.view.ChunkDataHunkHolder;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.io.ReactiveFolder;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import art.arcane.iris.util.common.scheduling.J;
@@ -266,7 +267,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         if (engine != null) return engine.getTarget();
 
         return targetCache.aquire(() -> {
-            IrisData data = IrisData.get(dataLocation);
+            IrisData data = IrisData.openRuntime(dataLocation);
             data.dump();
             data.clearLists();
             IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
@@ -383,39 +384,48 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
     @Override
     public CompletableFuture<Void> closeAsync() {
-        CompletableFuture<Void> existing = closeFuture.get();
-        if (existing != null && !existing.isDone()) {
-            return existing;
-        }
-
         closing = true;
-        CompletableFuture<Void> future = withExclusiveControlFuture(() -> {
-            Looper activeHotloader = hotloader;
-            hotloader = null;
-            if (isStudio() && activeHotloader != null) {
-                activeHotloader.interrupt();
-                try {
-                    activeHotloader.join(1000L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    IrisLogging.reportError(e);
-                }
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        while (!closeFuture.compareAndSet(null, future)) {
+            CompletableFuture<Void> existing = closeFuture.get();
+            if (existing != null) {
+                return existing;
             }
-
-            Engine currentEngine = engine;
-            if (currentEngine != null && !currentEngine.isClosed()) {
-                currentEngine.close();
-            }
-            folder.clear();
-            populators.clear();
-        });
-        if (!closeFuture.compareAndSet(existing, future)) {
-            CompletableFuture<Void> winningFuture = closeFuture.get();
-            return winningFuture == null ? future : winningFuture;
         }
 
-        future.whenComplete((ignored, throwable) -> {
-            if (throwable != null) {
+        CompletableFuture<Void> operation;
+        try {
+            operation = withExclusiveControlFuture(() -> {
+                Looper activeHotloader = hotloader;
+                hotloader = null;
+                if (isStudio() && activeHotloader != null) {
+                    activeHotloader.interrupt();
+                    try {
+                        activeHotloader.join(1000L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        IrisLogging.reportError(e);
+                    }
+                }
+
+                Engine currentEngine = engine;
+                if (currentEngine != null && !currentEngine.isClosed()) {
+                    currentEngine.close();
+                }
+                folder.clear();
+                populators.clear();
+            });
+        } catch (Throwable throwable) {
+            future.completeExceptionally(throwable);
+            closeFuture.compareAndSet(future, null);
+            return future;
+        }
+
+        operation.whenComplete((ignored, throwable) -> {
+            if (throwable == null) {
+                future.complete(null);
+            } else {
+                future.completeExceptionally(throwable);
                 closeFuture.compareAndSet(future, null);
             }
         });
@@ -446,8 +456,10 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 IrisLogging.reportError(e);
+                e.printStackTrace();
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
+                e.printStackTrace();
             } finally {
                 if (acquired) {
                     loadLock.release(LOAD_LOCKS);
@@ -486,7 +498,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     @Override
     public void generateNoise(@NotNull WorldInfo world, @NotNull Random random, int x, int z, @NotNull ChunkGenerator.ChunkData d) {
         if (closing) {
-            return;
+            throw new IllegalStateException("Iris chunk generation was rejected while the generator is closing.");
         }
         throwIfInitializationFailed();
 
@@ -501,8 +513,11 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 ChunkDataHunkHolder blocks = new ChunkDataHunkHolder(d);
                 Hunk<PlatformBiome> biomes = Hunk.viewBiomes(tc);
                 boolean useMulticore = studio && !J.isFolia();
-                engine.generate(x << 4, z << 4, blocks, biomes, useMulticore);
-                blocks.apply();
+                try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_terrain_stage");
+                     IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                    engine.generate(x << 4, z << 4, blocks, biomes, useMulticore);
+                    blocks.apply();
+                }
             }
 
             IrisLogging.debug("Generated " + x + " " + z);
@@ -510,7 +525,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             throw e;
         } catch (GenerationSessionException e) {
             if (closing || isExpectedTeardown(engine, e)) {
-                return;
+                throw new IllegalStateException("Iris chunk generation was rejected during an engine transition.", e);
             }
 
             IrisLogging.error("======================================");
@@ -518,22 +533,14 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             reportErrorChunk(x, z, e);
             IrisLogging.error("======================================");
 
-            for (int i = 0; i < 16; i++) {
-                for (int j = 0; j < 16; j++) {
-                    d.setBlock(i, 0, j, Material.RED_GLAZED_TERRACOTTA.createBlockData());
-                }
-            }
+            throw new IllegalStateException("Iris chunk generation could not acquire its engine runtime.", e);
         } catch (Throwable e) {
             IrisLogging.error("======================================");
             e.printStackTrace();
             reportErrorChunk(x, z, e);
             IrisLogging.error("======================================");
 
-            for (int i = 0; i < 16; i++) {
-                for (int j = 0; j < 16; j++) {
-                    d.setBlock(i, 0, j, Material.RED_GLAZED_TERRACOTTA.createBlockData());
-                }
-            }
+            throw new IllegalStateException("Iris failed to generate chunk " + x + "," + z + ".", e);
         }
     }
 
@@ -595,7 +602,13 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             default -> false;
         };
 
-        return currentEngine.getMinHeight() + currentEngine.getHeight(x, z, ignoreFluid) + 1;
+        try (GenerationSessionLease lease = currentEngine.acquireGenerationLease("bukkit_base_height");
+             IrisContext.Scope ignored = IrisContext.open(currentEngine, lease.sessionId(), null)) {
+            return currentEngine.getMinHeight() + currentEngine.getHeight(x, z, ignoreFluid) + 1;
+        } catch (GenerationSessionException e) {
+            throw new IllegalStateException("Iris base height query was rejected for world '"
+                    + worldInfo.getName() + "'.", e);
+        }
     }
 
     private void computeStudioGenerator() {

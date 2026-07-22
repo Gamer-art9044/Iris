@@ -33,6 +33,9 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.function.Predicate;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 final class ModdedDeveloperCommands {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
@@ -53,7 +56,7 @@ final class ModdedDeveloperCommands {
 
     private static int sentry(CommandSourceStack source) {
         IrisPlatforms.get().reportError(new Exception("This is an Iris Sentry test exception"));
-        ModdedCommandFeedback.ok(source, "Dispatched a test exception to the Iris error reporter (Sentry if enabled).");
+        ModdedCommandFeedback.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DEVELOPER_COMMANDS_DISPATCHED_TEST_EXCEPTION_IRIS_ERROR_REPORTER_SENTRY_IF_ENABLED));
         return 1;
     }
 
@@ -63,13 +66,13 @@ final class ModdedDeveloperCommands {
             for (NetworkInterface networkInterface : Collections.list(interfaces)) {
                 ModdedCommandFeedback.ok(source, networkInterface.getDisplayName());
                 for (InetAddress address : Collections.list(networkInterface.getInetAddresses())) {
-                    ModdedCommandFeedback.ok(source, "  " + address.getHostAddress());
+                    ModdedCommandFeedback.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DEVELOPER_COMMANDS_MESSAGE, MessageArgument.untrusted("value", address.getHostAddress())));
                 }
             }
             return 1;
         } catch (SocketException error) {
             LOGGER.error("Iris developer network dump failed", error);
-            ModdedCommandFeedback.fail(source, "Network scan failed: " + error.getClass().getSimpleName());
+            ModdedCommandFeedback.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DEVELOPER_COMMANDS_NETWORK_SCAN_FAILED, MessageArgument.untrusted("value", error.getClass().getSimpleName())));
             return 0;
         }
     }

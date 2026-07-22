@@ -19,6 +19,8 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -85,7 +87,7 @@ public final class ModdedForcedDatapack {
     private static Pack requireReadablePack(Path directory) {
         PackLocationInfo location = new PackLocationInfo(
                 PACK_ID,
-                Component.literal("Iris World Generation"),
+                Component.literal(IrisLanguage.plain(RuntimeUiMessages.FORCED_DATAPACK_NAME)),
                 PackSource.BUILT_IN,
                 Optional.empty());
         PackSelectionConfig selection = new PackSelectionConfig(true, Pack.Position.TOP, true);

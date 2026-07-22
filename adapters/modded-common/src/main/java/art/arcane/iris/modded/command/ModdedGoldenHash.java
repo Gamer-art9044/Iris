@@ -36,6 +36,10 @@ import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.core.localization.RuntimeProgressMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedGoldenHash {
     public enum Mode {
         AUTO,
@@ -80,13 +84,18 @@ public final class ModdedGoldenHash {
 
     public static void start(CommandSourceStack source, ServerLevel level, Engine engine, int radius, int threads, Mode mode) {
         if (!ACTIVE.compareAndSet(false, true)) {
-            IrisModdedCommands.fail(source, "A goldenhash scan is already running.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_GOLDEN_HASH_GOLDENHASH_SCAN_IS_ALREADY_RUNNING));
             return;
         }
         ModdedGoldenHash scan = new ModdedGoldenHash(source, level, engine, radius, threads, mode);
         int boundedRadius = Math.max(0, radius);
         int chunks = (boundedRadius * 2 + 1) * (boundedRadius * 2 + 1);
-        scan.ok("GoldenHash started: " + chunks + " chunk(s) around 0,0 in buffers (world untouched), threads=" + Math.max(1, threads) + " mode=" + mode);
+        scan.ok(IrisLanguage.plain(
+                RuntimeProgressMessages.GOLDEN_STARTED,
+                MessageArgument.trusted("chunks", chunks),
+                MessageArgument.trusted("threads", Math.max(1, threads)),
+                MessageArgument.untrusted("mode", mode)
+        ));
         LOGGER.info("goldenhash start: dim={} seed={} radius={} threads={} mode={} file={}",
                 engine.getDimension().getLoadKey(), engine.getSeedManager().getSeed(), boundedRadius, Math.max(1, threads), mode, scan.hashEngine.getGoldenFile().getName());
         Thread thread = new Thread(() -> {
@@ -161,14 +170,25 @@ public final class ModdedGoldenHash {
                 int doneCount = hashed.incrementAndGet();
                 int stride = total <= 64 ? 1 : 32;
                 if (doneCount % stride == 0 || doneCount == total) {
-                    ModdedGoldenHash.this.ok("[" + doneCount + "/" + total + "] chunk " + chunkX + "," + chunkZ + " hashed");
+                    ModdedGoldenHash.this.ok(IrisLanguage.plain(
+                            RuntimeProgressMessages.GOLDEN_CHUNK_HASHED,
+                            MessageArgument.trusted("done", doneCount),
+                            MessageArgument.trusted("total", total),
+                            MessageArgument.trusted("x", chunkX),
+                            MessageArgument.trusted("z", chunkZ)
+                    ));
                 }
             }
 
             @Override
             public void chunkFailed(int chunkX, int chunkZ, Throwable error) {
                 LOGGER.error("goldenhash chunk {},{} failed", chunkX, chunkZ, error);
-                ModdedGoldenHash.this.fail("Chunk " + chunkX + "," + chunkZ + " FAILED: " + error.getClass().getSimpleName());
+                ModdedGoldenHash.this.fail(IrisLanguage.plain(
+                        RuntimeProgressMessages.GOLDEN_CHUNK_FAILED,
+                        MessageArgument.trusted("x", chunkX),
+                        MessageArgument.trusted("z", chunkZ),
+                        MessageArgument.untrusted("type", error.getClass().getSimpleName())
+                ));
             }
         };
     }

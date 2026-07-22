@@ -24,6 +24,12 @@ import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
+import art.arcane.iris.core.localization.IrisMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.ModdedHelpMessages;
+import art.arcane.volmlib.util.director.help.DirectorHelpMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.volmlib.util.localization.TextKey;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -50,124 +56,124 @@ final class ModdedCommandHelp {
 
     static {
         SECTIONS.put("", List.of(
-                Entry.command("version", "", "Print version information"),
-                Entry.command("info", "[dimension]", "List loaded Iris dimensions and pack details"),
-                Entry.command("what", "[block|hand|markers]", "Inspect the Iris biome, region, cave biome, surface and chunk at your position, the block you look at, your held item, or nearby markers"),
-                Entry.group("find", "Find and teleport to Iris biomes, regions, objects, Iris structures, native structures and points of interest", "goto"),
-                Entry.command("tp", "<dimension> [player]", "Teleport yourself or a named player into a loaded Iris dimension"),
-                Entry.command("evacuate", "[dimension]", "Teleport every player out of an Iris dimension to the primary world spawn"),
-                Entry.command("seed", "", "Print world and engine seed information"),
-                Entry.command("debug", "", "Toggle Iris debug logging and save settings.json"),
-                Entry.command("reload", "", "Reload settings.json (also hotloaded automatically every 3s)"),
-                Entry.command("download", "<pack> [branch]", "Download a pack project", "dl"),
-                Entry.command("metrics", "", "Print generation metrics for your current Iris dimension", "measure"),
-                Entry.command("regen", "[radius]", "Delete and regenerate nearby chunks in place", "rg"),
-                Entry.group("pregen", "Pregenerate an Iris dimension", "pregenerate"),
-                Entry.command("wand", "", "Get an Iris object wand"),
-                Entry.group("object", "Object wand, save, paste, analyze and undo tools", "o"),
-                Entry.group("edit", "Open pack biome, region and dimension json files in your desktop editor"),
-                Entry.command("create", "<name> <pack|pack:dimensionKey> [seed]", "Create and inject a persistent Iris dimension; quote pack:dimensionKey to pick a specific pack dimension"),
-                Entry.group("studio", "Pack project creation, packaging and reports", "std", "s"),
-                Entry.group("pack", "Pack validation and maintenance", "pk"),
-                Entry.group("world", "Runtime Iris dimension creation, removal and status", "w"),
-                Entry.group("datapack", "World datapack install and status helpers", "datapacks", "dp"),
-                Entry.group("structure", "Iris structure index, info and placement tools", "struct", "str"),
-                Entry.command("goldenhash", "[radius] [threads] [capture|verify]", "Generate deterministic block hashes for parity testing", "gold"),
-                Entry.group("developer", "Developer diagnostics: Sentry test, network interfaces, region-file scan", "dev")
+                Entry.command("version", "", ModdedHelpMessages.COMMAND_VERSION_PRINT_VERSION_INFORMATION),
+                Entry.command("info", "[dimension]", ModdedHelpMessages.COMMAND_INFO_LIST_LOADED_IRIS_DIMENSIONS_AND_PACK_DETAILS),
+                Entry.command("what", "[block|hand|markers]", ModdedHelpMessages.COMMAND_WHAT_INSPECT_THE_IRIS_BIOME_REGION_CAVE_BIOME_SURFACE_AND_CHUNK_AT_YOUR),
+                Entry.group("find", ModdedHelpMessages.GROUP_FIND_FIND_AND_TELEPORT_TO_IRIS_BIOMES_REGIONS_OBJECTS_IRIS_STRUCTURES_NATIVE_STRUCTURES, "goto"),
+                Entry.command("tp", "<dimension> [player]", ModdedHelpMessages.COMMAND_TP_TELEPORT_YOURSELF_OR_A_NAMED_PLAYER_INTO_A_LOADED_IRIS_DIMENSION),
+                Entry.command("evacuate", "[dimension]", ModdedHelpMessages.COMMAND_EVACUATE_TELEPORT_EVERY_PLAYER_OUT_OF_AN_IRIS_DIMENSION_TO_THE_PRIMARY_WORLD),
+                Entry.command("seed", "", ModdedHelpMessages.COMMAND_SEED_PRINT_WORLD_AND_ENGINE_SEED_INFORMATION),
+                Entry.command("debug", "", ModdedHelpMessages.COMMAND_DEBUG_TOGGLE_IRIS_DEBUG_LOGGING_AND_SAVE_SETTINGS_JSON),
+                Entry.command("reload", "", ModdedHelpMessages.COMMAND_RELOAD_RELOAD_SETTINGS_JSON_ALSO_HOTLOADED_AUTOMATICALLY_EVERY_3S),
+                Entry.command("download", "<pack> [branch]", ModdedHelpMessages.COMMAND_DOWNLOAD_DOWNLOAD_A_PACK_PROJECT, "dl"),
+                Entry.command("metrics", "", ModdedHelpMessages.COMMAND_METRICS_PRINT_GENERATION_METRICS_FOR_YOUR_CURRENT_IRIS_DIMENSION, "measure"),
+                Entry.command("regen", "[radius]", ModdedHelpMessages.COMMAND_REGEN_DELETE_AND_REGENERATE_NEARBY_CHUNKS_IN_PLACE, "rg"),
+                Entry.group("pregen", ModdedHelpMessages.GROUP_PREGEN_PREGENERATE_AN_IRIS_DIMENSION, "pregenerate"),
+                Entry.command("wand", "", ModdedHelpMessages.COMMAND_WAND_GET_AN_IRIS_OBJECT_WAND),
+                Entry.group("object", ModdedHelpMessages.GROUP_OBJECT_OBJECT_WAND_SAVE_PASTE_ANALYZE_AND_UNDO_TOOLS, "o"),
+                Entry.group("edit", ModdedHelpMessages.GROUP_EDIT_OPEN_PACK_BIOME_REGION_AND_DIMENSION_JSON_FILES_IN_YOUR_DESKTOP_EDITOR),
+                Entry.command("create", "<name> <pack|pack:dimensionKey> [seed]", ModdedHelpMessages.COMMAND_CREATE_CREATE_AND_INJECT_A_PERSISTENT_IRIS_DIMENSION_QUOTE_PACK_DIMENSIONKEY_TO_PICK),
+                Entry.group("studio", ModdedHelpMessages.GROUP_STUDIO_PACK_PROJECT_CREATION_PACKAGING_AND_REPORTS, "std", "s"),
+                Entry.group("pack", ModdedHelpMessages.GROUP_PACK_PACK_VALIDATION_AND_MAINTENANCE, "pk"),
+                Entry.group("world", ModdedHelpMessages.GROUP_WORLD_RUNTIME_IRIS_DIMENSION_CREATION_REMOVAL_AND_STATUS, "w"),
+                Entry.group("datapack", ModdedHelpMessages.GROUP_DATAPACK_WORLD_DATAPACK_INSTALL_AND_STATUS_HELPERS, "datapacks", "dp"),
+                Entry.group("structure", ModdedHelpMessages.GROUP_STRUCTURE_IRIS_STRUCTURE_INDEX_INFO_AND_PLACEMENT_TOOLS, "struct", "str"),
+                Entry.command("goldenhash", "[radius] [threads] [capture|verify]", ModdedHelpMessages.COMMAND_GOLDENHASH_GENERATE_DETERMINISTIC_BLOCK_HASHES_FOR_PARITY_TESTING, "gold"),
+                Entry.group("developer", ModdedHelpMessages.GROUP_DEVELOPER_DEVELOPER_DIAGNOSTICS_SENTRY_TEST_NETWORK_INTERFACES_REGION_FILE_SCAN, "dev")
         ));
         SECTIONS.put("find", List.of(
-                Entry.command("biome", "<key>", "Find an Iris biome"),
-                Entry.command("region", "<key>", "Find an Iris region"),
-                Entry.command("object", "<key>", "Find an object placement"),
-                Entry.command("structure", "<key>", "Find an Iris-placed or native/datapack structure"),
-                Entry.command("poi", "<type>", "Find a supported point of interest")
+                Entry.command("biome", "<key>", ModdedHelpMessages.COMMAND_BIOME_FIND_AN_IRIS_BIOME),
+                Entry.command("region", "<key>", ModdedHelpMessages.COMMAND_REGION_FIND_AN_IRIS_REGION),
+                Entry.command("object", "<key>", ModdedHelpMessages.COMMAND_OBJECT_FIND_AN_OBJECT_PLACEMENT),
+                Entry.command("structure", "<key>", ModdedHelpMessages.COMMAND_STRUCTURE_FIND_AN_IRIS_PLACED_OR_NATIVE_DATAPACK_STRUCTURE),
+                Entry.command("poi", "<type>", ModdedHelpMessages.COMMAND_POI_FIND_A_SUPPORTED_POINT_OF_INTEREST)
         ));
         SECTIONS.put("goto", SECTIONS.get("find"));
         SECTIONS.put("edit", List.of(
-                Entry.command("biome", "[key]", "Open a biome json in your desktop editor; no key opens the biome at your position"),
-                Entry.command("region", "[key]", "Open a region json in your desktop editor; no key opens the region at your position"),
-                Entry.command("dimension", "", "Open the current pack's dimension json in your desktop editor")
+                Entry.command("biome", "[key]", ModdedHelpMessages.COMMAND_BIOME_OPEN_A_BIOME_JSON_IN_YOUR_DESKTOP_EDITOR_NO_KEY_OPENS_THE),
+                Entry.command("region", "[key]", ModdedHelpMessages.COMMAND_REGION_OPEN_A_REGION_JSON_IN_YOUR_DESKTOP_EDITOR_NO_KEY_OPENS_THE),
+                Entry.command("dimension", "", ModdedHelpMessages.COMMAND_DIMENSION_OPEN_THE_CURRENT_PACK_S_DIMENSION_JSON_IN_YOUR_DESKTOP_EDITOR)
         ));
         SECTIONS.put("pregen", List.of(
-                Entry.command("start", "<radius> [dimension] [at] [x] [z] [gui] [sync] [nocache]", "Start pregeneration; radius in blocks, resumable checkpoint cache on by default, center via 'at <x> <z>', flags compose in any order"),
-                Entry.command("stop", "", "Stop the active pregeneration task", "x"),
-                Entry.command("pause", "", "Pause or resume pregeneration", "resume"),
-                Entry.command("status", "", "Show pregeneration status")
+                Entry.command("start", "<radius> [dimension] [at] [x] [z] [gui] [sync] [nocache]", ModdedHelpMessages.COMMAND_START_START_PREGENERATION_RADIUS_IN_BLOCKS_RESUMABLE_CHECKPOINT_CACHE_ON_BY_DEFAULT_CENTER),
+                Entry.command("stop", "", ModdedHelpMessages.COMMAND_STOP_STOP_THE_ACTIVE_PREGENERATION_TASK, "x"),
+                Entry.command("pause", "", ModdedHelpMessages.COMMAND_PAUSE_PAUSE_OR_RESUME_PREGENERATION, "resume"),
+                Entry.command("status", "", ModdedHelpMessages.COMMAND_STATUS_SHOW_PREGENERATION_STATUS)
         ));
         SECTIONS.put("pregenerate", SECTIONS.get("pregen"));
         SECTIONS.put("object", List.of(
-                Entry.command("wand", "", "Get an Iris object wand"),
-                Entry.command("dust", "", "Get dust that reveals object placements", "d"),
-                Entry.command("save", "[overwrite] <name>", "Save the selected wand volume as an object"),
-                Entry.command("paste", "[at] [x] [y] [z] [rotate] [degrees] <key>", "Paste an object at your position or a given position, optionally rotated"),
-                Entry.command("expand", "[amount]", "Expand the wand selection in your looking direction"),
-                Entry.command("contract", "[amount]", "Contract the wand selection in your looking direction", "-"),
-                Entry.command("shift", "[amount]", "Shift the wand selection in your looking direction"),
-                Entry.command("position1", "[look]", "Set selection point 1", "p1"),
-                Entry.command("position2", "[look]", "Set selection point 2", "p2"),
-                Entry.command("x+y", "", "Autoselect up and out", "xpy"),
-                Entry.command("x&y", "", "Autoselect up, down and out", "xay"),
-                Entry.command("analyze", "<key>", "Show object composition"),
-                Entry.command("shrink", "<key>", "Shrink an object to its minimum size"),
-                Entry.command("plausibilize", "<key|prefix/> [dryrun=true] [reach=N]", "Grow branches so tree leaves survive vanilla decay"),
-                Entry.command("undo", "[amount]", "Undo pasted objects", "u")
+                Entry.command("wand", "", ModdedHelpMessages.COMMAND_WAND_GET_AN_IRIS_OBJECT_WAND_2),
+                Entry.command("dust", "", ModdedHelpMessages.COMMAND_DUST_GET_DUST_THAT_REVEALS_OBJECT_PLACEMENTS, "d"),
+                Entry.command("save", "[overwrite] <name>", ModdedHelpMessages.COMMAND_SAVE_SAVE_THE_SELECTED_WAND_VOLUME_AS_AN_OBJECT),
+                Entry.command("paste", "[at] [x] [y] [z] [rotate] [degrees] <key>", ModdedHelpMessages.COMMAND_PASTE_PASTE_AN_OBJECT_AT_YOUR_POSITION_OR_A_GIVEN_POSITION_OPTIONALLY_ROTATED),
+                Entry.command("expand", "[amount]", ModdedHelpMessages.COMMAND_EXPAND_EXPAND_THE_WAND_SELECTION_IN_YOUR_LOOKING_DIRECTION),
+                Entry.command("contract", "[amount]", ModdedHelpMessages.COMMAND_CONTRACT_CONTRACT_THE_WAND_SELECTION_IN_YOUR_LOOKING_DIRECTION, "-"),
+                Entry.command("shift", "[amount]", ModdedHelpMessages.COMMAND_SHIFT_SHIFT_THE_WAND_SELECTION_IN_YOUR_LOOKING_DIRECTION),
+                Entry.command("position1", "[look]", ModdedHelpMessages.COMMAND_POSITION1_SET_SELECTION_POINT_1, "p1"),
+                Entry.command("position2", "[look]", ModdedHelpMessages.COMMAND_POSITION2_SET_SELECTION_POINT_2, "p2"),
+                Entry.command("x+y", "", ModdedHelpMessages.COMMAND_X_Y_AUTOSELECT_UP_AND_OUT, "xpy"),
+                Entry.command("x&y", "", ModdedHelpMessages.COMMAND_X_Y_AUTOSELECT_UP_DOWN_AND_OUT, "xay"),
+                Entry.command("analyze", "<key>", ModdedHelpMessages.COMMAND_ANALYZE_SHOW_OBJECT_COMPOSITION),
+                Entry.command("shrink", "<key>", ModdedHelpMessages.COMMAND_SHRINK_SHRINK_AN_OBJECT_TO_ITS_MINIMUM_SIZE),
+                Entry.command("plausibilize", "<key|prefix/> [dryrun=true] [reach=N]", ModdedHelpMessages.COMMAND_PLAUSIBILIZE_GROW_BRANCHES_SO_TREE_LEAVES_SURVIVE_VANILLA_DECAY),
+                Entry.command("undo", "[amount]", ModdedHelpMessages.COMMAND_UNDO_UNDO_PASTED_OBJECTS, "u")
         ));
         SECTIONS.put("o", SECTIONS.get("object"));
         SECTIONS.put("studio", List.of(
-                Entry.command("create", "<name> [template]", "Create a new pack project", "+"),
-                Entry.command("package", "[pack]", "Package a dimension into a compressed format"),
-                Entry.command("version", "[pack]", "Print a pack version"),
-                Entry.command("regions", "[radius]", "Calculate nearby region distribution"),
-                Entry.command("open", "<pack> [seed]", "Open a temporary studio dimension for a pack", "o"),
-                Entry.command("close", "", "Close the open studio dimension and discard its world", "x"),
-                Entry.command("tpstudio", "", "Teleport into the open studio dimension", "stp"),
-                Entry.command("status", "", "Show the open studio dimension and its pack"),
-                Entry.command("noise", "[generator] [seed]", "Open the Noise Explorer GUI on the server display", "nmap"),
-                Entry.command("map", "", "Open the Vision map GUI on the server display", "render"),
-                Entry.command("vscode", "[pack]", "Regenerate the .code-workspace for a pack and open it in your desktop editor", "vsc"),
-                Entry.command("update", "[pack]", "Regenerate the .code-workspace for a pack"),
-                Entry.command("importvanilla", "", "Explain vanilla import workflow", "importv", "iv")
+                Entry.command("create", "<name> [template]", ModdedHelpMessages.COMMAND_CREATE_CREATE_A_NEW_PACK_PROJECT, "+"),
+                Entry.command("package", "[pack]", ModdedHelpMessages.COMMAND_PACKAGE_PACKAGE_A_DIMENSION_INTO_A_COMPRESSED_FORMAT),
+                Entry.command("version", "[pack]", ModdedHelpMessages.COMMAND_VERSION_PRINT_A_PACK_VERSION),
+                Entry.command("regions", "[radius]", ModdedHelpMessages.COMMAND_REGIONS_CALCULATE_NEARBY_REGION_DISTRIBUTION),
+                Entry.command("open", "<pack> [seed]", ModdedHelpMessages.COMMAND_OPEN_OPEN_A_TEMPORARY_STUDIO_DIMENSION_FOR_A_PACK, "o"),
+                Entry.command("close", "", ModdedHelpMessages.COMMAND_CLOSE_CLOSE_THE_OPEN_STUDIO_DIMENSION_AND_DISCARD_ITS_WORLD, "x"),
+                Entry.command("tpstudio", "", ModdedHelpMessages.COMMAND_TPSTUDIO_TELEPORT_INTO_THE_OPEN_STUDIO_DIMENSION, "stp"),
+                Entry.command("status", "", ModdedHelpMessages.COMMAND_STATUS_SHOW_THE_OPEN_STUDIO_DIMENSION_AND_ITS_PACK),
+                Entry.command("noise", "[generator] [seed]", ModdedHelpMessages.COMMAND_NOISE_OPEN_THE_NOISE_EXPLORER_GUI_ON_THE_SERVER_DISPLAY, "nmap"),
+                Entry.command("map", "", ModdedHelpMessages.COMMAND_MAP_OPEN_THE_VISION_MAP_GUI_ON_THE_SERVER_DISPLAY, "render"),
+                Entry.command("vscode", "[pack]", ModdedHelpMessages.COMMAND_VSCODE_REGENERATE_THE_CODE_WORKSPACE_FOR_A_PACK_AND_OPEN_IT_IN_YOUR, "vsc"),
+                Entry.command("update", "[pack]", ModdedHelpMessages.COMMAND_UPDATE_REGENERATE_THE_CODE_WORKSPACE_FOR_A_PACK),
+                Entry.command("importvanilla", "", ModdedHelpMessages.COMMAND_IMPORTVANILLA_EXPLAIN_VANILLA_IMPORT_WORKFLOW, "importv", "iv")
         ));
         SECTIONS.put("std", SECTIONS.get("studio"));
         SECTIONS.put("s", SECTIONS.get("studio"));
         SECTIONS.put("pack", List.of(
-                Entry.command("validate", "[pack]", "Validate a pack or every pack", "v"),
-                Entry.command("cleanup", "<pack> [apply]", "Preview or quarantine unused-resource candidates", "c"),
-                Entry.command("restore", "<pack> [apply]", "Preview or restore the latest quarantine", "r"),
-                Entry.command("status", "[pack]", "Show cached validation status", "s")
+                Entry.command("validate", "[pack]", ModdedHelpMessages.COMMAND_VALIDATE_VALIDATE_A_PACK_OR_EVERY_PACK, "v"),
+                Entry.command("cleanup", "<pack> [apply]", ModdedHelpMessages.COMMAND_CLEANUP_PREVIEW_OR_QUARANTINE_UNUSED_RESOURCE_CANDIDATES, "c"),
+                Entry.command("restore", "<pack> [apply]", ModdedHelpMessages.COMMAND_RESTORE_PREVIEW_OR_RESTORE_THE_LATEST_QUARANTINE, "r"),
+                Entry.command("status", "[pack]", ModdedHelpMessages.COMMAND_STATUS_SHOW_CACHED_VALIDATION_STATUS, "s")
         ));
         SECTIONS.put("pk", SECTIONS.get("pack"));
         SECTIONS.put("world", List.of(
-                Entry.command("enable", "<dimension> <pack|pack:dimensionKey> [seed|random]", "Create and inject a persistent Iris dimension at runtime; downloads the pack if missing, quote pack:dimensionKey to pick a specific pack dimension", "create"),
-                Entry.command("replace-overworld", "<pack|pack:dimensionKey> [seed|random]", "Inject an Iris primary world and route players there instead of the vanilla overworld"),
-                Entry.command("disable", "<dimension>", "Evacuate and unload an Iris dimension; world data on disk is kept for re-enabling"),
-                Entry.command("delete", "<dimension>", "Disable an Iris dimension and wipe its chunk and mantle data from disk", "remove", "rm"),
-                Entry.command("list", "", "List loaded Iris dimensions", "ls"),
-                Entry.command("status", "", "Show loaded Iris dimensions and the configured primary world")
+                Entry.command("enable", "<dimension> <pack|pack:dimensionKey> [seed|random]", ModdedHelpMessages.COMMAND_ENABLE_CREATE_AND_INJECT_A_PERSISTENT_IRIS_DIMENSION_AT_RUNTIME_DOWNLOADS_THE_PACK, "create"),
+                Entry.command("replace-overworld", "<pack|pack:dimensionKey> [seed|random]", ModdedHelpMessages.COMMAND_REPLACE_OVERWORLD_INJECT_AN_IRIS_PRIMARY_WORLD_AND_ROUTE_PLAYERS_THERE_INSTEAD_OF_THE),
+                Entry.command("disable", "<dimension>", ModdedHelpMessages.COMMAND_DISABLE_EVACUATE_AND_UNLOAD_AN_IRIS_DIMENSION_WORLD_DATA_ON_DISK_IS_KEPT),
+                Entry.command("delete", "<dimension>", ModdedHelpMessages.COMMAND_DELETE_DISABLE_AN_IRIS_DIMENSION_AND_WIPE_ITS_CHUNK_AND_MANTLE_DATA_FROM, "remove", "rm"),
+                Entry.command("list", "", ModdedHelpMessages.COMMAND_LIST_LIST_LOADED_IRIS_DIMENSIONS, "ls"),
+                Entry.command("status", "", ModdedHelpMessages.COMMAND_STATUS_SHOW_LOADED_IRIS_DIMENSIONS_AND_THE_CONFIGURED_PRIMARY_WORLD)
         ));
         SECTIONS.put("w", SECTIONS.get("world"));
         SECTIONS.put("datapack", List.of(
-                Entry.command("status", "", "Check loaded Iris dimension type overrides"),
-                Entry.command("install", "", "Install dimension type overrides for loaded Iris dimensions"),
-                Entry.command("list", "", "List configured and installed datapacks", "ls"),
-                Entry.command("ingest", "", "Explain Bukkit datapack ingest workflow", "pull"),
-                Entry.command("remove", "<id>", "Explain datapack removal workflow", "rm")
+                Entry.command("status", "", ModdedHelpMessages.COMMAND_STATUS_CHECK_LOADED_IRIS_DIMENSION_TYPE_OVERRIDES),
+                Entry.command("install", "", ModdedHelpMessages.COMMAND_INSTALL_INSTALL_DIMENSION_TYPE_OVERRIDES_FOR_LOADED_IRIS_DIMENSIONS),
+                Entry.command("list", "", ModdedHelpMessages.COMMAND_LIST_LIST_CONFIGURED_AND_INSTALLED_DATAPACKS, "ls"),
+                Entry.command("ingest", "", ModdedHelpMessages.COMMAND_INGEST_EXPLAIN_BUKKIT_DATAPACK_INGEST_WORKFLOW, "pull"),
+                Entry.command("remove", "<id>", ModdedHelpMessages.COMMAND_REMOVE_EXPLAIN_DATAPACK_REMOVAL_WORKFLOW, "rm")
         ));
         SECTIONS.put("datapacks", SECTIONS.get("datapack"));
         SECTIONS.put("dp", SECTIONS.get("datapack"));
         SECTIONS.put("structure", List.of(
-                Entry.command("list", "", "Regenerate structure-index.json", "ls"),
-                Entry.command("info", "<key>", "Resolve an Iris structure graph and report bounds"),
-                Entry.command("place", "<key>", "Assemble and place an Iris structure at your location", "p"),
-                Entry.command("import", "", "Explain Bukkit structure import workflow", "import-all", "reimport", "imp", "all"),
-                Entry.command("capture", "", "Explain Bukkit structure capture workflow", "cap"),
-                Entry.command("verify", "[key]", "Report native and Iris structure reachability in the current dimension", "locateall")
+                Entry.command("list", "", ModdedHelpMessages.COMMAND_LIST_REGENERATE_STRUCTURE_INDEX_JSON, "ls"),
+                Entry.command("info", "<key>", ModdedHelpMessages.COMMAND_INFO_RESOLVE_AN_IRIS_STRUCTURE_GRAPH_AND_REPORT_BOUNDS),
+                Entry.command("place", "<key>", ModdedHelpMessages.COMMAND_PLACE_ASSEMBLE_AND_PLACE_AN_IRIS_STRUCTURE_AT_YOUR_LOCATION, "p"),
+                Entry.command("import", "", ModdedHelpMessages.COMMAND_IMPORT_EXPLAIN_BUKKIT_STRUCTURE_IMPORT_WORKFLOW, "import-all", "reimport", "imp", "all"),
+                Entry.command("capture", "", ModdedHelpMessages.COMMAND_CAPTURE_EXPLAIN_BUKKIT_STRUCTURE_CAPTURE_WORKFLOW, "cap"),
+                Entry.command("verify", "[key]", ModdedHelpMessages.COMMAND_VERIFY_REPORT_NATIVE_AND_IRIS_STRUCTURE_REACHABILITY_IN_THE_CURRENT_DIMENSION, "locateall")
         ));
         SECTIONS.put("struct", SECTIONS.get("structure"));
         SECTIONS.put("str", SECTIONS.get("structure"));
         SECTIONS.put("developer", List.of(
-                Entry.command("sentry", "", "Send a test exception to the Iris error reporter"),
-                Entry.command("network", "", "List network interfaces and their addresses", "ip")
+                Entry.command("sentry", "", ModdedHelpMessages.COMMAND_SENTRY_SEND_A_TEST_EXCEPTION_TO_THE_IRIS_ERROR_REPORTER),
+                Entry.command("network", "", ModdedHelpMessages.COMMAND_NETWORK_LIST_NETWORK_INTERFACES_AND_THEIR_ADDRESSES, "ip")
         ));
         SECTIONS.put("dev", SECTIONS.get("developer"));
     }
@@ -179,7 +185,10 @@ final class ModdedCommandHelp {
         String normalized = normalize(path);
         List<Entry> entries = SECTIONS.get(normalized);
         if (entries == null) {
-            ModdedCommandFeedback.fail(source, "Unknown Iris help section: " + normalized);
+            ModdedCommandFeedback.fail(source, IrisLanguage.plain(
+                    IrisMessages.MODDED_HELP_UNKNOWN_SECTION,
+                    MessageArgument.untrusted("section", normalized)
+            ));
             return 0;
         }
 
@@ -208,9 +217,11 @@ final class ModdedCommandHelp {
         String parent = parentPath(path);
         String command = parent.isEmpty() ? "/iris" : "/iris help " + parent;
         MutableComponent hover = Component.empty()
-                .append(text("Click to go back to ", DARK_GREEN))
-                .append(text(parent.isEmpty() ? "Iris" : parent, PARAMETER_ALT));
-        return text("〈 Back", BACK).withStyle((style) -> style
+                .append(text(IrisLanguage.plain(
+                        IrisMessages.MODDED_HELP_BACK_HOVER,
+                        MessageArgument.untrusted("parent", parent.isEmpty() ? "Iris" : parent)
+                ), DARK_GREEN));
+        return text("〈 " + IrisLanguage.plain(DirectorHelpMessages.BACK), BACK).withStyle((style) -> style
                 .withClickEvent(new ClickEvent.RunCommand(command))
                 .withHoverEvent(new HoverEvent.ShowText(hover)));
     }
@@ -239,7 +250,7 @@ final class ModdedCommandHelp {
 
     private static MutableComponent nodes(Entry entry) {
         if (entry.group()) {
-            return text(" - Category of Commands", CATEGORY);
+            return text(" - " + IrisLanguage.plain(DirectorHelpMessages.COMMAND_GROUP), CATEGORY);
         }
 
         List<String> tokens = usageTokens(entry.usage());
@@ -273,18 +284,18 @@ final class ModdedCommandHelp {
         hover.append(text(name, PARAMETER));
         hover.append(Component.literal("\n"));
         hover.append(text("✎ ", DESCRIPTION_ICON));
-        hover.append(text("Command parameter", DESCRIPTION));
+        hover.append(text(IrisLanguage.plain(IrisMessages.MODDED_HELP_COMMAND_PARAMETER), DESCRIPTION));
         hover.append(Component.literal("\n"));
         if (required) {
             hover.append(text("⚠ ", REQUIRED));
-            hover.append(text("This parameter is required.", REQUIRED_TEXT));
+            hover.append(text(IrisLanguage.plain(IrisMessages.MODDED_HELP_PARAMETER_REQUIRED), REQUIRED_TEXT));
         } else {
             hover.append(text("✔ ", DESCRIPTION_ICON));
-            hover.append(text("This parameter is optional.", USAGE));
+            hover.append(text(IrisLanguage.plain(IrisMessages.MODDED_HELP_PARAMETER_OPTIONAL), USAGE));
         }
         hover.append(Component.literal("\n"));
         hover.append(text("✢ ", DARK_GREEN));
-        hover.append(text("This parameter is read as text by Brigadier.", HOVER_TYPE));
+        hover.append(text(IrisLanguage.plain(IrisMessages.MODDED_HELP_BRIGADIER_TEXT), HOVER_TYPE));
 
         return title.withStyle((style) -> style.withHoverEvent(new HoverEvent.ShowText(hover)));
     }
@@ -294,15 +305,15 @@ final class ModdedCommandHelp {
         hover.append(text(names(entry), PARAMETER));
         hover.append(Component.literal("\n"));
         hover.append(text("✎ ", DESCRIPTION_ICON));
-        hover.append(text(entry.description(), DESCRIPTION));
+        hover.append(text(IrisLanguage.plain(entry.description()), DESCRIPTION));
         hover.append(Component.literal("\n"));
         hover.append(text("✒ ", USAGE_ICON));
         if (entry.group()) {
-            hover.append(text("This is a command category. Click to run.", USAGE));
+            hover.append(text(IrisLanguage.plain(DirectorHelpMessages.COMMAND_GROUP), USAGE));
         } else if (entry.usage().isBlank()) {
-            hover.append(text("There are no parameters. Click to type command.", USAGE));
+            hover.append(text(IrisLanguage.plain(DirectorHelpMessages.NO_PARAMETERS), USAGE));
         } else {
-            hover.append(text("Hover over all of the parameters to learn more.", USAGE));
+            hover.append(text(IrisLanguage.plain(DirectorHelpMessages.PARAMETERS), USAGE));
             hover.append(Component.literal("\n"));
             hover.append(text("✦ ", EXAMPLE_ICON));
             hover.append(text(suggestion, PARAMETER));
@@ -311,7 +322,7 @@ final class ModdedCommandHelp {
         String parent = path.isEmpty() ? "/iris" : "/iris " + path;
         if (entry.aliases().length > 0) {
             hover.append(Component.literal("\n"));
-            hover.append(text("Aliases: ", DARK_GREEN));
+            hover.append(text(IrisLanguage.plain(DirectorHelpMessages.ALIASES) + ": ", DARK_GREEN));
             List<String> aliases = new ArrayList<>(entry.aliases().length);
             for (String alias : entry.aliases()) {
                 aliases.add(parent + " " + alias);
@@ -324,11 +335,11 @@ final class ModdedCommandHelp {
     private static MutableComponent opNotice() {
         MutableComponent notice = Component.empty();
         notice.append(text("⚠ ", REQUIRED));
-        notice.append(text("Iris commands need operator permission (level 2). ", REQUIRED_TEXT));
-        notice.append(text("Run ", DESCRIPTION));
-        notice.append(text("/op <you>", PARAMETER_ALT));
-        notice.append(text(" from the console (or enable cheats in singleplayer); ", DESCRIPTION));
-        notice.append(text("until then these commands will not run or tab-complete.", USAGE));
+        notice.append(text(IrisLanguage.plain(IrisMessages.MODDED_HELP_OPERATOR_NOTICE) + " ", REQUIRED_TEXT));
+        notice.append(text(IrisLanguage.plain(
+                IrisMessages.MODDED_HELP_OPERATOR_INSTRUCTION,
+                MessageArgument.trusted("command", "/op <you>")
+        ), DESCRIPTION));
         return notice;
     }
 
@@ -404,12 +415,12 @@ final class ModdedCommandHelp {
         return normalized;
     }
 
-    private record Entry(String name, String usage, String description, boolean group, String... aliases) {
-        static Entry command(String name, String usage, String description, String... aliases) {
+    private record Entry(String name, String usage, TextKey description, boolean group, String... aliases) {
+        static Entry command(String name, String usage, TextKey description, String... aliases) {
             return new Entry(name, usage, description, false, aliases);
         }
 
-        static Entry group(String name, String description, String... aliases) {
+        static Entry group(String name, TextKey description, String... aliases) {
             return new Entry(name, "", description, true, aliases);
         }
     }

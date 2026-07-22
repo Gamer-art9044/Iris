@@ -18,8 +18,11 @@
 
 package art.arcane.iris.util.common.scheduling.jobs;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
@@ -73,7 +76,11 @@ public interface Job {
         f.whenComplete((fs, ff) -> {
             J.car(c);
             if (!silentMsg) {
-                sender.sendMessage(C.AQUA + "Completed " + getName() + " in " + Form.duration(p.getMilliseconds(), 1));
+                sender.sendMessage(C.AQUA + IrisLanguage.text(
+                        RuntimeUiMessages.JOB_COMPLETED,
+                        MessageArgument.untrusted("job", getName()),
+                        MessageArgument.trusted("duration", Form.duration(p.getMilliseconds(), 1))
+                ));
             }
             whenComplete.run();
         });

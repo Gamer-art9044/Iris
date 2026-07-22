@@ -19,6 +19,8 @@
 package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.gui.PregeneratorJob;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.core.pregenerator.PregenPerformanceProfile;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
@@ -27,6 +29,7 @@ import art.arcane.iris.core.pregenerator.methods.CachedPregenMethod;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.math.Position2;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
@@ -119,39 +122,64 @@ public final class ModdedPregenJob {
         }
 
         MutableComponent status = Component.empty();
-        status.append(ModdedCommandFeedback.header("Iris Pregen"));
+        status.append(ModdedCommandFeedback.header(IrisLanguage.plain(RuntimeUiMessages.PREGEN_HEADER)));
         status.append(Component.literal("\n"));
-        status.append(ModdedCommandFeedback.text("Dimension ", ModdedCommandFeedback.DARK_GREEN));
-        status.append(ModdedCommandFeedback.text(dimension, ModdedCommandFeedback.PARAMETER_ALT));
-        status.append(ModdedCommandFeedback.text(" · Method ", ModdedCommandFeedback.DARK_GREEN));
-        status.append(ModdedCommandFeedback.text(progress.method(), ModdedCommandFeedback.PARAMETER));
+        status.append(ModdedCommandFeedback.text(IrisLanguage.plain(
+                RuntimeUiMessages.PREGEN_STATUS_CONTEXT,
+                MessageArgument.untrusted("dimension", dimension),
+                MessageArgument.untrusted("method", progress.method())
+        ), ModdedCommandFeedback.DARK_GREEN));
         status.append(Component.literal("\n"));
         status.append(ModdedCommandFeedback.progressBar(progress.percent(), 32));
-        status.append(ModdedCommandFeedback.text(" " + String.format("%.1f", progress.percent()) + "%", ModdedCommandFeedback.USAGE));
+        status.append(ModdedCommandFeedback.text(" " + IrisLanguage.plain(
+                RuntimeUiMessages.PREGEN_STATUS_PROGRESS,
+                MessageArgument.trusted("percent", String.format("%.1f", progress.percent()))
+        ), ModdedCommandFeedback.USAGE));
         status.append(Component.literal("\n"));
-        status.append(ModdedCommandFeedback.text("Chunks ", ModdedCommandFeedback.DARK_GREEN));
-        status.append(ModdedCommandFeedback.text(Form.f(progress.generated()) + "/" + Form.f(progress.totalChunks()), ModdedCommandFeedback.VALUE));
-        status.append(ModdedCommandFeedback.text(" · Speed ", ModdedCommandFeedback.DARK_GREEN));
-        status.append(ModdedCommandFeedback.text(Form.f((int) progress.chunksPerSecond()) + "/s", ModdedCommandFeedback.VALUE));
-        if (progress.failed() > 0) {
-            status.append(ModdedCommandFeedback.text(" · Failed ", ModdedCommandFeedback.DARK_GREEN));
-            status.append(ModdedCommandFeedback.text(Form.f(progress.failed()), ModdedCommandFeedback.REQUIRED));
-        }
+        status.append(ModdedCommandFeedback.text(chunksStatus(progress), ModdedCommandFeedback.DARK_GREEN));
         status.append(Component.literal("\n"));
-        status.append(ModdedCommandFeedback.text("ETA ", ModdedCommandFeedback.DARK_GREEN));
-        status.append(ModdedCommandFeedback.text(Form.duration(progress.eta(), 2), ModdedCommandFeedback.VALUE));
-        status.append(ModdedCommandFeedback.text(" · Elapsed ", ModdedCommandFeedback.DARK_GREEN));
-        status.append(ModdedCommandFeedback.text(Form.duration(progress.elapsed(), 2), ModdedCommandFeedback.VALUE));
-        if (progress.paused()) {
-            status.append(ModdedCommandFeedback.text(" · PAUSED", ModdedCommandFeedback.REQUIRED, true, false));
-        }
+        status.append(ModdedCommandFeedback.text(IrisLanguage.plain(
+                progress.paused()
+                        ? RuntimeUiMessages.PREGEN_STATUS_TIME_PAUSED
+                        : RuntimeUiMessages.PREGEN_STATUS_TIME,
+                MessageArgument.trusted("eta", Form.duration(progress.eta(), 2)),
+                MessageArgument.trusted("elapsed", Form.duration(progress.elapsed(), 2))
+        ), ModdedCommandFeedback.DARK_GREEN));
         status.append(Component.literal("\n"));
-        status.append(ModdedCommandFeedback.button("Pause/Resume", "/iris pregen pause", "Toggle pregeneration pause state", true));
+        status.append(ModdedCommandFeedback.button(
+                IrisLanguage.plain(RuntimeUiMessages.PREGEN_PAUSE_BUTTON),
+                "/iris pregen pause",
+                IrisLanguage.plain(RuntimeUiMessages.PREGEN_PAUSE_HOVER),
+                true
+        ));
         status.append(ModdedCommandFeedback.text("  ", ModdedCommandFeedback.OPTIONAL));
-        status.append(ModdedCommandFeedback.button("Stop", "/iris pregen stop", "Finish the current region and stop pregeneration", true));
+        status.append(ModdedCommandFeedback.button(
+                IrisLanguage.plain(RuntimeUiMessages.PREGEN_STOP_BUTTON),
+                "/iris pregen stop",
+                IrisLanguage.plain(RuntimeUiMessages.PREGEN_STOP_HOVER),
+                true
+        ));
         status.append(Component.literal("\n"));
         status.append(ModdedCommandFeedback.footer());
         return status;
+    }
+
+    private static String chunksStatus(PregeneratorJob.PregenProgress progress) {
+        if (progress.failed() > 0) {
+            return IrisLanguage.plain(
+                    RuntimeUiMessages.PREGEN_STATUS_CHUNKS_FAILED,
+                    MessageArgument.trusted("generated", Form.f(progress.generated())),
+                    MessageArgument.trusted("total", Form.f(progress.totalChunks())),
+                    MessageArgument.trusted("speed", Form.f((int) progress.chunksPerSecond())),
+                    MessageArgument.trusted("failed", Form.f(progress.failed()))
+            );
+        }
+        return IrisLanguage.plain(
+                RuntimeUiMessages.PREGEN_STATUS_CHUNKS,
+                MessageArgument.trusted("generated", Form.f(progress.generated())),
+                MessageArgument.trusted("total", Form.f(progress.totalChunks())),
+                MessageArgument.trusted("speed", Form.f((int) progress.chunksPerSecond()))
+        );
     }
 
     private static ActivePregen matchingActive(String worldIdentity) {

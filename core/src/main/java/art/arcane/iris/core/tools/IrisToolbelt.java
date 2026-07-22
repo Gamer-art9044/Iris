@@ -60,6 +60,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 /**
  * Something you really want to wear if working on Iris. Shit gets pretty hectic down there.
  * Hope you packed snacks & road sodas.
@@ -361,7 +364,7 @@ public class IrisToolbelt {
         for (World i : Bukkit.getWorlds()) {
             if (!WorldIdentity.key(i).equals(WorldIdentity.key(world))) {
                 for (Player j : new ArrayList<>(world.getPlayers())) {
-                    new VolmitSender(j, BukkitPlatform.volmitPlugin().getTag()).sendMessage("You have been evacuated from this world.");
+                    new VolmitSender(j, BukkitPlatform.volmitPlugin().getTag()).sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_TOOLBELT_YOU_HAVE_BEEN_EVACUATED_FROM_THIS_WORLD));
                     Location target = i.getSpawnLocation();
                     Runnable teleportTask = () -> teleportAsyncSafely(j, target);
                     if (!J.runEntity(j, teleportTask)) {
@@ -391,7 +394,7 @@ public class IrisToolbelt {
         for (World i : Bukkit.getWorlds()) {
             if (!WorldIdentity.key(i).equals(WorldIdentity.key(world))) {
                 for (Player j : new ArrayList<>(world.getPlayers())) {
-                    new VolmitSender(j, BukkitPlatform.volmitPlugin().getTag()).sendMessage("You have been evacuated from this world. " + m);
+                    new VolmitSender(j, BukkitPlatform.volmitPlugin().getTag()).sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_TOOLBELT_YOU_HAVE_BEEN_EVACUATED_FROM_THIS_WORLD_2, MessageArgument.untrusted("m", String.valueOf(m))));
                     Location target = i.getSpawnLocation();
                     Runnable teleportTask = () -> teleportAsyncSafely(j, target);
                     if (!J.runEntity(j, teleportTask)) {

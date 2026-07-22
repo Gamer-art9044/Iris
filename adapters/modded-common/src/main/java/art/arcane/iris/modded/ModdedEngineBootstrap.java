@@ -19,6 +19,7 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.gui.GuiHost;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.engine.decorator.DecoratorPlatformHooks;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineEffectsProvider;
@@ -260,6 +261,7 @@ public final class ModdedEngineBootstrap {
         ModdedIrisLog.info("Iris " + moddedLoader.modVersion() + " bootstrapping on Minecraft " + moddedLoader.minecraftVersion() + " (" + loaderDescription + ")");
         selfTest(moddedLoader.getClass().getClassLoader());
         bind();
+        IrisLanguage.initialize();
         MainWorldService.reconcileEarly();
         chunkGeneratorRegistration.run();
         ModdedIrisLog.info("Iris chunk generator registered as irisworldgen:iris");

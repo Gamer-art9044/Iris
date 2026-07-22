@@ -28,6 +28,9 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Comparator;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 /**
  * Represents a pawn command
  *
@@ -92,11 +95,11 @@ public abstract class MortarCommand implements ICommand {
 
             b = true;
 
-            sender.sendMessage("" + C.GREEN + i.getNode() + " " + "<font:minecraft:uniform>" + (getArgsUsage().trim().isEmpty() ? "" : (C.WHITE + i.getArgsUsage())) + C.GRAY + " - " + i.getDescription());
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.MORTAR_COMMAND_FONT_MINECRAFT_UNIFORM, MessageArgument.untrusted("node", String.valueOf(i.getNode())), MessageArgument.untrusted("value", String.valueOf((getArgsUsage().trim().isEmpty() ? "" : (C.WHITE + i.getArgsUsage())))), MessageArgument.untrusted("description", String.valueOf(i.getDescription()))));
         }
 
         if (!b) {
-            sender.sendMessage("There are either no sub-commands or you do not have permission to use them.");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.MORTAR_COMMAND_THERE_ARE_EITHER_NO_SUB_COMMANDS_YOU_DO_NOT_HAVE_PERMISSION_USE));
         }
 
         if (sender.isPlayer() && IrisSettings.get().getGeneral().isCommandSounds()) {
@@ -145,7 +148,7 @@ public abstract class MortarCommand implements ICommand {
             }
 
             if (!m.toString().trim().isEmpty()) {
-                sender.sendMessage("Parameters Ignored: " + m);
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.MORTAR_COMMAND_PARAMETERS_IGNORED, MessageArgument.untrusted("m", String.valueOf(m))));
             }
         }
     }

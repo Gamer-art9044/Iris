@@ -60,6 +60,9 @@ import art.arcane.iris.util.common.scheduling.jobs.Job;
 import art.arcane.iris.util.common.scheduling.jobs.JobCollection;
 import art.arcane.iris.util.common.scheduling.jobs.ParallelQueueJob;
 import lombok.Data;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.World;
@@ -82,6 +85,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeProgressMessages;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 @SuppressWarnings("ALL")
 @Data
 public class IrisProject {
@@ -185,12 +193,12 @@ public class IrisProject {
         {
             try {
                 if (d == null) {
-                    sender.sendMessage("Could not load dimension \"" + getName() + "\"");
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_COULD_NOT_LOAD_DIMENSION, MessageArgument.untrusted("value", String.valueOf(getName()))));
                     return;
                 }
 
                 if (d.getLoader() == null) {
-                    sender.sendMessage("Could not get dimension loader");
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_COULD_NOT_GET_DIMENSION_LOADER));
                     return;
                 }
                 File f = d.getLoader().getDataFolder();
@@ -282,7 +290,7 @@ public class IrisProject {
                             ? completionException.getCause()
                             : throwable;
                     IrisLogging.reportError("Studio open failed for project \"" + getName() + "\".", error);
-                    sender.sendMessage(C.RED + "Studio open failed: " + error.getMessage());
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_STUDIO_OPEN_FAILED, MessageArgument.untrusted("error", String.valueOf(error.getMessage()))));
                     return;
                 }
 
@@ -316,7 +324,7 @@ public class IrisProject {
 
         if (sender.isPlayer() && sender.player() != null) {
             bossBar = Bukkit.createBossBar(
-                    C.GOLD + "Studio " + C.AQUA + "OPENING",
+                    IrisLanguage.text(RuntimeProgressMessages.STUDIO_OPENING),
                     org.bukkit.boss.BarColor.BLUE,
                     org.bukkit.boss.BarStyle.SEGMENTED_20
             );
@@ -340,32 +348,36 @@ public class IrisProject {
                     if (bossBar != null) {
                         bossBar.setProgress(Math.max(0.0D, Math.min(1.0D, currentProgress)));
                         bossBar.setColor(org.bukkit.boss.BarColor.RED);
-                        bossBar.setTitle(C.GOLD + "Studio " + C.RED + "FAILED" + C.GRAY + " " + C.YELLOW + percent + "%");
+                        bossBar.setTitle(IrisLanguage.text(
+                                RuntimeProgressMessages.STUDIO_FAILED_PROGRESS,
+                                MessageArgument.trusted("percent", percent)
+                        ));
                         J.a(() -> { bossBar.removeAll(); bossBar.setVisible(false); }, 60);
                     }
                     if (sender.isPlayer()) {
-                        String action = buildStudioProgressBar(currentProgress)
-                                + C.GRAY + " " + C.RED + "FAILED"
-                                + C.GRAY + " | " + C.WHITE + currentStage;
-                        sender.sendAction(action);
+                        sender.sendAction(IrisLanguage.text(
+                                RuntimeProgressMessages.STUDIO_ACTION_FAILED,
+                                MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
+                                MessageArgument.trusted("stage", currentStage)
+                        ));
                     } else {
-                        sender.sendMessage(C.RED + "Studio open failed.");
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_STUDIO_OPEN_FAILED_2));
                     }
                 } else {
                     if (bossBar != null) {
                         bossBar.setProgress(1.0D);
                         bossBar.setColor(org.bukkit.boss.BarColor.GREEN);
-                        bossBar.setTitle(C.GOLD + "Studio " + C.GREEN + "READY" + C.GRAY + " " + C.YELLOW + "100%");
+                        bossBar.setTitle(IrisLanguage.text(RuntimeProgressMessages.STUDIO_READY_PROGRESS));
                         J.a(() -> { bossBar.removeAll(); bossBar.setVisible(false); }, 60);
                     }
                     if (sender.isPlayer()) {
-                        String action = buildStudioProgressBar(1.0D)
-                                + C.GRAY + " " + C.GREEN + "100%"
-                                + C.GRAY + " | " + C.GREEN + "Studio ready"
-                                + C.DARK_GRAY + " " + Form.duration(elapsed, 1);
-                        sender.sendAction(action);
+                        sender.sendAction(IrisLanguage.text(
+                                RuntimeProgressMessages.STUDIO_ACTION_READY,
+                                MessageArgument.trusted("bar", buildStudioProgressBar(1.0D)),
+                                MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
+                        ));
                     } else {
-                        sender.sendMessage(C.GREEN + "Studio ready " + C.GRAY + "(" + Form.duration(elapsed, 1) + ")");
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_STUDIO_READY, MessageArgument.untrusted("value", String.valueOf(Form.duration(elapsed, 1)))));
                     }
                 }
                 return;
@@ -374,20 +386,31 @@ public class IrisProject {
             if (sender.isPlayer() && sender.player() != null) {
                 if (bossBar != null) {
                     bossBar.setProgress(Math.max(0.0D, Math.min(1.0D, currentProgress)));
-                    bossBar.setTitle(C.GOLD + "Studio " + C.AQUA + "OPENING" + C.GRAY + " " + C.YELLOW + percent + "%");
+                    bossBar.setTitle(IrisLanguage.text(
+                            RuntimeProgressMessages.STUDIO_OPENING_PROGRESS,
+                            MessageArgument.trusted("percent", percent)
+                    ));
                 }
 
-                String action = buildStudioProgressBar(currentProgress)
-                        + C.GRAY + " " + C.YELLOW + percent + "%"
-                        + C.GRAY + " | " + C.WHITE + currentStage
-                        + C.DARK_GRAY + " " + Form.duration(elapsed, 0);
-                sender.sendAction(action);
+                sender.sendAction(IrisLanguage.text(
+                        RuntimeProgressMessages.STUDIO_ACTION_PROGRESS,
+                        MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
+                        MessageArgument.trusted("percent", percent),
+                        MessageArgument.trusted("stage", currentStage),
+                        MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
+                ));
             } else {
                 long now = System.currentTimeMillis();
                 long nextUpdate = nextConsoleUpdate.get();
                 if (now >= nextUpdate) {
                     String bar = buildStudioConsoleBar(currentProgress);
-                    sender.sendMessage(C.GOLD + "Studio " + C.AQUA + bar + " " + C.YELLOW + percent + "%" + C.GRAY + " " + currentStage + C.DARK_GRAY + " (" + Form.duration(elapsed, 0) + ")");
+                    sender.sendMessage(IrisLanguage.text(
+                            RuntimeProgressMessages.STUDIO_CONSOLE_PROGRESS,
+                            MessageArgument.trusted("bar", bar),
+                            MessageArgument.trusted("percent", percent),
+                            MessageArgument.trusted("stage", currentStage),
+                            MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
+                    ));
                     nextConsoleUpdate.set(now + 1500L);
                 }
             }
@@ -420,20 +443,22 @@ public class IrisProject {
     }
 
     private static String describeStage(String stage) {
-        if (stage == null || stage.isBlank()) return "Initializing";
+        if (stage == null || stage.isBlank()) {
+            return IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_INITIALIZING);
+        }
         return switch (stage) {
-            case "Queued" -> "Queued";
-            case "resolve_dimension" -> "Resolving dimension";
-            case "prepare_world_pack" -> "Preparing world pack";
-            case "install_datapacks" -> "Installing datapacks";
-            case "create_world" -> "Creating world";
-            case "apply_world_rules" -> "Applying world rules";
-            case "prepare_generator" -> "Preparing generator";
-            case "request_entry_chunk" -> "Loading entry chunk";
-            case "resolve_safe_entry" -> "Finding safe spawn";
-            case "teleport_player" -> "Teleporting";
-            case "finalize_open" -> "Finalizing";
-            case "cleanup" -> "Cleaning up";
+            case "Queued" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_QUEUED);
+            case "resolve_dimension" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_RESOLVE_DIMENSION);
+            case "prepare_world_pack" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_PREPARE_WORLD_PACK);
+            case "install_datapacks" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_INSTALL_DATAPACKS);
+            case "create_world" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_CREATE_WORLD);
+            case "apply_world_rules" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_APPLY_WORLD_RULES);
+            case "prepare_generator" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_PREPARE_GENERATOR);
+            case "request_entry_chunk" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_REQUEST_ENTRY_CHUNK);
+            case "resolve_safe_entry" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_RESOLVE_SAFE_ENTRY);
+            case "teleport_player" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_TELEPORT_PLAYER);
+            case "finalize_open" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_FINALIZE_OPEN);
+            case "cleanup" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_CLEANUP);
             default -> Form.capitalizeWords(stage.replace('_', ' '));
         };
     }
@@ -665,7 +690,7 @@ public class IrisProject {
         String a;
         StringBuilder b = new StringBuilder();
         StringBuilder c = new StringBuilder();
-        sender.sendMessage("Serializing Objects");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_SERIALIZING_OBJECTS));
 
         for (IrisBiome i : biomes) {
             for (IrisObjectPlacement j : i.getObjects()) {
@@ -704,7 +729,7 @@ public class IrisProject {
                 if (cl.flip()) {
                     int g = ggg.get();
                     ggg.set(0);
-                    sender.sendMessage("Wrote another " + g + " Objects");
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_WROTE_ANOTHER_OBJECTS, MessageArgument.untrusted("g", String.valueOf(g))));
                 }
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
@@ -778,13 +803,13 @@ public class IrisProject {
             ZipUtil.pack(folder, p, 9);
             IO.delete(folder);
 
-            sender.sendMessage("Package Compiled!");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_PACKAGE_COMPILED));
             return p;
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
         }
-        sender.sendMessage("Failed!");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_FAILED));
         return null;
     }
 
@@ -827,15 +852,25 @@ public class IrisProject {
                     o.read(f);
 
                     if (o.getBlocks().isEmpty()) {
-                        sender.sendMessageRaw("<hover:show_text:'Error:\n" +
-                                "<yellow>" + f.getPath() +
-                                "'><red>- IOB " + f.getName() + " has 0 blocks!");
+                        sender.sendComponent(Component.text(IrisLanguage.plain(
+                                        RuntimeUiMessages.COMPILE_IOB_EMPTY,
+                                        MessageArgument.untrusted("file", f.getName())
+                                ), NamedTextColor.RED)
+                                .hoverEvent(HoverEvent.showText(Component.text(IrisLanguage.plain(
+                                        RuntimeUiMessages.COMPILE_IOB_EMPTY_HOVER,
+                                        MessageArgument.untrusted("path", f.getPath())
+                                ), NamedTextColor.YELLOW))));
                     }
 
                     if (o.getW() == 0 || o.getH() == 0 || o.getD() == 0) {
-                        sender.sendMessageRaw("<hover:show_text:'Error:\n" +
-                                "<yellow>" + f.getPath() + "\n<red>The width height or depth has a zero in it (bad format)" +
-                                "'><red>- IOB " + f.getName() + " is not 3D!");
+                        sender.sendComponent(Component.text(IrisLanguage.plain(
+                                        RuntimeUiMessages.COMPILE_IOB_NOT_3D,
+                                        MessageArgument.untrusted("file", f.getName())
+                                ), NamedTextColor.RED)
+                                .hoverEvent(HoverEvent.showText(Component.text(IrisLanguage.plain(
+                                        RuntimeUiMessages.COMPILE_IOB_NOT_3D_HOVER,
+                                        MessageArgument.untrusted("path", f.getPath())
+                                ), NamedTextColor.YELLOW))));
                     }
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -858,10 +893,15 @@ public class IrisProject {
                     IO.writeAll(f, p.toString(4));
 
                 } catch (Throwable e) {
-                    sender.sendMessageRaw("<hover:show_text:'Error:\n" +
-                            "<yellow>" + f.getPath() +
-                            "\n<red>" + e.getMessage() +
-                            "'><red>- JSON Error " + f.getName());
+                    sender.sendComponent(Component.text(IrisLanguage.plain(
+                                    RuntimeUiMessages.COMPILE_JSON_ERROR,
+                                    MessageArgument.untrusted("file", f.getName())
+                            ), NamedTextColor.RED)
+                            .hoverEvent(HoverEvent.showText(Component.text(IrisLanguage.plain(
+                                    RuntimeUiMessages.COMPILE_JSON_ERROR_HOVER,
+                                    MessageArgument.untrusted("path", f.getPath()),
+                                    MessageArgument.untrusted("error", String.valueOf(e.getMessage()))
+                            ), NamedTextColor.YELLOW))));
                 }
             }
 
@@ -871,7 +911,7 @@ public class IrisProject {
             }
         }.queue(files));
 
-        new JobCollection("Compile", jobs).execute(sender);
+        new JobCollection(IrisLanguage.text(RuntimeUiMessages.JOB_COMPILE), jobs).execute(sender);
     }
 
     private void scanForErrors(IrisData data, File f, JSONObject p, VolmitSender sender) {
@@ -879,7 +919,10 @@ public class IrisProject {
         ResourceLoader<?> loader = data.getTypedLoaderFor(f);
 
         if (loader == null) {
-            sender.sendMessageBasic("Can't find loader for " + f.getPath());
+            sender.sendMessage(IrisLanguage.text(
+                    RuntimeUiMessages.COMPILE_LOADER_NOT_FOUND,
+                    MessageArgument.untrusted("path", f.getPath())
+            ));
             return;
         }
 

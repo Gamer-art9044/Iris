@@ -1,6 +1,9 @@
 package art.arcane.iris.client;
 
+import art.arcane.iris.core.localization.ClientUiMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.spi.protocol.IrisMessage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -45,7 +48,7 @@ public final class IrisVisionScreen extends Screen {
     private String renderedDimensionKey;
 
     public IrisVisionScreen() {
-        super(Component.literal("Iris Vision"));
+        super(Component.literal(IrisLanguage.plain(ClientUiMessages.VISION_TITLE)));
         this.textures = new LinkedHashMap<>(64, 0.75f, true);
         this.centerBlockX = 0.0D;
         this.centerBlockZ = 0.0D;
@@ -72,14 +75,14 @@ public final class IrisVisionScreen extends Screen {
         graphics.fill(0, 0, width, height, BACKGROUND_COLOR);
         IrisClientSession session = IrisClient.session();
         if (!session.isReady()) {
-            drawCentered(graphics, "Connecting to Iris server...", MUTED_COLOR);
-            drawHeader(graphics, "Iris Vision", "not connected");
+            drawCentered(graphics, IrisLanguage.plain(ClientUiMessages.VISION_CONNECTING), MUTED_COLOR);
+            drawHeader(graphics, IrisLanguage.plain(ClientUiMessages.VISION_TITLE), IrisLanguage.plain(ClientUiMessages.VISION_NOT_CONNECTED));
             return;
         }
         IrisMessage.DimensionStatus status = IrisClient.dimension().status();
         if (!IrisClient.visionAvailable() || status == null) {
-            drawCentered(graphics, "Not an Iris world", MUTED_COLOR);
-            drawHeader(graphics, "Iris Vision", status == null ? "no dimension data" : label(status));
+            drawCentered(graphics, IrisLanguage.plain(ClientUiMessages.VISION_NOT_IRIS_WORLD), MUTED_COLOR);
+            drawHeader(graphics, IrisLanguage.plain(ClientUiMessages.VISION_TITLE), status == null ? IrisLanguage.plain(ClientUiMessages.VISION_NO_DIMENSION_DATA) : label(status));
             return;
         }
         syncWorld(status);
@@ -159,8 +162,18 @@ public final class IrisVisionScreen extends Screen {
 
         drawMarkers(graphics, mouseX, mouseY, minTileX, maxTileX, minTileZ, maxTileZ, originX, originY, blocksPerPixel);
         drawPlayer(graphics, blocksPerPixel);
-        drawHeader(graphics, "Iris Vision", label(status) + "  zoom " + zoom + "  x" + (long) centerBlockX + " z" + (long) centerBlockZ);
-        drawFooter(graphics, "Drag to pan   Scroll to zoom   Esc to close");
+        drawHeader(
+                graphics,
+                IrisLanguage.plain(ClientUiMessages.VISION_TITLE),
+                IrisLanguage.plain(
+                        ClientUiMessages.VISION_HEADER_DETAIL,
+                        MessageArgument.trusted("status", label(status)),
+                        MessageArgument.trusted("zoom", zoom),
+                        MessageArgument.trusted("x", (long) centerBlockX),
+                        MessageArgument.trusted("z", (long) centerBlockZ)
+                )
+        );
+        drawFooter(graphics, IrisLanguage.plain(ClientUiMessages.VISION_FOOTER_HINT));
     }
 
     private void requestMissing(IrisClientTileCache cache, List<IrisTileKey> missing, int centerTileX, int centerTileZ) {
@@ -319,8 +332,14 @@ public final class IrisVisionScreen extends Screen {
     }
 
     private static String label(IrisMessage.DimensionStatus status) {
-        String pack = status.packKey() == null || status.packKey().isEmpty() ? "" : "  pack " + status.packKey();
-        return status.dimensionKey() + pack;
+        if (status.packKey() == null || status.packKey().isEmpty()) {
+            return String.valueOf(status.dimensionKey());
+        }
+        return IrisLanguage.plain(
+                ClientUiMessages.VISION_DIMENSION_PACK,
+                MessageArgument.untrusted("dimension", String.valueOf(status.dimensionKey())),
+                MessageArgument.untrusted("pack", status.packKey())
+        );
     }
 
     private record TileTexture(Identifier id, DynamicTexture texture) {

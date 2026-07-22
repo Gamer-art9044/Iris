@@ -18,7 +18,10 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.PackDownloadMessages;
 import art.arcane.iris.core.pack.PackDownloader;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,11 +41,11 @@ public final class ModdedPackInstaller {
 
     public static boolean install(Path configDir, String pack, String branch, Consumer<String> feedback) {
         if (pack == null || !PACK_NAME.matcher(pack).matches()) {
-            feedback.accept("Invalid pack name '" + pack + "' (allowed: a-z, 0-9, _ and -)");
+            feedback.accept(IrisLanguage.plain(PackDownloadMessages.INVALID_PACK_NAME, MessageArgument.untrusted("pack", String.valueOf(pack))));
             return false;
         }
         if (branch == null || !BRANCH_NAME.matcher(branch).matches()) {
-            feedback.accept("Invalid branch name '" + branch + "' (allowed: letters, digits, . _ and -)");
+            feedback.accept(IrisLanguage.plain(PackDownloadMessages.INVALID_BRANCH_NAME, MessageArgument.untrusted("branch", String.valueOf(branch))));
             return false;
         }
 
@@ -54,7 +57,11 @@ public final class ModdedPackInstaller {
             return PackDownloader.download(packs, "IrisDimensions/" + pack, branch, true, false, feedback) != null;
         } catch (IOException error) {
             LOGGER.error("Iris pack download failed for IrisDimensions/{} ({})", pack, branch, error);
-            feedback.accept("Pack download failed: " + error.getClass().getSimpleName() + (error.getMessage() == null ? "" : " - " + error.getMessage()));
+            feedback.accept(IrisLanguage.plain(
+                    PackDownloadMessages.DOWNLOAD_FAILED,
+                    MessageArgument.untrusted("type", error.getClass().getSimpleName()),
+                    MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(error))
+            ));
             return false;
         }
     }

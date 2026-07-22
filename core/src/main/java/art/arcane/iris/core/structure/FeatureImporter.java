@@ -51,6 +51,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public final class FeatureImporter {
     public record Report(int total, int imported, int skipped, int failed) {
     }
@@ -72,11 +75,11 @@ public final class FeatureImporter {
         List<Row> rows = parseRows(INMS.get().getObjectFeatureKeys());
         int total = rows.size();
         if (total == 0) {
-            sender.sendMessage(C.YELLOW + "No vanilla tree/object features are exposed by the active NMS binding (importing structures only).");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_NO_VANILLA_TREE_OBJECT_FEATURES_ARE_EXPOSED_BY_ACTIVE_NMS_BINDING_IMPORTING));
             return new Report(0, 0, 0, 0);
         }
 
-        sender.sendMessage(C.GREEN + "Importing " + C.WHITE + total + C.GREEN + " vanilla tree/object features (" + C.WHITE + wantVariants + C.GREEN + " variants each) into a scratch world...");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_IMPORTING_VANILLA_TREE_OBJECT_FEATURES_VARIANTS_EACH_INTO_SCRATCH_WORLD, MessageArgument.untrusted("total", String.valueOf(total)), MessageArgument.untrusted("wantVariants", String.valueOf(wantVariants))));
 
         World scratch = createScratchWorld(sender);
         if (scratch == null) {
@@ -120,27 +123,27 @@ public final class FeatureImporter {
 
                     if (written > 0) {
                         imported++;
-                        sender.sendMessage(C.GRAY + "[obj] " + row.key() + " -> objects/vanilla/" + row.group() + "/" + row.safeName() + " (" + written + ")");
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_OBJ_OBJECTS_VANILLA, MessageArgument.untrusted("key", String.valueOf(row.key())), MessageArgument.untrusted("group", String.valueOf(row.group())), MessageArgument.untrusted("safeName", String.valueOf(row.safeName())), MessageArgument.untrusted("written", String.valueOf(written))));
                     } else {
                         skipped++;
-                        sender.sendMessage(C.YELLOW + "[skip] " + row.key() + ": feature placed nothing after retries.");
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_SKIP_FEATURE_PLACED_NOTHING_AFTER_RETRIES, MessageArgument.untrusted("key", String.valueOf(row.key()))));
                     }
                 } catch (Throwable e) {
                     failed++;
-                    sender.sendMessage(C.RED + "[fail] " + row.key() + ": " + e.getMessage());
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_FAIL, MessageArgument.untrusted("key", String.valueOf(row.key())), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
                     IrisLogging.reportError(e);
                 }
 
                 int processed = imported + skipped + failed;
                 if (processed % 25 == 0) {
-                    sender.sendMessage(C.GRAY + "..." + processed + "/" + total + " (" + imported + " imported, " + skipped + " skipped, " + failed + " failed)");
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_IMPORTED_SKIPPED_FAILED, MessageArgument.untrusted("processed", String.valueOf(processed)), MessageArgument.untrusted("total", String.valueOf(total)), MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed))));
                 }
             }
         } finally {
             destroyScratchWorld(scratch, sender);
         }
 
-        sender.sendMessage(C.GREEN + "Feature import complete: " + C.WHITE + imported + C.GREEN + " features written, " + C.WHITE + skipped + C.GREEN + " skipped, " + C.WHITE + failed + C.GREEN + " failed (" + C.WHITE + total + C.GREEN + " total).");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_FEATURE_IMPORT_COMPLETE_FEATURES_WRITTEN_SKIPPED_FAILED_TOTAL, MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed)), MessageArgument.untrusted("total", String.valueOf(total))));
         return new Report(total, imported, skipped, failed);
     }
 
@@ -307,7 +310,7 @@ public final class FeatureImporter {
                     .get();
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            sender.sendMessage(C.RED + "Could not create the scratch world for feature import (" + e.getMessage() + "); skipping the tree/object pass.");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_COULD_NOT_CREATE_SCRATCH_WORLD_FEATURE_IMPORT_SKIPPING_TREE_OBJECT_PASS, MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
             return null;
         }
     }

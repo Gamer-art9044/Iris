@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.pack;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.volmlib.util.format.Form;
@@ -117,8 +119,8 @@ public class IrisPackRepository {
             File work = new File(IrisPlatforms.get().dataFolder("cache", "temp"), "extk-" + UUID.randomUUID());
             new JobCollection(Form.capitalize(getRepo()),
                     new DownloadJob(toURL(), pack),
-                    new SingleJob("Extracting", () -> ZipUtil.unpack(dl, work)),
-                    new SingleJob("Installing", () -> {
+                    new SingleJob(IrisLanguage.text(RuntimeUiMessages.JOB_EXTRACTING), () -> ZipUtil.unpack(dl, work)),
+                    new SingleJob(IrisLanguage.text(RuntimeUiMessages.JOB_INSTALLING), () -> {
                         try {
                             FileUtils.copyDirectory(work.listFiles()[0], pack);
                         } catch (IOException e) {
@@ -126,7 +128,7 @@ public class IrisPackRepository {
                         }
                     })).execute(sender, whenComplete);
         } else {
-            sender.sendMessage("Pack already exists!");
+            sender.sendMessage(IrisLanguage.text(RuntimeUiMessages.PACK_ALREADY_EXISTS));
         }
     }
 }

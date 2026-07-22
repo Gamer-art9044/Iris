@@ -19,6 +19,7 @@
 package art.arcane.iris.modded.service;
 
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.spi.IrisPlatforms;
 import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
@@ -52,12 +53,14 @@ public final class ModdedSettingsHotloadService implements ModdedTickableService
         lastPollAt = now;
         long modified = settingsFile().lastModified();
         if (modified == lastModified) {
+            IrisLanguage.update();
             return;
         }
         if (IrisSettings.settings != null) {
             IrisSettings.invalidate();
         }
         IrisSettings.get();
+        IrisLanguage.reload();
         lastModified = settingsFile().lastModified();
         LOGGER.info("Hotloaded settings.json");
     }

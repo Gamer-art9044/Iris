@@ -60,6 +60,9 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public class ServerConfigurator {
     public static void configure() {
         IrisSettings.IrisSettingsAutoconfiguration s = IrisSettings.get().getAutoConfiguration();
@@ -284,8 +287,8 @@ public class ServerConfigurator {
             for (Player i : Bukkit.getOnlinePlayers()) {
                 if (i.isOp() || i.hasPermission("iris.all")) {
                     VolmitSender sender = new VolmitSender(i, BukkitPlatform.volmitPlugin().getTag("WARNING"));
-                    sender.sendMessage("There are some Iris Packs that have custom biomes in them");
-                    sender.sendMessage("You need to restart your server to use these packs.");
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.SERVER_CONFIGURATOR_THERE_ARE_SOME_IRIS_PACKS_THAT_HAVE_CUSTOM_BIOMES_THEM));
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.SERVER_CONFIGURATOR_YOU_NEED_RESTART_YOUR_SERVER_USE_THESE_PACKS));
                 }
             }
 

@@ -18,6 +18,8 @@
 
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.events.IrisEngineHotloadEvent;
@@ -92,7 +94,7 @@ public abstract class EngineAssignedWorldManager extends EngineAssignedComponent
             for (Player i : BukkitWorldBinding.players(e.getEngine().getWorld())) {
                 i.playSound(i.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_BREAK, 1f, 1.8f);
                 VolmitSender s = new VolmitSender(i);
-                s.sendTitle(C.IRIS + "Engine " + C.AQUA + "<font:minecraft:uniform>Hotloaded", 70, 60, 410);
+                s.sendTitle(C.IRIS + "<font:minecraft:uniform>" + IrisLanguage.text(RuntimeUiMessages.ENGINE_HOTLOADED), 70, 60, 410);
             }
         });
     }

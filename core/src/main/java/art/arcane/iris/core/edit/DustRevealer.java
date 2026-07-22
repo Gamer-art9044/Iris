@@ -20,6 +20,8 @@ package art.arcane.iris.core.edit;
 
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.framework.Engine;
@@ -31,6 +33,7 @@ import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.BlockPosition;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import lombok.Data;
@@ -130,7 +133,10 @@ public class DustRevealer {
             if (a != null) {
                 world.playSound(block.getLocation(), Sound.ITEM_LODESTONE_COMPASS_LOCK, 1f, 0.1f);
 
-                sender.sendMessage("Found object " + a);
+                sender.sendMessage(IrisLanguage.text(
+                        RuntimeUiMessages.DUST_FOUND_OBJECT,
+                        MessageArgument.untrusted("object", a)
+                ));
                 J.a(() -> {
                     new DustRevealer(access, world, new BlockPosition(block.getX(), block.getY(), block.getZ()), a, new KList<>());
                 });
@@ -154,67 +160,131 @@ public class DustRevealer {
         IrisBiome caveBiome = safe(() -> engine.getCaveOrMantleBiome(x, relativeY, z));
         IrisRegion region = safe(() -> engine.getRegion(x, z));
 
-        KList<String> lines = new KList<>();
-        lines.add("Iris Dust @ " + x + ", " + y + ", " + z);
-        lines.add("Block: " + block.getType().name());
+        KList<DustLine> lines = new KList<>();
+        lines.add(new DustLine(IrisLanguage.text(
+                RuntimeUiMessages.DUST_HEADER,
+                MessageArgument.trusted("x", x),
+                MessageArgument.trusted("y", y),
+                MessageArgument.trusted("z", z)
+        ), false));
+        lines.add(new DustLine(IrisLanguage.text(
+                RuntimeUiMessages.DUST_BLOCK,
+                MessageArgument.untrusted("block", block.getType().name())
+        ), false));
         if (offset > 0) {
-            lines.add("Position: +" + offset + " ABOVE surface (surface Y=" + surfaceY + ")");
+            lines.add(new DustLine(IrisLanguage.text(
+                    RuntimeUiMessages.DUST_POSITION_ABOVE,
+                    MessageArgument.trusted("offset", offset),
+                    MessageArgument.trusted("surfaceY", surfaceY)
+            ), true));
         } else if (offset < 0) {
-            lines.add("Position: " + (-offset) + " below surface (surface Y=" + surfaceY + ")");
+            lines.add(new DustLine(IrisLanguage.text(
+                    RuntimeUiMessages.DUST_POSITION_BELOW,
+                    MessageArgument.trusted("offset", -offset),
+                    MessageArgument.trusted("surfaceY", surfaceY)
+            ), true));
         } else {
-            lines.add("Position: at surface (Y=" + surfaceY + ")");
+            lines.add(new DustLine(IrisLanguage.text(
+                    RuntimeUiMessages.DUST_POSITION_AT,
+                    MessageArgument.trusted("surfaceY", surfaceY)
+            ), true));
         }
 
         String placedBy;
         if (offset > 0) {
-            placedBy = objectKey != null ? "object/stilt '" + objectKey + "' (above surface)" : "decoration/object/stilt (above surface)";
+            placedBy = objectKey != null
+                    ? IrisLanguage.text(
+                            RuntimeUiMessages.DUST_PLACED_BY_OBJECT_ABOVE,
+                            MessageArgument.untrusted("object", objectKey)
+                    )
+                    : IrisLanguage.text(RuntimeUiMessages.DUST_PLACED_BY_DECORATION_ABOVE);
         } else if (objectKey != null) {
-            placedBy = "buried object '" + objectKey + "'";
+            placedBy = IrisLanguage.text(
+                    RuntimeUiMessages.DUST_PLACED_BY_BURIED_OBJECT,
+                    MessageArgument.untrusted("object", objectKey)
+            );
         } else {
-            placedBy = "terrain layer (depth " + Math.max(0, surfaceRelative - relativeY) + " below surface)";
+            placedBy = IrisLanguage.text(
+                    RuntimeUiMessages.DUST_PLACED_BY_TERRAIN,
+                    MessageArgument.trusted("depth", Math.max(0, surfaceRelative - relativeY))
+            );
         }
-        lines.add("Placed by: " + placedBy);
-        lines.add("Object @block: " + (objectKey == null ? "none" : objectKey));
+        lines.add(new DustLine(placedBy, true));
+        lines.add(new DustLine(IrisLanguage.text(
+                RuntimeUiMessages.DUST_OBJECT_AT_BLOCK,
+                MessageArgument.untrusted(
+                        "object",
+                        objectKey == null ? IrisLanguage.text(RuntimeUiMessages.DUST_NONE) : objectKey
+                )
+        ), false));
         if (objectKey == null) {
             String columnObject = findColumnObject(engine, x, relativeY, z, minHeight);
-            lines.add("Column object: " + (columnObject == null
-                    ? "none within 64 (decorator or terrain, NOT an object stilt)"
-                    : columnObject + " -> this block is likely that object's stilt"));
+            lines.add(new DustLine(IrisLanguage.text(
+                    columnObject == null
+                            ? RuntimeUiMessages.DUST_COLUMN_OBJECT_NONE
+                            : RuntimeUiMessages.DUST_COLUMN_OBJECT,
+                    MessageArgument.trusted(
+                            columnObject == null ? "detail" : "object",
+                            columnObject == null ? IrisLanguage.text(RuntimeUiMessages.DUST_COLUMN_NONE) : columnObject
+                    )
+            ), false));
         }
 
         if (surfaceBiome != null) {
-            lines.add("Surface biome: " + surfaceBiome.getLoadKey() + " (" + biomeKey(surfaceBiome.getDerivative()) + ")");
+            lines.add(new DustLine(IrisLanguage.text(
+                    RuntimeUiMessages.DUST_SURFACE_BIOME_DETAIL,
+                    MessageArgument.untrusted("biome", surfaceBiome.getLoadKey()),
+                    MessageArgument.untrusted("derivative", biomeKey(surfaceBiome.getDerivative()))
+            ), false));
         }
         if (biomeHere != null && (surfaceBiome == null || !biomeHere.getLoadKey().equals(surfaceBiome.getLoadKey()))) {
-            lines.add("Biome @Y: " + biomeHere.getLoadKey());
+            lines.add(new DustLine(IrisLanguage.text(
+                    RuntimeUiMessages.DUST_BIOME_AT_Y,
+                    MessageArgument.untrusted("biome", biomeHere.getLoadKey())
+            ), false));
         }
         if (caveBiome != null && (surfaceBiome == null || !caveBiome.getLoadKey().equals(surfaceBiome.getLoadKey()))) {
-            lines.add("Cave/Mantle biome: " + caveBiome.getLoadKey());
+            lines.add(new DustLine(IrisLanguage.text(
+                    RuntimeUiMessages.DUST_CAVE_BIOME,
+                    MessageArgument.untrusted("biome", caveBiome.getLoadKey())
+            ), false));
         }
 
         try {
-            lines.add("Server biome: " + INMS.get().getTrueBiomeBaseKey(block.getLocation())
-                    + " (ID: " + INMS.get().getTrueBiomeBaseId(INMS.get().getTrueBiomeBase(block.getLocation())) + ")");
+            lines.add(new DustLine(IrisLanguage.text(
+                    RuntimeUiMessages.DUST_SERVER_BIOME,
+                    MessageArgument.untrusted("biome", INMS.get().getTrueBiomeBaseKey(block.getLocation())),
+                    MessageArgument.trusted("id", INMS.get().getTrueBiomeBaseId(INMS.get().getTrueBiomeBase(block.getLocation())))
+            ), false));
         } catch (Throwable e) {
             IrisLogging.reportError(e);
         }
 
         if (region != null) {
-            lines.add("Region: " + region.getLoadKey() + " (" + region.getName() + ")");
+            lines.add(new DustLine(IrisLanguage.text(
+                    RuntimeUiMessages.DUST_REGION,
+                    MessageArgument.untrusted("region", region.getLoadKey()),
+                    MessageArgument.untrusted("name", region.getName())
+            ), false));
         }
 
         Set<String> objects = safe(() -> engine.getObjectsAt(x >> 4, z >> 4));
         if (objects != null && !objects.isEmpty()) {
-            lines.add("Objects in chunk: " + objects);
+            lines.add(new DustLine(IrisLanguage.text(
+                    RuntimeUiMessages.DUST_OBJECTS_IN_CHUNK,
+                    MessageArgument.untrusted("objects", objects)
+            ), false));
         }
 
-        sender.sendMessage(C.IRIS + "--- " + lines.get(0) + " ---");
+        StringBuilder payload = new StringBuilder();
+        sender.sendMessage(C.IRIS + lines.get(0).text());
+        payload.append(lines.get(0).text());
         for (int i = 1; i < lines.size(); i++) {
-            String line = lines.get(i);
-            String color = (line.startsWith("Position:") || line.startsWith("Placed by:")) ? C.YELLOW.toString() : C.WHITE.toString();
-            sender.sendMessage(color + line);
+            DustLine line = lines.get(i);
+            sender.sendMessage((line.emphasis() ? C.YELLOW : C.WHITE) + line.text());
+            payload.append('\n').append(line.text());
         }
-        sendCopyButton(sender, String.join("\n", lines));
+        sendCopyButton(sender, payload.toString());
     }
 
     private static String findColumnObject(Engine engine, int x, int relativeY, int z, int minHeight) {
@@ -223,7 +293,11 @@ public class DustRevealer {
                 try {
                     String up = engine.getObjectPlacementKey(x, relativeY + dy, z);
                     if (up != null) {
-                        return up + " @Y=" + (relativeY + dy + minHeight) + " (above)";
+                        return IrisLanguage.text(
+                                RuntimeUiMessages.DUST_COLUMN_ABOVE,
+                                MessageArgument.untrusted("object", up),
+                                MessageArgument.trusted("y", relativeY + dy + minHeight)
+                        );
                     }
                 } catch (Throwable ignored) {
                 }
@@ -232,7 +306,11 @@ public class DustRevealer {
                 try {
                     String down = engine.getObjectPlacementKey(x, relativeY - dy, z);
                     if (down != null) {
-                        return down + " @Y=" + (relativeY - dy + minHeight) + " (below)";
+                        return IrisLanguage.text(
+                                RuntimeUiMessages.DUST_COLUMN_BELOW,
+                                MessageArgument.untrusted("object", down),
+                                MessageArgument.trusted("y", relativeY - dy + minHeight)
+                        );
                     }
                 } catch (Throwable ignored) {
                 }
@@ -243,7 +321,7 @@ public class DustRevealer {
 
     private static String biomeKey(Biome biome) {
         if (biome == null) {
-            return "none";
+            return IrisLanguage.text(RuntimeUiMessages.DUST_NONE);
         }
         try {
             return biome.getKey().getKey();
@@ -266,10 +344,10 @@ public class DustRevealer {
             return;
         }
         try {
-            Component button = Component.text("[Click to copy these stats]")
+            Component button = Component.text(IrisLanguage.text(RuntimeUiMessages.DUST_COPY_BUTTON))
                     .color(NamedTextColor.GREEN)
                     .clickEvent(ClickEvent.copyToClipboard(payload))
-                    .hoverEvent(HoverEvent.showText(Component.text("Copy block stats to clipboard")));
+                    .hoverEvent(HoverEvent.showText(Component.text(IrisLanguage.text(RuntimeUiMessages.DUST_COPY_HOVER))));
             sender.sendComponent(button);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
@@ -292,5 +370,8 @@ public class DustRevealer {
 
     private boolean isValidTry(BlockPosition b) {
         return !hits.contains(b);
+    }
+
+    private record DustLine(String text, boolean emphasis) {
     }
 }

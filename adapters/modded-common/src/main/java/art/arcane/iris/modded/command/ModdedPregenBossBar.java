@@ -1,13 +1,16 @@
 package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.gui.PregeneratorJob;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.core.protocol.IrisProtocolServer;
 import art.arcane.iris.core.protocol.IrisSession;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.protocol.IrisProtocol;
 import art.arcane.volmlib.util.format.Form;
+import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.volmlib.util.localization.TextKey;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerPlayer;
@@ -35,7 +38,12 @@ public final class ModdedPregenBossBar {
             return;
         }
         viewer = player.getUUID();
-        bar = new ServerBossEvent(BAR_ID, Component.literal("Iris Pregen  starting..."), BossEvent.BossBarColor.GREEN, BossEvent.BossBarOverlay.PROGRESS);
+        bar = new ServerBossEvent(
+                BAR_ID,
+                Component.literal(IrisLanguage.plain(RuntimeUiMessages.PREGEN_STARTING)),
+                BossEvent.BossBarColor.GREEN,
+                BossEvent.BossBarOverlay.PROGRESS
+        );
         bar.setProgress(0.0F);
         bar.addPlayer(player);
         sinceUpdate = UPDATE_INTERVAL_TICKS;
@@ -73,22 +81,38 @@ public final class ModdedPregenBossBar {
     }
 
     private static Component nameFor(PregeneratorJob.PregenProgress progress) {
-        MutableComponent name = Component.empty();
-        name.append(ModdedCommandFeedback.text("Iris Pregen  ", ModdedCommandFeedback.DARK_GREEN));
-        name.append(ModdedCommandFeedback.text(Form.f(progress.generated()) + "/" + Form.f(progress.totalChunks()), ModdedCommandFeedback.VALUE));
-        name.append(ModdedCommandFeedback.text("  " + String.format("%.1f", progress.percent()) + "%", ModdedCommandFeedback.USAGE));
+        TextKey message = progress.paused()
+                ? RuntimeUiMessages.PREGEN_BOSSBAR_PAUSED
+                : RuntimeUiMessages.PREGEN_BOSSBAR_RUNNING;
         if (progress.paused()) {
-            name.append(ModdedCommandFeedback.text("  PAUSED", ModdedCommandFeedback.REQUIRED));
-            return name;
+            return ModdedCommandFeedback.text(IrisLanguage.plain(
+                    message,
+                    MessageArgument.trusted("generated", Form.f(progress.generated())),
+                    MessageArgument.trusted("total", Form.f(progress.totalChunks())),
+                    MessageArgument.trusted("percent", String.format("%.1f", progress.percent()))
+            ), ModdedCommandFeedback.DARK_GREEN);
         }
-        name.append(ModdedCommandFeedback.text("  " + Form.f((int) progress.chunksPerSecond()) + "/s", ModdedCommandFeedback.VALUE));
-        if (progress.eta() > 0L) {
-            name.append(ModdedCommandFeedback.text("  ETA " + Form.duration(progress.eta(), 1), ModdedCommandFeedback.DARK_GREEN));
-        }
-        if (progress.failed() > 0L) {
-            name.append(ModdedCommandFeedback.text("  failed " + Form.f(progress.failed()), ModdedCommandFeedback.REQUIRED));
-        }
-        return name;
+        String eta = progress.eta() > 0L
+                ? IrisLanguage.plain(
+                        RuntimeUiMessages.PREGEN_ETA_FRAGMENT,
+                        MessageArgument.trusted("eta", Form.duration(progress.eta(), 1))
+                )
+                : "";
+        String failed = progress.failed() > 0L
+                ? IrisLanguage.plain(
+                        RuntimeUiMessages.PREGEN_FAILED_FRAGMENT,
+                        MessageArgument.trusted("failed", Form.f(progress.failed()))
+                )
+                : "";
+        return ModdedCommandFeedback.text(IrisLanguage.plain(
+                message,
+                MessageArgument.trusted("generated", Form.f(progress.generated())),
+                MessageArgument.trusted("total", Form.f(progress.totalChunks())),
+                MessageArgument.trusted("percent", String.format("%.1f", progress.percent())),
+                MessageArgument.trusted("speed", Form.f((int) progress.chunksPerSecond())),
+                MessageArgument.trusted("eta", eta),
+                MessageArgument.trusted("failed", failed)
+        ), ModdedCommandFeedback.DARK_GREEN);
     }
 
     private static boolean hasClientPregenHud(ServerPlayer player) {

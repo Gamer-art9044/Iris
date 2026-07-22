@@ -18,6 +18,8 @@
 
 package art.arcane.iris.util.common.scheduling.jobs;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.volmlib.util.network.DL;
 import art.arcane.volmlib.util.network.DownloadMonitor;
 
@@ -50,7 +52,7 @@ public class DownloadJob implements Job {
 
     @Override
     public String getName() {
-        return "Downloading";
+        return IrisLanguage.text(RuntimeUiMessages.JOB_DOWNLOADING);
     }
 
     @Override

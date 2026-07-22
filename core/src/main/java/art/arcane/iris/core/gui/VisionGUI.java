@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.gui;
 
+import art.arcane.iris.core.localization.DesktopUiMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.engine.framework.render.IrisRenderer;
 import art.arcane.iris.engine.framework.render.RenderType;
 import art.arcane.iris.engine.framework.Engine;
@@ -32,6 +34,7 @@ import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.math.BlockPosition;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RollingSequence;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.O;
@@ -68,7 +71,6 @@ import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -188,7 +190,7 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
     }
 
     private static void createAndShowGUI(Engine r) {
-        JFrame frame = new JFrame("Iris Vision");
+        JFrame frame = new JFrame(IrisLanguage.plain(DesktopUiMessages.VISION_TITLE));
         VisionGUI nv = new VisionGUI(frame);
         nv.engine = r;
         nv.overlay = GuiHost.get().overlayFor(r);
@@ -208,7 +210,7 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
         toolbar.setBackground(new Color(22, 22, 28));
         toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(45, 45, 55)));
 
-        JLabel modeLabel = new JLabel("View:");
+        JLabel modeLabel = new JLabel(IrisLanguage.plain(DesktopUiMessages.VISION_VIEW));
         modeLabel.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
         modeLabel.setForeground(TEXT_SECONDARY);
         modeLabel.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 2));
@@ -232,15 +234,15 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
 
         toolbar.add(createToolbarSeparator());
 
-        JToggleButton gridBtn = createToolbarToggle("Grid", nv.grid);
+        JToggleButton gridBtn = createToolbarToggle(IrisLanguage.plain(DesktopUiMessages.VISION_GRID), nv.grid);
         gridBtn.addActionListener(e -> { nv.toggleGrid(); gridBtn.setSelected(nv.grid); });
         toolbar.add(gridBtn);
 
-        JToggleButton followBtn = createToolbarToggle("Follow", nv.follow);
+        JToggleButton followBtn = createToolbarToggle(IrisLanguage.plain(DesktopUiMessages.VISION_FOLLOW), nv.follow);
         followBtn.addActionListener(e -> { nv.toggleFollow(); followBtn.setSelected(nv.follow); });
         toolbar.add(followBtn);
 
-        JToggleButton qualityBtn = createToolbarToggle("LQ", nv.lowtile);
+        JToggleButton qualityBtn = createToolbarToggle(IrisLanguage.plain(DesktopUiMessages.VISION_LOW_QUALITY_SHORT), nv.lowtile);
         qualityBtn.addActionListener(e -> { nv.toggleQuality(); qualityBtn.setSelected(nv.lowtile); });
         toolbar.add(qualityBtn);
 
@@ -336,9 +338,9 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
         if (e.getKeyCode() == KeyEvent.VK_ALT) alt = false;
 
         if (e.getKeyCode() == KeyEvent.VK_F) { toggleFollow(); return; }
-        if (e.getKeyCode() == KeyEvent.VK_R) { dump(); notify("Refreshing"); return; }
+        if (e.getKeyCode() == KeyEvent.VK_R) { dump(); notify(IrisLanguage.plain(DesktopUiMessages.VISION_REFRESHING)); return; }
         if (e.getKeyCode() == KeyEvent.VK_P) { toggleQuality(); return; }
-        if (e.getKeyCode() == KeyEvent.VK_E) { eco = !eco; dump(); notify((eco ? "30" : "60") + " FPS"); return; }
+        if (e.getKeyCode() == KeyEvent.VK_E) { eco = !eco; dump(); notify(IrisLanguage.plain(DesktopUiMessages.VISION_FPS, MessageArgument.trusted("fps", eco ? 30 : 60))); return; }
         if (e.getKeyCode() == KeyEvent.VK_G) { toggleGrid(); return; }
 
         if (e.getKeyCode() == KeyEvent.VK_EQUALS) {
@@ -356,7 +358,7 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
         if (e.getKeyCode() == KeyEvent.VK_BACK_SLASH) {
             mscale = 1D;
             dump();
-            notify("Zoom Reset");
+            notify(IrisLanguage.plain(DesktopUiMessages.VISION_ZOOM_RESET));
             return;
         }
 
@@ -378,7 +380,18 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
     }
 
     private static String modeName(RenderType type) {
-        return Form.capitalizeWords(type.name().toLowerCase().replaceAll("\\Q_\\E", " "));
+        return IrisLanguage.plain(switch (type) {
+            case BIOME -> DesktopUiMessages.VISION_MODE_BIOME;
+            case BIOME_LAND -> DesktopUiMessages.VISION_MODE_BIOME_LAND;
+            case BIOME_SEA -> DesktopUiMessages.VISION_MODE_BIOME_SEA;
+            case REGION -> DesktopUiMessages.VISION_MODE_REGION;
+            case CAVE_LAND -> DesktopUiMessages.VISION_MODE_CAVE_LAND;
+            case HEIGHT -> DesktopUiMessages.VISION_MODE_HEIGHT;
+            case OBJECT_LOAD -> DesktopUiMessages.VISION_MODE_OBJECT_LOAD;
+            case DECORATOR_LOAD -> DesktopUiMessages.VISION_MODE_DECORATOR_LOAD;
+            case CONTINENT -> DesktopUiMessages.VISION_MODE_CONTINENT;
+            case LAYER_LOAD -> DesktopUiMessages.VISION_MODE_LAYER_LOAD;
+        });
     }
 
     void setRenderType(RenderType type) {
@@ -389,25 +402,25 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
 
     void toggleGrid() {
         grid = !grid;
-        notify("Grid " + (grid ? "On" : "Off"));
+        notify(IrisLanguage.plain(grid ? DesktopUiMessages.VISION_GRID_ENABLED : DesktopUiMessages.VISION_GRID_DISABLED));
     }
 
     void toggleFollow() {
         follow = !follow;
         if (followMarker != null && follow) {
-            notify("Following " + followMarker.label());
+            notify(IrisLanguage.plain(DesktopUiMessages.VISION_FOLLOWING, MessageArgument.untrusted("player", followMarker.label())));
         } else if (follow) {
-            notify("No player in world");
+            notify(IrisLanguage.plain(DesktopUiMessages.VISION_NO_PLAYER));
             follow = false;
         } else {
-            notify("Follow disabled");
+            notify(IrisLanguage.plain(DesktopUiMessages.VISION_FOLLOW_DISABLED));
         }
     }
 
     void toggleQuality() {
         lowtile = !lowtile;
         dump();
-        notify((lowtile ? "Low" : "High") + " Quality");
+        notify(IrisLanguage.plain(lowtile ? DesktopUiMessages.VISION_LOW_QUALITY : DesktopUiMessages.VISION_HIGH_QUALITY));
     }
 
     private void syncModeButtons() {
@@ -638,13 +651,21 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
         double wz = getWorldZ(h / 2.0);
         int fps = frameMs > 0 ? (int) (1000.0 / frameMs) : 0;
 
-        String left = String.format("  %s  |  %.1f bpp  |  %s x %s blocks",
-                modeName(currentType), mscale,
-                Form.f((int) (mscale * w)), Form.f((int) (mscale * h)));
+        String left = IrisLanguage.plain(
+                DesktopUiMessages.VISION_STATUS_LEFT,
+                MessageArgument.trusted("mode", modeName(currentType)),
+                MessageArgument.trusted("bpp", Form.f(mscale, 1)),
+                MessageArgument.trusted("width", Form.f((int) (mscale * w))),
+                MessageArgument.trusted("height", Form.f((int) (mscale * h)))
+        );
         g.drawString(left, 8, y + 17);
 
-        String right = String.format("X: %s  Z: %s  |  %d FPS  ",
-                Form.f((int) wx), Form.f((int) wz), fps);
+        String right = IrisLanguage.plain(
+                DesktopUiMessages.VISION_STATUS_RIGHT,
+                MessageArgument.trusted("x", Form.f((int) wx)),
+                MessageArgument.trusted("z", Form.f((int) wz)),
+                MessageArgument.trusted("fps", fps)
+        );
         int rw = g.getFontMetrics().stringWidth(right);
         g.drawString(right, w - rw - 8, y + 17);
 
@@ -690,9 +711,18 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
 
                 KList<String> k = new KList<>();
                 k.add(nearest.label());
-                k.add("Pos: " + (int) nearest.worldX() + ", " + (int) nearest.worldY() + ", " + (int) nearest.worldZ());
+                k.add(IrisLanguage.plain(
+                        DesktopUiMessages.VISION_ENTITY_POSITION,
+                        MessageArgument.trusted("x", (int) nearest.worldX()),
+                        MessageArgument.trusted("y", (int) nearest.worldY()),
+                        MessageArgument.trusted("z", (int) nearest.worldZ())
+                ));
                 if (nearest.maxHealth() > 0) {
-                    k.add("HP: " + Form.f(nearest.health(), 1) + " / " + Form.f(nearest.maxHealth(), 1));
+                    k.add(IrisLanguage.plain(
+                            DesktopUiMessages.VISION_ENTITY_HEALTH,
+                            MessageArgument.trusted("health", Form.f(nearest.health(), 1)),
+                            MessageArgument.trusted("maximum", Form.f(nearest.maxHealth(), 1))
+                    ));
                 }
                 drawCard(w - CARD_PAD, CARD_PAD, 1, 0, g, k);
             }
@@ -737,37 +767,37 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
         KList<String> l = new KList<>();
         l.add(biome.getName());
         l.add(region.getName());
-        l.add("Block " + (int) getWorldX(hx) + ", " + (int) getWorldZ(hz));
+        l.add(IrisLanguage.plain(DesktopUiMessages.VISION_BLOCK_POSITION, MessageArgument.trusted("x", (int) getWorldX(hx)), MessageArgument.trusted("z", (int) getWorldZ(hz))));
         if (detailed) {
-            l.add("Chunk " + ((int) getWorldX(hx) >> 4) + ", " + ((int) getWorldZ(hz) >> 4));
-            l.add("Region " + (((int) getWorldX(hx) >> 4) >> 5) + ", " + (((int) getWorldZ(hz) >> 4) >> 5));
-            l.add("Key: " + biome.getLoadKey());
-            l.add("File: " + biome.getLoadFile());
+            l.add(IrisLanguage.plain(DesktopUiMessages.VISION_CHUNK_POSITION, MessageArgument.trusted("x", (int) getWorldX(hx) >> 4), MessageArgument.trusted("z", (int) getWorldZ(hz) >> 4)));
+            l.add(IrisLanguage.plain(DesktopUiMessages.VISION_REGION_POSITION, MessageArgument.trusted("x", (int) getWorldX(hx) >> 9), MessageArgument.trusted("z", (int) getWorldZ(hz) >> 9)));
+            l.add(IrisLanguage.plain(DesktopUiMessages.VISION_BIOME_KEY, MessageArgument.untrusted("key", biome.getLoadKey())));
+            l.add(IrisLanguage.plain(DesktopUiMessages.VISION_BIOME_FILE, MessageArgument.untrusted("file", String.valueOf(biome.getLoadFile()))));
         }
         drawCard((float) hx + 16, (float) hz, 0, 0, g, l);
     }
 
     private void renderOverlayDebug(Graphics2D g) {
         KList<String> l = new KList<>();
-        l.add("Velocity: " + (int) velocity);
-        l.add("Tiles: " + positions.size() + " HD / " + fastpositions.size() + " LQ");
-        l.add("Workers: " + working.size() + " HD / " + workingfast.size() + " LQ");
-        l.add("Center: " + Form.f((int) getWorldX(getWidth() / 2.0)) + ", " + Form.f((int) getWorldZ(getHeight() / 2.0)));
+        l.add(IrisLanguage.plain(DesktopUiMessages.VISION_VELOCITY, MessageArgument.trusted("velocity", (int) velocity)));
+        l.add(IrisLanguage.plain(DesktopUiMessages.VISION_TILES, MessageArgument.trusted("high", positions.size()), MessageArgument.trusted("low", fastpositions.size())));
+        l.add(IrisLanguage.plain(DesktopUiMessages.VISION_WORKERS, MessageArgument.trusted("high", working.size()), MessageArgument.trusted("low", workingfast.size())));
+        l.add(IrisLanguage.plain(DesktopUiMessages.VISION_CENTER, MessageArgument.trusted("x", Form.f((int) getWorldX(getWidth() / 2.0))), MessageArgument.trusted("z", Form.f((int) getWorldZ(getHeight() / 2.0)))));
         drawCard(CARD_PAD, h - STATUS_HEIGHT - CARD_PAD, 0, 1, g, l);
     }
 
     private void renderOverlayHelp(Graphics2D g) {
         KList<String> keys = new KList<>();
         KList<String> descs = new KList<>();
-        keys.add("/");      descs.add("Toggle help");
-        keys.add("R");      descs.add("Refresh tiles");
-        keys.add("F");      descs.add("Follow player");
-        keys.add("+/-");    descs.add("Zoom in/out");
-        keys.add("\\");     descs.add("Reset zoom");
-        keys.add("M");      descs.add("Cycle render mode");
-        keys.add("P");      descs.add("Toggle tile quality");
-        keys.add("E");      descs.add("Toggle 30/60 FPS");
-        keys.add("G");      descs.add("Toggle grid");
+        keys.add("/");      descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_TOGGLE));
+        keys.add("R");      descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_REFRESH));
+        keys.add("F");      descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_FOLLOW));
+        keys.add("+/-");    descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_ZOOM));
+        keys.add("\\");     descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_RESET_ZOOM));
+        keys.add("M");      descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_CYCLE_MODE));
+        keys.add("P");      descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_QUALITY));
+        keys.add("E");      descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_FPS));
+        keys.add("G");      descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_GRID));
 
         int ff = 0;
         for (RenderType i : RenderType.values()) {
@@ -776,9 +806,9 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
             descs.add(modeName(i));
         }
 
-        keys.add("Shift");     descs.add("Detailed biome info");
-        keys.add("Ctrl+Click"); descs.add("Teleport to cursor");
-        keys.add("Alt+Click");  descs.add("Open biome in editor");
+        keys.add("Shift");     descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_BIOME));
+        keys.add("Ctrl+Click"); descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_TELEPORT));
+        keys.add("Alt+Click");  descs.add(IrisLanguage.plain(DesktopUiMessages.VISION_HELP_EDITOR));
 
         int maxKeyW = 0;
         g.setFont(FONT_HELP_KEY);
@@ -907,18 +937,18 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
         }
         String opened = overlay.openInEditor(getWorldX(hx), getWorldZ(hz), currentType);
         if (opened != null) {
-            notify("Opened " + opened);
+            notify(IrisLanguage.plain(DesktopUiMessages.VISION_OPENED, MessageArgument.untrusted("target", opened)));
         }
     }
 
     private void teleport() {
         if (overlay == null) {
-            notify("No player in world");
+            notify(IrisLanguage.plain(DesktopUiMessages.VISION_NO_PLAYER));
             return;
         }
         int xx = (int) getWorldX(hx);
         int zz = (int) getWorldZ(hz);
         overlay.teleport(xx, zz);
-        notify("Teleporting to " + xx + ", " + zz);
+        notify(IrisLanguage.plain(DesktopUiMessages.VISION_TELEPORTING, MessageArgument.trusted("x", xx), MessageArgument.trusted("z", zz)));
     }
 }

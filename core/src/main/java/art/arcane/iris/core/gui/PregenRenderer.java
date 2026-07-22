@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.gui;
 
+import art.arcane.iris.core.localization.DesktopUiMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.volmlib.util.collection.KList;
@@ -118,13 +120,13 @@ public final class PregenRenderer extends JPanel implements KeyListener {
         int hh = 20;
 
         if (source.paused()) {
-            g.drawString("PAUSED", 20, hh += h);
-            g.drawString("Press P to Resume", 20, hh += h);
+            g.drawString(IrisLanguage.plain(DesktopUiMessages.PREGEN_PAUSED), 20, hh += h);
+            g.drawString(IrisLanguage.plain(DesktopUiMessages.PREGEN_RESUME_HINT), 20, hh += h);
         } else {
             for (String i : prog) {
                 g.drawString(i, 20, hh += h);
             }
-            g.drawString("Press P to Pause", 20, hh += h);
+            g.drawString(IrisLanguage.plain(DesktopUiMessages.PREGEN_PAUSE_HINT), 20, hh += h);
         }
 
         J.sleep(IrisSettings.get().getGui().isMaximumPregenGuiFPS() ? 4 : 250);

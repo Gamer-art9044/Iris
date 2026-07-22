@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.gui;
 
+import art.arcane.iris.core.localization.DesktopUiMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
@@ -27,6 +29,7 @@ import art.arcane.volmlib.util.function.Function2;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.math.RollingSequence;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.common.parallel.BurstExecutor;
 import art.arcane.iris.util.common.parallel.MultiBurst;
@@ -89,10 +92,12 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
     private static final int SIDEBAR_WIDTH = 240;
     private static final int[] HSB_LUT = new int[256];
 
-    private static final String[] CATEGORY_ORDER = {
-            "Pack Generators", "Simplex", "Perlin", "Cellular", "Iris", "Clover",
-            "Hexagon", "Vascular", "Globe", "Cubic", "Fractal", "Static",
-            "Nowhere", "Sierpinski", "Utility", "Other"
+    private static final NoiseCategory[] CATEGORY_ORDER = {
+            NoiseCategory.PACK_GENERATORS, NoiseCategory.SIMPLEX, NoiseCategory.PERLIN,
+            NoiseCategory.CELLULAR, NoiseCategory.IRIS, NoiseCategory.CLOVER, NoiseCategory.HEXAGON,
+            NoiseCategory.VASCULAR, NoiseCategory.GLOBE, NoiseCategory.CUBIC, NoiseCategory.FRACTAL,
+            NoiseCategory.STATIC, NoiseCategory.NOWHERE, NoiseCategory.SIERPINSKI, NoiseCategory.UTILITY,
+            NoiseCategory.OTHER
     };
 
     static {
@@ -151,7 +156,7 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
         Engine engine = GuiHost.get().findActiveEngine();
         EventQueue.invokeLater(() -> {
             NoiseExplorerGUI nv = new NoiseExplorerGUI();
-            buildFrame("Noise Explorer", nv, engine, null, null);
+            buildFrame(IrisLanguage.plain(DesktopUiMessages.NOISE_TITLE), nv, engine, null, null);
         });
     }
 
@@ -162,7 +167,7 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
             nv.loader = gen;
             nv.generator = gen.get();
             nv.currentName = genName;
-            buildFrame("Noise Explorer: " + genName, nv, engine, gen, genName);
+            buildFrame(IrisLanguage.plain(DesktopUiMessages.NOISE_TITLE_GENERATOR, MessageArgument.untrusted("generator", genName)), nv, engine, gen, genName);
         });
     }
 
@@ -206,7 +211,7 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
                 BorderFactory.createMatteBorder(0, 0, 1, 0, SEPARATOR),
                 BorderFactory.createEmptyBorder(8, 10, 8, 10)
         ));
-        search.putClientProperty("JTextField.placeholderText", "Search...");
+        search.putClientProperty("JTextField.placeholderText", IrisLanguage.plain(DesktopUiMessages.NOISE_SEARCH));
 
         LinkedHashMap<String, List<ListItem>> categories = buildCategoryMap(nv, engine, customGen, customName);
         DefaultListModel<ListItem> model = new DefaultListModel<>();
@@ -277,12 +282,12 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
                 nv.loader = customGen;
                 nv.currentName = customName;
             }));
-            categories.put("Custom", custom);
+            categories.put(IrisLanguage.plain(DesktopUiMessages.NOISE_CATEGORY_CUSTOM), custom);
         }
 
-        Map<String, List<NoiseStyle>> styleGroups = new LinkedHashMap<>();
+        Map<NoiseCategory, List<NoiseStyle>> styleGroups = new LinkedHashMap<>();
         for (NoiseStyle style : NoiseStyle.values()) {
-            String cat = categorize(style);
+            NoiseCategory cat = categorize(style);
             styleGroups.computeIfAbsent(cat, k -> new ArrayList<>()).add(style);
         }
 
@@ -305,12 +310,12 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
                 }
             } catch (Throwable ignored) {}
             if (!genItems.isEmpty()) {
-                categories.put("Pack Generators", genItems);
+                categories.put(categoryLabel(NoiseCategory.PACK_GENERATORS), genItems);
             }
         }
 
-        for (String cat : CATEGORY_ORDER) {
-            if ("Pack Generators".equals(cat)) continue;
+        for (NoiseCategory cat : CATEGORY_ORDER) {
+            if (cat == NoiseCategory.PACK_GENERATORS) continue;
             List<NoiseStyle> styles = styleGroups.get(cat);
             if (styles != null && !styles.isEmpty()) {
                 List<ListItem> items = new ArrayList<>();
@@ -322,12 +327,13 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
                         nv.currentName = style.name();
                     }));
                 }
-                categories.put(cat, items);
+                categories.put(categoryLabel(cat), items);
             }
         }
 
-        for (Map.Entry<String, List<NoiseStyle>> entry : styleGroups.entrySet()) {
-            if (!categories.containsKey(entry.getKey())) {
+        for (Map.Entry<NoiseCategory, List<NoiseStyle>> entry : styleGroups.entrySet()) {
+            String category = categoryLabel(entry.getKey());
+            if (!categories.containsKey(category)) {
                 List<ListItem> items = new ArrayList<>();
                 for (NoiseStyle style : entry.getValue()) {
                     items.add(new ListItem(formatName(style.name()), style.name(), false, () -> {
@@ -337,30 +343,51 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
                         nv.currentName = style.name();
                     }));
                 }
-                categories.put(entry.getKey(), items);
+                categories.put(category, items);
             }
         }
 
         return categories;
     }
 
-    private static String categorize(NoiseStyle style) {
+    private static NoiseCategory categorize(NoiseStyle style) {
         String n = style.name();
-        if (n.startsWith("STATIC")) return "Static";
-        if (n.startsWith("IRIS")) return "Iris";
-        if (n.startsWith("CLOVER")) return "Clover";
-        if (n.startsWith("VASCULAR")) return "Vascular";
-        if (n.equals("FLAT")) return "Utility";
-        if (n.startsWith("CELLULAR")) return "Cellular";
-        if (n.startsWith("HEX") || n.equals("HEXAGON")) return "Hexagon";
-        if (n.startsWith("SIERPINSKI")) return "Sierpinski";
-        if (n.startsWith("NOWHERE")) return "Nowhere";
-        if (n.startsWith("GLOB")) return "Globe";
-        if (n.startsWith("PERLIN")) return "Perlin";
-        if (n.startsWith("CUBIC") || (n.startsWith("FRACTAL") && n.contains("CUBIC"))) return "Cubic";
-        if (n.contains("SIMPLEX") && !n.startsWith("FRACTAL")) return "Simplex";
-        if (n.startsWith("FRACTAL")) return "Fractal";
-        return "Other";
+        if (n.startsWith("STATIC")) return NoiseCategory.STATIC;
+        if (n.startsWith("IRIS")) return NoiseCategory.IRIS;
+        if (n.startsWith("CLOVER")) return NoiseCategory.CLOVER;
+        if (n.startsWith("VASCULAR")) return NoiseCategory.VASCULAR;
+        if (n.equals("FLAT")) return NoiseCategory.UTILITY;
+        if (n.startsWith("CELLULAR")) return NoiseCategory.CELLULAR;
+        if (n.startsWith("HEX") || n.equals("HEXAGON")) return NoiseCategory.HEXAGON;
+        if (n.startsWith("SIERPINSKI")) return NoiseCategory.SIERPINSKI;
+        if (n.startsWith("NOWHERE")) return NoiseCategory.NOWHERE;
+        if (n.startsWith("GLOB")) return NoiseCategory.GLOBE;
+        if (n.startsWith("PERLIN")) return NoiseCategory.PERLIN;
+        if (n.startsWith("CUBIC") || (n.startsWith("FRACTAL") && n.contains("CUBIC"))) return NoiseCategory.CUBIC;
+        if (n.contains("SIMPLEX") && !n.startsWith("FRACTAL")) return NoiseCategory.SIMPLEX;
+        if (n.startsWith("FRACTAL")) return NoiseCategory.FRACTAL;
+        return NoiseCategory.OTHER;
+    }
+
+    private static String categoryLabel(NoiseCategory category) {
+        return IrisLanguage.plain(switch (category) {
+            case PACK_GENERATORS -> DesktopUiMessages.NOISE_CATEGORY_PACK_GENERATORS;
+            case SIMPLEX -> DesktopUiMessages.NOISE_CATEGORY_SIMPLEX;
+            case PERLIN -> DesktopUiMessages.NOISE_CATEGORY_PERLIN;
+            case CELLULAR -> DesktopUiMessages.NOISE_CATEGORY_CELLULAR;
+            case IRIS -> DesktopUiMessages.NOISE_CATEGORY_IRIS;
+            case CLOVER -> DesktopUiMessages.NOISE_CATEGORY_CLOVER;
+            case HEXAGON -> DesktopUiMessages.NOISE_CATEGORY_HEXAGON;
+            case VASCULAR -> DesktopUiMessages.NOISE_CATEGORY_VASCULAR;
+            case GLOBE -> DesktopUiMessages.NOISE_CATEGORY_GLOBE;
+            case CUBIC -> DesktopUiMessages.NOISE_CATEGORY_CUBIC;
+            case FRACTAL -> DesktopUiMessages.NOISE_CATEGORY_FRACTAL;
+            case STATIC -> DesktopUiMessages.NOISE_CATEGORY_STATIC;
+            case NOWHERE -> DesktopUiMessages.NOISE_CATEGORY_NOWHERE;
+            case SIERPINSKI -> DesktopUiMessages.NOISE_CATEGORY_SIERPINSKI;
+            case UTILITY -> DesktopUiMessages.NOISE_CATEGORY_UTILITY;
+            case OTHER -> DesktopUiMessages.NOISE_CATEGORY_OTHER;
+        });
     }
 
     private static String formatName(String enumName) {
@@ -500,8 +527,15 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
 
         int fps = frameMs > 0 ? (int) (1000.0 / frameMs) : 0;
 
-        String status = String.format("  %s  |  X: %.1f  Z: %.1f  |  Zoom: %.4f  |  Value: %.4f  |  %d FPS",
-                currentName, worldX, worldZ, animScale, noiseVal, fps);
+        String status = IrisLanguage.plain(
+                DesktopUiMessages.NOISE_STATUS,
+                MessageArgument.untrusted("name", currentName),
+                MessageArgument.trusted("x", String.format("%.1f", worldX)),
+                MessageArgument.trusted("z", String.format("%.1f", worldZ)),
+                MessageArgument.trusted("zoom", String.format("%.4f", animScale)),
+                MessageArgument.trusted("value", String.format("%.4f", noiseVal)),
+                MessageArgument.trusted("fps", fps)
+        );
         g.drawString(status, 8, y + 18);
 
         int barW = 60;
@@ -553,5 +587,24 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
             }
             return this;
         }
+    }
+
+    private enum NoiseCategory {
+        PACK_GENERATORS,
+        SIMPLEX,
+        PERLIN,
+        CELLULAR,
+        IRIS,
+        CLOVER,
+        HEXAGON,
+        VASCULAR,
+        GLOBE,
+        CUBIC,
+        FRACTAL,
+        STATIC,
+        NOWHERE,
+        SIERPINSKI,
+        UTILITY,
+        OTHER
     }
 }

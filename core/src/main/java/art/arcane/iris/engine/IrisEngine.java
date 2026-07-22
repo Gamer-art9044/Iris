@@ -18,6 +18,9 @@
 
 package art.arcane.iris.engine;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.ClientUiMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineEffects;
 import art.arcane.iris.engine.framework.EngineEffectsProvider;
@@ -72,6 +75,7 @@ import art.arcane.volmlib.util.format.Form;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.MatterStructurePOI;
@@ -755,8 +759,8 @@ public class IrisEngine implements Engine {
         protocolServer.broadcastStudioHotload(packKey, 0, failed, message);
         protocolServer.broadcastToast(
                 failed ? IrisMessage.Toast.KIND_ERROR : IrisMessage.Toast.KIND_SUCCESS,
-                "Studio Hotload",
-                failed ? packKey + " failed" : packKey);
+                IrisLanguage.plain(ClientUiMessages.TOAST_STUDIO_HOTLOAD),
+                failed ? IrisLanguage.plain(ClientUiMessages.TOAST_PACK_FAILED, MessageArgument.untrusted("pack", packKey)) : packKey);
     }
 
     @Override
@@ -906,20 +910,20 @@ public class IrisEngine implements Engine {
             weights.put(i, weights.get(i) / v);
         }
 
-        sender.sendMessage("Total: " + C.BOLD + C.WHITE + Form.duration(masterWallClock, 0));
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_ENGINE_TOTAL, MessageArgument.untrusted("value", String.valueOf(Form.duration(masterWallClock, 0)))));
 
         for (String i : totals.k()) {
-            sender.sendMessage("  Engine " + C.UNDERLINE + C.GREEN + i + C.RESET + ": " + C.BOLD + C.WHITE + Form.duration(totals.get(i), 0));
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_ENGINE_ENGINE, MessageArgument.untrusted("i", String.valueOf(i)), MessageArgument.untrusted("value", String.valueOf(Form.duration(totals.get(i), 0)))));
         }
 
-        sender.sendMessage("Details: ");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_ENGINE_DETAILS));
 
         for (String i : weights.sortKNumber().reverse()) {
             String befb = C.UNDERLINE + "" + C.GREEN + "" + i.split("\\Q[\\E")[0] + C.RESET + C.GRAY + "[";
             String num = C.GOLD + i.split("\\Q[\\E")[1].split("]")[0] + C.RESET + C.GRAY + "].";
             String afb = C.ITALIC + "" + C.AQUA + i.split("\\Q]\\E")[1].substring(1) + C.RESET + C.GRAY;
 
-            sender.sendMessage("  " + befb + num + afb + ": " + C.BOLD + C.WHITE + Form.pc(weights.get(i), 0));
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_ENGINE_MESSAGE, MessageArgument.untrusted("befb", String.valueOf(befb)), MessageArgument.untrusted("num", String.valueOf(num)), MessageArgument.untrusted("afb", String.valueOf(afb)), MessageArgument.untrusted("value", String.valueOf(Form.pc(weights.get(i), 0)))));
         }
     }
 

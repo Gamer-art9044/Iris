@@ -30,6 +30,9 @@ import org.bukkit.command.CommandSender;
 
 import java.lang.reflect.Field;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 /**
  * Represents a virtual command. A chain of iterative processing through
  * subcommands.
@@ -171,12 +174,12 @@ public class VirtualCommand {
         for (String i : command.getRequiredPermissions()) {
             if (!sender.hasPermission(i)) {
                 failed = true;
-                J.s(() -> sender.sendMessage("- " + C.WHITE + i), 0);
+                J.s(() -> sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.VIRTUAL_COMMAND_MESSAGE, MessageArgument.untrusted("i", String.valueOf(i)))), 0);
             }
         }
 
         if (failed) {
-            sender.sendMessage("Insufficient Permissions");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.VIRTUAL_COMMAND_INSUFFICIENT_PERMISSIONS));
             return false;
         }
 

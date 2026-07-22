@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.runtime;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.spi.IrisLogging;
@@ -25,6 +27,7 @@ import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.math.ChunkSpiral;
 import art.arcane.iris.util.common.parallel.MultiBurst;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 
 import java.io.File;
@@ -137,26 +140,32 @@ public final class GoldenHashEngine {
         try {
             boolean exists = goldenFile.exists();
             if (request.mode() == Mode.VERIFY && !exists) {
-                feedback.fail("No golden capture at " + goldenFile.getAbsolutePath() + "; run a capture first.");
+                feedback.fail(IrisLanguage.plain(
+                        RuntimeProgressMessages.GOLDEN_NO_CAPTURE,
+                        MessageArgument.untrusted("path", goldenFile.getAbsolutePath())
+                ));
                 return false;
             }
 
             if (request.resetMantle()) {
-                progress.stage("Resetting mantle");
+                progress.stage(IrisLanguage.plain(RuntimeProgressMessages.CHUNK_STAGE_RESETTING_MANTLE));
                 resetMantleFull();
             }
 
             List<int[]> targets = ChunkSpiral.centerOut(request.centerChunkX(), request.centerChunkZ(), radius);
             progress.total(targets.size());
-            progress.stage("Generating");
+            progress.stage(IrisLanguage.plain(RuntimeProgressMessages.CHUNK_STAGE_GENERATING));
             Map<Long, String> lines = scan(targets);
 
             if (lines.size() != targets.size()) {
-                feedback.fail("GoldenHash aborted: " + (targets.size() - lines.size()) + " chunk(s) failed to generate. No golden file written.");
+                feedback.fail(IrisLanguage.plain(
+                        RuntimeProgressMessages.GOLDEN_ABORTED,
+                        MessageArgument.trusted("failed", targets.size() - lines.size())
+                ));
                 return false;
             }
 
-            progress.stage("Comparing");
+            progress.stage(IrisLanguage.plain(RuntimeProgressMessages.CHUNK_STAGE_COMPARING));
             if (request.mode() == Mode.CAPTURE || (request.mode() == Mode.AUTO && !exists)) {
                 capture(lines);
                 return true;
@@ -165,7 +174,10 @@ public final class GoldenHashEngine {
             return verify(lines);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            feedback.fail("GoldenHash failed: " + e);
+            feedback.fail(IrisLanguage.plain(
+                    RuntimeProgressMessages.GOLDEN_FAILED,
+                    MessageArgument.untrusted("error", String.valueOf(e))
+            ));
             return false;
         } finally {
             ACTIVE_SCANS.decrementAndGet();
@@ -185,10 +197,16 @@ public final class GoldenHashEngine {
                     }
                 }
             }
-            feedback.ok("Mantle reset (" + folder.getAbsolutePath() + ")");
+            feedback.ok(IrisLanguage.plain(
+                    RuntimeProgressMessages.GOLDEN_MANTLE_RESET,
+                    MessageArgument.untrusted("path", folder.getAbsolutePath())
+            ));
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            feedback.warn("Mantle reset failed (" + e.getClass().getSimpleName() + "); continuing with existing mantle state.");
+            feedback.warn(IrisLanguage.plain(
+                    RuntimeProgressMessages.GOLDEN_MANTLE_RESET_FAILED,
+                    MessageArgument.untrusted("type", e.getClass().getSimpleName())
+            ));
         }
     }
 
@@ -280,7 +298,11 @@ public final class GoldenHashEngine {
         out.add("#combined=" + combined);
         Files.write(goldenFile.toPath(), out, StandardCharsets.UTF_8);
 
-        feedback.ok("Golden captured: " + body.size() + " chunks combined=" + shortHash(combined));
+        feedback.ok(IrisLanguage.plain(
+                RuntimeProgressMessages.GOLDEN_CAPTURED,
+                MessageArgument.trusted("chunks", body.size()),
+                MessageArgument.trusted("hash", shortHash(combined))
+        ));
         feedback.ok(goldenFile.getAbsolutePath());
         IrisLogging.info("goldenhash captured: " + goldenFile.getAbsolutePath() + " combined=" + combined);
     }
@@ -304,12 +326,21 @@ public final class GoldenHashEngine {
         String expectedSeed = String.valueOf(request.seed());
         String expectedDim = engine.getDimension().getLoadKey();
         if (!expectedSeed.equals(meta.get("seed")) || !expectedDim.equals(meta.get("dim"))) {
-            feedback.fail("Golden file is for dim=" + meta.get("dim") + " seed=" + meta.get("seed")
-                    + " but this world is dim=" + expectedDim + " seed=" + expectedSeed + ". Aborting.");
+            feedback.fail(IrisLanguage.plain(
+                    RuntimeProgressMessages.GOLDEN_WRONG_WORLD,
+                    MessageArgument.untrusted("goldenDimension", String.valueOf(meta.get("dim"))),
+                    MessageArgument.untrusted("goldenSeed", String.valueOf(meta.get("seed"))),
+                    MessageArgument.untrusted("dimension", expectedDim),
+                    MessageArgument.untrusted("seed", expectedSeed)
+            ));
             return false;
         }
         if (!request.mcVersion().equals(meta.get("mc"))) {
-            feedback.warn("Golden was captured on mc=" + meta.get("mc") + ", running mc=" + request.mcVersion() + ". Diffs may be version-induced.");
+            feedback.warn(IrisLanguage.plain(
+                    RuntimeProgressMessages.GOLDEN_VERSION_WARNING,
+                    MessageArgument.untrusted("goldenVersion", String.valueOf(meta.get("mc"))),
+                    MessageArgument.untrusted("version", request.mcVersion())
+            ));
         }
 
         List<String> body = orderedBody(lines);
@@ -319,33 +350,56 @@ public final class GoldenHashEngine {
             String key = line.substring(0, second);
             String golden = goldenChunks.get(key);
             if (!line.equals(golden)) {
-                mismatches.add(key + (golden == null ? " (missing in golden)" : ""));
+                mismatches.add(golden == null
+                        ? IrisLanguage.plain(
+                                RuntimeProgressMessages.GOLDEN_MISSING_IN_GOLDEN,
+                                MessageArgument.untrusted("chunk", key)
+                        )
+                        : key);
             }
         }
 
         String combined = combinedHash(body);
         if (mismatches.isEmpty()) {
-            feedback.ok("GOLDEN MATCH: " + body.size() + "/" + goldenChunks.size() + " chunks, combined=" + shortHash(combined));
+            feedback.ok(IrisLanguage.plain(
+                    RuntimeProgressMessages.GOLDEN_MATCH,
+                    MessageArgument.trusted("current", body.size()),
+                    MessageArgument.trusted("golden", goldenChunks.size()),
+                    MessageArgument.trusted("hash", shortHash(combined))
+            ));
             IrisLogging.info("goldenhash MATCH: " + goldenFile.getName() + " combined=" + combined);
             return true;
         }
 
-        feedback.fail("GOLDEN MISMATCH: " + mismatches.size() + "/" + body.size() + " chunks differ.");
+        feedback.fail(IrisLanguage.plain(
+                RuntimeProgressMessages.GOLDEN_MISMATCH,
+                MessageArgument.trusted("mismatches", mismatches.size()),
+                MessageArgument.trusted("chunks", body.size())
+        ));
         for (int i = 0; i < Math.min(MAX_REPORTED_MISMATCHES, mismatches.size()); i++) {
-            feedback.fail("  chunk " + mismatches.get(i));
+            feedback.fail(IrisLanguage.plain(
+                    RuntimeProgressMessages.GOLDEN_MISMATCH_CHUNK,
+                    MessageArgument.untrusted("chunk", mismatches.get(i))
+            ));
         }
         if (mismatches.size() > MAX_REPORTED_MISMATCHES) {
-            feedback.fail("  ... and " + (mismatches.size() - MAX_REPORTED_MISMATCHES) + " more");
+            feedback.fail(IrisLanguage.plain(
+                    RuntimeProgressMessages.GOLDEN_MISMATCH_MORE,
+                    MessageArgument.trusted("count", mismatches.size() - MAX_REPORTED_MISMATCHES)
+            ));
         }
 
         File current = new File(goldenFile.getParentFile(), goldenFile.getName() + ".new");
         List<String> out = new ArrayList<>(body);
         out.add("#combined=" + combined);
         Files.write(current.toPath(), out, StandardCharsets.UTF_8);
-        feedback.warn("Current hashes written to " + current.getName());
+        feedback.warn(IrisLanguage.plain(
+                RuntimeProgressMessages.GOLDEN_CURRENT_WRITTEN,
+                MessageArgument.untrusted("file", current.getName())
+        ));
         IrisLogging.info("goldenhash MISMATCH: " + mismatches.size() + "/" + body.size() + " -> " + current.getAbsolutePath());
 
-        progress.stage("Diagnosing");
+        progress.stage(IrisLanguage.plain(RuntimeProgressMessages.CHUNK_STAGE_DIAGNOSING));
         diagnose(mismatches.getFirst());
         return false;
     }
@@ -376,6 +430,7 @@ public final class GoldenHashEngine {
 
             List<String> mantleDiffs = new ArrayList<>();
             String mantleStatus;
+            boolean mantleStable = false;
             try {
                 EngineMantle engineMantle = engine.getMantle();
                 int margin = Math.max(engineMantle.getRadius(), engineMantle.getRealRadius()) + 1;
@@ -396,10 +451,19 @@ public final class GoldenHashEngine {
                         }
                     }
                 }
-                mantleStatus = mantleDiffs.isEmpty() ? "STABLE (mantle rebuild reproduces scan output)" : "DIVERGED (" + mantleDiffs.size() + "+ diffs - mantle build is state/order dependent)";
+                mantleStable = mantleDiffs.isEmpty();
+                mantleStatus = mantleStable
+                        ? IrisLanguage.plain(RuntimeProgressMessages.GOLDEN_MANTLE_STABLE)
+                        : IrisLanguage.plain(
+                                RuntimeProgressMessages.GOLDEN_MANTLE_DIVERGED,
+                                MessageArgument.trusted("diffs", mantleDiffs.size())
+                        );
             } catch (Throwable t) {
                 mantleDiffs.clear();
-                mantleStatus = "SKIPPED (" + t.getClass().getSimpleName() + ")";
+                mantleStatus = IrisLanguage.plain(
+                        RuntimeProgressMessages.GOLDEN_MANTLE_SKIPPED,
+                        MessageArgument.untrusted("type", t.getClass().getSimpleName())
+                );
             }
 
             List<String> report = new ArrayList<>();
@@ -422,17 +486,27 @@ public final class GoldenHashEngine {
 
             File diag = new File(goldenFile.getParentFile(), goldenFile.getName() + ".diag-c" + chunkX + "x" + chunkZ + ".txt");
             Files.write(diag.toPath(), report, StandardCharsets.UTF_8);
-            String repeatPart = diffs.isEmpty() ? "Repeat-gen STABLE" : "Repeat-gen UNSTABLE (" + diffs.size() + "+ block diffs)";
-            String mantlePart = "mantle-reset " + mantleStatus;
-            if (diffs.isEmpty() && mantleDiffs.isEmpty() && mantleStatus.startsWith("STABLE")) {
-                feedback.warn(repeatPart + ", " + mantlePart + " -> " + diag.getName());
+            if (diffs.isEmpty() && mantleStable) {
+                feedback.warn(IrisLanguage.plain(
+                        RuntimeProgressMessages.GOLDEN_DIAG_STABLE,
+                        MessageArgument.trusted("mantleStatus", mantleStatus),
+                        MessageArgument.untrusted("file", diag.getName())
+                ));
             } else {
-                feedback.fail(repeatPart + ", " + mantlePart + " -> " + diag.getName());
+                feedback.fail(IrisLanguage.plain(
+                        RuntimeProgressMessages.GOLDEN_DIAG_UNSTABLE,
+                        MessageArgument.trusted("diffs", diffs.size()),
+                        MessageArgument.trusted("mantleStatus", mantleStatus),
+                        MessageArgument.untrusted("file", diag.getName())
+                ));
             }
             IrisLogging.info("goldenhash diag: chunk=" + chunkX + "," + chunkZ + " repeatStable=" + diffs.isEmpty() + " -> " + diag.getAbsolutePath());
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            feedback.fail("Diagnosis failed: " + e.getMessage());
+            feedback.fail(IrisLanguage.plain(
+                    RuntimeProgressMessages.GOLDEN_DIAG_FAILED,
+                    MessageArgument.untrusted("error", String.valueOf(e.getMessage()))
+            ));
         }
     }
 

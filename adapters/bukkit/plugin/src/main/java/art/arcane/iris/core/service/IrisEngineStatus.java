@@ -3,7 +3,6 @@ package art.arcane.iris.core.service;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.framework.MeteredCache;
 import art.arcane.iris.spi.IrisServices;
-import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.project.stream.utility.CachedDoubleStream2D;
 import art.arcane.iris.util.project.stream.utility.CachedStream2D;
@@ -12,6 +11,10 @@ import art.arcane.volmlib.util.format.Form;
 
 import java.util.List;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.BukkitCommandMessages;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 final class IrisEngineStatus {
     private IrisEngineStatus() {
     }
@@ -20,30 +23,40 @@ final class IrisEngineStatus {
         CacheSummary caches = summarizeCaches();
         MaintenanceMetrics metrics = snapshot.metrics();
 
-        sender.sendMessage(C.DARK_PURPLE + "-------------------------");
-        sender.sendMessage(C.DARK_PURPLE + "Status:");
-        sender.sendMessage(C.DARK_PURPLE + "- Service: " + C.LIGHT_PURPLE + (snapshot.serviceRunning() ? "Running" : "Stopped"));
-        sender.sendMessage(C.DARK_PURPLE + "- Metrics: " + C.LIGHT_PURPLE + (snapshot.metricsRunning() ? "Running" : "Stopped"));
-        sender.sendMessage(C.DARK_PURPLE + "- Maintenance Period: " + C.LIGHT_PURPLE + Form.duration(snapshot.maintenancePeriodMillis()));
-        sender.sendMessage(C.DARK_PURPLE + "- Worker Parallelism: " + C.LIGHT_PURPLE + snapshot.workerParallelism());
-        sender.sendMessage(C.DARK_PURPLE + "- Active World Tasks: " + C.LIGHT_PURPLE + metrics.activeTasks());
-        sender.sendMessage(C.DARK_PURPLE + "Tectonic Plates:");
-        sender.sendMessage(C.DARK_PURPLE + "- Configured Retention: " + C.LIGHT_PURPLE + Form.duration(snapshot.retentionMillis()));
-        sender.sendMessage(C.DARK_PURPLE + "- Heap Usage: " + C.LIGHT_PURPLE + Form.pc(snapshot.heapUsage()));
-        sender.sendMessage(C.DARK_PURPLE + "- Resident: " + C.LIGHT_PURPLE + metrics.residentTectonicPlates());
-        sender.sendMessage(C.DARK_PURPLE + "- Queued: " + C.LIGHT_PURPLE + metrics.queuedTectonicPlates());
-        sender.sendMessage(C.DARK_PURPLE + "- Average Idle Duration: " + C.LIGHT_PURPLE + Form.duration(metrics.averageIdleDuration(), 2));
-        sender.sendMessage(C.DARK_PURPLE + "- Max Idle Duration: " + C.LIGHT_PURPLE + Form.duration(metrics.maxIdleDuration(), 2));
-        sender.sendMessage(C.DARK_PURPLE + "- Min Idle Duration: " + C.LIGHT_PURPLE + Form.duration(metrics.minIdleDuration(), 2));
-        sender.sendMessage(C.DARK_PURPLE + "Caches:");
-        sender.sendMessage(C.DARK_PURPLE + "- Resource: " + C.LIGHT_PURPLE + caches.sizes()[0] + " (" + caches.counts()[0] + ")");
-        sender.sendMessage(C.DARK_PURPLE + "- 2D Stream: " + C.LIGHT_PURPLE + caches.sizes()[1] + " (" + caches.counts()[1] + ")");
-        sender.sendMessage(C.DARK_PURPLE + "- 3D Stream: " + C.LIGHT_PURPLE + caches.sizes()[2] + " (" + caches.counts()[2] + ")");
-        sender.sendMessage(C.DARK_PURPLE + "- Other: " + C.LIGHT_PURPLE + caches.sizes()[3] + " (" + caches.counts()[3] + ")");
-        sender.sendMessage(C.DARK_PURPLE + "Other:");
-        sender.sendMessage(C.DARK_PURPLE + "- Iris Worlds: " + C.LIGHT_PURPLE + metrics.worlds());
-        sender.sendMessage(C.DARK_PURPLE + "- Loaded Chunks: " + C.LIGHT_PURPLE + metrics.loadedChunks());
-        sender.sendMessage(C.DARK_PURPLE + "-------------------------");
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_MESSAGE));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_STATUS));
+        sender.sendMessage(IrisLanguage.text(
+                BukkitCommandMessages.IRIS_ENGINE_STATUS_SERVICE,
+                MessageArgument.trusted("value", status(snapshot.serviceRunning()))
+        ));
+        sender.sendMessage(IrisLanguage.text(
+                BukkitCommandMessages.IRIS_ENGINE_STATUS_METRICS,
+                MessageArgument.trusted("value", status(snapshot.metricsRunning()))
+        ));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_MAINTENANCE_PERIOD, MessageArgument.untrusted("value", Form.duration(snapshot.maintenancePeriodMillis()))));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_WORKER_PARALLELISM, MessageArgument.untrusted("value", snapshot.workerParallelism())));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_ACTIVE_WORLD_TASKS, MessageArgument.untrusted("value", metrics.activeTasks())));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_TECTONIC_PLATES));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_CONFIGURED_RETENTION, MessageArgument.untrusted("value", Form.duration(snapshot.retentionMillis()))));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_HEAP_USAGE, MessageArgument.untrusted("value", Form.pc(snapshot.heapUsage()))));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_RESIDENT, MessageArgument.untrusted("value", metrics.residentTectonicPlates())));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_QUEUED, MessageArgument.untrusted("value", metrics.queuedTectonicPlates())));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_AVERAGE_IDLE_DURATION, MessageArgument.untrusted("value", Form.duration(metrics.averageIdleDuration(), 2))));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_MAX_IDLE_DURATION, MessageArgument.untrusted("value", Form.duration(metrics.maxIdleDuration(), 2))));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_MIN_IDLE_DURATION, MessageArgument.untrusted("value", Form.duration(metrics.minIdleDuration(), 2))));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_CACHES));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_RESOURCE, MessageArgument.untrusted("value", caches.sizes()[0]), MessageArgument.untrusted("value2", caches.counts()[0])));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_2D_STREAM, MessageArgument.untrusted("value", caches.sizes()[1]), MessageArgument.untrusted("value2", caches.counts()[1])));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_3D_STREAM, MessageArgument.untrusted("value", caches.sizes()[2]), MessageArgument.untrusted("value2", caches.counts()[2])));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_OTHER, MessageArgument.untrusted("value", caches.sizes()[3]), MessageArgument.untrusted("value2", caches.counts()[3])));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_OTHER_2));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_IRIS_WORLDS, MessageArgument.untrusted("value", metrics.worlds())));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_LOADED_CHUNKS, MessageArgument.untrusted("value", metrics.loadedChunks())));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.IRIS_ENGINE_STATUS_MESSAGE_2));
+    }
+
+    private static String status(boolean running) {
+        return IrisLanguage.text(running ? RuntimeUiMessages.STATUS_RUNNING : RuntimeUiMessages.STATUS_STOPPED);
     }
 
     private static CacheSummary summarizeCaches() {

@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.runtime;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
@@ -60,7 +62,7 @@ public final class InPlaceChunkRegenerator {
         this.centerChunkX = centerChunkX;
         this.centerChunkZ = centerChunkZ;
         this.radius = Math.max(0, radius);
-        this.reporter = new ChunkJobReporter(sender, "Regen", world);
+        this.reporter = new ChunkJobReporter(sender, IrisLanguage.text(RuntimeProgressMessages.CHUNK_TITLE_REGEN), world);
     }
 
     public void start() {
@@ -73,12 +75,12 @@ public final class InPlaceChunkRegenerator {
     private void run() {
         boolean error = false;
         try {
-            reporter.setStage("Resetting mantle");
+            reporter.setStage(IrisLanguage.text(RuntimeProgressMessages.CHUNK_STAGE_RESETTING_MANTLE));
             resetMantleMargin();
 
             List<int[]> targets = ChunkJobReporter.orderedTargets(centerChunkX, centerChunkZ, radius);
             reporter.setTotal(targets.size());
-            reporter.setStage("Regenerating");
+            reporter.setStage(IrisLanguage.text(RuntimeProgressMessages.CHUNK_STAGE_REGENERATING));
             regenerate(targets);
         } catch (Throwable e) {
             IrisLogging.reportError(e);

@@ -50,61 +50,65 @@ import org.bukkit.entity.Player;
 import org.bukkit.generator.structure.Structure;
 import org.bukkit.util.StructureSearchResult;
 
-@Director(name = "find", origin = DirectorOrigin.PLAYER, description = "Iris Find commands", aliases = "goto")
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.BukkitCommandMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
+@Director(name = "find", origin = DirectorOrigin.PLAYER, description = "Iris Find commands", descriptionKey = "iris.director.commandfind.director.iris_find_commands", aliases = "goto")
 public class CommandFind implements DirectorExecutor {
-    @Director(description = "Find a biome")
+    @Director(description = "Find a biome", descriptionKey = "iris.director.commandfind.director.find_biome")
     public void biome(
-            @Param(description = "The biome to look for")
+            @Param(description = "The biome to look for", descriptionKey = "iris.director.commandfind.param.biome_look")
             IrisBiome biome,
-            @Param(description = "Should you be teleported", defaultValue = "true")
+            @Param(description = "Should you be teleported", descriptionKey = "iris.director.commandfind.param.should_you_be_teleported", defaultValue = "true")
             boolean teleport
     ) {
         Engine e = engine();
 
         if (e == null) {
-            sender().sendMessage(C.GOLD + "Not in an Iris World!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_FIND_NOT_IRIS_WORLD));
             return;
         }
 
         EngineBukkitOps.gotoBiome(e, biome, player(), teleport);
     }
 
-    @Director(description = "Find a region")
+    @Director(description = "Find a region", descriptionKey = "iris.director.commandfind.director.find_region")
     public void region(
-            @Param(description = "The region to look for")
+            @Param(description = "The region to look for", descriptionKey = "iris.director.commandfind.param.region_look")
             IrisRegion region,
-            @Param(description = "Should you be teleported", defaultValue = "true")
+            @Param(description = "Should you be teleported", descriptionKey = "iris.director.commandfind.param.should_you_be_teleported_2", defaultValue = "true")
             boolean teleport
     ) {
         Engine e = engine();
 
         if (e == null) {
-            sender().sendMessage(C.GOLD + "Not in an Iris World!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_FIND_NOT_IRIS_WORLD_2));
             return;
         }
 
         EngineBukkitOps.gotoRegion(e, region, player(), teleport);
     }
 
-    @Director(description = "Find a point of interest.")
+    @Director(description = "Find a point of interest.", descriptionKey = "iris.director.commandfind.director.find_point_interest")
     public void poi(
-            @Param(description = "The type of PoI to look for.")
+            @Param(description = "The type of PoI to look for.", descriptionKey = "iris.director.commandfind.param.type_poi_look")
             String type,
-            @Param(description = "Should you be teleported", defaultValue = "true")
+            @Param(description = "Should you be teleported", descriptionKey = "iris.director.commandfind.param.should_you_be_teleported_3", defaultValue = "true")
             boolean teleport
     ) {
         Engine e = engine();
         if (e == null) {
-            sender().sendMessage(C.GOLD + "Not in an Iris World!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_FIND_NOT_IRIS_WORLD_3));
             return;
         }
 
         EngineBukkitOps.gotoPOI(e, type, player(), teleport);
     }
 
-    @Director(description = "Find a structure (a vanilla key like minecraft:village_plains or minecraft:stronghold, or an imported iris structure key)", sync = true)
+    @Director(description = "Find a structure (a vanilla key like minecraft:village_plains or minecraft:stronghold, or an imported iris structure key)", descriptionKey = "iris.director.commandfind.director.find_structure_vanilla_key_like_minecraft_village_plains_minecraft_stronghold_imported_iris", sync = true)
     public void structure(
-            @Param(description = "The structure to look for (e.g. minecraft:village_plains, minecraft:stronghold, minecraft_ancient_city)", customHandler = StructureHandler.class)
+            @Param(description = "The structure to look for (e.g. minecraft:village_plains, minecraft:stronghold, minecraft_ancient_city)", descriptionKey = "iris.director.commandfind.param.structure_look_e_g_minecraft_village_plains_minecraft_stronghold_minecraft_ancient_city", customHandler = StructureHandler.class)
             String structure
     ) {
         VolmitSender commandSender = sender();
@@ -116,7 +120,7 @@ public class CommandFind implements DirectorExecutor {
         Engine e = engine();
 
         if (e == null) {
-            commandSender.sendMessage(C.GOLD + "Not in an Iris World!");
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_NOT_IRIS_WORLD));
             return;
         }
 
@@ -143,19 +147,19 @@ public class CommandFind implements DirectorExecutor {
         }
 
         if (nativeStructure == null) {
-            commandSender.sendMessage(C.RED + "Unknown structure: " + structureKey);
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_UNKNOWN_STRUCTURE, MessageArgument.untrusted("structureKey", structureKey)));
             return;
         }
 
         Player target = player();
         if (target == null) {
-            commandSender.sendMessage(C.GOLD + "Run this in-game to teleport to a structure.");
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_RUN_THIS_GAME_TELEPORT_STRUCTURE));
             return;
         }
 
         World targetWorld = target.getWorld();
         Location origin = target.getLocation();
-        commandSender.sendMessage(C.GRAY + "Locating " + structureKey + "...");
+        commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_LOCATING, MessageArgument.untrusted("structureKey", structureKey)));
         J.s(() -> {
             try {
                 if (!StructureReachability.isReachable(e, structureKey)) {
@@ -196,14 +200,14 @@ public class CommandFind implements DirectorExecutor {
     private void locateIrisStructure(Engine engine, String structure, VolmitSender commandSender) {
         Player target = player();
         if (target == null) {
-            commandSender.sendMessage(C.GOLD + "Run this in-game to teleport to a structure.");
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_RUN_THIS_GAME_TELEPORT_STRUCTURE_2));
             return;
         }
         World targetWorld = target.getWorld();
         Location origin = target.getLocation();
         int blockX = origin.getBlockX();
         int blockZ = origin.getBlockZ();
-        commandSender.sendMessage(C.GRAY + "Locating " + structure + "...");
+        commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_LOCATING_2, MessageArgument.untrusted("structure", structure)));
         J.a(() -> {
             try {
                 IrisStructureLocator.LocateResult result =
@@ -230,17 +234,17 @@ public class CommandFind implements DirectorExecutor {
         });
     }
 
-    @Director(description = "Find an object")
+    @Director(description = "Find an object", descriptionKey = "iris.director.commandfind.director.find_object")
     public void object(
-            @Param(description = "The object to look for", customHandler = ObjectHandler.class)
+            @Param(description = "The object to look for", descriptionKey = "iris.director.commandfind.param.object_look", customHandler = ObjectHandler.class)
             String object,
-            @Param(description = "Should you be teleported", defaultValue = "true")
+            @Param(description = "Should you be teleported", descriptionKey = "iris.director.commandfind.param.should_you_be_teleported_4", defaultValue = "true")
             boolean teleport
     ) {
         Engine e = engine();
 
         if (e == null) {
-            sender().sendMessage(C.GOLD + "Not in an Iris World!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_FIND_NOT_IRIS_WORLD_4));
             return;
         }
 
@@ -248,7 +252,7 @@ public class CommandFind implements DirectorExecutor {
         if (studioPlayer != null) {
             try {
                 if (ObjectStudioSaveService.get().teleportTo(studioPlayer, object)) {
-                    sender().sendMessage(C.GREEN + "Object Studio: teleporting to " + object);
+                    sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_FIND_OBJECT_STUDIO_TELEPORTING, MessageArgument.untrusted("object", object)));
                     return;
                 }
             } catch (Throwable t) {
@@ -261,7 +265,7 @@ public class CommandFind implements DirectorExecutor {
             return;
         }
 
-        sender().sendMessage(C.RED + object + " is not configured in any region/biome object placements.");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_FIND_IS_NOT_CONFIGURED_ANY_REGION_BIOME_OBJECT_PLACEMENTS, MessageArgument.untrusted("object", object)));
     }
 
     private void prepareStructureTeleport(Player target, World world, VolmitSender commandSender, String structure,
@@ -291,8 +295,7 @@ public class CommandFind implements DirectorExecutor {
             Location destination = new Location(world, at.getBlockX() + 0.5, y, at.getBlockZ() + 0.5);
             J.runEntity(target, () -> {
                 BukkitPlatform.teleportAsync(target, destination);
-                commandSender.sendMessage(C.GREEN + "Teleported to " + structure + " @ "
-                        + at.getBlockX() + ", " + y + ", " + at.getBlockZ());
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_TELEPORTED, MessageArgument.untrusted("structure", structure), MessageArgument.untrusted("value", at.getBlockX()), MessageArgument.untrusted("y", y), MessageArgument.untrusted("value2", at.getBlockZ())));
             });
         } catch (Throwable t) {
             sendStructureMessage(target, commandSender, C.RED + "Could not prepare the destination for " + structure + ".");

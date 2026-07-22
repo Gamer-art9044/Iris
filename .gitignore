@@ -44,3 +44,5 @@ docs/
 CROSSPLATFORM_PLAN.md
 
 .qa/
+
+__pycache__/

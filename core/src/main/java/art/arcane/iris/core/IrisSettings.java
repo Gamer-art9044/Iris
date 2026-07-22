@@ -236,6 +236,7 @@ public class IrisSettings {
 
     @Data
     public static class IrisSettingsGeneral {
+        public String language = "en_US";
         public boolean commandSounds = true;
         public boolean debug = false;
         public boolean dumpMantleOnError = false;

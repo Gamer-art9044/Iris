@@ -29,6 +29,7 @@ import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.IrisService;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
+import art.arcane.volmlib.util.director.DirectorEngineOptions;
 import art.arcane.volmlib.util.director.compat.DirectorEngineFactory;
 import art.arcane.volmlib.util.director.context.DirectorContextRegistry;
 import art.arcane.volmlib.util.director.runtime.DirectorExecutionMode;
@@ -38,7 +39,8 @@ import art.arcane.volmlib.util.director.runtime.DirectorInvocationHook;
 import art.arcane.volmlib.util.director.runtime.DirectorRuntimeEngine;
 import art.arcane.volmlib.util.director.runtime.DirectorRuntimeNode;
 import art.arcane.volmlib.util.director.runtime.DirectorSender;
-import art.arcane.volmlib.util.director.visual.DirectorVisualCommand;
+import art.arcane.volmlib.util.director.help.DirectorMiniMenu;
+import art.arcane.volmlib.util.director.help.DirectorMiniMenu.DirectorHelpPage;
 import art.arcane.volmlib.util.math.RNG;
 import org.bukkit.Sound;
 import org.bukkit.command.Command;
@@ -57,12 +59,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.IrisMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, DirectorInvocationHook {
     private static final String ROOT_COMMAND = "iris";
     private static final String ROOT_PERMISSION = "iris.all";
 
     private final transient AtomicCache<DirectorRuntimeEngine> directorCache = new AtomicCache<>();
-    private final transient AtomicCache<DirectorVisualCommand> helpCache = new AtomicCache<>();
 
     @Override
     public void onEnable() {
@@ -84,11 +88,13 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     public DirectorRuntimeEngine getDirector() {
         return directorCache.aquireNastyPrint(() -> DirectorEngineFactory.create(
                 new CommandIris(),
-                null,
-                buildDirectorContexts(),
-                this::dispatchDirector,
-                this,
-                DirectorSystem.handlers
+                DirectorEngineOptions.builder()
+                        .contexts(buildDirectorContexts())
+                        .dispatcher(this::dispatchDirector)
+                        .invocationHook(this)
+                        .legacyHandlers(DirectorSystem.handlers)
+                        .textResolver(IrisLanguage.directorResolver())
+                        .build()
         ));
     }
 
@@ -155,7 +161,10 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
 
     void executeRoot(CommandSender sender, String label, String[] args) {
         if (!sender.hasPermission(ROOT_PERMISSION)) {
-            sender.sendMessage("You lack the Permission '" + ROOT_PERMISSION + "'");
+            sender.sendMessage(IrisLanguage.text(
+                    IrisMessages.COMMAND_PERMISSION_DENIED,
+                    MessageArgument.trusted("permission", ROOT_PERMISSION)
+            ));
             return;
         }
 
@@ -212,23 +221,22 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
 
         playFailureSound(sender);
         if (result.getMessage() == null || result.getMessage().trim().isEmpty()) {
-            new VolmitSender(sender).sendMessage(C.RED + "Unknown Iris Command");
+            new VolmitSender(sender).sendMessage(C.RED + IrisLanguage.text(IrisMessages.COMMAND_UNKNOWN));
         }
     }
 
     private boolean sendHelpIfRequested(CommandSender sender, String[] args) {
-        Optional<DirectorVisualCommand.HelpRequest> request = DirectorVisualCommand.resolveHelp(getHelpRoot(), Arrays.asList(args));
+        Optional<DirectorHelpPage> request = DirectorMiniMenu.resolveHelp(getDirector(), Arrays.asList(args), 17);
         if (request.isEmpty()) {
             return false;
         }
 
-        VolmitSender volmitSender = new VolmitSender(sender);
-        volmitSender.sendDirectorHelp(request.get().command(), request.get().page());
+        DirectorMiniMenu.deliver(sender, DirectorMiniMenu.render(
+                request.get(),
+                DirectorMiniMenu.Theme.irisGreen(),
+                IrisLanguage.directorResolver()
+        ));
         return true;
-    }
-
-    private DirectorVisualCommand getHelpRoot() {
-        return helpCache.aquireNastyPrint(() -> DirectorVisualCommand.createRoot(getDirector()));
     }
 
     private DirectorExecutionResult runDirector(CommandSender sender, String label, String[] args) {

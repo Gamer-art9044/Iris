@@ -52,6 +52,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public class ObjectStudioSaveService implements IrisService {
     private static ObjectStudioSaveService INSTANCE;
 
@@ -161,11 +164,11 @@ public class ObjectStudioSaveService implements IrisService {
         Player player = event.getPlayer();
         GridCell cell = findCellNear(studio, clicked.getX(), clicked.getZ());
         if (cell == null) {
-            player.sendMessage(C.GRAY + "Object Studio: no cell under click (x=" + clicked.getX() + " z=" + clicked.getZ() + ").");
+            player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_NO_CELL_UNDER_CLICK_X_Z, MessageArgument.untrusted("x", String.valueOf(clicked.getX())), MessageArgument.untrusted("z", String.valueOf(clicked.getZ()))));
             return;
         }
 
-        player.sendMessage(C.AQUA + "Object Studio: saving " + C.WHITE + cell.pack() + "/" + cell.key() + C.GRAY + " (" + cell.w() + "x" + cell.h() + "x" + cell.d() + ")");
+        player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVING_X_X, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())), MessageArgument.untrusted("w", String.valueOf(cell.w())), MessageArgument.untrusted("h", String.valueOf(cell.h())), MessageArgument.untrusted("d", String.valueOf(cell.d()))));
         IrisLogging.info("Object Studio save triggered by %s for %s/%s", player.getName(), cell.pack(), cell.key());
         J.runRegion(world, cell.chunkMinX(), cell.chunkMinZ(), () -> {
             try {
@@ -255,7 +258,7 @@ public class ObjectStudioSaveService implements IrisService {
         Long prior = studio.hashes.get(hashKey);
         if (prior != null && prior == hash) {
             if (notify != null) {
-                notify.sendMessage(C.GRAY + "Object Studio: no changes for " + cell.pack() + "/" + cell.key() + ".");
+                notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_NO_CHANGES, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key()))));
             }
             return;
         }
@@ -263,7 +266,7 @@ public class ObjectStudioSaveService implements IrisService {
         if (!anyBlock && prior == null) {
             studio.hashes.put(hashKey, hash);
             if (notify != null) {
-                notify.sendMessage(C.GRAY + "Object Studio: empty cell " + cell.pack() + "/" + cell.key() + " (nothing to write).");
+                notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_EMPTY_CELL_NOTHING_WRITE, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key()))));
             }
             return;
         }
@@ -273,7 +276,7 @@ public class ObjectStudioSaveService implements IrisService {
         File targetFile = objectFileFor(studio, cell);
         if (targetFile == null) {
             if (notify != null) {
-                notify.sendMessage(C.RED + "Object Studio: no target file for " + cell.pack() + "/" + cell.key() + ".");
+                notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_NO_TARGET_FILE, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key()))));
             }
             return;
         }
@@ -288,12 +291,12 @@ public class ObjectStudioSaveService implements IrisService {
                 IrisLogging.info("Object Studio saved: %s/%s (%dx%dx%d)",
                         cell.pack(), cell.key(), cell.w(), cell.h(), cell.d());
                 if (notify != null) {
-                    J.runEntity(notify, () -> notify.sendMessage(C.GREEN + "Object Studio: saved " + C.WHITE + cell.pack() + "/" + cell.key()));
+                    J.runEntity(notify, () -> notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVED, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())))));
                 }
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
                 if (notify != null) {
-                    J.runEntity(notify, () -> notify.sendMessage(C.RED + "Object Studio: save failed for " + cell.pack() + "/" + cell.key() + " (" + e.getMessage() + ")"));
+                    J.runEntity(notify, () -> notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVE_FAILED, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())), MessageArgument.untrusted("error", String.valueOf(e.getMessage())))));
                 }
             }
         });

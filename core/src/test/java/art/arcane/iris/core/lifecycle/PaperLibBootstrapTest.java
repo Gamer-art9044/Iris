@@ -10,6 +10,7 @@ public class PaperLibBootstrapTest {
     public void isModernVersionSchemeAcceptsMajorVersionAboveOne() {
         assertTrue(PaperLibBootstrap.isModernVersionScheme("26.2-R0.1-SNAPSHOT"));
         assertTrue(PaperLibBootstrap.isModernVersionScheme("26.2"));
+        assertTrue(PaperLibBootstrap.isModernVersionScheme("26.2.build.2614-stable"));
         assertTrue(PaperLibBootstrap.isModernVersionScheme("27.0.0-R0.1-SNAPSHOT"));
     }
 

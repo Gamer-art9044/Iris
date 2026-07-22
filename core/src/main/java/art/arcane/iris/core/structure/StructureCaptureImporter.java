@@ -35,6 +35,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public final class StructureCaptureImporter {
     public record Report(int total, int imported, int skipped, int failed) {
     }
@@ -50,7 +53,7 @@ public final class StructureCaptureImporter {
     public static Report importAllStructures(IrisData data, StructureImporter.Mode mode, VolmitSender sender) {
         StructureImporter.Mode activeMode = mode == null ? StructureImporter.Mode.ADD_ONLY : mode;
         if (!INMS.get().supportsStructureCapture()) {
-            sender.sendMessage(C.YELLOW + "Structure capture is not supported by the active NMS binding; skipping the capture pass.");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_STRUCTURE_CAPTURE_IS_NOT_SUPPORTED_BY_ACTIVE_NMS_BINDING_SKIPPING_CAPTURE_PASS));
             return new Report(0, 0, 0, 0);
         }
 
@@ -74,11 +77,11 @@ public final class StructureCaptureImporter {
 
         int total = targets.size();
         if (total == 0) {
-            sender.sendMessage(C.GRAY + "No code-generated structures left to capture (everything is already imported as a structure).");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_NO_CODE_GENERATED_STRUCTURES_LEFT_CAPTURE_EVERYTHING_IS_ALREADY_IMPORTED_AS_STRUCTURE));
             return new Report(0, 0, 0, 0);
         }
 
-        sender.sendMessage(C.GREEN + "Capturing " + C.WHITE + total + C.GREEN + " code-generated structures (no NBT template) into a scratch world (skipping any wider/taller than " + MAX_SPAN + " blocks)...");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_CAPTURING_CODE_GENERATED_STRUCTURES_NO_NBT_TEMPLATE_INTO_SCRATCH_WORLD_SKIPPING_ANY, MessageArgument.untrusted("total", String.valueOf(total)), MessageArgument.untrusted("MAXSPAN", String.valueOf(MAX_SPAN))));
 
         World scratch = FeatureImporter.createScratchWorld(sender);
         if (scratch == null) {
@@ -97,7 +100,7 @@ public final class StructureCaptureImporter {
                     IrisObject object = captureOne(scratch, key, cellIndex++);
                     if (object == null || object.getBlocks().isEmpty()) {
                         skipped++;
-                        sender.sendMessage(C.YELLOW + "[skip] " + key + ": did not place a capturable structure here (too large, wrong dimension, or no valid placement in a flat world). Stays vanilla-generated.");
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_SKIP_DID_NOT_PLACE_CAPTURABLE_STRUCTURE_HERE_TOO_LARGE_WRONG_DIMENSION_NO, MessageArgument.untrusted("key", String.valueOf(key))));
                         continue;
                     }
                     object.shrinkwrap();
@@ -105,28 +108,28 @@ public final class StructureCaptureImporter {
                             data, name, key, object, "CENTER_HEIGHT", activeMode);
                     if (!result.success()) {
                         failed++;
-                        sender.sendMessage(C.RED + "[fail] " + key + ": " + result.message());
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_FAIL, MessageArgument.untrusted("key", String.valueOf(key)), MessageArgument.untrusted("message", String.valueOf(result.message()))));
                         continue;
                     }
                     imported++;
-                    sender.sendMessage(C.GRAY + "[capture] " + key + " -> objects/" + name + ".iob (" + object.getW() + "x" + object.getH() + "x" + object.getD() + ")");
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_CAPTURE_OBJECTS_IOB_X_X, MessageArgument.untrusted("key", String.valueOf(key)), MessageArgument.untrusted("name", String.valueOf(name)), MessageArgument.untrusted("w", String.valueOf(object.getW())), MessageArgument.untrusted("h", String.valueOf(object.getH())), MessageArgument.untrusted("d", String.valueOf(object.getD()))));
                 } catch (Throwable e) {
                     failed++;
-                    sender.sendMessage(C.RED + "[fail] " + key + ": " + e.getMessage());
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_FAIL_2, MessageArgument.untrusted("key", String.valueOf(key)), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
                     IrisLogging.reportError(e);
                     e.printStackTrace();
                 }
 
                 int processed = imported + skipped + failed;
                 if (processed % 10 == 0) {
-                    sender.sendMessage(C.GRAY + "..." + processed + "/" + total + " (" + imported + " captured, " + skipped + " skipped, " + failed + " failed)");
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_CAPTURED_SKIPPED_FAILED, MessageArgument.untrusted("processed", String.valueOf(processed)), MessageArgument.untrusted("total", String.valueOf(total)), MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed))));
                 }
             }
         } finally {
             FeatureImporter.destroyScratchWorld(scratch, sender);
         }
 
-        sender.sendMessage(C.GREEN + "Structure capture complete: " + C.WHITE + imported + C.GREEN + " captured, " + C.WHITE + skipped + C.GREEN + " skipped, " + C.WHITE + failed + C.GREEN + " failed (" + C.WHITE + total + C.GREEN + " total).");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_STRUCTURE_CAPTURE_COMPLETE_CAPTURED_SKIPPED_FAILED_TOTAL, MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed)), MessageArgument.untrusted("total", String.valueOf(total))));
         return new Report(total, imported, skipped, failed);
     }
 

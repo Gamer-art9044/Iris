@@ -67,67 +67,71 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-@Director(name = "structure", aliases = {"struct", "str"}, description = "Iris structure tools (index, import, info)")
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.BukkitCommandMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
+@Director(name = "structure", aliases = {"struct", "str"}, description = "Iris structure tools (index, import, info)", descriptionKey = "iris.director.commandstructure.director.iris_structure_tools_index_import_info")
 public class CommandStructure implements DirectorExecutor {
-    @Director(description = "Regenerate structure-index.json listing all vanilla, datapack & iris structures", aliases = {"ls"}, origin = DirectorOrigin.BOTH)
+    @Director(description = "Regenerate structure-index.json listing all vanilla, datapack & iris structures", descriptionKey = "iris.director.commandstructure.director.regenerate_structure_index_json_listing_all_vanilla_datapack_iris_structures", aliases = {"ls"}, origin = DirectorOrigin.BOTH)
     public void list(
-            @Param(description = "The dimension whose pack to index", aliases = "dim")
+            @Param(description = "The dimension whose pack to index", descriptionKey = "iris.director.commandstructure.param.dimension_whose_pack_index", aliases = "dim")
             IrisDimension dimension
     ) {
         IrisData data = dimension.getLoader();
         if (data == null) {
-            sender().sendMessage(C.RED + "Could not resolve the pack for dimension " + dimension.getLoadKey());
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_COULD_NOT_RESOLVE_PACK_DIMENSION, MessageArgument.untrusted("value", dimension.getLoadKey())));
             return;
         }
         File file = StructureIndexService.write(data);
-        sender().sendMessage(C.GREEN + "Wrote structure index: " + C.WHITE + file.getPath());
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_WROTE_STRUCTURE_INDEX, MessageArgument.untrusted("value", file.getPath())));
     }
 
-    @Director(name = "import", description = "Import EVERY structure - vanilla AND ingested datapacks - into this pack as editable Iris resources, always overwriting. Rebuilds jigsaw structures (villages, outposts, datapack jigsaws) as editable pool/piece graphs, imports every structure template NBT as an object, and assembles the multi-template structures (shipwrecks, ruined portals, ocean ruins, nether fossils). Run after ingesting a datapack and restarting. Regenerate chunks or use a fresh world for the imported copies to place.", aliases = {"import-all", "reimport", "imp", "all"}, origin = DirectorOrigin.BOTH)
+    @Director(name = "import", description = "Import EVERY structure - vanilla AND ingested datapacks - into this pack as editable Iris resources, always overwriting. Rebuilds jigsaw structures (villages, outposts, datapack jigsaws) as editable pool/piece graphs, imports every structure template NBT as an object, and assembles the multi-template structures (shipwrecks, ruined portals, ocean ruins, nether fossils). Run after ingesting a datapack and restarting. Regenerate chunks or use a fresh world for the imported copies to place.", descriptionKey = "iris.director.commandstructure.director.import_every_structure_vanilla_ingested_datapacks_into_this_pack_as_editable_iris", aliases = {"import-all", "reimport", "imp", "all"}, origin = DirectorOrigin.BOTH)
     public void importAll(
-            @Param(description = "The dimension whose pack to import into", aliases = "dim")
+            @Param(description = "The dimension whose pack to import into", descriptionKey = "iris.director.commandstructure.param.dimension_whose_pack_import_into", aliases = "dim")
             IrisDimension dimension
     ) {
         IrisData data = dimension.getLoader();
         if (data == null) {
-            sender().sendMessage(C.RED + "Could not resolve the pack for dimension " + dimension.getLoadKey());
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_COULD_NOT_RESOLVE_PACK_DIMENSION_2, MessageArgument.untrusted("value", dimension.getLoadKey())));
             return;
         }
-        sender().sendMessage(C.GREEN + "Importing all vanilla & datapack structures into " + C.WHITE + dimension.getLoadKey() + C.GREEN + " (overwrite)...");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_IMPORTING_ALL_VANILLA_DATAPACK_STRUCTURES_INTO_OVERWRITE, MessageArgument.untrusted("value", dimension.getLoadKey())));
         BulkStructureImporter.Report jigsaws = BulkStructureImporter.importAllVanilla(data, StructureImporter.Mode.OVERWRITE, true, sender());
         BulkStructureImporter.Report templates = BulkStructureImporter.importAllTemplates(data, StructureImporter.Mode.OVERWRITE, sender());
         BulkStructureImporter.Report groups = BulkStructureImporter.importTemplateGroups(data, StructureImporter.Mode.OVERWRITE, sender());
         StructureCaptureImporter.Report captured = StructureCaptureImporter.importAllStructures(data, StructureImporter.Mode.OVERWRITE, sender());
         int imported = jigsaws.imported() + templates.imported() + groups.imported() + captured.imported();
         int failed = jigsaws.failed() + templates.failed() + groups.failed() + captured.failed();
-        sender().sendMessage(C.GREEN + "Import complete: " + C.WHITE + imported + C.GREEN + " structures/objects written, " + C.WHITE + failed + C.GREEN + " failed.");
-        sender().sendMessage(C.GRAY + "Reference them from a biome/region/dimension 'structures' list, or run /iris structure list " + dimension.getLoadKey() + " to refresh the index. Regenerate chunks for changes to take effect.");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_IMPORT_COMPLETE_STRUCTURES_OBJECTS_WRITTEN_FAILED, MessageArgument.untrusted("imported", imported), MessageArgument.untrusted("failed", failed)));
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_REFERENCE_THEM_FROM_BIOME_REGION_DIMENSION_STRUCTURES_LIST_RUN_IRIS, MessageArgument.untrusted("value", dimension.getLoadKey())));
     }
 
-    @Director(name = "capture", description = "Capture code-generated structures that have no NBT template (swamp huts, igloos, etc.) into editable Iris objects by generating each one in a throwaway scratch world and reading back its blocks. Skips structures that already import as a structure, structures wider/taller than the capture cap (strongholds, mansions, monuments stay vanilla), and anything that will not generate in a flat overworld. Each captured structure becomes a single-piece Iris structure you can place from a biome/region/dimension 'structures' list. Runs automatically as the last pass of /iris structure import.", aliases = {"cap"}, origin = DirectorOrigin.BOTH)
+    @Director(name = "capture", description = "Capture code-generated structures that have no NBT template (swamp huts, igloos, etc.) into editable Iris objects by generating each one in a throwaway scratch world and reading back its blocks. Skips structures that already import as a structure, structures wider/taller than the capture cap (strongholds, mansions, monuments stay vanilla), and anything that will not generate in a flat overworld. Each captured structure becomes a single-piece Iris structure you can place from a biome/region/dimension 'structures' list. Runs automatically as the last pass of /iris structure import.", descriptionKey = "iris.director.commandstructure.director.capture_code_generated_structures_that_have_no_nbt_template_swamp_huts_igloos", aliases = {"cap"}, origin = DirectorOrigin.BOTH)
     public void capture(
-            @Param(description = "The dimension whose pack to capture into", aliases = "dim")
+            @Param(description = "The dimension whose pack to capture into", descriptionKey = "iris.director.commandstructure.param.dimension_whose_pack_capture_into", aliases = "dim")
             IrisDimension dimension
     ) {
         IrisData data = dimension.getLoader();
         if (data == null) {
-            sender().sendMessage(C.RED + "Could not resolve the pack for dimension " + dimension.getLoadKey());
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_COULD_NOT_RESOLVE_PACK_DIMENSION_3, MessageArgument.untrusted("value", dimension.getLoadKey())));
             return;
         }
         StructureCaptureImporter.Report report = StructureCaptureImporter.importAllStructures(data, StructureImporter.Mode.OVERWRITE, sender());
-        sender().sendMessage(C.GRAY + "Captured " + report.imported() + " structures. Place them from a 'structures' list and regenerate chunks. Delete a structures/*.json to re-capture it.");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_CAPTURED_STRUCTURES_PLACE_THEM_FROM_STRUCTURES_LIST_REGENERATE_CHUNKS_DELETE, MessageArgument.untrusted("value", report.imported())));
     }
 
-    @Director(description = "Verify native structure eligibility and locate Iris-placed structures without running blocking native searches.", aliases = {"locateall"}, origin = DirectorOrigin.BOTH, sync = true)
+    @Director(description = "Verify native structure eligibility and locate Iris-placed structures without running blocking native searches.", descriptionKey = "iris.director.commandstructure.director.verify_native_structure_eligibility_locate_iris_placed_structures_without_running_blocking_native", aliases = {"locateall"}, origin = DirectorOrigin.BOTH, sync = true)
     public void verify(
-            @Param(description = "The dimension to verify", aliases = "dim")
+            @Param(description = "The dimension to verify", descriptionKey = "iris.director.commandstructure.param.dimension_verify", aliases = "dim")
             IrisDimension dimension,
-            @Param(description = "Search radius in chunks around the origin (larger is much slower)", defaultValue = "48")
+            @Param(description = "Search radius in chunks around the origin (larger is much slower)", descriptionKey = "iris.director.commandstructure.param.search_radius_chunks_around_origin_larger_is_much_slower", defaultValue = "48")
             int radius
     ) {
         World world = resolveIrisWorld(dimension);
         if (world == null) {
-            sender().sendMessage(C.RED + "No loaded Iris world found for " + dimension.getLoadKey() + ". Join or create one first (the search runs against a live world).");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_NO_LOADED_IRIS_WORLD_FOUND_JOIN_CREATE_ONE_FIRST_SEARCH, MessageArgument.untrusted("value", dimension.getLoadKey())));
             return;
         }
         boolean senderIsPlayer = sender() != null && sender().isPlayer();
@@ -138,7 +142,7 @@ public class CommandStructure implements DirectorExecutor {
         PlatformChunkGenerator access = IrisToolbelt.access(world);
         Engine engine = access == null ? null : access.getEngine();
         if (engine == null) {
-            sender().sendMessage(C.RED + "The selected Iris world has no active generator engine.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_SELECTED_IRIS_WORLD_HAS_NO_ACTIVE_GENERATOR_ENGINE));
             return;
         }
         KList<String> structureKeys = new KList<>();
@@ -151,9 +155,7 @@ public class CommandStructure implements DirectorExecutor {
         }
         VolmitSender commandSender = sender();
         Player target = senderIsPlayer ? player() : null;
-        commandSender.sendMessage(C.GREEN + "Verifying structures in " + C.WHITE + world.getName()
-                + C.GREEN + " from " + center.getBlockX() + "," + center.getBlockZ()
-                + " within " + searchRadius + " chunks...");
+        commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_STRUCTURE_VERIFYING_STRUCTURES_FROM_WITHIN_CHUNKS, MessageArgument.untrusted("value", world.getName()), MessageArgument.untrusted("value2", center.getBlockX()), MessageArgument.untrusted("value3", center.getBlockZ()), MessageArgument.untrusted("searchRadius", searchRadius)));
         int centerX = center.getBlockX();
         int centerZ = center.getBlockZ();
         J.a(() -> runVerification(engine, structureKeys, centerX, centerZ, searchRadius, commandSender, target));
@@ -278,28 +280,28 @@ public class CommandStructure implements DirectorExecutor {
                 && dimensionKey.equals(generator.getEngine().getDimension().getLoadKey());
     }
 
-    @Director(description = "Resolve an iris structure's jigsaw graph and report piece count & bounds", origin = DirectorOrigin.BOTH)
+    @Director(description = "Resolve an iris structure's jigsaw graph and report piece count & bounds", descriptionKey = "iris.director.commandstructure.director.resolve_iris_structure_s_jigsaw_graph_report_piece_count_bounds", origin = DirectorOrigin.BOTH)
     public void info(
-            @Param(description = "The dimension whose pack holds the structure", aliases = "dim")
+            @Param(description = "The dimension whose pack holds the structure", descriptionKey = "iris.director.commandstructure.param.dimension_whose_pack_holds_structure", aliases = "dim")
             IrisDimension dimension,
-            @Param(description = "The iris structure key to inspect")
+            @Param(description = "The iris structure key to inspect", descriptionKey = "iris.director.commandstructure.param.iris_structure_key_inspect")
             String structure
     ) {
         IrisData data = dimension.getLoader();
         if (data == null) {
-            sender().sendMessage(C.RED + "Could not resolve the pack for dimension " + dimension.getLoadKey());
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_COULD_NOT_RESOLVE_PACK_DIMENSION_4, MessageArgument.untrusted("value", dimension.getLoadKey())));
             return;
         }
         IrisStructure s = data.load(IrisStructure.class, structure, false);
         if (s == null) {
-            sender().sendMessage(C.RED + "No iris structure '" + structure + "' in this pack");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_NO_IRIS_STRUCTURE_THIS_PACK, MessageArgument.untrusted("structure", structure)));
             return;
         }
         StructureAssembler assembler = StructureAssembler.forData(
                 data, s, new IrisPosition(0, 64, 0));
         KList<PlacedStructurePiece> pieces = assembler.assemble(new RNG(1234));
         if (pieces == null || pieces.isEmpty()) {
-            sender().sendMessage(C.RED + "Structure '" + structure + "' assembled 0 pieces (check startPool '" + s.getStartPool() + "')");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_STRUCTURE_ASSEMBLED_0_PIECES_CHECK_STARTPOOL, MessageArgument.untrusted("structure", structure), MessageArgument.untrusted("value", s.getStartPool())));
             return;
         }
         int minX = Integer.MAX_VALUE;
@@ -312,24 +314,24 @@ public class CommandStructure implements DirectorExecutor {
             maxX = Math.max(maxX, p.getMaxX());
             maxZ = Math.max(maxZ, p.getMaxZ());
         }
-        sender().sendMessage(C.GREEN + "Structure '" + structure + "': " + C.WHITE + pieces.size() + C.GREEN + " pieces, footprint " + C.WHITE + (maxX - minX + 1) + "x" + (maxZ - minZ + 1) + C.GREEN + " blocks (sample seed 1234)");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_STRUCTURE_PIECES_FOOTPRINT_X_BLOCKS_SAMPLE_SEED_1234, MessageArgument.untrusted("structure", structure), MessageArgument.untrusted("value", pieces.size()), MessageArgument.untrusted("value2", (maxX - minX + 1)), MessageArgument.untrusted("value3", (maxZ - minZ + 1))));
     }
 
-    @Director(description = "Assemble and place an iris structure at your location (studio testing)", aliases = {"p"}, origin = DirectorOrigin.PLAYER, sync = true)
+    @Director(description = "Assemble and place an iris structure at your location (studio testing)", descriptionKey = "iris.director.commandstructure.director.assemble_place_iris_structure_at_your_location_studio_testing", aliases = {"p"}, origin = DirectorOrigin.PLAYER, sync = true)
     public void place(
-            @Param(description = "The dimension whose pack holds the structure", aliases = "dim")
+            @Param(description = "The dimension whose pack holds the structure", descriptionKey = "iris.director.commandstructure.param.dimension_whose_pack_holds_structure_2", aliases = "dim")
             IrisDimension dimension,
-            @Param(description = "The iris structure key to place")
+            @Param(description = "The iris structure key to place", descriptionKey = "iris.director.commandstructure.param.iris_structure_key_place")
             String structure
     ) {
         IrisData data = dimension.getLoader();
         if (data == null) {
-            sender().sendMessage(C.RED + "Could not resolve the pack for dimension " + dimension.getLoadKey());
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_COULD_NOT_RESOLVE_PACK_DIMENSION_5, MessageArgument.untrusted("value", dimension.getLoadKey())));
             return;
         }
         IrisStructure s = data.load(IrisStructure.class, structure, false);
         if (s == null) {
-            sender().sendMessage(C.RED + "No iris structure '" + structure + "' in this pack");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_NO_IRIS_STRUCTURE_THIS_PACK_2, MessageArgument.untrusted("structure", structure)));
             return;
         }
         Location loc = player().getLocation();
@@ -338,7 +340,7 @@ public class CommandStructure implements DirectorExecutor {
         RNG rng = new RNG((long) loc.getBlockX() * 341873128712L + loc.getBlockZ());
         KList<PlacedStructurePiece> pieces = assembler.assemble(rng);
         if (pieces == null || pieces.isEmpty()) {
-            sender().sendMessage(C.RED + "Structure '" + structure + "' assembled 0 pieces");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_STRUCTURE_ASSEMBLED_0_PIECES, MessageArgument.untrusted("structure", structure)));
             return;
         }
         Map<Block, BlockData> future = new HashMap<>();
@@ -353,7 +355,7 @@ public class CommandStructure implements DirectorExecutor {
             }
             p.getObject().place(p.getX(), p.getY(), p.getZ(), placer, config, rng, null, null, data);
         }
-        sender().sendMessage(C.GREEN + "Placed '" + structure + "' (" + pieces.size() + " pieces) at your location.");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_PLACED_PIECES_AT_YOUR_LOCATION, MessageArgument.untrusted("structure", structure), MessageArgument.untrusted("value", pieces.size())));
     }
 
 }

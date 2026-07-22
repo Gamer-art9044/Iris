@@ -22,11 +22,14 @@ import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.core.edit.DustRevealer;
 import art.arcane.iris.core.link.WorldEditLink;
 import art.arcane.iris.core.wand.WandSelection;
@@ -53,11 +56,11 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.util.BlockVector;
 import org.bukkit.util.Vector;
 
 import java.awt.Color;
-import java.util.ArrayList;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 
@@ -103,7 +106,7 @@ public class WandSVC implements IrisService {
 
                 @Override
                 public String getName() {
-                    return "Scanning Selection";
+                    return IrisLanguage.text(RuntimeUiMessages.JOB_SCANNING_SELECTION);
                 }
 
                 @Override
@@ -253,10 +256,11 @@ public class WandSVC implements IrisService {
         ItemStack is = new ItemStack(Material.GLOWSTONE_DUST);
         is.addUnsafeEnchantment(Enchantment.FIRE_ASPECT, 1);
         ItemMeta im = is.getItemMeta();
-        im.setDisplayName(C.BOLD + "" + C.YELLOW + "Dust of Revealing");
+        im.setDisplayName(C.BOLD + "" + C.YELLOW + IrisLanguage.text(RuntimeUiMessages.DUST_NAME));
         im.setUnbreakable(true);
         im.addItemFlags(ItemFlag.values());
-        im.setLore(new KList<String>().qadd("Right click on a block to reveal it's placement structure!"));
+        im.setLore(new KList<String>().qadd(IrisLanguage.text(RuntimeUiMessages.DUST_LORE)));
+        im.getPersistentDataContainer().set(dustKey(), PersistentDataType.BYTE, (byte) 1);
         is.setItemMeta(im);
 
         return is;
@@ -269,19 +273,11 @@ public class WandSVC implements IrisService {
      * @return The slot number the wand is in. Or -1 if none are found
      */
     public static int findWand(Inventory inventory) {
-        ItemStack wand = createWand(); //Create blank wand
-        ItemMeta meta = wand.getItemMeta();
-        meta.setLore(new ArrayList<>()); //We are resetting the lore as the lore differs between wands
-        wand.setItemMeta(meta);
-
         for (int s = 0; s < inventory.getSize(); s++) {
             ItemStack stack = inventory.getItem(s);
-            if (stack == null) continue;
-            meta = stack.getItemMeta();
-            meta.setLore(new ArrayList<>()); //Reset the lore on this too so we can compare them
-            stack.setItemMeta(meta);         //We dont need to clone the item as items from .get are cloned
-
-            if (wand.isSimilar(stack)) return s; //If the name, material and NBT is the same
+            if (stack != null && isWand(stack)) {
+                return s;
+            }
         }
         return -1;
     }
@@ -297,10 +293,14 @@ public class WandSVC implements IrisService {
         ItemStack is = new ItemStack(Material.BLAZE_ROD);
         is.addUnsafeEnchantment(Enchantment.FIRE_ASPECT, 1);
         ItemMeta im = is.getItemMeta();
-        im.setDisplayName(C.BOLD + "" + C.GOLD + "Wand of Iris");
+        im.setDisplayName(C.BOLD + "" + C.GOLD + IrisLanguage.text(RuntimeUiMessages.WAND_NAME));
         im.setUnbreakable(true);
         im.addItemFlags(ItemFlag.values());
-        im.setLore(new KList<String>().add(locationToString(a), locationToString(b)));
+        im.setLore(new KList<String>().add(
+                a == null ? IrisLanguage.text(RuntimeUiMessages.WAND_LORE_FIRST) : locationToString(a),
+                b == null ? IrisLanguage.text(RuntimeUiMessages.WAND_LORE_SECOND) : locationToString(b)
+        ));
+        im.getPersistentDataContainer().set(wandKey(), PersistentDataType.BYTE, (byte) 1);
         is.setItemMeta(im);
 
         return is;
@@ -343,7 +343,13 @@ public class WandSVC implements IrisService {
      * @return True if it is
      */
     public static boolean isWand(ItemStack is) {
-        if (is.getItemMeta() == null) return false;
+        if (is == null || is.getItemMeta() == null) {
+            return false;
+        }
+        Byte marker = is.getItemMeta().getPersistentDataContainer().get(wandKey(), PersistentDataType.BYTE);
+        if (marker != null && marker == (byte) 1) {
+            return true;
+        }
         return is.getType().equals(wand.getType()) &&
                 is.getItemMeta().getDisplayName().equals(wand.getItemMeta().getDisplayName()) &&
                 is.getItemMeta().getEnchants().equals(wand.getItemMeta().getEnchants()) &&
@@ -517,7 +523,19 @@ public class WandSVC implements IrisService {
      * @return True if it is
      */
     public boolean isDust(ItemStack is) {
-        return is.isSimilar(dust);
+        if (is == null || is.getItemMeta() == null) {
+            return false;
+        }
+        Byte marker = is.getItemMeta().getPersistentDataContainer().get(dustKey(), PersistentDataType.BYTE);
+        return (marker != null && marker == (byte) 1) || is.isSimilar(dust);
+    }
+
+    private static NamespacedKey wandKey() {
+        return new NamespacedKey(Iris.instance, "wand");
+    }
+
+    private static NamespacedKey dustKey() {
+        return new NamespacedKey(Iris.instance, "dust");
     }
 
     /**

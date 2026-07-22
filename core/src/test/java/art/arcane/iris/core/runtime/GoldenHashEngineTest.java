@@ -149,7 +149,7 @@ public class GoldenHashEngineTest {
         GoldenHashEngine hashEngine = new GoldenHashEngine(engine, request(GoldenHashEngine.Mode.AUTO), goldenDir, broken, feedback, progress());
         assertFalse(hashEngine.run());
         assertFalse(new File(goldenDir, "testdim-s1234-c0x0-r0.hashes").exists());
-        assertTrue(feedback.fail.stream().anyMatch((String line) -> line.startsWith("GoldenHash aborted: 1 chunk(s)")));
+        assertTrue(feedback.fail.stream().anyMatch((String line) -> line.startsWith("GoldenHash aborted: 1 chunk")));
     }
 
     private GoldenHashEngine.Request request(GoldenHashEngine.Mode mode) {

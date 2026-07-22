@@ -30,7 +30,7 @@ public final class PaperLibBootstrap {
         }
 
         PaperLib.setCustomEnvironment(new ModernPaperEnvironment());
-        IrisLogging.info("PaperLib version detection failed for MC " + bukkitVersion + "; forced modern Paper environment");
+        IrisLogging.debug("Installed forced-modern Paper environment for MC " + bukkitVersion + "; bundled PaperLib predates the two-digit version scheme");
     }
 
     static boolean isModernVersionScheme(String bukkitVersion) {

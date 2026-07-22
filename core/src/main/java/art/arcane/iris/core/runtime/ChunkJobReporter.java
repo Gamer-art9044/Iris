@@ -18,12 +18,15 @@
 
 package art.arcane.iris.core.runtime;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.math.ChunkSpiral;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.format.Form;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.boss.BarColor;
@@ -44,7 +47,9 @@ public final class ChunkJobReporter {
     private final String title;
     private final String worldName;
 
-    private final AtomicReference<String> stage = new AtomicReference<>("Preparing");
+    private final AtomicReference<String> stage = new AtomicReference<>(
+            IrisLanguage.text(RuntimeProgressMessages.CHUNK_STAGE_PREPARING)
+    );
     private final AtomicReference<Double> progress = new AtomicReference<>(0.0D);
     private final AtomicBoolean complete = new AtomicBoolean(false);
     private final AtomicBoolean failed = new AtomicBoolean(false);
@@ -106,7 +111,10 @@ public final class ChunkJobReporter {
     private void startReporter() {
         boolean player = sender.isPlayer() && sender.player() != null;
         BossBar bossBar = player
-                ? Bukkit.createBossBar(C.GOLD + title + " " + C.AQUA + "WORKING", BarColor.BLUE, BarStyle.SEGMENTED_20)
+                ? Bukkit.createBossBar(IrisLanguage.text(
+                        RuntimeProgressMessages.CHUNK_BOSSBAR_WORKING,
+                        MessageArgument.trusted("title", title)
+                ), BarColor.BLUE, BarStyle.SEGMENTED_20)
                 : null;
         if (bossBar != null) {
             bossBar.setProgress(0.0D);
@@ -126,28 +134,53 @@ public final class ChunkJobReporter {
                 return;
             }
 
-            String label = stage.get() + " " + applied.get() + "/" + (total <= 0 ? "?" : total);
             if (bossBar != null) {
                 bossBar.setProgress(Math.min(1.0D, currentProgress));
-                bossBar.setTitle(C.GOLD + title + " " + C.AQUA + stage.get() + C.GRAY + " " + C.YELLOW + percent + "%");
+                bossBar.setTitle(IrisLanguage.text(
+                        RuntimeProgressMessages.CHUNK_BOSSBAR_PROGRESS,
+                        MessageArgument.trusted("title", title),
+                        MessageArgument.trusted("stage", stage.get()),
+                        MessageArgument.trusted("percent", percent)
+                ));
             }
             if (sender.isPlayer()) {
-                sender.sendAction(progressBar(currentProgress) + C.GRAY + " " + C.YELLOW + percent + "%"
-                        + C.GRAY + " | " + C.WHITE + label);
+                sender.sendAction(IrisLanguage.text(
+                        RuntimeProgressMessages.CHUNK_ACTION_PROGRESS,
+                        MessageArgument.trusted("bar", progressBar(currentProgress)),
+                        MessageArgument.trusted("percent", percent),
+                        MessageArgument.trusted("stage", stage.get()),
+                        MessageArgument.trusted("applied", applied.get()),
+                        MessageArgument.trusted("total", total <= 0 ? "?" : total)
+                ));
             }
         }, REPORT_INTERVAL_TICKS));
     }
 
     private void finishReporter(BossBar bossBar, long elapsed) {
         boolean ok = !failed.get();
-        String summary = applied.get() + "/" + total + " chunk(s) in " + Form.duration(elapsed, 1)
-                + (failures.get() > 0 ? " (" + failures.get() + " failed)" : "");
+        String summary = failures.get() > 0
+                ? IrisLanguage.text(
+                        RuntimeProgressMessages.CHUNK_SUMMARY_FAILED,
+                        MessageArgument.trusted("applied", applied.get()),
+                        MessageArgument.trusted("total", total),
+                        MessageArgument.trusted("elapsed", Form.duration(elapsed, 1)),
+                        MessageArgument.trusted("failures", failures.get())
+                )
+                : IrisLanguage.text(
+                        RuntimeProgressMessages.CHUNK_SUMMARY,
+                        MessageArgument.trusted("applied", applied.get()),
+                        MessageArgument.trusted("total", total),
+                        MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
+                );
 
         if (bossBar != null) {
             bossBar.setProgress(1.0D);
             bossBar.setColor(ok ? BarColor.GREEN : BarColor.RED);
-            bossBar.setTitle(C.GOLD + title + " " + (ok ? C.GREEN + "DONE" : C.RED + "FAILED")
-                    + C.GRAY + " " + C.YELLOW + summary);
+            bossBar.setTitle(IrisLanguage.text(
+                    ok ? RuntimeProgressMessages.CHUNK_BOSSBAR_DONE : RuntimeProgressMessages.CHUNK_BOSSBAR_FAILED,
+                    MessageArgument.trusted("title", title),
+                    MessageArgument.trusted("summary", summary)
+            ));
             J.a(() -> {
                 bossBar.removeAll();
                 bossBar.setVisible(false);
@@ -155,10 +188,17 @@ public final class ChunkJobReporter {
         }
 
         if (sender.isPlayer()) {
-            sender.sendAction(progressBar(1.0D) + C.GRAY + " " + (ok ? C.GREEN + "Done" : C.RED + "Failed")
-                    + C.GRAY + " | " + C.WHITE + summary);
+            sender.sendAction(IrisLanguage.text(
+                    ok ? RuntimeProgressMessages.CHUNK_ACTION_DONE : RuntimeProgressMessages.CHUNK_ACTION_FAILED,
+                    MessageArgument.trusted("bar", progressBar(1.0D)),
+                    MessageArgument.trusted("summary", summary)
+            ));
         }
-        sender.sendMessage((ok ? C.GREEN + title + " complete: " : C.RED + title + " finished with errors: ") + summary);
+        sender.sendMessage(IrisLanguage.text(
+                ok ? RuntimeProgressMessages.CHUNK_COMPLETE : RuntimeProgressMessages.CHUNK_FAILED,
+                MessageArgument.trusted("title", title),
+                MessageArgument.trusted("summary", summary)
+        ));
         IrisLogging.info(title + " done: world=" + worldName + " " + summary);
     }
 

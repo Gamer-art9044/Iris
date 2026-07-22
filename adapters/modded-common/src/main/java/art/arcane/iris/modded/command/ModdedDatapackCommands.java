@@ -45,6 +45,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.function.Predicate;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedDatapackCommands {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
@@ -118,8 +122,7 @@ public final class ModdedDatapackCommands {
 
             Engine engine = IrisModdedCommands.engineFor(level);
             if (engine == null || engine.getDimension() == null) {
-                IrisModdedCommands.ok(source, dimensionId + ": type=" + typeKey + " active=" + activeMin + ".." + activeMax
-                        + " logical=" + active.logicalHeight() + " (pack=" + irisGenerator.dimensionKey() + ", engine not started; pack heights unknown)");
+                IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_TYPE_ACTIVE_LOGICAL_PACK_ENGINE_NOT_STARTED_PACK_HEIGHTS_UNKNOWN, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("typeKey", typeKey), MessageArgument.untrusted("activeMin", activeMin), MessageArgument.untrusted("activeMax", activeMax), MessageArgument.untrusted("value", active.logicalHeight()), MessageArgument.untrusted("value2", irisGenerator.dimensionKey())));
                 continue;
             }
             IrisDimension dimension = engine.getDimension();
@@ -128,22 +131,18 @@ public final class ModdedDatapackCommands {
             int packLogical = dimension.getLogicalHeight();
             boolean matches = packMin == activeMin && packMax == activeMax && packLogical == active.logicalHeight();
             File override = overrideFile(server, irisGenerator.dimensionKey());
-            IrisModdedCommands.ok(source, dimensionId + ": type=" + typeKey
-                    + " active=" + activeMin + ".." + activeMax + " logical=" + active.logicalHeight()
-                    + " | pack '" + dimension.getLoadKey() + "' wants " + packMin + ".." + packMax + " logical=" + packLogical
-                    + " | " + (matches ? "MATCH" : "MISMATCH")
-                    + (override.isFile() ? " (world datapack override installed)" : ""));
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_TYPE_ACTIVE_LOGICAL_PACK_WANTS_LOGICAL, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("typeKey", typeKey), MessageArgument.untrusted("activeMin", activeMin), MessageArgument.untrusted("activeMax", activeMax), MessageArgument.untrusted("value", active.logicalHeight()), MessageArgument.untrusted("value2", dimension.getLoadKey()), MessageArgument.untrusted("packMin", packMin), MessageArgument.untrusted("packMax", packMax), MessageArgument.untrusted("packLogical", packLogical), MessageArgument.trusted("value3", IrisLanguage.plain(matches ? RuntimeUiMessages.STATUS_MATCH : RuntimeUiMessages.STATUS_MISMATCH)), MessageArgument.trusted("value4", override.isFile() ? IrisLanguage.plain(RuntimeUiMessages.DATAPACK_OVERRIDE_SUFFIX) : "")));
             if (!matches) {
                 mismatches++;
-                IrisModdedCommands.fail(source, "  WARNING: the active dimension type does not match the pack. Iris will refuse to start this world engine instead of clipping terrain. Run /iris world enable <dimension> <pack> for new worlds, or /iris datapack install for already-loaded Iris dimensions, then restart.");
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_WARNING_ACTIVE_DIMENSION_TYPE_DOES_NOT_MATCH_PACK_IRIS_WILL));
             }
         }
         if (irisLevels == 0) {
-            IrisModdedCommands.fail(source, "No Iris dimensions are loaded.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_NO_IRIS_DIMENSIONS_ARE_LOADED));
             return 0;
         }
         if (mismatches == 0) {
-            IrisModdedCommands.ok(source, "All " + irisLevels + " Iris dimension(s) match their pack height ranges.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_ALL_IRIS_DIMENSION_S_MATCH_THEIR_PACK_HEIGHT_RANGES, MessageArgument.untrusted("irisLevels", irisLevels)));
         }
         return 1;
     }
@@ -157,7 +156,7 @@ public final class ModdedDatapackCommands {
             }
             Engine engine = IrisModdedCommands.engineFor(level);
             if (engine == null || engine.getDimension() == null) {
-                IrisModdedCommands.fail(source, level.dimension().identifier() + ": engine not started; cannot derive its dimension type yet.");
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_ENGINE_NOT_STARTED_CANNOT_DERIVE_ITS_DIMENSION_TYPE_YET, MessageArgument.untrusted("value", level.dimension().identifier())));
                 continue;
             }
             IrisDimension dimension = engine.getDimension();
@@ -166,7 +165,7 @@ public final class ModdedDatapackCommands {
                 json = dimension.getDimensionType().toJson(DataVersion.getLatest().get());
             } catch (Throwable e) {
                 LOGGER.error("Iris dimension type generation failed for {}", dimension.getLoadKey(), e);
-                IrisModdedCommands.fail(source, level.dimension().identifier() + ": dimension type generation failed: " + e.getMessage());
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_DIMENSION_TYPE_GENERATION_FAILED, MessageArgument.untrusted("value", level.dimension().identifier()), MessageArgument.untrusted("value2", String.valueOf(e.getMessage()))));
                 continue;
             }
             File output = overrideFile(server, irisGenerator.dimensionKey());
@@ -176,11 +175,11 @@ public final class ModdedDatapackCommands {
                 written.add(output.getPath());
             } catch (IOException e) {
                 LOGGER.error("Iris dimension type write failed for {}", output, e);
-                IrisModdedCommands.fail(source, "Failed to write " + output + ": " + e.getMessage());
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_FAILED_WRITE, MessageArgument.untrusted("output", output), MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
             }
         }
         if (written.isEmpty()) {
-            IrisModdedCommands.fail(source, "No Iris dimensions with running engines found; nothing was installed.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_NO_IRIS_DIMENSIONS_WITH_RUNNING_ENGINES_FOUND_NOTHING_WAS_INSTALLED));
             return 0;
         }
 
@@ -200,14 +199,14 @@ public final class ModdedDatapackCommands {
             written.add(mcmeta.getPath());
         } catch (IOException e) {
             LOGGER.error("Iris pack.mcmeta write failed for {}", mcmeta, e);
-            IrisModdedCommands.fail(source, "Failed to write " + mcmeta + ": " + e.getMessage());
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_FAILED_WRITE_2, MessageArgument.untrusted("mcmeta", mcmeta), MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
             return 0;
         }
 
         for (String path : written) {
-            IrisModdedCommands.ok(source, "Wrote " + path);
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_WROTE, MessageArgument.untrusted("path", path)));
         }
-        IrisModdedCommands.ok(source, "World datapack '" + WORLD_PACK_NAME + "' dimension type overrides installed. Restart the server for the dimension types to apply.");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_WORLD_DATAPACK_DIMENSION_TYPE_OVERRIDES_INSTALLED_RESTART_SERVER_DIMENSION_TYPES, MessageArgument.untrusted("WORLDPACKNAME", WORLD_PACK_NAME)));
         return 1;
     }
 
@@ -239,12 +238,12 @@ public final class ModdedDatapackCommands {
             }
         }
 
-        IrisModdedCommands.ok(source, "Configured datapack imports: " + configured.size());
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_CONFIGURED_DATAPACK_IMPORTS, MessageArgument.untrusted("value", configured.size())));
         for (String url : configured) {
-            IrisModdedCommands.ok(source, "  - " + url);
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_MESSAGE, MessageArgument.untrusted("url", url)));
         }
         if (!configured.isEmpty()) {
-            IrisModdedCommands.ok(source, "Modrinth ingest is Bukkit-only; install these manually into world/datapacks if needed.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_MODRINTH_INGEST_IS_BUKKIT_ONLY_INSTALL_THESE_MANUALLY_INTO_WORLD));
         }
 
         File datapacks = worldDatapacksFolder(server);
@@ -257,9 +256,9 @@ public final class ModdedDatapackCommands {
                 }
             }
         }
-        IrisModdedCommands.ok(source, "Installed world datapacks: " + names.size());
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_INSTALLED_WORLD_DATAPACKS, MessageArgument.untrusted("value", names.size())));
         for (String name : names) {
-            IrisModdedCommands.ok(source, "  - " + name);
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_MESSAGE_2, MessageArgument.untrusted("name", name)));
         }
         return 1;
     }

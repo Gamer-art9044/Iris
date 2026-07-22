@@ -64,15 +64,20 @@ import java.util.Enumeration;
 import java.util.Map;
 import java.util.TreeMap;
 
-@Director(name = "Developer", origin = DirectorOrigin.BOTH, description = "Iris World Manager", aliases = {"dev"})
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.BukkitCommandMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+@Director(name = "Developer", origin = DirectorOrigin.BOTH, description = "Iris World Manager", descriptionKey = "iris.director.commanddeveloper.director.iris_world_manager", aliases = {"dev"})
 public class CommandDeveloper implements DirectorExecutor {
-    @Director(description = "Get Loaded TectonicPlates Count", origin = DirectorOrigin.BOTH, sync = true)
+    @Director(description = "Get Loaded TectonicPlates Count", descriptionKey = "iris.director.commanddeveloper.director.get_loaded_tectonicplates_count", origin = DirectorOrigin.BOTH, sync = true)
     public void EngineStatus() {
         Iris.service(IrisEngineSVC.class)
                 .engineStatus(sender());
     }
 
-    @Director(description = "Send a test exception to sentry")
+    @Director(description = "Send a test exception to sentry", descriptionKey = "iris.director.commanddeveloper.director.send_test_exception_sentry")
     public void Sentry() {
         Engine engine = engine();
         Exception testException = new Exception("This is a test");
@@ -85,23 +90,23 @@ public class CommandDeveloper implements DirectorExecutor {
         }
     }
 
-    @Director(description = "Hash generated block output of a fixed area for determinism/identity testing", origin = DirectorOrigin.BOTH)
+    @Director(description = "Hash generated block output of a fixed area for determinism/identity testing", descriptionKey = "iris.director.commanddeveloper.director.hash_generated_block_output_fixed_area_determinism_identity_testing", origin = DirectorOrigin.BOTH)
     public void genhash(
-            @Param(description = "The world to hash", contextual = true)
+            @Param(description = "The world to hash", descriptionKey = "iris.director.commanddeveloper.param.world_hash", contextual = true)
             World world,
-            @Param(description = "Radius in chunks around the center", defaultValue = "4")
+            @Param(description = "Radius in chunks around the center", descriptionKey = "iris.director.commanddeveloper.param.radius_chunks_around_center", defaultValue = "4")
             int radius,
-            @Param(description = "Center chunk X", defaultValue = "0")
+            @Param(description = "Center chunk X", descriptionKey = "iris.director.commanddeveloper.param.center_chunk_x", defaultValue = "0")
             int centerX,
-            @Param(description = "Center chunk Z", defaultValue = "0")
+            @Param(description = "Center chunk Z", descriptionKey = "iris.director.commanddeveloper.param.center_chunk_z", defaultValue = "0")
             int centerZ) {
         if (world == null) {
-            sender().sendMessage(C.RED + "World is null.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_WORLD_IS_NULL));
             return;
         }
 
         VolmitSender sender = sender();
-        sender.sendMessage(C.GREEN + "genhash started: " + ((radius * 2 + 1) * (radius * 2 + 1)) + " chunks...");
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_DEVELOPER_GENHASH_STARTED_CHUNKS, MessageArgument.untrusted("value", ((radius * 2 + 1) * (radius * 2 + 1)))));
         J.a(() -> runGenhash(sender, world, radius, centerX, centerZ));
     }
 
@@ -122,7 +127,7 @@ public class CommandDeveloper implements DirectorExecutor {
                     snapshot = loaded.getChunkSnapshot(false, false, false);
                 } catch (Throwable e) {
                     Iris.reportError(e);
-                    sender.sendMessage(C.RED + "genhash failed at chunk " + rx + "," + rz + ": " + e.getMessage());
+                    sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_DEVELOPER_GENHASH_FAILED_AT_CHUNK, MessageArgument.untrusted("rx", rx), MessageArgument.untrusted("rz", rz), MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
                     return;
                 }
                 long chunkHash = 0L;
@@ -172,9 +177,7 @@ public class CommandDeveloper implements DirectorExecutor {
             Iris.reportError(e);
         }
 
-        sender.sendMessage(C.GREEN + "genhash global=" + C.GOLD + Long.toHexString(globalHash)
-                + C.GREEN + " chunks=" + (side * side) + " solid=" + solidBlocks
-                + " in " + Form.duration((long) (M.ms() - startMs), 1));
+        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_DEVELOPER_GENHASH_GLOBAL_CHUNKS_SOLID, MessageArgument.untrusted("value", Long.toHexString(globalHash)), MessageArgument.untrusted("value2", (side * side)), MessageArgument.untrusted("solidBlocks", solidBlocks), MessageArgument.untrusted("value3", Form.duration((long) (M.ms() - startMs), 1))));
         Iris.info("genhash world=" + world.getName() + " global=" + Long.toHexString(globalHash)
                 + " chunks=" + (side * side) + " solidBlocks=" + solidBlocks + " -> " + out.getAbsolutePath());
     }
@@ -185,29 +188,23 @@ public class CommandDeveloper implements DirectorExecutor {
         return z ^ (z >>> 31);
     }
 
-    @Director(description = "Update the pack of a world (UNSAFE!)", name = "update-world", aliases = "^world")
+    @Director(description = "Update the pack of a world (UNSAFE!)", descriptionKey = "iris.director.commanddeveloper.director.update_pack_world_unsafe", name = "update-world", aliases = "^world")
     public void updateWorld(
-            @Param(description = "The world to update", contextual = true)
+            @Param(description = "The world to update", descriptionKey = "iris.director.commanddeveloper.param.world_update", contextual = true)
             World world,
-            @Param(description = "The pack to install into the world", contextual = true, aliases = "dimension")
+            @Param(description = "The pack to install into the world", descriptionKey = "iris.director.commanddeveloper.param.pack_install_into_world", contextual = true, aliases = "dimension")
             IrisDimension pack,
-            @Param(description = "Make sure to make a backup & read the warnings first!", defaultValue = "false", aliases = "c")
+            @Param(description = "Make sure to make a backup & read the warnings first!", descriptionKey = "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first", defaultValue = "false", aliases = "c")
             boolean confirm,
-            @Param(description = "Should Iris download the pack again for you", defaultValue = "false", name = "fresh-download", aliases = {"fresh", "new"})
+            @Param(description = "Should Iris download the pack again for you", descriptionKey = "iris.director.commanddeveloper.param.should_iris_download_pack_again_you", defaultValue = "false", name = "fresh-download", aliases = {"fresh", "new"})
             boolean freshDownload
     ) {
         if (!confirm) {
-            sender().sendMessage(new String[]{
-                    C.RED + "You should always make a backup before using this",
-                    C.YELLOW + "Issues caused by this can be, but are not limited to:",
-                    C.YELLOW + " - Broken chunks (cut-offs) between old and new chunks (before & after the update)",
-                    C.YELLOW + " - Regenerated chunks that do not fit in with the old chunks",
-                    C.YELLOW + " - Structures not spawning again when regenerating",
-                    C.YELLOW + " - Caves not lining up",
-                    C.YELLOW + " - Terrain layers not lining up",
-                    C.RED + "Now that you are aware of the risks, and have made a back-up:",
-                    C.RED + "/iris developer update-world " + world.getName() + " " + pack.getLoadKey() + " confirm=true"
-            });
+            sender().sendMessage(IrisLanguage.text(
+                    BukkitRuntimeMessages.COMMAND_DEVELOPER_UPDATE_WORLD_WARNING,
+                    MessageArgument.untrusted("world", world.getName()),
+                    MessageArgument.untrusted("pack", pack.getLoadKey())
+            ));
             return;
         }
 
@@ -221,16 +218,16 @@ public class CommandDeveloper implements DirectorExecutor {
         Iris.service(StudioSVC.class).installIntoWorld(sender(), pack, folder);
     }
 
-    @Director(description = "Test")
+    @Director(description = "Test", descriptionKey = "iris.director.commanddeveloper.director.test")
     public void mantle(
-            @Param(name = "plate", description = "Dump the whole tectonic plate instead of a single section", defaultValue = "false")
+            @Param(name = "plate", description = "Dump the whole tectonic plate instead of a single section", descriptionKey = "iris.director.commanddeveloper.param.dump_whole_tectonic_plate_instead_single_section", defaultValue = "false")
             boolean plate,
-            @Param(name = "name", description = "The dump file id under plugins/Iris/dump (pv.<id>.*)", defaultValue = "21474836474")
+            @Param(name = "name", description = "The dump file id under plugins/Iris/dump (pv.<id>.*)", descriptionKey = "iris.director.commanddeveloper.param.dump_file_id_under_plugins_iris_dump_pv_id", defaultValue = "21474836474")
             String name
     ) throws Throwable {
         Engine activeEngine = engine();
         if (activeEngine == null) {
-            sender().sendMessage(C.RED + "Target an Iris world before reading a mantle dump.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_TARGET_IRIS_WORLD_BEFORE_READING_MANTLE_DUMP));
             return;
         }
         File base = Iris.instance.getDataFile("dump", "pv." + name + ".ttp.lz4b.bin");
@@ -252,29 +249,29 @@ public class CommandDeveloper implements DirectorExecutor {
         }
     }
 
-    @Director(description = "Test")
+    @Director(description = "Test", descriptionKey = "iris.director.commanddeveloper.director.test_2")
     public void packBenchmark(
-            @Param(description = "The pack to bench", aliases = {"pack"}, defaultValue = "overworld")
+            @Param(description = "The pack to bench", descriptionKey = "iris.director.commanddeveloper.param.pack_bench", aliases = {"pack"}, defaultValue = "overworld")
             IrisDimension dimension,
-            @Param(description = "Radius in regions", defaultValue = "2048")
+            @Param(description = "Radius in regions", descriptionKey = "iris.director.commanddeveloper.param.radius_regions", defaultValue = "2048")
             int radius,
-            @Param(description = "Open GUI while benchmarking", defaultValue = "false")
+            @Param(description = "Open GUI while benchmarking", descriptionKey = "iris.director.commanddeveloper.param.open_gui_while_benchmarking", defaultValue = "false")
             boolean gui
     ) {
         new IrisPackBenchmarking(dimension, radius, gui);
     }
 
-    @Director(description = "Upgrade to another Minecraft version")
+    @Director(description = "Upgrade to another Minecraft version", descriptionKey = "iris.director.commanddeveloper.director.upgrade_another_minecraft_version")
     public void upgrade(
-            @Param(description = "The version to upgrade to", defaultValue = "latest") DataVersion version) {
-        sender().sendMessage(C.GREEN + "Upgrading to " + version.getVersion() + "...");
+            @Param(description = "The version to upgrade to", descriptionKey = "iris.director.commanddeveloper.param.version_upgrade", defaultValue = "latest") DataVersion version) {
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_UPGRADING, MessageArgument.untrusted("value", version.getVersion())));
         ServerConfigurator.installDataPacks(version.get(), false);
-        sender().sendMessage(C.GREEN + "Done upgrading! You can now update your server version to " + version.getVersion());
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_DONE_UPGRADING_YOU_CAN_NOW_UPDATE_YOUR_SERVER_VERSION, MessageArgument.untrusted("value", version.getVersion())));
     }
 
-    @Director(description = "test")
+    @Director(description = "test", descriptionKey = "iris.director.commanddeveloper.director.test_3")
     public void mca (
-            @Param(description = "The world folder to scan for .mca region files") String world) {
+            @Param(description = "The world folder to scan for .mca region files", descriptionKey = "iris.director.commanddeveloper.param.world_folder_scan_mca_region_files") String world) {
         try {
             File[] McaFiles = new File(world, "region").listFiles((dir, name) -> name.endsWith(".mca"));
             for (File mca : McaFiles) {
@@ -286,25 +283,25 @@ public class CommandDeveloper implements DirectorExecutor {
 
     }
 
-    @Director(description = "Delete nearby chunk blocks for regen testing", name = "delete-chunk", aliases = {"dc"}, origin = DirectorOrigin.PLAYER, sync = true)
+    @Director(description = "Delete nearby chunk blocks for regen testing", descriptionKey = "iris.director.commanddeveloper.director.delete_nearby_chunk_blocks_regen_testing", name = "delete-chunk", aliases = {"dc"}, origin = DirectorOrigin.PLAYER, sync = true)
     public void deleteChunk(
-            @Param(description = "Radius in chunks around your current chunk", defaultValue = "0")
+            @Param(description = "Radius in chunks around your current chunk", descriptionKey = "iris.director.commanddeveloper.param.radius_chunks_around_your_current_chunk", defaultValue = "0")
             int radius
     ) {
         if (radius < 0) {
-            sender().sendMessage(C.RED + "Radius must be 0 or greater.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_RADIUS_MUST_BE_0_GREATER));
             return;
         }
 
         World world = player().getWorld();
         if (!IrisToolbelt.isIrisWorld(world)) {
-            sender().sendMessage(C.RED + "This is not an Iris world.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_THIS_IS_NOT_IRIS_WORLD));
             return;
         }
 
         PlatformChunkGenerator access = IrisToolbelt.access(world);
         if (access == null || access.getEngine() == null) {
-            sender().sendMessage(C.RED + "The engine access for this world is null.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_ENGINE_ACCESS_THIS_WORLD_IS_NULL));
             return;
         }
 
@@ -312,14 +309,12 @@ public class CommandDeveloper implements DirectorExecutor {
         int centerZ = player().getLocation().getBlockZ() >> 4;
         int chunks = (radius * 2 + 1) * (radius * 2 + 1);
 
-        sender().sendMessage(C.GREEN + "Delete started: " + C.GOLD + chunks + C.GREEN
-                + " chunk(s) around " + C.GOLD + centerX + "," + centerZ + C.GREEN
-                + ". Clearing blocks to air.");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_DELETE_STARTED_CHUNK_S_AROUND_CLEARING_BLOCKS_AIR, MessageArgument.untrusted("chunks", chunks), MessageArgument.untrusted("centerX", centerX), MessageArgument.untrusted("centerZ", centerZ)));
 
         new ChunkClearer(world, access.getEngine(), sender(), centerX, centerZ, radius).start();
     }
 
-    @Director(description = "Test", aliases = {"ip"})
+    @Director(description = "Test", descriptionKey = "iris.director.commanddeveloper.director.test_4", aliases = {"ip"})
     public void network() {
         try {
             Enumeration<NetworkInterface> networkInterfaces = NetworkInterface.getNetworkInterfaces();
@@ -337,25 +332,25 @@ public class CommandDeveloper implements DirectorExecutor {
 
     // --- Regen ---
 
-    @Director(name = "regen", aliases = {"rg"}, description = "Delete and regenerate nearby chunks in place using Iris generation", origin = DirectorOrigin.PLAYER, sync = true)
+    @Director(name = "regen", aliases = {"rg"}, description = "Delete and regenerate nearby chunks in place using Iris generation", descriptionKey = "iris.director.commanddeveloper.director.delete_regenerate_nearby_chunks_place_using_iris_generation", origin = DirectorOrigin.PLAYER, sync = true)
     public void regen(
-            @Param(name = "radius", description = "The radius of nearby chunks", defaultValue = "5")
+            @Param(name = "radius", description = "The radius of nearby chunks", descriptionKey = "iris.director.commanddeveloper.param.radius_nearby_chunks", defaultValue = "5")
             int radius
     ) {
         if (radius < 0) {
-            sender().sendMessage(C.RED + "Radius must be 0 or greater.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_RADIUS_MUST_BE_0_GREATER_2));
             return;
         }
 
         World world = player().getWorld();
         if (!IrisToolbelt.isIrisWorld(world)) {
-            sender().sendMessage(C.RED + "You must be in an Iris world to use regen.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_YOU_MUST_BE_IRIS_WORLD_USE_REGEN));
             return;
         }
 
         Engine engine = IrisToolbelt.access(world).getEngine();
         if (engine == null) {
-            sender().sendMessage(C.RED + "The engine access for this world is null. Generate nearby chunks first.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_ENGINE_ACCESS_THIS_WORLD_IS_NULL_GENERATE_NEARBY_CHUNKS_FIRST));
             return;
         }
 
@@ -363,9 +358,7 @@ public class CommandDeveloper implements DirectorExecutor {
         int centerZ = player().getLocation().getBlockZ() >> 4;
         int chunks = (radius * 2 + 1) * (radius * 2 + 1);
 
-        sender().sendMessage(C.GREEN + "Regen started: " + C.GOLD + chunks + C.GREEN
-                + " chunk(s) around " + C.GOLD + centerX + "," + centerZ + C.GREEN
-                + ". Deleting and regenerating in place.");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_REGEN_STARTED_CHUNK_S_AROUND_DELETING_REGENERATING_PLACE, MessageArgument.untrusted("chunks", chunks), MessageArgument.untrusted("centerX", centerX), MessageArgument.untrusted("centerZ", centerZ)));
         Iris.info("Regen run start: world=" + world.getName()
                 + " center=" + centerX + "," + centerZ
                 + " radius=" + radius
@@ -374,43 +367,41 @@ public class CommandDeveloper implements DirectorExecutor {
         new InPlaceChunkRegenerator(world, engine, sender(), centerX, centerZ, radius).start();
     }
 
-    @Director(name = "goldenhash", aliases = {"gold"}, description = "Generate chunks into buffers (no world writes) and hash blocks+biomes; captures a golden file or verifies against an existing one. Resets mantle in the scanned area - use on disposable test worlds.", origin = DirectorOrigin.BOTH)
+    @Director(name = "goldenhash", aliases = {"gold"}, description = "Generate chunks into buffers (no world writes) and hash blocks+biomes; captures a golden file or verifies against an existing one. Resets mantle in the scanned area - use on disposable test worlds.", descriptionKey = "iris.director.commanddeveloper.director.generate_chunks_into_buffers_no_world_writes_hash_blocks_biomes_captures_golden", origin = DirectorOrigin.BOTH)
     public void goldenhash(
-            @Param(description = "The world to scan", contextual = true)
+            @Param(description = "The world to scan", descriptionKey = "iris.director.commanddeveloper.param.world_scan", contextual = true)
             World world,
-            @Param(name = "radius", description = "Radius in chunks around the center", defaultValue = "8")
+            @Param(name = "radius", description = "Radius in chunks around the center", descriptionKey = "iris.director.commanddeveloper.param.radius_chunks_around_center_2", defaultValue = "8")
             int radius,
-            @Param(name = "center-x", description = "Center chunk X", defaultValue = "0")
+            @Param(name = "center-x", description = "Center chunk X", descriptionKey = "iris.director.commanddeveloper.param.center_chunk_x_2", defaultValue = "0")
             int centerX,
-            @Param(name = "center-z", description = "Center chunk Z", defaultValue = "0")
+            @Param(name = "center-z", description = "Center chunk Z", descriptionKey = "iris.director.commanddeveloper.param.center_chunk_z_2", defaultValue = "0")
             int centerZ,
-            @Param(name = "reset-mantle", description = "Delete mantle data in the scan area first for full regeneration from scratch", defaultValue = "true")
+            @Param(name = "reset-mantle", description = "Delete mantle data in the scan area first for full regeneration from scratch", descriptionKey = "iris.director.commanddeveloper.param.delete_mantle_data_scan_area_first_full_regeneration_from_scratch", defaultValue = "true")
             boolean resetMantle,
-            @Param(name = "threads", description = "Concurrent chunk generations; 1 = strictly serial for order-dependence testing", defaultValue = "8")
+            @Param(name = "threads", description = "Concurrent chunk generations; 1 = strictly serial for order-dependence testing", descriptionKey = "iris.director.commanddeveloper.param.concurrent_chunk_generations_1_strictly_serial_order_dependence_testing", defaultValue = "8")
             int threads,
-            @Param(name = "deep", description = "Also dump full per-chunk non-air blockstates for offline diffing", defaultValue = "false")
+            @Param(name = "deep", description = "Also dump full per-chunk non-air blockstates for offline diffing", descriptionKey = "iris.director.commanddeveloper.param.also_dump_full_per_chunk_non_air_blockstates_offline_diffing", defaultValue = "false")
             boolean deep
     ) {
         if (radius < 0) {
-            sender().sendMessage(C.RED + "Radius must be 0 or greater.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_RADIUS_MUST_BE_0_GREATER_3));
             return;
         }
 
         if (world == null || !IrisToolbelt.isIrisWorld(world)) {
-            sender().sendMessage(C.RED + "Target must be an Iris world.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_TARGET_MUST_BE_IRIS_WORLD));
             return;
         }
 
         PlatformChunkGenerator access = IrisToolbelt.access(world);
         if (access == null || access.getEngine() == null) {
-            sender().sendMessage(C.RED + "The engine access for this world is null.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_ENGINE_ACCESS_THIS_WORLD_IS_NULL_2));
             return;
         }
 
         int chunks = (radius * 2 + 1) * (radius * 2 + 1);
-        sender().sendMessage(C.GREEN + "GoldenHash started: " + C.GOLD + chunks + C.GREEN
-                + " chunk(s) around " + C.GOLD + centerX + "," + centerZ + C.GREEN
-                + " in buffers (world untouched).");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_DEVELOPER_GOLDENHASH_STARTED_CHUNK_S_AROUND_BUFFERS_WORLD_UNTOUCHED, MessageArgument.untrusted("chunks", chunks), MessageArgument.untrusted("centerX", centerX), MessageArgument.untrusted("centerZ", centerZ)));
         Iris.info("goldenhash start: world=" + world.getName()
                 + " center=" + centerX + "," + centerZ
                 + " radius=" + radius

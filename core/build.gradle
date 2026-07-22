@@ -218,6 +218,7 @@ tasks.named('compileJava', JavaCompile).configure {
 
 tasks.named('test', Test).configure {
     jvmArgs('--add-modules', 'jdk.incubator.vector')
+    classpath += files('src/main/resources')
 }
 
 configurations.matching { it.name.startsWith('slim') }.all { }

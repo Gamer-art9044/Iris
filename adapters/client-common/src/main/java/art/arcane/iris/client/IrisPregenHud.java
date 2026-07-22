@@ -1,6 +1,10 @@
 package art.arcane.iris.client;
 
+import art.arcane.iris.core.localization.ClientUiMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.spi.protocol.IrisMessage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -47,9 +51,14 @@ public final class IrisPregenHud {
         double percent = progress.chunksTotal() > 0L
                 ? clampPercent((double) progress.chunksDone() / (double) progress.chunksTotal() * 100.0D)
                 : 0.0D;
-        String title = "Iris Pregen";
-        String stats = String.format("%,d / %,d  (%.1f%%)", progress.chunksDone(), progress.chunksTotal(), percent);
-        String tail = paused ? "PAUSED" : rateAndEta(progress);
+        String title = IrisLanguage.plain(RuntimeUiMessages.PREGEN_HEADER);
+        String stats = IrisLanguage.plain(
+                ClientUiMessages.PREGEN_STATS,
+                MessageArgument.trusted("done", String.format("%,d", progress.chunksDone())),
+                MessageArgument.trusted("total", String.format("%,d", progress.chunksTotal())),
+                MessageArgument.trusted("percent", String.format("%.1f", percent))
+        );
+        String tail = paused ? IrisLanguage.plain(ClientUiMessages.PREGEN_PAUSED) : rateAndEta(progress);
         int accent = paused ? PAUSED_COLOR : BAR_RUNNING_COLOR;
 
         int lineHeight = font.lineHeight;
@@ -120,11 +129,15 @@ public final class IrisPregenHud {
     }
 
     private static String rateAndEta(IrisMessage.PregenProgress progress) {
-        String rate = String.format("%,.0f/s", progress.chunksPerSecond());
+        String rate = String.format("%,.0f", progress.chunksPerSecond());
         if (progress.etaMillis() > 0L) {
-            return rate + "  ETA " + formatDuration(progress.etaMillis());
+            return IrisLanguage.plain(
+                    ClientUiMessages.PREGEN_RATE_ETA,
+                    MessageArgument.trusted("rate", rate),
+                    MessageArgument.trusted("eta", formatDuration(progress.etaMillis()))
+            );
         }
-        return rate;
+        return IrisLanguage.plain(ClientUiMessages.PREGEN_RATE, MessageArgument.trusted("rate", rate));
     }
 
     private static String formatDuration(long etaMillis) {
@@ -133,12 +146,12 @@ public final class IrisPregenHud {
         long minutes = (totalSeconds % 3600L) / 60L;
         long seconds = totalSeconds % 60L;
         if (hours > 0L) {
-            return hours + "h " + minutes + "m";
+            return IrisLanguage.plain(ClientUiMessages.DURATION_HOURS_MINUTES, MessageArgument.trusted("hours", hours), MessageArgument.trusted("minutes", minutes));
         }
         if (minutes > 0L) {
-            return minutes + "m " + seconds + "s";
+            return IrisLanguage.plain(ClientUiMessages.DURATION_MINUTES_SECONDS, MessageArgument.trusted("minutes", minutes), MessageArgument.trusted("seconds", seconds));
         }
-        return seconds + "s";
+        return IrisLanguage.plain(ClientUiMessages.DURATION_SECONDS, MessageArgument.trusted("seconds", seconds));
     }
 
     private static double clampPercent(double value) {

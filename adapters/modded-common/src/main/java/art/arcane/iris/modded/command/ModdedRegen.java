@@ -61,6 +61,8 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.ModdedCommandMessages;
 public final class ModdedRegen {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int APPLY_AHEAD = 8;
@@ -88,7 +90,7 @@ public final class ModdedRegen {
 
     public static void start(CommandSourceStack source, ServerLevel level, IrisModdedChunkGenerator generator, Engine engine, ServerPlayer player, int radius) {
         if (!ACTIVE.compareAndSet(false, true)) {
-            IrisModdedCommands.fail(source, "A regen is already running.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_REGEN_REGEN_IS_ALREADY_RUNNING));
             return;
         }
         int centerX = player.blockPosition().getX() >> 4;

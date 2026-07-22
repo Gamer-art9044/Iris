@@ -31,34 +31,38 @@ import art.arcane.volmlib.util.math.Position2;
 import org.bukkit.World;
 import org.bukkit.util.Vector;
 
-@Director(name = "pregen", aliases = "pregenerate", description = "Pregenerate your Iris worlds!")
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
+@Director(name = "pregen", aliases = "pregenerate", description = "Pregenerate your Iris worlds!", descriptionKey = "iris.director.commandpregen.director.pregenerate_your_iris_worlds")
 public class CommandPregen implements DirectorExecutor {
-    @Director(description = "Pregenerate a world")
+    @Director(description = "Pregenerate a world", descriptionKey = "iris.director.commandpregen.director.pregenerate_world")
     public void start(
-            @Param(description = "The radius of the pregen in blocks", aliases = "size")
+            @Param(description = "The radius of the pregen in blocks", descriptionKey = "iris.director.commandpregen.param.radius_pregen_blocks", aliases = "size")
             int radius,
-            @Param(description = "The world to pregen", contextual = true)
+            @Param(description = "The world to pregen", descriptionKey = "iris.director.commandpregen.param.world_pregen", contextual = true)
             World world,
-            @Param(aliases = "middle", description = "The center location of the pregen. Use \"me\" for your current location", defaultValue = "0,0")
+            @Param(aliases = "middle", description = "The center location of the pregen. Use \"me\" for your current location", descriptionKey = "iris.director.commandpregen.param.center_location_pregen_use_me_your_current_location", defaultValue = "0,0")
             Vector center,
-            @Param(description = "Open the Iris pregen gui", defaultValue = "true")
+            @Param(description = "Open the Iris pregen gui", descriptionKey = "iris.director.commandpregen.param.open_iris_pregen_gui", defaultValue = "true")
             boolean gui,
-            @Param(name = "serial", description = "Generate only one chunk at a time", defaultValue = "false")
+            @Param(name = "serial", description = "Generate only one chunk at a time", descriptionKey = "iris.director.commandpregen.param.generate_only_one_chunk_at_time", defaultValue = "false")
             boolean serial
             ) {
         if (radius <= 0) {
-            sender().sendMessage(C.RED + "Pregen radius must be greater than zero blocks.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_PREGEN_RADIUS_MUST_BE_GREATER_THAN_ZERO_BLOCKS));
             return;
         }
         if (serial && !IrisToolbelt.supportsStrictSerialPregeneration()) {
-            sender().sendMessage(C.RED + "Strict serial pregeneration requires Paper or a Paper-compatible server.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_STRICT_SERIAL_PREGENERATION_REQUIRES_PAPER_PAPER_COMPATIBLE_SERVER));
             return;
         }
 
         try {
             if (sender().isPlayer() && access() == null) {
-                sender().sendMessage(C.RED + "The engine access for this world is null!");
-                sender().sendMessage(C.RED + "Please make sure the world is loaded & the engine is initialized. Generate a new chunk, for example.");
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_ENGINE_ACCESS_THIS_WORLD_IS_NULL));
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_PLEASE_MAKE_SURE_WORLD_IS_LOADED_ENGINE_IS_INITIALIZED_GENERATE));
             }
             PregenTask task = PregenTask
                     .builder()
@@ -76,48 +80,42 @@ public class CommandPregen implements DirectorExecutor {
             sender().sendMessage(msg);
             Iris.info(msg);
         } catch (Throwable e) {
-            sender().sendMessage(C.RED + "Failed to start pregeneration. See console for details.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_FAILED_START_PREGENERATION_SEE_CONSOLE_DETAILS));
             Iris.reportError(e);
             e.printStackTrace();
         }
     }
 
-    @Director(description = "Stop the active pregeneration task", aliases = "x")
+    @Director(description = "Stop the active pregeneration task", descriptionKey = "iris.director.commandpregen.director.stop_active_pregeneration_task", aliases = "x")
     public void stop() {
         if (PregeneratorJob.shutdownInstance()) {
             String message = C.BLUE + "Pregen stop requested; finishing active work before cancellation.";
             sender().sendMessage(message);
             Iris.info(message);
         } else {
-            sender().sendMessage(C.YELLOW + "No active pregeneration tasks to stop");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_NO_ACTIVE_PREGENERATION_TASKS_STOP));
         }
     }
 
-    @Director(description = "Pause / continue the active pregeneration task", aliases = {"resume"})
+    @Director(description = "Pause / continue the active pregeneration task", descriptionKey = "iris.director.commandpregen.director.pause_continue_active_pregeneration_task", aliases = {"resume"})
     public void pause() {
         if (PregeneratorJob.pauseResume()) {
-            sender().sendMessage(C.GREEN + "Paused/unpaused pregeneration task, now: " + (PregeneratorJob.isPaused() ? "Paused" : "Running") + ".");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_PAUSED_UNPAUSED_PREGENERATION_TASK_NOW, MessageArgument.trusted("value", IrisLanguage.text(PregeneratorJob.isPaused() ? RuntimeUiMessages.STATUS_PAUSED : RuntimeUiMessages.STATUS_RUNNING))));
         } else {
-            sender().sendMessage(C.YELLOW + "No active pregeneration tasks to pause/unpause.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_NO_ACTIVE_PREGENERATION_TASKS_PAUSE_UNPAUSE));
         }
     }
 
-    @Director(description = "Show the active pregeneration status")
+    @Director(description = "Show the active pregeneration status", descriptionKey = "iris.director.commandpregen.director.show_active_pregeneration_status")
     public void status() {
         PregeneratorJob.PregenProgress progress = PregeneratorJob.progressSnapshot();
         if (progress == null) {
-            sender().sendMessage(C.YELLOW + "No active pregeneration task.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_NO_ACTIVE_PREGENERATION_TASK));
             return;
         }
 
         String world = progress.worldName() == null ? "?" : progress.worldName();
-        sender().sendMessage(C.GREEN + "Pregen " + C.GOLD + world + C.GREEN + ": " + C.GOLD + Form.f(progress.generated()) + "/" + Form.f(progress.totalChunks())
-                + C.GREEN + " (" + C.GOLD + String.format("%.1f", progress.percent()) + "%" + C.GREEN + ")"
-                + (progress.paused() ? C.YELLOW + " PAUSED" : ""));
-        sender().sendMessage(C.GREEN + "Speed: " + C.GOLD + Form.f((int) progress.chunksPerSecond()) + "/s" + C.GREEN
-                + " ETA: " + C.GOLD + Form.duration(progress.eta(), 2) + C.GREEN
-                + " Elapsed: " + C.GOLD + Form.duration(progress.elapsed(), 2) + C.GREEN
-                + " Method: " + C.GOLD + progress.method()
-                + (progress.failed() > 0 ? C.RED + " Failed: " + Form.f(progress.failed()) : ""));
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_PREGEN, MessageArgument.untrusted("world", world), MessageArgument.untrusted("value", Form.f(progress.generated())), MessageArgument.untrusted("value2", Form.f(progress.totalChunks())), MessageArgument.untrusted("value3", String.format("%.1f", progress.percent())), MessageArgument.untrusted("value4", (progress.paused() ? C.YELLOW + " PAUSED" : ""))));
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_SPEED_S_ETA_ELAPSED_METHOD, MessageArgument.untrusted("value", Form.f((int) progress.chunksPerSecond())), MessageArgument.untrusted("value2", Form.duration(progress.eta(), 2)), MessageArgument.untrusted("value3", Form.duration(progress.elapsed(), 2)), MessageArgument.untrusted("value4", progress.method()), MessageArgument.untrusted("value5", (progress.failed() > 0 ? C.RED + " Failed: " + Form.f(progress.failed()) : ""))));
     }
 }

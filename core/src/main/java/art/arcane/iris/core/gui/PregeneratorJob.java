@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.gui;
 
+import art.arcane.iris.core.localization.DesktopUiMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.protocol.IrisMessage;
@@ -33,6 +35,7 @@ import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.format.MemoryMonitor;
 import art.arcane.volmlib.util.function.Consumer2;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.math.Position2;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import art.arcane.iris.util.common.scheduling.J;
@@ -77,7 +80,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     private volatile long lastTotalChunks = 0L;
     private volatile long lastEta = 0L;
     private volatile long lastElapsed = 0L;
-    private volatile String lastMethod = "Void";
+    private volatile String lastMethod = IrisLanguage.plain(DesktopUiMessages.PREGEN_METHOD_PENDING);
 
     public PregeneratorJob(PregenTask task, PregeneratorMethod method, Engine engine) {
         instance.updateAndGet(old -> {
@@ -90,7 +93,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         this.engine = engine;
         monitor = new MemoryMonitor(50);
         saving = false;
-        info = new String[]{"Initializing..."};
+        info = new String[]{IrisLanguage.plain(DesktopUiMessages.PREGEN_INITIALIZING)};
         this.task = task;
         this.pregenerator = new IrisPregenerator(task, method, this);
         max = new Position2(Integer.MIN_VALUE, Integer.MIN_VALUE);
@@ -320,7 +323,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     public void open() {
         J.a(() -> {
             try {
-                renderer = PregenRenderer.open("Pregen View", this, PregeneratorJob::pauseResume);
+                renderer = PregenRenderer.open(IrisLanguage.plain(DesktopUiMessages.PREGEN_TITLE), this, PregeneratorJob::pauseResume);
                 drawFunction = renderer.drawFunction();
             } catch (Throwable ignored) {
                 IrisLogging.error("Error opening pregen gui");
@@ -339,12 +342,31 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         lastMethod = method;
 
         info = new String[]{
-                (paused() ? "PAUSED" : (saving ? "Saving... " : "Generating")) + " " + Form.f(generated) + " of " + Form.f(totalChunks) + " (" + Form.pc(percent, 0) + " Complete)",
-                "Speed: " + (cached ? "Cached " : "") + Form.f(chunksPerSecond, 0) + " Chunks/s, " + Form.f(regionsPerMinute, 1) + " Regions/m, " + Form.f(chunksPerMinute, 0) + " Chunks/m",
-                Form.duration(eta, 2) + " Remaining " + " (" + Form.duration(elapsed, 2) + " Elapsed)",
-                "Generation Method: " + method,
-                "Memory: " + Form.memSize(monitor.getUsedBytes(), 2) + " (" + Form.pc(monitor.getUsagePercent(), 0) + ") Pressure: " + Form.memSize(monitor.getPressure(), 0) + "/s",
-
+                IrisLanguage.plain(
+                        paused() ? DesktopUiMessages.PREGEN_PROGRESS_PAUSED
+                                : saving ? DesktopUiMessages.PREGEN_PROGRESS_SAVING : DesktopUiMessages.PREGEN_PROGRESS_GENERATING,
+                        MessageArgument.trusted("generated", Form.f(generated)),
+                        MessageArgument.trusted("total", Form.f(totalChunks)),
+                        MessageArgument.trusted("percent", Form.pc(percent, 0))
+                ),
+                IrisLanguage.plain(
+                        cached ? DesktopUiMessages.PREGEN_SPEED_CACHED : DesktopUiMessages.PREGEN_SPEED,
+                        MessageArgument.trusted("chunksPerSecond", Form.f(chunksPerSecond, 0)),
+                        MessageArgument.trusted("regionsPerMinute", Form.f(regionsPerMinute, 1)),
+                        MessageArgument.trusted("chunksPerMinute", Form.f(chunksPerMinute, 0))
+                ),
+                IrisLanguage.plain(
+                        DesktopUiMessages.PREGEN_TIME,
+                        MessageArgument.trusted("remaining", Form.duration(eta, 2)),
+                        MessageArgument.trusted("elapsed", Form.duration(elapsed, 2))
+                ),
+                IrisLanguage.plain(DesktopUiMessages.PREGEN_METHOD, MessageArgument.untrusted("method", String.valueOf(method))),
+                IrisLanguage.plain(
+                        DesktopUiMessages.PREGEN_MEMORY,
+                        MessageArgument.trusted("used", Form.memSize(monitor.getUsedBytes(), 2)),
+                        MessageArgument.trusted("usage", Form.pc(monitor.getUsagePercent(), 0)),
+                        MessageArgument.trusted("pressure", Form.memSize(monitor.getPressure(), 0))
+                )
         };
 
         for (Consumer<Double> i : onProgress) {

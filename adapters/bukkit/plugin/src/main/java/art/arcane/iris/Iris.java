@@ -38,6 +38,7 @@ import art.arcane.iris.core.runtime.TransientWorldCleanupSupport;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.core.lifecycle.WorldLifecycleStaging;
 import art.arcane.iris.core.link.IrisPapiExpansion;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
@@ -606,6 +607,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     private void enable() {
         alreadyDrained.set(false);
+        IrisLanguage.initialize();
         PaperLibBootstrap.install();
         SimdSupport.install();
         services = new KMap<>();
@@ -1110,9 +1112,11 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             configHotloadEngine.processFileChange(file, ignored -> {
                 IrisSettings.invalidate();
                 IrisSettings.get();
+                IrisLanguage.reload();
                 return true;
             }, ignored -> Iris.info("Hotloaded settings.json "));
         }
+        IrisLanguage.update();
     }
 
     private static boolean isSettingsFile(File file) {

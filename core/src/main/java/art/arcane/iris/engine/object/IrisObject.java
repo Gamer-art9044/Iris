@@ -18,6 +18,8 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.data.cache.AtomicCache;
@@ -449,7 +451,7 @@ public class IrisObject extends IrisRegistrant {
 
             @Override
             public String getName() {
-                return "Saving Object";
+                return IrisLanguage.text(RuntimeUiMessages.JOB_SAVING_OBJECT);
             }
 
             @Override

@@ -31,6 +31,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public class IrisConverter {
     public static void convertSchematics(VolmitSender sender) {
         File folder = IrisPlatforms.get().dataFolder("convert");
@@ -38,7 +42,7 @@ public class IrisConverter {
         FilenameFilter filter = (dir, name) -> name.endsWith(".schem");
         File[] fileList = folder.listFiles(filter);
         if (fileList == null) {
-            sender.sendMessage("No schematic files to convert found in " + folder.getAbsolutePath());
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_CONVERTER_NO_SCHEMATIC_FILES_CONVERT_FOUND, MessageArgument.untrusted("path", String.valueOf(folder.getAbsolutePath()))));
             return;
         }
 
@@ -76,7 +80,10 @@ public class IrisConverter {
                         IrisLogging.info(C.GRAY + "- It may take a while");
                         if (sender.isPlayer()) {
                             i = J.ar(() -> {
-                                sender.sendProgress((double) v.get() / mv, "Converting");
+                                sender.sendProgress(
+                                        (double) v.get() / mv,
+                                        IrisLanguage.text(RuntimeUiMessages.CONVERTING)
+                                );
                             }, 0);
                         }
                     }
@@ -117,9 +124,9 @@ public class IrisConverter {
                         counter.incrementAndGet();
                         if (sender.isPlayer()) {
                             if (largeObject) {
-                                sender.sendMessage(C.IRIS + "Converted " + schem.getName() + " -> " + schem.getName().replace(".schem", ".iob") + " in " + Form.duration(p.getMillis()));
+                                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_CONVERTER_CONVERTED, MessageArgument.untrusted("name", String.valueOf(schem.getName())), MessageArgument.untrusted("value", String.valueOf(schem.getName().replace(".schem", ".iob"))), MessageArgument.untrusted("value2", String.valueOf(Form.duration(p.getMillis())))));
                             } else {
-                                sender.sendMessage(C.IRIS + "Converted " + schem.getName() + " -> " + schem.getName().replace(".schem", ".iob"));
+                                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_CONVERTER_CONVERTED_2, MessageArgument.untrusted("name", String.valueOf(schem.getName())), MessageArgument.untrusted("value", String.valueOf(schem.getName().replace(".schem", ".iob")))));
                             }
                         }
                         if (largeObject) {
@@ -129,22 +136,22 @@ public class IrisConverter {
                         }
                         FileUtils.delete(schem);
                     } catch (IOException e) {
-                        sender.sendMessage(C.RED + "Failed to save: " + schem.getName());
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_CONVERTER_FAILED_SAVE, MessageArgument.untrusted("name", String.valueOf(schem.getName()))));
                         throw new IOException(e);
                     }
 
 
                 } catch (Exception e) {
-                    sender.sendMessage(C.RED + "Failed to convert: " + schem.getName());
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_CONVERTER_FAILED_CONVERT, MessageArgument.untrusted("name", String.valueOf(schem.getName()))));
                     e.printStackTrace();
                 }
             }
             stopwatch.end();
             if (counter.get() != 0) {
-                sender.sendMessage(C.GRAY + "Converted: " + counter.get() + " in " + Form.duration(stopwatch.getMillis()));
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_CONVERTER_CONVERTED_3, MessageArgument.untrusted("get", String.valueOf(counter.get())), MessageArgument.untrusted("value", String.valueOf(Form.duration(stopwatch.getMillis())))));
             }
             if (counter.get() < fileList.length) {
-                sender.sendMessage(C.RED + "Some schematics failed to convert. Check the console for details.");
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_CONVERTER_SOME_SCHEMATICS_FAILED_CONVERT_CHECK_CONSOLE_DETAILS));
             }
         });
     }
@@ -163,5 +170,4 @@ public class IrisConverter {
         }
     }
 }
-
 

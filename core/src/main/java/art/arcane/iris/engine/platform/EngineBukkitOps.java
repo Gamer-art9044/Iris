@@ -86,6 +86,10 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public final class EngineBukkitOps {
     private static final ConcurrentHashMap<UUID, CompletableFuture<Position2>> ACTIVE_LOCATE_REQUESTS = new ConcurrentHashMap<>();
 
@@ -541,7 +545,7 @@ public final class EngineBukkitOps {
 
     public static void gotoRegion(Engine engine, IrisRegion r, Player player, boolean teleport) {
         if (!engine.getDimension().getRegions().contains(r.getLoadKey())) {
-            player.sendMessage(C.RED + r.getName() + " is not defined in the dimension!");
+            player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_IS_NOT_DEFINED_DIMENSION, MessageArgument.untrusted("name", String.valueOf(r.getName()))));
             return;
         }
 
@@ -559,14 +563,14 @@ public final class EngineBukkitOps {
     private static void find(Engine engine, Locator<?> locator, Player player, boolean teleport, String message) {
         find(engine, locator, player, 120_000, location -> {
             if (location == null) {
-                player.sendMessage(C.RED + "Could not find " + message + " within search range.");
+                player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_COULD_NOT_FIND_WITHIN_SEARCH_RANGE, MessageArgument.untrusted("message", String.valueOf(message))));
                 return;
             }
             if (teleport) {
                 J.runEntity(player, () -> teleportAsyncSafely(player, location));
-                player.sendMessage(C.GREEN + "Teleporting to " + message + "...");
+                player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_TELEPORTING, MessageArgument.untrusted("message", String.valueOf(message))));
             } else {
-                player.sendMessage(C.GREEN + message + " at: " + location.getBlockX() + " " + location.getBlockY() + " " + location.getBlockZ());
+                player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_AT, MessageArgument.untrusted("message", String.valueOf(message)), MessageArgument.untrusted("blockX", String.valueOf(location.getBlockX())), MessageArgument.untrusted("blockY", String.valueOf(location.getBlockY())), MessageArgument.untrusted("blockZ", String.valueOf(location.getBlockZ()))));
             }
         });
     }
@@ -578,7 +582,7 @@ public final class EngineBukkitOps {
         Location origin = player.getLocation();
         int originChunkX = origin.getBlockX() >> 4;
         int originChunkZ = origin.getBlockZ() >> 4;
-        new SingleJob("Searching", () -> {
+        new SingleJob(IrisLanguage.text(RuntimeUiMessages.JOB_SEARCHED_CHUNKS, MessageArgument.trusted("chunks", 0)), () -> {
             CompletableFuture<Position2> search = null;
             boolean resultDispatched = false;
             UUID playerId = player.getUniqueId();
@@ -619,7 +623,10 @@ public final class EngineBukkitOps {
         }) {
             @Override
             public String getName() {
-                return "Searched " + Form.f(checks.get()) + " Chunks";
+                return IrisLanguage.text(
+                        RuntimeUiMessages.JOB_SEARCHED_CHUNKS,
+                        MessageArgument.trusted("chunks", Form.f(checks.get()))
+                );
             }
 
             @Override

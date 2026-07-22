@@ -83,13 +83,18 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
-@Director(name = "object", aliases = "o", origin = DirectorOrigin.PLAYER, description = "Iris object manipulation")
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.BukkitCommandMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+@Director(name = "object", aliases = "o", origin = DirectorOrigin.PLAYER, description = "Iris object manipulation", descriptionKey = "iris.director.commandobject.director.iris_object_manipulation")
 public class CommandObject implements DirectorExecutor {
-    @Director(description = "Open an object studio world (grid of every object; dimension optional, defaults to all packs)", sync = true)
+    @Director(description = "Open an object studio world (grid of every object; dimension optional, defaults to all packs)", descriptionKey = "iris.director.commandobject.director.open_object_studio_world_grid_every_object_dimension_optional_defaults_all_packs", sync = true)
     public void studio(
-            @Param(defaultValue = "null", description = "Optional dimension whose object pack to lay out; omit to aggregate objects from every pack", aliases = "dim", customHandler = NullableDimensionHandler.class)
+            @Param(defaultValue = "null", description = "Optional dimension whose object pack to lay out; omit to aggregate objects from every pack", descriptionKey = "iris.director.commandobject.param.optional_dimension_whose_object_pack_lay_out_omit_aggregate_objects_from_every", aliases = "dim", customHandler = NullableDimensionHandler.class)
             IrisDimension dimension,
-            @Param(defaultValue = "1337", description = "The seed to generate the studio with", aliases = "s")
+            @Param(defaultValue = "1337", description = "The seed to generate the studio with", descriptionKey = "iris.director.commandobject.param.seed_generate_studio_with", aliases = "s")
             long seed
     ) {
         VolmitSender commandSender = sender();
@@ -130,7 +135,7 @@ public class CommandObject implements DirectorExecutor {
         }
 
         if (hostDimension == null || sources.isEmpty()) {
-            commandSender.sendMessage(C.RED + "No packs with objects were found on this server.");
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_OBJECT_NO_PACKS_WITH_OBJECTS_WERE_FOUND_ON_THIS_SERVER));
             return;
         }
 
@@ -140,7 +145,7 @@ public class CommandObject implements DirectorExecutor {
             if (k != null) totalObjects += k.length;
         }
         if (totalObjects == 0) {
-            commandSender.sendMessage(C.RED + "No objects to place across the selected pack(s).");
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_OBJECT_NO_OBJECTS_PLACE_ACROSS_SELECTED_PACK_S));
             return;
         }
 
@@ -151,8 +156,7 @@ public class CommandObject implements DirectorExecutor {
         String scope = dimension == null
                 ? ("all packs [" + sources.size() + "]")
                 : ("\"" + hostDimension.getName() + "\"");
-        commandSender.sendMessage(C.GREEN + "Opening Object Studio for " + scope + " ("
-                + totalObjects + " objects)");
+        commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_OBJECT_OPENING_OBJECT_STUDIO_OBJECTS, MessageArgument.untrusted("scope", scope), MessageArgument.untrusted("totalObjects", totalObjects)));
 
         IrisDimension finalHost = hostDimension;
         try {
@@ -176,7 +180,7 @@ public class CommandObject implements DirectorExecutor {
             });
         } catch (Throwable e) {
             Iris.reportError("Failed to open object studio world \"" + finalHost.getLoadKey() + "\".", e);
-            commandSender.sendMessage(C.RED + "Failed to open object studio: " + e.getMessage());
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_OBJECT_FAILED_OPEN_OBJECT_STUDIO, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
         }
     }
 
@@ -269,14 +273,14 @@ public class CommandObject implements DirectorExecutor {
         };
     }
 
-    @Director(description = "Check the composition of an object")
+    @Director(description = "Check the composition of an object", descriptionKey = "iris.director.commandobject.director.check_composition_object")
     public void analyze(
-            @Param(description = "The object to analyze", customHandler = ObjectHandler.class)
+            @Param(description = "The object to analyze", descriptionKey = "iris.director.commandobject.param.object_analyze", customHandler = ObjectHandler.class)
             String object
     ) {
         IrisObject o = IrisData.loadAnyObject(object, data());
-        sender().sendMessage("Object Size: " + o.getW() + " * " + o.getH() + " * " + o.getD() + "");
-        sender().sendMessage("Blocks Used: " + NumberFormat.getIntegerInstance().format(o.getBlocks().size()));
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_OBJECT_SIZE, MessageArgument.untrusted("value", o.getW()), MessageArgument.untrusted("value2", o.getH()), MessageArgument.untrusted("value3", o.getD())));
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_BLOCKS_USED, MessageArgument.untrusted("value", NumberFormat.getIntegerInstance().format(o.getBlocks().size()))));
 
         var queue = o.getBlocks().values();
         Map<Material, Set<BlockData>> unsorted = new HashMap<>();
@@ -309,7 +313,7 @@ public class CommandObject implements DirectorExecutor {
                 .sorted().toList();
         Set<Material> sortedMats = new TreeSet<>(Comparator.comparingInt(materials::get).reversed());
         sortedMats.addAll(sortedMatsList);
-        sender().sendMessage("== Blocks in object ==");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_BLOCKS_OBJECT));
 
         int n = 0;
         for (Material mat : sortedMats) {
@@ -331,35 +335,35 @@ public class CommandObject implements DirectorExecutor {
             n++;
 
             if (n >= 10) {
-                sender().sendMessage("  + " + (sortedMats.size() - n) + " other block types");
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_OTHER_BLOCK_TYPES, MessageArgument.untrusted("value", (sortedMats.size() - n))));
                 return;
             }
         }
     }
 
-    @Director(description = "Shrink an object to its minimum size")
-    public void shrink(@Param(description = "The object to shrink", customHandler = ObjectHandler.class) String object) {
+    @Director(description = "Shrink an object to its minimum size", descriptionKey = "iris.director.commandobject.director.shrink_object_its_minimum_size")
+    public void shrink(@Param(description = "The object to shrink", descriptionKey = "iris.director.commandobject.param.object_shrink", customHandler = ObjectHandler.class) String object) {
         IrisObject o = IrisData.loadAnyObject(object, data());
-        sender().sendMessage("Current Object Size: " + o.getW() + " * " + o.getH() + " * " + o.getD());
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_CURRENT_OBJECT_SIZE, MessageArgument.untrusted("value", o.getW()), MessageArgument.untrusted("value2", o.getH()), MessageArgument.untrusted("value3", o.getD())));
         o.shrinkwrap();
-        sender().sendMessage("New Object Size: " + o.getW() + " * " + o.getH() + " * " + o.getD());
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NEW_OBJECT_SIZE, MessageArgument.untrusted("value", o.getW()), MessageArgument.untrusted("value2", o.getH()), MessageArgument.untrusted("value3", o.getD())));
         try {
             o.write(o.getLoadFile());
         } catch (IOException e) {
-            sender().sendMessage("Failed to save object " + o.getLoadFile() + ": " + e.getMessage());
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_FAILED_SAVE_OBJECT, MessageArgument.untrusted("value", o.getLoadFile()), MessageArgument.untrusted("value2", String.valueOf(e.getMessage()))));
             e.printStackTrace();
         }
     }
 
-    @Director(description = "Grow organic branches through the canopy so every leaf survives vanilla decay",
+    @Director(description = "Grow organic branches through the canopy so every leaf survives vanilla decay", descriptionKey = "iris.director.commandobject.director.grow_organic_branches_through_canopy_so_every_leaf_survives_vanilla_decay",
             origin = DirectorOrigin.BOTH)
     public void plausibilize(
-            @Param(description = "Object key, prefix (trees/), or filesystem path",
+            @Param(description = "Object key, prefix (trees/), or filesystem path", descriptionKey = "iris.director.commandobject.param.object_key_prefix_trees_filesystem_path",
                     customHandler = ObjectTargetHandler.class)
             String target,
-            @Param(name = "dryrun", description = "dryrun=true analyzes only, writes nothing", defaultValue = "false")
+            @Param(name = "dryrun", description = "dryrun=true analyzes only, writes nothing", descriptionKey = "iris.director.commandobject.param.dryrun_true_analyzes_only_writes_nothing", defaultValue = "false")
             boolean dryRun,
-            @Param(name = "reach", description = "reach=N max branch length in blocks from existing wood; farther leaf clusters are pinned persistent instead. reach=0 grows unlimited", defaultValue = "12")
+            @Param(name = "reach", description = "reach=N max branch length in blocks from existing wood; farther leaf clusters are pinned persistent instead. reach=0 grows unlimited", descriptionKey = "iris.director.commandobject.param.reach_n_max_branch_length_blocks_from_existing_wood_farther_leaf_clusters", defaultValue = "12")
             int reach
     ) {
         IrisData nearest = data();
@@ -368,19 +372,23 @@ public class CommandObject implements DirectorExecutor {
             targets = resolveFromPacks(target);
         }
         if (targets.isEmpty()) {
-            sender().sendMessage(C.RED + "No objects matched: " + target);
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NO_OBJECTS_MATCHED, MessageArgument.untrusted("target", target)));
             return;
         }
 
-        sender().sendMessage(C.IRIS + "Plausibilize [reach=" + reach + (dryRun ? ", DRY" : "")
-                + "] queued " + targets.size() + " object(s)");
+        sender().sendMessage(IrisLanguage.text(
+                BukkitCommandMessagesExtended.COMMAND_OBJECT_PLAUSIBILIZE_REACH_QUEUED_OBJECT_S,
+                MessageArgument.trusted("reach", reach),
+                MessageArgument.trusted("value", dryRun ? IrisLanguage.text(RuntimeUiMessages.TREE_DRY_SUFFIX) : ""),
+                MessageArgument.trusted("value2", targets.size())
+        ));
 
         org.bukkit.command.CommandSender s = sender();
         List<TreePlausibilizeBatch.Target> queued = targets;
-        J.a(() -> TreePlausibilizeBatch.run(queued, dryRun, reach, nearest, (String line) ->
-                s.sendMessage(line.startsWith("Done:") || line.startsWith("Totals:") || line.startsWith("[")
-                        ? C.IRIS + line
-                        : C.GRAY + "  " + line)));
+        J.a(() -> TreePlausibilizeBatch.run(queued, dryRun, reach, nearest, (TreePlausibilizeBatch.Output output) ->
+                s.sendMessage(output.headline()
+                        ? C.IRIS + output.text()
+                        : C.GRAY + "  " + output.text())));
     }
 
     private static List<TreePlausibilizeBatch.Target> resolveFromPacks(String target) {
@@ -408,7 +416,7 @@ public class CommandObject implements DirectorExecutor {
         return out;
     }
 
-    @Director(description = "Convert .schem files in the 'convert' folder to .iob files.")
+    @Director(description = "Convert .schem files in the 'convert' folder to .iob files.", descriptionKey = "iris.director.commandobject.director.convert_schem_files_convert_folder_iob_files")
     public void convert () {
         try {
             IrisConverter.convertSchematics(sender());
@@ -418,26 +426,26 @@ public class CommandObject implements DirectorExecutor {
 
     }
 
-    @Director(description = "Get a powder that reveals objects", aliases = "d")
+    @Director(description = "Get a powder that reveals objects", descriptionKey = "iris.director.commandobject.director.get_powder_that_reveals_objects", aliases = "d")
     public void dust() {
         player().getInventory().addItem(WandSVC.createDust());
         sender().playSound(Sound.AMBIENT_SOUL_SAND_VALLEY_ADDITIONS, 1f, 1.5f);
     }
 
-    @Director(description = "Contract a selection based on your looking direction", aliases = "-")
+    @Director(description = "Contract a selection based on your looking direction", descriptionKey = "iris.director.commandobject.director.contract_selection_based_on_your_looking_direction", aliases = "-")
     public void contract(
-            @Param(description = "The amount to inset by", defaultValue = "1")
+            @Param(description = "The amount to inset by", descriptionKey = "iris.director.commandobject.param.amount_inset_by", defaultValue = "1")
             int amount
     ) {
         if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage("Hold your wand.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_HOLD_YOUR_WAND));
             return;
         }
 
 
         Location[] b = WandSVC.getCuboid(player());
         if (b == null || b[0] == null || b[1] == null) {
-            sender().sendMessage("No area selected.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NO_AREA_SELECTED));
             return;
         }
         Location a1 = b[0].clone();
@@ -453,13 +461,13 @@ public class CommandObject implements DirectorExecutor {
         sender().playSound(Sound.ENTITY_ITEM_FRAME_ROTATE_ITEM, 1f, 0.55f);
     }
 
-    @Director(description = "Set point 1 to look", aliases = "p1")
+    @Director(description = "Set point 1 to look", descriptionKey = "iris.director.commandobject.director.set_point_1_look", aliases = "p1")
     public void position1(
-            @Param(description = "Whether to use your current position, or where you look", defaultValue = "true")
+            @Param(description = "Whether to use your current position, or where you look", descriptionKey = "iris.director.commandobject.param.whether_use_your_current_position_where_you_look", defaultValue = "true")
             boolean here
     ) {
         if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage("Ready your Wand.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_READY_YOUR_WAND));
             return;
         }
 
@@ -479,13 +487,13 @@ public class CommandObject implements DirectorExecutor {
         }
     }
 
-    @Director(description = "Set point 2 to look", aliases = "p2")
+    @Director(description = "Set point 2 to look", descriptionKey = "iris.director.commandobject.director.set_point_2_look", aliases = "p2")
     public void position2(
-            @Param(description = "Whether to use your current position, or where you look", defaultValue = "true")
+            @Param(description = "Whether to use your current position, or where you look", descriptionKey = "iris.director.commandobject.param.whether_use_your_current_position_where_you_look_2", defaultValue = "true")
             boolean here
     ) {
         if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage("Ready your Wand.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_READY_YOUR_WAND_2));
             return;
         }
 
@@ -506,24 +514,24 @@ public class CommandObject implements DirectorExecutor {
         }
     }
 
-    @Director(description = "Paste an object", sync = true)
+    @Director(description = "Paste an object", descriptionKey = "iris.director.commandobject.director.paste_object", sync = true)
     public void paste(
-            @Param(description = "The object to paste", customHandler = ObjectHandler.class)
+            @Param(description = "The object to paste", descriptionKey = "iris.director.commandobject.param.object_paste", customHandler = ObjectHandler.class)
             String object,
-            @Param(description = "Whether or not to edit the object (need to hold wand)", defaultValue = "false")
+            @Param(description = "Whether or not to edit the object (need to hold wand)", descriptionKey = "iris.director.commandobject.param.whether_not_edit_object_need_hold_wand", defaultValue = "false")
             boolean edit,
-            @Param(description = "The amount of degrees to rotate by", defaultValue = "0")
+            @Param(description = "The amount of degrees to rotate by", descriptionKey = "iris.director.commandobject.param.amount_degrees_rotate_by", defaultValue = "0")
             int rotate,
-            @Param(description = "The factor by which to scale the object placement", defaultValue = "1")
+            @Param(description = "The factor by which to scale the object placement", descriptionKey = "iris.director.commandobject.param.factor_by_which_scale_object_placement", defaultValue = "1")
             double scale
 //            ,
-//            @Param(description = "The scale interpolator to use", defaultValue = "none")
+//            @Param(description = "The scale interpolator to use", descriptionKey = "iris.director.commandobject.param.scale_interpolator_use", defaultValue = "none")
 //            IrisObjectPlacementScaleInterpolator interpolator
     ) {
         IrisObject o = IrisData.loadAnyObject(object, data());
         double maxScale = Double.max(10 - o.getBlocks().size() / 10000d, 1);
         if (scale > maxScale) {
-            sender().sendMessage(C.YELLOW + "Indicated scale exceeds maximum. Downscaled to maximum: " + maxScale);
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_INDICATED_SCALE_EXCEEDS_MAXIMUM_DOWNSCALED_MAXIMUM, MessageArgument.untrusted("maxScale", maxScale)));
             scale = maxScale;
         }
 
@@ -552,70 +560,70 @@ public class CommandObject implements DirectorExecutor {
             if (WandSVC.isWand(wand)) {
                 wand = newWand;
                 player().getInventory().setItemInMainHand(wand);
-                sender().sendMessage("Updated wand for " + "objects/" + o.getLoadKey() + ".iob ");
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_UPDATED_WAND_OBJECTS_IOB, MessageArgument.untrusted("value", o.getLoadKey())));
             } else {
                 int slot = WandSVC.findWand(player().getInventory());
                 if (slot == -1) {
                     player().getInventory().addItem(newWand);
-                    sender().sendMessage("Given new wand for " + "objects/" + o.getLoadKey() + ".iob ");
+                    sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_GIVEN_NEW_WAND_OBJECTS_IOB, MessageArgument.untrusted("value", o.getLoadKey())));
                 } else {
                     player().getInventory().setItem(slot, newWand);
-                    sender().sendMessage("Updated wand for " + "objects/" + o.getLoadKey() + ".iob ");
+                    sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_UPDATED_WAND_OBJECTS_IOB_2, MessageArgument.untrusted("value", o.getLoadKey())));
                 }
             }
         } else {
-            sender().sendMessage(C.IRIS + "Placed " + object);
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_PLACED, MessageArgument.untrusted("object", object)));
         }
     }
 
-    @Director(description = "Save an object")
+    @Director(description = "Save an object", descriptionKey = "iris.director.commandobject.director.save_object")
     public void save(
-            @Param(description = "The dimension to store the object in", contextual = true)
+            @Param(description = "The dimension to store the object in", descriptionKey = "iris.director.commandobject.param.dimension_store_object", contextual = true)
             IrisDimension dimension,
-            @Param(description = "The file to store it in, can use / for subfolders")
+            @Param(description = "The file to store it in, can use / for subfolders", descriptionKey = "iris.director.commandobject.param.file_store_it_can_use_subfolders")
             String name,
-            @Param(description = "Overwrite existing object files", defaultValue = "false", aliases = "force")
+            @Param(description = "Overwrite existing object files", descriptionKey = "iris.director.commandobject.param.overwrite_existing_object_files", defaultValue = "false", aliases = "force")
             boolean overwrite,
-            @Param(description = "Use legacy TileState serialization if possible", defaultValue = "true")
+            @Param(description = "Use legacy TileState serialization if possible", descriptionKey = "iris.director.commandobject.param.use_legacy_tilestate_serialization_if_possible", defaultValue = "true")
             boolean legacy
     ) {
         IrisObject o = WandSVC.createSchematic(player(), legacy);
 
         if (o == null) {
-            sender().sendMessage(C.YELLOW + "You need to hold your wand!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_YOU_NEED_HOLD_YOUR_WAND));
             return;
         }
 
         File file = Iris.service(StudioSVC.class).getWorkspaceFile(dimension.getLoadKey(), "objects", name + ".iob");
 
         if (file.exists() && !overwrite) {
-            sender().sendMessage(C.RED + "File already exists. Set overwrite=true to overwrite it.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_FILE_ALREADY_EXISTS_SET_OVERWRITE_TRUE_OVERWRITE_IT));
             return;
         }
         try {
             o.write(file, sender());
         } catch (IOException e) {
-            sender().sendMessage(C.RED + "Failed to save object because of an IOException: " + e.getMessage());
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_FAILED_SAVE_OBJECT_BECAUSE_IOEXCEPTION, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
             Iris.reportError(e);
         }
 
         sender().playSound(Sound.BLOCK_ENCHANTMENT_TABLE_USE, 1f, 1.5f);
-        sender().sendMessage(C.GREEN + "Successfully object to saved: " + dimension.getLoadKey() + "/objects/" + name);
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_SUCCESSFULLY_OBJECT_SAVED_OBJECTS, MessageArgument.untrusted("value", dimension.getLoadKey()), MessageArgument.untrusted("name", name)));
     }
 
-    @Director(description = "Shift a selection in your looking direction")
+    @Director(description = "Shift a selection in your looking direction", descriptionKey = "iris.director.commandobject.director.shift_selection_your_looking_direction")
     public void shift(
-            @Param(description = "The amount to shift by", defaultValue = "1")
+            @Param(description = "The amount to shift by", descriptionKey = "iris.director.commandobject.param.amount_shift_by", defaultValue = "1")
             int amount
     ) {
         if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage("Hold your wand.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_HOLD_YOUR_WAND_2));
             return;
         }
 
         Location[] b = WandSVC.getCuboid(player());
         if (b == null || b[0] == null || b[1] == null) {
-            sender().sendMessage("No area selected.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NO_AREA_SELECTED_2));
             return;
         }
         Location a1 = b[0].clone();
@@ -634,52 +642,52 @@ public class CommandObject implements DirectorExecutor {
         sender().playSound(Sound.ENTITY_ITEM_FRAME_ROTATE_ITEM, 1f, 0.55f);
     }
 
-    @Director(description = "Undo a number of pastes", aliases = "u")
+    @Director(description = "Undo a number of pastes", descriptionKey = "iris.director.commandobject.director.undo_number_pastes", aliases = "u")
     public void undo(
-            @Param(description = "The amount of pastes to undo", defaultValue = "1")
+            @Param(description = "The amount of pastes to undo", descriptionKey = "iris.director.commandobject.param.amount_pastes_undo", defaultValue = "1")
             int amount
     ) {
         ObjectSVC service = Iris.service(ObjectSVC.class);
         int actualReverts = Math.min(service.getUndos().size(), amount);
         service.revertChanges(actualReverts);
-        sender().sendMessage(C.BLUE + "Reverted " + actualReverts + C.BLUE +" pastes!");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_REVERTED_PASTES, MessageArgument.untrusted("actualReverts", actualReverts)));
     }
 
-    @Director(description = "Gets an object wand and grabs the current WorldEdit selection.", aliases = "we", origin = DirectorOrigin.PLAYER)
+    @Director(description = "Gets an object wand and grabs the current WorldEdit selection.", descriptionKey = "iris.director.commandobject.director.gets_object_wand_grabs_current_worldedit_selection", aliases = "we", origin = DirectorOrigin.PLAYER)
     public void we() {
         if (!Bukkit.getPluginManager().isPluginEnabled("WorldEdit")) {
-            sender().sendMessage(C.RED + "You can't get a WorldEdit selection without WorldEdit, you know.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_YOU_CAN_T_GET_WORLDEDIT_SELECTION_WITHOUT_WORLDEDIT_YOU_KNOW));
             return;
         }
 
         Cuboid locs = WorldEditLink.getSelection(sender().player());
 
         if (locs == null) {
-            sender().sendMessage(C.RED + "You don't have a WorldEdit selection in this world.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_YOU_DON_T_HAVE_WORLDEDIT_SELECTION_THIS_WORLD));
             return;
         }
 
         sender().player().getInventory().addItem(WandSVC.createWand(locs.getLowerNE(), locs.getUpperSW()));
-        sender().sendMessage(C.GREEN + "A fresh wand with your current WorldEdit selection on it!");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_FRESH_WAND_WITH_YOUR_CURRENT_WORLDEDIT_SELECTION_ON_IT));
     }
 
-    @Director(description = "Get an object wand", sync = true)
+    @Director(description = "Get an object wand", descriptionKey = "iris.director.commandobject.director.get_object_wand", sync = true)
     public void wand() {
         player().getInventory().addItem(WandSVC.createWand());
         sender().playSound(Sound.ITEM_ARMOR_EQUIP_NETHERITE, 1f, 1.5f);
-        sender().sendMessage(C.GREEN + "Poof! Good luck building!");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_POOF_GOOD_LUCK_BUILDING));
     }
 
-    @Director(name = "x&y", description = "Autoselect up, down & out", sync = true)
+    @Director(name = "x&y", description = "Autoselect up, down & out", descriptionKey = "iris.director.commandobject.director.autoselect_up_down_out", sync = true)
     public void xay() {
         if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage(C.YELLOW + "Hold your wand!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_HOLD_YOUR_WAND_3));
             return;
         }
 
         Location[] b = WandSVC.getCuboid(player());
         if (b == null || b[0] == null || b[1] == null) {
-            sender().sendMessage("No area selected.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NO_AREA_SELECTED_3));
             return;
         }
         Location a1 = b[0].clone();
@@ -718,19 +726,19 @@ public class CommandObject implements DirectorExecutor {
         player().getInventory().setItemInMainHand(WandSVC.createWand(b[0], b[1]));
         player().updateInventory();
         sender().playSound(Sound.ENTITY_ITEM_FRAME_ROTATE_ITEM, 1f, 0.55f);
-        sender().sendMessage(C.GREEN + "Auto-select complete!");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_AUTO_SELECT_COMPLETE));
     }
 
-    @Director(name = "x+y", description = "Autoselect up & out", sync = true)
+    @Director(name = "x+y", description = "Autoselect up & out", descriptionKey = "iris.director.commandobject.director.autoselect_up_out", sync = true)
     public void xpy() {
         if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage(C.YELLOW + "Hold your wand!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_HOLD_YOUR_WAND_4));
             return;
         }
 
         Location[] b = WandSVC.getCuboid(player());
         if (b == null || b[0] == null || b[1] == null) {
-            sender().sendMessage("No area selected.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NO_AREA_SELECTED_4));
             return;
         }
         b[0].add(new Vector(0, 1, 0));
@@ -759,6 +767,6 @@ public class CommandObject implements DirectorExecutor {
         player().getInventory().setItemInMainHand(WandSVC.createWand(b[0], b[1]));
         player().updateInventory();
         sender().playSound(Sound.ENTITY_ITEM_FRAME_ROTATE_ITEM, 1f, 0.55f);
-        sender().sendMessage(C.GREEN + "Auto-select complete!");
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_AUTO_SELECT_COMPLETE_2));
     }
 }

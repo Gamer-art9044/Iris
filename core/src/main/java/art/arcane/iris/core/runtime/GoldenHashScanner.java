@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.runtime;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -39,7 +41,7 @@ public final class GoldenHashScanner {
         this.world = world;
         this.engine = engine;
         this.sender = sender;
-        this.reporter = new ChunkJobReporter(sender, "GoldenHash", world);
+        this.reporter = new ChunkJobReporter(sender, IrisLanguage.text(RuntimeProgressMessages.CHUNK_TITLE_GOLDEN_HASH), world);
         GoldenHashEngine.Request request = new GoldenHashEngine.Request(
                 world.getName(),
                 world.getSeed(),

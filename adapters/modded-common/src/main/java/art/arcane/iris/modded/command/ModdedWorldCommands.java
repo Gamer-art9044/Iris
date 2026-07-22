@@ -51,6 +51,10 @@ import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Predicate;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedWorldCommands {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
@@ -169,13 +173,13 @@ public final class ModdedWorldCommands {
         if (packFolder.isDirectory()) {
             return enableInstalled(source, server, dimensionId, pack, packDimension, seed);
         }
-        IrisModdedCommands.ok(source, "Pack '" + pack + "' is not installed; downloading IrisDimensions/" + pack + "...");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
         Thread thread = new Thread(() -> {
             boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master",
                     (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
             server.execute(() -> {
                 if (!installed || !packFolder.isDirectory()) {
-                    IrisModdedCommands.fail(source, "Pack '" + pack + "' could not be downloaded; check the name or install it with /iris download " + pack + ".");
+                    IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_INSTALL_IT_WITH, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
                     return;
                 }
                 enableInstalled(source, server, dimensionId, pack, packDimension, seed);
@@ -197,11 +201,11 @@ public final class ModdedWorldCommands {
             ModdedDimensionManager.createPersistent(server, dimensionId, pack, packDimension, seed);
         } catch (Throwable e) {
             LOGGER.error("Iris world injection failed for {} (pack={} dim={})", dimensionId, pack, packDimension, e);
-            IrisModdedCommands.fail(source, "Failed to inject Iris world '" + dimensionId + "': " + e.getClass().getSimpleName() + (e.getMessage() == null ? "" : " - " + e.getMessage()));
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_FAILED_INJECT_IRIS_WORLD, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return 0;
         }
-        IrisModdedCommands.ok(source, "Created Iris world " + dimensionId + " from pack '" + pack + "' dimension '" + packDimension + "' (seed " + seed + ").");
-        IrisModdedCommands.ok(source, "It is live now and re-injected on every startup. Teleport in with /iris world status or a portal; no restart required.");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_CREATED_IRIS_WORLD_FROM_PACK_DIMENSION_SEED, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("packDimension", packDimension), MessageArgument.untrusted("seed", seed)));
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_IT_IS_LIVE_NOW_RE_INJECTED_ON_EVERY_STARTUP_TELEPORT));
         return 1;
     }
 
@@ -228,21 +232,21 @@ public final class ModdedWorldCommands {
             ModdedDimensionManager.createPersistent(server, dimensionId, pack, packDimension, seed);
         } catch (Throwable e) {
             LOGGER.error("Iris primary world injection failed for {} (pack={} dim={})", dimensionId, pack, packDimension, e);
-            IrisModdedCommands.fail(source, "Failed to inject Iris primary world: " + e.getClass().getSimpleName() + (e.getMessage() == null ? "" : " - " + e.getMessage()));
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_FAILED_INJECT_IRIS_PRIMARY_WORLD, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return 0;
         }
         ModdedModConfig.setPrimaryWorld(dimensionId);
         ModdedPrimaryWorldRouter.clear();
-        IrisModdedCommands.ok(source, "Iris primary world set to " + dimensionId + " (pack '" + pack + "' dimension '" + packDimension + "' seed " + seed + ").");
-        IrisModdedCommands.ok(source, "The vanilla overworld generator cannot be hot-swapped, so this does NOT regenerate the existing overworld.");
-        IrisModdedCommands.ok(source, "Instead, " + dimensionId + " is now the configured primary world: players in the vanilla overworld are routed there on join, and it re-injects on every startup.");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_IRIS_PRIMARY_WORLD_SET_PACK_DIMENSION_SEED, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("packDimension", packDimension), MessageArgument.untrusted("seed", seed)));
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_VANILLA_OVERWORLD_GENERATOR_CANNOT_BE_HOT_SWAPPED_SO_THIS_DOES));
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_INSTEAD_IS_NOW_CONFIGURED_PRIMARY_WORLD_PLAYERS_VANILLA_OVERWORLD_ARE, MessageArgument.untrusted("dimensionId", dimensionId)));
         return 1;
     }
 
     private static int clearMainWorld(CommandSourceStack source) {
         ModdedModConfig.setMainWorld("", 0L);
         MainWorldService.clearOverride();
-        IrisModdedCommands.ok(source, "Iris main world override cleared. The overworld keeps its current generator; edit server.properties level-type and restart to change it back.");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_IRIS_MAIN_WORLD_OVERRIDE_CLEARED_OVERWORLD_KEEPS_ITS_CURRENT_GENERATOR));
         return 1;
     }
 
@@ -258,7 +262,7 @@ public final class ModdedWorldCommands {
             try {
                 seed = Long.parseLong(seedRaw.trim());
             } catch (NumberFormatException e) {
-                IrisModdedCommands.fail(source, "Invalid seed '" + seedRaw + "'. Use a number or 'random'.");
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_INVALID_SEED_USE_NUMBER_RANDOM, MessageArgument.untrusted("seedRaw", seedRaw)));
                 return 0;
             }
         }
@@ -272,13 +276,13 @@ public final class ModdedWorldCommands {
         if (packFolder.isDirectory()) {
             return applyMainWorld(source, pack, packDimension, packRaw, seed);
         }
-        IrisModdedCommands.ok(source, "Pack '" + pack + "' is not installed; downloading IrisDimensions/" + pack + "...");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS_2, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
         Thread thread = new Thread(() -> {
             boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master",
                     (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
             server.execute(() -> {
                 if (!installed || !packFolder.isDirectory()) {
-                    IrisModdedCommands.fail(source, "Pack '" + pack + "' could not be downloaded; check the name or install it with /iris download " + pack + ".");
+                    IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_INSTALL_IT_WITH_2, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
                     return;
                 }
                 applyMainWorld(source, pack, packDimension, packRaw, seed);
@@ -299,23 +303,23 @@ public final class ModdedWorldCommands {
             }
         } catch (Throwable e) {
             LOGGER.error("Iris main world pack load failed for {} (dim={})", pack, packDimension, e);
-            IrisModdedCommands.fail(source, "Pack '" + pack + "' is not ready yet (still loading or validating). Try the command again in a moment.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_READY_YET_STILL_LOADING_VALIDATING_TRY_COMMAND, MessageArgument.untrusted("pack", pack)));
             return 0;
         }
         ModdedModConfig.setMainWorld(packRef, seed);
         if (!MainWorldService.stage(packRef, seed)) {
-            IrisModdedCommands.fail(source, "Failed to write server.properties; check file permissions and set level-type manually.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_FAILED_WRITE_SERVER_PROPERTIES_CHECK_FILE_PERMISSIONS_SET_LEVEL_TYPE));
             return 0;
         }
         String preset = MainWorldService.presetIdFor(packRef);
-        IrisModdedCommands.ok(source, "Iris main world set to '" + pack + "' (preset " + preset + ", seed " + (seed == 0L ? "random" : Long.toString(seed)) + ").");
-        IrisModdedCommands.ok(source, "server.properties level-type is now " + preset + ". On the next restart the overworld, nether, and end regenerate as this Iris world.");
-        IrisModdedCommands.ok(source, "Player data (inventories, advancements, stats) is kept; existing terrain in those dimensions is replaced. This applies once.");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_IRIS_MAIN_WORLD_SET_PRESET_SEED, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("preset", preset), MessageArgument.untrusted("value", seed == 0L ? IrisLanguage.plain(RuntimeUiMessages.STATUS_RANDOM) : Long.toString(seed))));
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_SERVER_PROPERTIES_LEVEL_TYPE_IS_NOW_ON_NEXT_RESTART_OVERWORLD, MessageArgument.untrusted("preset", preset)));
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PLAYER_DATA_INVENTORIES_ADVANCEMENTS_STATS_IS_KEPT_EXISTING_TERRAIN_THOSE));
         if (ModdedModConfig.get().mainWorldAutoRestart()) {
-            IrisModdedCommands.ok(source, "mainWorldAutoRestart is enabled - stopping the server now so your restart wrapper brings it back on the new main world.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_MAINWORLDAUTORESTART_IS_ENABLED_STOPPING_SERVER_NOW_SO_YOUR_RESTART_WRAPPER));
             source.getServer().halt(false);
         } else {
-            IrisModdedCommands.ok(source, "Restart the server now to generate it. (Set mainWorldAutoRestart=true in modded.json to have Iris stop the server for you.)");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_RESTART_SERVER_NOW_GENERATE_IT_SET_MAINWORLDAUTORESTART_TRUE_MODDED_JSON));
         }
         return 1;
     }
@@ -325,12 +329,11 @@ public final class ModdedWorldCommands {
             ModdedStartup.requirePackForWorldCreation(pack);
             return false;
         } catch (BrokenPackException e) {
-            IrisModdedCommands.fail(source, "Refusing to create world '" + dimensionId
-                    + "' using pack '" + pack + "' because required validation failed:");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_REFUSING_CREATE_WORLD_USING_PACK_BECAUSE_REQUIRED_VALIDATION_FAILED, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("pack", pack)));
             for (String reason : e.getReasons()) {
-                IrisModdedCommands.fail(source, "  - " + reason);
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_MESSAGE, MessageArgument.untrusted("reason", reason)));
             }
-            IrisModdedCommands.fail(source, "Fix the pack and run /iris pack validate " + pack + " to revalidate.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_FIX_PACK_RUN_IRIS_PACK_VALIDATE_REVALIDATE, MessageArgument.untrusted("pack", pack)));
             return true;
         }
     }
@@ -338,13 +341,13 @@ public final class ModdedWorldCommands {
     private static boolean loadPackDimension(CommandSourceStack source, String pack, String packDimension) {
         File packFolder = new File(ModdedPackCommands.packsRoot(), pack);
         if (!packFolder.isDirectory()) {
-            IrisModdedCommands.fail(source, "Pack '" + pack + "' was not found under " + ModdedPackCommands.packsRoot().getAbsolutePath());
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_WAS_NOT_FOUND_UNDER, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("value", ModdedPackCommands.packsRoot().getAbsolutePath())));
             return false;
         }
         IrisData data = IrisData.get(packFolder);
         IrisDimension dimension = data.getDimensionLoader().load(packDimension);
         if (dimension == null) {
-            IrisModdedCommands.fail(source, "Pack '" + pack + "' does not contain dimensions/" + packDimension + ".json");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_DOES_NOT_CONTAIN_DIMENSIONS_JSON, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("packDimension", packDimension)));
             return false;
         }
         return true;
@@ -364,7 +367,7 @@ public final class ModdedWorldCommands {
                 && packDimension.matches("[A-Za-z0-9_/.-]+") && !packDimension.contains("..")) {
             return true;
         }
-        IrisModdedCommands.fail(source, "Invalid pack reference '" + pack + (pack.equals(packDimension) ? "" : ":" + packDimension) + "'. Use pack or pack:dimensionKey.");
+        IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_INVALID_PACK_REFERENCE_USE_PACK_PACK_DIMENSIONKEY, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("value", (pack.equals(packDimension) ? "" : ":" + packDimension))));
         return false;
     }
 
@@ -379,7 +382,7 @@ public final class ModdedWorldCommands {
         try {
             return Long.parseLong(value);
         } catch (NumberFormatException e) {
-            IrisModdedCommands.fail(source, "Invalid seed '" + seedRaw + "'. Use a number or 'random'.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_INVALID_SEED_USE_NUMBER_RANDOM_2, MessageArgument.untrusted("seedRaw", seedRaw)));
             return null;
         }
     }
@@ -398,7 +401,7 @@ public final class ModdedWorldCommands {
             removed = ModdedDimensionManager.removePersistent(server, dimensionId, wipeStorage);
         } catch (Throwable e) {
             LOGGER.error("Iris world removal failed for {}", dimensionId, e);
-            IrisModdedCommands.fail(source, "Failed to remove Iris world '" + dimensionId + "': " + e.getClass().getSimpleName() + (e.getMessage() == null ? "" : " - " + e.getMessage()));
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_FAILED_REMOVE_IRIS_WORLD, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return 0;
         }
         if (dimensionId.equals(ModdedModConfig.get().primaryWorld())) {
@@ -407,17 +410,17 @@ public final class ModdedWorldCommands {
         }
         if (!removed) {
             if (wipeStorage) {
-                IrisModdedCommands.ok(source, "Iris world '" + dimensionId + "' was not loaded; cleared its persistent registry entry and wiped its stored chunk/mantle data.");
+                IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_IRIS_WORLD_WAS_NOT_LOADED_CLEARED_ITS_PERSISTENT_REGISTRY_ENTRY, MessageArgument.untrusted("dimensionId", dimensionId)));
             } else {
-                IrisModdedCommands.ok(source, "Iris world '" + dimensionId + "' was not loaded; cleared its persistent registry entry. World data on disk is kept.");
+                IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_IRIS_WORLD_WAS_NOT_LOADED_CLEARED_ITS_PERSISTENT_REGISTRY_ENTRY_2, MessageArgument.untrusted("dimensionId", dimensionId)));
             }
             return 1;
         }
         if (wipeStorage) {
-            IrisModdedCommands.ok(source, "Deleted Iris world '" + dimensionId + "': evacuated, unloaded, chunk/mantle data wiped, and dropped from the startup registry.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_DELETED_IRIS_WORLD_EVACUATED_UNLOADED_CHUNK_MANTLE_DATA_WIPED_DROPPED, MessageArgument.untrusted("dimensionId", dimensionId)));
         } else {
-            IrisModdedCommands.ok(source, "Disabled Iris world '" + dimensionId + "': evacuated, unloaded, and dropped from the startup registry.");
-            IrisModdedCommands.ok(source, "World data on disk is kept; re-enable with /iris world enable " + dimensionId + " <pack> or delete it with /iris world delete " + dimensionId + ".");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_DISABLED_IRIS_WORLD_EVACUATED_UNLOADED_DROPPED_FROM_STARTUP_REGISTRY, MessageArgument.untrusted("dimensionId", dimensionId)));
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_WORLD_DATA_ON_DISK_IS_KEPT_RE_ENABLE_WITH_IRIS, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("dimensionId2", dimensionId)));
         }
         return 1;
     }
@@ -428,27 +431,27 @@ public final class ModdedWorldCommands {
         for (ServerLevel level : server.getAllLevels()) {
             if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator) {
                 loaded++;
-                IrisModdedCommands.ok(source, "Loaded Iris level: " + level.dimension().identifier() + " -> pack '" + generator.activePack() + "' dimension '" + generator.activeDimensionKey() + "'");
+                IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_LOADED_IRIS_LEVEL_PACK_DIMENSION, MessageArgument.untrusted("value", level.dimension().identifier()), MessageArgument.untrusted("value2", generator.activePack()), MessageArgument.untrusted("value3", generator.activeDimensionKey())));
             }
         }
         String primary = ModdedModConfig.get().primaryWorld();
         if (!primary.isBlank()) {
-            IrisModdedCommands.ok(source, "Primary world: " + primary + (ModdedModConfig.get().routePlayersToPrimaryWorld() ? " (players routed there)" : " (routing disabled)"));
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PRIMARY_WORLD, MessageArgument.untrusted("primary", primary), MessageArgument.trusted("value", IrisLanguage.plain(ModdedModConfig.get().routePlayersToPrimaryWorld() ? RuntimeUiMessages.PRIMARY_PLAYERS_ROUTED_SUFFIX : RuntimeUiMessages.PRIMARY_ROUTING_DISABLED_SUFFIX))));
         }
         if (loaded == 0) {
-            IrisModdedCommands.fail(source, "No Iris dimensions are currently loaded. Create one with /iris world create <name> <pack>.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_NO_IRIS_DIMENSIONS_ARE_CURRENTLY_LOADED_CREATE_ONE_WITH_IRIS));
         }
         return loaded > 0 ? 1 : 0;
     }
 
     private static int list(CommandSourceStack source) {
         List<String> dimensions = loadedIrisDimensions(source.getServer());
-        IrisModdedCommands.ok(source, "Loaded Iris dimensions: " + dimensions.size());
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_LOADED_IRIS_DIMENSIONS, MessageArgument.untrusted("value", dimensions.size())));
         for (String dimension : dimensions) {
-            IrisModdedCommands.ok(source, "  - " + dimension);
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_MESSAGE_2, MessageArgument.untrusted("dimension", dimension)));
         }
         if (dimensions.isEmpty()) {
-            IrisModdedCommands.ok(source, "Use /iris world create <name> <pack> to inject one without restarting.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_USE_IRIS_WORLD_CREATE_NAME_PACK_INJECT_ONE_WITHOUT_RESTARTING));
         }
         return 1;
     }

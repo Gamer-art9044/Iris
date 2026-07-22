@@ -18,6 +18,9 @@
 
 package art.arcane.iris.core.service;
 
+import art.arcane.iris.core.localization.BukkitUiMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
@@ -28,11 +31,11 @@ import art.arcane.volmlib.util.board.Board;
 import art.arcane.volmlib.util.board.BoardProvider;
 import art.arcane.volmlib.util.board.BoardSettings;
 import art.arcane.volmlib.util.board.ScoreDirection;
-import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.iris.util.common.plugin.IrisService;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.matter.MatterCavern;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import lombok.Data;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -171,7 +174,7 @@ public class BoardSVC implements IrisService, BoardProvider {
 
     @Override
     public String getTitle(Player player) {
-        return C.GREEN + "Iris";
+        return IrisLanguage.text(BukkitUiMessages.SCOREBOARD_TITLE);
     }
 
     @Override
@@ -333,20 +336,28 @@ public class BoardSVC implements IrisService, BoardProvider {
 
             List<String> lines = new ArrayList<>(this.lines.size());
             lines.add("&7&m                   ");
-            lines.add(C.GREEN + "Speed" + C.GRAY + ":  " + Form.f(engine.getGeneratedPerSecond(), 0) + "/s " + Form.duration(1000D / engine.getGeneratedPerSecond(), 0));
-            lines.add(C.AQUA + "Cache" + C.GRAY + ": " + Form.f(IrisData.cacheSize()));
-            lines.add(C.AQUA + "Mantle" + C.GRAY + ": " + engine.getMantle().getLoadedRegionCount());
+            lines.add(IrisLanguage.text(
+                    BukkitUiMessages.SCOREBOARD_SPEED,
+                    MessageArgument.trusted("speed", Form.f(engine.getGeneratedPerSecond(), 0)),
+                    MessageArgument.trusted("duration", Form.duration(1000D / engine.getGeneratedPerSecond(), 0))
+            ));
+            lines.add(IrisLanguage.text(BukkitUiMessages.SCOREBOARD_CACHE, MessageArgument.trusted("count", Form.f(IrisData.cacheSize()))));
+            lines.add(IrisLanguage.text(BukkitUiMessages.SCOREBOARD_MANTLE, MessageArgument.trusted("count", engine.getMantle().getLoadedRegionCount())));
 
             if (IrisSettings.get().getGeneral().debug) {
-                lines.add(C.LIGHT_PURPLE + "Carving" + C.GRAY + ": " + (engine.getMantle().getMantle().get(x, y, z, MatterCavern.class) != null));
+                boolean carving = engine.getMantle().getMantle().get(x, y, z, MatterCavern.class) != null;
+                lines.add(IrisLanguage.text(
+                        BukkitUiMessages.SCOREBOARD_CARVING,
+                        MessageArgument.trusted("state", IrisLanguage.text(carving ? RuntimeUiMessages.STATUS_TRUE : RuntimeUiMessages.STATUS_FALSE))
+                ));
             }
 
             lines.add("&7&m                   ");
-            lines.add(C.AQUA + "Region" + C.GRAY + ": " + engine.getRegion(x, z).getName());
-            lines.add(C.AQUA + "Biome" + C.GRAY + ":  " + engine.getBiomeOrMantle(x, y, z).getName());
-            lines.add(C.AQUA + "Height" + C.GRAY + ": " + Math.round(engine.getHeight(x, z)));
-            lines.add(C.AQUA + "Slope" + C.GRAY + ":  " + Form.f(engine.getComplex().getSlopeStream().get(x, z), 2));
-            lines.add(C.AQUA + "BUD/s" + C.GRAY + ": " + Form.f(engine.getBlockUpdatesPerSecond()));
+            lines.add(IrisLanguage.text(BukkitUiMessages.SCOREBOARD_REGION, MessageArgument.untrusted("region", engine.getRegion(x, z).getName())));
+            lines.add(IrisLanguage.text(BukkitUiMessages.SCOREBOARD_BIOME, MessageArgument.untrusted("biome", engine.getBiomeOrMantle(x, y, z).getName())));
+            lines.add(IrisLanguage.text(BukkitUiMessages.SCOREBOARD_HEIGHT, MessageArgument.trusted("height", Math.round(engine.getHeight(x, z)))));
+            lines.add(IrisLanguage.text(BukkitUiMessages.SCOREBOARD_SLOPE, MessageArgument.trusted("slope", Form.f(engine.getComplex().getSlopeStream().get(x, z), 2))));
+            lines.add(IrisLanguage.text(BukkitUiMessages.SCOREBOARD_BLOCK_UPDATES, MessageArgument.trusted("updates", Form.f(engine.getBlockUpdatesPerSecond()))));
             lines.add("&7&m                   ");
             this.lines = lines;
         }

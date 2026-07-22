@@ -59,6 +59,9 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public class StudioSVC implements IrisService {
     public static final String LISTING = "https://raw.githubusercontent.com/IrisDimensions/_listing/main/listing-v2.json";
     public static final String WORKSPACE_NAME = "packs";
@@ -137,7 +140,7 @@ public class StudioSVC implements IrisService {
     public IrisDimension installIntoWorld(VolmitSender sender, IrisDimension dimension, File folder) {
         File target = new File(folder, "iris/pack");
         File source = dimension.getLoader().getDataFolder();
-        sender.sendMessage("Installing Package: " + source.getName() + ":" + dimension.getLoadKey());
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_INSTALLING_PACKAGE, MessageArgument.untrusted("name", String.valueOf(source.getName())), MessageArgument.untrusted("loadKey", String.valueOf(dimension.getLoadKey()))));
         try {
             FileUtils.copyDirectory(source, target);
         } catch (IOException e) {
@@ -148,7 +151,7 @@ public class StudioSVC implements IrisService {
     }
 
     public IrisDimension installInto(VolmitSender sender, String type, File folder) {
-        sender.sendMessage("Looking for Package: " + type);
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_LOOKING_PACKAGE, MessageArgument.untrusted("type", String.valueOf(type))));
         IrisDimension dim = IrisData.loadAnyDimension(type, null);
 
         if (dim == null) {
@@ -156,14 +159,14 @@ public class StudioSVC implements IrisService {
             if (workspaceFiles != null) {
                 for (File i : workspaceFiles) {
                     if (i.isFile() && i.getName().equals(type + ".iris")) {
-                        sender.sendMessage("Found " + type + ".iris in " + WORKSPACE_NAME + " folder");
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FOUND_IRIS_FOLDER, MessageArgument.untrusted("type", String.valueOf(type)), MessageArgument.untrusted("WORKSPACENAME", String.valueOf(WORKSPACE_NAME))));
                         ZipUtil.unpack(i, folder);
                         break;
                     }
                 }
             }
         } else {
-            sender.sendMessage("Found " + type + " dimension in " + WORKSPACE_NAME + " folder. Repackaging");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FOUND_DIMENSION_FOLDER_REPACKAGING, MessageArgument.untrusted("type", String.valueOf(type)), MessageArgument.untrusted("WORKSPACENAME", String.valueOf(WORKSPACE_NAME))));
             File f = new IrisProject(new File(getWorkspaceFolder(), type)).getPath();
 
             try {
@@ -204,7 +207,7 @@ public class StudioSVC implements IrisService {
         }
 
         if (!dimensionFile.exists() || !dimensionFile.isFile()) {
-            sender.sendMessage("Can't find the " + dimensionFile.getName() + " in the dimensions folder of this pack! Failed!");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_CAN_T_FIND_DIMENSIONS_FOLDER_THIS_PACK_FAILED, MessageArgument.untrusted("name", String.valueOf(dimensionFile.getName()))));
             return null;
         }
 
@@ -213,11 +216,11 @@ public class StudioSVC implements IrisService {
         dim = dm.getDimensionLoader().load(type);
 
         if (dim == null) {
-            sender.sendMessage("Can't load the dimension! Failed!");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_CAN_T_LOAD_DIMENSION_FAILED));
             return null;
         }
 
-        sender.sendMessage(folder.getName() + " type installed. ");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_TYPE_INSTALLED, MessageArgument.untrusted("name", String.valueOf(folder.getName()))));
         return dim;
     }
 
@@ -230,8 +233,8 @@ public class StudioSVC implements IrisService {
             String url = getListing(false).get(key);
 
             if (url == null) {
-                sender.sendMessage("Pack '" + key + "' was not found in the pack listing.");
-                sender.sendMessage("Use /iris download <pack> branch=<branch> to download manually.");
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_PACK_WAS_NOT_FOUND_PACK_LISTING, MessageArgument.untrusted("key", String.valueOf(key))));
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_USE_IRIS_DOWNLOAD_PACK_BRANCH_BRANCH_DOWNLOAD_MANUALLY));
                 return;
             }
 
@@ -243,7 +246,7 @@ public class StudioSVC implements IrisService {
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
-            sender.sendMessage("Failed to download '" + key + "'.");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_DOWNLOAD, MessageArgument.untrusted("key", String.valueOf(key))));
         }
     }
 
@@ -256,7 +259,7 @@ public class StudioSVC implements IrisService {
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
-            sender.sendMessage("Failed to download the IrisDimensions/overworld beta release.");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_DOWNLOAD_IRISDIMENSIONS_OVERWORLD_BETA_RELEASE));
         }
     }
 
@@ -266,7 +269,7 @@ public class StudioSVC implements IrisService {
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
-            sender.sendMessage("Failed to download '" + repo + "' (branch " + branch + ").");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_DOWNLOAD_BRANCH, MessageArgument.untrusted("repo", String.valueOf(repo)), MessageArgument.untrusted("branch", String.valueOf(branch))));
         }
     }
 
@@ -317,7 +320,7 @@ public class StudioSVC implements IrisService {
             });
         } catch (Exception e) {
             IrisLogging.reportError("Failed to open studio world \"" + dimm + "\".", e);
-            sender.sendMessage("Failed to open studio world: " + e.getMessage());
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_OPEN_STUDIO_WORLD, MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
         }
     }
 
@@ -326,11 +329,11 @@ public class StudioSVC implements IrisService {
         if (validation == null || validation.isLoadable()) {
             return false;
         }
-        sender.sendMessage("Cannot open studio '" + dimm + "' - pack has blocking errors:");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_CANNOT_OPEN_STUDIO_PACK_HAS_BLOCKING_ERRORS, MessageArgument.untrusted("dimm", String.valueOf(dimm))));
         for (String reason : validation.getBlockingErrors()) {
-            sender.sendMessage(" - " + reason);
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_MESSAGE, MessageArgument.untrusted("reason", String.valueOf(reason))));
         }
-        sender.sendMessage("Fix the pack and run /iris pack validate " + dimm + " to revalidate.");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FIX_PACK_RUN_IRIS_PACK_VALIDATE_REVALIDATE, MessageArgument.untrusted("dimm", String.valueOf(dimm))));
         return true;
     }
 
@@ -342,14 +345,14 @@ public class StudioSVC implements IrisService {
         pendingClose.whenComplete((closeResult, closeThrowable) -> {
             if (closeThrowable != null) {
                 IrisLogging.reportError("Failed while closing an existing studio project before opening \"" + dimm + "\".", closeThrowable);
-                J.s(() -> sender.sendMessage("Failed to close the existing studio project: " + closeThrowable.getMessage()));
+                J.s(() -> sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_CLOSE_EXISTING_STUDIO_PROJECT, MessageArgument.untrusted("error", String.valueOf(closeThrowable.getMessage())))));
                 return;
             }
 
             if (closeResult != null && closeResult.failureCause() != null) {
                 Throwable failure = closeResult.failureCause();
                 IrisLogging.reportError("Failed while closing an existing studio project before opening \"" + dimm + "\".", failure);
-                J.s(() -> sender.sendMessage("Failed to close the existing studio project: " + failure.getMessage()));
+                J.s(() -> sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_CLOSE_EXISTING_STUDIO_PROJECT_2, MessageArgument.untrusted("error", String.valueOf(failure.getMessage())))));
                 return;
             }
 
@@ -369,7 +372,7 @@ public class StudioSVC implements IrisService {
                 if (activeProject == project) {
                     activeProject = null;
                 }
-                J.s(() -> sender.sendMessage("Failed to open studio world: " + e.getMessage()));
+                J.s(() -> sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_OPEN_STUDIO_WORLD_2, MessageArgument.untrusted("error", String.valueOf(e.getMessage())))));
             }
         });
     }
@@ -516,18 +519,18 @@ public class StudioSVC implements IrisService {
         }
 
         if (packFiles == null || packFiles.length == 0) {
-            sender.sendMessage("Couldn't find the pack to create a new dimension from.");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_COULDN_T_FIND_PACK_CREATE_NEW_DIMENSION_FROM));
             return;
         }
 
         File importDimensionFile = new File(importPack, "dimensions/" + downloadable + ".json");
 
         if (!importDimensionFile.exists()) {
-            sender.sendMessage("Missing Imported Dimension File");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_MISSING_IMPORTED_DIMENSION_FILE));
             return;
         }
 
-        sender.sendMessage("Importing " + downloadable + " into new Project " + s);
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_IMPORTING_INTO_NEW_PROJECT, MessageArgument.untrusted("downloadable", String.valueOf(downloadable)), MessageArgument.untrusted("s", String.valueOf(s))));
         createFrom(downloadable, s);
         if (shouldDelete) {
             importPack.delete();

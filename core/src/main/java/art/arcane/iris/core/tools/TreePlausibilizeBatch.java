@@ -20,8 +20,12 @@ package art.arcane.iris.core.tools;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.spi.IrisLogging;
+import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.volmlib.util.localization.TextKey;
 
 import java.io.File;
 import java.io.IOException;
@@ -86,7 +90,7 @@ public final class TreePlausibilizeBatch {
         }
     }
 
-    public static void run(List<Target> targets, boolean dryRun, int reach, IrisData nearest, Consumer<String> out) {
+    public static void run(List<Target> targets, boolean dryRun, int reach, IrisData nearest, Consumer<Output> out) {
         int processed = 0;
         int changed = 0;
         int skipped = 0;
@@ -107,7 +111,11 @@ public final class TreePlausibilizeBatch {
             try {
                 IrisObject o = load(t, nearest);
                 if (o == null) {
-                    out.accept("skip " + t.key() + ": failed to load");
+                    out.accept(output(
+                            RuntimeUiMessages.TREE_SKIP_LOAD,
+                            false,
+                            MessageArgument.untrusted("object", t.key())
+                    ));
                     skipped++;
                     continue;
                 }
@@ -135,27 +143,74 @@ public final class TreePlausibilizeBatch {
                 totalUnreachableAfter += r.unreachableAfter();
 
                 if (r.mutated() || targets.size() == 1) {
-                    out.accept(t.key() + ": +" + r.woodPlaced() + " wood (" + r.branchesGrown() + " branches), "
-                            + r.leavesConvertedToWood() + " leaves->wood, ~" + r.distancesRewritten() + " distances"
-                            + (r.leavesPinnedPersistent() > 0 ? ", !" + r.leavesPinnedPersistent() + " pinned" : ""));
+                    if (r.leavesPinnedPersistent() > 0) {
+                        out.accept(output(
+                                RuntimeUiMessages.TREE_RESULT_PINNED,
+                                false,
+                                MessageArgument.untrusted("object", t.key()),
+                                MessageArgument.trusted("wood", r.woodPlaced()),
+                                MessageArgument.trusted("branches", r.branchesGrown()),
+                                MessageArgument.trusted("converted", r.leavesConvertedToWood()),
+                                MessageArgument.trusted("distances", r.distancesRewritten()),
+                                MessageArgument.trusted("pinned", r.leavesPinnedPersistent())
+                        ));
+                    } else {
+                        out.accept(output(
+                                RuntimeUiMessages.TREE_RESULT,
+                                false,
+                                MessageArgument.untrusted("object", t.key()),
+                                MessageArgument.trusted("wood", r.woodPlaced()),
+                                MessageArgument.trusted("branches", r.branchesGrown()),
+                                MessageArgument.trusted("converted", r.leavesConvertedToWood()),
+                                MessageArgument.trusted("distances", r.distancesRewritten())
+                        ));
+                    }
                 }
 
                 if (targets.size() > 1 && index % progressStep == 0) {
-                    out.accept("[" + index + "/" + targets.size() + "]");
+                    out.accept(output(
+                            RuntimeUiMessages.TREE_PROGRESS,
+                            true,
+                            MessageArgument.trusted("current", index),
+                            MessageArgument.trusted("total", targets.size())
+                    ));
                 }
             } catch (Throwable e) {
-                out.accept("fail " + t.key() + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                out.accept(output(
+                        RuntimeUiMessages.TREE_FAILED,
+                        false,
+                        MessageArgument.untrusted("object", t.key()),
+                        MessageArgument.untrusted("type", e.getClass().getSimpleName()),
+                        MessageArgument.untrusted("error", String.valueOf(e.getMessage()))
+                ));
                 IrisLogging.reportError(e);
                 failed++;
             }
         }
 
-        out.accept("Done: " + processed + " processed, " + changed + " changed, "
-                + skipped + " skipped, " + failed + " failed"
-                + (dryRun ? " (dry run, nothing written)" : ""));
-        out.accept("Totals: +" + totalWood + " wood (" + totalBranches + " branches), "
-                + totalConverted + " leaves->wood, ~" + totalRewritten + " distances, !"
-                + totalPinned + " pinned, unreachable " + totalUnreachableBefore + " -> " + totalUnreachableAfter);
+        out.accept(output(
+                dryRun ? RuntimeUiMessages.TREE_DONE_DRY : RuntimeUiMessages.TREE_DONE,
+                true,
+                MessageArgument.trusted("processed", processed),
+                MessageArgument.trusted("changed", changed),
+                MessageArgument.trusted("skipped", skipped),
+                MessageArgument.trusted("failed", failed)
+        ));
+        out.accept(output(
+                RuntimeUiMessages.TREE_TOTALS,
+                true,
+                MessageArgument.trusted("wood", totalWood),
+                MessageArgument.trusted("branches", totalBranches),
+                MessageArgument.trusted("converted", totalConverted),
+                MessageArgument.trusted("distances", totalRewritten),
+                MessageArgument.trusted("pinned", totalPinned),
+                MessageArgument.trusted("before", totalUnreachableBefore),
+                MessageArgument.trusted("after", totalUnreachableAfter)
+        ));
+    }
+
+    private static Output output(TextKey key, boolean headline, MessageArgument... arguments) {
+        return new Output(IrisLanguage.plain(key, arguments), headline);
     }
 
     private static IrisObject load(Target t, IrisData nearest) throws IOException {
@@ -166,5 +221,8 @@ public final class TreePlausibilizeBatch {
             return o;
         }
         return IrisData.loadAnyObject(t.key(), nearest);
+    }
+
+    public record Output(String text, boolean headline) {
     }
 }

@@ -152,9 +152,19 @@ public final class ModdedDimensionManager {
     }
 
     public static Handle createPersistent(MinecraftServer server, String dimensionId, String pack, String packDimensionKey, long seed) {
-        Handle handle = create(server, dimensionId, pack, packDimensionKey, seed);
         ModdedDimensionRegistryStore.put(server, new ModdedDimensionRegistryStore.PersistentDimension(dimensionId, pack, packDimensionKey, seed));
-        return handle;
+        try {
+            return create(server, dimensionId, pack, packDimensionKey, seed);
+        } catch (Throwable e) {
+            ModdedDimensionRegistryStore.remove(server, dimensionId);
+            if (e instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (e instanceof Error fatalError) {
+                throw fatalError;
+            }
+            throw new IllegalStateException("Iris runtime dimension injection failed for " + dimensionId, e);
+        }
     }
 
     public static boolean removePersistent(MinecraftServer server, String dimensionId, boolean wipeStorage) {
@@ -265,9 +275,10 @@ public final class ModdedDimensionManager {
         IrisDimension dimension = loadPackDimension(pack, packDimensionKey);
         String typeRef = ModdedForcedDatapack.dimensionTypeRef(dimension);
         ResourceKey<DimensionType> typeKey = ResourceKey.create(Registries.DIMENSION_TYPE, Identifier.parse(typeRef));
-        Holder.Reference<DimensionType> packType = ModdedForcedDatapack.requireRegisteredDimensionType(
+        ModdedRuntimeRegistry.ensureCustomBiomes(registryAccess, dimension, pack);
+        ModdedRuntimeRegistry.ensureDimensionType(registryAccess, registry, typeKey, typeRef, dimension);
+        return ModdedForcedDatapack.requireRegisteredDimensionType(
                 typeRef, registry.get(typeKey), pack, packDimensionKey);
-        return packType;
     }
 
     private static IrisDimension loadPackDimension(String pack, String packDimensionKey) {

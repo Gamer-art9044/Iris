@@ -33,6 +33,8 @@ import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.lifecycle.WorldLifecycleCaller;
 import art.arcane.iris.core.lifecycle.WorldLifecycleRequest;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.service.StudioSVC;
@@ -41,6 +43,7 @@ import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.FoliaScheduler;
@@ -323,8 +326,10 @@ public class IrisCreator {
     private void reportSenderTeleportFailure(Player player, World world, Throwable throwable) {
         IrisLogging.reportError("World \"" + world.getName()
                 + "\" was created, but automatic teleport failed for player \"" + player.getName() + "\".", throwable);
-        J.runEntity(player, () -> new VolmitSender(player).sendMessage(C.YELLOW
-                + "The world was created, but automatic teleport failed. Try /iris teleport world=" + IrisWorldStorage.logicalName(world)));
+        J.runEntity(player, () -> new VolmitSender(player).sendMessage(IrisLanguage.text(
+                RuntimeProgressMessages.WORLD_CREATE_TELEPORT_FAILED,
+                MessageArgument.untrusted("world", IrisWorldStorage.logicalName(world))
+        )));
     }
 
     private void reportStudioProgress(double progress, String stage) {
@@ -393,11 +398,23 @@ public class IrisCreator {
                         bar.append(bi < filled ? C.GREEN : C.DARK_GRAY).append("|");
                     }
                     bar.append(C.DARK_GRAY).append("]");
-                    sender.sendAction(bar.toString() + C.GRAY + " " + C.YELLOW + percent + "%" + C.DARK_GRAY + " " + Form.f(generated) + "/" + Form.f(required) + " chunks");
+                    sender.sendAction(IrisLanguage.text(
+                            RuntimeProgressMessages.WORLD_CREATE_ACTION,
+                            MessageArgument.trusted("bar", bar.toString()),
+                            MessageArgument.trusted("percent", percent),
+                            MessageArgument.trusted("generated", Form.f(generated)),
+                            MessageArgument.trusted("required", Form.f(required))
+                    ));
                     return;
                 }
 
-                sender.sendMessage(C.GOLD + "Generating " + C.YELLOW + percent + "%" + C.GRAY + " " + Form.f(generated) + "/" + Form.f(required) + " chunks" + C.DARK_GRAY + " (" + remaining + " left)");
+                sender.sendMessage(IrisLanguage.text(
+                        RuntimeProgressMessages.WORLD_CREATE_CONSOLE,
+                        MessageArgument.trusted("percent", percent),
+                        MessageArgument.trusted("generated", Form.f(generated)),
+                        MessageArgument.trusted("required", Form.f(required)),
+                        MessageArgument.trusted("remaining", remaining)
+                ));
             }, interval));
         });
         return taskId;
@@ -423,11 +440,18 @@ public class IrisCreator {
                     bar.append(bi < filled ? C.GREEN : C.DARK_GRAY).append("|");
                 }
                 bar.append(C.DARK_GRAY).append("]");
-                sender.sendAction(bar.toString() + C.GRAY + " " + C.YELLOW + percent + "%" + C.GRAY + " | " + C.WHITE + "Pregenerating");
+                sender.sendAction(IrisLanguage.text(
+                        RuntimeProgressMessages.WORLD_PREGEN_ACTION,
+                        MessageArgument.trusted("bar", bar.toString()),
+                        MessageArgument.trusted("percent", percent)
+                ));
                 return;
             }
 
-            sender.sendMessage(C.GOLD + "Pregenerating " + C.YELLOW + percent + "%");
+            sender.sendMessage(IrisLanguage.text(
+                    RuntimeProgressMessages.WORLD_PREGEN_CONSOLE,
+                    MessageArgument.trusted("percent", percent)
+            ));
         }, interval));
         return taskId;
     }

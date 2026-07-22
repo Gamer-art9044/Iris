@@ -34,6 +34,9 @@ import java.util.Map;
 import java.util.TreeSet;
 import java.util.function.Predicate;
 
+import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public final class BulkStructureImporter {
     public record Report(int total, int imported, int skipped, int failed) {
     }
@@ -56,13 +59,13 @@ public final class BulkStructureImporter {
         int skipped = 0;
         int failed = 0;
 
-        sender.sendMessage(C.GREEN + "Importing " + C.WHITE + total + C.GREEN + " vanilla & datapack structures (mode=" + mode + ", includeNonJigsaw=" + includeNonJigsaw + ")...");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_IMPORTING_VANILLA_DATAPACK_STRUCTURES_MODE_INCLUDENONJIGSAW, MessageArgument.untrusted("total", String.valueOf(total)), MessageArgument.untrusted("mode", String.valueOf(mode)), MessageArgument.untrusted("includeNonJigsaw", String.valueOf(includeNonJigsaw))));
 
         for (String keyString : vanilla) {
             NamespacedKey nk = NamespacedKey.fromString(keyString.toLowerCase());
             if (nk == null) {
                 failed++;
-                sender.sendMessage(C.RED + "[fail] " + keyString + ": invalid key");
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_INVALID_KEY, MessageArgument.untrusted("keyString", String.valueOf(keyString))));
                 continue;
             }
             String name = StructureImporter.deriveName(nk);
@@ -71,7 +74,7 @@ public final class BulkStructureImporter {
                 VillageImporter.Result jigsaw = VillageImporter.importVillage(data, nk, name, mode);
                 if (jigsaw.success()) {
                     imported++;
-                    sender.sendMessage(C.GRAY + "[jigsaw] " + keyString + " -> " + name);
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_JIGSAW, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("name", String.valueOf(name))));
                     continue;
                 }
 
@@ -84,15 +87,15 @@ public final class BulkStructureImporter {
                     StructureImporter.Result single = StructureImporter.importStructure(data, nk, name, mode);
                     if (single.success()) {
                         imported++;
-                        sender.sendMessage(C.GRAY + "[single] " + keyString + " -> " + name);
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_SINGLE, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("name", String.valueOf(name))));
                     } else if (single.message() != null && single.message().startsWith("Skipped")) {
                         skipped++;
                     } else if (single.message() != null && single.message().contains("No loadable structure NBT")) {
                         skipped++;
-                        sender.sendMessage(C.YELLOW + "[skip] " + keyString + ": no single-template NBT - vanilla builds this in code or from separate piece templates (imported via the templates pass); nothing to import as one structure.");
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_SKIP_NO_SINGLE_TEMPLATE_NBT_VANILLA_BUILDS_THIS_CODE_FROM_SEPARATE_PIECE, MessageArgument.untrusted("keyString", String.valueOf(keyString))));
                     } else {
                         failed++;
-                        sender.sendMessage(C.RED + "[fail] " + keyString + ": " + single.message());
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("message", String.valueOf(single.message()))));
                     }
                     continue;
                 }
@@ -103,16 +106,16 @@ public final class BulkStructureImporter {
                 }
 
                 failed++;
-                sender.sendMessage(C.RED + "[fail] " + keyString + ": " + message);
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_2, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("message", String.valueOf(message))));
             } catch (Throwable e) {
                 failed++;
-                sender.sendMessage(C.RED + "[fail] " + keyString + ": " + e.getMessage());
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_3, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
             }
         }
 
         StructureIndexService.write(data);
 
-        sender.sendMessage(C.GREEN + "Bulk import complete: " + C.WHITE + imported + C.GREEN + " imported, " + C.WHITE + skipped + C.GREEN + " skipped, " + C.WHITE + failed + C.GREEN + " failed (" + C.WHITE + total + C.GREEN + " total).");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_BULK_IMPORT_COMPLETE_IMPORTED_SKIPPED_FAILED_TOTAL, MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed)), MessageArgument.untrusted("total", String.valueOf(total))));
         return new Report(total, imported, skipped, failed);
     }
 
@@ -128,27 +131,27 @@ public final class BulkStructureImporter {
         int skipped = 0;
         int failed = 0;
 
-        sender.sendMessage(C.GREEN + "Building single-template structures from imported pieces (one variant placed per generation)...");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_BUILDING_SINGLE_TEMPLATE_STRUCTURES_FROM_IMPORTED_PIECES_ONE_VARIANT_PLACED_PER_GENERATION));
         for (String[] g : groups) {
             try {
                 StructureImporter.Result result = StructureImporter.importTemplateGroup(data, g[0], g[1], g[2], mode);
                 if (result.success()) {
                     imported++;
-                    sender.sendMessage(C.GRAY + "[group] " + g[1] + " -> " + g[0] + " (" + result.blocks() + " variants)");
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_GROUP_VARIANTS, MessageArgument.untrusted("value", String.valueOf(g[1])), MessageArgument.untrusted("value2", String.valueOf(g[0])), MessageArgument.untrusted("blocks", String.valueOf(result.blocks()))));
                 } else if (result.message() != null && result.message().startsWith("Skipped")) {
                     skipped++;
                 } else {
                     skipped++;
-                    sender.sendMessage(C.YELLOW + "[skip] " + g[0] + ": " + result.message());
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_SKIP, MessageArgument.untrusted("value", String.valueOf(g[0])), MessageArgument.untrusted("message", String.valueOf(result.message()))));
                 }
             } catch (Throwable e) {
                 failed++;
-                sender.sendMessage(C.RED + "[fail] " + g[0] + ": " + e.getMessage());
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_4, MessageArgument.untrusted("value", String.valueOf(g[0])), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
             }
         }
 
         StructureIndexService.write(data);
-        sender.sendMessage(C.GREEN + "Single-template structures: " + C.WHITE + imported + C.GREEN + " built, " + C.WHITE + skipped + C.GREEN + " skipped, " + C.WHITE + failed + C.GREEN + " failed.");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_SINGLE_TEMPLATE_STRUCTURES_BUILT_SKIPPED_FAILED, MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed))));
         return new Report(groups.length, imported, skipped, failed);
     }
 
@@ -157,7 +160,7 @@ public final class BulkStructureImporter {
         try {
             templateKeys = enumerateTemplateKeys();
         } catch (Throwable e) {
-            sender.sendMessage(C.RED + "Failed to enumerate structure templates via the server ResourceManager: " + e);
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAILED_ENUMERATE_STRUCTURE_TEMPLATES_VIA_SERVER_RESOURCEMANAGER, MessageArgument.untrusted("e", String.valueOf(e))));
             return new Report(0, 0, 0, 0);
         }
 
@@ -175,17 +178,17 @@ public final class BulkStructureImporter {
         int failed = 0;
 
         if (total == 0) {
-            sender.sendMessage(C.YELLOW + "No structure templates were found under the 'structure' resource path.");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_NO_STRUCTURE_TEMPLATES_WERE_FOUND_UNDER_STRUCTURE_RESOURCE_PATH));
             return new Report(0, 0, 0, 0);
         }
 
-        sender.sendMessage(C.GREEN + "Importing " + C.WHITE + total + C.GREEN + " structure templates (mode=" + mode + ")...");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_IMPORTING_STRUCTURE_TEMPLATES_MODE, MessageArgument.untrusted("total", String.valueOf(total)), MessageArgument.untrusted("mode", String.valueOf(mode))));
 
         for (String keyString : all) {
             NamespacedKey nk = NamespacedKey.fromString(keyString.toLowerCase());
             if (nk == null) {
                 failed++;
-                sender.sendMessage(C.RED + "[fail] " + keyString + ": invalid key");
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_INVALID_KEY_2, MessageArgument.untrusted("keyString", String.valueOf(keyString))));
                 continue;
             }
             String name = templateNameFor(keyString);
@@ -198,22 +201,22 @@ public final class BulkStructureImporter {
                     skipped++;
                 } else {
                     failed++;
-                    sender.sendMessage(C.RED + "[fail] " + keyString + ": " + result.message());
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_5, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("message", String.valueOf(result.message()))));
                 }
             } catch (Throwable e) {
                 failed++;
-                sender.sendMessage(C.RED + "[fail] " + keyString + ": " + e.getMessage());
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_6, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
             }
 
             int processed = imported + skipped + failed;
             if (processed % 50 == 0) {
-                sender.sendMessage(C.GRAY + "..." + processed + "/" + total + " (" + imported + " imported, " + skipped + " skipped, " + failed + " failed)");
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_IMPORTED_SKIPPED_FAILED, MessageArgument.untrusted("processed", String.valueOf(processed)), MessageArgument.untrusted("total", String.valueOf(total)), MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed))));
             }
         }
 
         StructureIndexService.write(data);
 
-        sender.sendMessage(C.GREEN + "Template import complete: " + C.WHITE + imported + C.GREEN + " imported, " + C.WHITE + skipped + C.GREEN + " skipped, " + C.WHITE + failed + C.GREEN + " failed (" + C.WHITE + total + C.GREEN + " total).");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_TEMPLATE_IMPORT_COMPLETE_IMPORTED_SKIPPED_FAILED_TOTAL, MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed)), MessageArgument.untrusted("total", String.valueOf(total))));
         return new Report(total, imported, skipped, failed);
     }
 
@@ -233,14 +236,14 @@ public final class BulkStructureImporter {
         int failed = 0;
 
         if (total == 0) {
-            sender.sendMessage(C.YELLOW + "No datapack (non-minecraft) structures are registered. Ingest a datapack and restart first, then run this again.");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_NO_DATAPACK_NON_MINECRAFT_STRUCTURES_ARE_REGISTERED_INGEST_DATAPACK_RESTART_FIRST_THEN));
         } else {
-            sender.sendMessage(C.GREEN + "Importing " + C.WHITE + total + C.GREEN + " datapack structures (mode=" + mode + ")...");
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_IMPORTING_DATAPACK_STRUCTURES_MODE, MessageArgument.untrusted("total", String.valueOf(total)), MessageArgument.untrusted("mode", String.valueOf(mode))));
             for (String keyString : datapack) {
                 NamespacedKey nk = NamespacedKey.fromString(keyString.toLowerCase());
                 if (nk == null) {
                     failed++;
-                    sender.sendMessage(C.RED + "[fail] " + keyString + ": invalid key");
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_INVALID_KEY_3, MessageArgument.untrusted("keyString", String.valueOf(keyString))));
                     continue;
                 }
                 String name = StructureImporter.deriveName(nk);
@@ -249,7 +252,7 @@ public final class BulkStructureImporter {
                     VillageImporter.Result jigsaw = VillageImporter.importVillage(data, nk, name, mode);
                     if (jigsaw.success()) {
                         imported++;
-                        sender.sendMessage(C.GRAY + "[jigsaw] " + keyString + " -> " + name);
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_JIGSAW_2, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("name", String.valueOf(name))));
                         continue;
                     }
 
@@ -258,14 +261,14 @@ public final class BulkStructureImporter {
                         StructureImporter.Result single = StructureImporter.importStructure(data, nk, name, mode);
                         if (single.success()) {
                             imported++;
-                            sender.sendMessage(C.GRAY + "[single] " + keyString + " -> " + name);
+                            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_SINGLE_2, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("name", String.valueOf(name))));
                         } else if (single.message() != null && single.message().startsWith("Skipped")) {
                             skipped++;
                         } else if (single.message() != null && single.message().contains("No loadable structure NBT")) {
                             skipped++;
                         } else {
                             failed++;
-                            sender.sendMessage(C.RED + "[fail] " + keyString + ": " + single.message());
+                            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_7, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("message", String.valueOf(single.message()))));
                         }
                         continue;
                     }
@@ -276,10 +279,10 @@ public final class BulkStructureImporter {
                     }
 
                     failed++;
-                    sender.sendMessage(C.RED + "[fail] " + keyString + ": " + message);
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_8, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("message", String.valueOf(message))));
                 } catch (Throwable e) {
                     failed++;
-                    sender.sendMessage(C.RED + "[fail] " + keyString + ": " + e.getMessage());
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_9, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
                 }
             }
         }
@@ -294,7 +297,7 @@ public final class BulkStructureImporter {
             }
             Collections.sort(datapackTemplates);
             if (!datapackTemplates.isEmpty()) {
-                sender.sendMessage(C.GREEN + "Importing " + C.WHITE + datapackTemplates.size() + C.GREEN + " datapack structure templates...");
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_IMPORTING_DATAPACK_STRUCTURE_TEMPLATES, MessageArgument.untrusted("size", String.valueOf(datapackTemplates.size()))));
                 for (String keyString : datapackTemplates) {
                     NamespacedKey nk = NamespacedKey.fromString(keyString.toLowerCase());
                     if (nk == null) {
@@ -310,20 +313,20 @@ public final class BulkStructureImporter {
                             skipped++;
                         } else {
                             failed++;
-                            sender.sendMessage(C.RED + "[fail] " + keyString + ": " + result.message());
+                            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_10, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("message", String.valueOf(result.message()))));
                         }
                     } catch (Throwable e) {
                         failed++;
-                        sender.sendMessage(C.RED + "[fail] " + keyString + ": " + e.getMessage());
+                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_11, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
                     }
                 }
             }
         } catch (Throwable e) {
-            sender.sendMessage(C.YELLOW + "Could not enumerate datapack templates via the server ResourceManager: " + e.getMessage());
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_COULD_NOT_ENUMERATE_DATAPACK_TEMPLATES_VIA_SERVER_RESOURCEMANAGER, MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
         }
 
         StructureIndexService.write(data);
-        sender.sendMessage(C.GREEN + "Datapack structure import complete: " + C.WHITE + imported + C.GREEN + " imported, " + C.WHITE + skipped + C.GREEN + " skipped, " + C.WHITE + failed + C.GREEN + " failed.");
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_DATAPACK_STRUCTURE_IMPORT_COMPLETE_IMPORTED_SKIPPED_FAILED, MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed))));
         return new Report(total, imported, skipped, failed);
     }
 

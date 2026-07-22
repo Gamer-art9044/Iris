@@ -18,6 +18,8 @@
 
 package art.arcane.iris.engine;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.gui.PregeneratorJob;
@@ -1104,7 +1106,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
 
                 @Override
                 public String getName() {
-                    return "Loading Chunks";
+                    return IrisLanguage.text(RuntimeUiMessages.JOB_LOADING_CHUNKS);
                 }
             }.queue(futures).execute(new VolmitSender(player), true, r);
         }));

@@ -39,6 +39,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedPackCommands {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
@@ -101,7 +104,7 @@ public final class ModdedPackCommands {
     private static int validate(CommandSourceStack source, String pack) {
         File packsRoot = packsRoot();
         if (!packsRoot.isDirectory()) {
-            IrisModdedCommands.fail(source, "Packs folder not found: " + packsRoot.getAbsolutePath());
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_PACKS_FOLDER_NOT_FOUND, MessageArgument.untrusted("value", packsRoot.getAbsolutePath())));
             return 0;
         }
 
@@ -109,7 +112,7 @@ public final class ModdedPackCommands {
         if (pack == null || pack.isBlank()) {
             File[] dirs = packsRoot.listFiles(File::isDirectory);
             if (dirs == null || dirs.length == 0) {
-                IrisModdedCommands.fail(source, "No packs to validate under " + packsRoot.getAbsolutePath());
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_NO_PACKS_VALIDATE_UNDER, MessageArgument.untrusted("value", packsRoot.getAbsolutePath())));
                 return 0;
             }
             for (File dir : dirs) {
@@ -118,14 +121,14 @@ public final class ModdedPackCommands {
         } else {
             File target = PackDirectoryResolver.resolveExisting(packsRoot, pack);
             if (target == null) {
-                IrisModdedCommands.fail(source, "Pack '" + pack + "' not found under " + packsRoot.getAbsolutePath());
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_PACK_NOT_FOUND_UNDER, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("value", packsRoot.getAbsolutePath())));
                 return 0;
             }
             targets.add(target);
         }
 
         MinecraftServer server = source.getServer();
-        IrisModdedCommands.ok(source, "Validating " + targets.size() + " pack(s)...");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_VALIDATING_PACK_S, MessageArgument.untrusted("value", targets.size())));
         Thread thread = new Thread(() -> {
             int broken = 0;
             for (File target : targets) {
@@ -138,12 +141,12 @@ public final class ModdedPackCommands {
                     server.execute(() -> report(source, result));
                 } catch (Throwable e) {
                     LOGGER.error("Iris pack validation failed for {}", target.getName(), e);
-                    server.execute(() -> IrisModdedCommands.fail(source, "Validation of '" + target.getName() + "' failed: " + e.getMessage()));
+                    server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_VALIDATION_FAILED, MessageArgument.untrusted("value", target.getName()), MessageArgument.untrusted("value2", String.valueOf(e.getMessage())))));
                     broken++;
                 }
             }
             int brokenTotal = broken;
-            server.execute(() -> IrisModdedCommands.ok(source, "Validation complete. Broken packs: " + brokenTotal + "/" + targets.size()));
+            server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_VALIDATION_COMPLETE_BROKEN_PACKS, MessageArgument.untrusted("brokenTotal", brokenTotal), MessageArgument.untrusted("value", targets.size()))));
         }, "Iris Pack Validator");
         thread.setDaemon(true);
         thread.start();
@@ -153,7 +156,7 @@ public final class ModdedPackCommands {
     private static int cleanup(CommandSourceStack source, String pack, boolean apply) {
         File packFolder = PackDirectoryResolver.resolveExisting(packsRoot(), pack);
         if (packFolder == null) {
-            IrisModdedCommands.fail(source, "Pack '" + pack + "' not found under " + packsRoot().getAbsolutePath());
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_PACK_NOT_FOUND_UNDER_2, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("value", packsRoot().getAbsolutePath())));
             return 0;
         }
         MinecraftServer server = source.getServer();
@@ -174,7 +177,7 @@ public final class ModdedPackCommands {
     private static int restore(CommandSourceStack source, String pack, boolean apply) {
         File packFolder = PackDirectoryResolver.resolveExisting(packsRoot(), pack);
         if (packFolder == null) {
-            IrisModdedCommands.fail(source, "Pack '" + pack + "' not found under " + packsRoot().getAbsolutePath());
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_PACK_NOT_FOUND_UNDER_3, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("value", packsRoot().getAbsolutePath())));
             return 0;
         }
         MinecraftServer server = source.getServer();
@@ -196,21 +199,19 @@ public final class ModdedPackCommands {
         if (pack == null || pack.isBlank()) {
             Map<String, PackValidationResult> snapshot = PackValidationRegistry.snapshot();
             if (snapshot.isEmpty()) {
-                IrisModdedCommands.fail(source, "No validation results recorded. Run /iris pack validate first.");
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_NO_VALIDATION_RESULTS_RECORDED_RUN_IRIS_PACK_VALIDATE_FIRST));
                 return 0;
             }
             for (Map.Entry<String, PackValidationResult> entry : snapshot.entrySet()) {
                 PackValidationResult result = entry.getValue();
                 String tag = result.isLoadable() ? "OK" : "BROKEN";
-                IrisModdedCommands.ok(source, tag + " " + entry.getKey()
-                        + " (blocking=" + result.getBlockingErrors().size()
-                        + ", warnings=" + result.getWarnings().size() + ")");
+                IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_BLOCKING_WARNINGS, MessageArgument.untrusted("tag", tag), MessageArgument.untrusted("value", entry.getKey()), MessageArgument.untrusted("value2", result.getBlockingErrors().size()), MessageArgument.untrusted("value3", result.getWarnings().size())));
             }
             return 1;
         }
         PackValidationResult result = PackValidationRegistry.get(pack);
         if (result == null) {
-            IrisModdedCommands.fail(source, "No validation result for '" + pack + "'. Run /iris pack validate " + pack + ".");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_NO_VALIDATION_RESULT_RUN_IRIS_PACK_VALIDATE, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
             return 0;
         }
         report(source, result);
@@ -219,20 +220,19 @@ public final class ModdedPackCommands {
 
     private static void report(CommandSourceStack source, PackValidationResult result) {
         if (result.isLoadable()) {
-            IrisModdedCommands.ok(source, "Pack '" + result.getPackName() + "' is loadable."
-                    + " (warnings=" + result.getWarnings().size() + ")");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_PACK_IS_LOADABLE_WARNINGS, MessageArgument.untrusted("value", result.getPackName()), MessageArgument.untrusted("value2", result.getWarnings().size())));
         } else {
-            IrisModdedCommands.fail(source, "Pack '" + result.getPackName() + "' is BROKEN:");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_PACK_IS_BROKEN, MessageArgument.untrusted("value", result.getPackName())));
             for (String reason : result.getBlockingErrors()) {
-                IrisModdedCommands.fail(source, "  - " + reason);
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_MESSAGE, MessageArgument.untrusted("reason", reason)));
             }
         }
         int warningMax = Math.min(10, result.getWarnings().size());
         for (int i = 0; i < warningMax; i++) {
-            IrisModdedCommands.ok(source, "  ! " + result.getWarnings().get(i));
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_MESSAGE_2, MessageArgument.untrusted("value", result.getWarnings().get(i))));
         }
         if (result.getWarnings().size() > warningMax) {
-            IrisModdedCommands.ok(source, "  ... and " + (result.getWarnings().size() - warningMax) + " more warning(s).");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_MORE_WARNING_S, MessageArgument.untrusted("value", (result.getWarnings().size() - warningMax))));
         }
     }
 
@@ -242,13 +242,12 @@ public final class ModdedPackCommands {
             return;
         }
         if (!result.hasCandidates()) {
-            IrisModdedCommands.ok(source, "No cleanup candidates found for pack '" + pack + "'.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_NO_CLEANUP_CANDIDATES_FOUND_PACK, MessageArgument.untrusted("pack", pack)));
             return;
         }
-        IrisModdedCommands.ok(source, "Cleanup preview for pack '" + pack + "': "
-                + result.candidatePaths().size() + " candidate(s). No files were changed.");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_CLEANUP_PREVIEW_PACK_CANDIDATE_S_NO_FILES_WERE_CHANGED, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("value", result.candidatePaths().size())));
         reportPaths(source, result.candidatePaths(), "candidate");
-        IrisModdedCommands.ok(source, "Run /iris pack cleanup " + pack + " apply to quarantine after a fresh scan.");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_RUN_IRIS_PACK_CLEANUP_APPLY_QUARANTINE_AFTER_FRESH_SCAN, MessageArgument.untrusted("pack", pack)));
     }
 
     private static void reportCleanupApply(CommandSourceStack source, String pack, PackResourceCleanup.ApplyResult result) {
@@ -258,11 +257,10 @@ public final class ModdedPackCommands {
             return;
         }
         if (!result.changed()) {
-            IrisModdedCommands.ok(source, "No cleanup candidates found for pack '" + pack + "'.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_NO_CLEANUP_CANDIDATES_FOUND_PACK_2, MessageArgument.untrusted("pack", pack)));
             return;
         }
-        IrisModdedCommands.ok(source, "Quarantined " + result.quarantinedPaths().size()
-                + " cleanup candidate(s) under " + result.quarantinePath() + ".");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_QUARANTINED_CLEANUP_CANDIDATE_S_UNDER, MessageArgument.untrusted("value", result.quarantinedPaths().size()), MessageArgument.untrusted("value2", result.quarantinePath())));
         reportPaths(source, result.quarantinedPaths(), "quarantined");
     }
 
@@ -272,23 +270,22 @@ public final class ModdedPackCommands {
             return;
         }
         if (!result.hasFiles()) {
-            IrisModdedCommands.ok(source, "Nothing to restore for pack '" + pack + "'.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_NOTHING_RESTORE_PACK, MessageArgument.untrusted("pack", pack)));
             return;
         }
-        IrisModdedCommands.ok(source, "Restore preview for " + result.dumpPath() + ": "
-                + result.filePaths().size() + " file(s). No files were changed.");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_RESTORE_PREVIEW_FILE_S_NO_FILES_WERE_CHANGED, MessageArgument.untrusted("value", result.dumpPath()), MessageArgument.untrusted("value2", result.filePaths().size())));
         reportPaths(source, result.filePaths(), "file");
         if (!result.conflicts().isEmpty()) {
-            IrisModdedCommands.fail(source, "Restore is blocked by " + result.conflicts().size() + " existing destination(s).");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_RESTORE_IS_BLOCKED_BY_EXISTING_DESTINATION_S, MessageArgument.untrusted("value", result.conflicts().size())));
             reportPaths(source, result.conflicts(), "conflict");
             return;
         }
-        IrisModdedCommands.ok(source, "Run /iris pack restore " + pack + " apply to restore after a fresh conflict check.");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_RUN_IRIS_PACK_RESTORE_APPLY_RESTORE_AFTER_FRESH_CONFLICT_CHECK, MessageArgument.untrusted("pack", pack)));
     }
 
     private static void reportRestoreApply(CommandSourceStack source, String pack, PackResourceCleanup.RestoreResult result) {
         if (!result.conflicts().isEmpty()) {
-            IrisModdedCommands.fail(source, "Restore refused because " + result.conflicts().size() + " destination(s) already exist.");
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_RESTORE_REFUSED_BECAUSE_DESTINATION_S_ALREADY_EXIST, MessageArgument.untrusted("value", result.conflicts().size())));
             reportPaths(source, result.conflicts(), "conflict");
             return;
         }
@@ -297,21 +294,20 @@ public final class ModdedPackCommands {
             return;
         }
         if (!result.changed()) {
-            IrisModdedCommands.ok(source, "Nothing to restore for pack '" + pack + "'.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_NOTHING_RESTORE_PACK_2, MessageArgument.untrusted("pack", pack)));
             return;
         }
-        IrisModdedCommands.ok(source, "Restored " + result.restoredPaths().size()
-                + " file(s) from " + result.dumpPath() + ".");
+        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_RESTORED_FILE_S_FROM, MessageArgument.untrusted("value", result.restoredPaths().size()), MessageArgument.untrusted("value2", result.dumpPath())));
         reportPaths(source, result.restoredPaths(), "restored");
     }
 
     private static void reportPaths(CommandSourceStack source, List<String> paths, String label) {
         int max = Math.min(10, paths.size());
         for (int i = 0; i < max; i++) {
-            IrisModdedCommands.ok(source, "  - " + label + ": " + paths.get(i));
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_MESSAGE_3, MessageArgument.untrusted("label", label), MessageArgument.untrusted("value", paths.get(i))));
         }
         if (paths.size() > max) {
-            IrisModdedCommands.ok(source, "  ... and " + (paths.size() - max) + " more.");
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_MORE, MessageArgument.untrusted("value", (paths.size() - max))));
         }
     }
 }

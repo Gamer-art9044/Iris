@@ -33,86 +33,89 @@ import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
 
 
-@Director(name = "edit", origin = DirectorOrigin.PLAYER, description = "Edit something")
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
+import art.arcane.volmlib.util.localization.MessageArgument;
+@Director(name = "edit", origin = DirectorOrigin.PLAYER, description = "Edit something", descriptionKey = "iris.director.commandedit.director.edit_something")
 public class CommandEdit implements DirectorExecutor {
     private boolean noStudio() {
         if (!sender().isPlayer()) {
-            sender().sendMessage(C.RED + "Players only!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_PLAYERS_ONLY));
             return true;
         }
         if (!Iris.service(StudioSVC.class).isProjectOpen()) {
-            sender().sendMessage(C.RED + "No studio world is open!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_NO_STUDIO_WORLD_IS_OPEN));
             return true;
         }
         if (!engine().isStudio()) {
-            sender().sendMessage(C.RED + "You must be in a studio world!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_YOU_MUST_BE_STUDIO_WORLD));
             return true;
         }
 
         if (GraphicsEnvironment.isHeadless()) {
-            sender().sendMessage(C.RED + "Cannot open files in headless environments!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_CANNOT_OPEN_FILES_HEADLESS_ENVIRONMENTS));
             return true;
         }
 
         if (!Desktop.isDesktopSupported()) {
-            sender().sendMessage(C.RED + "Desktop is not supported by this environment!");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_DESKTOP_IS_NOT_SUPPORTED_BY_THIS_ENVIRONMENT));
             return true;
         }
         return false;
     }
 
 
-    @Director(description = "Edit the biome you specified", aliases = {"b"}, origin = DirectorOrigin.PLAYER)
-    public void biome(@Param(contextual = false, description = "The biome to edit") IrisBiome biome) {
+    @Director(description = "Edit the biome you specified", descriptionKey = "iris.director.commandedit.director.edit_biome_you_specified", aliases = {"b"}, origin = DirectorOrigin.PLAYER)
+    public void biome(@Param(contextual = false, description = "The biome to edit", descriptionKey = "iris.director.commandedit.param.biome_edit") IrisBiome biome) {
         if (noStudio()) {
             return;
         }
         try {
             if (biome == null || biome.getLoadFile() == null) {
-                sender().sendMessage(C.GOLD + "Cannot find the file; Perhaps it was not loaded directly from a file?");
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_CANNOT_FIND_FILE_PERHAPS_IT_WAS_NOT_LOADED_DIRECTLY_FROM));
                 return;
             }
             Desktop.getDesktop().open(biome.getLoadFile());
-            sender().sendMessage(C.GREEN + "Opening " + biome.getTypeName() + " " + biome.getLoadFile().getName().split("\\Q.\\E")[0] + " in VSCode! ");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_OPENING_VSCODE, MessageArgument.untrusted("value", biome.getTypeName()), MessageArgument.untrusted("value2", biome.getLoadFile().getName().split("\\Q.\\E")[0])));
         } catch (Throwable e) {
             Iris.reportError(e);
-            sender().sendMessage(C.RED + "Cant find the file. Or registrant does not exist");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_CANT_FIND_FILE_REGISTRANT_DOES_NOT_EXIST));
         }
     }
 
-    @Director(description = "Edit the region you specified", aliases = {"r"}, origin = DirectorOrigin.PLAYER)
-    public void region(@Param(contextual = false, description = "The region to edit") IrisRegion region) {
+    @Director(description = "Edit the region you specified", descriptionKey = "iris.director.commandedit.director.edit_region_you_specified", aliases = {"r"}, origin = DirectorOrigin.PLAYER)
+    public void region(@Param(contextual = false, description = "The region to edit", descriptionKey = "iris.director.commandedit.param.region_edit") IrisRegion region) {
         if (noStudio()) {
             return;
         }
         try {
             if (region == null || region.getLoadFile() == null) {
-                sender().sendMessage(C.GOLD + "Cannot find the file; Perhaps it was not loaded directly from a file?");
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_CANNOT_FIND_FILE_PERHAPS_IT_WAS_NOT_LOADED_DIRECTLY_FROM_2));
                 return;
             }
             Desktop.getDesktop().open(region.getLoadFile());
-            sender().sendMessage(C.GREEN + "Opening " + region.getTypeName() + " " + region.getLoadFile().getName().split("\\Q.\\E")[0] + " in VSCode! ");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_OPENING_VSCODE_2, MessageArgument.untrusted("value", region.getTypeName()), MessageArgument.untrusted("value2", region.getLoadFile().getName().split("\\Q.\\E")[0])));
         } catch (Throwable e) {
             Iris.reportError(e);
-            sender().sendMessage(C.RED + "Cant find the file. Or registrant does not exist");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_CANT_FIND_FILE_REGISTRANT_DOES_NOT_EXIST_2));
         }
     }
 
-    @Director(description = "Edit the dimension you specified", aliases = {"d"}, origin = DirectorOrigin.PLAYER)
-    public void dimension(@Param(contextual = false, description = "The dimension to edit") IrisDimension dimension) {
+    @Director(description = "Edit the dimension you specified", descriptionKey = "iris.director.commandedit.director.edit_dimension_you_specified", aliases = {"d"}, origin = DirectorOrigin.PLAYER)
+    public void dimension(@Param(contextual = false, description = "The dimension to edit", descriptionKey = "iris.director.commandedit.param.dimension_edit") IrisDimension dimension) {
         if (noStudio()) {
             return;
         }
         try {
             if (dimension == null || dimension.getLoadFile() == null) {
-                sender().sendMessage(C.GOLD + "Cannot find the file; Perhaps it was not loaded directly from a file?");
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_CANNOT_FIND_FILE_PERHAPS_IT_WAS_NOT_LOADED_DIRECTLY_FROM_3));
                 return;
             }
             Desktop.getDesktop().open(dimension.getLoadFile());
-            sender().sendMessage(C.GREEN + "Opening " + dimension.getTypeName() + " " + dimension.getLoadFile().getName().split("\\Q.\\E")[0] + " in VSCode! ");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_OPENING_VSCODE_3, MessageArgument.untrusted("value", dimension.getTypeName()), MessageArgument.untrusted("value2", dimension.getLoadFile().getName().split("\\Q.\\E")[0])));
         } catch (Throwable e) {
             Iris.reportError(e);
-            sender().sendMessage(C.RED + "Cant find the file. Or registrant does not exist");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_EDIT_CANT_FIND_FILE_REGISTRANT_DOES_NOT_EXIST_3));
         }
     }
 

@@ -1,6 +1,9 @@
 package art.arcane.iris.client;
 
+import art.arcane.iris.core.localization.ClientUiMessages;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.spi.protocol.IrisMessage;
+import art.arcane.volmlib.util.localization.MessageArgument;
 
 import java.util.ArrayDeque;
 
@@ -25,7 +28,7 @@ public final class IrisClientToasts {
 
     public void enqueueHotload(String packKey, int changedFiles, boolean failed, String message) {
         int kind = failed ? IrisMessage.Toast.KIND_ERROR : IrisMessage.Toast.KIND_SUCCESS;
-        enqueue(kind, "Studio Hotload", hotloadBody(packKey, changedFiles, failed, message));
+        enqueue(kind, IrisLanguage.plain(ClientUiMessages.TOAST_STUDIO_HOTLOAD), hotloadBody(packKey, changedFiles, failed, message));
     }
 
     public Pending poll() {
@@ -51,14 +54,14 @@ public final class IrisClientToasts {
             builder.append(pack);
         }
         if (changedFiles != 0) {
-            append(builder, changedFiles + (changedFiles == 1 ? " file" : " files"));
+            append(builder, IrisLanguage.plain(ClientUiMessages.TOAST_CHANGED_FILES, MessageArgument.trusted("count", changedFiles)));
         }
         String text = normalize(message);
         if (!text.isEmpty()) {
             append(builder, text);
         }
         if (builder.isEmpty()) {
-            return failed ? "reload failed" : "reloaded";
+            return IrisLanguage.plain(failed ? ClientUiMessages.TOAST_RELOAD_FAILED : ClientUiMessages.TOAST_RELOADED);
         }
         return builder.toString();
     }

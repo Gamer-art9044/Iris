@@ -18,6 +18,9 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
@@ -78,10 +81,10 @@ public final class ModdedWandService {
 
     public static ItemStack createWand() {
         ItemStack stack = new ItemStack(Items.BLAZE_ROD);
-        stack.set(DataComponents.CUSTOM_NAME, Component.literal("Wand of Iris").withStyle(ChatFormatting.BOLD, ChatFormatting.GOLD));
+        stack.set(DataComponents.CUSTOM_NAME, Component.literal(IrisLanguage.plain(RuntimeUiMessages.WAND_NAME)).withStyle(ChatFormatting.BOLD, ChatFormatting.GOLD));
         stack.set(DataComponents.LORE, new ItemLore(List.of(
-                Component.literal("Left click a block to set the first corner"),
-                Component.literal("Right click a block to set the second corner"))));
+                Component.literal(IrisLanguage.plain(RuntimeUiMessages.WAND_LORE_FIRST)),
+                Component.literal(IrisLanguage.plain(RuntimeUiMessages.WAND_LORE_SECOND)))));
         stack.set(DataComponents.UNBREAKABLE, Unit.INSTANCE);
         stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, Boolean.TRUE);
         stack.set(DataComponents.CUSTOM_DATA, CustomData.of(flagTag(WAND_TAG)));
@@ -90,9 +93,9 @@ public final class ModdedWandService {
 
     public static ItemStack createDust() {
         ItemStack stack = new ItemStack(Items.GLOWSTONE_DUST);
-        stack.set(DataComponents.CUSTOM_NAME, Component.literal("Dust of Revealing").withStyle(ChatFormatting.BOLD, ChatFormatting.YELLOW));
+        stack.set(DataComponents.CUSTOM_NAME, Component.literal(IrisLanguage.plain(RuntimeUiMessages.DUST_NAME)).withStyle(ChatFormatting.BOLD, ChatFormatting.YELLOW));
         stack.set(DataComponents.LORE, new ItemLore(List.of(
-                Component.literal("Right click on a block to reveal it's placement structure!"))));
+                Component.literal(IrisLanguage.plain(RuntimeUiMessages.DUST_LORE)))));
         stack.set(DataComponents.UNBREAKABLE, Unit.INSTANCE);
         stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, Boolean.TRUE);
         stack.set(DataComponents.CUSTOM_DATA, CustomData.of(flagTag(DUST_TAG)));
@@ -161,7 +164,13 @@ public final class ModdedWandService {
             return first ? new Selection(dimension, corner, other) : new Selection(dimension, other, corner);
         });
         level.playSound(null, pos, SoundEvents.END_PORTAL_FRAME_FILL, SoundSource.PLAYERS, 1.0F, first ? 0.67F : 1.17F);
-        player.sendOverlayMessage(Component.literal("Position " + (first ? 1 : 2) + " set to " + corner.getX() + ", " + corner.getY() + ", " + corner.getZ()));
+        player.sendOverlayMessage(Component.literal(IrisLanguage.plain(
+                RuntimeUiMessages.WAND_POSITION_SET,
+                MessageArgument.trusted("position", first ? 1 : 2),
+                MessageArgument.trusted("x", corner.getX()),
+                MessageArgument.trusted("y", corner.getY()),
+                MessageArgument.trusted("z", corner.getZ())
+        )));
     }
 
     public static Selection selection(ServerPlayer player) {

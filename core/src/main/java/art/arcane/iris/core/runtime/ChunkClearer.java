@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.runtime;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.engine.framework.Engine;
@@ -51,7 +53,7 @@ public final class ChunkClearer {
         this.centerChunkX = centerChunkX;
         this.centerChunkZ = centerChunkZ;
         this.radius = Math.max(0, radius);
-        this.reporter = new ChunkJobReporter(sender, "Delete", world);
+        this.reporter = new ChunkJobReporter(sender, IrisLanguage.text(RuntimeProgressMessages.CHUNK_TITLE_DELETE), world);
     }
 
     public void start() {
@@ -66,7 +68,7 @@ public final class ChunkClearer {
         try {
             List<int[]> targets = ChunkJobReporter.orderedTargets(centerChunkX, centerChunkZ, radius);
             reporter.setTotal(targets.size());
-            reporter.setStage("Clearing");
+            reporter.setStage(IrisLanguage.text(RuntimeProgressMessages.CHUNK_STAGE_CLEARING));
             clear(targets);
         } catch (Throwable e) {
             IrisLogging.reportError(e);

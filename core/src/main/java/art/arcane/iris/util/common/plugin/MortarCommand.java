@@ -21,7 +21,6 @@ package art.arcane.iris.util.common.plugin;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.volmlib.util.collection.KList;
-import art.arcane.iris.util.common.format.C;
 import org.bukkit.Sound;
 
 import java.lang.reflect.Field;
@@ -83,30 +82,6 @@ public abstract class MortarCommand implements ICommand {
     }
 
     public abstract void addTabOptions(VolmitSender sender, String[] args, KList<String> list);
-
-    public void printHelp(VolmitSender sender) {
-        boolean b = false;
-
-        for (MortarCommand i : getChildren()) {
-            for (String j : i.getRequiredPermissions()) {
-                if (!sender.hasPermission(j)) {
-                }
-            }
-
-            b = true;
-
-            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.MORTAR_COMMAND_FONT_MINECRAFT_UNIFORM, MessageArgument.untrusted("node", String.valueOf(i.getNode())), MessageArgument.untrusted("value", String.valueOf((getArgsUsage().trim().isEmpty() ? "" : (C.WHITE + i.getArgsUsage())))), MessageArgument.untrusted("description", String.valueOf(i.getDescription()))));
-        }
-
-        if (!b) {
-            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.MORTAR_COMMAND_THERE_ARE_EITHER_NO_SUB_COMMANDS_YOU_DO_NOT_HAVE_PERMISSION_USE));
-        }
-
-        if (sender.isPlayer() && IrisSettings.get().getGeneral().isCommandSounds()) {
-            sender.playSound(Sound.ITEM_BOOK_PAGE_TURN, 0.28f, 1.4f);
-            sender.playSound(Sound.ITEM_AXE_STRIP, 0.35f, 1.7f);
-        }
-    }
 
     protected abstract String getArgsUsage();
 

@@ -52,6 +52,8 @@ import static art.arcane.iris.modded.command.ModdedCommandFeedback.USAGE;
 import static art.arcane.iris.modded.command.ModdedCommandFeedback.USAGE_ICON;
 
 final class ModdedCommandHelp {
+    private static final int PAGE_SIZE = 17;
+    private static final int PAGE_BUTTON_WIDTH = 10;
     private static final Map<String, List<Entry>> SECTIONS = new LinkedHashMap<>();
 
     static {
@@ -182,35 +184,43 @@ final class ModdedCommandHelp {
     }
 
     static int send(CommandSourceStack source, String path) {
-        String normalized = normalize(path);
-        List<Entry> entries = SECTIONS.get(normalized);
+        Request request = parse(path);
+        List<Entry> entries = SECTIONS.get(request.section());
         if (entries == null) {
             ModdedCommandFeedback.fail(source, IrisLanguage.plain(
                     IrisMessages.MODDED_HELP_UNKNOWN_SECTION,
-                    MessageArgument.untrusted("section", normalized)
+                    MessageArgument.untrusted("section", request.section())
             ));
             return 0;
         }
 
+        int totalPages = Math.max(1, (int) Math.ceil(entries.size() / (double) PAGE_SIZE));
+        int page = Math.max(0, Math.min(request.page(), totalPages - 1));
+        int from = page * PAGE_SIZE;
+        int to = Math.min(entries.size(), from + PAGE_SIZE);
+
         ModdedCommandFeedback.clear(source);
 
-        sendHeader(source, normalized);
+        sendHeader(source, request.section(), page, totalPages);
         if (!Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(source)) {
             ModdedCommandFeedback.send(source, opNotice());
         }
-        if (!normalized.isEmpty()) {
-            ModdedCommandFeedback.send(source, backButton(normalized));
+        if (!request.section().isEmpty()) {
+            ModdedCommandFeedback.send(source, backButton(request.section()));
         }
-        for (Entry entry : entries) {
-            ModdedCommandFeedback.send(source, line(normalized, entry));
+        for (Entry entry : entries.subList(from, to)) {
+            ModdedCommandFeedback.send(source, line(request.section(), entry));
         }
-        ModdedCommandFeedback.ok(source, footer());
+        ModdedCommandFeedback.ok(source, footer(request.section(), page, totalPages));
         return 1;
     }
 
-    private static void sendHeader(CommandSourceStack source, String path) {
+    private static void sendHeader(CommandSourceStack source, String path, int page, int totalPages) {
         String title = path.isEmpty() ? "/iris" : "/iris " + path;
-        ModdedCommandFeedback.send(source, ModdedCommandFeedback.header(title));
+        if (totalPages > 1) {
+            title += " {" + (page + 1) + "/" + totalPages + "}";
+        }
+        ModdedCommandFeedback.send(source, ModdedCommandFeedback.banner(title));
     }
 
     private static MutableComponent backButton(String path) {
@@ -238,11 +248,11 @@ final class ModdedCommandHelp {
         String command = parent + " " + entry.name();
         String suggestion = entry.usage().isBlank() ? command : command + " " + entry.usage();
         ClickEvent clickEvent = entry.group() ? new ClickEvent.RunCommand(command) : new ClickEvent.SuggestCommand(suggestion);
-        MutableComponent hover = entryHover(path, entry, suggestion);
+        MutableComponent hover = entryHover(entry, suggestion);
         MutableComponent display = Component.empty();
-        display.append(text(parent + " >", 0xFFFFFF));
         display.append(text("⇀", DARK_GREEN));
-        display.append(text(" " + entry.name(), PARAMETER_ALT));
+        display.append(Component.literal(" "));
+        display.append(ModdedCommandFeedback.gradientText(entry.name(), PARAMETER, PARAMETER_ALT, false));
         return display.withStyle((style) -> style
                 .withClickEvent(clickEvent)
                 .withHoverEvent(new HoverEvent.ShowText(hover)));
@@ -250,7 +260,7 @@ final class ModdedCommandHelp {
 
     private static MutableComponent nodes(Entry entry) {
         if (entry.group()) {
-            return text(" - " + IrisLanguage.plain(DirectorHelpMessages.COMMAND_GROUP), CATEGORY);
+            return text(" - " + IrisLanguage.plain(DirectorHelpMessages.CATEGORY), CATEGORY);
         }
 
         List<String> tokens = usageTokens(entry.usage());
@@ -288,10 +298,10 @@ final class ModdedCommandHelp {
         hover.append(Component.literal("\n"));
         if (required) {
             hover.append(text("⚠ ", REQUIRED));
-            hover.append(text(IrisLanguage.plain(IrisMessages.MODDED_HELP_PARAMETER_REQUIRED), REQUIRED_TEXT));
+            hover.append(text(IrisLanguage.plain(DirectorHelpMessages.REQUIRED), REQUIRED_TEXT));
         } else {
             hover.append(text("✔ ", DESCRIPTION_ICON));
-            hover.append(text(IrisLanguage.plain(IrisMessages.MODDED_HELP_PARAMETER_OPTIONAL), USAGE));
+            hover.append(text(IrisLanguage.plain(DirectorHelpMessages.OPTIONAL), USAGE));
         }
         hover.append(Component.literal("\n"));
         hover.append(text("✢ ", DARK_GREEN));
@@ -300,7 +310,7 @@ final class ModdedCommandHelp {
         return title.withStyle((style) -> style.withHoverEvent(new HoverEvent.ShowText(hover)));
     }
 
-    private static MutableComponent entryHover(String path, Entry entry, String suggestion) {
+    private static MutableComponent entryHover(Entry entry, String suggestion) {
         MutableComponent hover = Component.empty();
         hover.append(text(names(entry), PARAMETER));
         hover.append(Component.literal("\n"));
@@ -313,21 +323,10 @@ final class ModdedCommandHelp {
         } else if (entry.usage().isBlank()) {
             hover.append(text(IrisLanguage.plain(DirectorHelpMessages.NO_PARAMETERS), USAGE));
         } else {
-            hover.append(text(IrisLanguage.plain(DirectorHelpMessages.PARAMETERS), USAGE));
+            hover.append(text(IrisLanguage.plain(DirectorHelpMessages.PARAMETERS_HOVER), USAGE));
             hover.append(Component.literal("\n"));
             hover.append(text("✦ ", EXAMPLE_ICON));
             hover.append(text(suggestion, PARAMETER));
-        }
-
-        String parent = path.isEmpty() ? "/iris" : "/iris " + path;
-        if (entry.aliases().length > 0) {
-            hover.append(Component.literal("\n"));
-            hover.append(text(IrisLanguage.plain(DirectorHelpMessages.ALIASES) + ": ", DARK_GREEN));
-            List<String> aliases = new ArrayList<>(entry.aliases().length);
-            for (String alias : entry.aliases()) {
-                aliases.add(parent + " " + alias);
-            }
-            hover.append(text(String.join(", ", aliases), PARAMETER_ALT));
         }
         return hover;
     }
@@ -343,8 +342,45 @@ final class ModdedCommandHelp {
         return notice;
     }
 
-    private static MutableComponent footer() {
-        return ModdedCommandFeedback.footer();
+    private static MutableComponent footer(String section, int page, int totalPages) {
+        MutableComponent footer = Component.empty();
+        int fill = ModdedCommandFeedback.PAGE_LINE_LENGTH;
+        boolean hasPrevious = page > 0;
+        boolean hasNext = page + 1 < totalPages;
+
+        if (hasPrevious) {
+            fill -= PAGE_BUTTON_WIDTH;
+            footer.append(pageButton(section, page, false));
+            footer.append(Component.literal(" "));
+        }
+        if (hasNext) {
+            fill -= PAGE_BUTTON_WIDTH;
+        }
+
+        footer.append(ModdedCommandFeedback.gradientText(
+                " ".repeat(fill),
+                ModdedCommandFeedback.HEADER_B,
+                ModdedCommandFeedback.HEADER_A,
+                true
+        ));
+
+        if (hasNext) {
+            footer.append(Component.literal(" "));
+            footer.append(pageButton(section, page + 2, true));
+        }
+        return footer;
+    }
+
+    private static MutableComponent pageButton(String section, int target, boolean next) {
+        String command = "/iris help " + (section.isEmpty() ? "" : section + " ") + target;
+        String pageWord = IrisLanguage.plain(DirectorHelpMessages.PAGE);
+        String label = next ? pageWord + " " + target + " ❭" : "〈 " + pageWord + " " + target;
+        MutableComponent hover = text(IrisLanguage.plain(next
+                ? DirectorHelpMessages.NEXT_PAGE
+                : DirectorHelpMessages.PREVIOUS_PAGE), DESCRIPTION);
+        return text(label, next ? PARAMETER_ALT : PARAMETER).withStyle((style) -> style
+                .withClickEvent(new ClickEvent.RunCommand(command))
+                .withHoverEvent(new HoverEvent.ShowText(hover)));
     }
 
     private static MutableComponent text(String value, int color) {
@@ -391,9 +427,9 @@ final class ModdedCommandHelp {
         return path.substring(0, lastSpace);
     }
 
-    private static String normalize(String path) {
+    private static Request parse(String path) {
         if (path == null) {
-            return "";
+            return new Request("", 0);
         }
 
         String normalized = path.trim().toLowerCase();
@@ -405,14 +441,27 @@ final class ModdedCommandHelp {
 
         if (normalized.startsWith("help ")) {
             normalized = normalized.substring(5).trim();
+        } else if (normalized.equals("help")) {
+            normalized = "";
         }
 
-        int space = normalized.indexOf(' ');
-        if (space >= 0) {
-            normalized = normalized.substring(0, space);
+        int page = 0;
+        String[] tokens = normalized.isEmpty() ? new String[0] : normalized.split("\\s+");
+        int end = tokens.length;
+        if (end > 0 && tokens[end - 1].matches("\\d+")) {
+            try {
+                page = Math.max(0, Integer.parseInt(tokens[end - 1]) - 1);
+            } catch (NumberFormatException ignored) {
+                page = 0;
+            }
+            end--;
         }
 
-        return normalized;
+        String section = end > 0 ? tokens[0] : "";
+        return new Request(section, page);
+    }
+
+    private record Request(String section, int page) {
     }
 
     private record Entry(String name, String usage, TextKey description, boolean group, String... aliases) {

@@ -45,14 +45,6 @@ public final class IrisMessages {
             "iris.modded.help.command_parameter",
             "Command parameter"
     );
-    public static final TextKey MODDED_HELP_PARAMETER_REQUIRED = TextKey.of(
-            "iris.modded.help.parameter_required",
-            "This parameter is required."
-    );
-    public static final TextKey MODDED_HELP_PARAMETER_OPTIONAL = TextKey.of(
-            "iris.modded.help.parameter_optional",
-            "This parameter is optional."
-    );
     public static final TextKey MODDED_HELP_BRIGADIER_TEXT = TextKey.of(
             "iris.modded.help.brigadier_text",
             "This parameter is read as text by Brigadier."
@@ -84,8 +76,6 @@ public final class IrisMessages {
             MODDED_HELP_UNKNOWN_SECTION,
             MODDED_HELP_BACK_HOVER,
             MODDED_HELP_COMMAND_PARAMETER,
-            MODDED_HELP_PARAMETER_REQUIRED,
-            MODDED_HELP_PARAMETER_OPTIONAL,
             MODDED_HELP_BRIGADIER_TEXT,
             MODDED_HELP_OPERATOR_NOTICE,
             MODDED_HELP_OPERATOR_INSTRUCTION,

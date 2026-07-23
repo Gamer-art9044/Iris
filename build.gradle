@@ -144,9 +144,11 @@ tasks.register('iris', Copy) {
     group = 'iris'
     dependsOn('jar')
     from(layout.buildDirectory.file("libs/${bukkitArtifactName}"))
-    into(layout.buildDirectory)
+    into(layout.buildDirectory.dir('consumer'))
     doFirst {
-        delete(layout.buildDirectory.file("Iris-${project.version}.jar"))
+        delete(fileTree(layout.buildDirectory.dir('consumer').get()) {
+            include('Iris v* [CraftBukkit] *.jar')
+        })
     }
 }
 
@@ -372,7 +374,7 @@ tasks.register('buildAll') {
             file("${bukkitConsumerPath}/Iris-Neoforge.jar")
         )
         copy {
-            from(layout.buildDirectory.file(bukkitArtifactName))
+            from(layout.buildDirectory.file("consumer/${bukkitArtifactName}"))
             into(bukkitConsumerPath)
             rename { String ignored -> 'Iris.jar' }
         }

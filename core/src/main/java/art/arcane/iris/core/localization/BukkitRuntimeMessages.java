@@ -618,14 +618,6 @@ public final class BukkitRuntimeMessages {
             "iris.bukkit.runtime.virtualcommand.insufficient_permissions",
             "Insufficient Permissions"
     );
-    public static final TextKey MORTAR_COMMAND_FONT_MINECRAFT_UNIFORM = TextKey.of(
-            "iris.bukkit.runtime.mortarcommand.font_minecraft_uniform",
-            "" + C.GREEN + "{node}" + " " + "<font:minecraft:uniform>" + "{value}" + C.GRAY + " - " + "{description}"
-    );
-    public static final TextKey MORTAR_COMMAND_THERE_ARE_EITHER_NO_SUB_COMMANDS_YOU_DO_NOT_HAVE_PERMISSION_USE = TextKey.of(
-            "iris.bukkit.runtime.mortarcommand.there_are_either_no_sub_commands_you_do_not_have_permission_use",
-            "There are either no sub-commands or you do not have permission to use them."
-    );
     public static final TextKey MORTAR_COMMAND_PARAMETERS_IGNORED = TextKey.of(
             "iris.bukkit.runtime.mortarcommand.parameters_ignored",
             "Parameters Ignored: " + "{m}"
@@ -781,8 +773,6 @@ public final class BukkitRuntimeMessages {
             SERVER_CONFIGURATOR_YOU_NEED_RESTART_YOUR_SERVER_USE_THESE_PACKS,
             VIRTUAL_COMMAND_MESSAGE,
             VIRTUAL_COMMAND_INSUFFICIENT_PERMISSIONS,
-            MORTAR_COMMAND_FONT_MINECRAFT_UNIFORM,
-            MORTAR_COMMAND_THERE_ARE_EITHER_NO_SUB_COMMANDS_YOU_DO_NOT_HAVE_PERMISSION_USE,
             MORTAR_COMMAND_PARAMETERS_IGNORED
     );
 

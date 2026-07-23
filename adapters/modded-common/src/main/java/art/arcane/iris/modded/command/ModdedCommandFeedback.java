@@ -96,6 +96,30 @@ final class ModdedCommandFeedback {
         return header;
     }
 
+    static MutableComponent banner(String title) {
+        int pad = Math.max(1, 44 - (title.length() + 2) - 4);
+        MutableComponent banner = Component.empty();
+        banner.append(gradientText("[" + " ".repeat(pad) + "(((", HEADER_A, HEADER_B, true));
+        banner.append(Component.literal(" "));
+        banner.append(gradientText(title, PARAMETER, PARAMETER_ALT, false));
+        banner.append(Component.literal(" "));
+        banner.append(gradientText(")))" + " ".repeat(pad) + "]", HEADER_B, HEADER_A, true));
+        return banner;
+    }
+
+    static MutableComponent gradientText(String value, int from, int to, boolean strikethrough) {
+        MutableComponent out = Component.empty();
+        int steps = Math.max(1, value.length() - 1);
+        for (int index = 0; index < value.length(); index++) {
+            double t = index / (double) steps;
+            int red = (int) Math.round(((from >> 16) & 0xFF) + ((((to >> 16) & 0xFF) - ((from >> 16) & 0xFF)) * t));
+            int green = (int) Math.round(((from >> 8) & 0xFF) + ((((to >> 8) & 0xFF) - ((from >> 8) & 0xFF)) * t));
+            int blue = (int) Math.round((from & 0xFF) + (((to & 0xFF) - (from & 0xFF)) * t));
+            out.append(text(String.valueOf(value.charAt(index)), (red << 16) | (green << 8) | blue, false, strikethrough));
+        }
+        return out;
+    }
+
     static MutableComponent footer() {
         return text(" ".repeat(PAGE_LINE_LENGTH), HEADER_B, false, true);
     }

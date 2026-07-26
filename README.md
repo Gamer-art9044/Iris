@@ -110,6 +110,67 @@ registries, so on modded servers block, item, entity, enchantment, and potion-ef
 includes installed mod content (for example `create:brass_ingot`). Editing an open studio's pack
 files hotloads the changes and regenerates the schemas.
 
+## PlaceholderAPI
+
+Iris registers the `iris` expansion when PlaceholderAPI is enabled. Paths are dot-separated,
+lowercase, and never contain an underscore. Every value is plain text: no colour codes, no unit
+suffixes, no `%` character, `.` as the decimal separator, and no thousands grouping.
+
+Three answers are possible. A path that is not in the list below returns nothing, so PlaceholderAPI
+re-emits the literal `%iris_...%` and a typo stays visible. A known path with no value right now
+returns `---`. A real zero returns `0`.
+
+| Placeholder | Value |
+|---|---|
+| `%iris_available%` | `true` when the Iris terrain service is live |
+| `%iris_world.available%` | `true` when the reading player is in an Iris world and a reading exists |
+| `%iris_world.biome%` | Surface biome display name at the player, e.g. `Hot Desert Dunes` |
+| `%iris_world.biome-key%` | Surface biome load key, e.g. `desert/hot-dunes` |
+| `%iris_world.region%` | Region display name at the player |
+| `%iris_world.region-key%` | Region load key |
+| `%iris_world.dimension%` | Dimension (pack) load key of the player's world |
+| `%iris_pregen.available%` | `true` while a pregeneration job is running |
+| `%iris_pregen.world%` | World name the running job is pregenerating |
+| `%iris_pregen.percent%` | Completion, `0.00` to `100.00`, no `%` character |
+| `%iris_pregen.eta%` | Estimated seconds remaining, whole number |
+| `%iris_pregen.eta-text%` | Same estimate as `2m 5s` or `1h 30m` |
+| `%iris_pregen.chunks%` | Chunks generated so far |
+| `%iris_pregen.total%` | Chunks in the job |
+| `%iris_pregen.chunks-per-second%` | Current rate |
+| `%iris_pregen.paused%` | `true` while the job is paused |
+
+The world values are the surface reading at the player's block column. Walking refreshes them at most
+once per second per player, so a whole board of `world.*` keys costs one refresh per player per
+second no matter how many of them are on it, and a value may lag a sprinting player by up to a
+second. A jump that is not walking — joining, respawning, changing worlds, stepping through a portal,
+or any teleport including `/iris goto`, `/tp`, an ender pearl and a random teleport — is published
+immediately, so a player who arrives somewhere and then stands still never keeps reading the biome,
+region or dimension of where they came from. `pregen.*` is global: there is one pregeneration job per
+server, and `%iris_pregen.world%` says which world it is.
+
+### Migration from the pre-2.0 keys
+
+The old underscore keys are gone. There is no alias and no dual-accept window; an old key now
+renders literally so it is visible rather than silently wrong.
+
+| Old key | New key | Why |
+|---|---|---|
+| `%iris_biome_name%` | `%iris_world.biome%` | Renamed onto the dot grammar |
+| `%iris_biome_id%` | `%iris_world.biome-key%` | Renamed; `id` was always the load key |
+| `%iris_region_name%` | `%iris_world.region%` | Renamed onto the dot grammar |
+| `%iris_region_id%` | `%iris_world.region-key%` | Renamed; `id` was always the load key |
+| `%iris_biome_file%` | removed | Rendered an absolute server path into player-visible text, and threw on packs with no backing file |
+| `%iris_region_file%` | removed | Same as `biome_file` |
+| `%iris_world_seed%` | removed | Handed the world seed to anyone who could read a scoreboard, and a placeholder has no permission context to gate on |
+| `%iris_terrain_height%` | removed | Reported the *generated* height, before objects and player edits, so it disagreed with the block under the player's feet |
+| `%iris_terrain_slope%` | removed | Three extra noise samples per read for an unformatted pack-authoring diagnostic |
+| `%iris_world_mode%` | removed | Studio or Production; a studio world exists for seconds during authoring and is never on a live board |
+| `%iris_world_speed%` | removed | Mutated engine rate-window state every time it was read. `%iris_pregen.chunks-per-second%` answers the same question from a snapshot |
+
+The old keys also read the *cave* biome for a player standing under an overhang, because they
+sampled two blocks above the player's feet. The new `world.biome` is always the surface biome,
+which is what a board reader means.
+
 ## Building from source
 
 Requirements: JDK 25 (set `JAVA_HOME` to it). The Gradle wrapper handles everything else.

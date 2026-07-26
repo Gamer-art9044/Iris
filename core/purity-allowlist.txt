@@ -1,4 +1,5 @@
 art/arcane/iris/core/IrisRuntimeSchedulerMode.java
+art/arcane/iris/core/IrisWorldStorage.java
 art/arcane/iris/core/IrisWorlds.java
 art/arcane/iris/core/ServerConfigurator.java
 art/arcane/iris/core/datapack/DatapackIngestService.java
@@ -18,7 +19,6 @@ art/arcane/iris/core/lifecycle/WorldLifecycleStaging.java
 art/arcane/iris/core/lifecycle/WorldLifecycleSupport.java
 art/arcane/iris/core/lifecycle/WorldsProviderBackend.java
 art/arcane/iris/core/link/ExternalDataProvider.java
-art/arcane/iris/core/link/Identifier.java
 art/arcane/iris/core/link/MultiverseCoreLink.java
 art/arcane/iris/core/link/WorldEditLink.java
 art/arcane/iris/core/link/data/CraftEngineDataProvider.java
@@ -52,6 +52,7 @@ art/arcane/iris/core/runtime/WorldRuntimeControlService.java
 art/arcane/iris/core/safeguard/Mode.java
 art/arcane/iris/core/safeguard/task/Tasks.java
 art/arcane/iris/core/service/BoardSVC.java
+art/arcane/iris/core/service/EntityRiseSVC.java
 art/arcane/iris/core/service/ExternalDataSVC.java
 art/arcane/iris/core/service/GlobalCacheSVC.java
 art/arcane/iris/core/service/ObjectSVC.java
@@ -69,15 +70,14 @@ art/arcane/iris/core/tools/IrisPackBenchmarking.java
 art/arcane/iris/core/tools/IrisReflectiveAPI.java
 art/arcane/iris/core/tools/IrisToolbelt.java
 art/arcane/iris/core/tools/IrisWorldCreator.java
-art/arcane/iris/core/tools/TreePlausibilizer.java
 art/arcane/iris/engine/IrisEngineEffects.java
 art/arcane/iris/engine/IrisWorldManager.java
 art/arcane/iris/engine/data/chunk/LinkedTerrainChunk.java
 art/arcane/iris/engine/data/chunk/TerrainChunk.java
 art/arcane/iris/engine/decorator/DecoratorCore.java
+art/arcane/iris/engine/framework/BukkitEngineWorldManager.java
 art/arcane/iris/engine/framework/EngineAssignedWorldManager.java
 art/arcane/iris/engine/framework/EnginePlayer.java
-art/arcane/iris/engine/framework/EngineWorldManager.java
 art/arcane/iris/engine/framework/placer/WorldObjectPlacer.java
 art/arcane/iris/engine/mantle/MantleWriter.java
 art/arcane/iris/engine/object/BlockDataMergeSupport.java
@@ -91,7 +91,6 @@ art/arcane/iris/engine/object/IrisCommandRegistry.java
 art/arcane/iris/engine/object/IrisCompat.java
 art/arcane/iris/engine/object/IrisCompatabilityBlockFilter.java
 art/arcane/iris/engine/object/IrisCompatabilityItemFilter.java
-art/arcane/iris/engine/object/IrisDimension.java
 art/arcane/iris/engine/object/IrisDirection.java
 art/arcane/iris/engine/object/IrisEffect.java
 art/arcane/iris/engine/object/IrisEnchantment.java
@@ -108,7 +107,6 @@ art/arcane/iris/engine/object/IrisTree.java
 art/arcane/iris/engine/object/IrisVanillaLootTable.java
 art/arcane/iris/engine/object/IrisVillagerOverride.java
 art/arcane/iris/engine/object/IrisVillagerTrade.java
-art/arcane/iris/engine/object/IrisWorld.java
 art/arcane/iris/engine/object/LegacyTileData.java
 art/arcane/iris/engine/object/PotionEffectTypes.java
 art/arcane/iris/engine/object/TileData.java
@@ -122,11 +120,13 @@ art/arcane/iris/platform/bukkit/BukkitBiome.java
 art/arcane/iris/platform/bukkit/BukkitBlockResolution.java
 art/arcane/iris/platform/bukkit/BukkitBlockState.java
 art/arcane/iris/platform/bukkit/BukkitEntityType.java
+art/arcane/iris/platform/bukkit/BukkitEnvironment.java
 art/arcane/iris/platform/bukkit/BukkitItem.java
 art/arcane/iris/platform/bukkit/BukkitPlatform.java
 art/arcane/iris/platform/bukkit/BukkitRegistries.java
 art/arcane/iris/platform/bukkit/BukkitScheduler.java
 art/arcane/iris/platform/bukkit/BukkitWorld.java
+art/arcane/iris/platform/bukkit/BukkitWorldBinding.java
 art/arcane/iris/util/common/data/IrisCustomData.java
 art/arcane/iris/util/common/data/registry/Attributes.java
 art/arcane/iris/util/common/data/registry/KeyedRegistry.java

@@ -61,6 +61,7 @@ public final class IrisEngineSVC implements IrisService {
             new AtomicReference<>(IrisTelemetrySnapshot.EMPTY);
     private final Map<World, CompletableFuture<Void>> pendingRegistrations = new HashMap<>();
     private final Map<World, Registered> worlds = new ConcurrentHashMap<>();
+    private final IrisWorldPhaseLedger phases = new IrisWorldPhaseLedger();
     private volatile ScheduledThreadPoolExecutor service;
     private volatile ScheduledFuture<?> metricsTask;
 
@@ -105,26 +106,28 @@ public final class IrisEngineSVC implements IrisService {
             activeMetricsTask.cancel(false);
         }
 
-        List<Registered> registeredWorlds;
-        List<ClosingGenerator> reservedCloses = new ArrayList<>();
+        List<Teardown> teardowns = new ArrayList<>();
         List<CompletableFuture<Void>> generatorCloses;
         synchronized (registrationLock) {
-            registeredWorlds = List.copyOf(worlds.values());
+            for (Map.Entry<World, Registered> entry : worlds.entrySet()) {
+                Registered registered = entry.getValue();
+                registered.close();
+                teardowns.add(new Teardown(entry.getKey(), registered, reserveClose(registered)));
+            }
             worlds.clear();
             pendingRegistrations.clear();
-            for (Registered registered : registeredWorlds) {
-                registered.close();
-                reservedCloses.add(reserveClose(registered));
-            }
             generatorCloses = new ArrayList<>(closingGenerators.size());
             for (ClosingGenerator closing : closingGenerators) {
                 generatorCloses.add(closing.completion());
             }
         }
 
+        for (Teardown teardown : teardowns) {
+            phases.closing(teardown.world());
+        }
         shutdownAndDrain(activeService);
-        for (int index = 0; index < registeredWorlds.size(); index++) {
-            startClose(registeredWorlds.get(index), reservedCloses.get(index));
+        for (Teardown teardown : teardowns) {
+            startClose(teardown.registered(), teardown.closing());
         }
         awaitGeneratorShutdown(generatorCloses);
         resetMetrics();
@@ -177,6 +180,7 @@ public final class IrisEngineSVC implements IrisService {
         Registered replaced = null;
         ClosingGenerator replacementClose = null;
         CompletableFuture<Void> retryAfter = null;
+        boolean registered = false;
         try {
             synchronized (registrationLock) {
                 if (service != activeService || activeService.isShutdown() || !isCurrentWorld(world)) {
@@ -202,6 +206,7 @@ public final class IrisEngineSVC implements IrisService {
                         Registration registration = new Registration(world.getName(), access, registrationIdentity);
                         worlds.put(world, new Registered(registration, activeService));
                         pendingRegistrations.remove(world);
+                        registered = true;
                     }
                 }
             }
@@ -211,7 +216,11 @@ public final class IrisEngineSVC implements IrisService {
             }
         }
 
+        if (registered) {
+            phases.ready(world);
+        }
         if (replacementClose != null) {
+            phases.closing(world);
             retryRegistrationAfterClose(world, retryAfter);
             startClose(replaced, replacementClose);
             return;
@@ -237,6 +246,7 @@ public final class IrisEngineSVC implements IrisService {
             }
         }
         if (closing != null) {
+            phases.closing(world);
             startClose(registered, closing);
         }
     }
@@ -696,5 +706,8 @@ public final class IrisEngineSVC implements IrisService {
 
     private record ClosingGenerator(RegistrationIdentity registrationIdentity,
                                     CompletableFuture<Void> completion) {
+    }
+
+    private record Teardown(World world, Registered registered, ClosingGenerator closing) {
     }
 }

@@ -18,11 +18,13 @@
 
 package art.arcane.iris.core.runtime;
 
+import art.arcane.iris.api.world.IrisWorldPhase;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.events.IrisEngineHotloadEvent;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.project.IrisProject;
+import art.arcane.iris.core.service.IrisApiEventSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.framework.Engine;
@@ -57,6 +59,7 @@ public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
     @Override
     public void fireHotloadEvent(Engine engine) {
         IrisPlatforms.get().callEvent(new IrisEngineHotloadEvent(engine));
+        IrisApiEventSVC.fireWorldPhase(BukkitWorldBinding.world(engine.getWorld()), IrisWorldPhase.ENGINE_HOTLOADED);
     }
 
     @Override

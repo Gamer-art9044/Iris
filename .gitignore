@@ -39,7 +39,8 @@ local.properties
 credentials.json
 service-account*.json
 
-docs/
+docs/*
+!docs/api/
 
 CROSSPLATFORM_PLAN.md
 

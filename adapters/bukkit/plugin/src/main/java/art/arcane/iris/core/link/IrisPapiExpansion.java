@@ -18,100 +18,42 @@
 
 package art.arcane.iris.core.link;
 
-import art.arcane.iris.Iris;
-import art.arcane.iris.core.tools.IrisToolbelt;
-import art.arcane.iris.engine.object.IrisBiome;
-import art.arcane.iris.engine.platform.EngineBukkitOps;
-import art.arcane.iris.engine.platform.PlatformChunkGenerator;
-import me.clip.placeholderapi.expansion.PlaceholderExpansion;
-import org.bukkit.Location;
-import org.bukkit.OfflinePlayer;
-import org.jetbrains.annotations.NotNull;
+import art.arcane.volmlib.util.bukkit.papi.PlaceholderKeyRegistry;
+import art.arcane.volmlib.util.bukkit.papi.VolmitPlaceholderExpansion;
 
-// See/update https://app.gitbook.com/@volmitsoftware/s/iris/compatability/papi/
-public class IrisPapiExpansion extends PlaceholderExpansion {
-    @Override
-    public @NotNull String getIdentifier() {
-        return "iris";
+import java.util.Objects;
+import java.util.logging.Logger;
+
+public final class IrisPapiExpansion extends VolmitPlaceholderExpansion {
+    public static final String IDENTIFIER = "iris";
+    public static final String AUTHOR = "Volmit Software";
+    public static final String VERSION = "2.0.0";
+    public static final String REQUIRED_PLUGIN = "Iris";
+
+    public IrisPapiExpansion(IrisPapiState state, Logger logger) {
+        super(IDENTIFIER, AUTHOR, VERSION, REQUIRED_PLUGIN, registry(state), logger);
     }
 
-    @Override
-    public @NotNull String getAuthor() {
-        return "Volmit Software";
-    }
+    public static PlaceholderKeyRegistry registry(IrisPapiState state) {
+        Objects.requireNonNull(state, "state");
 
-    @Override
-    public @NotNull String getVersion() {
-        return Iris.instance.getDescription().getVersion();
-    }
-
-    @Override
-    public boolean persist() {
-        return true;
-    }
-
-    @Override
-    public String onRequest(OfflinePlayer player, String p) {
-        Location l = null;
-        PlatformChunkGenerator a = null;
-
-        if (player.isOnline() && player.getPlayer() != null) {
-            l = player.getPlayer().getLocation().add(0, 2, 0);
-            a = IrisToolbelt.access(l.getWorld());
-        }
-
-        if (p.equalsIgnoreCase("biome_name")) {
-            if (a != null) {
-                return getBiome(a, l).getName();
-            }
-        } else if (p.equalsIgnoreCase("biome_id")) {
-            if (a != null) {
-                return getBiome(a, l).getLoadKey();
-            }
-        } else if (p.equalsIgnoreCase("biome_file")) {
-            if (a != null) {
-                return getBiome(a, l).getLoadFile().getPath();
-            }
-        } else if (p.equalsIgnoreCase("region_name")) {
-            if (a != null) {
-                return EngineBukkitOps.getRegion(a.getEngine(), l).getName();
-            }
-        } else if (p.equalsIgnoreCase("region_id")) {
-            if (a != null) {
-                return EngineBukkitOps.getRegion(a.getEngine(), l).getLoadKey();
-            }
-        } else if (p.equalsIgnoreCase("region_file")) {
-            if (a != null) {
-                return EngineBukkitOps.getRegion(a.getEngine(), l).getLoadFile().getPath();
-            }
-        } else if (p.equalsIgnoreCase("terrain_slope")) {
-            if (a != null) {
-                return (a.getEngine())
-                        .getComplex().getSlopeStream()
-                        .get(l.getX(), l.getZ()) + "";
-            }
-        } else if (p.equalsIgnoreCase("terrain_height")) {
-            if (a != null) {
-                return Math.round(a.getEngine().getHeight(l.getBlockX(), l.getBlockZ())) + "";
-            }
-        } else if (p.equalsIgnoreCase("world_mode")) {
-            if (a != null) {
-                return a.isStudio() ? "Studio" : "Production";
-            }
-        } else if (p.equalsIgnoreCase("world_seed")) {
-            if (a != null) {
-                return a.getEngine().getSeedManager().getSeed() + "";
-            }
-        } else if (p.equalsIgnoreCase("world_speed")) {
-            if (a != null) {
-                return a.getEngine().getGeneratedPerSecond() + "/s";
-            }
-        }
-
-        return null;
-    }
-
-    private IrisBiome getBiome(PlatformChunkGenerator a, Location l) {
-        return a.getEngine().getBiome(l.getBlockX(), l.getBlockY() - l.getWorld().getMinHeight(), l.getBlockZ());
+        return PlaceholderKeyRegistry.builder()
+                .key("available", state::available)
+                .key("world.available", state::worldAvailable)
+                .key("world.biome", state::biome)
+                .key("world.biome-key", state::biomeKey)
+                .key("world.region", state::region)
+                .key("world.region-key", state::regionKey)
+                .key("world.dimension", state::dimension)
+                .key("pregen.available", state::pregenAvailable)
+                .key("pregen.world", state::pregenWorld)
+                .key("pregen.percent", state::pregenPercent)
+                .key("pregen.eta", state::pregenEta)
+                .key("pregen.eta-text", state::pregenEtaText)
+                .key("pregen.chunks", state::pregenChunks)
+                .key("pregen.total", state::pregenTotal)
+                .key("pregen.chunks-per-second", state::pregenChunksPerSecond)
+                .key("pregen.paused", state::pregenPaused)
+                .build();
     }
 }

@@ -26,7 +26,10 @@ import art.arcane.iris.spi.protocol.IrisMessage;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.protocol.IrisProtocolServer;
 import art.arcane.iris.core.pregenerator.IrisPregenerator;
+import art.arcane.iris.core.pregenerator.PregenApiPhase;
+import art.arcane.iris.core.pregenerator.PregenApiSink;
 import art.arcane.iris.core.pregenerator.PregenListener;
+import art.arcane.iris.core.pregenerator.PregenPhaseTracker;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
 import art.arcane.iris.engine.framework.Engine;
@@ -41,6 +44,7 @@ import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import art.arcane.iris.util.common.scheduling.J;
 
 import java.awt.Color;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -70,6 +74,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     private final Engine engine;
     private final ExecutorService service;
     private final Thread worker;
+    private final PregenPhaseTracker apiPhases = new PregenPhaseTracker();
     private PregenRenderer renderer;
     private Consumer2<Position2, Color> drawFunction;
     private int rgc = 0;
@@ -211,24 +216,24 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
 
     public static PregenProgress progressSnapshot() {
         PregeneratorJob inst = instance.get();
-        if (inst == null) {
-            return null;
-        }
+        return inst == null ? null : inst.snapshot();
+    }
 
-        double percent = inst.lastTotalChunks <= 0 ? 0D : ((double) inst.lastGenerated / (double) inst.lastTotalChunks) * 100D;
+    public PregenProgress snapshot() {
+        double percent = lastTotalChunks <= 0 ? 0D : ((double) lastGenerated / (double) lastTotalChunks) * 100D;
         return new PregenProgress(
                 percent,
-                inst.lastGenerated,
-                inst.lastTotalChunks,
-                Math.max(0D, inst.lastChunksPerSecond),
-                Math.max(0L, inst.lastChunksRemaining),
-                inst.lastEta,
-                inst.lastElapsed,
-                inst.lastMethod,
-                inst.paused(),
-                inst.pregenerator.getFailedChunks(),
-                inst.worldName(),
-                inst.worldIdentity());
+                lastGenerated,
+                lastTotalChunks,
+                Math.max(0D, lastChunksPerSecond),
+                Math.max(0L, lastChunksRemaining),
+                lastEta,
+                lastElapsed,
+                lastMethod,
+                paused(),
+                pregenerator.getFailedChunks(),
+                worldName(),
+                worldIdentity());
     }
 
     public String worldName() {
@@ -372,6 +377,32 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         for (Consumer<Double> i : onProgress) {
             i.accept(percent);
         }
+
+        dispatchApiPhases(apiPhases.onTick(paused()));
+    }
+
+    private void dispatchApiPhases(List<PregenApiPhase> phases) {
+        if (phases.isEmpty()) {
+            return;
+        }
+
+        PregenApiSink sink = IrisServices.getOrNull(PregenApiSink.class);
+        if (sink == null) {
+            return;
+        }
+
+        PregenProgress progress = snapshot();
+        for (PregenApiPhase phase : phases) {
+            try {
+                sink.pregen(phase, progress);
+            } catch (Throwable error) {
+                IrisLogging.reportError("Iris pregeneration API dispatch failed for phase " + phase + ".", error);
+            }
+        }
+    }
+
+    private boolean reachedTotal() {
+        return lastTotalChunks > 0L && lastGenerated >= lastTotalChunks;
     }
 
     @Override
@@ -455,6 +486,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
 
     @Override
     public void onClose() {
+        dispatchApiPhases(apiPhases.onClose(reachedTotal()));
         close();
         instance.compareAndSet(this, null);
         whenDone.forEach(Runnable::run);
@@ -463,7 +495,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
 
     @Override
     public void onSaving() {
-
+        dispatchApiPhases(apiPhases.onSaving());
     }
 
     @Override

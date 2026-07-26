@@ -37,7 +37,10 @@ import art.arcane.iris.core.runtime.BukkitEnginePlatformHooks;
 import art.arcane.iris.core.runtime.TransientWorldCleanupSupport;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.core.lifecycle.WorldLifecycleStaging;
-import art.arcane.iris.core.link.IrisPapiExpansion;
+import art.arcane.iris.api.terrain.IrisTerrainService;
+import art.arcane.iris.core.link.IrisPapiInstaller;
+import art.arcane.iris.core.link.IrisPapiListener;
+import art.arcane.iris.core.link.IrisPapiState;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.loader.IrisData;
@@ -71,6 +74,7 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.LogLevel;
 import art.arcane.volmlib.integration.ReloadAware;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
+import art.arcane.volmlib.util.bukkit.papi.PlaceholderRegistration;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.exceptions.IrisException;
@@ -173,6 +177,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     }
 
     private final AtomicBoolean alreadyDrained = new AtomicBoolean(false);
+    private volatile PlaceholderRegistration papiRegistration;
+    private volatile IrisPapiListener papiListener;
+    private volatile IrisPapiState papiState;
     private KMap<Class<? extends IrisService>, IrisService> services;
 
     public static VolmitSender getSender() {
@@ -1000,6 +1007,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     }
 
     public void onDisable() {
+        teardownPapi();
         if (IrisSafeguard.isForceShutdown()) return;
         if (alreadyDrained.compareAndSet(false, true)) {
             drainWorldGenerators("onDisable", 30L);
@@ -1023,6 +1031,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     @Override
     public void onPreUnload(ReloadAware.PreUnloadReason reason) {
+        teardownPapi();
         if (!alreadyDrained.compareAndSet(false, true)) {
             Iris.info("Pre-unload hook skipped; Iris already drained.");
             return;
@@ -1083,8 +1092,53 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     }
 
     private void setupPapi() {
-        if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
-            new IrisPapiExpansion().register();
+        if (!PlaceholderRegistration.isPlaceholderApiEnabled()) {
+            return;
+        }
+
+        IrisPapiState state = new IrisPapiState(() -> IrisServices.getOrNull(IrisTerrainService.class));
+        PlaceholderRegistration registration = new PlaceholderRegistration(getLogger());
+
+        if (!IrisPapiInstaller.install(registration, state, getLogger())) {
+            return;
+        }
+
+        IrisPapiListener listener = new IrisPapiListener(state);
+
+        try {
+            Bukkit.getPluginManager().registerEvents(listener, this);
+        } catch (Throwable failure) {
+            registration.unregister();
+            Iris.warn("Failed to attach the Iris PlaceholderAPI listener: "
+                    + failure.getClass().getName() + ": " + failure.getMessage());
+            return;
+        }
+
+        papiState = state;
+        papiListener = listener;
+        papiRegistration = registration;
+    }
+
+    private void teardownPapi() {
+        IrisPapiListener listener = papiListener;
+        papiListener = null;
+
+        if (listener != null) {
+            HandlerList.unregisterAll(listener);
+        }
+
+        PlaceholderRegistration registration = papiRegistration;
+        papiRegistration = null;
+
+        if (registration != null) {
+            registration.unregister();
+        }
+
+        IrisPapiState state = papiState;
+        papiState = null;
+
+        if (state != null) {
+            state.clear();
         }
     }
 

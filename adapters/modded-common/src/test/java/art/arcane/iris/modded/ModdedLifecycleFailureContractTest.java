@@ -60,16 +60,15 @@ public class ModdedLifecycleFailureContractTest {
     }
 
     @Test
-    public void persistentReinjectionRethrowsTheOriginalCause() throws IOException {
+    public void persistentReinjectionQuarantinesBrokenEntriesAndContinues() throws IOException {
         String source = source("ModdedStartup.java");
         String reinjection = method(source, "private static void reinjectPersistentDimensions(");
         String failure = catchBlock(reinjection);
 
         assertTrue(failure.contains("LOGGER.error("));
         assertFalse(failure.contains("e.toString()"));
-        assertFalse(failure.contains("continue;"));
-        assertTrue(failure.contains("throw new IllegalStateException("));
-        assertTrue(failure.contains(", e);"));
+        assertFalse(failure.contains("throw new IllegalStateException("));
+        assertTrue(reinjection.contains("injected++;"));
     }
 
     @Test

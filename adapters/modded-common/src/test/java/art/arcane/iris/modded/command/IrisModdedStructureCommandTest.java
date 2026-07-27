@@ -25,7 +25,7 @@ public class IrisModdedStructureCommandTest {
         assertTrue(source.contains("combineStructureKeys(irisKeys, nativeKeys)"));
         assertTrue(source.contains("irisGenerator.isNativeStructureReachable(holder)"));
         assertTrue(source.contains("LocateStatus.SEARCH_LIMIT_REACHED"));
-        assertTrue(source.contains("the density search safety limit was reached"));
+        assertTrue(source.contains("IRIS_MODDED_COMMANDS_UNABLE_LOCATE_IRIS_PLACED_STRUCTURE_DENSITY_SEARCH_SAFETY_LIMIT_WAS"));
         assertTrue(source.contains("int targetX = result.originX()"));
         assertTrue(source.contains("int targetY = result.baseY() + 2"));
         assertTrue(source.contains("int targetZ = result.originZ()"));

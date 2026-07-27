@@ -45,6 +45,9 @@ public final class IrisFabricClient implements ClientModInitializer {
         KeyMappingHelper.registerKeyMapping(IrisClientKeybinds.OPEN_MAP);
         KeyMappingHelper.registerKeyMapping(IrisClientKeybinds.TOGGLE_WHAT);
         HudElementRegistry.addLast(IrisClient.HUD_ELEMENT_ID, (graphics, delta) -> IrisClientHud.render(graphics));
-        ClientTickEvents.END_CLIENT_TICK.register(client -> IrisClientKeybinds.pollToggle());
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            IrisClient.tick();
+            IrisClientKeybinds.pollToggle();
+        });
     }
 }

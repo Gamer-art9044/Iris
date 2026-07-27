@@ -5,6 +5,9 @@ license = "GPL-3.0"
 [[mixins]]
 config = "irisworldgen.entity.mixins.json"
 
+[[mixins]]
+config = "irisworldgen.client.mixins.json"
+
 [[mods]]
 modId = "irisworldgen"
 version = "${version}"

@@ -18,18 +18,18 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.IrisMessages;
+import art.arcane.iris.core.localization.ModdedHelpMessages;
+import art.arcane.volmlib.util.director.help.DirectorHelpMessages;
+import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.volmlib.util.localization.TextKey;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
-import art.arcane.iris.core.localization.IrisMessages;
-import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.ModdedHelpMessages;
-import art.arcane.volmlib.util.director.help.DirectorHelpMessages;
-import art.arcane.volmlib.util.localization.MessageArgument;
-import art.arcane.volmlib.util.localization.TextKey;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -60,21 +60,24 @@ final class ModdedCommandHelp {
         SECTIONS.put("", List.of(
                 Entry.command("version", "", ModdedHelpMessages.COMMAND_VERSION_PRINT_VERSION_INFORMATION),
                 Entry.command("info", "[dimension]", ModdedHelpMessages.COMMAND_INFO_LIST_LOADED_IRIS_DIMENSIONS_AND_PACK_DETAILS),
-                Entry.command("what", "[block|hand|markers]", ModdedHelpMessages.COMMAND_WHAT_INSPECT_THE_IRIS_BIOME_REGION_CAVE_BIOME_SURFACE_AND_CHUNK_AT_YOUR),
+                Entry.command("what", "[here|biome|region|block|hand|markers]", ModdedHelpMessages.COMMAND_WHAT_INSPECT_THE_IRIS_BIOME_REGION_CAVE_BIOME_SURFACE_AND_CHUNK_AT_YOUR),
                 Entry.group("find", ModdedHelpMessages.GROUP_FIND_FIND_AND_TELEPORT_TO_IRIS_BIOMES_REGIONS_OBJECTS_IRIS_STRUCTURES_NATIVE_STRUCTURES, "goto"),
-                Entry.command("tp", "<dimension> [player]", ModdedHelpMessages.COMMAND_TP_TELEPORT_YOURSELF_OR_A_NAMED_PLAYER_INTO_A_LOADED_IRIS_DIMENSION),
+                Entry.command("teleport", "<dimension> [player]", ModdedHelpMessages.COMMAND_TP_TELEPORT_YOURSELF_OR_A_NAMED_PLAYER_INTO_A_LOADED_IRIS_DIMENSION, "tp"),
                 Entry.command("evacuate", "[dimension]", ModdedHelpMessages.COMMAND_EVACUATE_TELEPORT_EVERY_PLAYER_OUT_OF_AN_IRIS_DIMENSION_TO_THE_PRIMARY_WORLD),
                 Entry.command("seed", "", ModdedHelpMessages.COMMAND_SEED_PRINT_WORLD_AND_ENGINE_SEED_INFORMATION),
                 Entry.command("debug", "", ModdedHelpMessages.COMMAND_DEBUG_TOGGLE_IRIS_DEBUG_LOGGING_AND_SAVE_SETTINGS_JSON),
                 Entry.command("reload", "", ModdedHelpMessages.COMMAND_RELOAD_RELOAD_SETTINGS_JSON_ALSO_HOTLOADED_AUTOMATICALLY_EVERY_3S),
-                Entry.command("download", "<pack> [branch]", ModdedHelpMessages.COMMAND_DOWNLOAD_DOWNLOAD_A_PACK_PROJECT, "dl"),
+                Entry.command("download", "<pack> [branch] [overwrite]", ModdedHelpMessages.COMMAND_DOWNLOAD_DOWNLOAD_A_PACK_PROJECT, "dl"),
                 Entry.command("metrics", "", ModdedHelpMessages.COMMAND_METRICS_PRINT_GENERATION_METRICS_FOR_YOUR_CURRENT_IRIS_DIMENSION, "measure"),
                 Entry.command("regen", "[radius]", ModdedHelpMessages.COMMAND_REGEN_DELETE_AND_REGENERATE_NEARBY_CHUNKS_IN_PLACE, "rg"),
                 Entry.group("pregen", ModdedHelpMessages.GROUP_PREGEN_PREGENERATE_AN_IRIS_DIMENSION, "pregenerate"),
                 Entry.command("wand", "", ModdedHelpMessages.COMMAND_WAND_GET_AN_IRIS_OBJECT_WAND),
+                Entry.command("dust", "", ModdedHelpMessages.COMMAND_DUST_GET_DUST_THAT_REVEALS_OBJECT_PLACEMENTS, "d"),
                 Entry.group("object", ModdedHelpMessages.GROUP_OBJECT_OBJECT_WAND_SAVE_PASTE_ANALYZE_AND_UNDO_TOOLS, "o"),
                 Entry.group("edit", ModdedHelpMessages.GROUP_EDIT_OPEN_PACK_BIOME_REGION_AND_DIMENSION_JSON_FILES_IN_YOUR_DESKTOP_EDITOR),
-                Entry.command("create", "<name> <pack|pack:dimensionKey> [seed]", ModdedHelpMessages.COMMAND_CREATE_CREATE_AND_INJECT_A_PERSISTENT_IRIS_DIMENSION_QUOTE_PACK_DIMENSIONKEY_TO_PICK),
+                Entry.command("create", "<name> [pack|pack:dimensionKey] [seed]", ModdedHelpMessages.COMMAND_CREATE_CREATE_AND_INJECT_A_PERSISTENT_IRIS_DIMENSION_QUOTE_PACK_DIMENSIONKEY_TO_PICK, "c"),
+                Entry.command("height", "", ModdedHelpMessages.COMMAND_HEIGHT_PRINT_WORLD_HEIGHT),
+                Entry.command("worlds", "", ModdedHelpMessages.COMMAND_WORLDS_LIST_WORLD_ACCESS, "accesslist"),
                 Entry.group("studio", ModdedHelpMessages.GROUP_STUDIO_PACK_PROJECT_CREATION_PACKAGING_AND_REPORTS, "std", "s"),
                 Entry.group("pack", ModdedHelpMessages.GROUP_PACK_PACK_VALIDATION_AND_MAINTENANCE, "pk"),
                 Entry.group("world", ModdedHelpMessages.GROUP_WORLD_RUNTIME_IRIS_DIMENSION_CREATION_REMOVAL_AND_STATUS, "w"),
@@ -82,6 +85,14 @@ final class ModdedCommandHelp {
                 Entry.group("structure", ModdedHelpMessages.GROUP_STRUCTURE_IRIS_STRUCTURE_INDEX_INFO_AND_PLACEMENT_TOOLS, "struct", "str"),
                 Entry.command("goldenhash", "[radius] [threads] [capture|verify]", ModdedHelpMessages.COMMAND_GOLDENHASH_GENERATE_DETERMINISTIC_BLOCK_HASHES_FOR_PARITY_TESTING, "gold"),
                 Entry.group("developer", ModdedHelpMessages.GROUP_DEVELOPER_DEVELOPER_DIAGNOSTICS_SENTRY_TEST_NETWORK_INTERFACES_REGION_FILE_SCAN, "dev")
+        ));
+        SECTIONS.put("what", List.of(
+                Entry.command("here", "", ModdedHelpMessages.COMMAND_WHAT_HERE_INSPECT_CURRENT_IRIS_CONTEXT),
+                Entry.command("biome", "", ModdedHelpMessages.COMMAND_WHAT_BIOME_INSPECT_CURRENT_BIOME),
+                Entry.command("region", "", ModdedHelpMessages.COMMAND_WHAT_REGION_INSPECT_CURRENT_REGION),
+                Entry.command("block", "", ModdedHelpMessages.COMMAND_WHAT_BLOCK_INSPECT_TARGET_BLOCK),
+                Entry.command("hand", "", ModdedHelpMessages.COMMAND_WHAT_HAND_INSPECT_HELD_ITEM),
+                Entry.command("markers", "<marker>", ModdedHelpMessages.COMMAND_WHAT_MARKERS_REVEAL_NEARBY_MARKERS)
         ));
         SECTIONS.put("find", List.of(
                 Entry.command("biome", "<key>", ModdedHelpMessages.COMMAND_BIOME_FIND_AN_IRIS_BIOME),
@@ -92,9 +103,9 @@ final class ModdedCommandHelp {
         ));
         SECTIONS.put("goto", SECTIONS.get("find"));
         SECTIONS.put("edit", List.of(
-                Entry.command("biome", "[key]", ModdedHelpMessages.COMMAND_BIOME_OPEN_A_BIOME_JSON_IN_YOUR_DESKTOP_EDITOR_NO_KEY_OPENS_THE),
-                Entry.command("region", "[key]", ModdedHelpMessages.COMMAND_REGION_OPEN_A_REGION_JSON_IN_YOUR_DESKTOP_EDITOR_NO_KEY_OPENS_THE),
-                Entry.command("dimension", "", ModdedHelpMessages.COMMAND_DIMENSION_OPEN_THE_CURRENT_PACK_S_DIMENSION_JSON_IN_YOUR_DESKTOP_EDITOR)
+                Entry.command("biome", "[key]", ModdedHelpMessages.COMMAND_BIOME_OPEN_A_BIOME_JSON_IN_YOUR_DESKTOP_EDITOR_NO_KEY_OPENS_THE, "b"),
+                Entry.command("region", "[key]", ModdedHelpMessages.COMMAND_REGION_OPEN_A_REGION_JSON_IN_YOUR_DESKTOP_EDITOR_NO_KEY_OPENS_THE, "r"),
+                Entry.command("dimension", "", ModdedHelpMessages.COMMAND_DIMENSION_OPEN_THE_CURRENT_PACK_S_DIMENSION_JSON_IN_YOUR_DESKTOP_EDITOR, "d")
         ));
         SECTIONS.put("pregen", List.of(
                 Entry.command("start", "<radius> [dimension] [at] [x] [z] [gui] [sync] [nocache]", ModdedHelpMessages.COMMAND_START_START_PREGENERATION_RADIUS_IN_BLOCKS_RESUMABLE_CHECKPOINT_CACHE_ON_BY_DEFAULT_CENTER),
@@ -118,12 +129,15 @@ final class ModdedCommandHelp {
                 Entry.command("analyze", "<key>", ModdedHelpMessages.COMMAND_ANALYZE_SHOW_OBJECT_COMPOSITION),
                 Entry.command("shrink", "<key>", ModdedHelpMessages.COMMAND_SHRINK_SHRINK_AN_OBJECT_TO_ITS_MINIMUM_SIZE),
                 Entry.command("plausibilize", "<key|prefix/> [dryrun=true] [reach=N]", ModdedHelpMessages.COMMAND_PLAUSIBILIZE_GROW_BRANCHES_SO_TREE_LEAVES_SURVIVE_VANILLA_DECAY),
-                Entry.command("undo", "[amount]", ModdedHelpMessages.COMMAND_UNDO_UNDO_PASTED_OBJECTS, "u")
+                Entry.command("undo", "[amount]", ModdedHelpMessages.COMMAND_UNDO_UNDO_PASTED_OBJECTS, "u"),
+                Entry.command("we", "", ModdedHelpMessages.COMMAND_OBJECT_WE_BUKKIT_ONLY),
+                Entry.command("studio", "", ModdedHelpMessages.COMMAND_OBJECT_STUDIO_BUKKIT_ONLY),
+                Entry.command("convert", "", ModdedHelpMessages.COMMAND_OBJECT_CONVERT_BUKKIT_ONLY)
         ));
         SECTIONS.put("o", SECTIONS.get("object"));
         SECTIONS.put("studio", List.of(
-                Entry.command("create", "<name> [template]", ModdedHelpMessages.COMMAND_CREATE_CREATE_A_NEW_PACK_PROJECT, "+"),
-                Entry.command("package", "[pack]", ModdedHelpMessages.COMMAND_PACKAGE_PACKAGE_A_DIMENSION_INTO_A_COMPRESSED_FORMAT),
+                Entry.command("create", "[name] [template]", ModdedHelpMessages.COMMAND_CREATE_CREATE_A_NEW_PACK_PROJECT, "+"),
+                Entry.command("package", "[pack]", ModdedHelpMessages.COMMAND_PACKAGE_PACKAGE_A_DIMENSION_INTO_A_COMPRESSED_FORMAT, "pkg"),
                 Entry.command("version", "[pack]", ModdedHelpMessages.COMMAND_VERSION_PRINT_A_PACK_VERSION),
                 Entry.command("regions", "[radius]", ModdedHelpMessages.COMMAND_REGIONS_CALCULATE_NEARBY_REGION_DISTRIBUTION),
                 Entry.command("open", "<pack> [seed]", ModdedHelpMessages.COMMAND_OPEN_OPEN_A_TEMPORARY_STUDIO_DIMENSION_FOR_A_PACK, "o"),
@@ -134,7 +148,11 @@ final class ModdedCommandHelp {
                 Entry.command("map", "", ModdedHelpMessages.COMMAND_MAP_OPEN_THE_VISION_MAP_GUI_ON_THE_SERVER_DISPLAY, "render"),
                 Entry.command("vscode", "[pack]", ModdedHelpMessages.COMMAND_VSCODE_REGENERATE_THE_CODE_WORKSPACE_FOR_A_PACK_AND_OPEN_IT_IN_YOUR, "vsc"),
                 Entry.command("update", "[pack]", ModdedHelpMessages.COMMAND_UPDATE_REGENERATE_THE_CODE_WORKSPACE_FOR_A_PACK),
-                Entry.command("importvanilla", "", ModdedHelpMessages.COMMAND_IMPORTVANILLA_EXPLAIN_VANILLA_IMPORT_WORKFLOW, "importv", "iv")
+                Entry.command("importvanilla", "", ModdedHelpMessages.COMMAND_IMPORTVANILLA_EXPLAIN_VANILLA_IMPORT_WORKFLOW, "importv", "iv"),
+                Entry.command("loot", "", ModdedHelpMessages.COMMAND_STUDIO_LOOT_BUKKIT_ONLY),
+                Entry.command("profile", "", ModdedHelpMessages.COMMAND_STUDIO_PROFILE_BUKKIT_ONLY),
+                Entry.command("spawn", "", ModdedHelpMessages.COMMAND_STUDIO_SPAWN_BUKKIT_ONLY, "summon"),
+                Entry.command("objects", "", ModdedHelpMessages.COMMAND_STUDIO_OBJECTS_BUKKIT_ONLY, "find-objects")
         ));
         SECTIONS.put("std", SECTIONS.get("studio"));
         SECTIONS.put("s", SECTIONS.get("studio"));
@@ -148,6 +166,7 @@ final class ModdedCommandHelp {
         SECTIONS.put("world", List.of(
                 Entry.command("enable", "<dimension> <pack|pack:dimensionKey> [seed|random]", ModdedHelpMessages.COMMAND_ENABLE_CREATE_AND_INJECT_A_PERSISTENT_IRIS_DIMENSION_AT_RUNTIME_DOWNLOADS_THE_PACK, "create"),
                 Entry.command("replace-overworld", "<pack|pack:dimensionKey> [seed|random]", ModdedHelpMessages.COMMAND_REPLACE_OVERWORLD_INJECT_AN_IRIS_PRIMARY_WORLD_AND_ROUTE_PLAYERS_THERE_INSTEAD_OF_THE),
+                Entry.command("mainworld", "<pack|pack:dimensionKey|off> [seed|random]", ModdedHelpMessages.COMMAND_MAINWORLD_CONFIGURE_PRIMARY_WORLD_PRESET),
                 Entry.command("disable", "<dimension>", ModdedHelpMessages.COMMAND_DISABLE_EVACUATE_AND_UNLOAD_AN_IRIS_DIMENSION_WORLD_DATA_ON_DISK_IS_KEPT),
                 Entry.command("delete", "<dimension>", ModdedHelpMessages.COMMAND_DELETE_DISABLE_AN_IRIS_DIMENSION_AND_WIPE_ITS_CHUNK_AND_MANTLE_DATA_FROM, "remove", "rm"),
                 Entry.command("list", "", ModdedHelpMessages.COMMAND_LIST_LIST_LOADED_IRIS_DIMENSIONS, "ls"),
@@ -181,6 +200,24 @@ final class ModdedCommandHelp {
     }
 
     private ModdedCommandHelp() {
+    }
+
+    static boolean documents(String section, String command) {
+        List<Entry> entries = SECTIONS.get(section);
+        if (entries == null) {
+            return false;
+        }
+        for (Entry entry : entries) {
+            if (entry.name().equals(command)) {
+                return true;
+            }
+            for (String alias : entry.aliases()) {
+                if (alias.equals(command)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     static int send(CommandSourceStack source, String path) {

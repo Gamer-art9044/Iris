@@ -40,7 +40,7 @@ public class IrisCursorResolverTest {
         cave.setLoadKey("iris:lush_cave");
         IrisDimension dimension = new IrisDimension();
         dimension.setLoadKey("overworld");
-        Engine engine = engine(biome, region, cave, 72, dimension);
+        Engine engine = engine(biome, region, cave, 72, -64, dimension);
 
         IrisMessage.CursorInfo info = IrisCursorResolver.resolve(engine, 100, -200);
 
@@ -49,7 +49,7 @@ public class IrisCursorResolverTest {
         assertEquals("iris:plains", info.biomeKey());
         assertEquals("iris:temperate", info.regionKey());
         assertEquals("iris:lush_cave", info.caveBiomeKey());
-        assertEquals(72, info.height());
+        assertEquals(8, info.height());
         assertEquals("overworld", info.dimensionKey());
     }
 
@@ -57,7 +57,7 @@ public class IrisCursorResolverTest {
     public void missingCaveAndNullKeysCollapseToEmptyStrings() {
         IrisDimension dimension = new IrisDimension();
         dimension.setLoadKey("overworld");
-        Engine engine = engine(null, null, null, 0, dimension);
+        Engine engine = engine(null, null, null, 0, -64, dimension);
 
         IrisMessage.CursorInfo info = IrisCursorResolver.resolve(engine, 0, 0);
 
@@ -67,12 +67,13 @@ public class IrisCursorResolverTest {
         assertEquals("overworld", info.dimensionKey());
     }
 
-    private static Engine engine(IrisBiome biome, IrisRegion region, IrisBiome cave, int height, IrisDimension dimension) {
+    private static Engine engine(IrisBiome biome, IrisRegion region, IrisBiome cave, int height, int minHeight, IrisDimension dimension) {
         return (Engine) Proxy.newProxyInstance(Engine.class.getClassLoader(), new Class[]{Engine.class}, (proxy, method, args) -> switch (method.getName()) {
             case "getSurfaceBiome" -> biome;
             case "getRegion" -> region;
             case "getCaveBiome" -> cave;
             case "getHeight" -> height;
+            case "getMinHeight" -> minHeight;
             case "getDimension" -> dimension;
             case "toString" -> "proxyEngine";
             case "hashCode" -> System.identityHashCode(proxy);

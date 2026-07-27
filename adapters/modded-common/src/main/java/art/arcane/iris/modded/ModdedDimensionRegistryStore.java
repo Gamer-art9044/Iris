@@ -26,10 +26,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,7 +46,10 @@ public final class ModdedDimensionRegistryStore {
     }
 
     public static List<PersistentDimension> load(MinecraftServer server) {
-        Path file = storeFile(server);
+        return load(storeFile(server));
+    }
+
+    static List<PersistentDimension> load(Path file) {
         if (!Files.isRegularFile(file)) {
             return new ArrayList<>();
         }
@@ -51,32 +57,37 @@ public final class ModdedDimensionRegistryStore {
             JSONObject root = new JSONObject(Files.readString(file, StandardCharsets.UTF_8));
             JSONArray entries = root.optJSONArray("dimensions");
             if (entries == null) {
-                return new ArrayList<>();
+                throw new IllegalArgumentException("registry root has no dimensions array");
             }
             Map<String, PersistentDimension> deduplicated = new LinkedHashMap<>();
             for (int index = 0; index < entries.length(); index++) {
-                JSONObject entry = entries.getJSONObject(index);
-                String id = entry.optString("id", null);
-                if (id == null) {
-                    continue;
+                try {
+                    JSONObject entry = entries.getJSONObject(index);
+                    String id = required(entry, "id", index, file);
+                    String pack = required(entry, "pack", index, file);
+                    String dimension = required(entry, "dimension", index, file);
+                    if (!entry.has("seed")) {
+                        throw new IllegalArgumentException("missing seed");
+                    }
+                    PersistentDimension previous = deduplicated.putIfAbsent(
+                            id, new PersistentDimension(id, pack, dimension, entry.getLong("seed")));
+                    if (previous != null) {
+                        throw new IllegalArgumentException("duplicate id '" + id + "'");
+                    }
+                } catch (RuntimeException invalidEntry) {
+                    LOGGER.error("Iris persistent dimension registry entry {} in {} is invalid; skipping only that entry",
+                            index, file, invalidEntry);
                 }
-                String pack = entry.optString("pack", null);
-                String dimension = entry.optString("dimension", null);
-                if (pack == null || dimension == null) {
-                    LOGGER.error("Iris registry entry '{}' in {} has no pack/dimension fields; skipping it. Re-create the world with /iris world enable", id, file);
-                    continue;
-                }
-                if (!entry.has("seed")) {
-                    LOGGER.warn("Iris registry entry '{}' in {} has no seed; skipping it. Re-create the world with /iris world enable", id, file);
-                    continue;
-                }
-                deduplicated.put(id, new PersistentDimension(id, pack, dimension, entry.getLong("seed")));
             }
             return new ArrayList<>(deduplicated.values());
         } catch (RuntimeException | IOException e) {
-            LOGGER.error("Iris persistent dimension registry at {} is invalid; ignoring it", file, e);
-            return new ArrayList<>();
+            throw new IllegalStateException("Iris persistent dimension registry at " + file
+                    + " could not be read; refusing to discard persistent worlds", e);
         }
+    }
+
+    public static PersistentDimension get(MinecraftServer server, String id) {
+        return index(load(server)).get(id);
     }
 
     public static synchronized void put(MinecraftServer server, PersistentDimension dimension) {
@@ -100,8 +111,19 @@ public final class ModdedDimensionRegistryStore {
         return map;
     }
 
+    private static String required(JSONObject entry, String key, int index, Path file) {
+        String value = entry.optString(key, null);
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("entry " + index + " in " + file + " has no " + key);
+        }
+        return value;
+    }
+
     private static void write(MinecraftServer server, List<PersistentDimension> dimensions) {
-        Path file = storeFile(server);
+        write(storeFile(server), dimensions);
+    }
+
+    static void write(Path file, List<PersistentDimension> dimensions) {
         JSONArray entries = new JSONArray();
         for (PersistentDimension dimension : dimensions) {
             JSONObject entry = new JSONObject();
@@ -113,13 +135,29 @@ public final class ModdedDimensionRegistryStore {
         }
         JSONObject root = new JSONObject();
         root.put("dimensions", entries);
+        Path temp = file.resolveSibling(FILE_NAME + ".tmp");
         try {
             Files.createDirectories(file.getParent());
-            Path temp = file.resolveSibling(FILE_NAME + ".tmp");
             Files.writeString(temp, root.toString(2), StandardCharsets.UTF_8);
-            Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE)) {
+                channel.force(true);
+            }
+            moveReplacing(temp, file);
         } catch (IOException e) {
-            LOGGER.error("Iris failed to write persistent dimension registry at {}", file, e);
+            try {
+                Files.deleteIfExists(temp);
+            } catch (IOException cleanupFailure) {
+                e.addSuppressed(cleanupFailure);
+            }
+            throw new IllegalStateException("Iris failed to write persistent dimension registry at " + file, e);
+        }
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException unsupported) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 

@@ -233,7 +233,7 @@ public final class ModdedObjectCommands {
         return 1;
     }
 
-    private static int giveDust(CommandSourceStack source) {
+    static int giveDust(CommandSourceStack source) {
         ServerPlayer player = source.getPlayer();
         if (player == null) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_THIS_COMMAND_CAN_ONLY_BE_USED_BY_PLAYERS_DUST_IS));

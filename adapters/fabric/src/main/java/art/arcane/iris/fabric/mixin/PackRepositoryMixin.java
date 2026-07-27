@@ -20,17 +20,22 @@ package art.arcane.iris.fabric.mixin;
 
 import art.arcane.iris.fabric.FabricForcedDatapackSources;
 import net.minecraft.server.packs.repository.PackRepository;
+import net.minecraft.server.packs.repository.RepositorySource;
 import net.minecraft.server.packs.repository.ServerPacksSource;
-import net.minecraft.world.level.storage.LevelStorageSource;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(ServerPacksSource.class)
-public class ServerPacksSourceMixin {
-    @Inject(method = "createPackRepository(Lnet/minecraft/world/level/storage/LevelStorageSource$LevelStorageAccess;)Lnet/minecraft/server/packs/repository/PackRepository;", at = @At("RETURN"))
-    private static void iris$addForcedDatapackSource(LevelStorageSource.LevelStorageAccess storage, CallbackInfoReturnable<PackRepository> info) {
-        FabricForcedDatapackSources.attach(info.getReturnValue());
+@Mixin(PackRepository.class)
+public class PackRepositoryMixin {
+    @Inject(method = "<init>", at = @At("RETURN"))
+    private void iris$addForcedDatapackSource(RepositorySource[] sources, CallbackInfo info) {
+        for (RepositorySource source : sources) {
+            if (source instanceof ServerPacksSource) {
+                FabricForcedDatapackSources.attach((PackRepository) (Object) this);
+                return;
+            }
+        }
     }
 }

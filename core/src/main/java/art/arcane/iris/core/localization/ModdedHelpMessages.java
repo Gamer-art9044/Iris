@@ -354,6 +354,70 @@ public final class ModdedHelpMessages {
             "iris.modded.help.entry.command.network",
             "List network interfaces and their addresses"
     );
+    public static final TextKey COMMAND_WHAT_HERE_INSPECT_CURRENT_IRIS_CONTEXT = TextKey.of(
+            "iris.modded.help.entry.command.what.here",
+            "Inspect the Iris biome, region, cave biome, surface and chunk at your position"
+    );
+    public static final TextKey COMMAND_WHAT_BIOME_INSPECT_CURRENT_BIOME = TextKey.of(
+            "iris.modded.help.entry.command.what.biome",
+            "Inspect the Iris biome, configured derivative and registered native biome"
+    );
+    public static final TextKey COMMAND_WHAT_REGION_INSPECT_CURRENT_REGION = TextKey.of(
+            "iris.modded.help.entry.command.what.region",
+            "Inspect the Iris region at your current chunk"
+    );
+    public static final TextKey COMMAND_WHAT_BLOCK_INSPECT_TARGET_BLOCK = TextKey.of(
+            "iris.modded.help.entry.command.what.block",
+            "Inspect the targeted block state, properties, object and block entity"
+    );
+    public static final TextKey COMMAND_WHAT_HAND_INSPECT_HELD_ITEM = TextKey.of(
+            "iris.modded.help.entry.command.what.hand",
+            "Inspect the held item and its default block state"
+    );
+    public static final TextKey COMMAND_WHAT_MARKERS_REVEAL_NEARBY_MARKERS = TextKey.of(
+            "iris.modded.help.entry.command.what.markers",
+            "Reveal nearby Iris Mantle markers with particles"
+    );
+    public static final TextKey COMMAND_HEIGHT_PRINT_WORLD_HEIGHT = TextKey.of(
+            "iris.modded.help.entry.command.height",
+            "Print the current dimension height range"
+    );
+    public static final TextKey COMMAND_WORLDS_LIST_WORLD_ACCESS = TextKey.of(
+            "iris.modded.help.entry.command.worlds",
+            "List loaded dimensions and identify the Iris-generated dimensions"
+    );
+    public static final TextKey COMMAND_MAINWORLD_CONFIGURE_PRIMARY_WORLD_PRESET = TextKey.of(
+            "iris.modded.help.entry.command.mainworld",
+            "Configure or clear the Iris primary-world preset used on restart"
+    );
+    public static final TextKey COMMAND_OBJECT_WE_BUKKIT_ONLY = TextKey.of(
+            "iris.modded.help.entry.command.object.we",
+            "Explain why WorldEdit selection import requires the Bukkit plugin"
+    );
+    public static final TextKey COMMAND_OBJECT_STUDIO_BUKKIT_ONLY = TextKey.of(
+            "iris.modded.help.entry.command.object.studio",
+            "Explain why the object studio world requires the Bukkit toolchain"
+    );
+    public static final TextKey COMMAND_OBJECT_CONVERT_BUKKIT_ONLY = TextKey.of(
+            "iris.modded.help.entry.command.object.convert",
+            "Explain why schematic conversion requires the Bukkit plugin"
+    );
+    public static final TextKey COMMAND_STUDIO_LOOT_BUKKIT_ONLY = TextKey.of(
+            "iris.modded.help.entry.command.studio.loot",
+            "Explain why the Bukkit loot simulation GUI is unavailable"
+    );
+    public static final TextKey COMMAND_STUDIO_PROFILE_BUKKIT_ONLY = TextKey.of(
+            "iris.modded.help.entry.command.studio.profile",
+            "Explain why Bukkit pack profiling is unavailable"
+    );
+    public static final TextKey COMMAND_STUDIO_SPAWN_BUKKIT_ONLY = TextKey.of(
+            "iris.modded.help.entry.command.studio.spawn",
+            "Explain why Bukkit Iris entity spawning is unavailable"
+    );
+    public static final TextKey COMMAND_STUDIO_OBJECTS_BUKKIT_ONLY = TextKey.of(
+            "iris.modded.help.entry.command.studio.objects",
+            "Explain why the Bukkit chunk object report is unavailable"
+    );
 
     private static final List<MessageKey> KEYS = List.of(
             COMMAND_VERSION_PRINT_VERSION_INFORMATION,
@@ -442,7 +506,23 @@ public final class ModdedHelpMessages {
             COMMAND_CAPTURE_EXPLAIN_BUKKIT_STRUCTURE_CAPTURE_WORKFLOW,
             COMMAND_VERIFY_REPORT_NATIVE_AND_IRIS_STRUCTURE_REACHABILITY_IN_THE_CURRENT_DIMENSION,
             COMMAND_SENTRY_SEND_A_TEST_EXCEPTION_TO_THE_IRIS_ERROR_REPORTER,
-            COMMAND_NETWORK_LIST_NETWORK_INTERFACES_AND_THEIR_ADDRESSES
+            COMMAND_NETWORK_LIST_NETWORK_INTERFACES_AND_THEIR_ADDRESSES,
+            COMMAND_WHAT_HERE_INSPECT_CURRENT_IRIS_CONTEXT,
+            COMMAND_WHAT_BIOME_INSPECT_CURRENT_BIOME,
+            COMMAND_WHAT_REGION_INSPECT_CURRENT_REGION,
+            COMMAND_WHAT_BLOCK_INSPECT_TARGET_BLOCK,
+            COMMAND_WHAT_HAND_INSPECT_HELD_ITEM,
+            COMMAND_WHAT_MARKERS_REVEAL_NEARBY_MARKERS,
+            COMMAND_HEIGHT_PRINT_WORLD_HEIGHT,
+            COMMAND_WORLDS_LIST_WORLD_ACCESS,
+            COMMAND_MAINWORLD_CONFIGURE_PRIMARY_WORLD_PRESET,
+            COMMAND_OBJECT_WE_BUKKIT_ONLY,
+            COMMAND_OBJECT_STUDIO_BUKKIT_ONLY,
+            COMMAND_OBJECT_CONVERT_BUKKIT_ONLY,
+            COMMAND_STUDIO_LOOT_BUKKIT_ONLY,
+            COMMAND_STUDIO_PROFILE_BUKKIT_ONLY,
+            COMMAND_STUDIO_SPAWN_BUKKIT_ONLY,
+            COMMAND_STUDIO_OBJECTS_BUKKIT_ONLY
     );
 
     private ModdedHelpMessages() {

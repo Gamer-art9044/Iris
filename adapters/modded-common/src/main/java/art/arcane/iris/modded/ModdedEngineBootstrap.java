@@ -262,7 +262,10 @@ public final class ModdedEngineBootstrap {
         selfTest(moddedLoader.getClass().getClassLoader());
         bind();
         IrisLanguage.initialize();
-        MainWorldService.reconcileEarly();
+        ModdedStartup.prefetchDefaultPack();
+        if (!moddedLoader.clientEnvironment()) {
+            MainWorldService.reconcileEarly();
+        }
         chunkGeneratorRegistration.run();
         ModdedIrisLog.info("Iris chunk generator registered as irisworldgen:iris");
         armParityProbe();

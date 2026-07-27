@@ -31,7 +31,7 @@ public final class IrisCursorResolver {
         IrisBiome surfaceBiome = engine.getSurfaceBiome(blockX, blockZ);
         IrisRegion region = engine.getRegion(blockX, blockZ);
         IrisBiome caveBiome = engine.getCaveBiome(blockX, blockZ);
-        int height = engine.getHeight(blockX, blockZ);
+        int height = engine.getMinHeight() + engine.getHeight(blockX, blockZ);
         String biomeKey = keyOf(surfaceBiome == null ? null : surfaceBiome.getLoadKey());
         String regionKey = keyOf(region == null ? null : region.getLoadKey());
         String caveBiomeKey = keyOf(caveBiome == null ? null : caveBiome.getLoadKey());

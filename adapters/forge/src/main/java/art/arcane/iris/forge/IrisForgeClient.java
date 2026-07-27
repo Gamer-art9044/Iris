@@ -27,6 +27,7 @@ import net.minecraftforge.client.event.AddGuiOverlayLayersEvent;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.client.event.InputEvent;
 import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.network.Channel;
 import net.minecraftforge.network.PacketDistributor;
 
@@ -46,6 +47,8 @@ public final class IrisForgeClient {
         ClientPlayerNetworkEvent.LoggingIn.BUS.addListener((ClientPlayerNetworkEvent.LoggingIn event) -> IrisClient.onWorldJoin());
         ClientPlayerNetworkEvent.LoggingOut.BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> IrisClient.onDisconnect());
         InputEvent.Key.BUS.addListener((InputEvent.Key event) -> IrisClientKeybinds.pollToggle());
+        TickEvent.ClientTickEvent.Post.BUS.addListener(
+                (TickEvent.ClientTickEvent.Post event) -> IrisClient.tick());
     }
 
     private static void sendToServer(byte[] frame) {

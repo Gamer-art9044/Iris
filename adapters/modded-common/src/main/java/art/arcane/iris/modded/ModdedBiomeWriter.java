@@ -23,6 +23,7 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBiomeWriter;
+import art.arcane.iris.util.project.context.IrisContext;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
@@ -51,7 +52,7 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
         if (registry == null) {
             return 0;
         }
-        int direct = idForKey(registry, key);
+        int direct = idForKey(registry, scopedBiomeKey(key));
         if (direct >= 0) {
             return direct;
         }
@@ -60,6 +61,19 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
             return derivative;
         }
         return fallbackId(registry);
+    }
+
+    private String scopedBiomeKey(String key) {
+        IrisContext context = IrisContext.get();
+        if (context == null || key == null) {
+            return key;
+        }
+        Engine engine = context.getEngine();
+        String prefix = engine.getDimension().getLoadKey() + ":";
+        if (!key.regionMatches(true, 0, prefix, 0, prefix.length())) {
+            return key;
+        }
+        return ModdedWorldgenIds.biomeRef(engine, key.substring(prefix.length()));
     }
 
     @Override

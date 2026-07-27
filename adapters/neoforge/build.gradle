@@ -146,6 +146,10 @@ neoForge {
     accessTransformers.from('src/main/resources/META-INF/accesstransformer.cfg')
 
     runs {
+        client {
+            client()
+            jvmArgument('-Xmx8G')
+        }
         server {
             server()
             String parity = providers.gradleProperty('irisParity').getOrNull()

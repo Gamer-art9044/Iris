@@ -47,13 +47,19 @@ public final class ModdedDimensionStorage {
 
     public static void wipe(MinecraftServer server, ResourceKey<Level> dimension) {
         File storageFolder = storageFolder(server, dimension);
-        for (String folder : CHUNK_DATA_FOLDERS) {
-            deleteRecursively(new File(storageFolder, folder).toPath());
+        try {
+            for (String folder : CHUNK_DATA_FOLDERS) {
+                deleteRecursively(new File(storageFolder, folder).toPath());
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException(
+                    "Iris failed to completely wipe dimension storage at "
+                            + storageFolder.getAbsolutePath(), e);
         }
         LOGGER.info("Iris wiped dimension storage at {}", storageFolder.getAbsolutePath());
     }
 
-    private static void deleteRecursively(Path root) {
+    private static void deleteRecursively(Path root) throws IOException {
         if (!Files.exists(root)) {
             return;
         }
@@ -61,8 +67,6 @@ public final class ModdedDimensionStorage {
             for (Path path : walk.sorted(Comparator.reverseOrder()).toList()) {
                 Files.deleteIfExists(path);
             }
-        } catch (IOException e) {
-            LOGGER.error("Iris failed to wipe dimension storage at {}", root, e);
         }
     }
 }

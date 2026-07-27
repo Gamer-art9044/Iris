@@ -152,11 +152,21 @@ public final class ModdedDimensionManager {
     }
 
     public static Handle createPersistent(MinecraftServer server, String dimensionId, String pack, String packDimensionKey, long seed) {
+        ModdedDimensionRegistryStore.PersistentDimension previous =
+                ModdedDimensionRegistryStore.get(server, dimensionId);
         ModdedDimensionRegistryStore.put(server, new ModdedDimensionRegistryStore.PersistentDimension(dimensionId, pack, packDimensionKey, seed));
         try {
             return create(server, dimensionId, pack, packDimensionKey, seed);
         } catch (Throwable e) {
-            ModdedDimensionRegistryStore.remove(server, dimensionId);
+            try {
+                if (previous == null) {
+                    ModdedDimensionRegistryStore.remove(server, dimensionId);
+                } else {
+                    ModdedDimensionRegistryStore.put(server, previous);
+                }
+            } catch (Throwable rollbackFailure) {
+                e.addSuppressed(rollbackFailure);
+            }
             if (e instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
@@ -168,9 +178,21 @@ public final class ModdedDimensionManager {
     }
 
     public static boolean removePersistent(MinecraftServer server, String dimensionId, boolean wipeStorage) {
-        boolean removed = remove(server, dimensionId, wipeStorage);
+        ModdedDimensionRegistryStore.PersistentDimension previous =
+                ModdedDimensionRegistryStore.get(server, dimensionId);
         ModdedDimensionRegistryStore.remove(server, dimensionId);
-        return removed;
+        try {
+            return remove(server, dimensionId, wipeStorage);
+        } catch (Throwable e) {
+            if (previous != null) {
+                try {
+                    ModdedDimensionRegistryStore.put(server, previous);
+                } catch (Throwable rollbackFailure) {
+                    e.addSuppressed(rollbackFailure);
+                }
+            }
+            throw e;
+        }
     }
 
     public static boolean remove(MinecraftServer server, String dimensionId, boolean wipeStorage) {
@@ -273,10 +295,10 @@ public final class ModdedDimensionManager {
     private static Holder<DimensionType> resolveDimensionType(RegistryAccess registryAccess, String pack, String packDimensionKey) {
         Registry<DimensionType> registry = registryAccess.lookupOrThrow(Registries.DIMENSION_TYPE);
         IrisDimension dimension = loadPackDimension(pack, packDimensionKey);
-        String typeRef = ModdedForcedDatapack.dimensionTypeRef(dimension);
+        String typeRef = ModdedWorldgenIds.dimensionTypeRef(pack, packDimensionKey);
         ResourceKey<DimensionType> typeKey = ResourceKey.create(Registries.DIMENSION_TYPE, Identifier.parse(typeRef));
         ModdedRuntimeRegistry.ensureCustomBiomes(registryAccess, dimension, pack);
-        ModdedRuntimeRegistry.ensureDimensionType(registryAccess, registry, typeKey, typeRef, dimension);
+        ModdedRuntimeRegistry.ensureDimensionType(registry, typeKey, typeRef);
         return ModdedForcedDatapack.requireRegisteredDimensionType(
                 typeRef, registry.get(typeKey), pack, packDimensionKey);
     }

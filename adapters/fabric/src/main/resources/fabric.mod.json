@@ -11,7 +11,14 @@
   "license": "GPL-3.0",
   "environment": "*",
   "accessWidener": "irisworldgen.accesswidener",
-  "mixins": ["irisworldgen.mixins.json", "irisworldgen.entity.mixins.json"],
+  "mixins": [
+    "irisworldgen.mixins.json",
+    "irisworldgen.entity.mixins.json",
+    {
+      "config": "irisworldgen.client.mixins.json",
+      "environment": "client"
+    }
+  ],
   "entrypoints": {
     "main": ["art.arcane.iris.fabric.IrisFabricBootstrap"],
     "client": ["art.arcane.iris.fabric.IrisFabricClient"]

@@ -111,7 +111,7 @@ public final class ModdedWorldEngines {
         }
 
         long seed = seedOverride == Long.MIN_VALUE ? level.getSeed() : seedOverride;
-        validateDimensionContract(dimension, level);
+        validateDimensionContract(pack, dimensionKey, dimension, level);
         File worldFolder = DimensionType.getStorageFolder(level.dimension(), level.getServer().getWorldPath(LevelResource.ROOT)).toFile();
         IrisWorld world = IrisWorld.builder()
                 .platformIdentity(level.dimension().identifier().toString())
@@ -139,12 +139,21 @@ public final class ModdedWorldEngines {
         return engine;
     }
 
-    private static void validateDimensionContract(IrisDimension dimension, ServerLevel level) {
+    private static void validateDimensionContract(String pack, String dimensionKey,
+                                                  IrisDimension dimension, ServerLevel level) {
         DimensionType actualType = level.dimensionType();
         String actualTypeKey = level.dimensionTypeRegistration().unwrapKey()
                 .map(key -> key.identifier().toString())
                 .orElse("<unregistered>");
-        IrisDimensionRuntimeContract expected = IrisDimensionRuntimeContract.expected(dimension, "irisworldgen");
+        String legacyTypeKey = "irisworldgen:" + dimension.getDimensionTypeKey();
+        String expectedTypeKey = legacyTypeKey.equals(actualTypeKey)
+                ? legacyTypeKey
+                : ModdedWorldgenIds.dimensionTypeRef(pack, dimensionKey);
+        IrisDimensionRuntimeContract expected = new IrisDimensionRuntimeContract(
+                expectedTypeKey,
+                dimension.getMinHeight(),
+                dimension.getMaxHeight() - dimension.getMinHeight(),
+                dimension.getLogicalHeight());
         IrisDimensionRuntimeContract actual = new IrisDimensionRuntimeContract(
                 actualTypeKey,
                 actualType.minY(),

@@ -92,6 +92,33 @@ public final class RuntimeUiMessages {
     public static final TextKey DUST_OBJECTS_IN_CHUNK = TextKey.of("iris.runtime.dust.objects_in_chunk", "Objects in chunk: {objects}");
     public static final TextKey DUST_COPY_BUTTON = TextKey.of("iris.runtime.dust.copy_button", "[Click to copy these stats]");
     public static final TextKey DUST_COPY_HOVER = TextKey.of("iris.runtime.dust.copy_hover", "Copy block stats to clipboard");
+    public static final TextKey DUST_REVEAL_FAILED = TextKey.of("iris.runtime.dust.reveal_failed", "Object reveal failed; see the console for details.");
+    public static final TextKey WHAT_MATERIAL = TextKey.of("iris.runtime.what.material", "Material: {material}");
+    public static final TextKey WHAT_FULL_STATE = TextKey.of("iris.runtime.what.full_state", "Full: {state}");
+    public static final TextKey WHAT_ITEM_COUNT = TextKey.of("iris.runtime.what.item_count", "Count: {count}");
+    public static final TextKey WHAT_IRIS_BIOME = TextKey.of("iris.runtime.what.iris_biome", "Iris biome: {biome} ({name})");
+    public static final TextKey WHAT_DERIVATIVE_BIOME = TextKey.of("iris.runtime.what.derivative_biome", "Derivative biome: {biome}");
+    public static final TextKey WHAT_NATIVE_BIOME = TextKey.of("iris.runtime.what.native_biome", "Registered biome: {biome} (ID: {id})");
+    public static final TextKey WHAT_NON_IRIS_BIOME = TextKey.of("iris.runtime.what.non_iris_biome", "Non-Iris biome: {biome} (ID: {id})");
+    public static final TextKey WHAT_IRIS_REGION = TextKey.of("iris.runtime.what.iris_region", "Iris region: {region} ({name})");
+    public static final TextKey WHAT_POSITION = TextKey.of("iris.runtime.what.position", "Position: {x}, {y}, {z} (chunk {chunkX}, {chunkZ})");
+    public static final TextKey WHAT_OBJECT = TextKey.of("iris.runtime.what.object", "Iris object: {object}");
+    public static final TextKey WHAT_BLOCK_ENTITY = TextKey.of("iris.runtime.what.block_entity", "Block entity: {type}");
+    public static final TextKey WHAT_LOOT_TABLE = TextKey.of("iris.runtime.what.loot_table", "Loot table: {loot}");
+    public static final TextKey WHAT_SPAWNER_ENTITY = TextKey.of("iris.runtime.what.spawner_entity", "Spawner entity: {entity}");
+    public static final TextKey WHAT_FLAG_SOLID = TextKey.of("iris.runtime.what.flag.solid", "solid");
+    public static final TextKey WHAT_FLAG_FLUID = TextKey.of("iris.runtime.what.flag.fluid", "fluid");
+    public static final TextKey WHAT_FLAG_WATER = TextKey.of("iris.runtime.what.flag.water", "water");
+    public static final TextKey WHAT_FLAG_WATERLOGGED = TextKey.of("iris.runtime.what.flag.waterlogged", "waterlogged");
+    public static final TextKey WHAT_FLAG_STORAGE = TextKey.of("iris.runtime.what.flag.storage", "storage (loot capable)");
+    public static final TextKey WHAT_FLAG_LIT = TextKey.of("iris.runtime.what.flag.lit", "lit");
+    public static final TextKey WHAT_FLAG_FOLIAGE = TextKey.of("iris.runtime.what.flag.foliage", "foliage");
+    public static final TextKey WHAT_FLAG_PLANTABLE_FOLIAGE = TextKey.of("iris.runtime.what.flag.plantable_foliage", "plantable foliage");
+    public static final TextKey WHAT_FLAG_DECORANT = TextKey.of("iris.runtime.what.flag.decorant", "decorant");
+    public static final TextKey WHAT_FLAG_ORE = TextKey.of("iris.runtime.what.flag.ore", "ore");
+    public static final TextKey WHAT_FLAG_BLOCK_ENTITY = TextKey.of("iris.runtime.what.flag.block_entity", "block entity");
+    public static final TextKey WORLD_HEIGHT_RANGE = TextKey.of("iris.runtime.world.height_range", "World height: {minY} to {maxY}");
+    public static final TextKey WORLD_HEIGHT_TOTAL = TextKey.of("iris.runtime.world.height_total", "Total height: {height}");
     public static final TextKey PREGEN_STARTING = TextKey.of("iris.runtime.pregen.starting", "Iris Pregen starting...");
     public static final TextKey PREGEN_HEADER = TextKey.of("iris.runtime.pregen.header", "Iris Pregen");
     public static final TextKey PREGEN_BOSSBAR_PAUSED = TextKey.of("iris.runtime.pregen.bossbar.paused", "Iris Pregen {generated}/{total} {percent}% PAUSED");
@@ -196,6 +223,33 @@ public final class RuntimeUiMessages {
             DUST_OBJECTS_IN_CHUNK,
             DUST_COPY_BUTTON,
             DUST_COPY_HOVER,
+            DUST_REVEAL_FAILED,
+            WHAT_MATERIAL,
+            WHAT_FULL_STATE,
+            WHAT_ITEM_COUNT,
+            WHAT_IRIS_BIOME,
+            WHAT_DERIVATIVE_BIOME,
+            WHAT_NATIVE_BIOME,
+            WHAT_NON_IRIS_BIOME,
+            WHAT_IRIS_REGION,
+            WHAT_POSITION,
+            WHAT_OBJECT,
+            WHAT_BLOCK_ENTITY,
+            WHAT_LOOT_TABLE,
+            WHAT_SPAWNER_ENTITY,
+            WHAT_FLAG_SOLID,
+            WHAT_FLAG_FLUID,
+            WHAT_FLAG_WATER,
+            WHAT_FLAG_WATERLOGGED,
+            WHAT_FLAG_STORAGE,
+            WHAT_FLAG_LIT,
+            WHAT_FLAG_FOLIAGE,
+            WHAT_FLAG_PLANTABLE_FOLIAGE,
+            WHAT_FLAG_DECORANT,
+            WHAT_FLAG_ORE,
+            WHAT_FLAG_BLOCK_ENTITY,
+            WORLD_HEIGHT_RANGE,
+            WORLD_HEIGHT_TOTAL,
             PREGEN_STARTING,
             PREGEN_HEADER,
             PREGEN_BOSSBAR_PAUSED,

@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "art.arcane.iris.client.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "IrisWorldOpenFlowsMixin",
+    "IrisWorldTypeEntryMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -29,7 +29,7 @@ public class IrisModLanguageAssetsTest {
     @Test
     public void minecraftLanguageAssetsMatchSharedLocaleManifest() throws Exception {
         JsonObject english = read("en_us");
-        assertEquals(2, english.size());
+        assertEquals(4, english.size());
 
         for (String locale : VolmitLocales.nonEnglish()) {
             String minecraftLocale = VolmitLocales.minecraftCode(locale);
@@ -73,9 +73,16 @@ public class IrisModLanguageAssetsTest {
 
     private Set<String> resourceFiles() throws Exception {
         URL resource = IrisModLanguageAssetsTest.class.getClassLoader().getResource(ROOT);
-        assertNotNull("Missing mod language resource directory", resource);
-        assertEquals("file", resource.getProtocol());
-        try (Stream<Path> paths = Files.list(Path.of(resource.toURI()))) {
+        Path directory;
+        if (resource != null && "file".equals(resource.getProtocol())) {
+            directory = Path.of(resource.toURI());
+        } else {
+            String sources = System.getProperty("iris.moddedCommonSources");
+            assertNotNull("Missing mod language resource directory and source root", sources);
+            directory = Path.of(sources).getParent()
+                    .resolve("resources").resolve(ROOT);
+        }
+        try (Stream<Path> paths = Files.list(directory)) {
             return paths
                     .filter(Files::isRegularFile)
                     .map(path -> path.getFileName().toString())

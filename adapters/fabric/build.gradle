@@ -172,6 +172,10 @@ tasks.named('test').configure {
 loom {
     accessWidenerPath = file('src/main/resources/irisworldgen.accesswidener')
     runs {
+        client {
+            runDir(providers.gradleProperty('irisClientRunDir').getOrElse('run'))
+            vmArg('-Xmx8G')
+        }
         server {
             String parity = providers.gradleProperty('irisParity').getOrNull()
             if (parity != null) {

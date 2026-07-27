@@ -33,22 +33,21 @@ import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
-import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
-import art.arcane.iris.modded.ModdedBlockState;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
 import art.arcane.iris.modded.ModdedLoader;
 import art.arcane.iris.modded.ModdedPackInstaller;
+import art.arcane.iris.modded.ModdedScheduler;
+import art.arcane.iris.modded.ModdedWorldgenIds;
 import art.arcane.iris.spi.IrisLogging;
-import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.Position2;
-import art.arcane.volmlib.util.matter.MatterMarker;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -70,7 +69,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
 import net.minecraft.core.Registry;
-import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
@@ -79,13 +77,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Relative;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.structure.Structure;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -123,8 +117,6 @@ public final class IrisModdedCommands {
     private static final SuggestionProvider<CommandSourceStack> OBJECT_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestObjectKeys(context, builder);
     private static final SuggestionProvider<CommandSourceStack> STRUCTURE_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestStructureKeys(context, builder);
     private static final SuggestionProvider<CommandSourceStack> POI_TYPES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> SharedSuggestionProvider.suggest(List.of("buried_treasure"), builder);
-    private static final SuggestionProvider<CommandSourceStack> MARKER_TYPES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> SharedSuggestionProvider.suggest(List.of("cave_floor", "cave_ceiling", "object"), builder);
-    private static final DustParticleOptions MARKER_DUST = new DustParticleOptions(0x5A8CFF, 1.2F);
     static final SuggestionProvider<CommandSourceStack> PACK_NAMES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestPackNames(context, builder);
     private static final SuggestionProvider<CommandSourceStack> DIMENSION_NAMES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestDimensionNames(context, builder);
 
@@ -152,21 +144,10 @@ public final class IrisModdedCommands {
                 .then(Commands.argument("dimension", StringArgumentType.greedyString()).suggests(DIMENSION_NAMES)
                         .executes((CommandContext<CommandSourceStack> context) -> info(context.getSource(), StringArgumentType.getString(context, "dimension")))));
 
-        root.then(Commands.literal("what").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> what(context.getSource()))
-                .then(Commands.literal("block")
-                        .executes((CommandContext<CommandSourceStack> context) -> whatBlock(context.getSource())))
-                .then(Commands.literal("hand")
-                        .executes((CommandContext<CommandSourceStack> context) -> whatHand(context.getSource())))
-                .then(Commands.literal("markers")
-                        .then(Commands.argument("marker", StringArgumentType.greedyString()).suggests(MARKER_TYPES)
-                                .executes((CommandContext<CommandSourceStack> context) -> whatMarkers(context.getSource(), StringArgumentType.getString(context, "marker"))))));
+        root.then(ModdedWhatCommands.tree());
 
-        root.then(Commands.literal("tp").requires(GATE)
-                .then(Commands.argument("dimension", DimensionArgument.dimension()).suggests(DIMENSION_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> tp(context.getSource(), DimensionArgument.getDimension(context, "dimension"), null))
-                        .then(Commands.argument("player", EntityArgument.player())
-                                .executes((CommandContext<CommandSourceStack> context) -> tp(context.getSource(), DimensionArgument.getDimension(context, "dimension"), EntityArgument.getPlayer(context, "player"))))));
+        root.then(teleportTree("teleport"));
+        root.then(teleportTree("tp"));
 
         root.then(Commands.literal("evacuate").requires(GATE)
                 .executes((CommandContext<CommandSourceStack> context) -> evacuate(context.getSource(), null))
@@ -178,6 +159,12 @@ public final class IrisModdedCommands {
 
         root.then(Commands.literal("reload").requires(GATE)
                 .executes((CommandContext<CommandSourceStack> context) -> reload(context.getSource())));
+        root.then(Commands.literal("height").requires(GATE)
+                .executes((CommandContext<CommandSourceStack> context) -> height(context.getSource())));
+        root.then(Commands.literal("worlds").requires(GATE)
+                .executes((CommandContext<CommandSourceStack> context) -> info(context.getSource(), null)));
+        root.then(Commands.literal("accesslist").requires(GATE)
+                .executes((CommandContext<CommandSourceStack> context) -> info(context.getSource(), null)));
 
         root.then(gotoTree("goto"));
         root.then(gotoTree("find"));
@@ -202,11 +189,16 @@ public final class IrisModdedCommands {
 
         root.then(Commands.literal("wand").requires(GATE)
                 .executes((CommandContext<CommandSourceStack> context) -> ModdedObjectCommands.giveWand(context.getSource())));
+        root.then(Commands.literal("dust").requires(GATE)
+                .executes((CommandContext<CommandSourceStack> context) -> ModdedObjectCommands.giveDust(context.getSource())));
+        root.then(Commands.literal("d").requires(GATE)
+                .executes((CommandContext<CommandSourceStack> context) -> ModdedObjectCommands.giveDust(context.getSource())));
         root.then(ModdedObjectCommands.tree("object"));
         root.then(ModdedObjectCommands.tree("o"));
         root.then(editTree());
 
-        root.then(createTree());
+        root.then(createTree("create"));
+        root.then(createTree("c"));
 
         root.then(ModdedStudioCommands.tree("studio"));
         root.then(ModdedStudioCommands.tree("std"));
@@ -227,9 +219,15 @@ public final class IrisModdedCommands {
         return root;
     }
 
-    private static LiteralArgumentBuilder<CommandSourceStack> createTree() {
-        return Commands.literal("create").requires(GATE)
+    private static LiteralArgumentBuilder<CommandSourceStack> createTree(String name) {
+        return Commands.literal(name).requires(GATE)
                 .then(Commands.argument("name", StringArgumentType.word())
+                        .executes((CommandContext<CommandSourceStack> context) ->
+                                ModdedWorldCommands.createWorld(
+                                        context.getSource(),
+                                        StringArgumentType.getString(context, "name"),
+                                        "overworld",
+                                        1337L))
                         .then(Commands.argument("pack", StringArgumentType.string()).suggests(PACK_NAMES)
                                 .executes((CommandContext<CommandSourceStack> context) -> ModdedWorldCommands.createWorld(context.getSource(),
                                         StringArgumentType.getString(context, "name"),
@@ -242,6 +240,17 @@ public final class IrisModdedCommands {
                                                 LongArgumentType.getLong(context, "seed"))))));
     }
 
+    private static LiteralArgumentBuilder<CommandSourceStack> teleportTree(String name) {
+        return Commands.literal(name).requires(GATE)
+                .then(Commands.argument("dimension", DimensionArgument.dimension()).suggests(DIMENSION_NAMES)
+                        .executes((CommandContext<CommandSourceStack> context) ->
+                                tp(context.getSource(), DimensionArgument.getDimension(context, "dimension"), null))
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .executes((CommandContext<CommandSourceStack> context) ->
+                                        tp(context.getSource(), DimensionArgument.getDimension(context, "dimension"),
+                                                EntityArgument.getPlayer(context, "player")))));
+    }
+
     private static LiteralArgumentBuilder<CommandSourceStack> helpTree() {
         return Commands.literal("help")
                 .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), ""))
@@ -252,9 +261,34 @@ public final class IrisModdedCommands {
     private static LiteralArgumentBuilder<CommandSourceStack> downloadTree(String name) {
         return Commands.literal(name).requires(GATE)
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> download(context.getSource(), StringArgumentType.getString(context, "pack"), "stable"))
+                        .executes((CommandContext<CommandSourceStack> context) ->
+                                download(context.getSource(),
+                                        StringArgumentType.getString(context, "pack"), "stable", false))
+                        .then(Commands.literal("force")
+                                .executes((CommandContext<CommandSourceStack> context) ->
+                                        download(context.getSource(),
+                                                StringArgumentType.getString(context, "pack"), "stable", true)))
+                        .then(Commands.argument("overwrite", BoolArgumentType.bool())
+                                .executes((CommandContext<CommandSourceStack> context) ->
+                                        download(context.getSource(),
+                                                StringArgumentType.getString(context, "pack"), "stable",
+                                                BoolArgumentType.getBool(context, "overwrite"))))
                         .then(Commands.argument("branch", StringArgumentType.word())
-                                .executes((CommandContext<CommandSourceStack> context) -> download(context.getSource(), StringArgumentType.getString(context, "pack"), StringArgumentType.getString(context, "branch")))));
+                                .executes((CommandContext<CommandSourceStack> context) ->
+                                        download(context.getSource(),
+                                                StringArgumentType.getString(context, "pack"),
+                                                StringArgumentType.getString(context, "branch"), false))
+                                .then(Commands.literal("force")
+                                        .executes((CommandContext<CommandSourceStack> context) ->
+                                                download(context.getSource(),
+                                                        StringArgumentType.getString(context, "pack"),
+                                                        StringArgumentType.getString(context, "branch"), true)))
+                                .then(Commands.argument("overwrite", BoolArgumentType.bool())
+                                        .executes((CommandContext<CommandSourceStack> context) ->
+                                                download(context.getSource(),
+                                                        StringArgumentType.getString(context, "pack"),
+                                                        StringArgumentType.getString(context, "branch"),
+                                                        BoolArgumentType.getBool(context, "overwrite"))))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> metricsTree(String name) {
@@ -380,11 +414,21 @@ public final class IrisModdedCommands {
                         .executes((CommandContext<CommandSourceStack> context) -> editBiome(context.getSource(), null))
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(BIOME_KEYS)
                                 .executes((CommandContext<CommandSourceStack> context) -> editBiome(context.getSource(), StringArgumentType.getString(context, "key")))))
+                .then(Commands.literal("b")
+                        .executes((CommandContext<CommandSourceStack> context) -> editBiome(context.getSource(), null))
+                        .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(BIOME_KEYS)
+                                .executes((CommandContext<CommandSourceStack> context) -> editBiome(context.getSource(), StringArgumentType.getString(context, "key")))))
                 .then(Commands.literal("region")
                         .executes((CommandContext<CommandSourceStack> context) -> editRegion(context.getSource(), null))
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(REGION_KEYS)
                                 .executes((CommandContext<CommandSourceStack> context) -> editRegion(context.getSource(), StringArgumentType.getString(context, "key")))))
+                .then(Commands.literal("r")
+                        .executes((CommandContext<CommandSourceStack> context) -> editRegion(context.getSource(), null))
+                        .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(REGION_KEYS)
+                                .executes((CommandContext<CommandSourceStack> context) -> editRegion(context.getSource(), StringArgumentType.getString(context, "key")))))
                 .then(Commands.literal("dimension")
+                        .executes((CommandContext<CommandSourceStack> context) -> editDimension(context.getSource())))
+                .then(Commands.literal("d")
                         .executes((CommandContext<CommandSourceStack> context) -> editDimension(context.getSource())));
     }
 
@@ -540,21 +584,18 @@ public final class IrisModdedCommands {
                 MessageArgument.untrusted("locale", IrisSettings.get().getGeneral().getLanguage()),
                 MessageArgument.trusted("activeLocale", IrisLanguage.activeLocale())
         ));
-        return 1;
+        return 0;
     }
 
-    private static int whatHand(CommandSourceStack source) {
-        ServerPlayer player = source.getPlayer();
-        if (player == null) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_THIS_COMMAND_CAN_ONLY_BE_USED_BY_PLAYERS_IT_INSPECTS));
-            return 0;
-        }
-        ItemStack stack = player.getMainHandItem();
-        if (stack.isEmpty()) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_YOUR_MAIN_HAND_IS_EMPTY));
-            return 0;
-        }
-        ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_HAND_X, MessageArgument.untrusted("value", BuiltInRegistries.ITEM.getKey(stack.getItem())), MessageArgument.untrusted("value2", stack.getCount())));
+    private static int height(CommandSourceStack source) {
+        ServerLevel level = source.getLevel();
+        IrisModdedCommands.ok(source, IrisLanguage.plain(
+                RuntimeUiMessages.WORLD_HEIGHT_RANGE,
+                MessageArgument.trusted("minY", level.getMinY()),
+                MessageArgument.trusted("maxY", level.getMaxY())));
+        IrisModdedCommands.ok(source, IrisLanguage.plain(
+                RuntimeUiMessages.WORLD_HEIGHT_TOTAL,
+                MessageArgument.trusted("height", level.getHeight())));
         return 1;
     }
 
@@ -662,15 +703,20 @@ public final class IrisModdedCommands {
             }
             iris++;
             String dimensionId = level.dimension().identifier().toString();
-            if (filter != null && !dimensionId.contains(filter) && !irisGenerator.dimensionKey().contains(filter)) {
+            String irisIdentity = ModdedWorldgenIds.generatorIdentity(irisGenerator.dimensionKey());
+            if (filter != null && !dimensionId.contains(filter)
+                    && !irisIdentity.contains(filter)
+                    && !irisGenerator.dimensionKey().contains(filter)) {
                 continue;
             }
             Engine engine = irisGenerator.engineIfBound();
             if (engine == null) {
-                lines.add(dimensionId + ": pack=" + irisGenerator.dimensionKey() + " (engine not started yet)");
+                lines.add(irisIdentity + ": pack=" + irisGenerator.dimensionKey()
+                        + " world=" + dimensionId + " (engine not started yet)");
                 continue;
             }
-            lines.add(dimensionId + ": pack=" + engine.getDimension().getLoadKey()
+            lines.add(irisIdentity + ": pack=" + engine.getDimension().getLoadKey()
+                    + " world=" + dimensionId
                     + " seed=" + level.getSeed()
                     + " height=" + engine.getMinHeight() + ".." + engine.getMaxHeight()
                     + " generated=" + engine.getGenerated()
@@ -688,154 +734,6 @@ public final class IrisModdedCommands {
         for (String line : lines) {
             ok(source, line);
         }
-        return 1;
-    }
-
-    private static int what(CommandSourceStack source) {
-        ServerPlayer player = source.getPlayer();
-        if (player == null) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_THIS_COMMAND_CAN_ONLY_BE_USED_BY_PLAYERS_2));
-            return 0;
-        }
-        ServerLevel level = source.getLevel();
-        Engine engine = engineFor(level);
-        if (engine == null) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_THIS_DIMENSION_IS_NOT_GENERATED_BY_IRIS_6));
-            return 0;
-        }
-        BlockPos pos = player.blockPosition();
-        int relativeY = pos.getY() - engine.getMinHeight();
-        try {
-            IrisBiome biome = engine.getBiome(pos.getX(), relativeY, pos.getZ());
-            ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_BIOME, MessageArgument.untrusted("value", biome.getLoadKey()), MessageArgument.untrusted("value2", biome.getName())));
-        } catch (Throwable e) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_BIOME_LOOKUP_FAILED_2, MessageArgument.untrusted("value", e.getClass().getSimpleName())));
-        }
-        try {
-            IrisRegion region = engine.getRegion(pos.getX(), pos.getZ());
-            ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_REGION, MessageArgument.untrusted("value", region.getLoadKey()), MessageArgument.untrusted("value2", region.getName())));
-        } catch (Throwable e) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_REGION_LOOKUP_FAILED_2, MessageArgument.untrusted("value", e.getClass().getSimpleName())));
-        }
-        try {
-            IrisBiome cave = engine.getCaveBiome(pos.getX(), relativeY, pos.getZ());
-            ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_CAVE_BIOME, MessageArgument.untrusted("value", cave == null ? IrisLanguage.plain(RuntimeUiMessages.STATUS_NONE) : cave.getLoadKey())));
-        } catch (Throwable e) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_CAVE_BIOME_LOOKUP_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName())));
-        }
-        int surfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, pos.getX(), pos.getZ());
-        BlockState surface = level.getBlockState(new BlockPos(pos.getX(), surfaceY - 1, pos.getZ()));
-        ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_SURFACE_BLOCK_Y, MessageArgument.untrusted("value", BuiltInRegistries.BLOCK.getKey(surface.getBlock())), MessageArgument.untrusted("value2", (surfaceY - 1))));
-        ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_POSITION_CHUNK, MessageArgument.untrusted("value", pos.getX()), MessageArgument.untrusted("value2", pos.getY()), MessageArgument.untrusted("value3", pos.getZ()), MessageArgument.untrusted("value4", (pos.getX() >> 4)), MessageArgument.untrusted("value5", (pos.getZ() >> 4))));
-        return 1;
-    }
-
-    private static int whatBlock(CommandSourceStack source) {
-        ServerPlayer player = source.getPlayer();
-        if (player == null) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_THIS_COMMAND_CAN_ONLY_BE_USED_BY_PLAYERS_IT_INSPECTS_2));
-            return 0;
-        }
-        HitResult hit = player.pick(128.0D, 1.0F, false);
-        if (hit.getType() != HitResult.Type.BLOCK || !(hit instanceof BlockHitResult blockHit)) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_LOOK_AT_BLOCK_NOT_SKY));
-            return 0;
-        }
-        ServerLevel level = source.getLevel();
-        BlockPos pos = blockHit.getBlockPos();
-        BlockState state = level.getBlockState(pos);
-        PlatformBlockState platform = ModdedBlockState.of(state, null);
-        ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_BLOCK_Y, MessageArgument.untrusted("value", platform.key()), MessageArgument.untrusted("value2", pos.getY())));
-        List<String> flags = new ArrayList<>();
-        if (platform.isSolid()) {
-            flags.add("solid");
-        }
-        if (platform.isFluid()) {
-            flags.add("fluid");
-        }
-        if (platform.isWater()) {
-            flags.add("water");
-        }
-        if (platform.isWaterLogged()) {
-            flags.add("waterlogged");
-        }
-        if (platform.isStorage()) {
-            flags.add("storage (loot capable)");
-        }
-        if (platform.isLit()) {
-            flags.add("lit");
-        }
-        if (platform.isFoliage()) {
-            flags.add("foliage");
-        }
-        if (platform.isFoliagePlantable()) {
-            flags.add("plantable foliage");
-        }
-        if (platform.isDecorant()) {
-            flags.add("decorant");
-        }
-        if (platform.isOre()) {
-            flags.add("ore");
-        }
-        if (platform.hasTileEntity()) {
-            flags.add("tile entity");
-        }
-        if (flags.isEmpty()) {
-            ok(source, IrisLanguage.plain(IrisMessages.MODDED_PROPERTIES_NONE));
-            return 1;
-        }
-        ok(source, IrisLanguage.plain(
-                IrisMessages.MODDED_PROPERTIES,
-                MessageArgument.untrusted("properties", String.join(", ", flags))
-        ));
-        return 1;
-    }
-
-    private static int whatMarkers(CommandSourceStack source, String markerRaw) {
-        ServerPlayer player = source.getPlayer();
-        if (player == null) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_THIS_COMMAND_CAN_ONLY_BE_USED_BY_PLAYERS_MARKERS_RENDER));
-            return 0;
-        }
-        ServerLevel level = source.getLevel();
-        Engine engine = engineFor(level);
-        if (engine == null) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_THIS_DIMENSION_IS_NOT_GENERATED_BY_IRIS_7));
-            return 0;
-        }
-        String marker = markerRaw.trim();
-        BlockPos origin = player.blockPosition();
-        int chunkX = origin.getX() >> 4;
-        int chunkZ = origin.getZ() >> 4;
-        MinecraftServer server = source.getServer();
-        ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_SCANNING_MARKERS_AROUND_YOU, MessageArgument.untrusted("marker", marker)));
-        Thread thread = new Thread(() -> {
-            List<int[]> hits = new ArrayList<>();
-            MatterMarker matterMarker = new MatterMarker(marker);
-            try {
-                for (int cx = chunkX - 4; cx <= chunkX + 4; cx++) {
-                    for (int cz = chunkZ - 4; cz <= chunkZ + 4; cz++) {
-                        for (IrisPosition position : engine.getMantle().findMarkers(cx, cz, matterMarker)) {
-                            hits.add(new int[]{position.getX(), position.getY(), position.getZ()});
-                        }
-                    }
-                }
-            } catch (Throwable e) {
-                LOGGER.error("Iris marker scan failed for {}", marker, e);
-                server.execute(() -> fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_MARKER_SCAN_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()))));
-                return;
-            }
-            server.execute(() -> {
-                for (int[] hit : hits) {
-                    level.sendParticles(player, MARKER_DUST, true, true,
-                            hit[0] + 0.5D, hit[1] + 1.0D, hit[2] + 0.5D,
-                            3, 0.2D, 0.2D, 0.2D, 0.0D);
-                }
-                ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_FOUND_NEARBY_MARKER_S, MessageArgument.untrusted("value", hits.size()), MessageArgument.untrusted("marker", marker)));
-            });
-        }, "Iris Marker Scan");
-        thread.setDaemon(true);
-        thread.start();
         return 1;
     }
 
@@ -1253,9 +1151,26 @@ public final class IrisModdedCommands {
         int blockX = (at.getX() << 4) + 8;
         int blockZ = (at.getZ() << 4) + 8;
         try (GenerationSessionLease lease = engine.acquireGenerationLease("modded_locator_teleport");
-             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             int blockY = engine.getMinHeight() + engine.getHeight(blockX, blockZ, false) + 2;
-            player.teleportTo(level, blockX + 0.5D, blockY, blockZ + 0.5D, Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
+            boolean teleported = player.teleportTo(
+                    level,
+                    blockX + 0.5D,
+                    blockY,
+                    blockZ + 0.5D,
+                    Set.<Relative>of(),
+                    player.getYRot(),
+                    player.getXRot(),
+                    false);
+            if (!teleported) {
+                fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.IRIS_MODDED_COMMANDS_FOUND_AT_BUT_TELEPORTATION_FAILED,
+                        MessageArgument.untrusted("label", label),
+                        MessageArgument.trusted("targetX", blockX),
+                        MessageArgument.trusted("clampedY", blockY),
+                        MessageArgument.trusted("targetZ", blockZ)));
+                return;
+            }
             ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_TELEPORTED_AT_2, MessageArgument.untrusted("label", label), MessageArgument.untrusted("blockX", blockX), MessageArgument.untrusted("blockY", blockY), MessageArgument.untrusted("blockZ", blockZ)));
         } catch (GenerationSessionException e) {
             fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_ENGINE_CHANGED_WHILE_LOCATING_TRY_AGAIN, MessageArgument.untrusted("label", label)));
@@ -1294,22 +1209,32 @@ public final class IrisModdedCommands {
         return 1;
     }
 
-    private static int download(CommandSourceStack source, String pack, String branch) {
-        MinecraftServer server = source.getServer();
+    private static int download(CommandSourceStack source, String pack,
+                                String branch, boolean forceOverwrite) {
         boolean defaultOverworld = PackDownloader.isDefaultOverworld(pack);
-        String downloadSource = defaultOverworld ? "beta release" : "branch " + branch;
+        String baseDownloadSource = defaultOverworld ? "beta release" : "branch " + branch;
+        String downloadSource = forceOverwrite
+                ? baseDownloadSource + IrisLanguage.plain(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX)
+                : baseDownloadSource;
         ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("downloadSource", downloadSource)));
-        Thread thread = new Thread(() -> {
-            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, branch,
-                    (String message) -> server.execute(() -> ok(source, message)));
+        ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
+        if (scheduler == null) {
+            fail(source, IrisLanguage.plain(
+                    ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
+                    MessageArgument.untrusted("pack", pack),
+                    MessageArgument.untrusted("downloadSource", downloadSource)));
+            return 0;
+        }
+        scheduler.async(() -> {
+            boolean installed = ModdedPackInstaller.install(
+                    ModdedEngineBootstrap.loader().configDir(), pack, branch, forceOverwrite,
+                    (String message) -> scheduler.global(() -> ok(source, message)));
             if (installed) {
-                server.execute(() -> ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_INSTALLED_ITS_EXACT_DIMENSION_TYPES_CUSTOM_BIOMES_JOIN_FORCED, MessageArgument.untrusted("pack", pack))));
+                scheduler.global(() -> ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_INSTALLED_ITS_EXACT_DIMENSION_TYPES_CUSTOM_BIOMES_JOIN_FORCED, MessageArgument.untrusted("pack", pack))));
             } else {
-                server.execute(() -> fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("downloadSource", downloadSource))));
+                scheduler.global(() -> fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("downloadSource", downloadSource))));
             }
-        }, "Iris Pack Download");
-        thread.setDaemon(true);
-        thread.start();
+        });
         return 1;
     }
 
@@ -1416,15 +1341,27 @@ public final class IrisModdedCommands {
 
     private static CompletableFuture<Suggestions> suggestPackNames(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
         ModdedCommandFeedback.tab(context.getSource());
-        List<String> names = new ArrayList<>();
+        Set<String> names = new TreeSet<>();
         names.add("overworld");
         try {
             File packs = ModdedEngineBootstrap.loader().configDir().resolve("irisworldgen").resolve("packs").toFile();
             File[] children = packs.listFiles();
             if (children != null) {
                 for (File child : children) {
-                    if (child.isDirectory() && !names.contains(child.getName())) {
-                        names.add(child.getName());
+                    if (!child.isDirectory()) {
+                        continue;
+                    }
+                    String packName = child.getName();
+                    names.add(packName);
+                    File dimensions = new File(child, "dimensions");
+                    File[] dimensionFiles = dimensions.listFiles(
+                            (File directory, String name) -> name.endsWith(".json"));
+                    if (dimensionFiles == null) {
+                        continue;
+                    }
+                    for (File dimensionFile : dimensionFiles) {
+                        String fileName = dimensionFile.getName();
+                        names.add(packName + ":" + fileName.substring(0, fileName.length() - 5));
                     }
                 }
             }

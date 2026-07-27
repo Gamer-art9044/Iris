@@ -97,11 +97,20 @@ public final class IrisClient {
     }
 
     public static void onWorldJoin() {
+        clearWorldState();
         SESSION.sendHello();
     }
 
     public static void onDisconnect() {
         SESSION.reset();
+        clearWorldState();
+    }
+
+    public static void tick() {
+        SESSION.tick();
+    }
+
+    private static void clearWorldState() {
         PREGEN.clear();
         DIMENSION.clear();
         TILES.clear();

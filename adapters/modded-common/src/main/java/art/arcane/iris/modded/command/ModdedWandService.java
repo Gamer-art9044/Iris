@@ -40,6 +40,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ItemLore;
+import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,6 +89,8 @@ public final class ModdedWandService {
         stack.set(DataComponents.UNBREAKABLE, Unit.INSTANCE);
         stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, Boolean.TRUE);
         stack.set(DataComponents.CUSTOM_DATA, CustomData.of(flagTag(WAND_TAG)));
+        stack.set(DataComponents.TOOLTIP_DISPLAY,
+                TooltipDisplay.DEFAULT.withHidden(DataComponents.UNBREAKABLE, true));
         return stack;
     }
 
@@ -99,6 +102,8 @@ public final class ModdedWandService {
         stack.set(DataComponents.UNBREAKABLE, Unit.INSTANCE);
         stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, Boolean.TRUE);
         stack.set(DataComponents.CUSTOM_DATA, CustomData.of(flagTag(DUST_TAG)));
+        stack.set(DataComponents.TOOLTIP_DISPLAY,
+                TooltipDisplay.DEFAULT.withHidden(DataComponents.UNBREAKABLE, true));
         return stack;
     }
 
@@ -187,6 +192,8 @@ public final class ModdedWandService {
 
     public static void clearAll() {
         SELECTIONS.clear();
+        ModdedDustRevealer.clear();
+        ModdedWhatCommands.clear();
     }
 
     public static void serverTick(MinecraftServer server) {

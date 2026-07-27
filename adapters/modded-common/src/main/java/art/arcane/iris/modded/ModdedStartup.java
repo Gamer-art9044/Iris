@@ -95,10 +95,9 @@ public final class ModdedStartup {
                 PackValidationResult result = PackValidator.validate(packDir);
                 PackValidationRegistry.publish(result);
                 if (!result.isLoadable()) {
-                    LOGGER.error("Iris pack '{}' FAILED validation - world/studio creation will be refused. Reasons:", result.getPackName());
-                    for (String reason : result.getBlockingErrors()) {
-                        LOGGER.error("  - {}", reason);
-                    }
+                    LOGGER.error("Iris pack '{}' FAILED validation with {} blocking error(s); world/studio creation will be refused. First error: {}",
+                            result.getPackName(), result.getBlockingErrors().size(),
+                            result.getBlockingErrors().getFirst());
                 } else if (!result.getWarnings().isEmpty()) {
                     LOGGER.info("Iris pack '{}' validated ({} warning(s)).", result.getPackName(), result.getWarnings().size());
                     for (String warning : result.getWarnings()) {
@@ -168,8 +167,6 @@ public final class ModdedStartup {
                 if (e instanceof Error fatalError) {
                     throw fatalError;
                 }
-                throw new IllegalStateException("Iris failed to re-inject persistent dimension '"
-                        + dimension.id() + "' from pack '" + dimension.pack() + "'", e);
             }
         }
         LOGGER.info("Iris re-injected {} persistent dimension(s) at startup", injected);
@@ -187,9 +184,11 @@ public final class ModdedStartup {
             if (new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
                 return;
             }
-            String source = PackDownloader.isDefaultOverworld(pack) ? "beta release" : "master branch";
+            String source = "master branch";
             LOGGER.info("Iris default pack '{}' missing; downloading IrisDimensions/{} ({})", pack, pack, source);
-            boolean installed = ModdedPackInstaller.install(configDir, pack, "master", (String line) -> LOGGER.info("Iris: {}", line));
+            boolean installed = ModdedPackInstaller.install(
+                    configDir, pack, "master", false,
+                    (String line) -> LOGGER.info("Iris: {}", line));
             if (!installed) {
                 LOGGER.warn("Iris default pack '{}' could not be downloaded; install it with /iris download {}", pack, pack);
             }

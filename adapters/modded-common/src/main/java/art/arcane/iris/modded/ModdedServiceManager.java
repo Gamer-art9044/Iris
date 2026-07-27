@@ -90,7 +90,6 @@ public final class ModdedServiceManager {
         if (!enabled) {
             return;
         }
-        enabled = false;
         Throwable failure = null;
         ModdedService[] ordered = services.values().toArray(new ModdedService[0]);
         for (int i = ordered.length - 1; i >= 0; i--) {
@@ -109,6 +108,7 @@ public final class ModdedServiceManager {
         if (failure != null) {
             throw new IllegalStateException("One or more Iris services failed to disable", failure);
         }
+        enabled = false;
     }
 
     synchronized void rollback(Throwable failure) {

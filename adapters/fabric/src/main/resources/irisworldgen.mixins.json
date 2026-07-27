@@ -6,7 +6,7 @@
   "mixins": [
     "BlockItemMixin",
     "BlockMixin",
-    "ServerPacksSourceMixin"
+    "PackRepositoryMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -284,11 +284,11 @@ public final class IrisProtocolServer {
     }
 
     private void dispatch(IrisSession session, IrisMessage message) {
+        if (message instanceof IrisMessage.ClientHello clientHello) {
+            onClientHello(session, clientHello);
+            return;
+        }
         if (session.state() == IrisSession.State.AWAITING_HELLO) {
-            if (message instanceof IrisMessage.ClientHello clientHello) {
-                onClientHello(session, clientHello);
-                return;
-            }
             droppedBeforeHello.incrementAndGet();
             return;
         }

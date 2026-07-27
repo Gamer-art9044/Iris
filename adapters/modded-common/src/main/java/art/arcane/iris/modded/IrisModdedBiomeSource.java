@@ -334,8 +334,7 @@ final class IrisModdedBiomeSource extends BiomeSource {
             if (customBiome == null) {
                 return fallbackBiome(registry, quartX, quartY, quartZ, sampler);
             }
-            biomeKey = engine.getDimension().getLoadKey().toLowerCase(Locale.ROOT)
-                    + ":" + customBiome.getId().toLowerCase(Locale.ROOT);
+            biomeKey = ModdedWorldgenIds.biomeRef(engine, customBiome.getId());
         } else if (resolution.underground()) {
             biomeKey = resolution.irisBiome().getGroundBiomeKey(
                     resolution.rng(), engine, resolution.blockX(), resolution.blockY(), resolution.blockZ());
@@ -514,7 +513,6 @@ final class IrisModdedBiomeSource extends BiomeSource {
                 throw new IllegalStateException("Iris structure biome key lookup has no active engine runtime");
             }
             LinkedHashSet<String> possible = new LinkedHashSet<>();
-            String namespace = engine.getDimension().getLoadKey().toLowerCase(Locale.ROOT);
             for (IrisBiome irisBiome : engine.getAllBiomes()) {
                 String derivative = normalizeKey(irisBiome.getStructureDerivativeKey());
                 if (derivative != null) {
@@ -524,7 +522,7 @@ final class IrisModdedBiomeSource extends BiomeSource {
                     continue;
                 }
                 for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                    possible.add(namespace + ":" + customBiome.getId().toLowerCase(Locale.ROOT));
+                    possible.add(ModdedWorldgenIds.biomeRef(engine, customBiome.getId()));
                 }
             }
             return Set.copyOf(possible);

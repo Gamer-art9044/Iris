@@ -115,21 +115,11 @@ public final class ModdedStudioCommands {
 
         root.executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name));
 
-        root.then(Commands.literal("create")
-                .then(Commands.argument("name", StringArgumentType.word())
-                        .executes((CommandContext<CommandSourceStack> context) -> create(context.getSource(), StringArgumentType.getString(context, "name"), DEFAULT_TEMPLATE))
-                        .then(Commands.argument("template", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                                .executes((CommandContext<CommandSourceStack> context) -> create(context.getSource(), StringArgumentType.getString(context, "name"), StringArgumentType.getString(context, "template"))))));
-        root.then(Commands.literal("+")
-                .then(Commands.argument("name", StringArgumentType.word())
-                        .executes((CommandContext<CommandSourceStack> context) -> create(context.getSource(), StringArgumentType.getString(context, "name"), DEFAULT_TEMPLATE))
-                        .then(Commands.argument("template", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                                .executes((CommandContext<CommandSourceStack> context) -> create(context.getSource(), StringArgumentType.getString(context, "name"), StringArgumentType.getString(context, "template"))))));
+        root.then(createTree("create"));
+        root.then(createTree("+"));
 
-        root.then(Commands.literal("package")
-                .executes((CommandContext<CommandSourceStack> context) -> pkg(context.getSource(), null))
-                .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> pkg(context.getSource(), StringArgumentType.getString(context, "pack")))));
+        root.then(packageTree("package"));
+        root.then(packageTree("pkg"));
 
         root.then(Commands.literal("version")
                 .executes((CommandContext<CommandSourceStack> context) -> version(context.getSource(), null))
@@ -171,6 +161,30 @@ public final class ModdedStudioCommands {
         root.then(message("find-objects", "The chunk object report reads Bukkit chunk data and is not ported to modded servers."));
 
         return root;
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> createTree(String name) {
+        return Commands.literal(name)
+                .executes((CommandContext<CommandSourceStack> context) ->
+                        create(context.getSource(), "studio", DEFAULT_TEMPLATE))
+                .then(Commands.argument("name", StringArgumentType.word())
+                        .executes((CommandContext<CommandSourceStack> context) ->
+                                create(context.getSource(), StringArgumentType.getString(context, "name"), DEFAULT_TEMPLATE))
+                        .then(Commands.argument("template", StringArgumentType.word())
+                                .suggests(IrisModdedCommands.PACK_NAMES)
+                                .executes((CommandContext<CommandSourceStack> context) ->
+                                        create(context.getSource(),
+                                                StringArgumentType.getString(context, "name"),
+                                                StringArgumentType.getString(context, "template")))));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> packageTree(String name) {
+        return Commands.literal(name)
+                .executes((CommandContext<CommandSourceStack> context) -> pkg(context.getSource(), null))
+                .then(Commands.argument("pack", StringArgumentType.word())
+                        .suggests(IrisModdedCommands.PACK_NAMES)
+                        .executes((CommandContext<CommandSourceStack> context) ->
+                                pkg(context.getSource(), StringArgumentType.getString(context, "pack"))));
     }
 
     public static void clear() {
@@ -368,7 +382,7 @@ public final class ModdedStudioCommands {
             File packFolder = new File(ModdedPackCommands.packsRoot(), pack);
             if (!new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
                 server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACK_MISSING_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack))));
-                boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master",
+                boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master", false,
                         (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
                 if (!installed || !new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
                     server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_TRY_IRIS_DOWNLOAD, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack))));
@@ -573,7 +587,7 @@ public final class ModdedStudioCommands {
                 File templateFolder = new File(packsRoot, template);
                 if (!new File(templateFolder, "dimensions/" + template + ".json").isFile()) {
                     server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_TEMPLATE_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("template", template), MessageArgument.untrusted("template2", template))));
-                    boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), template, "master",
+                    boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), template, "master", false,
                             (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
                     if (!installed || !new File(templateFolder, "dimensions/" + template + ".json").isFile()) {
                         server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_TEMPLATE_COULD_NOT_BE_DOWNLOADED_INSTALL_PACK_WITH_DIMENSIONS_JSON, MessageArgument.untrusted("template", template), MessageArgument.untrusted("template2", template))));

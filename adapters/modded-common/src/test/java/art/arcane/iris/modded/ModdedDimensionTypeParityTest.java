@@ -44,6 +44,7 @@ import static art.arcane.iris.engine.object.IrisDimensionTypeOptions.TriState.FA
 import static art.arcane.iris.engine.object.IrisDimensionTypeOptions.TriState.TRUE;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -54,9 +55,14 @@ public class ModdedDimensionTypeParityTest {
         IrisDimension nether = dimension("nether", IrisEnvironment.NETHER, 0, 256, 256, new IrisDimensionTypeOptions());
         IrisDimension end = dimension("the_end", IrisEnvironment.THE_END, 0, 256, 256, new IrisDimensionTypeOptions());
 
-        assertEquals("irisworldgen:overworld", ModdedForcedDatapack.dimensionTypeRef(overworld));
-        assertEquals("irisworldgen:nether", ModdedForcedDatapack.dimensionTypeRef(nether));
-        assertEquals("irisworldgen:the_end", ModdedForcedDatapack.dimensionTypeRef(end));
+        assertEquals("irisworldgen:packs/6f766572776f726c64/dimensions/6f766572776f726c64/dimension_type",
+                ModdedWorldgenIds.dimensionTypeRef("overworld", overworld.getLoadKey()));
+        assertEquals("irisworldgen:packs/6e6574686572/dimensions/6e6574686572/dimension_type",
+                ModdedWorldgenIds.dimensionTypeRef("nether", nether.getLoadKey()));
+        assertEquals("irisworldgen:packs/7468655f656e64/dimensions/7468655f656e64/dimension_type",
+                ModdedWorldgenIds.dimensionTypeRef("the_end", end.getLoadKey()));
+        assertNotEquals(ModdedWorldgenIds.dimensionTypeRef("first", "overworld"),
+                ModdedWorldgenIds.dimensionTypeRef("second", "overworld"));
     }
 
     @Test
@@ -77,18 +83,18 @@ public class ModdedDimensionTypeParityTest {
         roots.add(packDirectory.toFile());
         try {
             for (IrisDimension dimension : dimensions) {
-                ModdedForcedDatapack.writeDimensionType(roots, fixer, dimension);
-                Path output = packDirectory.resolve("data/irisworldgen/dimension_type/"
-                        + dimension.getDimensionTypeKey() + ".json");
+                ModdedForcedDatapack.writeDimensionType(
+                        roots, fixer, dimension, "contracts", dimension.getLoadKey());
+                Path output = typeFile(packDirectory, "contracts", dimension);
                 assertTrue(Files.isRegularFile(output));
                 assertEquals(dimension.getDimensionType().toJson(fixer),
                         Files.readString(output, StandardCharsets.UTF_8));
             }
 
-            JSONObject overworldJson = readType(packDirectory, overworld);
-            JSONObject netherJson = readType(packDirectory, nether);
-            JSONObject endJson = readType(packDirectory, end);
-            JSONObject customJson = readType(packDirectory, custom);
+            JSONObject overworldJson = readType(packDirectory, "contracts", overworld);
+            JSONObject netherJson = readType(packDirectory, "contracts", nether);
+            JSONObject endJson = readType(packDirectory, "contracts", end);
+            JSONObject customJson = readType(packDirectory, "contracts", custom);
 
             assertTrue(overworldJson.getBoolean("has_skylight"));
             assertFalse(overworldJson.getBoolean("has_ceiling"));
@@ -166,10 +172,16 @@ public class ModdedDimensionTypeParityTest {
         return dimension;
     }
 
-    private static JSONObject readType(Path packDirectory, IrisDimension dimension) throws IOException {
-        Path output = packDirectory.resolve("data/irisworldgen/dimension_type/"
-                + dimension.getDimensionTypeKey() + ".json");
-        return new JSONObject(Files.readString(output, StandardCharsets.UTF_8));
+    private static JSONObject readType(Path packDirectory, String pack,
+                                       IrisDimension dimension) throws IOException {
+        return new JSONObject(Files.readString(
+                typeFile(packDirectory, pack, dimension), StandardCharsets.UTF_8));
+    }
+
+    private static Path typeFile(Path packDirectory, String pack, IrisDimension dimension) {
+        String typeRef = ModdedWorldgenIds.dimensionTypeRef(pack, dimension.getLoadKey());
+        return packDirectory.resolve("data/irisworldgen/dimension_type/")
+                .resolve(typeRef.substring(typeRef.indexOf(':') + 1) + ".json");
     }
 
     private static void deleteTree(Path root) throws IOException {

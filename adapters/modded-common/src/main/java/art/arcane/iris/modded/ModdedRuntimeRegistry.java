@@ -19,53 +19,35 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.nms.datapack.DataVersion;
-import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.util.common.data.DataProvider;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
-import com.mojang.serialization.Codec;
-import com.mojang.serialization.JsonOps;
-import net.minecraft.core.Holder;
-import net.minecraft.core.MappedRegistry;
-import net.minecraft.core.RegistrationInfo;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
-import net.minecraft.resources.RegistryOps;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.dimension.DimensionType;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.Locale;
-import java.util.Optional;
+import java.util.List;
 import java.util.Set;
 
 public final class ModdedRuntimeRegistry {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
-    private static final Object LOCK = new Object();
-
     private ModdedRuntimeRegistry() {
     }
 
-    static void ensureDimensionType(RegistryAccess registryAccess, Registry<DimensionType> registry,
-                                    ResourceKey<DimensionType> typeKey, String typeRef, IrisDimension dimension) {
+    static void ensureDimensionType(Registry<DimensionType> registry,
+                                    ResourceKey<DimensionType> typeKey, String typeRef) {
         if (registry.get(typeKey).isPresent()) {
             return;
         }
-        IDataFixer fixer = DataVersion.getLatest().get();
-        String json = dimension.getDimensionType().toJson(fixer);
-        DimensionType type = decode(registryAccess, DimensionType.DIRECT_CODEC, json, typeRef);
-        registerIntoFrozen(registry, typeKey, type, typeRef);
-        LOGGER.info("Iris registered runtime dimension type '{}'", typeRef);
+        throw new IllegalStateException("Iris dimension type '" + typeRef
+                + "' is not synchronized. Restart after installing the pack before creating its world.");
     }
 
     static void ensureCustomBiomes(RegistryAccess registryAccess, IrisDimension dimension, String pack) {
@@ -76,10 +58,8 @@ public final class ModdedRuntimeRegistry {
         Registry<Biome> registry = registryAccess.lookupOrThrow(Registries.BIOME);
         IrisData data = IrisData.get(packFolder);
         DataProvider provider = () -> data;
-        IDataFixer fixer = DataVersion.getLatest().get();
-        String namespace = dimension.getLoadKey().toLowerCase(Locale.ROOT);
         Set<String> seen = new HashSet<>();
-        int registered = 0;
+        List<String> missing = new ArrayList<>();
         for (IrisBiome irisBiome : dimension.getAllBiomes(provider)) {
             if (!irisBiome.isCustom()) {
                 continue;
@@ -89,48 +69,17 @@ public final class ModdedRuntimeRegistry {
                 if (!seen.add(biomeId)) {
                     continue;
                 }
-                String biomeRef = namespace + ":" + biomeId;
+                String biomeRef = ModdedWorldgenIds.biomeRef(pack, dimension.getLoadKey(), biomeId);
                 ResourceKey<Biome> biomeKey = ResourceKey.create(Registries.BIOME, Identifier.parse(biomeRef));
-                if (registry.get(biomeKey).isPresent()) {
-                    continue;
-                }
-                String json = customBiome.generateJson(fixer);
-                Biome biome = decode(registryAccess, Biome.DIRECT_CODEC, json, biomeRef);
-                registerIntoFrozen(registry, biomeKey, biome, biomeRef);
-                registered++;
-            }
-        }
-        if (registered > 0) {
-            LOGGER.info("Iris registered {} runtime biome(s) for pack '{}'", registered, pack);
-        }
-    }
-
-    private static <T> T decode(RegistryAccess registryAccess, Codec<T> codec, String json, String ref) {
-        JsonElement element = JsonParser.parseString(json);
-        RegistryOps<JsonElement> ops = RegistryOps.create(JsonOps.INSTANCE, registryAccess);
-        return codec.parse(ops, element).getOrThrow((String message) ->
-                new IllegalStateException("Iris could not decode runtime registry entry '" + ref + "': " + message));
-    }
-
-    private static <T> Holder.Reference<T> registerIntoFrozen(Registry<T> registry, ResourceKey<T> key, T value, String ref) {
-        if (!(registry instanceof MappedRegistry<T> mapped)) {
-            throw new IllegalStateException("Iris cannot register '" + ref + "' at runtime: "
-                    + registry.getClass().getName() + " is not a MappedRegistry");
-        }
-        synchronized (LOCK) {
-            Optional<Holder.Reference<T>> raced = registry.get(key);
-            if (raced.isPresent()) {
-                return raced.get();
-            }
-            boolean wasFrozen = mapped.frozen;
-            mapped.frozen = false;
-            try {
-                return mapped.register(key, value, RegistrationInfo.BUILT_IN);
-            } finally {
-                if (wasFrozen) {
-                    mapped.freeze();
+                if (registry.get(biomeKey).isEmpty()) {
+                    missing.add(biomeRef);
                 }
             }
+        }
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException("Iris pack '" + pack + "' has " + missing.size()
+                    + " unsynchronized custom biome(s). Restart before creating its world. First missing entry: "
+                    + missing.getFirst());
         }
     }
 }

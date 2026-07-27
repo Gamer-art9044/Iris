@@ -524,7 +524,11 @@ public class IrisDimension extends IrisRegistrant {
 
     public void installBiomes(IDataFixer fixer, DataProvider data, KList<File> datapackRoots, KSet<String> biomes) throws IOException {
         String namespace = getLoadKey().toLowerCase(Locale.ROOT);
+        installBiomes(fixer, data, datapackRoots, namespace, "", biomes);
+    }
 
+    public void installBiomes(IDataFixer fixer, DataProvider data, KList<File> datapackRoots,
+                              String namespace, String pathPrefix, KSet<String> biomes) throws IOException {
         for (IrisBiome irisBiome : getAllBiomes(data)) {
             if (!irisBiome.isCustom()) {
                 continue;
@@ -542,12 +546,15 @@ public class IrisDimension extends IrisRegistrant {
                 }
 
                 for (File datapackRoot : datapackRoots) {
-                    File output = new File(datapackRoot, "data/" + namespace + "/worldgen/biome/" + customBiomeId + ".json");
+                    String biomePath = pathPrefix.isBlank()
+                            ? customBiomeId
+                            : pathPrefix + "/" + customBiomeId;
+                    File output = new File(datapackRoot, "data/" + namespace + "/worldgen/biome/" + biomePath + ".json");
 
                     IrisLogging.debug("    Installing Data Pack Biome: " + output.getPath());
                     output.getParentFile().mkdirs();
                     IO.writeAll(output, json);
-                    installBiomeTags(datapackRoot, namespace + ":" + customBiomeId, customBiome.getTags());
+                    installBiomeTags(datapackRoot, namespace + ":" + biomePath, customBiome.getTags());
                 }
             }
         }

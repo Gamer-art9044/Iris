@@ -7,6 +7,7 @@ import java.util.function.LongSupplier;
 
 public final class IrisClientCursor {
     private static final long MIN_REQUEST_INTERVAL_MILLIS = 500L;
+    private static final long SAME_POSITION_REFRESH_MILLIS = 2_000L;
 
     private final ClientPacketSink sink;
     private final LongSupplier clock;
@@ -27,10 +28,11 @@ public final class IrisClientCursor {
     }
 
     public synchronized void requestFor(int blockX, int blockZ) {
-        if (requested && blockX == lastRequestedX && blockZ == lastRequestedZ) {
+        long now = clock.getAsLong();
+        boolean samePosition = requested && blockX == lastRequestedX && blockZ == lastRequestedZ;
+        if (samePosition && now - lastRequestMillis < SAME_POSITION_REFRESH_MILLIS) {
             return;
         }
-        long now = clock.getAsLong();
         if (now - lastRequestMillis < MIN_REQUEST_INTERVAL_MILLIS) {
             return;
         }

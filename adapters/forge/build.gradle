@@ -174,6 +174,12 @@ dependencies {
 minecraft {
     accessTransformer.from(file('src/main/resources/META-INF/accesstransformer.cfg'))
     runs {
+        register('client') {
+            workingDir = layout.projectDirectory.dir('run')
+            jvmArgs('-Xmx8G')
+            args('--mixin.config', 'irisworldgen.entity.mixins.json',
+                    '--mixin.config', 'irisworldgen.client.mixins.json')
+        }
         register('server') {
             workingDir = layout.projectDirectory.dir('run')
             String parity = providers.gradleProperty('irisParity').getOrNull()
@@ -223,7 +229,7 @@ tasks.named('shadowJar', ShadowJar).configure {
         delete(layout.buildDirectory.file("libs/Iris-${project.version}+mc${minecraftVersion}-forge.jar"))
     }
     manifest {
-        attributes('MixinConfigs': 'irisworldgen.entity.mixins.json')
+        attributes('MixinConfigs': 'irisworldgen.entity.mixins.json,irisworldgen.client.mixins.json')
     }
     archiveFileName.set(irisArtifactName('Forge', "${minecraftVersion}+${loaderDisplayVersion(forgeVersion)}"))
     configurations = [project.configurations.named('bundle').get()]

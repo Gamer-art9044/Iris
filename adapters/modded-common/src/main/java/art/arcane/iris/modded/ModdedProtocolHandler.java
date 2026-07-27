@@ -64,6 +64,7 @@ public final class ModdedProtocolHandler {
         }
         SESSION_ENGINES.clear();
         SESSION_LEVELS.clear();
+        dimensionSyncTicks = 0;
         IrisSessionRegistry sessionRegistry = new IrisSessionRegistry();
         ModdedProtocolTransport serverTransport = new ModdedProtocolTransport(server, boundChannel);
         IrisProtocolServer protocol = new IrisProtocolServer(sessionRegistry, SERVER_CAPABILITIES, brand(), true);
@@ -95,6 +96,7 @@ public final class ModdedProtocolHandler {
         }
         SESSION_ENGINES.clear();
         SESSION_LEVELS.clear();
+        dimensionSyncTicks = 0;
         registry = null;
         protocolServer = null;
         transport = null;

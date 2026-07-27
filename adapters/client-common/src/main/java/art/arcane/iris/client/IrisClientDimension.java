@@ -11,7 +11,7 @@ public final class IrisClientDimension {
         if (previous == null) {
             return true;
         }
-        return previous.irisWorld() != incoming.irisWorld() || !previous.dimensionKey().equals(incoming.dimensionKey());
+        return !previous.equals(incoming);
     }
 
     public IrisMessage.DimensionStatus status() {

@@ -45,7 +45,7 @@ public final class IrisVisionScreen extends Screen {
     private double centerBlockZ;
     private int zoom;
     private boolean initialized;
-    private String renderedDimensionKey;
+    private IrisMessage.DimensionStatus renderedDimension;
 
     public IrisVisionScreen() {
         super(Component.literal(IrisLanguage.plain(ClientUiMessages.VISION_TITLE)));
@@ -54,7 +54,7 @@ public final class IrisVisionScreen extends Screen {
         this.centerBlockZ = 0.0D;
         this.zoom = DEFAULT_ZOOM;
         this.initialized = false;
-        this.renderedDimensionKey = null;
+        this.renderedDimension = null;
     }
 
     @Override
@@ -290,12 +290,12 @@ public final class IrisVisionScreen extends Screen {
     }
 
     private void syncWorld(IrisMessage.DimensionStatus status) {
-        if (renderedDimensionKey == null) {
-            renderedDimensionKey = status.dimensionKey();
+        if (renderedDimension == null) {
+            renderedDimension = status;
             return;
         }
-        if (!renderedDimensionKey.equals(status.dimensionKey())) {
-            renderedDimensionKey = status.dimensionKey();
+        if (!renderedDimension.equals(status)) {
+            renderedDimension = status;
             releaseTextures();
             centerOnPlayer();
         }

@@ -56,8 +56,12 @@ public final class ModdedEngineMaintenanceService implements ModdedTickableServi
     @Override
     public void onEnable() {
         ExecutorService current = service;
-        if (current != null && !current.isShutdown()) {
-            return;
+        if (current != null) {
+            if (!current.isTerminated()) {
+                throw new IllegalStateException(
+                        "Iris engine maintenance cannot restart while prior workers are still active");
+            }
+            service = null;
         }
 
         IrisSettings.IrisSettingsEngineSVC settings = IrisSettings.get().getPerformance().getEngineSVC();
@@ -75,9 +79,9 @@ public final class ModdedEngineMaintenanceService implements ModdedTickableServi
     @Override
     public void onDisable() {
         ExecutorService active = service;
-        service = null;
         boolean drained = shutdownAndDrain(active);
         if (drained) {
+            service = null;
             inFlight.clear();
         }
         lastSavedAt.clear();

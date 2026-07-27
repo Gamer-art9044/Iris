@@ -26,13 +26,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Stream;
+import java.util.UUID;
 
 public final class MainWorldService {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
-    private static final String PRESET_NAMESPACE = "irisworldgen";
     private static final String MARKER_NAME = "mainworld.pending";
     private static final String[] VANILLA_DIMENSION_FOLDERS = {
             "region",
@@ -54,8 +52,7 @@ public final class MainWorldService {
         int colon = value.indexOf(':');
         String pack = colon >= 0 ? value.substring(0, colon) : value;
         String dimension = colon >= 0 ? value.substring(colon + 1) : value;
-        String presetKey = dimension.equals(pack) ? pack : pack + "_" + dimension;
-        return PRESET_NAMESPACE + ":" + presetKey;
+        return ModdedWorldgenIds.presetRef(pack, dimension);
     }
 
     public static void reconcileEarly() {
@@ -78,15 +75,22 @@ public final class MainWorldService {
                 return;
             }
             String levelName = firstNonBlank(readProperty(properties, "level-name"), "world");
-            wipeVanillaDimensions(instanceRoot().resolve(levelName));
+            Path worldRoot = resolveWorldRoot(levelName);
+            Path recovery = quarantineVanillaDimensions(worldRoot);
             clearPending();
-            LOGGER.warn("Iris main world '{}' generated fresh: cleared the previous overworld/nether/end so this boot regenerates them as {} (player data kept).", pack, target);
+            LOGGER.warn("Iris main world '{}' generated fresh: moved the prior overworld/nether/end data to {} so this boot regenerates them as {} (player data kept).", pack, recovery, target);
         } catch (Throwable e) {
             LOGGER.error("Iris main world reconciliation failed", e);
+            throw new IllegalStateException(
+                    "Iris refused startup after main-world reconciliation failed", e);
         }
     }
 
     public static boolean stage(String packRef, long seed) {
+        if (ModdedEngineBootstrap.loader().clientEnvironment()) {
+            LOGGER.error("Iris main-world replacement is only available on dedicated servers; use the Create World generator selector in singleplayer");
+            return false;
+        }
         try {
             Path properties = instanceRoot().resolve("server.properties");
             writeLevelProperties(properties, presetIdFor(packRef), seed);
@@ -164,24 +168,53 @@ public final class MainWorldService {
         lines.add(prefix + value);
     }
 
-    private static void wipeVanillaDimensions(Path worldRoot) throws IOException {
-        Files.deleteIfExists(worldRoot.resolve("level.dat"));
-        Files.deleteIfExists(worldRoot.resolve("level.dat_old"));
-        for (String folder : VANILLA_DIMENSION_FOLDERS) {
-            deleteRecursively(worldRoot.resolve(folder));
+    private static Path resolveWorldRoot(String levelName) throws IOException {
+        Path root = instanceRoot().toAbsolutePath().normalize();
+        Path worldRoot = root.resolve(levelName).toAbsolutePath().normalize();
+        if (worldRoot.equals(root) || !worldRoot.startsWith(root)) {
+            throw new IOException("Unsafe level-name path outside the server instance: " + levelName);
         }
+        return worldRoot;
     }
 
-    private static void deleteRecursively(Path path) throws IOException {
-        if (!Files.exists(path)) {
+    private static Path quarantineVanillaDimensions(Path worldRoot) throws IOException {
+        Path recovery = markerFile().getParent().resolve("mainworld-recovery-" + UUID.randomUUID());
+        List<Path> moved = new ArrayList<>();
+        moveToRecovery(worldRoot, worldRoot.resolve("level.dat"), recovery, moved);
+        moveToRecovery(worldRoot, worldRoot.resolve("level.dat_old"), recovery, moved);
+        for (String folder : VANILLA_DIMENSION_FOLDERS) {
+            moveToRecovery(worldRoot, worldRoot.resolve(folder), recovery, moved);
+        }
+        if (moved.isEmpty()) {
+            Files.deleteIfExists(recovery);
+        }
+        return recovery;
+    }
+
+    private static void moveToRecovery(Path worldRoot, Path source, Path recovery,
+                                       List<Path> moved) throws IOException {
+        if (!Files.exists(source)) {
             return;
         }
-        List<Path> entries = new ArrayList<>();
-        try (Stream<Path> walk = Files.walk(path)) {
-            walk.sorted(Comparator.comparingInt(Path::getNameCount).reversed()).forEach(entries::add);
-        }
-        for (Path entry : entries) {
-            Files.deleteIfExists(entry);
+        Path relative = worldRoot.relativize(source);
+        Path target = recovery.resolve(relative);
+        Files.createDirectories(target.getParent());
+        try {
+            Files.move(source, target);
+            moved.add(relative);
+        } catch (IOException failure) {
+            for (int index = moved.size() - 1; index >= 0; index--) {
+                Path rollbackRelative = moved.get(index);
+                Path rollbackSource = recovery.resolve(rollbackRelative);
+                Path rollbackTarget = worldRoot.resolve(rollbackRelative);
+                try {
+                    Files.createDirectories(rollbackTarget.getParent());
+                    Files.move(rollbackSource, rollbackTarget);
+                } catch (IOException rollbackFailure) {
+                    failure.addSuppressed(rollbackFailure);
+                }
+            }
+            throw failure;
         }
     }
 

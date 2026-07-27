@@ -28,6 +28,7 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
@@ -35,11 +36,13 @@ public final class ModdedPackInstaller {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Pattern PACK_NAME = Pattern.compile("[a-z0-9_-]+");
     private static final Pattern BRANCH_NAME = Pattern.compile("[A-Za-z0-9._-]+");
+    private static final ConcurrentHashMap<String, Object> INSTALL_LOCKS = new ConcurrentHashMap<>();
 
     private ModdedPackInstaller() {
     }
 
-    public static boolean install(Path configDir, String pack, String branch, Consumer<String> feedback) {
+    public static boolean install(Path configDir, String pack, String branch,
+                                  boolean forceOverwrite, Consumer<String> feedback) {
         if (pack == null || !PACK_NAME.matcher(pack).matches()) {
             feedback.accept(IrisLanguage.plain(PackDownloadMessages.INVALID_PACK_NAME, MessageArgument.untrusted("pack", String.valueOf(pack))));
             return false;
@@ -49,20 +52,31 @@ public final class ModdedPackInstaller {
             return false;
         }
 
-        File packs = configDir.resolve("irisworldgen").resolve("packs").toFile();
-        try {
-            if (PackDownloader.isDefaultOverworld(pack)) {
-                return PackDownloader.downloadDefaultOverworld(packs, true, feedback) != null;
+        Object installLock = INSTALL_LOCKS.computeIfAbsent(pack, key -> new Object());
+        synchronized (installLock) {
+            File packs = configDir.resolve("irisworldgen").resolve("packs").toFile();
+            try {
+                if (PackDownloader.isDefaultOverworld(pack)) {
+                    return PackDownloader.downloadDefaultOverworld(
+                            packs, forceOverwrite, feedback) != null;
+                }
+                return PackDownloader.download(
+                        packs,
+                        "IrisDimensions/" + pack,
+                        branch,
+                        forceOverwrite,
+                        false,
+                        feedback
+                ) != null;
+            } catch (IOException error) {
+                LOGGER.error("Iris pack download failed for IrisDimensions/{} ({})", pack, branch, error);
+                feedback.accept(IrisLanguage.plain(
+                        PackDownloadMessages.DOWNLOAD_FAILED,
+                        MessageArgument.untrusted("type", error.getClass().getSimpleName()),
+                        MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(error))
+                ));
+                return false;
             }
-            return PackDownloader.download(packs, "IrisDimensions/" + pack, branch, true, false, feedback) != null;
-        } catch (IOException error) {
-            LOGGER.error("Iris pack download failed for IrisDimensions/{} ({})", pack, branch, error);
-            feedback.accept(IrisLanguage.plain(
-                    PackDownloadMessages.DOWNLOAD_FAILED,
-                    MessageArgument.untrusted("type", error.getClass().getSimpleName()),
-                    MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(error))
-            ));
-            return false;
         }
     }
 }

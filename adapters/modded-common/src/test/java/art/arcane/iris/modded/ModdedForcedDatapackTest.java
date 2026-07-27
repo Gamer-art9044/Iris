@@ -40,6 +40,21 @@ import static org.junit.Assert.assertTrue;
 
 public class ModdedForcedDatapackTest {
     @Test
+    public void packScopedIdsCannotCollideAndHaveReadableLabels() {
+        String first = ModdedWorldgenIds.presetRef("overworld", "overworld");
+        String second = ModdedWorldgenIds.presetRef("other", "overworld");
+
+        assertFalse(first.equals(second));
+        assertEquals("IRIS:Overworld",
+                ModdedWorldgenIds.displayName(first.substring(first.indexOf(':') + 1)));
+        assertEquals("IRIS:Other / Overworld",
+                ModdedWorldgenIds.displayName(second.substring(second.indexOf(':') + 1)));
+        assertEquals("iris:overworld", ModdedWorldgenIds.generatorIdentity("overworld"));
+        assertEquals("iris:other/overworld",
+                ModdedWorldgenIds.generatorIdentity("other:overworld"));
+    }
+
+    @Test
     public void scopesSharedCustomBiomeIdsByNamespace() {
         Map<String, KSet<String>> seenBiomes = new LinkedHashMap<>();
 

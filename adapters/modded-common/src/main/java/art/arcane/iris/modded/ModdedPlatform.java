@@ -48,10 +48,10 @@ public final class ModdedPlatform implements IrisPlatform {
 
     public ModdedPlatform(ModdedLoader loader) {
         this.loader = loader;
-        this.registries = new ModdedRegistries(loader::currentServer);
+        this.registries = new ModdedRegistries(ModdedEngineBootstrap::currentServer);
         this.scheduler = new ModdedScheduler();
-        this.structureHooks = new ModdedStructureHooks(loader::currentServer);
-        this.biomeWriter = new ModdedBiomeWriter(loader::currentServer);
+        this.structureHooks = new ModdedStructureHooks(ModdedEngineBootstrap::currentServer);
+        this.biomeWriter = new ModdedBiomeWriter(ModdedEngineBootstrap::currentServer);
     }
 
     public static void errorSink(Consumer<Throwable> sink) {
@@ -63,7 +63,7 @@ public final class ModdedPlatform implements IrisPlatform {
     }
 
     public MinecraftServer server() {
-        return loader.currentServer();
+        return ModdedEngineBootstrap.currentServer();
     }
 
     public ModdedScheduler moddedScheduler() {
@@ -137,7 +137,7 @@ public final class ModdedPlatform implements IrisPlatform {
 
     @Override
     public void dispatchConsoleCommand(String command) {
-        ModdedServerCommands.dispatch(loader.currentServer(), command);
+        ModdedServerCommands.dispatch(ModdedEngineBootstrap.currentServer(), command);
     }
 
     @Override

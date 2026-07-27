@@ -91,6 +91,25 @@ public class IrisProtocolServerTest {
     }
 
     @Test
+    public void repeatedHelloResendsServerHelloForPacketLossRecovery() {
+        RecordingTransport transport = new RecordingTransport();
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        IrisProtocolServer server = new IrisProtocolServer(registry, SERVER_CAPABILITIES, BRAND, true);
+        IrisSession session = new IrisSession("s1", transport);
+        registry.register(session);
+        byte[] hello = IrisMessageCodec.encode(new IrisMessage.ClientHello(
+                IrisProtocol.PROTOCOL_VERSION, IrisProtocol.CAPABILITY_PREGEN));
+
+        server.onClientFrame("s1", hello);
+        server.onClientFrame("s1", hello);
+
+        assertEquals(IrisSession.State.READY, session.state());
+        assertEquals(2, transport.sent.size());
+        assertTrue(transport.sent.get(0) instanceof IrisMessage.ServerHello);
+        assertTrue(transport.sent.get(1) instanceof IrisMessage.ServerHello);
+    }
+
+    @Test
     public void readySessionReceivesProgressAndEndBroadcasts() {
         RecordingTransport transport = new RecordingTransport();
         IrisSessionRegistry registry = new IrisSessionRegistry();
@@ -493,6 +512,7 @@ public class IrisProtocolServerTest {
             case "getRegion" -> region;
             case "getCaveBiome" -> cave;
             case "getHeight" -> height;
+            case "getMinHeight" -> 0;
             case "getDimension" -> dimension;
             case "toString" -> "proxyEngine";
             case "hashCode" -> System.identityHashCode(proxy);

@@ -657,7 +657,7 @@ public class CommandStudio implements DirectorExecutor {
                 .getTarget()
                 .getWorld();
         BukkitPlatform.teleportAsync(player, BukkitWorldBinding.spawnLocation(studioWorld))
-                .thenRun(() -> player.setGameMode(GameMode.SPECTATOR));
+                .thenRun(() -> player.setGameMode(GameMode.CREATIVE));
     }
 
     @Director(description = "Update your dimension projects VSCode workspace", descriptionKey = "iris.director.commandstudio.director.update_your_dimension_projects_vscode_workspace")

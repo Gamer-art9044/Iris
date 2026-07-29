@@ -64,4 +64,19 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_base_column\")"));
         assertTrue(source.contains("catch (GenerationSessionException e)"));
     }
+
+    @Test
+    public void vanillaChunkGenerationMobsUseTheVisibleBiomesVanillaDerivative() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int spawnStart = source.indexOf("public void spawnOriginalMobs");
+        int spawnEnd = source.indexOf("private static WeightedList", spawnStart);
+        String spawn = source.substring(spawnStart, spawnEnd);
+
+        assertTrue(spawn.contains("customBiomeSource.getVanillaSpawnBiome(visibleBiome)"));
+        assertTrue(spawn.contains("NaturalSpawner.spawnMobsForChunkGeneration("));
+        assertTrue(spawn.contains("region.getBiome(center.getWorldPosition().atY(region.getMaxY()))"));
+        assertTrue(spawn.contains("new LegacyRandomSource(RandomSupport.generateUniqueSeed())"));
+        assertTrue(spawn.contains("random.setDecorationSeed(region.getSeed()"));
+        assertFalse(spawn.contains("delegate.spawnOriginalMobs"));
+    }
 }

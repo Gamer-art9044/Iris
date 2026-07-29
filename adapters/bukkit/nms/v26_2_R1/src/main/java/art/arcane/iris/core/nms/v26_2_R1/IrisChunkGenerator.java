@@ -37,6 +37,7 @@ import net.minecraft.util.random.WeightedList;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.level.NoiseColumn;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.WorldGenLevel;
@@ -46,6 +47,7 @@ import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.MobSpawnSettings;
 import net.minecraft.world.level.levelgen.GenerationStep;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.LegacyRandomSource;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.RandomSupport;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
@@ -574,8 +576,14 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     }
 
     @Override
-    public void spawnOriginalMobs(WorldGenRegion regionlimitedworldaccess) {
-        delegate.spawnOriginalMobs(regionlimitedworldaccess);
+    public void spawnOriginalMobs(WorldGenRegion region) {
+        ChunkPos center = region.getCenter();
+        Holder<Biome> visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
+        Holder<Biome> vanillaBiome = customBiomeSource.getVanillaSpawnBiome(visibleBiome);
+        WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
+        random.setDecorationSeed(region.getSeed(), center.getMinBlockX(), center.getMinBlockZ());
+        NaturalSpawner.spawnMobsForChunkGeneration(
+                region, vanillaBiome == null ? visibleBiome : vanillaBiome, center, random);
     }
 
     private static WeightedList<MobSpawnSettings.SpawnerData> mergeSpawnTables(

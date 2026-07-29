@@ -979,7 +979,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             return true;
         }
 
-        return IrisSettings.get().getStudio().isEnableEntitySpawning();
+        return IrisSettings.get().getStudio().isEntitySpawning();
     }
 
     private KList<IrisEntitySpawn> spawnRandomly(List<IrisEntitySpawn> types) {

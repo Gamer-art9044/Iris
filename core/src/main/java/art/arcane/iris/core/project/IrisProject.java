@@ -295,7 +295,7 @@ public class IrisProject {
                 }
 
                 if (sender.isPlayer() && sender.player() != null) {
-                    J.runEntity(sender.player(), () -> sender.player().setGameMode(GameMode.SPECTATOR));
+                    J.runEntity(sender.player(), () -> sender.player().setGameMode(GameMode.CREATIVE));
                 }
                 activeProvider = IrisToolbelt.access(result.world());
                 maintenanceWorld = result.world();

@@ -40,8 +40,6 @@ import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.block.Action;
-import org.bukkit.event.entity.CreatureSpawnEvent;
-import org.bukkit.event.entity.EntitySpawnEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -127,26 +125,6 @@ public class ObjectStudioSaveService implements IrisService {
     @EventHandler
     public void onWorldUnload(WorldUnloadEvent event) {
         unregister(event.getWorld());
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onCreatureSpawn(CreatureSpawnEvent event) {
-        if (!studios.containsKey(event.getLocation().getWorld().getUID())) return;
-        CreatureSpawnEvent.SpawnReason reason = event.getSpawnReason();
-        if (reason == CreatureSpawnEvent.SpawnReason.CUSTOM
-                || reason == CreatureSpawnEvent.SpawnReason.COMMAND
-                || reason == CreatureSpawnEvent.SpawnReason.SPAWNER_EGG) {
-            return;
-        }
-        event.setCancelled(true);
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onEntitySpawn(EntitySpawnEvent event) {
-        if (event instanceof CreatureSpawnEvent) return;
-        if (!studios.containsKey(event.getLocation().getWorld().getUID())) return;
-        if (event.getEntity() instanceof org.bukkit.entity.Player) return;
-        event.setCancelled(true);
     }
 
     @EventHandler(ignoreCancelled = true)

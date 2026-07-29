@@ -712,7 +712,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
     }
 
     private boolean isEntitySpawningEnabledForCurrentWorld() {
-        return entitySpawningEnabled(engine.isStudio(), IrisSettings.get().getStudio().isEnableEntitySpawning());
+        return entitySpawningEnabled(engine.isStudio(), IrisSettings.get().getStudio().isEntitySpawning());
     }
 
     static boolean entitySpawningEnabled(boolean studio, boolean studioSetting) {

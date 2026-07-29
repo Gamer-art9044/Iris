@@ -971,7 +971,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                         final Location spawn = w.getSpawnLocation();
                         for (Player i : getServer().getOnlinePlayers()) {
                             final Runnable playerTask = () -> {
-                                i.setGameMode(GameMode.SPECTATOR);
+                                i.setGameMode(GameMode.CREATIVE);
                                 BukkitPlatform.teleportAsync(i, spawn);
                             };
                             if (!J.runEntity(i, playerTask)) {

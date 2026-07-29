@@ -82,6 +82,7 @@ public final class WorldRuntimeControlService {
 
         IrisServices.get(art.arcane.iris.core.link.MultiverseCoreLink.class).removeFromConfig(world);
         setIntGameRule(world, 0, "SPAWN_CHUNK_RADIUS", "spawnChunkRadius");
+        enableStudioEntitySpawning(world);
         if (!IrisSettings.get().getStudio().isDisableTimeAndWeather()) {
             return true;
         }
@@ -100,17 +101,12 @@ public final class WorldRuntimeControlService {
         applyStudioWorldRules(world);
 
         setBooleanGameRule(world, false, "DO_FIRE_TICK", "doFireTick");
-        setBooleanGameRule(world, false, "DO_MOB_SPAWNING", "doMobSpawning");
         setBooleanGameRule(world, false, "DO_MOB_LOOT", "doMobLoot");
-        setBooleanGameRule(world, false, "DO_TRADER_SPAWNING", "doTraderSpawning");
-        setBooleanGameRule(world, false, "DO_PATROL_SPAWNING", "doPatrolSpawning");
-        setBooleanGameRule(world, false, "DO_INSOMNIA", "doInsomnia");
         setBooleanGameRule(world, true, "DO_IMMEDIATE_RESPAWN", "doImmediateRespawn");
         setBooleanGameRule(world, false, "FALL_DAMAGE", "fallDamage");
         setBooleanGameRule(world, false, "FIRE_DAMAGE", "fireDamage");
         setBooleanGameRule(world, false, "DROWNING_DAMAGE", "drowningDamage");
         setBooleanGameRule(world, false, "FREEZE_DAMAGE", "freezeDamage");
-        setBooleanGameRule(world, false, "DO_WARDEN_SPAWNING", "doWardenSpawning");
         setBooleanGameRule(world, false, "MOB_GRIEFING", "mobGriefing");
         setBooleanGameRule(world, false, "DO_TILE_DROPS", "doTileDrops");
         setBooleanGameRule(world, true, "KEEP_INVENTORY", "keepInventory");
@@ -119,6 +115,14 @@ public final class WorldRuntimeControlService {
         setIntGameRule(world, 0, "MAX_ENTITY_CRAMMING", "maxEntityCramming");
         applyNoonTimeLock(world);
         return true;
+    }
+
+    static void enableStudioEntitySpawning(World world) {
+        setBooleanGameRule(world, true, "DO_MOB_SPAWNING", "doMobSpawning");
+        setBooleanGameRule(world, true, "DO_TRADER_SPAWNING", "doTraderSpawning");
+        setBooleanGameRule(world, true, "DO_PATROL_SPAWNING", "doPatrolSpawning");
+        setBooleanGameRule(world, true, "DO_INSOMNIA", "doInsomnia");
+        setBooleanGameRule(world, true, "DO_WARDEN_SPAWNING", "doWardenSpawning");
     }
 
     public boolean applyNoonTimeLock(World world) {

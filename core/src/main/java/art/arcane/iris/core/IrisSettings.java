@@ -295,7 +295,7 @@ public class IrisSettings {
         public boolean studio = true;
         public boolean openVSCode = true;
         public boolean disableTimeAndWeather = true;
-        public boolean enableEntitySpawning = false;
+        public boolean entitySpawning = true;
         public boolean autoStartDefaultStudio = false;
     }
 

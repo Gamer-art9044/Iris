@@ -182,11 +182,26 @@ public final class ModdedStateRotator implements IrisObjectRotation.StateRotator
 
     private static Property<?> findRotation(BlockState state) {
         for (Property<?> property : state.getProperties()) {
-            if (property.getName().equals("rotation") && property instanceof IntegerProperty) {
+            if (property.getName().equals("rotation")
+                    && property instanceof IntegerProperty integer
+                    && isFullRotationCycle(integer)) {
                 return property;
             }
         }
         return null;
+    }
+
+    private static boolean isFullRotationCycle(IntegerProperty property) {
+        List<Integer> values = property.getPossibleValues();
+        if (values.size() != ROTATION_CYCLE_MODS.length) {
+            return false;
+        }
+        for (int value : values) {
+            if (value < 0 || value >= ROTATION_CYCLE_MODS.length) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Property<?> findAxis(BlockState state) {

@@ -31,6 +31,8 @@ import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.project.IrisProject;
+import art.arcane.iris.core.project.IrisPackageCompiler;
+import art.arcane.iris.core.project.IrisCodeWorkspace;
 import art.arcane.iris.core.project.IrisProjectCopier;
 import art.arcane.iris.core.runtime.TransientWorldCleanupSupport;
 import art.arcane.iris.core.tools.IrisToolbelt;
@@ -378,7 +380,7 @@ public class StudioSVC implements IrisService {
     }
 
     public void openVSCode(VolmitSender sender, String dim) {
-        new IrisProject(new File(getWorkspaceFolder(), dim)).openVSCode(sender);
+        new IrisCodeWorkspace(new IrisProject(new File(getWorkspaceFolder(), dim))).openVSCode(sender);
     }
 
     public File getWorkspaceFolder(String... sub) {
@@ -475,7 +477,7 @@ public class StudioSVC implements IrisService {
     }
 
     public File compilePackage(VolmitSender sender, String d, boolean obfuscate, boolean minify) {
-        return new IrisProject(new File(getWorkspaceFolder(), d)).compilePackage(sender, obfuscate, minify);
+        return new IrisPackageCompiler(new IrisProject(new File(getWorkspaceFolder(), d))).compilePackage(sender, obfuscate, minify);
     }
 
     public void createFrom(String existingPack, String newName) {
@@ -496,7 +498,7 @@ public class StudioSVC implements IrisService {
 
         try {
             IrisProject p = new IrisProject(getWorkspaceFolder(newName));
-            JSONObject ws = p.createCodeWorkspaceConfig();
+            JSONObject ws = new IrisCodeWorkspace(p).createCodeWorkspaceConfig();
             IO.writeAll(getWorkspaceFile(newName, newName + ".code-workspace"), ws.toString(0));
         } catch (JSONException | IOException e) {
             IrisLogging.reportError(e);
@@ -548,7 +550,7 @@ public class StudioSVC implements IrisService {
 
     public void updateWorkspace() {
         if (isProjectOpen()) {
-            activeProject.updateWorkspace();
+            new IrisCodeWorkspace(activeProject).updateWorkspace();
         }
     }
 }

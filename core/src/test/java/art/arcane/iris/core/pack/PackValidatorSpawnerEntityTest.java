@@ -110,7 +110,7 @@ public class PackValidatorSpawnerEntityTest {
     }
 
     private List<String> validate(File pack) {
-        return PackValidator.validateSpawnerEntityReferences(
+        return PackSpawnValidator.validateSpawnerEntityReferences(
                 new File(pack, "spawners"), new File(pack, "entities"));
     }
 

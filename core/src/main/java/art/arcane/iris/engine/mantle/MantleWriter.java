@@ -26,13 +26,11 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.IrisGeneratorStyle;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.TileData;
-import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.volmlib.util.function.Function3;
@@ -44,17 +42,15 @@ import art.arcane.volmlib.util.matter.MatterCavern;
 import art.arcane.volmlib.util.matter.MatterSlice;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.common.scheduling.J;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import lombok.Data;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.B;
 import org.bukkit.util.Vector;
 
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 import static art.arcane.iris.engine.mantle.EngineMantle.AIR;
 
@@ -62,19 +58,22 @@ import static art.arcane.iris.engine.mantle.EngineMantle.AIR;
 public class MantleWriter implements IObjectPlacer, AutoCloseable {
     private final EngineMantle engineMantle;
     private final Mantle<Matter> mantle;
-    private final Map<Long, MantleChunk<Matter>> cachedChunks;
     private final int radius;
     private final int x;
     private final int z;
+    private final int windowSide;
+    private final AtomicReferenceArray<MantleChunk<Matter>> window;
 
     public MantleWriter(EngineMantle engineMantle, Mantle<Matter> mantle, int x, int z, int radius, boolean multicore) {
         this.engineMantle = engineMantle;
         this.mantle = mantle;
         this.radius = radius * 2;
-        final int d = this.radius + 1;
-        this.cachedChunks = multicore ? new KMap<>(d * d, 0.75f, Math.max(32, Runtime.getRuntime().availableProcessors() * 4)) : new Long2ObjectOpenHashMap<>(d * d);
         this.x = x;
         this.z = z;
+        // Every coordinate acquireChunk accepts lives in this window, so a flat array replaces the
+        // boxed per-block map lookup on the placement and carve hot paths.
+        this.windowSide = (this.radius * 2) + 1;
+        this.window = new AtomicReferenceArray<>(windowSide * windowSide);
 
         final boolean foliaMaintenance = J.isFolia()
                 && WorldMaintenance.isWorldMaintenanceActive(engineMantle.getEngine().getWorld().identity());
@@ -82,18 +81,14 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         if (foliaMaintenance && IrisSettings.get().getGeneral().isDebug()) {
             IrisLogging.info("MantleWriter using sequential chunk prefetch for maintenance regen at " + x + "," + z + ".");
         }
-        Map<Long, MantleChunk<Matter>> map = multicore
-                ? cachedChunks
-                : new KMap<Long, MantleChunk<Matter>>(d * d, 1f, parallelism);
         mantle.getChunks(
                 x - radius,
                 x + radius,
                 z - radius,
                 z + radius,
                 parallelism,
-                (i, j, c) -> map.put(Cache.key(i, j), c.use())
+                this::storePrefetchedChunk
         );
-        if (!multicore) cachedChunks.putAll(map);
     }
 
     private static Set<IrisPosition> getBallooned(Set<IrisPosition> vset, double radius) {
@@ -337,19 +332,48 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
 
     @ChunkCoordinates
     public MantleChunk<Matter> acquireChunk(int cx, int cz) {
-        if (cx < this.x - radius || cx > this.x + radius
-                || cz < this.z - radius || cz > this.z + radius) {
+        int index = windowIndex(cx, cz);
+        if (index < 0) {
             IrisLogging.error("Mantle Writer Accessed chunk out of bounds" + cx + "," + cz);
             return null;
         }
-        final Long key = Cache.key(cx, cz);
-        MantleChunk<Matter> chunk = cachedChunks.get(key);
-        if (chunk == null) {
-            chunk = mantle.getChunk(cx, cz).use();
-            MantleChunk<Matter> old = cachedChunks.put(key, chunk);
-            if (old != null) old.release();
+
+        while (true) {
+            MantleChunk<Matter> chunk = window.get(index);
+            if (chunk != null) {
+                return chunk;
+            }
+
+            // Losing this race must release our own use, never the winner's: the winner is already
+            // writing through the chunk it published.
+            MantleChunk<Matter> acquired = mantle.getChunk(cx, cz).use();
+            if (window.compareAndSet(index, null, acquired)) {
+                return acquired;
+            }
+            acquired.release();
         }
-        return chunk;
+    }
+
+    @ChunkCoordinates
+    private int windowIndex(int cx, int cz) {
+        int localX = cx - x + radius;
+        int localZ = cz - z + radius;
+        if (localX < 0 || localX >= windowSide || localZ < 0 || localZ >= windowSide) {
+            return -1;
+        }
+        return (localX * windowSide) + localZ;
+    }
+
+    @ChunkCoordinates
+    private void storePrefetchedChunk(int cx, int cz, MantleChunk<Matter> chunk) {
+        int index = windowIndex(cx, cz);
+        if (index < 0) {
+            return;
+        }
+
+        if (!window.compareAndSet(index, null, chunk.use())) {
+            chunk.release();
+        }
     }
 
     @Override
@@ -934,10 +958,11 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
 
     @Override
     public void close() {
-        Iterator<MantleChunk<Matter>> iterator = cachedChunks.values().iterator();
-        while (iterator.hasNext()) {
-            iterator.next().release();
-            iterator.remove();
+        for (int index = 0; index < window.length(); index++) {
+            MantleChunk<Matter> chunk = window.getAndSet(index, null);
+            if (chunk != null) {
+                chunk.release();
+            }
         }
     }
 }

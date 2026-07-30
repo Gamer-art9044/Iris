@@ -72,8 +72,9 @@ public final class PackDownloader {
             ZipUtil.unpack(zip, work);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             feedback.accept(IrisLanguage.plain(PackDownloadMessages.UNPACK_FAILED));
+            IO.delete(work);
+            return null;
         }
         File dir = null;
         File[] zipFiles = work.listFiles();

@@ -29,7 +29,7 @@ public class PackValidatorRemovedWorldgenFieldTest {
                 "Dimension 'main' declares removed field 'fluidBodies'. Remove it because fluid-body generation is not supported.",
                 "Region 'nested/region' declares removed field 'fluidBodies'. Remove it because fluid-body generation is not supported.",
                 "Biome 'nested/biome' declares removed field 'fluidBodies'. Remove it because fluid-body generation is not supported."
-        ), PackValidator.validateRemovedWorldgenFields(pack));
+        ), PackObjectSurfaceValidator.validateRemovedWorldgenFields(pack));
     }
 
     @Test

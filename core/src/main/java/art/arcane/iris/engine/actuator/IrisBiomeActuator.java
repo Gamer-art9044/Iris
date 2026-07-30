@@ -23,19 +23,25 @@ import art.arcane.iris.engine.framework.EngineAssignedActuator;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.util.project.context.ChunkContext;
+import art.arcane.iris.util.project.context.ChunkedDataCache;
+import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.iris.util.project.hunk.Hunk;
+import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterBiomeInject;
 import art.arcane.volmlib.util.matter.slices.BiomeInjectMatter;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
+import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBiome;
 
 public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
     private final RNG rng;
     private final ChronoLatch cl = new ChronoLatch(5000);
+    private final KMap<String, ResolvedBiome> resolvedBiomes = new KMap<>();
 
     public IrisBiomeActuator(Engine engine) {
         super(engine, "Biome");
@@ -47,36 +53,65 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
     public void onActuate(int x, int z, Hunk<PlatformBiome> h, boolean multicore, ChunkContext context) {
         try {
             PrecisionStopwatch p = PrecisionStopwatch.start();
-            for (int xf = 0; xf < h.getWidth(); xf++) {
+            int width = h.getWidth();
+            int depth = h.getDepth();
+            int height = h.getHeight();
+            Engine engine = getEngine();
+            Mantle<Matter> mantle = engine.getMantle().getMantle();
+            ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
+
+            for (int xf = 0; xf < width; xf++) {
                 IrisBiome ib;
-                for (int zf = 0; zf < h.getDepth(); zf++) {
-                    ib = context.getBiome().get(xf, zf);
-                    MatterBiomeInject matter;
-                    PlatformBiome biome;
+                for (int zf = 0; zf < depth; zf++) {
+                    ib = biomeCache.get(xf, zf);
+                    String key;
 
                     if (ib.isCustom()) {
-                        IrisBiomeCustom custom = ib.getCustomBiome(rng, getEngine(), x + xf, 0, z + zf);
-                        String key = getDimension().getLoadKey() + ":" + custom.getId();
-                        biome = IrisPlatforms.get().registries().biome(key);
-                        matter = BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(key));
+                        IrisBiomeCustom custom = ib.getCustomBiome(rng, engine, x + xf, 0, z + zf);
+                        key = getDimension().getLoadKey() + ":" + custom.getId();
                     } else {
-                        String skyKey = ib.getSkyBiomeKey(rng, getEngine(), x + xf, 0, z + zf);
-                        biome = IrisPlatforms.get().registries().biome(skyKey);
-                        matter = BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(skyKey));
+                        key = ib.getSkyBiomeKey(rng, engine, x + xf, 0, z + zf);
                     }
+
+                    ResolvedBiome resolved = resolve(key);
+                    PlatformBiome biome = resolved.biome();
 
                     if (biome != null) {
-                        for (int yf = 0; yf < h.getHeight(); yf++) {
-                            h.set(xf, yf, zf, biome);
-                        }
+                        h.set(xf, 0, zf, xf, height - 1, zf, biome);
                     }
 
-                    getEngine().getMantle().getMantle().set(x + xf, 0, z + zf, matter);
+                    mantle.set(x + xf, 0, z + zf, resolved.matter());
                 }
             }
-            getEngine().getMetrics().getBiome().put(p.getMilliseconds());
+            engine.getMetrics().getBiome().put(p.getMilliseconds());
         } catch (Throwable e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * The registry lookup and the biome id only depend on the scatter resolved key, so cache the pair
+     * instead of paying two string keyed lookups per column. Unresolved biomes are never cached, so a
+     * biome registered later still resolves.
+     */
+    private ResolvedBiome resolve(String key) {
+        ResolvedBiome cached = key == null ? null : resolvedBiomes.get(key);
+
+        if (cached != null) {
+            return cached;
+        }
+
+        IrisPlatform platform = IrisPlatforms.get();
+        PlatformBiome biome = platform.registries().biome(key);
+        ResolvedBiome resolved = new ResolvedBiome(biome, BiomeInjectMatter.get(platform.biomeWriter().biomeIdFor(key)));
+
+        if (key != null && biome != null) {
+            resolvedBiomes.put(key, resolved);
+        }
+
+        return resolved;
+    }
+
+    private record ResolvedBiome(PlatformBiome biome, MatterBiomeInject matter) {
     }
 }

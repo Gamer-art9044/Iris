@@ -131,18 +131,10 @@ public class ObjectResourceLoader extends ResourceLoader<IrisObject> {
             return null;
         }
 
-        for (File i : getFolders(name)) {
-            for (File j : i.listFiles()) {
-                if (j.isFile() && j.getName().endsWith(".iob") && j.getName().split("\\Q.\\E")[0].equals(name)) {
-                    return j;
-                }
-            }
+        File file = resolveFile(name, ".iob");
 
-            File file = new File(i, name + ".iob");
-
-            if (file.exists()) {
-                return file;
-            }
+        if (file != null) {
+            return file;
         }
 
         IrisLogging.warn("Couldn't find " + resourceTypeName + ": " + name + " (called by " + callerHint() + ")");
@@ -155,21 +147,8 @@ public class ObjectResourceLoader extends ResourceLoader<IrisObject> {
     }
 
     private IrisObject loadRaw(String name) {
-        for (File i : getFolders(name)) {
-            for (File j : i.listFiles()) {
-                if (j.isFile() && j.getName().endsWith(".iob") && j.getName().split("\\Q.\\E")[0].equals(name)) {
-                    return loadFile(j, name);
-                }
-            }
-
-            File file = new File(i, name + ".iob");
-
-            if (file.exists()) {
-                return loadFile(file, name);
-            }
-        }
-
-        return null;
+        File file = resolveFile(name, ".iob");
+        return file == null ? null : loadFile(file, name);
     }
 
     public IrisObject load(String name, boolean warn) {

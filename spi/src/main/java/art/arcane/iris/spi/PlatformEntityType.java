@@ -20,13 +20,32 @@ package art.arcane.iris.spi;
 
 /**
  * Neutral handle for a resolved entity type backed by an adapter-owned native handle.
+ * <p>
+ * Immutable and safe to share across threads. Internal to Iris; not a published integration surface.
+ *
+ * @see PlatformRegistries#entity(String)
  */
 public interface PlatformEntityType {
+    /**
+     * Canonical {@code namespace:path} entity type key. Never null.
+     */
     String key();
 
+    /**
+     * Namespace half of {@link #key()}. Never null.
+     */
     String namespace();
 
+    /**
+     * The host's spawn category, lowercased - {@code monster}, {@code creature}, {@code ambient} and so on.
+     * Iris matches it against pack spawn rules, so the string form is the contract rather than any enum. Never
+     * null.
+     */
     String spawnCategory();
 
+    /**
+     * The adapter's backing entity type object - {@code org.bukkit.entity.EntityType} on Bukkit,
+     * {@code EntityType} on a mod loader. Never null. Only code inside the owning adapter may cast it.
+     */
     Object nativeHandle();
 }

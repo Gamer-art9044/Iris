@@ -108,7 +108,7 @@ public final class ModdedDustRevealer {
                 pos.immutable(),
                 key,
                 level.getMinY(),
-                level.getMaxY(),
+                level.getMaxY() + 1,
                 new AtomicBoolean());
         RevealRun previous = ACTIVE_RUNS.put(player.getUUID(), run);
         if (previous != null) {
@@ -144,14 +144,14 @@ public final class ModdedDustRevealer {
                 run.key(),
                 run.engine().getMinHeight(),
                 run.minY(),
-                run.maxY(),
+                run.maxYExclusive(),
                 run.cancelled(),
                 (int x, int relativeY, int z) ->
                         run.engine().getObjectPlacementKey(x, relativeY, z));
     }
 
     static List<BlockPos> collect(BlockPos origin, String key, int engineMinY,
-                                  int minY, int maxY, AtomicBoolean cancelled,
+                                  int minY, int maxYExclusive, AtomicBoolean cancelled,
                                   ObjectPlacementLookup lookup) {
         List<BlockPos> hits = new ArrayList<>();
         Set<BlockPos> visited = new HashSet<>();
@@ -169,7 +169,7 @@ public final class ModdedDustRevealer {
                         }
                         BlockPos next = current.offset(dx, dy, dz);
                         if (next.getY() < minY
-                                || next.getY() >= maxY
+                                || next.getY() >= maxYExclusive
                                 || !visited.add(next)) {
                             continue;
                         }
@@ -483,7 +483,7 @@ public final class ModdedDustRevealer {
             BlockPos origin,
             String key,
             int minY,
-            int maxY,
+            int maxYExclusive,
             AtomicBoolean cancelled
     ) {
     }

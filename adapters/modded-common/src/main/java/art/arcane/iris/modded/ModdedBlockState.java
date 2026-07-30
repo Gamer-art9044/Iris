@@ -38,6 +38,7 @@ public final class ModdedBlockState implements PlatformBlockState {
     private final String key;
     private final String namespace;
     private final String deferredPlacementKey;
+    private volatile String materialKey;
     private volatile Boolean air;
     private volatile Boolean solid;
     private volatile Boolean occluding;
@@ -146,6 +147,17 @@ public final class ModdedBlockState implements PlatformBlockState {
     @Override
     public String namespace() {
         return namespace;
+    }
+
+    @Override
+    public String materialKey() {
+        String cached = materialKey;
+        if (cached == null) {
+            int bracket = key.indexOf('[');
+            cached = bracket < 0 ? key : key.substring(0, bracket);
+            materialKey = cached;
+        }
+        return cached;
     }
 
     @Override

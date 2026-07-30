@@ -45,7 +45,7 @@ public class NativeStructurePostProcessorScatteredFeatureTest {
         BoundingBox cachedBounds = start.getBoundingBox();
         BoundingBox footprint = piece.getBoundingBox();
 
-        int offset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 start, "minecraft:desert_pyramid", 0, 63, -64, 320, false, false, null,
                 (x, z) -> x == footprint.maxX() && z == footprint.maxZ() ? 64 : 92);
 
@@ -63,7 +63,7 @@ public class NativeStructurePostProcessorScatteredFeatureTest {
         StructureStart start = jungleStart(piece);
         BoundingBox footprint = piece.getBoundingBox();
 
-        int offset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 start, "minecraft:jungle_pyramid", 4, 63, -64, 320, false, false, null,
                 (x, z) -> x == footprint.minX() && z == footprint.minZ() ? 88 : 70);
 
@@ -78,9 +78,9 @@ public class NativeStructurePostProcessorScatteredFeatureTest {
         TestDesertPyramidPiece piece = new TestDesertPyramidPiece(RandomSource.create(23L), 0, 0);
         StructureStart start = desertStart(piece);
 
-        int initialOffset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int initialOffset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 start, "minecraft:desert_pyramid", 0, 63, -64, 320, false, false, null, (x, z) -> 80);
-        int repeatedOffset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int repeatedOffset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 start, "minecraft:desert_pyramid", 0, 63, -64, 320, false, false, null, (x, z) -> 80);
 
         assertEquals(17, initialOffset);
@@ -93,7 +93,7 @@ public class NativeStructurePostProcessorScatteredFeatureTest {
         TestDesertPyramidPiece piece = new TestDesertPyramidPiece(RandomSource.create(29L), 0, 0);
         StructureStart start = desertStart(piece);
 
-        int offset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 start, "minecraft:desert_pyramid", 0, 63, -64, 320, false, false, null, (x, z) -> 318);
 
         assertEquals(241, offset);
@@ -110,12 +110,12 @@ public class NativeStructurePostProcessorScatteredFeatureTest {
         StructureStart jungleStart = jungleStart(jungle);
         StructureStart swampStart = swampStart(swamp);
 
-        assertFalse(NativeStructurePostProcessor.requiresSurfaceTerrain(desertStart));
-        assertFalse(NativeStructurePostProcessor.requiresSurfaceTerrain(jungleStart));
-        assertFalse(NativeStructurePostProcessor.requiresSurfaceTerrain(swampStart));
+        assertFalse(NativeStructureSurfaceFitter.requiresSurfaceTerrain(desertStart));
+        assertFalse(NativeStructureSurfaceFitter.requiresSurfaceTerrain(jungleStart));
+        assertFalse(NativeStructureSurfaceFitter.requiresSurfaceTerrain(swampStart));
 
         AtomicInteger terrainQueries = new AtomicInteger();
-        int offset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 swampStart, "minecraft:swamp_hut", 0, 63, -64, 320, false, false, null,
                 (x, z) -> terrainQueries.incrementAndGet());
         assertEquals(0, offset);
@@ -125,7 +125,7 @@ public class NativeStructurePostProcessorScatteredFeatureTest {
 
     @Test
     public void scatteredHeightFieldMatchesTheRuntimeContract() {
-        Field field = NativeStructurePostProcessor.resolveScatteredHeightPositionField();
+        Field field = NativeStructureReflection.resolveScatteredHeightPositionField();
 
         assertEquals(ScatteredFeaturePiece.class, field.getDeclaringClass());
         assertEquals(int.class, field.getType());

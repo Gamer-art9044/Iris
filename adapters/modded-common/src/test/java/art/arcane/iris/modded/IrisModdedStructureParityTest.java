@@ -58,10 +58,10 @@ public class IrisModdedStructureParityTest {
 
     @Test
     public void spawnHeightMatchesPaperFixedSpawnClamp() {
-        assertEquals(96, IrisModdedChunkGenerator.clampSpawnHeight(-64, 384));
-        assertEquals(96, IrisModdedChunkGenerator.clampSpawnHeight(0, 128));
-        assertEquals(88, IrisModdedChunkGenerator.clampSpawnHeight(80, 10));
-        assertEquals(101, IrisModdedChunkGenerator.clampSpawnHeight(100, 20));
+        assertEquals(96, ModdedDimensionMetadata.clampSpawnHeight(-64, 384));
+        assertEquals(96, ModdedDimensionMetadata.clampSpawnHeight(0, 128));
+        assertEquals(88, ModdedDimensionMetadata.clampSpawnHeight(80, 10));
+        assertEquals(101, ModdedDimensionMetadata.clampSpawnHeight(100, 20));
     }
 
     @Test
@@ -109,7 +109,7 @@ public class IrisModdedStructureParityTest {
                 .setVanillaDerivative("minecraft:plains")
                 .setInferredType(InferredType.SEA);
 
-        Set<String> keys = IrisModdedChunkGenerator.collectConfiguredBiomeKeys(
+        Set<String> keys = ModdedDimensionMetadata.collectConfiguredBiomeKeys(
                 List.of(ocean, custom, shore, unsafeSea), "OverWorld");
 
         assertEquals(Set.of("minecraft:deep_ocean", "minecraft:forest", "minecraft:beach",
@@ -150,8 +150,8 @@ public class IrisModdedStructureParityTest {
                 .setFluidHeight(50);
         dimension.setLoadKey("bootstrap_contract");
 
-        IrisModdedChunkGenerator.DimensionMetadata metadata =
-                IrisModdedChunkGenerator.dimensionMetadata(dimension);
+        ModdedDimensionMetadata.DimensionMetadata metadata =
+                ModdedDimensionMetadata.dimensionMetadata(dimension);
 
         assertEquals(-256, metadata.minY());
         assertEquals(512, metadata.maxY());
@@ -161,8 +161,8 @@ public class IrisModdedStructureParityTest {
 
     @Test
     public void structureRingWorkersWaitWithoutBlockingLifecycleBinding() throws Exception {
-        IrisModdedChunkGenerator.EngineBinding<String> binding =
-                new IrisModdedChunkGenerator.EngineBinding<>(5L, TimeUnit.SECONDS);
+        ModdedEngineBinding<String> binding =
+                new ModdedEngineBinding<>(5L, TimeUnit.SECONDS);
         String exactEngine = "exact-engine";
         CountDownLatch workerStarted = new CountDownLatch(1);
         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -184,8 +184,8 @@ public class IrisModdedStructureParityTest {
 
     @Test
     public void structureRingBindingPropagatesBootstrapFailure() {
-        IrisModdedChunkGenerator.EngineBinding<String> binding =
-                new IrisModdedChunkGenerator.EngineBinding<>(1L, TimeUnit.SECONDS);
+        ModdedEngineBinding<String> binding =
+                new ModdedEngineBinding<>(1L, TimeUnit.SECONDS);
         IllegalArgumentException failure = new IllegalArgumentException("broken pack");
         binding.fail(failure);
 
@@ -200,16 +200,16 @@ public class IrisModdedStructureParityTest {
 
     @Test
     public void structureBiomeBootstrapAllowsOnlyPendingBindingsToUseMetadata() {
-        IrisModdedChunkGenerator.EngineBinding<String> binding =
-                new IrisModdedChunkGenerator.EngineBinding<>(1L, TimeUnit.SECONDS);
+        ModdedEngineBinding<String> binding =
+                new ModdedEngineBinding<>(1L, TimeUnit.SECONDS);
 
         binding.throwIfFailed("overworld:overworld");
     }
 
     @Test
     public void structureBiomeBootstrapPropagatesBindingFailure() {
-        IrisModdedChunkGenerator.EngineBinding<String> binding =
-                new IrisModdedChunkGenerator.EngineBinding<>(1L, TimeUnit.SECONDS);
+        ModdedEngineBinding<String> binding =
+                new ModdedEngineBinding<>(1L, TimeUnit.SECONDS);
         IllegalArgumentException failure = new IllegalArgumentException("broken pack");
         binding.fail(failure);
 

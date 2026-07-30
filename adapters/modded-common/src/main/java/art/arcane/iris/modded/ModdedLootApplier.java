@@ -267,14 +267,20 @@ public final class ModdedLootApplier {
         for (int i = 0; i < container.getContainerSize() && !stack.isEmpty(); i++) {
             ItemStack existing = container.getItem(i);
             if (existing.isEmpty()) {
-                container.setItem(i, stack);
-                return;
+                container.setItem(i, stack.split(container.getMaxStackSize(stack)));
+                continue;
             }
-            if (ItemStack.isSameItemSameComponents(existing, stack) && existing.getCount() < existing.getMaxStackSize()) {
-                int move = Math.min(stack.getCount(), existing.getMaxStackSize() - existing.getCount());
-                existing.grow(move);
-                stack.shrink(move);
+            if (ItemStack.isSameItemSameComponents(existing, stack)) {
+                int limit = container.getMaxStackSize(existing);
+                if (existing.getCount() < limit) {
+                    int move = Math.min(stack.getCount(), limit - existing.getCount());
+                    existing.grow(move);
+                    stack.shrink(move);
+                }
             }
+        }
+        if (!stack.isEmpty()) {
+            IrisLogging.debug("Iris loot: container full, dropped " + stack.getCount() + "x " + stack.getItem());
         }
     }
 

@@ -3,15 +3,14 @@ package art.arcane.iris.engine;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisGenerator;
 import art.arcane.iris.engine.object.IrisInterpolator;
-import art.arcane.iris.util.project.interpolation.IrisInterpolation.NoiseBounds;
-import art.arcane.iris.util.project.interpolation.IrisInterpolation.NoiseBoundsProvider;
+import art.arcane.iris.util.project.interpolation.NoiseBounds;
+import art.arcane.iris.util.project.interpolation.NoiseBoundsProvider;
 import org.junit.Test;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.HashMap;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
@@ -82,7 +81,7 @@ public class IrisComplexGridBoundsCacheTest {
                 Engine.class,
                 IrisInterpolator.class,
                 int.class,
-                Set.class,
+                IrisGenerator[].class,
                 int.class,
                 int.class
         );
@@ -94,7 +93,7 @@ public class IrisComplexGridBoundsCacheTest {
         Field gridBoundsCache = IrisComplex.class.getDeclaredField("gridBoundsCache");
         gridBoundsCache.setAccessible(true);
         ThreadLocal<?> cache = (ThreadLocal<?>) gridBoundsCache.get(complex);
-        return (long) method.invoke(complex, cache.get(), null, interpolator, 0, Set.<IrisGenerator>of(), x, z);
+        return (long) method.invoke(complex, cache.get(), null, interpolator, 0, new IrisGenerator[0], x, z);
     }
 
     private float unpackLow(long packed) {

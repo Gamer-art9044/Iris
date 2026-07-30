@@ -19,11 +19,22 @@
 package art.arcane.iris.spi;
 
 /**
- * Severity levels for platform-routed log messages.
+ * Severity levels for platform-routed log messages. Adapters map these onto the host logger; the unbound
+ * fallback in {@link IrisLogging} sends {@link #WARN} and {@link #ERROR} to {@code System.err} and the rest to
+ * {@code System.out}.
+ * <p>
+ * Constants may be added. Switch expressions over this enum need a {@code default} arm.
  */
 public enum LogLevel {
+    /**
+     * Diagnostic detail. Adapters route it to the host logger's own debug channel unless Iris debug logging is
+     * enabled, so it is normally invisible in server output.
+     */
     DEBUG,
+    /** Normal operational messages. */
     INFO,
+    /** Recoverable problems and misconfiguration. */
     WARN,
+    /** Failures; usually paired with {@link IrisPlatform#reportError(Throwable)}. */
     ERROR
 }

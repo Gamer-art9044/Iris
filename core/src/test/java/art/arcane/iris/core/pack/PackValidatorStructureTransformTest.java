@@ -25,7 +25,7 @@ public class PackValidatorStructureTransformTest {
         write(pack, "regions/nested/region.json", "{\"structures\":[{\"structures\":[\"test\"],\"translate\":{}}]}");
         write(pack, "biomes/nested/biome.json", "{\"structures\":[{\"structures\":[\"test\"],\"scale\":{}}]}");
 
-        List<String> errors = PackValidator.validateUnsupportedStructureTransforms(pack);
+        List<String> errors = PackObjectSurfaceValidator.validateUnsupportedStructureTransforms(pack);
 
         assertEquals(List.of(
                 "Dimension 'main' structures[0] declares unsupported field 'rotation'. Structure placement transforms are not supported; remove the field.",
@@ -39,7 +39,7 @@ public class PackValidatorStructureTransformTest {
         File pack = temporaryFolder.newFolder("pack");
         write(pack, "biomes/biome.json", "{\"objects\":[{\"rotation\":{},\"translate\":{},\"scale\":{}}],\"structures\":[{\"structures\":[\"test\"]}]}");
 
-        assertTrue(PackValidator.validateUnsupportedStructureTransforms(pack).isEmpty());
+        assertTrue(PackObjectSurfaceValidator.validateUnsupportedStructureTransforms(pack).isEmpty());
     }
 
     @Test

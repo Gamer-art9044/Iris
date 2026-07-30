@@ -43,10 +43,11 @@ public final class ModdedIrisLog {
 
     public static void debug(String message) {
         if (!debugEnabled()) {
+            LOGGER.debug(clean(message));
             return;
         }
 
-        LOGGER.debug(clean(message));
+        LOGGER.info("[Iris/DEBUG] " + clean(message));
     }
 
     public static void info(String message) {

@@ -341,10 +341,6 @@ public class VolmitSender implements CommandSender {
 
     @Override
     public void sendMessage(String message) {
-        if (s instanceof CommandDummy) {
-            return;
-        }
-
         if ((!IrisSettings.get().getGeneral().isUseCustomColorsIngame() && s instanceof Player) || !IrisSettings.get().getGeneral().isUseConsoleCustomColors()) {
             s.sendMessage(C.translateAlternateColorCodes('&', getTag() + message));
             return;
@@ -363,10 +359,6 @@ public class VolmitSender implements CommandSender {
     }
 
     public void sendMessageRaw(String message) {
-        if (s instanceof CommandDummy) {
-            return;
-        }
-
         if ((!IrisSettings.get().getGeneral().isUseCustomColorsIngame() && s instanceof Player) || !IrisSettings.get().getGeneral().isUseConsoleCustomColors()) {
             s.sendMessage(C.translateAlternateColorCodes('&', message));
             return;
@@ -381,9 +373,6 @@ public class VolmitSender implements CommandSender {
     }
 
     public void sendComponent(Component component) {
-        if (s instanceof CommandDummy) {
-            return;
-        }
         deliver(component);
     }
 

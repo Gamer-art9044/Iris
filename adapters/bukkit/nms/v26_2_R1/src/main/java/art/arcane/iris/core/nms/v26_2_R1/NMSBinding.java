@@ -171,7 +171,14 @@ public class NMSBinding implements INMSBinding {
             return o;
         }
 
-        return invokeFor(type, source);
+        o = invokeFor(type, source);
+
+        if (o != null) {
+            return o;
+        }
+
+        throw new IllegalStateException("Iris cannot resolve a " + type.getName()
+                + " from " + source.getClass().getName() + " on this server version");
     }
 
     private static Object invokeFor(Class<?> returns, Object in) {
@@ -181,8 +188,9 @@ public class NMSBinding implements INMSBinding {
                 try {
                     IrisLogging.debug("[NMS] Found " + returns.getSimpleName() + " in " + in.getClass().getSimpleName() + "." + i.getName() + "()");
                     return i.invoke(in);
-                } catch (Throwable e) {
-                    e.printStackTrace();
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    throw new IllegalStateException("Iris failed to invoke " + in.getClass().getName() + "."
+                            + i.getName() + "() for " + returns.getName(), e);
                 }
             }
         }
@@ -191,7 +199,15 @@ public class NMSBinding implements INMSBinding {
     }
 
     private static Object fieldFor(Class<?> returns, Object in) {
-        return fieldForClass(returns, in.getClass(), in);
+        for (Class<?> sourceType = in.getClass(); sourceType != null; sourceType = sourceType.getSuperclass()) {
+            Object o = fieldForClass(returns, sourceType, in);
+
+            if (o != null) {
+                return o;
+            }
+        }
+
+        return null;
     }
 
     @SuppressWarnings("unchecked")
@@ -202,8 +218,9 @@ public class NMSBinding implements INMSBinding {
                 try {
                     IrisLogging.debug("[NMS] Found " + returnType.getSimpleName() + " in " + sourceType.getSimpleName() + "." + i.getName());
                     return (T) i.get(in);
-                } catch (IllegalAccessException e) {
-                    e.printStackTrace();
+                } catch (IllegalAccessException | RuntimeException e) {
+                    throw new IllegalStateException("Iris failed to read " + sourceType.getName() + "."
+                            + i.getName() + " for " + returnType.getName(), e);
                 }
             }
         }
@@ -366,11 +383,18 @@ public class NMSBinding implements INMSBinding {
     }
 
     private RegistryAccess registry() {
-        return registryAccess.aquire(() -> (RegistryAccess) getFor(RegistryAccess.Frozen.class, ((CraftServer) Bukkit.getServer()).getHandle().getServer()));
+        RegistryAccess access = registryAccess.aquire(() -> (RegistryAccess) getFor(RegistryAccess.Frozen.class, ((CraftServer) Bukkit.getServer()).getHandle().getServer()));
+
+        if (access == null) {
+            throw new IllegalStateException("Iris cannot resolve the Minecraft registry access on this server version");
+        }
+
+        return access;
     }
 
     private Registry<net.minecraft.world.level.biome.Biome> getCustomBiomeRegistry() {
-        return registry().lookup(Registries.BIOME).orElse(null);
+        return registry().lookup(Registries.BIOME).orElseThrow(() -> new IllegalStateException(
+                "Iris cannot resolve the Minecraft biome registry on this server version"));
     }
 
     private Registry<Block> getBlockRegistry() {
@@ -435,7 +459,26 @@ public class NMSBinding implements INMSBinding {
 
     @Override
     public String getKeyForBiomeBase(Object biomeBase) {
-        return getCustomBiomeRegistry().getKey((net.minecraft.world.level.biome.Biome) biomeBase).getPath(); // something, not something:something
+        net.minecraft.world.level.biome.Biome biome;
+        if (biomeBase instanceof Holder<?> holder) {
+            Object value = holder.value();
+            if (!(value instanceof net.minecraft.world.level.biome.Biome held)) {
+                throw new IllegalArgumentException("Iris cannot read a biome key from holder value "
+                        + (value == null ? "null" : value.getClass().getName()));
+            }
+            biome = held;
+        } else if (biomeBase instanceof net.minecraft.world.level.biome.Biome direct) {
+            biome = direct;
+        } else {
+            throw new IllegalArgumentException("Iris cannot read a biome key from "
+                    + (biomeBase == null ? "null" : biomeBase.getClass().getName()));
+        }
+
+        Identifier key = getCustomBiomeRegistry().getKey(biome);
+        if (key == null) {
+            throw new IllegalStateException("Iris found no registry key for biome " + biome);
+        }
+        return key.getPath(); // something, not something:something
     }
 
     @Override
@@ -805,7 +848,7 @@ public class NMSBinding implements INMSBinding {
 
     @Override
     public MCAPaletteAccess createPalette() {
-        MCAIdMapper<BlockState> registry = registryCache.aquireNasty(() -> {
+        MCAIdMapper<BlockState> registry = registryCache.aquireNastyPrint(() -> {
             Field cf = IdMapper.class.getDeclaredField("tToId");
             Field df = IdMapper.class.getDeclaredField("idToT");
             Field bf = IdMapper.class.getDeclaredField("nextId");
@@ -818,7 +861,13 @@ public class NMSBinding implements INMSBinding {
             List<BlockState> d = (List<BlockState>) df.get(blockData);
             return new MCAIdMapper<BlockState>(c, d, b);
         });
-        MCAPalette<BlockState> global = globalCache.aquireNasty(() -> new MCAGlobalPalette<>(registry, ((CraftBlockData) AIR).getState()));
+        if (registry == null) {
+            throw new IllegalStateException("Iris cannot mirror the Minecraft block state id map on this server version");
+        }
+        MCAPalette<BlockState> global = globalCache.aquireNastyPrint(() -> new MCAGlobalPalette<>(registry, ((CraftBlockData) AIR).getState()));
+        if (global == null) {
+            throw new IllegalStateException("Iris cannot build the global block state palette on this server version");
+        }
         java.util.Map<CompoundTag, BlockState> innerDecodeCache = new java.util.concurrent.ConcurrentHashMap<>(64);
         java.util.Map<CompoundTag, BlockState> outerDecodeCache = new java.util.concurrent.ConcurrentHashMap<>(64);
         MCAPalettedContainer<BlockState> container = new MCAPalettedContainer<>(global, registry,

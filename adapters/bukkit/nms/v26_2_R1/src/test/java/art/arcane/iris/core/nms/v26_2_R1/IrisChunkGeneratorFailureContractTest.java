@@ -91,6 +91,27 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_worldgen_heightmaps\")"));
     }
 
+    @Test
+    public void worldgenHeightmapPrimingLivesInTheSharedNativegenSources() throws IOException {
+        Path nativegen = Path.of(System.getProperty("iris.nativeStructurePostProcessorSource")).getParent();
+        Path shared = nativegen.resolve("WorldgenTerrainHeightmaps.java");
+
+        assertTrue("Worldgen heightmap priming must be shared with the modded loaders through "
+                + nativegen, Files.isRegularFile(shared));
+
+        String heightmaps = Files.readString(shared);
+
+        assertTrue(heightmaps.contains("package art.arcane.iris.nativegen;"));
+        assertTrue(heightmaps.contains("public static void primeTerrain("));
+        assertTrue(heightmaps.contains("public static void primeStructurePlacement("));
+        assertFalse(heightmaps.contains("org.bukkit"));
+        assertFalse(heightmaps.contains("craftbukkit"));
+
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+
+        assertTrue(source.contains("import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;"));
+    }
+
     private static int occurrences(String source, String needle) {
         int count = 0;
         int index = source.indexOf(needle);

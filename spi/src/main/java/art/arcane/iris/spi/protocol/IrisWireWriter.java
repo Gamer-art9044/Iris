@@ -21,15 +21,31 @@ package art.arcane.iris.spi.protocol;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
+/**
+ * Sequential big-endian writer that builds one protocol frame into a growing byte buffer.
+ * <p>
+ * Not thread-safe: it carries a write position, so one instance serves one frame on one thread. The buffer
+ * doubles as needed and is hard-capped at {@link IrisProtocol#MAX_FRAME_BYTES} - exceeding it throws
+ * {@link IllegalStateException} at the write that overflows rather than emitting an oversized frame the peer
+ * would reject. Field order here is the wire format and must mirror {@link IrisWireReader}.
+ * <p>
+ * Internal to Iris; not a published integration surface.
+ */
 public final class IrisWireWriter {
     private byte[] buffer;
     private int length;
 
+    /**
+     * Creates an empty writer with a small buffer that grows on demand.
+     */
     public IrisWireWriter() {
         this.buffer = new byte[64];
         this.length = 0;
     }
 
+    /**
+     * Writes a 7-bit-continuation varint. Negative values encode as five bytes.
+     */
     public void writeVarInt(int value) {
         int remaining = value;
         while (true) {
@@ -44,6 +60,9 @@ public final class IrisWireWriter {
         }
     }
 
+    /**
+     * Writes a fixed four-byte big-endian int.
+     */
     public void writeInt(int value) {
         ensure(4);
         buffer[length++] = (byte) (value >>> 24);
@@ -52,6 +71,9 @@ public final class IrisWireWriter {
         buffer[length++] = (byte) value;
     }
 
+    /**
+     * Writes a fixed eight-byte big-endian long.
+     */
     public void writeLong(long value) {
         ensure(8);
         buffer[length++] = (byte) (value >>> 56);
@@ -64,14 +86,23 @@ public final class IrisWireWriter {
         buffer[length++] = (byte) value;
     }
 
+    /**
+     * Writes a double as its IEEE 754 bit pattern.
+     */
     public void writeDouble(double value) {
         writeLong(Double.doubleToLongBits(value));
     }
 
+    /**
+     * Writes a boolean as one byte, {@code 1} or {@code 0}.
+     */
     public void writeBoolean(boolean value) {
         writeByte(value ? 1 : 0);
     }
 
+    /**
+     * Writes a varint-length-prefixed UTF-8 string. {@code value} must not be null.
+     */
     public void writeString(String value) {
         byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
         writeVarInt(encoded.length);
@@ -80,6 +111,9 @@ public final class IrisWireWriter {
         length += encoded.length;
     }
 
+    /**
+     * Writes a varint-length-prefixed byte array, copying the contents. {@code value} must not be null.
+     */
     public void writeBytes(byte[] value) {
         writeVarInt(value.length);
         ensure(value.length);
@@ -87,6 +121,10 @@ public final class IrisWireWriter {
         length += value.length;
     }
 
+    /**
+     * The bytes written so far, as a fresh copy trimmed to length. The writer stays usable afterwards. Never
+     * returns null.
+     */
     public byte[] toByteArray() {
         return Arrays.copyOf(buffer, length);
     }

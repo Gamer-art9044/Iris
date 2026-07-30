@@ -15,6 +15,11 @@ import art.arcane.iris.nativegen.NativeStructureStartInjector;
 import art.arcane.iris.nativegen.NativeStructureReferenceEnvelope;
 import art.arcane.iris.nativegen.NativeStructureLocateResults;
 import art.arcane.iris.nativegen.NativeStructurePostProcessor;
+import art.arcane.iris.nativegen.NativeStructureSurfaceFitter;
+import art.arcane.iris.nativegen.NativeStructureTerrainIntegrator;
+import art.arcane.iris.nativegen.NativeStructureVegetationClearer;
+import art.arcane.iris.nativegen.NativeStructureVerticalPlacer;
+import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.IrisCustomData;
 import art.arcane.iris.util.common.reflect.WrappedField;
@@ -184,7 +189,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             }
             String key = id.toString();
             IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine,
-                    key, NativeStructurePostProcessor.isUndergroundStep(holder.value().step()));
+                    key, NativeStructureVegetationClearer.isUndergroundStep(holder.value().step()));
             if (!decision.generate()) {
                 continue;
             }
@@ -290,7 +295,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                 throw NativeStructureGenerationException.failure(
                         "resolution", null, chunkPos.x(), chunkPos.z());
             }
-            boolean undergroundStep = NativeStructurePostProcessor.isUndergroundStep(structure.step());
+            boolean undergroundStep = NativeStructureVegetationClearer.isUndergroundStep(structure.step());
             IrisNativeStructureDecision decision;
             try {
                 decision = NativeStructureGenerationPolicy.resolve(engine,
@@ -304,7 +309,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                 continue;
             }
             try {
-                NativeStructurePostProcessor.applyVerticalPlacement(
+                NativeStructureVerticalPlacer.applyVerticalPlacement(
                         start,
                         structureId,
                         decision.yShift(),
@@ -317,7 +322,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                         (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
                 StructureStart wrapped = NativeStructureReferenceEnvelope.wrap(
                         start, structure, start.getReferences(), templateManager,
-                        NativeStructurePostProcessor.resolveNativeTerrain(start, decision.terrain()));
+                        NativeStructureTerrainIntegrator.resolveNativeTerrain(start, decision.terrain()));
                 access.setStartForStructure(structure, wrapped);
             } catch (Throwable error) {
                 throw NativeStructureGenerationException.failure(
@@ -448,8 +453,8 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         List<NativePlacementGroup> placementGroups = new ArrayList<>();
         List<StructureStart> heightmapStarts = new ArrayList<>();
         List<StructureStart> nativeStarts = new ArrayList<>();
-        List<NativeStructurePostProcessor.VegetationTarget> vegetationTargets = new ArrayList<>();
-        List<NativeStructurePostProcessor.TerrainTarget> terrainTargets = new ArrayList<>();
+        List<NativeStructureVegetationClearer.VegetationTarget> vegetationTargets = new ArrayList<>();
+        List<NativeStructureTerrainIntegrator.TerrainTarget> terrainTargets = new ArrayList<>();
         for (int step = 0; step < steps; step++) {
             int index = 0;
             for (Structure structure : byStep.get(step)) {
@@ -461,7 +466,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                 }
                 try {
                     IrisNativeStructureDecision sourceDecision = NativeStructureGenerationPolicy.resolve(engine,
-                            structureId, NativeStructurePostProcessor.isUndergroundStep(structure.step()));
+                            structureId, NativeStructureVegetationClearer.isUndergroundStep(structure.step()));
                     List<StructureStart> starts = structureManager.startsForStructure(sectionPos, structure);
                     List<NativePlacement> resolvedPlacements = new ArrayList<>(starts.size());
                     for (StructureStart start : starts) {
@@ -474,17 +479,17 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                         }
                         resolvedPlacements.add(new NativePlacement(start, decision));
                         heightmapStarts.add(start);
-                        terrainTargets.add(new NativeStructurePostProcessor.TerrainTarget(
+                        terrainTargets.add(new NativeStructureTerrainIntegrator.TerrainTarget(
                                 structureId, start,
-                                NativeStructurePostProcessor.resolveNativeTerrain(
+                                NativeStructureTerrainIntegrator.resolveNativeTerrain(
                                         start, decision.terrain())));
                         if (plan == null || !plan.placement().isUnderground()) {
                             nativeStarts.add(start);
                         }
-                        boolean clearEntireFootprint = NativeStructurePostProcessor
+                        boolean clearEntireFootprint = NativeStructureVegetationClearer
                                 .shouldClearEntireVegetationFootprint(
                                         structure.step(), decision.clearVegetation());
-                        vegetationTargets.add(new NativeStructurePostProcessor.VegetationTarget(
+                        vegetationTargets.add(new NativeStructureVegetationClearer.VegetationTarget(
                                 start, clearEntireFootprint));
                     }
                     if (!resolvedPlacements.isEmpty()) {
@@ -507,7 +512,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                     chunkPos.x(), chunkPos.z(), error);
         }
         try {
-            NativeStructurePostProcessor.prepareSurfaceStructures(
+            NativeStructureSurfaceFitter.prepareSurfaceStructures(
                     world, area, nativeStarts,
                     (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
         } catch (Throwable error) {
@@ -516,7 +521,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                     chunkPos.x(), chunkPos.z(), error);
         }
         try {
-            NativeStructurePostProcessor.clearIntersectingVegetation(
+            NativeStructureVegetationClearer.clearIntersectingVegetation(
                     world, chunk, area, vegetationTargets);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
@@ -741,27 +746,30 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     }
 
     static {
-        Field biomeSource = null;
+        List<Field> biomeSources = new ArrayList<>(1);
         for (Field field : ChunkGenerator.class.getDeclaredFields()) {
             if (!field.getType().equals(BiomeSource.class))
                 continue;
-            biomeSource = field;
-            break;
+            biomeSources.add(field);
         }
-        if (biomeSource == null)
-            throw new RuntimeException("Could not find biomeSource field in ChunkGenerator!");
+        if (biomeSources.size() != 1)
+            throw new IllegalStateException("Expected exactly one BiomeSource field in ChunkGenerator, found "
+                    + biomeSources.size() + " " + biomeSources.stream().map(Field::getName).toList());
+        Field biomeSource = biomeSources.getFirst();
 
-        Method setHeight = null;
+        List<Method> setHeights = new ArrayList<>(1);
         for (Method method : Heightmap.class.getDeclaredMethods()) {
             Class<?>[] types = method.getParameterTypes();
-            if (types.length != 3 || !Arrays.equals(types, new Class<?>[]{int.class, int.class, int.class})
+            if (!method.getName().equals("setHeight")
+                    || !Arrays.equals(types, new Class<?>[]{int.class, int.class, int.class})
                     || !method.getReturnType().equals(void.class))
                 continue;
-            setHeight = method;
-            break;
+            setHeights.add(method);
         }
-        if (setHeight == null)
-            throw new RuntimeException("Could not find setHeight method in Heightmap!");
+        if (setHeights.size() != 1)
+            throw new IllegalStateException("Expected exactly one Heightmap.setHeight(int,int,int) method, found "
+                    + setHeights.size());
+        Method setHeight = setHeights.getFirst();
 
         BIOME_SOURCE = new WrappedField<>(ChunkGenerator.class, biomeSource.getName());
         SET_HEIGHT = new WrappedReturningMethod<>(Heightmap.class, setHeight.getName(), setHeight.getParameterTypes());

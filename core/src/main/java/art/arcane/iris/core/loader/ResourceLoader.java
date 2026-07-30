@@ -52,7 +52,11 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Objects;
@@ -64,6 +68,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -83,7 +88,7 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
     private static final Set<String> schemaBuildQueue = ConcurrentHashMap.newKeySet();
     private static final AtomicBoolean schemaBuildExecutorRegistered = new AtomicBoolean();
     protected final AtomicCache<KList<File>> folderCache;
-    protected KSet<String> firstAccess;
+    protected volatile KSet<String> firstAccess;
     protected File root;
     protected String folderName;
     protected String resourceTypeName;
@@ -163,21 +168,64 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
             return null;
         }
 
-        for (File i : getFolders(name)) {
-            for (File j : i.listFiles()) {
-                if (j.isFile() && j.getName().endsWith(".json") && j.getName().split("\\Q.\\E")[0].equals(name)) {
-                    return j;
-                }
-            }
+        File file = resolveFile(name, ".json");
 
-            File file = new File(i, name + ".json");
-
-            if (file.exists()) {
-                return file;
-            }
+        if (file != null) {
+            return file;
         }
 
         IrisLogging.warn("Couldn't find " + resourceTypeName + ": " + name + " (called by " + callerHint() + ")");
+
+        return null;
+    }
+
+    /**
+     * Resolves a resource file by key. An exact <code>name + extension</code> hit always wins;
+     * only then is the dotted-prefix scan used (so plains.json beats plains.disabled.json).
+     */
+    protected File resolveFile(String name, String extension) {
+        return resolveFile(name, extension, getFolders(name));
+    }
+
+    protected File resolveFile(String name, String extension, KList<File> folders) {
+        if (folders == null) {
+            return null;
+        }
+
+        for (File folder : folders) {
+            File exact = new File(folder, name + extension);
+
+            if (exact.isFile()) {
+                return exact;
+            }
+
+            File[] listed = folder.listFiles();
+
+            if (listed == null) {
+                continue;
+            }
+
+            KList<File> matches = new KList<>();
+
+            for (File candidate : listed) {
+                if (candidate.isFile() && candidate.getName().endsWith(extension) && candidate.getName().split("\\Q.\\E")[0].equals(name)) {
+                    matches.add(candidate);
+                }
+            }
+
+            if (matches.isEmpty()) {
+                continue;
+            }
+
+            if (matches.size() > 1) {
+                matches.sort(Comparator.comparing(File::getName));
+                IrisLogging.warn("Ambiguous " + resourceTypeName + " " + name + " in " + folder.getPath() + ": "
+                        + matches.stream().map(File::getName).collect(Collectors.joining(", "))
+                        + " (using " + matches.get(0).getName() + ")");
+            }
+
+            return matches.get(0);
+        }
 
         return null;
     }
@@ -413,22 +461,8 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
     }
 
     private T loadRaw(String name) {
-        for (File i : getFolders(name)) {
-            //noinspection ConstantConditions
-            for (File j : i.listFiles()) {
-                if (j.isFile() && j.getName().endsWith(".json") && j.getName().split("\\Q.\\E")[0].equals(name)) {
-                    return loadFile(j, name);
-                }
-            }
-
-            File file = new File(i, name + ".json");
-
-            if (file.exists()) {
-                return loadFile(file, name);
-            }
-        }
-
-        return null;
+        File file = resolveFile(name, ".json");
+        return file == null ? null : loadFile(file, name);
     }
 
     public T load(String name, boolean warn) {
@@ -440,53 +474,90 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
             return null;
         }
 
-        var set = firstAccess;
-        if (set != null) firstAccess.add(name);
+        KSet<String> set = firstAccess;
+        if (set != null) set.add(name);
         return loadCache.get(name);
     }
 
-    public void loadFirstAccess(Engine engine) throws IOException {
+    private File prefetchFile(Engine engine) {
         String id = "DIM" + Math.abs(engine.getSeedManager().getSeed() + engine.getDimension().getVersion() + engine.getDimension().getLoadKey().hashCode());
-        File file = IrisPlatforms.get().dataFile("prefetch/" + id + "/" + Math.abs(getFolderName().hashCode()) + ".ipfch");
+        return IrisPlatforms.get().dataFile("prefetch/" + id + "/" + Math.abs(getFolderName().hashCode()) + ".ipfch");
+    }
+
+    public void loadFirstAccess(Engine engine) throws IOException {
+        File file = prefetchFile(engine);
 
         if (!file.exists()) {
             return;
         }
 
-        FileInputStream fin = new FileInputStream(file);
-        GZIPInputStream gzi = new GZIPInputStream(fin);
-        DataInputStream din = new DataInputStream(gzi);
-        int m = din.readInt();
         KList<String> s = new KList<>();
 
-        for (int i = 0; i < m; i++) {
-            s.add(din.readUTF());
+        try (FileInputStream fin = new FileInputStream(file);
+             GZIPInputStream gzi = new GZIPInputStream(fin);
+             DataInputStream din = new DataInputStream(gzi)) {
+            int m = din.readInt();
+
+            if (m < 0) {
+                throw new IOException("Bad prefetch count " + m);
+            }
+
+            for (int i = 0; i < m; i++) {
+                s.add(din.readUTF());
+            }
+        } catch (IOException e) {
+            IrisLogging.warn("Discarding corrupt prefetch " + file.getPath() + ": " + e.getMessage());
+
+            if (!file.delete()) {
+                IrisLogging.warn("Couldn't delete corrupt prefetch " + file.getPath());
+            }
+
+            return;
         }
 
-        din.close();
         IrisLogging.info("Loading " + s.size() + " prefetch " + getFolderName());
         firstAccess = null;
         loadAllParallel(s);
     }
 
     public void saveFirstAccess(Engine engine) throws IOException {
-        if (firstAccess == null) return;
-        String id = "DIM" + Math.abs(engine.getSeedManager().getSeed() + engine.getDimension().getVersion() + engine.getDimension().getLoadKey().hashCode());
-        File file = IrisPlatforms.get().dataFile("prefetch/" + id + "/" + Math.abs(getFolderName().hashCode()) + ".ipfch");
-        file.getParentFile().mkdirs();
-        FileOutputStream fos = new FileOutputStream(file);
-        GZIPOutputStream gzo = new CustomOutputStream(fos, 9);
-        DataOutputStream dos = new DataOutputStream(gzo);
-        var set = firstAccess;
-        firstAccess = null;
-        dos.writeInt(set.size());
+        KSet<String> set = firstAccess;
+        if (set == null) return;
+        KList<String> snapshot = new KList<>(set);
+        File file = prefetchFile(engine);
+        File parent = file.getParentFile();
 
-        for (String i : set) {
-            dos.writeUTF(i);
+        if (parent == null) {
+            throw new IOException("Prefetch path has no parent: " + file.getPath());
         }
 
-        dos.flush();
-        dos.close();
+        if (!parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
+            throw new IOException("Couldn't create prefetch folder " + parent.getPath());
+        }
+
+        File temp = File.createTempFile(file.getName(), ".tmp", parent);
+
+        try {
+            try (FileOutputStream fos = new FileOutputStream(temp);
+                 GZIPOutputStream gzo = new CustomOutputStream(fos, 9);
+                 DataOutputStream dos = new DataOutputStream(gzo)) {
+                dos.writeInt(snapshot.size());
+
+                for (String i : snapshot) {
+                    dos.writeUTF(i);
+                }
+            }
+
+            try {
+                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp.toPath());
+        }
+
+        firstAccess = null;
     }
 
     public KList<File> getFolders() {
@@ -531,21 +602,7 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
     }
 
     public File fileFor(T b) {
-        for (File i : getFolders()) {
-            for (File j : i.listFiles()) {
-                if (j.isFile() && j.getName().endsWith(".json") && j.getName().split("\\Q.\\E")[0].equals(b.getLoadKey())) {
-                    return j;
-                }
-            }
-
-            File file = new File(i, b.getLoadKey() + ".json");
-
-            if (file.exists()) {
-                return file;
-            }
-        }
-
-        return null;
+        return resolveFile(b.getLoadKey(), ".json", getFolders());
     }
 
     public boolean isLoaded(String next) {

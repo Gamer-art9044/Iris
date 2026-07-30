@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.gui;
 
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
@@ -26,72 +27,141 @@ import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.format.Form;
 import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import static art.arcane.iris.util.common.data.registry.Attributes.MAX_HEALTH;
 
 public final class BukkitVisionOverlay implements GuiOverlay {
     private final Engine engine;
+    private final AtomicBoolean playerRefreshQueued = new AtomicBoolean();
+    private volatile List<GuiMarker> playerMarkers = List.of();
 
     public BukkitVisionOverlay(Engine engine) {
         this.engine = engine;
     }
 
+    /**
+     * Called from the AWT event thread, so it may only hand back the last snapshot
+     * built by a server thread.
+     */
     @Override
     public List<GuiMarker> players() {
-        IrisWorld world = engine.getWorld();
-        List<GuiMarker> markers = new ArrayList<>();
-        for (Player player : BukkitWorldBinding.players(world)) {
-            markers.add(GuiMarker.player(player.getName(), player.getLocation().getX(), player.getLocation().getZ()));
+        queuePlayerRefresh();
+        return playerMarkers;
+    }
+
+    private void queuePlayerRefresh() {
+        if (!playerRefreshQueued.compareAndSet(false, true)) {
+            return;
         }
-        return markers;
+
+        boolean scheduled = J.runGlobal(() -> {
+            try {
+                List<GuiMarker> markers = new ArrayList<>();
+                for (Player player : BukkitWorldBinding.players(engine.getWorld())) {
+                    Location at = player.getLocation();
+                    markers.add(GuiMarker.player(player.getName(), at.getX(), at.getZ()));
+                }
+                playerMarkers = List.copyOf(markers);
+            } finally {
+                playerRefreshQueued.set(false);
+            }
+        });
+
+        if (!scheduled) {
+            playerRefreshQueued.set(false);
+        }
     }
 
     @Override
     public void requestEntities(Consumer<List<GuiMarker>> sink) {
-        J.s(() -> {
-            IrisWorld world = engine.getWorld();
-            List<GuiMarker> markers = new ArrayList<>();
-            for (LivingEntity entity : BukkitWorldBinding.entities(world, LivingEntity.class)) {
-                if (entity instanceof Player) {
-                    continue;
-                }
-                String label = Form.capitalizeWords(entity.getType().name().toLowerCase(Locale.ROOT).replaceAll("\\Q_\\E", " "));
-                double maxHealth = 0;
-                try {
-                    maxHealth = entity.getAttribute(MAX_HEALTH).getValue();
-                } catch (Throwable ignored) {
-                }
-                markers.add(GuiMarker.entity(label, entity.getLocation().getX(), entity.getLocation().getY(), entity.getLocation().getZ(),
-                        entity.getHealth(), maxHealth));
+        J.runGlobal(() -> {
+            IrisWorld target = engine.getWorld();
+            World world = BukkitWorldBinding.world(target);
+            if (world == null) {
+                sink.accept(List.of());
+                return;
             }
-            sink.accept(markers);
+
+            List<LivingEntity> living = new ArrayList<>();
+            for (LivingEntity entity : BukkitWorldBinding.entities(target, LivingEntity.class)) {
+                if (!(entity instanceof Player)) {
+                    living.add(entity);
+                }
+            }
+
+            if (living.isEmpty()) {
+                sink.accept(List.of());
+                return;
+            }
+
+            List<GuiMarker> collected = Collections.synchronizedList(new ArrayList<>(living.size()));
+            AtomicInteger pending = new AtomicInteger(living.size());
+            Runnable complete = () -> {
+                if (pending.decrementAndGet() == 0) {
+                    sink.accept(List.copyOf(collected));
+                }
+            };
+
+            for (LivingEntity entity : living) {
+                Location at = entity.getLocation();
+                Runnable read = () -> {
+                    try {
+                        collected.add(marker(entity, at));
+                    } catch (Throwable ignored) {
+                    } finally {
+                        complete.run();
+                    }
+                };
+
+                if (!J.runRegion(world, at.getBlockX() >> 4, at.getBlockZ() >> 4, read)) {
+                    complete.run();
+                }
+            }
         });
+    }
+
+    private GuiMarker marker(LivingEntity entity, Location at) {
+        String label = Form.capitalizeWords(entity.getType().name().toLowerCase(Locale.ROOT).replaceAll("\\Q_\\E", " "));
+        double maxHealth = 0;
+        try {
+            maxHealth = entity.getAttribute(MAX_HEALTH).getValue();
+        } catch (Throwable ignored) {
+        }
+        return GuiMarker.entity(label, at.getX(), at.getY(), at.getZ(), entity.getHealth(), maxHealth);
     }
 
     @Override
     public void teleport(double worldX, double worldZ) {
-        IrisWorld world = engine.getWorld();
-        if (!world.hasPlatformWorld()) {
+        IrisWorld target = engine.getWorld();
+        if (!target.hasPlatformWorld()) {
             return;
         }
-        J.s(() -> {
-            List<Player> players = BukkitWorldBinding.players(world);
+        J.runGlobal(() -> {
+            List<Player> players = BukkitWorldBinding.players(target);
             if (players.isEmpty()) {
                 return;
             }
             Player player = players.get(0);
+            World world = player.getWorld();
             int xx = (int) worldX;
             int zz = (int) worldZ;
-            int yy = player.getWorld().getHighestBlockYAt(xx, zz) + 1;
-            player.teleport(new Location(player.getWorld(), xx, yy, zz));
+            J.runRegion(world, xx >> 4, zz >> 4, () -> {
+                int yy = world.getHighestBlockYAt(xx, zz) + 1;
+                Location destination = new Location(world, xx, yy, zz);
+                J.runEntity(player, () -> BukkitPlatform.teleportAsync(player, destination));
+            });
         });
     }
 

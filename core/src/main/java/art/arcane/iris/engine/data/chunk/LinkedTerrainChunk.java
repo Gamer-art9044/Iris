@@ -61,6 +61,21 @@ public class LinkedTerrainChunk implements TerrainChunk {
         biomes[biomeIndex(x, y, z)] = (Biome) bio.nativeHandle();
     }
 
+    /**
+     * Writes the whole vertical column in one pass, striding the flat biome array directly. Equivalent to
+     * calling setBiome for every y in [minHeight, maxHeight).
+     */
+    public void fillBiomeColumn(int x, int z, PlatformBiome bio) {
+        Biome handle = (Biome) bio.nativeHandle();
+        int stride = CHUNK_SIZE * CHUNK_SIZE;
+        int index = (z & (CHUNK_SIZE - 1)) * CHUNK_SIZE + (x & (CHUNK_SIZE - 1));
+
+        for (int y = 0; y < biomeHeight; y++) {
+            biomes[index] = handle;
+            index += stride;
+        }
+    }
+
     @Override
     public int getMinHeight() {
         return minHeight;

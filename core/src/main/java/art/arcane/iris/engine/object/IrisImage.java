@@ -28,6 +28,7 @@ import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.util.Objects;
 
 public class IrisImage extends IrisRegistrant {
     private final BufferedImage image;
@@ -37,7 +38,7 @@ public class IrisImage extends IrisRegistrant {
     }
 
     public IrisImage(BufferedImage image) {
-        this.image = image;
+        this.image = Objects.requireNonNull(image, "IrisImage requires a decoded image (the source file was unreadable or not an image)");
     }
 
     public int getWidth() {

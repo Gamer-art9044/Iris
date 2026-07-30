@@ -20,11 +20,26 @@ package art.arcane.iris.spi;
 
 /**
  * Neutral handle for a resolved item type backed by an adapter-owned native handle.
+ * <p>
+ * Describes an item type, not a stack - no count, no components. Immutable and safe to share across threads.
+ * Internal to Iris; not a published integration surface.
+ *
+ * @see PlatformRegistries#item(String)
  */
 public interface PlatformItem {
+    /**
+     * Canonical {@code namespace:path} item key. Never null.
+     */
     String key();
 
+    /**
+     * Namespace half of {@link #key()}. Never null.
+     */
     String namespace();
 
+    /**
+     * The adapter's backing item object - {@code org.bukkit.Material} on Bukkit, an {@code Item} registry value
+     * on a mod loader. Never null. Only code inside the owning adapter may cast it.
+     */
     Object nativeHandle();
 }

@@ -10,7 +10,7 @@ import static org.junit.Assert.assertTrue;
 public class IrisEngineLifecycleGateTest {
     @Test
     public void incompleteBackgroundDrainBlocksResourceRelease() {
-        IrisEngine.BackgroundTaskDrain drain = new IrisEngine.BackgroundTaskDrain(
+        EngineBackgroundTasks.BackgroundTaskDrain drain = new EngineBackgroundTasks.BackgroundTaskDrain(
                 new TimeoutException("still running"), false);
 
         assertFalse(drain.allowsResourceRelease());
@@ -18,7 +18,7 @@ public class IrisEngineLifecycleGateTest {
 
     @Test
     public void completedFailedTaskAllowsSafeResourceRelease() {
-        IrisEngine.BackgroundTaskDrain drain = new IrisEngine.BackgroundTaskDrain(
+        EngineBackgroundTasks.BackgroundTaskDrain drain = new EngineBackgroundTasks.BackgroundTaskDrain(
                 new IllegalStateException("completed exceptionally"), true);
 
         assertTrue(drain.allowsResourceRelease());

@@ -20,7 +20,23 @@ package art.arcane.iris.spi;
 
 import java.util.List;
 
+/**
+ * One block state property as JSON schema vocabulary, so pack schema generation can describe block keys without
+ * knowing platform property types.
+ * <p>
+ * Immutable. Produced by {@link PlatformRegistries#blockStateProperties()} and consumed only by schema
+ * generation, never on the generation path. Internal to Iris; not a published integration surface.
+ *
+ * @param name          the property name as it appears in a block key, for example {@code waterlogged}
+ * @param jsonType      JSON schema type: {@code boolean}, {@code integer} or {@code string}. Never null or empty
+ * @param defaultValue  the value the host's default state carries, boxed as its JSON representation
+ * @param allowedValues every legal value, empty when the adapter cannot enumerate them. Never null
+ * @param numericRange  bounds for a numeric property, null for {@code boolean} and {@code string}
+ */
 public record PlatformBlockProperty(String name, String jsonType, Object defaultValue, List<Object> allowedValues, PlatformNumericRange numericRange) {
+    /**
+     * Whether {@link #numericRange()} is present, and therefore whether schema output should emit bounds.
+     */
     public boolean hasNumericRange() {
         return numericRange != null;
     }

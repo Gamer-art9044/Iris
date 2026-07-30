@@ -51,8 +51,6 @@ public class CNG {
     public static final NoiseInjector SRC_POW = (s, v) -> new double[]{Math.pow(s, v), 0};
     public static final NoiseInjector DST_MOD = (s, v) -> new double[]{v % s, 0};
     public static final NoiseInjector DST_POW = (s, v) -> new double[]{Math.pow(v, s), 0};
-    public static long hits = 0;
-    public static long creates = 0;
     private final double opacity;
     private double scale;
     private double bakedScale;
@@ -99,7 +97,6 @@ public class CNG {
 
     public CNG(RNG random, NoiseGenerator generator, double opacity, int octaves) {
         customGenerator = null;
-        creates++;
         noscale = generator.isNoScale();
         this.oct = octaves;
         this.rng = random;
@@ -739,7 +736,6 @@ public class CNG {
     private double applyPost(double n, double x) {
         n = power != 1D ? (n < 0 ? -Math.pow(Math.abs(n), power) : Math.pow(n, power)) : n;
         double m = 1;
-        hits += oct;
 
         if (children != null) {
             for (CNG i : children) {
@@ -780,7 +776,6 @@ public class CNG {
     private double applyPost(double n, double x, double z) {
         n = power != 1D ? (n < 0 ? -Math.pow(Math.abs(n), power) : Math.pow(n, power)) : n;
         double m = 1;
-        hits += oct;
 
         if (children != null) {
             for (CNG i : children) {
@@ -821,7 +816,6 @@ public class CNG {
     private double applyPost(double n, double x, double y, double z) {
         n = power != 1D ? (n < 0 ? -Math.pow(Math.abs(n), power) : Math.pow(n, power)) : n;
         double m = 1;
-        hits += oct;
 
         if (children != null) {
             for (CNG i : children) {
@@ -875,7 +869,6 @@ public class CNG {
         double n = getNoise(dim);
         n = power != 1D ? (n < 0 ? -Math.pow(Math.abs(n), power) : Math.pow(n, power)) : n;
         double m = 1;
-        hits += oct;
         if (children == null) {
             return (n - down + up) * patch;
         }

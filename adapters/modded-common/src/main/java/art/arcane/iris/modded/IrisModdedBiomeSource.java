@@ -49,8 +49,10 @@ import java.util.stream.Stream;
 
 final class IrisModdedBiomeSource extends BiomeSource {
     private static final int BIOME_CACHE_MAX = 262144;
+    private static final int UNRESOLVED_WARN_KEYS_MAX = 256;
 
     private final BiomeSource serializedSource;
+    private final Set<String> warnedUnresolvedBiomeKeys = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<Long, Holder<Biome>> visibleBiomeCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Holder<Biome>> structureBiomeCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Holder<Biome>> surfaceStructureBiomeCache = new ConcurrentHashMap<>();
@@ -70,6 +72,7 @@ final class IrisModdedBiomeSource extends BiomeSource {
         visibleBiomeCache.clear();
         structureBiomeCache.clear();
         surfaceStructureBiomeCache.clear();
+        warnedUnresolvedBiomeKeys.clear();
         possibleStructureBiomeKeys = null;
         for (StructureStateBiomeSource source : structureStateSources) {
             source.clearCache();
@@ -332,7 +335,8 @@ final class IrisModdedBiomeSource extends BiomeSource {
             IrisBiomeCustom customBiome = resolution.irisBiome().getCustomBiome(
                     resolution.rng(), engine, resolution.blockX(), resolution.blockY(), resolution.blockZ());
             if (customBiome == null) {
-                return fallbackBiome(registry, quartX, quartY, quartZ, sampler);
+                return fallbackBiome(registry, "custom derivative of '"
+                        + resolution.irisBiome().getLoadKey() + "'", quartX, quartY, quartZ, sampler);
             }
             biomeKey = ModdedWorldgenIds.biomeRef(engine, customBiome.getId());
         } else if (resolution.underground()) {
@@ -344,7 +348,7 @@ final class IrisModdedBiomeSource extends BiomeSource {
         }
         Holder<Biome> resolved = resolveHolder(registry, biomeKey);
         return resolved == null
-                ? fallbackBiome(registry, quartX, quartY, quartZ, sampler)
+                ? fallbackBiome(registry, biomeKey, quartX, quartY, quartZ, sampler)
                 : resolved;
     }
 
@@ -567,10 +571,27 @@ final class IrisModdedBiomeSource extends BiomeSource {
         return identifier == null ? null : identifier.toString().toLowerCase(Locale.ROOT);
     }
 
-    private Holder<Biome> fallbackBiome(Registry<Biome> registry, int quartX, int quartY, int quartZ,
+    private Holder<Biome> fallbackBiome(Registry<Biome> registry, String unresolvedKey,
+                                        int quartX, int quartY, int quartZ,
                                         Climate.Sampler sampler) {
         Holder<Biome> plains = resolveHolder(registry, "minecraft:plains");
+        warnUnresolvedBiome(unresolvedKey, plains == null ? "the serialized biome source" : "minecraft:plains",
+                quartX, quartY, quartZ);
         return plains == null ? serializedSource.getNoiseBiome(quartX, quartY, quartZ, sampler) : plains;
+    }
+
+    private void warnUnresolvedBiome(String unresolvedKey, String fallback,
+                                     int quartX, int quartY, int quartZ) {
+        String key = unresolvedKey == null || unresolvedKey.isBlank() ? "<blank>" : unresolvedKey;
+        if (!warnedUnresolvedBiomeKeys.add(key)) {
+            return;
+        }
+        if (warnedUnresolvedBiomeKeys.size() > UNRESOLVED_WARN_KEYS_MAX) {
+            warnedUnresolvedBiomeKeys.clear();
+        }
+        ModdedIrisLog.warn("Iris biome " + key + " is not registered; using " + fallback
+                + " at quart " + quartX + "," + quartY + "," + quartZ
+                + " (wrong biome generates; regenerate the forced datapack and restart)");
     }
 
     private static long packNoiseKey(int x, int y, int z) {

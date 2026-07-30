@@ -20,8 +20,8 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void acceptsExplicitMatchingSpawnGroup() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"spawns\":[{\"type\":\"minecraft:slime\",\"group\":\"MONSTER\"}]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(
-                biomes, key -> PackValidator.SpawnCategoryResolution.known("monster"));
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(
+                biomes, key -> PackSpawnValidator.SpawnCategoryResolution.known("monster"));
 
         assertTrue(errors.isEmpty());
     }
@@ -30,8 +30,8 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void acceptsBiomeWithoutCustomSpawns() throws Exception {
         File biomes = createBiomes("{\"name\":\"Plains\"}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(
-                biomes, key -> PackValidator.SpawnCategoryResolution.known("monster"));
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(
+                biomes, key -> PackSpawnValidator.SpawnCategoryResolution.known("monster"));
 
         assertTrue(errors.isEmpty());
     }
@@ -40,8 +40,8 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void rejectsMissingSpawnGroup() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"spawns\":[{\"type\":\"minecraft:slime\"}]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(
-                biomes, key -> PackValidator.SpawnCategoryResolution.known("monster"));
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(
+                biomes, key -> PackSpawnValidator.SpawnCategoryResolution.known("monster"));
 
         assertEquals(1, errors.size());
         assertTrue(errors.get(0).contains("must declare group 'MONSTER'"));
@@ -51,8 +51,8 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void acceptsImplicitMiscSpawnGroup() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"effects\",\"spawns\":[{\"type\":\"minecraft:armor_stand\"}]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(
-                biomes, key -> PackValidator.SpawnCategoryResolution.known("misc"));
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(
+                biomes, key -> PackSpawnValidator.SpawnCategoryResolution.known("misc"));
 
         assertTrue(errors.isEmpty());
     }
@@ -61,8 +61,8 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void rejectsSpawnGroupThatDisagreesWithRegistry() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"spawns\":[{\"type\":\"minecraft:slime\",\"group\":\"MISC\"}]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(
-                biomes, key -> PackValidator.SpawnCategoryResolution.known("monster"));
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(
+                biomes, key -> PackSpawnValidator.SpawnCategoryResolution.known("monster"));
 
         assertEquals(1, errors.size());
         assertTrue(errors.get(0).contains("live entity registry requires 'MONSTER'"));
@@ -72,8 +72,8 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void acceptsAxolotlSpawnCategory() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"cave\",\"spawns\":[{\"type\":\"minecraft:axolotl\",\"group\":\"AXOLOTLS\"}]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(
-                biomes, key -> PackValidator.SpawnCategoryResolution.known("axolotls"));
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(
+                biomes, key -> PackSpawnValidator.SpawnCategoryResolution.known("axolotls"));
 
         assertTrue(errors.isEmpty());
     }
@@ -82,8 +82,8 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void rejectsUnknownSpawnEntity() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"spawns\":[{\"type\":\"missing:entity\",\"group\":\"MISC\"}]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(
-                biomes, key -> PackValidator.SpawnCategoryResolution.unknown());
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(
+                biomes, key -> PackSpawnValidator.SpawnCategoryResolution.unknown());
 
         assertEquals(1, errors.size());
         assertTrue(errors.get(0).contains("unknown entity type 'missing:entity'"));
@@ -93,8 +93,8 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void rejectsCaseNormalizedGroupThatRuntimeWouldNotParse() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"spawns\":[{\"type\":\"minecraft:slime\",\"group\":\"monster\"}]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(
-                biomes, key -> PackValidator.SpawnCategoryResolution.known("monster"));
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(
+                biomes, key -> PackSpawnValidator.SpawnCategoryResolution.known("monster"));
 
         assertEquals(1, errors.size());
         assertTrue(errors.get(0).contains("unknown group 'monster'"));
@@ -104,7 +104,7 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void rejectsWrongCustomDerivativeContainerType() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":{}}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(biomes, null);
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(biomes, null);
 
         assertEquals(1, errors.size());
         assertTrue(errors.get(0).contains("customDerivitives must be an array"));
@@ -114,7 +114,7 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void rejectsWrongSpawnContainerType() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"spawns\":{}}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(biomes, null);
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(biomes, null);
 
         assertEquals(1, errors.size());
         assertTrue(errors.get(0).contains("spawns must be an array"));
@@ -124,7 +124,7 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void acceptsNullCustomDerivativeContainerAsAbsent() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":null}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(biomes, null);
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(biomes, null);
 
         assertTrue(errors.isEmpty());
     }
@@ -133,7 +133,7 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void acceptsNullSpawnContainerAsAbsent() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"spawns\":null}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(biomes, null);
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(biomes, null);
 
         assertTrue(errors.isEmpty());
     }
@@ -142,7 +142,7 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void acceptsNamespacedCustomBiomeTags() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"tags\":[\"minecraft:allows_surface_slime_spawns\"]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(biomes, null);
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(biomes, null);
 
         assertTrue(errors.isEmpty());
     }
@@ -151,7 +151,7 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void rejectsUnsafeCustomBiomeTags() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"tags\":[\"minecraft:../outside\"]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(biomes, null);
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(biomes, null);
 
         assertEquals(1, errors.size());
         assertTrue(errors.get(0).contains("invalid tag"));
@@ -161,7 +161,7 @@ public class PackValidatorCustomBiomeSpawnTest {
     public void convertsSpawnCategoryResolverFailureIntoBlockingError() throws Exception {
         File biomes = createBiomes("{\"customDerivitives\":[{\"id\":\"swamp\",\"spawns\":[{\"type\":\"minecraft:slime\",\"group\":\"MONSTER\"}]}]}");
 
-        List<String> errors = PackValidator.validateCustomBiomeSpawns(biomes, key -> {
+        List<String> errors = PackSpawnValidator.validateCustomBiomeSpawns(biomes, key -> {
             throw new IllegalStateException("registry unavailable");
         });
 

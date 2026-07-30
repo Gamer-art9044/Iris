@@ -31,8 +31,6 @@ import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
-import org.bukkit.boss.BarColor;
-import org.bukkit.boss.BarStyle;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -94,7 +92,7 @@ public interface Job {
                 HudSurface barSurface = barClaim.granted();
                 sender.sendProgress(getProgress(), getName(), titleSurface, barSurface);
                 if (barSurface == HudSurface.BOSS_BAR) {
-                    BukkitPlatform.hudLanes().show(sender.player(), "iris:job", getName() + " " + getProgressString(), getProgress(), BarColor.BLUE, BarStyle.SOLID, 4000L);
+                    BukkitPlatform.showProgressLane(sender.player(), "iris:job", getName() + " " + getProgressString(), getProgress(), 4000L);
                 } else if (barSurface == HudSurface.ACTION_BAR) {
                     BukkitPlatform.hudLanes().hide(sender.player(), "iris:job");
                 }

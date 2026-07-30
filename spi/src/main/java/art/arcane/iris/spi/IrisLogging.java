@@ -21,6 +21,17 @@ package art.arcane.iris.spi;
 import java.util.IllegalFormatException;
 import java.util.regex.Pattern;
 
+/**
+ * Logging front door for core: routes through the bound {@link IrisPlatform} when there is one and falls back
+ * to {@code System.out}/{@code System.err} when there is not, so code that runs before adapter startup, in
+ * tests, or in the standalone probe still logs.
+ * <p>
+ * Every method is safe from any thread and swallows its own failures - logging never throws. Formatting is
+ * lenient: a malformed format string is emitted verbatim rather than raising
+ * {@link java.util.IllegalFormatException}, and a null message renders as {@code "null"}.
+ * <p>
+ * Internal to Iris; not a published integration surface.
+ */
 public final class IrisLogging {
     private static final Pattern LEGACY_COLOR = Pattern.compile("(?i)\\u00a7[0-9A-FK-ORX]");
     private static final Pattern MINI_MESSAGE_TAG = Pattern.compile("(?i)</?(?:reset|bold|b|italic|i|underlined?|u|strikethrough|st|obfuscated?|obf|black|dark_blue|dark_green|dark_aqua|dark_red|dark_purple|gold|gray|dark_gray|blue|green|aqua|red|light_purple|yellow|white|gradient|font|hover|click|rainbow)(?::[^>\\n]{0,96})?>|<#[0-9a-f]{6}>");
@@ -28,22 +39,39 @@ public final class IrisLogging {
     private IrisLogging() {
     }
 
+    /**
+     * Logs at {@link LogLevel#INFO}, applying {@link #format(String, Object...)} to the arguments.
+     */
     public static void info(String format, Object... args) {
         emit(LogLevel.INFO, format(format, args));
     }
 
+    /**
+     * Logs a literal message at {@link LogLevel#DEBUG}. Takes no format arguments, so a message containing
+     * {@code %} needs no escaping.
+     */
     public static void debug(String message) {
         emit(LogLevel.DEBUG, message);
     }
 
+    /**
+     * Logs at {@link LogLevel#WARN}, applying {@link #format(String, Object...)} to the arguments.
+     */
     public static void warn(String format, Object... args) {
         emit(LogLevel.WARN, format(format, args));
     }
 
+    /**
+     * Logs at {@link LogLevel#ERROR}, applying {@link #format(String, Object...)} to the arguments.
+     */
     public static void error(String format, Object... args) {
         emit(LogLevel.ERROR, format(format, args));
     }
 
+    /**
+     * Emits a player-facing message to the console, preserving colour markup when a platform is bound and
+     * stripping it via {@link #clean(String)} when one is not.
+     */
     public static void msg(String message) {
         if (IrisPlatforms.isBound()) {
             IrisPlatforms.get().msg(message);
@@ -53,6 +81,11 @@ public final class IrisLogging {
         System.out.println("[Iris] " + clean(message));
     }
 
+    /**
+     * Logs {@code context} at {@link LogLevel#ERROR} and then reports {@code error}. A null or blank
+     * {@code context} gets a generic description; a null {@code error} is replaced with a synthetic
+     * {@link IllegalStateException} so the report is never empty.
+     */
     public static void reportError(String context, Throwable error) {
         Throwable cause = error == null ? new IllegalStateException("Unknown Iris failure") : error;
         String message = context == null || context.isBlank() ? "Unhandled Iris failure." : context;
@@ -65,9 +98,12 @@ public final class IrisLogging {
         }
 
         reportError(cause);
-        cause.printStackTrace(System.err);
     }
 
+    /**
+     * Hands {@code error} to the platform's error reporting, or prints it to {@code System.err} when no
+     * platform is bound. A null {@code error} is ignored.
+     */
     public static void reportError(Throwable error) {
         if (IrisPlatforms.isBound()) {
             IrisPlatforms.get().reportError(error);
@@ -80,6 +116,11 @@ public final class IrisLogging {
         }
     }
 
+    /**
+     * {@link String#format(String, Object...)} that cannot throw: a null format renders as {@code "null"},
+     * no arguments returns {@code format} unchanged, and a mismatched format string is returned verbatim.
+     * Never returns null.
+     */
     public static String format(String format, Object... args) {
         if (format == null) {
             return "null";
@@ -96,6 +137,10 @@ public final class IrisLogging {
         }
     }
 
+    /**
+     * Strips legacy section-sign colour codes and MiniMessage tags, for sinks that render neither. A null
+     * message renders as {@code "null"}. Never returns null.
+     */
     public static String clean(String message) {
         if (message == null) {
             return "null";

@@ -18,5 +18,18 @@
 
 package art.arcane.iris.spi;
 
+/**
+ * Inclusive-or-exclusive numeric bounds for a {@link PlatformBlockProperty}, mirroring JSON schema's
+ * {@code minimum}/{@code maximum} pair.
+ * <p>
+ * Immutable. Bounds are carried as {@code double} regardless of the property's JSON type; an
+ * {@code integer} property's bounds are whole numbers and are narrowed by the schema writer. Internal to Iris;
+ * not a published integration surface.
+ *
+ * @param minimum          lower bound
+ * @param maximum          upper bound
+ * @param exclusiveMinimum whether {@code minimum} itself is disallowed
+ * @param exclusiveMaximum whether {@code maximum} itself is disallowed
+ */
 public record PlatformNumericRange(double minimum, double maximum, boolean exclusiveMinimum, boolean exclusiveMaximum) {
 }

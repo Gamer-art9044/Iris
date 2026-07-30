@@ -104,12 +104,14 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
         MantleChunk<Matter> mc = mantle.getChunk(x, z).use();
         try {
             PrecisionStopwatch resolveStopwatch = PrecisionStopwatch.start();
+            final int worldHeightSpan = getEngine().getWorld().maxHeight() - getEngine().getWorld().minHeight();
+            final int caveLavaHeight = getEngine().getDimension().getCaveLavaHeight();
             mc.iterate(MatterCavern.class, (xx, yy, zz, c) -> {
                 if (c == null) {
                     return;
                 }
 
-                if (yy >= getEngine().getWorld().maxHeight() - getEngine().getWorld().minHeight() || yy <= 0) {
+                if (yy >= worldHeightSpan || yy <= 0) {
                     return;
                 }
 
@@ -138,10 +140,12 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                     return;
                 }
 
-                PlatformBlockState explicitState = resolveExplicitCarveState(c, context.getFluid().get(rx, rz), LAVA, AIR);
                 if (explicitCarveIntent) {
-                    output.setRaw(rx, yy, rz, explicitState);
-                } else if (usesDefaultLava(getEngine().getDimension().getCaveLavaHeight(), yy)) {
+                    // Only a water cavern consumes the fluid sample, and on the maintenance path that
+                    // sample is a full procedural stream evaluation, so never take it per voxel.
+                    PlatformBlockState fluid = c.isWater() ? context.getFluid().get(rx, rz) : null;
+                    output.setRaw(rx, yy, rz, resolveExplicitCarveState(c, fluid, LAVA, AIR));
+                } else if (usesDefaultLava(caveLavaHeight, yy)) {
                     output.setRaw(rx, yy, rz, LAVA);
                 } else {
                     output.setRaw(rx, yy, rz, AIR);

@@ -12,6 +12,7 @@ public final class IrisTileCodec {
     public static final int MODE_PALETTE = 1;
     private static final int MAX_DIMENSION = 512;
     private static final int OPAQUE = 0xFF000000;
+    static final int MAX_DECODED_BYTES = 9 + 4 + 3 * MAX_DIMENSION * MAX_DIMENSION;
 
     private IrisTileCodec() {
     }
@@ -86,6 +87,9 @@ public final class IrisTileCodec {
                     if (inflater.finished() || inflater.needsInput() || inflater.needsDictionary()) {
                         break;
                     }
+                }
+                if (out.size() + produced > MAX_DECODED_BYTES) {
+                    return null;
                 }
                 out.write(buffer, 0, produced);
             }

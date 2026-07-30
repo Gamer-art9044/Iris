@@ -288,7 +288,7 @@ public class IrisCaveCarver3DNearParityTest {
                 .setWaterMinDepthBelowSurface(0)
                 .setWaterRequiresFloor(true);
         WriterCapture firstCapture = createWriterCapture(80);
-        IrisCaveCarver3D.WaterSupportPlan supportPlan = new IrisCaveCarver3D.WaterSupportPlan();
+        CaveWaterSupportPlan supportPlan = new CaveWaterSupportPlan();
         new IrisCaveCarver3D(engine, supportedProfile).carve(
                 firstCapture.writer, chunkX, chunkZ, fullWeights(), 0D, 0D, null, surfaceHeights, null, supportPlan);
         int candidateCount = countLiquid(firstCapture, (byte) 1);
@@ -328,7 +328,7 @@ public class IrisCaveCarver3DNearParityTest {
         int z = 8;
         slice.set(0, y & 15, z, water);
         slice.set(8, y & 15, z, water);
-        IrisCaveCarver3D.WaterSupportPlan supportPlan = new IrisCaveCarver3D.WaterSupportPlan();
+        CaveWaterSupportPlan supportPlan = new CaveWaterSupportPlan();
         supportPlan.add(0, y, z, water, air);
         supportPlan.add(8, y, z, water, air);
 
@@ -343,7 +343,7 @@ public class IrisCaveCarver3DNearParityTest {
         Engine engine = createEngine(80, 70);
         int[] surfaceHeights = filledHeights(70);
         WriterCapture capture = createWriterCapture(80);
-        IrisCaveCarver3D.WaterSupportPlan waterSupportPlan = new IrisCaveCarver3D.WaterSupportPlan();
+        CaveWaterSupportPlan waterSupportPlan = new CaveWaterSupportPlan();
         IrisCaveProfile waterProfile = createWaterProfile()
                 .setDensityThreshold(new IrisStyledRange(0.15D, 0.15D, new IrisGeneratorStyle(NoiseStyle.FLAT)))
                 .setWaterRequiresFloor(true);

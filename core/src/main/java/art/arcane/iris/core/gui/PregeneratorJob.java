@@ -33,7 +33,6 @@ import art.arcane.iris.core.pregenerator.PregenPhaseTracker;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
 import art.arcane.iris.engine.framework.Engine;
-import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.format.MemoryMonitor;
 import art.arcane.volmlib.util.function.Consumer2;
@@ -45,6 +44,7 @@ import art.arcane.iris.util.common.scheduling.J;
 
 import java.awt.Color;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -65,8 +65,8 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     private final MemoryMonitor monitor;
     private final PregenTask task;
     private final boolean saving;
-    private final KList<Consumer<Double>> onProgress = new KList<>();
-    private final KList<Runnable> whenDone = new KList<>();
+    private final List<Consumer<Double>> onProgress = new CopyOnWriteArrayList<>();
+    private final List<Runnable> whenDone = new CopyOnWriteArrayList<>();
     private final IrisPregenerator pregenerator;
     private final Position2 min;
     private final Position2 max;
@@ -91,6 +91,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         instance.updateAndGet(old -> {
             if (old != null) {
                 old.pregenerator.close();
+                old.worker.interrupt();
                 old.close();
             }
             return this;
@@ -135,7 +136,10 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
             return false;
         }
 
-        J.a(inst.pregenerator::close);
+        J.a(() -> {
+            inst.pregenerator.close();
+            inst.worker.interrupt();
+        });
         return true;
     }
 
@@ -305,6 +309,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     public void stop() {
         J.a(() -> {
             pregenerator.close();
+            worker.interrupt();
             close();
             instance.compareAndSet(this, null);
         });

@@ -73,6 +73,7 @@ public final class ModdedStartup {
         if (!STARTED.compareAndSet(false, true)) {
             return;
         }
+        ModdedForcedDatapack.verifyInjected();
         reinjectPersistentDimensions(server);
 
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
@@ -88,6 +89,8 @@ public final class ModdedStartup {
         File[] packDirs = packsRoot.listFiles(File::isDirectory);
         PackValidationRegistry.clear();
         if (packDirs == null || packDirs.length == 0) {
+            LOGGER.info("Iris found no packs to validate under {}; install one with /iris download <pack>",
+                    packsRoot.getAbsolutePath());
             return;
         }
         for (File packDir : packDirs) {

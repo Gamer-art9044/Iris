@@ -18,18 +18,40 @@
 
 package art.arcane.iris.spi.protocol;
 
+/**
+ * Wire constants for the Iris client/server plugin channel: version, channel name, size and rate caps,
+ * capability bits and message type ids.
+ * <p>
+ * Both ends of the channel compile against this class, so every value here is part of the wire contract. Adding
+ * a message type or capability bit is compatible; changing an existing value is not and requires bumping
+ * {@link #PROTOCOL_VERSION}. Constants only - no state, safe from any thread.
+ * <p>
+ * Internal to Iris; not a published integration surface.
+ */
 public final class IrisProtocol {
+    /** Wire version exchanged in the hello handshake. Bumped on any incompatible change. */
     public static final int PROTOCOL_VERSION = 1;
+    /** Plugin channel both ends register. */
     public static final String CHANNEL = "irisworldgen:main";
+    /** Hard cap on a single encoded frame. {@link IrisWireWriter} refuses to exceed it; the decoder rejects larger. */
     public static final int MAX_FRAME_BYTES = 24576;
+    /** Inbound frames accepted per client per second before the server sheds. */
     public static final int MAX_INBOUND_FRAMES_PER_SECOND = 32;
+    /** Vision tile requests accepted per client per second, tighter than the general frame budget because each one costs a render. */
     public static final int MAX_VISION_TILE_REQUESTS_PER_SECOND = 8;
+    /** Fixed header size of a vision tile frame, subtracted when splitting a tile into chunks. */
     public static final int VISION_TILE_HEADER_BYTES = 25;
+    /** Largest payload carried by one vision tile chunk. */
     public static final int VISION_TILE_MAX_CHUNK_BYTES = 24000;
+    /** Cap on markers in one {@link IrisMessage.VisionMarkers} frame. */
     public static final int MAX_VISION_MARKERS = 256;
+    /** Capability bit: pregeneration progress streaming. */
     public static final long CAPABILITY_PREGEN = 1L << 0;
+    /** Capability bit: vision map tiles and markers. */
     public static final long CAPABILITY_VISION = 1L << 1;
+    /** Capability bit: cursor coordinate lookups. */
     public static final long CAPABILITY_CURSOR = 1L << 2;
+    /** Capability bit: studio hotload notifications. */
     public static final long CAPABILITY_STUDIO = 1L << 3;
     public static final int TYPE_CLIENT_HELLO = 1;
     public static final int TYPE_SERVER_HELLO = 2;

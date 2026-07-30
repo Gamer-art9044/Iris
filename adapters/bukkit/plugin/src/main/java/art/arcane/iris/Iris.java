@@ -27,28 +27,23 @@ import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.EngineWorldManagerProvider;
 import art.arcane.iris.core.splash.IrisSplashComposer;
 import art.arcane.iris.core.IrisSettings;
-import art.arcane.iris.core.IrisWorldStorage;
-import art.arcane.iris.core.IrisWorlds;
+import art.arcane.iris.core.BukkitWorldReconciler;
+import art.arcane.iris.core.IrisWorldGeneratorResolver;
+import art.arcane.iris.core.PendingWorldDeleteQueue;
+import art.arcane.iris.core.SettingsHotloadWatch;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.lifecycle.PaperLibBootstrap;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.runtime.BukkitEnginePlatformHooks;
-import art.arcane.iris.core.runtime.TransientWorldCleanupSupport;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
-import art.arcane.iris.core.lifecycle.WorldLifecycleStaging;
 import art.arcane.iris.api.terrain.IrisTerrainService;
 import art.arcane.iris.core.link.IrisPapiInstaller;
 import art.arcane.iris.core.link.IrisPapiListener;
 import art.arcane.iris.core.link.IrisPapiState;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.link.MultiverseCoreLink;
-import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
-import art.arcane.iris.core.pack.BrokenPackException;
-import art.arcane.iris.core.pack.PackValidationRegistry;
-import art.arcane.iris.core.pack.PackValidationResult;
-import art.arcane.iris.core.pack.PackValidator;
 import art.arcane.iris.core.gui.BukkitGuiHost;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.service.EditSVC;
@@ -61,19 +56,14 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.PreservationRegistry;
 import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.object.IrisCompat;
-import art.arcane.iris.engine.object.IrisDimension;
-import art.arcane.iris.engine.object.IrisWorld;
-import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.core.safeguard.IrisSafeguard;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
-import art.arcane.iris.platform.bukkit.BukkitEnvironment;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.LogLevel;
 import art.arcane.volmlib.integration.ReloadAware;
-import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import art.arcane.volmlib.util.bukkit.papi.PlaceholderRegistration;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
@@ -96,17 +86,13 @@ import art.arcane.iris.util.common.plugin.VolmitPlugin;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.plugin.chunk.ChunkTickets;
 import art.arcane.iris.util.common.scheduling.J;
-import art.arcane.iris.util.common.misc.ServerProperties;
 import art.arcane.iris.util.simd.SimdSupport;
 import art.arcane.volmlib.util.scheduling.Queue;
 import art.arcane.volmlib.util.scheduling.ShurikenQueue;
-import lombok.NonNull;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
-import org.bukkit.NamespacedKey;
 import org.bukkit.World;
-import org.bukkit.WorldCreator;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
@@ -121,23 +107,14 @@ import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Modifier;
-import java.net.URI;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Date;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -145,7 +122,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -165,8 +141,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     public static ChunkTickets tickets;
     private static VolmitSender sender;
     private static Thread shutdownHook;
-    private static File settingsFile;
-    private static final String PENDING_WORLD_DELETE_FILE = "pending-world-deletes.txt";
     private static final StackWalker DEBUG_STACK_WALKER = StackWalker.getInstance();
     static {
         try {
@@ -178,11 +152,18 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
     }
 
+    private static final Object TEARDOWN_LOCK = new Object();
     private final AtomicBoolean alreadyDrained = new AtomicBoolean(false);
+    private final AtomicBoolean servicesDisabled = new AtomicBoolean(false);
+    private final AtomicBoolean sharedRuntimeClosed = new AtomicBoolean(false);
     private volatile PlaceholderRegistration papiRegistration;
     private volatile IrisPapiListener papiListener;
     private volatile IrisPapiState papiState;
     private KMap<Class<? extends IrisService>, IrisService> services;
+    private final IrisWorldGeneratorResolver generatorResolver = new IrisWorldGeneratorResolver(this);
+    private final BukkitWorldReconciler worldReconciler = new BukkitWorldReconciler(this);
+    private final PendingWorldDeleteQueue pendingWorldDeletes = new PendingWorldDeleteQueue(this);
+    private volatile SettingsHotloadWatch settingsHotloadWatch;
 
     public static VolmitSender getSender() {
         if (sender == null) {
@@ -290,69 +271,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 inner.printStackTrace(System.err);
             }
         }
-    }
-
-    public static File getCached(String name, String url) {
-        String h = IO.hash(name + "@" + url);
-        File f = Iris.instance.getDataFile("cache", h.substring(0, 2), h.substring(3, 5), h);
-
-        if (!f.exists()) {
-            try (BufferedInputStream in = new BufferedInputStream(URI.create(url).toURL().openStream()); FileOutputStream fileOutputStream = new FileOutputStream(f)) {
-                byte[] dataBuffer = new byte[1024];
-                int bytesRead;
-                while ((bytesRead = in.read(dataBuffer, 0, 1024)) != -1) {
-                    fileOutputStream.write(dataBuffer, 0, bytesRead);
-                    Iris.verbose("Aquiring " + name);
-                }
-            } catch (IOException e) {
-                Iris.reportError(e);
-            }
-        }
-
-        return f.exists() ? f : null;
-    }
-
-    public static String getNonCached(String name, String url) {
-        String h = IO.hash(name + "*" + url);
-        File f = Iris.instance.getDataFile("cache", h.substring(0, 2), h.substring(3, 5), h);
-
-        try (BufferedInputStream in = new BufferedInputStream(URI.create(url).toURL().openStream()); FileOutputStream fileOutputStream = new FileOutputStream(f)) {
-            byte[] dataBuffer = new byte[1024];
-            int bytesRead;
-            while ((bytesRead = in.read(dataBuffer, 0, 1024)) != -1) {
-                fileOutputStream.write(dataBuffer, 0, bytesRead);
-            }
-        } catch (IOException e) {
-            Iris.reportError(e);
-        }
-
-        try {
-            return IO.readAll(f);
-        } catch (IOException e) {
-            Iris.reportError(e);
-        }
-
-        return "";
-    }
-
-    public static File getNonCachedFile(String name, String url) {
-        String h = IO.hash(name + "*" + url);
-        File f = Iris.instance.getDataFile("cache", h.substring(0, 2), h.substring(3, 5), h);
-        Iris.verbose("Download " + name + " -> " + url);
-        try (BufferedInputStream in = new BufferedInputStream(URI.create(url).toURL().openStream()); FileOutputStream fileOutputStream = new FileOutputStream(f)) {
-            byte[] dataBuffer = new byte[1024];
-            int bytesRead;
-            while ((bytesRead = in.read(dataBuffer, 0, 1024)) != -1) {
-                fileOutputStream.write(dataBuffer, 0, bytesRead);
-            }
-
-            fileOutputStream.flush();
-        } catch (IOException e) {
-            e.printStackTrace();
-            Iris.reportError(e);
-        }
-
-        return f;
     }
 
     public static void warn(String format, Object... objs) {
@@ -616,6 +534,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     private void enable() {
         alreadyDrained.set(false);
+        servicesDisabled.set(false);
+        sharedRuntimeClosed.set(false);
+        MultiBurst.burst.reopen();
+        MultiBurst.ioBurst.reopen();
         IrisLanguage.initialize();
         PaperLibBootstrap.install();
         SimdSupport.install();
@@ -635,7 +557,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisServices.register(IrisCompat.class, compat);
         ServerConfigurator.configure();
         IrisToolbelt.applyPregenPerformanceProfile();
-        validateAllPacks();
+        generatorResolver.validateAllPacks();
         IrisSafeguard.execute();
         getSender().setTag(getTag());
         splash();
@@ -649,37 +571,38 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisServices.register(EnginePlatformHooks.class, new BukkitEnginePlatformHooks());
         IrisServices.register(EngineWorldManagerProvider.class,
                 (EngineWorldManagerProvider) IrisWorldManager::new);
-        IrisServices.register(art.arcane.iris.core.runtime.WorldDeletionQueue.class, (art.arcane.iris.core.runtime.WorldDeletionQueue) Iris::queueWorldDeletionOnStartup);
-        settingsFile = getDataFile("settings.json");
+        IrisServices.register(art.arcane.iris.core.runtime.WorldDeletionQueue.class, (art.arcane.iris.core.runtime.WorldDeletionQueue) pendingWorldDeletes::queueWorldDeletionOnStartup);
+        SettingsHotloadWatch watch = new SettingsHotloadWatch(getDataFile("settings.json"));
+        settingsHotloadWatch = watch;
         configHotloadEngine = new ConfigHotloadEngine(
-                Iris::isSettingsFile,
-                Iris::knownSettingsFiles,
-                Iris::readSettingsContent,
-                Iris::normalizeSettingsContent
+                watch::isSettingsFile,
+                watch::knownSettingsFiles,
+                watch::readSettingsContent,
+                watch::normalizeSettingsContent
         );
-        configHotloadEngine.configure(3_000L, List.of(settingsFile), List.of());
+        configHotloadEngine.configure(3_000L, List.of(watch.settingsFile()), List.of());
         services.values().forEach(IrisService::onEnable);
         services.values().forEach(this::registerListener);
         addShutdownHook();
-        processPendingStartupWorldDeletes();
+        pendingWorldDeletes.processPendingStartupWorldDeletes();
         WorldLifecycleService.get();
         WorldRuntimeControlService.get();
 
         if (J.isFolia()) {
-            J.s(() -> checkForBukkitWorlds(s -> true), 1);
+            J.s(() -> worldReconciler.checkForBukkitWorlds(s -> true), 1);
         }
 
         J.s(() -> {
             J.a(() -> IO.delete(getTemp()));
             J.a(this::bstats);
-            J.ar(this::checkConfigHotload, 60);
+            J.ar(() -> settingsHotloadWatch.checkConfigHotload(configHotloadEngine), 60);
             J.sr(this::tickQueue, 0);
             J.s(this::setupPapi);
             J.a(DatapackIngestService::autoIngestOnStartup, 60);
 
             autoStartStudio();
             if (!J.isFolia()) {
-                checkForBukkitWorlds(s -> true);
+                worldReconciler.checkForBukkitWorlds(s -> true);
             }
             IrisToolbelt.retainMantleDataForSlice(String.class.getCanonicalName());
             IrisToolbelt.retainMantleDataForSlice(BlockData.class.getCanonicalName());
@@ -696,24 +619,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 return;
             }
         }
-        shutdownHook = new Thread(() -> {
-            if (alreadyDrained.compareAndSet(false, true)) {
-                try {
-                    Bukkit.getWorlds()
-                            .stream()
-                            .map(World::getGenerator)
-                            .filter(PlatformChunkGenerator.class::isInstance)
-                            .map(PlatformChunkGenerator.class::cast)
-                            .forEach(PlatformChunkGenerator::close);
-                } catch (Throwable e) {
-                    Iris.reportError("Failed to close Iris world generators from the JVM shutdown hook.", e);
-                }
-            }
-
-            MultiBurst.burst.close();
-            MultiBurst.ioBurst.close();
-            IrisServices.clear();
-        }, "Iris-ShutdownHook");
+        shutdownHook = new Thread(() -> teardownRuntime("shutdown-hook", 30L), "Iris-ShutdownHook");
         try {
             Runtime.getRuntime().addShutdownHook(shutdownHook);
         } catch (IllegalStateException ex) {
@@ -721,247 +627,8 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
     }
 
-    public void checkForBukkitWorlds(Predicate<String> filter) {
-        try {
-            KList<String> deferredStartupWorlds = new KList<>();
-            IrisWorlds.readBukkitWorlds().forEach((s, generator) -> {
-                try {
-                    NamespacedKey worldKey = IrisWorldStorage.keyFromName(s);
-                    if (WorldIdentity.resolve(worldKey).isPresent() || !filter.test(s)) return;
-
-                    Iris.info("Loading World: %s | Generator: %s", s, generator);
-                    ChunkGenerator gen = getDefaultWorldGenerator(s, generator);
-                    IrisDimension dim = loadDimension(s, generator);
-                    assert dim != null && gen != null;
-
-                    Iris.info(C.LIGHT_PURPLE + "Preparing Spawn for " + s + "' using Iris:" + generator + "...");
-                    WorldCreator c = WorldCreator.ofKey(worldKey)
-                            .generator(gen)
-                            .environment(BukkitEnvironment.from(dim.getEnvironment()));
-                    Long stagedSeed = IrisWorlds.readBukkitWorldSeed(s);
-                    if (stagedSeed != null) {
-                        c.seed(stagedSeed);
-                    }
-                    INMS.get().createWorld(c);
-                    Iris.info(C.LIGHT_PURPLE + "Loaded " + s + "!");
-                } catch (Throwable e) {
-                    if (containsCreateWorldUnsupportedOperation(e)) {
-                        if (J.isFolia()) {
-                            if (!deferredStartupWorlds.contains(s)) {
-                                deferredStartupWorlds.add(s);
-                            }
-                            return;
-                        }
-                        Iris.error("Failed to load world " + s + "!");
-                        Iris.error("This server denied Bukkit.createWorld for \"" + s + "\" at the current startup phase.");
-                        Iris.error("Ensure Iris is loaded at STARTUP and restart after staging worlds in bukkit.yml.");
-                        reportError("Failed to load staged startup world \"" + s + "\".", e);
-                        return;
-                    }
-                    reportError("Failed to load startup world \"" + s + "\".", e);
-                }
-            });
-            if (!deferredStartupWorlds.isEmpty()) {
-                Iris.warn("Staged Iris worlds could not load on Folia: %s", String.join(", ", deferredStartupWorlds));
-                Iris.warn("Bukkit.createWorld is unsupported on this server and the Iris runtime world backend is unavailable (%s).", WorldLifecycleService.get().capabilities().paperLikeResolution());
-            }
-        } catch (Throwable e) {
-            reportError("Failed while loading startup Iris worlds.", e);
-        }
-    }
-
-    private static boolean containsCreateWorldUnsupportedOperation(Throwable throwable) {
-        Throwable cursor = throwable;
-        while (cursor != null) {
-            if (cursor instanceof UnsupportedOperationException || cursor instanceof IllegalStateException) {
-                for (StackTraceElement element : cursor.getStackTrace()) {
-                    if ("org.bukkit.craftbukkit.CraftServer".equals(element.getClassName())
-                            && "createWorld".equals(element.getMethodName())) {
-                        return true;
-                    }
-                }
-            }
-            cursor = cursor.getCause();
-        }
-        return false;
-    }
-
-    public static synchronized int queueWorldDeletionOnStartup(Collection<String> worldNames) throws IOException {
-        if (instance == null || worldNames == null || worldNames.isEmpty()) {
-            return 0;
-        }
-
-        LinkedHashMap<String, String> queue = loadPendingWorldDeleteMap();
-        int before = queue.size();
-
-        for (String worldName : worldNames) {
-            String normalized = normalizeWorldName(worldName);
-            if (normalized == null) {
-                continue;
-            }
-            queue.putIfAbsent(normalized.toLowerCase(Locale.ROOT), normalized);
-        }
-
-        if (queue.size() != before) {
-            writePendingWorldDeleteMap(queue);
-        }
-
-        return queue.size() - before;
-    }
-
-    private void processPendingStartupWorldDeletes() {
-        try {
-            try {
-                int unregistered = art.arcane.iris.core.tools.IrisCreator.removeTransientStudioWorldsFromBukkitYml();
-                if (unregistered > 0) {
-                    Iris.info("Unregistered " + unregistered + " transient studio world(s) from bukkit.yml on startup.");
-                }
-            } catch (Throwable e) {
-                Iris.reportError("Failed to unregister transient studio worlds from bukkit.yml on startup.", e);
-            }
-
-            LinkedHashMap<String, String> queue = loadPendingWorldDeleteMap();
-            for (String transientStudioWorld : TransientWorldCleanupSupport.collectTransientStudioWorldNames(IrisWorldStorage.levelRoot())) {
-                queue.putIfAbsent(transientStudioWorld.toLowerCase(Locale.ROOT), transientStudioWorld);
-            }
-            if (queue.isEmpty()) {
-                return;
-            }
-
-            LinkedHashMap<String, String> remaining = new LinkedHashMap<>();
-            for (String worldName : queue.values()) {
-                if (worldName.equalsIgnoreCase(ServerProperties.LEVEL_NAME)) {
-                    Iris.warn("Skipping queued deletion for \"" + worldName + "\" because it is configured as level-name.");
-                    continue;
-                }
-
-                NamespacedKey worldKey = IrisWorldStorage.keyFromName(worldName);
-                World loaded = WorldIdentity.resolve(worldKey).orElse(null);
-                if (loaded != null) {
-                    if (TransientWorldCleanupSupport.isTransientStudioWorldName(worldName)) {
-                        try {
-                            PlatformChunkGenerator generator = IrisToolbelt.access(loaded);
-                            if (generator != null) {
-                                generator.close();
-                            }
-                            IrisToolbelt.evacuate(loaded);
-                            Bukkit.unloadWorld(loaded, false);
-                            Iris.info("Unloaded leftover studio world \"" + worldName + "\" for deletion.");
-                        } catch (Throwable e) {
-                            Iris.reportError("Failed to unload leftover studio world \"" + worldName + "\".", e);
-                        }
-
-                        if (WorldIdentity.resolve(worldKey).isPresent()) {
-                            Iris.warn("Studio world \"" + worldName + "\" is still loaded after unload; will retry next startup.");
-                            remaining.put(worldName.toLowerCase(Locale.ROOT), worldName);
-                            continue;
-                        }
-                    } else {
-                        Iris.warn("Skipping queued deletion for \"" + worldName + "\" because it is currently loaded.");
-                        remaining.put(worldName.toLowerCase(Locale.ROOT), worldName);
-                        continue;
-                    }
-                }
-
-                boolean foundAny = false;
-                boolean deletedAll = true;
-                for (String familyWorldName : TransientWorldCleanupSupport.worldFamilyNames(worldName)) {
-                    File worldFolder = IrisWorldStorage.dimensionRoot(familyWorldName);
-                    if (!worldFolder.exists()) {
-                        continue;
-                    }
-
-                    foundAny = true;
-                    IO.delete(worldFolder);
-                    if (worldFolder.exists()) {
-                        deletedAll = false;
-                        Iris.warn("Failed to delete queued world folder \"" + familyWorldName + "\". Retrying on next startup.");
-                    } else {
-                        Iris.info("Deleted queued world folder \"" + familyWorldName + "\".");
-                    }
-                }
-
-                if (!foundAny) {
-                    Iris.info("Queued world deletion skipped for \"" + worldName + "\" (folder missing).");
-                    continue;
-                }
-
-                if (!deletedAll) {
-                    remaining.put(worldName.toLowerCase(Locale.ROOT), worldName);
-                    continue;
-                }
-            }
-
-            writePendingWorldDeleteMap(remaining);
-        } catch (Throwable e) {
-            Iris.error("Failed to process queued startup world deletions.");
-            reportError(e);
-            e.printStackTrace();
-        }
-    }
-
-    private static LinkedHashMap<String, String> loadPendingWorldDeleteMap() throws IOException {
-        LinkedHashMap<String, String> queue = new LinkedHashMap<>();
-        if (instance == null) {
-            return queue;
-        }
-
-        File queueFile = instance.getDataFile(PENDING_WORLD_DELETE_FILE);
-        if (!queueFile.exists()) {
-            return queue;
-        }
-
-        try (BufferedReader reader = new BufferedReader(new FileReader(queueFile))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                String normalized = normalizeWorldName(line);
-                if (normalized == null) {
-                    continue;
-                }
-                queue.putIfAbsent(normalized.toLowerCase(Locale.ROOT), normalized);
-            }
-        }
-
-        return queue;
-    }
-
-    private static void writePendingWorldDeleteMap(Map<String, String> queue) throws IOException {
-        if (instance == null) {
-            return;
-        }
-
-        File queueFile = instance.getDataFile(PENDING_WORLD_DELETE_FILE);
-        if (queue.isEmpty()) {
-            if (queueFile.exists()) {
-                IO.delete(queueFile);
-            }
-            return;
-        }
-
-        File parent = queueFile.getParentFile();
-        if (parent != null && !parent.exists() && !parent.mkdirs()) {
-            throw new IOException("Failed to create queue directory: " + parent.getAbsolutePath());
-        }
-
-        try (PrintWriter writer = new PrintWriter(new FileWriter(queueFile))) {
-            for (String worldName : queue.values()) {
-                writer.println(worldName);
-            }
-        }
-    }
-
-    @Nullable
-    private static String normalizeWorldName(String worldName) {
-        if (worldName == null) {
-            return null;
-        }
-
-        String trimmed = worldName.trim();
-        if (trimmed.isEmpty()) {
-            return null;
-        }
-
-        return trimmed;
+    public BukkitWorldReconciler worldReconciler() {
+        return worldReconciler;
     }
 
     private void autoStartStudio() {
@@ -1012,13 +679,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     public void onDisable() {
         teardownPapi();
         if (IrisSafeguard.isForceShutdown()) return;
-        if (alreadyDrained.compareAndSet(false, true)) {
-            drainWorldGenerators("onDisable", 30L);
-        }
-        if (services != null) {
-            services.values().forEach(IrisService::onDisable);
-        }
-        IrisServices.clear();
+        teardownRuntime("onDisable", 30L);
         if (BukkitPlatform.hasHud()) {
             BukkitPlatform.hudSlots().shutdown();
             BukkitPlatform.hudLanes().shutdown();
@@ -1039,12 +700,54 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     @Override
     public void onPreUnload(ReloadAware.PreUnloadReason reason) {
         teardownPapi();
-        if (!alreadyDrained.compareAndSet(false, true)) {
+        if (alreadyDrained.get()) {
             Iris.info("Pre-unload hook skipped; Iris already drained.");
             return;
         }
         Iris.info("BileTools pre-unload hook fired (" + reason + "). Freezing all Iris worlds.");
-        drainWorldGenerators("pre-unload:" + reason, 45L);
+        drainOnce("pre-unload:" + reason, 45L);
+    }
+
+    /**
+     * Drains the world generators exactly once. Serialized against the JVM shutdown hook so a
+     * second caller cannot rip the pools or services out from under an in-flight drain.
+     */
+    private void drainOnce(String reason, long timeoutSeconds) {
+        synchronized (TEARDOWN_LOCK) {
+            if (alreadyDrained.compareAndSet(false, true)) {
+                drainWorldGenerators(reason, timeoutSeconds);
+            }
+        }
+    }
+
+    /**
+     * Full teardown: generators, then services, then the shared pools and the service map.
+     * Both onDisable and the JVM shutdown hook route through here; whichever runs second is a no-op.
+     */
+    private void teardownRuntime(String reason, long timeoutSeconds) {
+        synchronized (TEARDOWN_LOCK) {
+            if (alreadyDrained.compareAndSet(false, true)) {
+                drainWorldGenerators(reason, timeoutSeconds);
+            }
+
+            if (services != null && servicesDisabled.compareAndSet(false, true)) {
+                for (IrisService service : services.values()) {
+                    try {
+                        service.onDisable();
+                    } catch (Throwable e) {
+                        Iris.reportError("Failed to disable " + service.getClass().getSimpleName() + ".", e);
+                    }
+                }
+            }
+
+            if (!sharedRuntimeClosed.compareAndSet(false, true)) {
+                return;
+            }
+
+            J.attempt(MultiBurst.burst::close);
+            J.attempt(MultiBurst.ioBurst::close);
+            IrisServices.clear();
+        }
     }
 
     private void drainWorldGenerators(String reason, long timeoutSeconds) {
@@ -1164,61 +867,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         return IrisSafeguard.mode().tag(subTag);
     }
 
-    private void checkConfigHotload() {
-        if (configHotloadEngine == null) {
-            return;
-        }
-
-        for (File file : configHotloadEngine.pollTouchedFiles()) {
-            configHotloadEngine.processFileChange(file, ignored -> {
-                IrisSettings.invalidate();
-                IrisSettings.get();
-                IrisLanguage.reload();
-                return true;
-            }, ignored -> Iris.info("Hotloaded settings.json "));
-        }
-        IrisLanguage.update();
-    }
-
-    private static boolean isSettingsFile(File file) {
-        if (file == null || settingsFile == null) {
-            return false;
-        }
-        return settingsFile.getAbsoluteFile().equals(file.getAbsoluteFile());
-    }
-
-    private static List<File> knownSettingsFiles() {
-        if (settingsFile == null) {
-            return List.of();
-        }
-        return List.of(settingsFile);
-    }
-
-    private static String readSettingsContent(File file) {
-        if (file == null || !file.exists() || !file.isFile()) {
-            return null;
-        }
-
-        try {
-            return IO.readAll(file);
-        } catch (Throwable ex) {
-            Iris.warn("Failed to read settings file %s: %s%s",
-                    file.getAbsolutePath(),
-                    ex.getClass().getSimpleName(),
-                    ex.getMessage() == null ? "" : " - " + ex.getMessage());
-            Iris.reportError(ex);
-            return null;
-        }
-    }
-
-    private static String normalizeSettingsContent(String text) {
-        if (text == null) {
-            return null;
-        }
-
-        return text.replace("\r\n", "\n").trim();
-    }
-
     private void tickQueue() {
         synchronized (Iris.syncJobs) {
             if (!Iris.syncJobs.hasNext()) {
@@ -1256,117 +904,12 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     @Nullable
     @Override
     public BiomeProvider getDefaultBiomeProvider(@NotNull String worldName, @Nullable String id) {
-        org.bukkit.generator.BiomeProvider stagedBiomeProvider = WorldLifecycleStaging.consumeBiomeProvider(worldName);
-        if (stagedBiomeProvider != null) {
-            Iris.debug("Using staged runtime biome provider for " + worldName);
-            return stagedBiomeProvider;
-        }
-        Iris.debug("Biome Provider Called for " + worldName + " using ID: " + id);
-        return super.getDefaultBiomeProvider(worldName, id);
+        return generatorResolver.resolveDefaultBiomeProvider(worldName, id, () -> super.getDefaultBiomeProvider(worldName, id));
     }
 
     @Override
     public ChunkGenerator getDefaultWorldGenerator(String worldName, String id) {
-        ChunkGenerator stagedGenerator = WorldLifecycleStaging.consumeGenerator(worldName);
-        if (stagedGenerator != null) {
-            Iris.debug("Using staged runtime generator for " + worldName);
-            return stagedGenerator;
-        }
-        Iris.debug("Default World Generator Called for " + worldName + " using ID: " + id);
-        if (id == null || id.isEmpty()) id = IrisSettings.get().getGenerator().getDefaultWorldType();
-        Iris.debug("Generator ID: " + id + " requested by bukkit/plugin");
-
-        PackValidationResult validation = PackValidationRegistry.get(id);
-        if (validation != null && !validation.isLoadable()) {
-            Iris.error("Refusing to create world '" + worldName + "' using broken pack '" + id + "':");
-            for (String reason : validation.getBlockingErrors()) {
-                Iris.error("  - " + reason);
-            }
-            throw new BrokenPackException(id, validation.getBlockingErrors());
-        }
-
-        IrisDimension dim = loadDimension(worldName, id);
-        if (dim == null) {
-            throw new RuntimeException("Can't find dimension " + id + "!");
-        }
-
-        Iris.debug("Assuming IrisDimension: " + dim.getName());
-        NamespacedKey worldKey = IrisWorldStorage.keyFromName(worldName);
-
-        IrisWorld w = IrisWorld.builder()
-                .platformIdentity(worldKey.toString())
-                .name(worldName)
-                .seed(1337)
-                .worldFolder(IrisWorldStorage.dimensionRoot(worldKey))
-                .minHeight(dim.getMinHeight())
-                .maxHeight(dim.getMaxHeight())
-                .build();
-
-        Iris.debug("Generator Config: " + w.toString());
-
-        File ff = new File(w.worldFolder(), "iris/pack");
-        File[] files = ff.listFiles();
-        if (files == null || files.length == 0)
-            IO.delete(ff);
-
-        if (!ff.exists()) {
-            ff.mkdirs();
-            dim = service(StudioSVC.class).installIntoWorld(getSender(), dim, w.worldFolder());
-            if (dim == null) {
-                throw new IllegalStateException("Failed to install dimension pack for " + id);
-            }
-        }
-
-        return new BukkitChunkGenerator(w, false, ff, dim.getLoadKey());
-    }
-
-    public static void validateAllPacks() {
-        File packsRoot = Iris.instance.getDataFolder("packs");
-        File[] packDirs = packsRoot.listFiles(File::isDirectory);
-        if (packDirs == null || packDirs.length == 0) {
-            return;
-        }
-        PackValidationRegistry.clear();
-        for (File packDir : packDirs) {
-            try {
-                PackValidationResult result = PackValidator.validate(packDir);
-                PackValidationRegistry.publish(result);
-                if (!result.isLoadable()) {
-                    Iris.error("Pack '" + result.getPackName() + "' FAILED validation - world/studio creation will be refused. Reasons:");
-                    for (String reason : result.getBlockingErrors()) {
-                        Iris.error("  - " + reason);
-                    }
-                } else if (!result.getWarnings().isEmpty()) {
-                    Iris.info("Pack '" + result.getPackName() + "' validated ("
-                            + result.getWarnings().size() + " warning(s)).");
-                    for (String warning : result.getWarnings()) {
-                        Iris.warn("  [" + result.getPackName() + "] " + warning);
-                    }
-                } else {
-                    Iris.success("Pack '" + result.getPackName() + "' validated.");
-                }
-            } catch (Throwable e) {
-                Iris.reportError("Pack validation failed for '" + packDir.getName() + "'", e);
-            }
-        }
-    }
-
-    @Nullable
-    public static IrisDimension loadDimension(@NonNull String worldName, @NonNull String id) {
-        File pack = IrisWorldStorage.packRoot(IrisWorldStorage.keyFromName(worldName));
-        IrisDimension dimension = pack.isDirectory() ? IrisData.get(pack).getDimensionLoader().load(id) : null;
-        if (dimension == null) dimension = IrisData.loadAnyDimension(id, null);
-        if (dimension == null) {
-            Iris.warn("Unable to find dimension type " + id + " Looking for online packs...");
-            Iris.service(StudioSVC.class).downloadSearch(new VolmitSender(Bukkit.getConsoleSender()), id, false);
-            dimension = IrisData.loadAnyDimension(id, null);
-
-            if (dimension != null) {
-                Iris.info("Resolved missing dimension, proceeding.");
-            }
-        }
-
-        return dimension;
+        return generatorResolver.resolveDefaultWorldGenerator(worldName, id);
     }
 
     public void splash() {

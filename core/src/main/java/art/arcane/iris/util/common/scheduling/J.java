@@ -425,61 +425,96 @@ public class J {
         }
     }
 
-    public static CompletableFuture sfut(Runnable r) {
-        CompletableFuture f = new CompletableFuture();
+    /**
+     * Never returns null; the future always completes, exceptionally if the task throws or cannot be scheduled.
+     */
+    public static CompletableFuture<Void> sfut(Runnable r) {
+        CompletableFuture<Void> f = new CompletableFuture<>();
 
         if (!canSchedule()) {
-            return null;
+            f.completeExceptionally(new IllegalStateException("Cannot schedule sync task, no scheduler available."));
+            return f;
         }
 
-        s(() -> {
-            r.run();
-            f.complete(null);
-        });
+        try {
+            s(() -> settle(f, r));
+        } catch (Throwable e) {
+            f.completeExceptionally(e);
+        }
 
         return f;
     }
 
+    /**
+     * Never returns null; the future always completes, exceptionally if the supplier throws or cannot be scheduled.
+     */
     public static <T> CompletableFuture<T> sfut(Supplier<T> r) {
         CompletableFuture<T> f = new CompletableFuture<>();
 
         if (!canSchedule()) {
-            return null;
+            f.completeExceptionally(new IllegalStateException("Cannot schedule sync task, no scheduler available."));
+            return f;
         }
 
-        s(() -> {
-            try {
-                f.complete(r.get());
-            } catch (Throwable e) {
-                f.completeExceptionally(e);
-            }
-        });
+        try {
+            s(() -> settleSupplied(f, r));
+        } catch (Throwable e) {
+            f.completeExceptionally(e);
+        }
 
         return f;
     }
 
-    public static CompletableFuture sfut(Runnable r, int delay) {
-        CompletableFuture f = new CompletableFuture();
+    /**
+     * Never returns null; the future always completes, exceptionally if the task throws or cannot be scheduled.
+     */
+    public static CompletableFuture<Void> sfut(Runnable r, int delay) {
+        CompletableFuture<Void> f = new CompletableFuture<>();
 
         if (!canSchedule()) {
-            return null;
+            f.completeExceptionally(new IllegalStateException("Cannot schedule delayed sync task, no scheduler available."));
+            return f;
         }
 
-        s(() -> {
-            r.run();
-            f.complete(null);
-        }, delay);
+        try {
+            s(() -> settle(f, r), delay);
+        } catch (Throwable e) {
+            f.completeExceptionally(e);
+        }
 
         return f;
     }
 
-    public static CompletableFuture afut(Runnable r) {
-        CompletableFuture f = new CompletableFuture();
-        J.a(() -> {
+    /**
+     * Never returns null; the future always completes, exceptionally if the task throws or cannot be scheduled.
+     */
+    public static CompletableFuture<Void> afut(Runnable r) {
+        CompletableFuture<Void> f = new CompletableFuture<>();
+
+        try {
+            J.a(() -> settle(f, r));
+        } catch (Throwable e) {
+            f.completeExceptionally(e);
+        }
+
+        return f;
+    }
+
+    private static void settle(CompletableFuture<Void> f, Runnable r) {
+        try {
             r.run();
             f.complete(null);
-        });
-        return f;
+        } catch (Throwable e) {
+            f.completeExceptionally(e);
+        }
+    }
+
+    private static <T> void settleSupplied(CompletableFuture<T> f, Supplier<T> r) {
+        try {
+            f.complete(r.get());
+        } catch (Throwable e) {
+            f.completeExceptionally(e);
+        }
     }
 
     public static void s(Runnable r, int delay) {

@@ -12,7 +12,8 @@ import static org.junit.Assert.assertTrue;
 public class IrisModdedStructureCommandTest {
     @Test
     public void gotoStructureSupportsIrisAndNativeRegistryTargets() throws IOException {
-        String source = source("IrisModdedCommands.java");
+        String source = source("ModdedLocateCommands.java");
+        String suggestions = source("ModdedCommandSuggestions.java");
 
         assertTrue(source.contains("IrisStructureLocator.isPlaced(engine, key)"));
         assertTrue(source.contains("registry.get(identifier)"));
@@ -22,7 +23,7 @@ public class IrisModdedStructureCommandTest {
         assertTrue(source.contains("HolderSet.direct(target.holder())"));
         assertFalse(source.contains("NativeStructureLocateCapability"));
         assertTrue(source.contains("boolean teleported = player.teleportTo("));
-        assertTrue(source.contains("combineStructureKeys(irisKeys, nativeKeys)"));
+        assertTrue(suggestions.contains("combineStructureKeys(irisKeys, nativeKeys)"));
         assertTrue(source.contains("irisGenerator.isNativeStructureReachable(holder)"));
         assertTrue(source.contains("LocateStatus.SEARCH_LIMIT_REACHED"));
         assertTrue(source.contains("IRIS_MODDED_COMMANDS_UNABLE_LOCATE_IRIS_PLACED_STRUCTURE_DENSITY_SEARCH_SAFETY_LIMIT_WAS"));
@@ -35,9 +36,9 @@ public class IrisModdedStructureCommandTest {
 
     @Test
     public void generatorLocateUsesEveryIrisPlacedNativeStructure() throws IOException {
-        String source = moddedSource("IrisModdedChunkGenerator.java");
-        int methodStart = source.indexOf("private Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(");
-        int methodEnd = source.indexOf("private HolderSet<Structure> filterReachableNativeStructures(", methodStart);
+        String source = moddedSource("ModdedNativeStructureStage.java");
+        int methodStart = source.indexOf("Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(");
+        int methodEnd = source.indexOf("HolderSet<Structure> filterReachableNativeStructures(", methodStart);
         String method = source.substring(methodStart, methodEnd);
         int unexploredGuard = method.indexOf("if (findUnexplored)");
         int registryLookup = method.indexOf("level.registryAccess().lookupOrThrow(Registries.STRUCTURE)");
@@ -58,8 +59,8 @@ public class IrisModdedStructureCommandTest {
 
     @Test
     public void commandResolvesNativePolicyBeforeAnyVanillaAliasLookup() throws IOException {
-        String source = source("IrisModdedCommands.java");
-        int methodStart = source.indexOf("private static int gotoStructure(");
+        String source = source("ModdedLocateCommands.java");
+        int methodStart = source.indexOf("static int gotoStructure(");
         int methodEnd = source.indexOf("private static void locateIrisStructure(", methodStart);
         String method = source.substring(methodStart, methodEnd);
         int nativeResolution = method.indexOf("resolveNativeStructure(source, level, engine, key)");
@@ -79,7 +80,7 @@ public class IrisModdedStructureCommandTest {
 
     @Test
     public void verifyResolvesRegisteredNativeBeforeGenericIrisAliases() throws IOException {
-        String source = source("IrisModdedCommands.java");
+        String source = source("ModdedLocateCommands.java");
         int methodStart = source.indexOf("private static int verifyStructure(");
         int methodEnd = source.indexOf("private static Optional<NativeStructureTarget> resolveNativeStructure(",
                 methodStart);

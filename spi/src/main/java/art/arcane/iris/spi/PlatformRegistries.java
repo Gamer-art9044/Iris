@@ -23,39 +23,105 @@ import java.util.Map;
 
 /**
  * Resolves namespaced string keys against the platform's live registries into interned neutral handles.
+ * <p>
+ * Keys are the pack's currency: {@code namespace:path} with optional {@code [prop=value,...]} block state
+ * properties. Resolution runs on generation threads for every block a pack names, so implementations must be
+ * thread-safe and must intern or cache their results - a key that resolves once should not re-parse.
+ * <p>
+ * Internal to Iris; not a published integration surface.
  */
 public interface PlatformRegistries {
+    /**
+     * Resolves a block key through the platform's compatibility layer, which rewrites keys that moved between
+     * Minecraft versions and consults registered custom-content providers. An unresolvable key is reported and
+     * falls back to air; a key that cannot be parsed at all may come back null. Callers that need to tell
+     * absence from air use {@link #blockOrNull(String)}.
+     */
     PlatformBlockState block(String key);
 
+    /**
+     * Resolves a block key, returning null instead of an air fallback when it does not resolve. Silent.
+     */
     PlatformBlockState blockOrNull(String key);
 
+    /**
+     * {@link #blockOrNull(String)} with control over whether an unresolved key is logged. Pass
+     * {@code warn = false} for speculative lookups.
+     */
     PlatformBlockState blockOrNull(String key, boolean warn);
 
+    /**
+     * The interned air state. Never null; identity-comparable across calls.
+     */
     PlatformBlockState air();
 
+    /**
+     * The deepslate variant of {@code ore} when {@code block} is deepslate, otherwise {@code ore} unchanged.
+     * Lets ore placement follow the host stone without the pack enumerating variants.
+     */
     PlatformBlockState deepSlateOre(PlatformBlockState block, PlatformBlockState ore);
 
+    /**
+     * Resolves a biome key against the live biome registry, including datapack and mod biomes. Null when the
+     * key does not parse or is not registered.
+     */
     PlatformBiome biome(String key);
 
+    /**
+     * Resolves an item key. Null when unknown.
+     */
     PlatformItem item(String key);
 
+    /**
+     * Resolves an entity type key. Null when unknown.
+     */
     PlatformEntityType entity(String key);
 
+    /**
+     * Every registered block state key, properties included. Drives schema completion and command
+     * suggestions, not the generation path. Never null.
+     */
     List<String> blockKeys();
 
+    /**
+     * Every registered biome key. Never null.
+     */
     List<String> biomeKeys();
 
+    /**
+     * Every registered structure key. Never null.
+     */
     List<String> structureKeys();
 
+    /**
+     * Every registered item key. Never null.
+     */
     List<String> itemKeys();
 
+    /**
+     * Every registered entity type key. Never null.
+     */
     List<String> entityKeys();
 
+    /**
+     * Every registered block key without state properties - the material-level view of
+     * {@link #blockKeys()}. Never null.
+     */
     List<String> blockTypeKeys();
 
+    /**
+     * Every registered enchantment key. Never null.
+     */
     List<String> enchantmentKeys();
 
+    /**
+     * Every registered potion effect key. Never null.
+     */
     List<String> potionEffectKeys();
 
+    /**
+     * Block key to its declared state properties, used to generate pack schema enums and numeric ranges.
+     * Keyed by material-level block key. Never null.
+     */
     Map<String, List<PlatformBlockProperty>> blockStateProperties();
 }

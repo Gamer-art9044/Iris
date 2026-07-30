@@ -18,6 +18,9 @@ else.
 PlaceholderAPI keys are not a compile surface, but they are a contract an operator depends on:
 [placeholders.md](placeholders.md).
 
+Writing a **mod** rather than a plugin? The Fabric, Forge and NeoForge jars carry a different surface,
+`art.arcane.iris.modded.api`: [modded.md](modded.md).
+
 Anything outside `art.arcane.iris.api` is internal. `art.arcane.iris.core.*`,
 `art.arcane.iris.engine.*`, `art.arcane.iris.util.*` and `art.arcane.iris.spi.*` change without
 notice and without a deprecation cycle. If you find yourself importing `Engine`, `IrisBiome` or
@@ -29,12 +32,12 @@ notice and without a deprecation cycle. If you find yourself importing `Engine`,
 
 `art.arcane.iris.api` ships in the **Bukkit plugin jar only**. The Fabric, Forge and NeoForge mod
 jars contain the same generator but not this package — there is no Bukkit `World`, no
-`ServicesManager` and no `Event` bus to hang it on. A mod that wants generator data uses the mod
-loader's own registries.
+`ServicesManager` and no `Event` bus to hang it on.
 
-The mod jars carry a separate, unrelated surface at `art.arcane.iris.modded.api`, for supplying
-custom block data to the generator from a mod. It is not covered by these documents, is absent from
-the Bukkit plugin jar, and shares no types with `art.arcane.iris.api`.
+The mod jars carry a separate surface instead: `art.arcane.iris.modded.api`, documented in
+[modded.md](modded.md). It is where a mod detects Iris levels, drives pregeneration, reads and writes
+mantle data, and registers a provider so an Iris pack can place the mod's own blocks, items and mobs.
+It is absent from the Bukkit plugin jar and shares no types with `art.arcane.iris.api`.
 
 Everything in these documents assumes Paper, Purpur, Leaf, Canvas, Folia or Spigot, Minecraft 26.2,
 Java 25.

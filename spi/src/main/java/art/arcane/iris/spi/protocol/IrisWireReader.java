@@ -20,17 +20,37 @@ package art.arcane.iris.spi.protocol;
 
 import java.nio.charset.StandardCharsets;
 
+/**
+ * Sequential big-endian reader over one protocol frame.
+ * <p>
+ * Not thread-safe and not reusable: it carries a read position, so one instance serves one frame on one thread.
+ * Every read is bounds-checked against the frame length and throws {@link ProtocolException} rather than
+ * {@link ArrayIndexOutOfBoundsException}, so a hostile or truncated frame cannot read past its end. Length
+ * prefixes are validated against the remaining bytes before any allocation, so a forged length cannot force a
+ * large allocation.
+ * <p>
+ * Internal to Iris; not a published integration surface.
+ */
 public final class IrisWireReader {
     private final byte[] frame;
     private final int limit;
     private int position;
 
+    /**
+     * Wraps {@code frame} for reading from offset zero. The array is held by reference and must not be mutated
+     * while the reader is in use.
+     */
     public IrisWireReader(byte[] frame) {
         this.frame = frame;
         this.limit = frame.length;
         this.position = 0;
     }
 
+    /**
+     * Reads a 7-bit-continuation varint.
+     *
+     * @throws ProtocolException if the frame ends mid-varint or the encoding exceeds five bytes
+     */
     public int readVarInt() throws ProtocolException {
         int result = 0;
         int shift = 0;
@@ -46,6 +66,11 @@ public final class IrisWireReader {
         throw new ProtocolException("varint exceeds 5 bytes");
     }
 
+    /**
+     * Reads a fixed four-byte big-endian int.
+     *
+     * @throws ProtocolException if fewer than four bytes remain
+     */
     public int readInt() throws ProtocolException {
         requireRemaining(4);
         int value = ((frame[position] & 0xFF) << 24)
@@ -56,6 +81,11 @@ public final class IrisWireReader {
         return value;
     }
 
+    /**
+     * Reads a fixed eight-byte big-endian long.
+     *
+     * @throws ProtocolException if fewer than eight bytes remain
+     */
     public long readLong() throws ProtocolException {
         requireRemaining(8);
         long value = ((long) (frame[position] & 0xFF) << 56)
@@ -70,15 +100,30 @@ public final class IrisWireReader {
         return value;
     }
 
+    /**
+     * Reads a double from its IEEE 754 bit pattern.
+     *
+     * @throws ProtocolException if fewer than eight bytes remain
+     */
     public double readDouble() throws ProtocolException {
         return Double.longBitsToDouble(readLong());
     }
 
+    /**
+     * Reads one byte as a boolean; any non-zero value is true.
+     *
+     * @throws ProtocolException if no bytes remain
+     */
     public boolean readBoolean() throws ProtocolException {
         requireRemaining(1);
         return frame[position++] != 0;
     }
 
+    /**
+     * Reads a varint-length-prefixed UTF-8 string. Never returns null; an empty string is legal.
+     *
+     * @throws ProtocolException if the length is negative or exceeds the remaining bytes
+     */
     public String readString() throws ProtocolException {
         int declaredLength = readVarInt();
         if (declaredLength < 0) {
@@ -92,6 +137,11 @@ public final class IrisWireReader {
         return value;
     }
 
+    /**
+     * Reads a varint-length-prefixed byte array into a fresh copy. Never returns null.
+     *
+     * @throws ProtocolException if the length is negative or exceeds the remaining bytes
+     */
     public byte[] readBytes() throws ProtocolException {
         int declaredLength = readVarInt();
         if (declaredLength < 0) {

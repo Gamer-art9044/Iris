@@ -18,8 +18,16 @@
 
 package art.arcane.iris.modded.api;
 
+/**
+ * The kinds of custom content a {@link ModdedDataProvider} can claim.
+ * <p>
+ * Constants may be added. Switch expressions over this enum need a {@code default} arm.
+ */
 public enum ModdedDataType {
+    /** Block states, resolved through {@link ModdedDataProvider#getBlockData(net.minecraft.resources.Identifier, java.util.Map)}. */
     BLOCK,
+    /** Item types, claimed for loot and pack tooling. */
     ITEM,
+    /** Entity types, spawned through {@link ModdedDataProvider#spawnMob(net.minecraft.server.level.ServerLevel, double, double, double, net.minecraft.resources.Identifier)}. */
     ENTITY
 }

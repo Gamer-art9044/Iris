@@ -23,21 +23,24 @@ import org.bukkit.World;
 import org.bukkit.block.Biome;
 import org.bukkit.block.data.BlockData;
 
-@SuppressWarnings("ClassCanBeRecord")
 public class BukkitBlockEditor implements BlockEditor {
     private final World world;
+    private volatile long last;
 
     public BukkitBlockEditor(World world) {
         this.world = world;
+        this.last = M.ms();
     }
 
     @Override
     public void set(int x, int y, int z, BlockData d) {
+        touch();
         world.getBlockAt(x, y, z).setBlockData(d, false);
     }
 
     @Override
     public BlockData get(int x, int y, int z) {
+        touch();
         return world.getBlockAt(x, y, z).getBlockData();
     }
 
@@ -48,11 +51,12 @@ public class BukkitBlockEditor implements BlockEditor {
 
     @Override
     public long last() {
-        return M.ms();
+        return last;
     }
 
     @Override
     public void setBiome(int x, int z, Biome b) {
+        touch();
         int minHeight = world.getMinHeight();
         int maxHeight = world.getMaxHeight();
         for (int y = minHeight; y < maxHeight; y++) {
@@ -62,16 +66,23 @@ public class BukkitBlockEditor implements BlockEditor {
 
     @Override
     public void setBiome(int x, int y, int z, Biome b) {
+        touch();
         world.setBiome(x, y, z, b);
     }
 
     @Override
     public Biome getBiome(int x, int y, int z) {
+        touch();
         return world.getBiome(x, y, z);
     }
 
     @Override
     public Biome getBiome(int x, int z) {
+        touch();
         return world.getBiome(x, world.getMinHeight(), z);
+    }
+
+    private void touch() {
+        last = M.ms();
     }
 }

@@ -26,6 +26,9 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.slf4j.LoggerFactory;
+
+import java.util.Arrays;
 
 @Mixin(PackRepository.class)
 public class PackRepositoryMixin {
@@ -37,5 +40,10 @@ public class PackRepositoryMixin {
                 return;
             }
         }
+        // Client resource-pack repositories legitimately have no ServerPacksSource; a missing server-data
+        // repository is reported once at boot by ModdedForcedDatapack.verifyInjected().
+        LoggerFactory.getLogger("Iris").debug(
+                "Iris forced datapack source not attached: no ServerPacksSource among {} source(s) {}",
+                sources.length, Arrays.toString(sources));
     }
 }

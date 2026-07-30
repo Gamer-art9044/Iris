@@ -361,16 +361,28 @@ public class WandSVC implements IrisService {
         wand = createWand();
         dust = createDust();
 
-        J.ar(() -> {
-            for (Player i : Bukkit.getOnlinePlayers()) {
-                tick(i);
-            }
-        }, 0);
+        J.ar(this::tickAll, 0);
     }
 
     @Override
     public void onDisable() {
 
+    }
+
+    /**
+     * Async driver tick. The online player list is only read from the thread that owns it,
+     * and every wand draw is dispatched to the thread owning that player.
+     */
+    private void tickAll() {
+        try {
+            J.runGlobal(() -> {
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    J.runEntity(p, () -> tick(p));
+                }
+            });
+        } catch (Throwable e) {
+            Iris.reportError(e);
+        }
     }
 
     public void tick(Player p) {

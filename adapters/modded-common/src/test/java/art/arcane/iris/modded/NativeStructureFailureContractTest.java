@@ -24,15 +24,14 @@ public class NativeStructureFailureContractTest {
 
     @Test
     public void structureLocateDoesNotCatchAndFallThroughToAnotherImplementation() throws IOException {
-        Path sourcePath = Path.of(System.getProperty("iris.moddedCommonSources"),
-                "art/arcane/iris/modded/IrisModdedChunkGenerator.java");
-        String source = Files.readString(sourcePath);
+        String source = moddedSource("IrisModdedChunkGenerator.java");
         int locateStart = source.indexOf("public Pair<BlockPos, Holder<Structure>> findNearestMapStructure");
         int locateEnd = source.indexOf("public boolean isNativeStructureReachable", locateStart);
         String locate = source.substring(locateStart, locateEnd);
-        int filterStart = source.indexOf("private HolderSet<Structure> filterReachableNativeStructures");
-        int filterEnd = source.indexOf("private ServerLevel boundLevel", filterStart);
-        String filter = source.substring(filterStart, filterEnd);
+        String stage = moddedSource("ModdedNativeStructureStage.java");
+        int filterStart = stage.indexOf("HolderSet<Structure> filterReachableNativeStructures");
+        int filterEnd = stage.indexOf("void adjustGeneratedStructures", filterStart);
+        String filter = stage.substring(filterStart, filterEnd);
 
         assertTrue(locate.contains("Engine current = engine();"));
         assertFalse(locate.contains("catch (Throwable"));
@@ -58,10 +57,8 @@ public class NativeStructureFailureContractTest {
 
     @Test
     public void structureTerrainPreparationPrecedesVegetationAndPlacement() throws IOException {
-        Path sourcePath = Path.of(System.getProperty("iris.moddedCommonSources"),
-                "art/arcane/iris/modded/IrisModdedChunkGenerator.java");
-        String source = Files.readString(sourcePath);
-        int placementStart = source.indexOf("private void placeVanillaStructures");
+        String source = moddedSource("ModdedNativeStructureStage.java");
+        int placementStart = source.indexOf("void placeVanillaStructures");
         int placementEnd = source.indexOf("private static String nativeStructureBatchContext", placementStart);
         String placement = source.substring(placementStart, placementEnd);
 
@@ -75,6 +72,23 @@ public class NativeStructureFailureContractTest {
     }
 
     @Test
+    public void structurePlacementPrimesNeighbourWorldgenHeightmapsBeforeTerrainPreparation() throws IOException {
+        String source = moddedSource("ModdedNativeStructureStage.java");
+        int placementStart = source.indexOf("void placeVanillaStructures");
+        int placementEnd = source.indexOf("private static String nativeStructureBatchContext", placementStart);
+        String placement = source.substring(placementStart, placementEnd);
+
+        assertTrue(source.contains("import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;"));
+        assertTrue(placement.contains("WorldgenTerrainHeightmaps.primeStructurePlacement("));
+        assertTrue(placement.contains("\"heightmap priming\""));
+        assertTrue(placement.contains("heightmapStarts.add(start);"));
+        assertTrue(placement.indexOf("WorldgenTerrainHeightmaps.primeStructurePlacement(")
+                < placement.indexOf("prepareSurfaceStructures"));
+        assertTrue(source.contains("generationEngine.getHeight(x, z, false) + runtimeMinY + 1"));
+        assertTrue(source.contains("generationEngine.getHeight(x, z, true) + runtimeMinY + 1"));
+    }
+
+    @Test
     public void structureFailurePreservesPhaseIdentityChunkAndCause() {
         IllegalArgumentException cause = new IllegalArgumentException("broken placement");
         NativeStructureGenerationException error = NativeStructureGenerationException.failure(
@@ -85,5 +99,11 @@ public class NativeStructureFailureContractTest {
         assertTrue(error.getMessage().contains("minecraft:monument"));
         assertTrue(error.getMessage().contains("12,-8"));
         assertTrue(error.getMessage().contains("aborted"));
+    }
+
+    private static String moddedSource(String fileName) throws IOException {
+        Path sourcePath = Path.of(System.getProperty("iris.moddedCommonSources"),
+                "art", "arcane", "iris", "modded", fileName);
+        return Files.readString(sourcePath);
     }
 }

@@ -61,7 +61,7 @@ public class NativeStructurePostProcessorEncaseTest {
         put(blocks, bounds.minX(), bounds.minY(), bounds.minZ(), Blocks.DIRT.defaultBlockState());
         put(blocks, bounds.maxX(), bounds.minY(), bounds.maxZ(), Blocks.WATER.defaultBlockState());
 
-        NativeStructurePostProcessor.integrateTerrain(
+        NativeStructureTerrainIntegrator.integrateTerrain(
                 world(blocks), area, "minecraft:stronghold", start,
                 new IrisStructureTerrain()
                         .setMode(IrisStructureTerrainMode.ENCASE)
@@ -86,7 +86,7 @@ public class NativeStructurePostProcessorEncaseTest {
         BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
         Map<BlockPos, BlockState> blocks = new HashMap<>();
 
-        NativeStructurePostProcessor.integrateTerrain(
+        NativeStructureTerrainIntegrator.integrateTerrain(
                 world(blocks), bounds, "minecraft:stronghold", start,
                 new IrisStructureTerrain().setMode(IrisStructureTerrainMode.ENCASE),
                 null);
@@ -105,7 +105,7 @@ public class NativeStructurePostProcessorEncaseTest {
         Map<BlockPos, BlockState> blocks = new HashMap<>();
         IrisMaterialPalette palette = new IrisMaterialPalette().qclear().qadd("minecraft:tuff");
 
-        NativeStructurePostProcessor.integrateTerrain(
+        NativeStructureTerrainIntegrator.integrateTerrain(
                 world(blocks), bounds, "minecraft:stronghold", start,
                 new IrisStructureTerrain()
                         .setMode(IrisStructureTerrainMode.ENCASE)
@@ -131,7 +131,7 @@ public class NativeStructurePostProcessorEncaseTest {
     @Test
     public void buryAndEncapsulateAdaptationsAutoDefaultToEncase() {
         for (TerrainAdjustment adjustment : List.of(TerrainAdjustment.BURY, TerrainAdjustment.ENCAPSULATE)) {
-            IrisStructureTerrain resolved = NativeStructurePostProcessor.resolveNativeTerrain(
+            IrisStructureTerrain resolved = NativeStructureTerrainIntegrator.resolveNativeTerrain(
                     start(adjustment, 64), null);
 
             assertEquals(IrisStructureTerrainMode.ENCASE, resolved.resolvedMode());
@@ -146,7 +146,7 @@ public class NativeStructurePostProcessorEncaseTest {
     public void otherAdaptationsNeverAutoDefaultToEncase() {
         for (TerrainAdjustment adjustment : List.of(
                 TerrainAdjustment.NONE, TerrainAdjustment.BEARD_THIN, TerrainAdjustment.BEARD_BOX)) {
-            assertNull(NativeStructurePostProcessor.resolveNativeTerrain(
+            assertNull(NativeStructureTerrainIntegrator.resolveNativeTerrain(
                     start(adjustment, 64), null));
         }
     }
@@ -156,7 +156,7 @@ public class NativeStructurePostProcessorEncaseTest {
         IrisStructureTerrain configured = new IrisStructureTerrain()
                 .setMode(IrisStructureTerrainMode.SOURCE);
 
-        assertSame(configured, NativeStructurePostProcessor.resolveNativeTerrain(
+        assertSame(configured, NativeStructureTerrainIntegrator.resolveNativeTerrain(
                 start(TerrainAdjustment.BURY, 64), configured));
     }
 
@@ -189,9 +189,9 @@ public class NativeStructurePostProcessorEncaseTest {
         StructureStart first = start(TerrainAdjustment.BURY, 64);
         StructureStart second = start(TerrainAdjustment.BURY, 64);
 
-        NativeStructurePostProcessor.applyVerticalShift(
+        NativeStructureVerticalPlacer.applyVerticalShift(
                 first, -64, -256, 320, true, false, band, (x, z) -> 40);
-        NativeStructurePostProcessor.applyVerticalShift(
+        NativeStructureVerticalPlacer.applyVerticalShift(
                 second, -64, -256, 320, true, false, band, (x, z) -> 40);
 
         BoundingBox bounds = first.getBoundingBox();
@@ -199,7 +199,7 @@ public class NativeStructurePostProcessorEncaseTest {
         assertTrue(bounds.minY() >= -120);
         assertTrue(bounds.maxY() <= -20);
 
-        int repeated = NativeStructurePostProcessor.applyVerticalShift(
+        int repeated = NativeStructureVerticalPlacer.applyVerticalShift(
                 first, -64, -256, 320, true, false, band, (x, z) -> 40);
         assertEquals(0, repeated);
     }
@@ -209,7 +209,7 @@ public class NativeStructurePostProcessorEncaseTest {
         IrisStructureYBand band = new IrisStructureYBand().setMin(-50).setMax(-45);
         StructureStart start = start(TerrainAdjustment.BURY, 64);
 
-        NativeStructurePostProcessor.applyVerticalShift(
+        NativeStructureVerticalPlacer.applyVerticalShift(
                 start, 0, -256, 320, true, false, band, (x, z) -> 40);
 
         BoundingBox bounds = start.getBoundingBox();
@@ -225,7 +225,7 @@ public class NativeStructurePostProcessorEncaseTest {
         BoundingBox bounds = start.getBoundingBox();
         int height = bounds.maxY() - bounds.minY();
 
-        NativeStructurePostProcessor.applyVerticalShift(
+        NativeStructureVerticalPlacer.applyVerticalShift(
                 start, -200, -256, 320, true, false, band, (x, z) -> 40);
 
         assertEquals(-64 - height / 2, start.getBoundingBox().minY());
@@ -237,7 +237,7 @@ public class NativeStructurePostProcessorEncaseTest {
         StructureStart start = start(TerrainAdjustment.BURY, 64);
         int minY = start.getBoundingBox().minY();
 
-        int offset = NativeStructurePostProcessor.applyVerticalShift(
+        int offset = NativeStructureVerticalPlacer.applyVerticalShift(
                 start, 0, -256, 320, true, true, band, (x, z) -> 40);
 
         assertEquals(0, offset);

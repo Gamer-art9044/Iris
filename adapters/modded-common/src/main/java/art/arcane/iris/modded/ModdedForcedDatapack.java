@@ -55,6 +55,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -63,6 +64,7 @@ public final class ModdedForcedDatapack {
     private static final String PACK_ID = "iris_worldgen";
     private static final String PACK_FOLDER = "iris";
     private static final Object LOCK = new Object();
+    private static final AtomicBoolean LOADED = new AtomicBoolean(false);
 
     private ModdedForcedDatapack() {
     }
@@ -71,7 +73,24 @@ public final class ModdedForcedDatapack {
         return (Consumer<Pack> consumer) -> {
             Pack pack = buildPack();
             consumer.accept(pack);
+            LOADED.set(true);
         };
+    }
+
+    public static void verifyInjected() {
+        if (LOADED.get()) {
+            return;
+        }
+        Path packsRoot = packsRoot();
+        File[] packs = packsRoot.toFile().listFiles(File::isDirectory);
+        if (packs == null || packs.length == 0) {
+            return;
+        }
+        LOGGER.error("===============================================================");
+        LOGGER.error("Iris forced datapack '{}' was never loaded by this server.", PACK_ID);
+        LOGGER.error("{} installed pack(s) at {} contributed no dimension types or custom biomes.", packs.length, packsRoot);
+        LOGGER.error("Datapack source injection failed for this loader (mixin/event not applied), so world creation will fail and restarting will not fix it.");
+        LOGGER.error("===============================================================");
     }
 
     public static Path datapackRoot() {
@@ -310,7 +329,9 @@ public final class ModdedForcedDatapack {
                                                 String pack, String packDimensionKey) {
         return registeredType.orElseThrow(() -> new IllegalStateException(
                 "Iris dimension type '" + typeRef + "' for pack '" + pack + "' dimension '"
-                        + packDimensionKey + "' is not loaded. Restart the server so the forced Iris datapack registers it before creating the world."));
+                        + packDimensionKey + "' is not loaded. Restart the server so the forced Iris datapack registers it before creating the world."
+                        + (LOADED.get() ? "" : " The forced Iris datapack has not been loaded by this server at all"
+                        + " (datapack source injection failed; see the Iris boot ERROR), so a restart alone will not register it.")));
     }
 
     private static void writeWorldPreset(KList<File> folders, String packName, String dimensionKey,

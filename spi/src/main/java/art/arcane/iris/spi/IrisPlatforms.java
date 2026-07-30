@@ -20,6 +20,12 @@ package art.arcane.iris.spi;
 
 /**
  * Static holder binding the active platform adapter for the lifetime of the runtime.
+ * <p>
+ * Exactly one adapter binds itself during startup; core reaches it through {@link #get()} from every thread.
+ * The binding is volatile, so reads are safe from any thread and see the bind that happened before them;
+ * {@link #bind(IrisPlatform)} and {@link #unbind()} serialize against each other.
+ * <p>
+ * Internal to Iris; not a published integration surface.
  */
 public final class IrisPlatforms {
     private static volatile IrisPlatform platform;
@@ -27,6 +33,11 @@ public final class IrisPlatforms {
     private IrisPlatforms() {
     }
 
+    /**
+     * Binds {@code p} as the active platform. Rebinding the same instance is a no-op.
+     *
+     * @throws IllegalStateException if a different platform is already bound
+     */
     public static synchronized void bind(IrisPlatform p) {
         if (platform != null && platform != p) {
             throw new IllegalStateException("Iris platform is already bound to a different instance");
@@ -34,10 +45,19 @@ public final class IrisPlatforms {
         platform = p;
     }
 
+    /**
+     * Clears the binding. Safe to call when nothing is bound.
+     */
     public static synchronized void unbind() {
         platform = null;
     }
 
+    /**
+     * The bound platform. Never returns null.
+     *
+     * @throws IllegalStateException if no platform is bound, which means Iris was reached before adapter
+     *                               startup or after shutdown
+     */
     public static IrisPlatform get() {
         IrisPlatform bound = platform;
         if (bound == null) {
@@ -46,6 +66,10 @@ public final class IrisPlatforms {
         return bound;
     }
 
+    /**
+     * Whether a platform is bound. Use before {@link #get()} on paths that must tolerate a bare JVM, such as
+     * logging during startup or in tests.
+     */
     public static boolean isBound() {
         return platform != null;
     }

@@ -51,6 +51,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -58,6 +60,8 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     private static final AtomicInteger THREAD_COUNT = new AtomicInteger();
     private static final int ADAPTIVE_TIMEOUT_STEP = 3;
     private static final int ADAPTIVE_RECOVERY_INTERVAL = 8;
+    private static final long CLOSE_DRAIN_TIMEOUT_SECONDS = 60L;
+    private static final long FLUSH_TIMEOUT_SECONDS = 120L;
     private final World world;
     private final IrisRuntimeSchedulerMode runtimeSchedulerMode;
     private final IrisPaperLikeBackendMode paperLikeBackendMode;
@@ -97,6 +101,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     private final AtomicLong completed = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
     private final AtomicLong lastProgressAt = new AtomicLong(M.ms());
+    private final AtomicBoolean closing = new AtomicBoolean();
     private final Object permitMonitor = new Object();
     private volatile Engine metricsEngine;
     private volatile Mantle cachedMantle;
@@ -169,7 +174,8 @@ public class AsyncPregenMethod implements PregeneratorMethod {
                 pregen.getMantleBackpressureWaitMs(),
                 pregen.getMantleBackpressureTimeoutMs(),
                 this::lowerAdaptiveInFlightLimit,
-                this::metricsSnapshot);
+                this::metricsSnapshot,
+                this::isCancelled);
     }
 
     public static AsyncPregenMethod strictSerial(World world) {
@@ -408,48 +414,90 @@ public class AsyncPregenMethod implements PregeneratorMethod {
             return;
         }
 
-        try {
-            J.sfut(() -> {
-                for (Long rk : keys) {
-                    if (!evictedRegions.add(rk)) {
-                        continue;
-                    }
-
-                    regionPending.remove(rk);
-                    Queue<Chunk> chunks = regionChunks.remove(rk);
-                    if (chunks == null) {
-                        continue;
-                    }
-
-                    for (Chunk chunk : chunks) {
-                        if (chunk != null) {
-                            unloadChunkSafely(chunk.getX(), chunk.getZ());
-                        }
-                    }
+        CompletableFuture<Void> flush = J.sfut(() -> {
+            for (Long rk : keys) {
+                if (!evictedRegions.add(rk)) {
+                    continue;
                 }
 
-                world.save();
-                INMS.get().flushChunkIO(world);
-            }).get();
+                regionPending.remove(rk);
+                Queue<Chunk> chunks = regionChunks.remove(rk);
+                if (chunks == null) {
+                    continue;
+                }
+
+                for (Chunk chunk : chunks) {
+                    if (chunk != null) {
+                        unloadChunkSafely(chunk.getX(), chunk.getZ());
+                    }
+                }
+            }
+
+            world.save();
+            INMS.get().flushChunkIO(world);
+        });
+
+        try {
+            flush.get(FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            IrisLogging.warn("Interrupted while flushing pregen chunks for " + world.getName() + ".");
+        } catch (TimeoutException e) {
+            IrisLogging.warn("Pregen chunk flush for " + world.getName() + " did not finish in " + FLUSH_TIMEOUT_SECONDS
+                    + "s, continuing shutdown. " + keys.size() + " region(s) queued.");
         } catch (Throwable e) {
             IrisLogging.reportError(e);
         }
     }
 
     private Chunk onChunkFutureFailure(int x, int z, Throwable throwable) {
-        Throwable root = throwable;
-        while (root.getCause() != null) {
-            root = root.getCause();
+        try {
+            Throwable root = throwable;
+            while (root.getCause() != null) {
+                root = root.getCause();
+            }
+
+            if (root instanceof TimeoutException) {
+                onTimeout(x, z);
+            } else {
+                IrisLogging.warn("Failed async pregen chunk load at " + x + "," + z + ". " + metricsSnapshot());
+            }
+
+            IrisLogging.reportError(throwable);
+        } catch (Throwable e) {
+            e.printStackTrace();
         }
 
-        if (root instanceof java.util.concurrent.TimeoutException) {
-            onTimeout(x, z);
-        } else {
-            IrisLogging.warn("Failed async pregen chunk load at " + x + "," + z + ". " + metricsSnapshot());
-        }
-
-        IrisLogging.reportError(throwable);
         return null;
+    }
+
+    private void completeChunk(int x, int z, PregenListener listener, Chunk chunk, Throwable throwable) {
+        boolean success = false;
+        try {
+            if (throwable != null) {
+                onChunkFutureFailure(x, z, throwable);
+                onChunkFailedToLoad(x, z);
+                listener.onChunkFailed(x, z);
+            } else if (chunk == null) {
+                onChunkFailedToLoad(x, z);
+                listener.onChunkFailed(x, z);
+            } else {
+                listener.onChunkGenerated(x, z);
+                cleanupMantleChunk(x, z);
+                listener.onChunkCleaned(x, z);
+                onChunkCompleted(x, z, chunk);
+                success = true;
+            }
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            e.printStackTrace();
+        } finally {
+            try {
+                markFinished(success);
+            } finally {
+                semaphore.release();
+            }
+        }
     }
 
     private void onTimeout(int x, int z) {
@@ -707,10 +755,36 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
     @Override
     public void close() {
-        semaphore.acquireUninterruptibly(threads);
-        flushAllRemainingChunks();
-        executor.shutdown();
-        resetWorkerThreads();
+        closing.set(true);
+        notifyPermitWaiters();
+
+        // A stop request interrupts the pregen worker; shield the drain and flush so chunks still hit disk.
+        boolean interrupted = Thread.interrupted();
+        try {
+            boolean drained = false;
+            try {
+                drained = semaphore.tryAcquire(threads, CLOSE_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+
+            if (!drained) {
+                IrisLogging.warn("Async pregen close did not drain in " + CLOSE_DRAIN_TIMEOUT_SECONDS
+                        + "s, continuing degraded. " + metricsSnapshot());
+            }
+
+            flushAllRemainingChunks();
+            executor.shutdown();
+            resetWorkerThreads();
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private boolean isCancelled() {
+        return closing.get() || Thread.currentThread().isInterrupted();
     }
 
     @Override
@@ -732,10 +806,18 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         listener.onChunkGenerating(x, z);
         backpressure.enforceMantleBudget();
         backpressure.awaitHeapHeadroom();
+        if (isCancelled()) {
+            return;
+        }
+
         try {
             long waitStart = M.ms();
             synchronized (permitMonitor) {
                 while (inFlight.get() >= adaptiveInFlightLimit.get()) {
+                    if (isCancelled()) {
+                        return;
+                    }
+
                     permitMonitor.wait(500L);
                 }
             }
@@ -746,6 +828,9 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
             long permitWaitStart = M.ms();
             while (!semaphore.tryAcquire(1, TimeUnit.SECONDS)) {
+                if (isCancelled()) {
+                    return;
+                }
             }
             long permitWait = Math.max(0L, M.ms() - permitWaitStart);
             if (permitWait > 0L) {
@@ -921,48 +1006,24 @@ public class AsyncPregenMethod implements PregeneratorMethod {
             try {
                 requestChunkAsync(x, z)
                         .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                        .whenComplete((chunk, throwable) -> completeFoliaChunk(x, z, listener, chunk, throwable));
+                        .whenComplete((chunk, throwable) -> completeChunk(x, z, listener, chunk, throwable));
                 return;
             } catch (Throwable ignored) {
             }
 
-            if (!J.runRegion(world, x, z, () -> requestChunkAsync(x, z)
-                    .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                    .whenComplete((chunk, throwable) -> completeFoliaChunk(x, z, listener, chunk, throwable)))) {
-                markFinished(false);
-                semaphore.release();
-                listener.onChunkFailed(x, z);
-                IrisLogging.warn("Failed to schedule Folia region pregen task at " + x + "," + z + ". " + metricsSnapshot());
-            }
-        }
-
-        private void completeFoliaChunk(int x, int z, PregenListener listener, Chunk chunk, Throwable throwable) {
-            boolean success = false;
-            try {
-                if (throwable != null) {
-                    onChunkFutureFailure(x, z, throwable);
-                    onChunkFailedToLoad(x, z);
-                    listener.onChunkFailed(x, z);
-                    return;
+            Runnable regionTask = () -> {
+                try {
+                    requestChunkAsync(x, z)
+                            .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                            .whenComplete((chunk, throwable) -> completeChunk(x, z, listener, chunk, throwable));
+                } catch (Throwable e) {
+                    completeChunk(x, z, listener, null, e);
                 }
+            };
 
-                if (chunk == null) {
-                    onChunkFailedToLoad(x, z);
-                    listener.onChunkFailed(x, z);
-                    return;
-                }
-
-                listener.onChunkGenerated(x, z);
-                cleanupMantleChunk(x, z);
-                listener.onChunkCleaned(x, z);
-                onChunkCompleted(x, z, chunk);
-                success = true;
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
-                e.printStackTrace();
-            } finally {
-                markFinished(success);
-                semaphore.release();
+            if (!J.runRegion(world, x, z, regionTask)) {
+                completeChunk(x, z, listener, null,
+                        new IllegalStateException("Failed to schedule Folia region pregen task at " + x + "," + z + ". " + metricsSnapshot()));
             }
         }
     }
@@ -971,35 +1032,23 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         private final ExecutorService service = new MultiBurst("Iris Async Pregen");
 
         public void generate(int x, int z, PregenListener listener) {
-            service.submit(() -> {
-                boolean success = false;
-                try {
-                    Chunk i = requestChunkAsync(x, z)
-                            .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                            .exceptionally(e -> onChunkFutureFailure(x, z, e))
-                            .get();
-
-                    if (i == null) {
-                        onChunkFailedToLoad(x, z);
-                        listener.onChunkFailed(x, z);
-                        return;
+            try {
+                service.submit(() -> {
+                    try {
+                        Chunk i = requestChunkAsync(x, z)
+                                .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                                .get();
+                        completeChunk(x, z, listener, i, null);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        completeChunk(x, z, listener, null, e);
+                    } catch (Throwable e) {
+                        completeChunk(x, z, listener, null, e);
                     }
-
-                    listener.onChunkGenerated(x, z);
-                    cleanupMantleChunk(x, z);
-                    listener.onChunkCleaned(x, z);
-                    onChunkCompleted(x, z, i);
-                    success = true;
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
-                    e.printStackTrace();
-                } finally {
-                    markFinished(success);
-                    semaphore.release();
-                }
-            });
+                });
+            } catch (Throwable e) {
+                completeChunk(x, z, listener, null, e);
+            }
         }
 
         @Override
@@ -1011,28 +1060,13 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     private class TicketExecutor implements Executor {
         @Override
         public void generate(int x, int z, PregenListener listener) {
-            requestChunkAsync(x, z)
-                    .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                    .exceptionally(e -> onChunkFutureFailure(x, z, e))
-                    .thenAccept(i -> {
-                        boolean success = false;
-                        try {
-                            if (i == null) {
-                                onChunkFailedToLoad(x, z);
-                                listener.onChunkFailed(x, z);
-                                return;
-                            }
-
-                            listener.onChunkGenerated(x, z);
-                            cleanupMantleChunk(x, z);
-                            listener.onChunkCleaned(x, z);
-                            onChunkCompleted(x, z, i);
-                            success = true;
-                        } finally {
-                            markFinished(success);
-                            semaphore.release();
-                        }
-                    });
+            try {
+                requestChunkAsync(x, z)
+                        .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                        .whenComplete((chunk, throwable) -> completeChunk(x, z, listener, chunk, throwable));
+            } catch (Throwable e) {
+                completeChunk(x, z, listener, null, e);
+            }
         }
     }
 

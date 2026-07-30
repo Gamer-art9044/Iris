@@ -316,19 +316,6 @@ public class CommandIris implements DirectorExecutor {
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_IRIS_V_BY_VOLMIT_SOFTWARE, MessageArgument.untrusted("value", Iris.instance.getDescription().getVersion())));
     }
 
-    /*
-    /todo
-    @Director(description = "Benchmark a pack", descriptionKey = "iris.director.commandiris.director.benchmark_pack", origin = DirectorOrigin.CONSOLE)
-    public void packbenchmark(
-            @Param(description = "Dimension to benchmark", descriptionKey = "iris.director.commandiris.param.dimension_benchmark")
-            IrisDimension type
-    ) throws InterruptedException {
-
-         BenchDimension = type.getLoadKey();
-
-        IrisPackBenchmarking.runBenchmark();
-    } */
-
     @Director(description = "Print world height information", descriptionKey = "iris.director.commandiris.director.print_world_height_information", origin = DirectorOrigin.PLAYER)
     public void height() {
         if (sender().isPlayer()) {
@@ -588,7 +575,7 @@ public class CommandIris implements DirectorExecutor {
             return;
         }
 
-        Iris.instance.checkForBukkitWorlds(logicalWorldName::equals);
+        Iris.instance.worldReconciler().checkForBukkitWorlds(logicalWorldName::equals);
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_LOADED_SUCCESSFULLY, MessageArgument.untrusted("logicalWorldName", logicalWorldName)));
     }
     @Director(description = "Evacuate an iris world", descriptionKey = "iris.director.commandiris.director.evacuate_iris_world", origin = DirectorOrigin.PLAYER, sync = true)

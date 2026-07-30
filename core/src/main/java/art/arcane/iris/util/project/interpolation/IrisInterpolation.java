@@ -21,18 +21,9 @@ package art.arcane.iris.util.project.interpolation;
 import com.google.common.util.concurrent.AtomicDouble;
 import art.arcane.volmlib.util.interpolation.Starcast;
 import art.arcane.iris.engine.object.NoiseStyle;
-import art.arcane.iris.spi.IrisLogging;
-import art.arcane.volmlib.util.format.Form;
-import art.arcane.volmlib.util.function.Consumer2;
 import art.arcane.volmlib.util.function.NoiseProvider;
-import art.arcane.volmlib.util.function.NoiseProvider3;
-import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
-import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
-
-import java.math.BigDecimal;
-import java.util.Arrays;
 
 public class IrisInterpolation {
     public static CNG cng = NoiseStyle.SIMPLEX.create(new RNG());
@@ -316,76 +307,6 @@ public class IrisInterpolation {
         //@done
     }
 
-    public static void test(String m, Consumer2<Integer, Integer> f) {
-        PrecisionStopwatch p = PrecisionStopwatch.start();
-
-        for (int i = 0; i < 8192; i++) {
-            f.accept(i, -i * 234);
-        }
-
-        p.end();
-
-        IrisLogging.info("%s", m + ": " + Form.duration(p.getMilliseconds(), 8));
-    }
-
-    public static void printOptimizedSrc(boolean arrays) {
-        IrisLogging.info("%s", generateOptimizedStarcast(3, arrays));
-        IrisLogging.info("%s", generateOptimizedStarcast(5, arrays));
-        IrisLogging.info("%s", generateOptimizedStarcast(6, arrays));
-        IrisLogging.info("%s", generateOptimizedStarcast(7, arrays));
-        IrisLogging.info("%s", generateOptimizedStarcast(9, arrays));
-        IrisLogging.info("%s", generateOptimizedStarcast(12, arrays));
-        IrisLogging.info("%s", generateOptimizedStarcast(24, arrays));
-        IrisLogging.info("%s", generateOptimizedStarcast(32, arrays));
-        IrisLogging.info("%s", generateOptimizedStarcast(48, arrays));
-        IrisLogging.info("%s", generateOptimizedStarcast(64, arrays));
-    }
-
-    public static String generateOptimizedStarcast(double checks, boolean array) {
-        double m = (360 / checks);
-        int ig = 0;
-        int igx = 0;
-        StringBuilder fb = new StringBuilder();
-        StringBuilder sb = new StringBuilder();
-
-        if (array) {
-            fb.append("private static final double[] F").append((int) checks).append("A = {");
-        }
-
-        sb.append("private static double sc").append((int) checks).append("(int x, int z, double r, NoiseProvider n) {\n    return (");
-        for (int i = 0; i < 360; i += m) {
-            double sin = Math.sin(Math.toRadians(i));
-            double cos = Math.cos(Math.toRadians(i));
-            String cof = new BigDecimal(cos).toPlainString();
-            String sif = new BigDecimal(sin).toPlainString();
-            String cc = array ? "F" + (int) checks + "A[" + (igx++) + "]" : "F" + (int) checks + "C" + ig;
-            String ss = array ? "F" + (int) checks + "A[" + (igx++) + "]" : "F" + (int) checks + "S" + ig;
-
-            if (array) {
-                fb.append(ig > 0 ? (ig % 6 == 0 ? ",\n" : ",") : "").append(cof).append(",").append(sif);
-            } else {
-                fb.append("private static final double ").append(cc).append(" = ").append(cof).append(";\n");
-                fb.append("private static final double ").append(ss).append(" = ").append(sif).append(";\n");
-            }
-
-            sb.append(ig > 0 ? "\n    +" : "").append("n.noise(x + ((r * ").append(cc).append(") - (r * ").append(ss).append(")), z + ((r * ").append(ss).append(") + (r * ").append(cc).append(")))");
-            ig++;
-        }
-
-        if (array) {
-            fb.append("};");
-        }
-
-        sb.append(")/").append(checks).append("D;\n}");
-        return fb + "\n" + sb;
-    }
-
-    public static double getStarcast3D(int x, int y, int z, double rad, double checks, NoiseProvider3 n) {
-        return (Starcast.starcast(x, z, rad, checks, (xx, zz) -> n.noise(xx, y, zz))
-                + Starcast.starcast(x, y, rad, checks, (xx, yy) -> n.noise(xx, yy, z))
-                + Starcast.starcast(y, z, rad, checks, (yy, zz) -> n.noise(x, yy, zz))) / 3D;
-    }
-
     public static double getBilinearBezierNoise(int x, int z, double rad, NoiseProvider n) {
         int fx = getRadiusFactor(x, rad);
         int fz = getRadiusFactor(z, rad);
@@ -421,235 +342,6 @@ public class IrisInterpolation {
                 n.noise(x1, z2),
                 n.noise(x2, z2),
                 px, pz, a);
-        //@done
-    }
-
-    public static double getTrilinear(int x, int y, int z, double rad, NoiseProvider3 n) {
-        return getTrilinear(x, y, z, rad, rad, rad, n);
-    }
-
-    public static double getTrilinear(int x, int y, int z, double radx, double rady, double radz, NoiseProvider3 n) {
-        int fx = getRadiusFactor(x, radx);
-        int fy = getRadiusFactor(y, rady);
-        int fz = getRadiusFactor(z, radz);
-        int x1 = (int) Math.round(fx * radx);
-        int y1 = (int) Math.round(fy * rady);
-        int z1 = (int) Math.round(fz * radz);
-        int x2 = (int) Math.round((fx + 1) * radx);
-        int y2 = (int) Math.round((fy + 1) * rady);
-        int z2 = (int) Math.round((fz + 1) * radz);
-        double px = rangeScale(0, 1, x1, x2, x);
-        double py = rangeScale(0, 1, y1, y2, y);
-        double pz = rangeScale(0, 1, z1, z2, z);
-        //@builder
-        return trilerp(
-                n.noise(x1, y1, z1),
-                n.noise(x2, y1, z1),
-                n.noise(x1, y2, z1),
-                n.noise(x2, y2, z1),
-                n.noise(x1, y1, z2),
-                n.noise(x2, y1, z2),
-                n.noise(x1, y2, z2),
-                n.noise(x2, y2, z2),
-                px, py, pz);
-        //@done
-    }
-
-    public static double getTricubic(int x, int y, int z, double rad, NoiseProvider3 n) {
-        return getTricubic(x, y, z, rad, rad, rad, n);
-    }
-
-    public static double getTricubic(int x, int y, int z, double radx, double rady, double radz, NoiseProvider3 n) {
-        int fx = getRadiusFactor(x, radx);
-        int fy = getRadiusFactor(y, rady);
-        int fz = getRadiusFactor(z, radz);
-        int x0 = (int) Math.round((fx - 1) * radx);
-        int y0 = (int) Math.round((fy - 1) * rady);
-        int z0 = (int) Math.round((fz - 1) * radz);
-        int x1 = (int) Math.round(fx * radx);
-        int y1 = (int) Math.round(fy * rady);
-        int z1 = (int) Math.round(fz * radz);
-        int x2 = (int) Math.round((fx + 1) * radx);
-        int y2 = (int) Math.round((fy + 1) * rady);
-        int z2 = (int) Math.round((fz + 1) * radz);
-        int x3 = (int) Math.round((fx + 2) * radx);
-        int y3 = (int) Math.round((fy + 2) * rady);
-        int z3 = (int) Math.round((fz + 2) * radz);
-        double px = rangeScale(0, 1, x1, x2, x);
-        double py = rangeScale(0, 1, y1, y2, y);
-        double pz = rangeScale(0, 1, z1, z2, z);
-        //@builder
-        //!!!!!!!!!!!!!!!!!! 2 1 3
-
-        return tricubic(
-                n.noise(x0, y0, z0),
-                n.noise(x0, y1, z0),
-                n.noise(x0, y2, z0),
-                n.noise(x0, y3, z0),
-                n.noise(x1, y0, z0),
-                n.noise(x1, y1, z0),
-                n.noise(x1, y2, z0),
-                n.noise(x1, y3, z0),
-                n.noise(x2, y0, z0),
-                n.noise(x2, y1, z0),
-                n.noise(x2, y2, z0),
-                n.noise(x2, y3, z0),
-                n.noise(x3, y0, z0),
-                n.noise(x3, y1, z0),
-                n.noise(x3, y2, z0),
-                n.noise(x3, y3, z0),
-                n.noise(x0, y0, z1),
-                n.noise(x0, y1, z1),
-                n.noise(x0, y2, z1),
-                n.noise(x0, y3, z1),
-                n.noise(x1, y0, z1),
-                n.noise(x1, y1, z1),
-                n.noise(x1, y2, z1),
-                n.noise(x1, y3, z1),
-                n.noise(x2, y0, z1),
-                n.noise(x2, y1, z1),
-                n.noise(x2, y2, z1),
-                n.noise(x2, y3, z1),
-                n.noise(x3, y0, z1),
-                n.noise(x3, y1, z1),
-                n.noise(x3, y2, z1),
-                n.noise(x3, y3, z1),
-                n.noise(x0, y0, z2),
-                n.noise(x0, y1, z2),
-                n.noise(x0, y2, z2),
-                n.noise(x0, y3, z2),
-                n.noise(x1, y0, z2),
-                n.noise(x1, y1, z2),
-                n.noise(x1, y2, z2),
-                n.noise(x1, y3, z2),
-                n.noise(x2, y0, z2),
-                n.noise(x2, y1, z2),
-                n.noise(x2, y2, z2),
-                n.noise(x2, y3, z2),
-                n.noise(x3, y0, z2),
-                n.noise(x3, y1, z2),
-                n.noise(x3, y2, z2),
-                n.noise(x3, y3, z2),
-                n.noise(x0, y0, z3),
-                n.noise(x0, y1, z3),
-                n.noise(x0, y2, z3),
-                n.noise(x0, y3, z3),
-                n.noise(x1, y0, z3),
-                n.noise(x1, y1, z3),
-                n.noise(x1, y2, z3),
-                n.noise(x1, y3, z3),
-                n.noise(x2, y0, z3),
-                n.noise(x2, y1, z3),
-                n.noise(x2, y2, z3),
-                n.noise(x2, y3, z3),
-                n.noise(x3, y0, z3),
-                n.noise(x3, y1, z3),
-                n.noise(x3, y2, z3),
-                n.noise(x3, y3, z3),
-                px, py, pz);
-        //@done
-    }
-
-    public static double getTrihermite(int x, int y, int z, double rad, NoiseProvider3 n, double tension, double bias) {
-        return getTrihermite(x, y, z, rad, rad, rad, n, tension, bias);
-    }
-
-    public static double getTrihermite(int x, int y, int z, double rad, NoiseProvider3 n) {
-        return getTrihermite(x, y, z, rad, rad, rad, n, 0D, 0D);
-    }
-
-    public static double getTrihermite(int x, int y, int z, double radx, double rady, double radz, NoiseProvider3 n) {
-        return getTrihermite(x, y, z, radx, rady, radz, n, 0D, 0D);
-    }
-
-    public static double getTrihermite(int x, int y, int z, double radx, double rady, double radz, NoiseProvider3 n, double tension, double bias) {
-        int fx = getRadiusFactor(x, radx);
-        int fy = getRadiusFactor(y, rady);
-        int fz = getRadiusFactor(z, radz);
-        int x0 = (int) Math.round((fx - 1) * radx);
-        int y0 = (int) Math.round((fy - 1) * rady);
-        int z0 = (int) Math.round((fz - 1) * radz);
-        int x1 = (int) Math.round(fx * radx);
-        int y1 = (int) Math.round(fy * rady);
-        int z1 = (int) Math.round(fz * radz);
-        int x2 = (int) Math.round((fx + 1) * radx);
-        int y2 = (int) Math.round((fy + 1) * rady);
-        int z2 = (int) Math.round((fz + 1) * radz);
-        int x3 = (int) Math.round((fx + 2) * radx);
-        int y3 = (int) Math.round((fy + 2) * rady);
-        int z3 = (int) Math.round((fz + 2) * radz);
-        double px = rangeScale(0, 1, x1, x2, x);
-        double py = rangeScale(0, 1, y1, y2, y);
-        double pz = rangeScale(0, 1, z1, z2, z);
-        //@builder
-        //!!!!!!!!!!!!!!!!!! 2 1 3
-
-        return trihermite(
-                n.noise(x0, y0, z0),
-                n.noise(x0, y1, z0),
-                n.noise(x0, y2, z0),
-                n.noise(x0, y3, z0),
-                n.noise(x1, y0, z0),
-                n.noise(x1, y1, z0),
-                n.noise(x1, y2, z0),
-                n.noise(x1, y3, z0),
-                n.noise(x2, y0, z0),
-                n.noise(x2, y1, z0),
-                n.noise(x2, y2, z0),
-                n.noise(x2, y3, z0),
-                n.noise(x3, y0, z0),
-                n.noise(x3, y1, z0),
-                n.noise(x3, y2, z0),
-                n.noise(x3, y3, z0),
-                n.noise(x0, y0, z1),
-                n.noise(x0, y1, z1),
-                n.noise(x0, y2, z1),
-                n.noise(x0, y3, z1),
-                n.noise(x1, y0, z1),
-                n.noise(x1, y1, z1),
-                n.noise(x1, y2, z1),
-                n.noise(x1, y3, z1),
-                n.noise(x2, y0, z1),
-                n.noise(x2, y1, z1),
-                n.noise(x2, y2, z1),
-                n.noise(x2, y3, z1),
-                n.noise(x3, y0, z1),
-                n.noise(x3, y1, z1),
-                n.noise(x3, y2, z1),
-                n.noise(x3, y3, z1),
-                n.noise(x0, y0, z2),
-                n.noise(x0, y1, z2),
-                n.noise(x0, y2, z2),
-                n.noise(x0, y3, z2),
-                n.noise(x1, y0, z2),
-                n.noise(x1, y1, z2),
-                n.noise(x1, y2, z2),
-                n.noise(x1, y3, z2),
-                n.noise(x2, y0, z2),
-                n.noise(x2, y1, z2),
-                n.noise(x2, y2, z2),
-                n.noise(x2, y3, z2),
-                n.noise(x3, y0, z2),
-                n.noise(x3, y1, z2),
-                n.noise(x3, y2, z2),
-                n.noise(x3, y3, z2),
-                n.noise(x0, y0, z3),
-                n.noise(x0, y1, z3),
-                n.noise(x0, y2, z3),
-                n.noise(x0, y3, z3),
-                n.noise(x1, y0, z3),
-                n.noise(x1, y1, z3),
-                n.noise(x1, y2, z3),
-                n.noise(x1, y3, z3),
-                n.noise(x2, y0, z3),
-                n.noise(x2, y1, z3),
-                n.noise(x2, y2, z3),
-                n.noise(x2, y3, z3),
-                n.noise(x3, y0, z3),
-                n.noise(x3, y1, z3),
-                n.noise(x3, y2, z3),
-                n.noise(x3, y3, z3),
-                px, py, pz, tension, bias);
         //@done
     }
 
@@ -909,64 +601,6 @@ public class IrisInterpolation {
         return rad.get();
     }
 
-    public static double getNoise3D(InterpolationMethod3D method, int x, int y, int z, double radx, double rady, double radz, NoiseProvider3 n) {
-        return switch (method) {
-            case TRILINEAR -> getTrilinear(x, y, z, radx, rady, radz, n);
-            case TRICUBIC -> getTricubic(x, y, z, radx, rady, radz, n);
-            case TRIHERMITE -> getTrihermite(x, y, z, radx, rady, radz, n);
-            case TRISTARCAST_3 -> getStarcast3D(x, y, z, radx, 3D, n);
-            case TRISTARCAST_6 -> getStarcast3D(x, y, z, radx, 6D, n);
-            case TRISTARCAST_9 -> getStarcast3D(x, y, z, radx, 9D, n);
-            case TRISTARCAST_12 -> getStarcast3D(x, y, z, radx, 12D, n);
-            case TRILINEAR_TRISTARCAST_3 ->
-                    getStarcast3D(x, y, z, radx, 3D, (xx, yy, zz) -> getTrilinear((int) xx, (int) yy, (int) zz, radx, rady, radz, n));
-            case TRILINEAR_TRISTARCAST_6 ->
-                    getStarcast3D(x, y, z, radx, 6D, (xx, yy, zz) -> getTrilinear((int) xx, (int) yy, (int) zz, radx, rady, radz, n));
-            case TRILINEAR_TRISTARCAST_9 ->
-                    getStarcast3D(x, y, z, radx, 9D, (xx, yy, zz) -> getTrilinear((int) xx, (int) yy, (int) zz, radx, rady, radz, n));
-            case TRILINEAR_TRISTARCAST_12 ->
-                    getStarcast3D(x, y, z, radx, 12D, (xx, yy, zz) -> getTrilinear((int) xx, (int) yy, (int) zz, radx, rady, radz, n));
-            case NONE -> n.noise(x, y, z);
-        };
-    }
-
-    public static Hunk<Double> getNoise3D(InterpolationMethod3D method, int xo, int yo, int zo, int w, int h, int d, double rad, NoiseProvider3 n) {
-        return getNoise3D(method, xo, yo, zo, w, h, d, rad, rad, rad, n);
-    }
-
-    /**
-     * Get the interpolated 3D noise within a given cuboid size with offsets
-     *
-     * @param method the interpolation method to use
-     * @param xo     the x offset for noise
-     * @param yo     the y offset for noise
-     * @param zo     the z offset for noise
-     * @param w      the width of the result
-     * @param h      the height of the result
-     * @param d      the depth of the result
-     * @param radX   the interpolation radius for the x axis
-     * @param radY   the interpolation radius for the y axis
-     * @param radZ   the interpolation radius for the z axis
-     * @param n      the noise provider
-     * @return the resulting hunk of noise
-     */
-    public static Hunk<Double> getNoise3D(InterpolationMethod3D method, int xo, int yo, int zo, int w, int h, int d, double radX, double radY, double radZ, NoiseProvider3 n) {
-        Hunk<Double> hunk = Hunk.newAtomicDoubleHunk(w, h, d);
-        for (int i = 0; i < w; i++) {
-            for (int j = 0; j < h; j++) {
-                for (int k = 0; k < d; k++) {
-                    hunk.set(i, j, k, getNoise3D(method, i + xo, j + yo, k + zo, radX, radY, radZ, n));
-                }
-            }
-        }
-
-        return hunk;
-    }
-
-    public static double getNoise3D(InterpolationMethod3D method, int x, int y, int z, double rad, NoiseProvider3 n) {
-        return getNoise3D(method, x, y, z, rad, rad, rad, n);
-    }
-
     public static double getNoise(InterpolationMethod method, int x, int z, double h, NoiseProvider noise) {
         final NoiseProvider n;
         if (usesSampleCache(method)) {
@@ -977,71 +611,56 @@ public class IrisInterpolation {
             n = noise;
         }
 
-        if (method.equals(InterpolationMethod.BILINEAR)) {
-            return getBilinearNoise(x, z, h, n);
-        } else if (method.equals(InterpolationMethod.STARCAST_3)) {
-            return Starcast.starcast(x, z, h, 3D, n);
-        } else if (method.equals(InterpolationMethod.STARCAST_6)) {
-            return Starcast.starcast(x, z, h, 6D, n);
-        } else if (method.equals(InterpolationMethod.STARCAST_9)) {
-            return Starcast.starcast(x, z, h, 9D, n);
-        } else if (method.equals(InterpolationMethod.STARCAST_12)) {
-            return Starcast.starcast(x, z, h, 12D, n);
-        } else if (method.equals(InterpolationMethod.BILINEAR_STARCAST_3)) {
-            return Starcast.starcast(x, z, h, 3D, (xx, zz) -> getBilinearNoise((int) xx, (int) zz, h, n));
-        } else if (method.equals(InterpolationMethod.BILINEAR_STARCAST_6)) {
-            return Starcast.starcast(x, z, h, 6D, (xx, zz) -> getBilinearNoise((int) xx, (int) zz, h, n));
-        } else if (method.equals(InterpolationMethod.BILINEAR_STARCAST_9)) {
-            return Starcast.starcast(x, z, h, 9D, (xx, zz) -> getBilinearNoise((int) xx, (int) zz, h, n));
-        } else if (method.equals(InterpolationMethod.BILINEAR_STARCAST_12)) {
-            return Starcast.starcast(x, z, h, 12D, (xx, zz) -> getBilinearNoise((int) xx, (int) zz, h, n));
-        } else if (method.equals(InterpolationMethod.HERMITE_STARCAST_3)) {
-            return Starcast.starcast(x, z, h, 3D, (xx, zz) -> getHermiteNoise((int) xx, (int) zz, h, n, 0D, 0D));
-        } else if (method.equals(InterpolationMethod.HERMITE_STARCAST_6)) {
-            return Starcast.starcast(x, z, h, 6D, (xx, zz) -> getHermiteNoise((int) xx, (int) zz, h, n, 0D, 0D));
-        } else if (method.equals(InterpolationMethod.HERMITE_STARCAST_9)) {
-            return Starcast.starcast(x, z, h, 9D, (xx, zz) -> getHermiteNoise((int) xx, (int) zz, h, n, 0D, 0D));
-        } else if (method.equals(InterpolationMethod.HERMITE_STARCAST_12)) {
-            return Starcast.starcast(x, z, h, 12D, (xx, zz) -> getHermiteNoise((int) xx, (int) zz, h, n, 0D, 0D));
-        } else if (method.equals(InterpolationMethod.BILINEAR_BEZIER)) {
-            return getBilinearBezierNoise(x, z, h, n);
-        } else if (method.equals(InterpolationMethod.BILINEAR_PARAMETRIC_2)) {
-            return getBilinearParametricNoise(x, z, h, n, 2);
-        } else if (method.equals(InterpolationMethod.BILINEAR_PARAMETRIC_4)) {
-            return getBilinearParametricNoise(x, z, h, n, 4);
-        } else if (method.equals(InterpolationMethod.BILINEAR_PARAMETRIC_1_5)) {
-            return getBilinearParametricNoise(x, z, h, n, 1.5);
-        } else if (method.equals(InterpolationMethod.BICUBIC)) {
-            return getBilinearNoise(x, z, h, n);
-        } else if (method.equals(InterpolationMethod.HERMITE)) {
-            return getHermiteNoise(x, z, h, n);
-        } else if (method.equals(InterpolationMethod.HERMITE_TENSE)) {
-            return getHermiteNoise(x, z, h, n, 0.8D, 0D);
-        } else if (method.equals(InterpolationMethod.CATMULL_ROM_SPLINE)) {
-            return getHermiteNoise(x, z, h, n, 1D, 0D);
-        } else if (method.equals(InterpolationMethod.HERMITE_LOOSE)) {
-            return getHermiteNoise(x, z, h, n, 0D, 0D);
-        } else if (method.equals(InterpolationMethod.HERMITE_LOOSE_HALF_NEGATIVE_BIAS)) {
-            return getHermiteNoise(x, z, h, n, 0D, -0.5D);
-        } else if (method.equals(InterpolationMethod.HERMITE_LOOSE_HALF_POSITIVE_BIAS)) {
-            return getHermiteNoise(x, z, h, n, 0D, 0.5D);
-        } else if (method.equals(InterpolationMethod.HERMITE_LOOSE_FULL_NEGATIVE_BIAS)) {
-            return getHermiteNoise(x, z, h, n, 0D, -1D);
-        } else if (method.equals(InterpolationMethod.HERMITE_LOOSE_FULL_POSITIVE_BIAS)) {
-            return getHermiteNoise(x, z, h, n, 0D, 1D);
-        }
-
-        return n.noise(x, z);
+        return switch (method) {
+            case BILINEAR -> getBilinearNoise(x, z, h, n);
+            case STARCAST_3 -> Starcast.starcast(x, z, h, 3D, n);
+            case STARCAST_6 -> Starcast.starcast(x, z, h, 6D, n);
+            case STARCAST_9 -> Starcast.starcast(x, z, h, 9D, n);
+            case STARCAST_12 -> Starcast.starcast(x, z, h, 12D, n);
+            case BILINEAR_STARCAST_3 ->
+                    Starcast.starcast(x, z, h, 3D, (xx, zz) -> getBilinearNoise((int) xx, (int) zz, h, n));
+            case BILINEAR_STARCAST_6 ->
+                    Starcast.starcast(x, z, h, 6D, (xx, zz) -> getBilinearNoise((int) xx, (int) zz, h, n));
+            case BILINEAR_STARCAST_9 ->
+                    Starcast.starcast(x, z, h, 9D, (xx, zz) -> getBilinearNoise((int) xx, (int) zz, h, n));
+            case BILINEAR_STARCAST_12 ->
+                    Starcast.starcast(x, z, h, 12D, (xx, zz) -> getBilinearNoise((int) xx, (int) zz, h, n));
+            case HERMITE_STARCAST_3 ->
+                    Starcast.starcast(x, z, h, 3D, (xx, zz) -> getHermiteNoise((int) xx, (int) zz, h, n, 0D, 0D));
+            case HERMITE_STARCAST_6 ->
+                    Starcast.starcast(x, z, h, 6D, (xx, zz) -> getHermiteNoise((int) xx, (int) zz, h, n, 0D, 0D));
+            case HERMITE_STARCAST_9 ->
+                    Starcast.starcast(x, z, h, 9D, (xx, zz) -> getHermiteNoise((int) xx, (int) zz, h, n, 0D, 0D));
+            case HERMITE_STARCAST_12 ->
+                    Starcast.starcast(x, z, h, 12D, (xx, zz) -> getHermiteNoise((int) xx, (int) zz, h, n, 0D, 0D));
+            case BILINEAR_BEZIER -> getBilinearBezierNoise(x, z, h, n);
+            case BILINEAR_PARAMETRIC_2 -> getBilinearParametricNoise(x, z, h, n, 2);
+            case BILINEAR_PARAMETRIC_4 -> getBilinearParametricNoise(x, z, h, n, 4);
+            case BILINEAR_PARAMETRIC_1_5 -> getBilinearParametricNoise(x, z, h, n, 1.5);
+            case BICUBIC -> getBilinearNoise(x, z, h, n);
+            case HERMITE -> getHermiteNoise(x, z, h, n);
+            case HERMITE_TENSE -> getHermiteNoise(x, z, h, n, 0.8D, 0D);
+            case CATMULL_ROM_SPLINE -> getHermiteNoise(x, z, h, n, 1D, 0D);
+            case HERMITE_LOOSE -> getHermiteNoise(x, z, h, n, 0D, 0D);
+            case HERMITE_LOOSE_HALF_NEGATIVE_BIAS -> getHermiteNoise(x, z, h, n, 0D, -0.5D);
+            case HERMITE_LOOSE_HALF_POSITIVE_BIAS -> getHermiteNoise(x, z, h, n, 0D, 0.5D);
+            case HERMITE_LOOSE_FULL_NEGATIVE_BIAS -> getHermiteNoise(x, z, h, n, 0D, -1D);
+            case HERMITE_LOOSE_FULL_POSITIVE_BIAS -> getHermiteNoise(x, z, h, n, 0D, 1D);
+            case NONE -> n.noise(x, z);
+        };
     }
 
     public static NoiseBounds getNoiseBounds(InterpolationMethod method, int x, int z, double h, NoiseBoundsProvider noise) {
         NoiseBoundsSampleCache2D cache = NOISE_BOUNDS_SAMPLE_CACHE_2D.get();
         cache.clear();
-        NoiseProvider minProvider = (sampleX, sampleZ) -> cache.getOrSampleMin(sampleX, sampleZ, noise);
-        NoiseProvider maxProvider = (sampleX, sampleZ) -> cache.getOrSampleMax(sampleX, sampleZ, noise);
-        double min = getNoise(method, x, z, h, minProvider);
-        double max = getNoise(method, x, z, h, maxProvider);
-        return new NoiseBounds(min, max);
+        NoiseBoundsProvider previous = cache.bindProvider(noise);
+        try {
+            double min = getNoise(method, x, z, h, cache.minView());
+            double max = getNoise(method, x, z, h, cache.maxView());
+            return new NoiseBounds(min, max);
+        } finally {
+            cache.bindProvider(previous);
+        }
     }
 
     private static boolean usesSampleCache(InterpolationMethod method) {
@@ -1058,295 +677,7 @@ public class IrisInterpolation {
         };
     }
 
-    private static class NoiseSampleCache2D {
-        private long[] xBits;
-        private long[] zBits;
-        private double[] values;
-        private byte[] states;
-        private int mask;
-        private int resizeThreshold;
-        private int size;
-
-        public NoiseSampleCache2D(int initialCapacity) {
-            int minimumCapacity = Math.max(8, initialCapacity);
-            int tableSize = tableSizeFor((minimumCapacity << 1) + minimumCapacity);
-            xBits = new long[tableSize];
-            zBits = new long[tableSize];
-            values = new double[tableSize];
-            states = new byte[tableSize];
-            mask = tableSize - 1;
-            resizeThreshold = Math.max(1, (tableSize * 3) >> 2);
-            size = 0;
-        }
-
-        public void clear() {
-            if (size == 0) {
-                return;
-            }
-            Arrays.fill(states, (byte) 0);
-            size = 0;
-        }
-
-        public double getOrSample(double relativeX, double relativeZ, double sampleX, double sampleZ, NoiseProvider provider) {
-            long rx = Double.doubleToLongBits(relativeX);
-            long rz = Double.doubleToLongBits(relativeZ);
-            int slot = findSlot(rx, rz);
-            if (states[slot] != 0) {
-                return values[slot];
-            }
-
-            double value = provider.noise(sampleX, sampleZ);
-            insert(slot, rx, rz, value);
-            return value;
-        }
-
-        private int findSlot(long rx, long rz) {
-            int slot = mix(rx, rz) & mask;
-            while (states[slot] != 0) {
-                if (xBits[slot] == rx && zBits[slot] == rz) {
-                    break;
-                }
-                slot = (slot + 1) & mask;
-            }
-            return slot;
-        }
-
-        private void insert(int slot, long rx, long rz, double value) {
-            xBits[slot] = rx;
-            zBits[slot] = rz;
-            values[slot] = value;
-            states[slot] = 1;
-            size++;
-            if (size >= resizeThreshold) {
-                grow();
-            }
-        }
-
-        private int mix(long rx, long rz) {
-            long hash = rx * 0x9E3779B97F4A7C15L;
-            hash ^= Long.rotateLeft(rz * 0xC2B2AE3D27D4EB4FL, 32);
-            hash ^= (hash >>> 33);
-            hash *= 0xff51afd7ed558ccdL;
-            hash ^= (hash >>> 33);
-            return (int) hash;
-        }
-
-        private void grow() {
-            long[] previousXBits = xBits;
-            long[] previousZBits = zBits;
-            double[] previousValues = values;
-            byte[] previousStates = states;
-
-            int nextLength = xBits.length << 1;
-            long[] nextXBits = new long[nextLength];
-            long[] nextZBits = new long[nextLength];
-            double[] nextValues = new double[nextLength];
-            byte[] nextStates = new byte[nextLength];
-
-            xBits = nextXBits;
-            zBits = nextZBits;
-            values = nextValues;
-            states = nextStates;
-            mask = nextLength - 1;
-            resizeThreshold = Math.max(1, (nextLength * 3) >> 2);
-            size = 0;
-
-            for (int i = 0; i < previousStates.length; i++) {
-                if (previousStates[i] == 0) {
-                    continue;
-                }
-                int slot = findSlot(previousXBits[i], previousZBits[i]);
-                xBits[slot] = previousXBits[i];
-                zBits[slot] = previousZBits[i];
-                values[slot] = previousValues[i];
-                states[slot] = 1;
-                size++;
-            }
-        }
-
-        private int tableSizeFor(int value) {
-            int n = value - 1;
-            n |= n >>> 1;
-            n |= n >>> 2;
-            n |= n >>> 4;
-            n |= n >>> 8;
-            n |= n >>> 16;
-            int size = n + 1;
-            if (size < 8) {
-                return 8;
-            }
-            return size;
-        }
-    }
-
-    @FunctionalInterface
-    public interface NoiseBoundsProvider {
-        NoiseBounds noise(double x, double z);
-    }
-
-    public static final class NoiseBounds {
-        private final double min;
-        private final double max;
-
-        public NoiseBounds(double min, double max) {
-            this.min = min;
-            this.max = max;
-        }
-
-        public double min() {
-            return min;
-        }
-
-        public double max() {
-            return max;
-        }
-    }
-
-    private static class NoiseBoundsSampleCache2D {
-        private long[] xBits;
-        private long[] zBits;
-        private double[] minValues;
-        private double[] maxValues;
-        private byte[] states;
-        private int mask;
-        private int resizeThreshold;
-        private int size;
-
-        public NoiseBoundsSampleCache2D(int initialCapacity) {
-            int minimumCapacity = Math.max(8, initialCapacity);
-            int tableSize = tableSizeFor((minimumCapacity << 1) + minimumCapacity);
-            xBits = new long[tableSize];
-            zBits = new long[tableSize];
-            minValues = new double[tableSize];
-            maxValues = new double[tableSize];
-            states = new byte[tableSize];
-            mask = tableSize - 1;
-            resizeThreshold = Math.max(1, (tableSize * 3) >> 2);
-            size = 0;
-        }
-
-        public void clear() {
-            if (size == 0) {
-                return;
-            }
-            Arrays.fill(states, (byte) 0);
-            size = 0;
-        }
-
-        public double getOrSampleMin(double sampleX, double sampleZ, NoiseBoundsProvider provider) {
-            long xBitsValue = Double.doubleToLongBits(sampleX);
-            long zBitsValue = Double.doubleToLongBits(sampleZ);
-            int slot = findSlot(xBitsValue, zBitsValue);
-            if (states[slot] != 0) {
-                return minValues[slot];
-            }
-
-            NoiseBounds bounds = provider.noise(sampleX, sampleZ);
-            insert(slot, xBitsValue, zBitsValue, bounds.min(), bounds.max());
-            return bounds.min();
-        }
-
-        public double getOrSampleMax(double sampleX, double sampleZ, NoiseBoundsProvider provider) {
-            long xBitsValue = Double.doubleToLongBits(sampleX);
-            long zBitsValue = Double.doubleToLongBits(sampleZ);
-            int slot = findSlot(xBitsValue, zBitsValue);
-            if (states[slot] != 0) {
-                return maxValues[slot];
-            }
-
-            NoiseBounds bounds = provider.noise(sampleX, sampleZ);
-            insert(slot, xBitsValue, zBitsValue, bounds.min(), bounds.max());
-            return bounds.max();
-        }
-
-        private int findSlot(long xb, long zb) {
-            int slot = mix(xb, zb) & mask;
-            while (states[slot] != 0) {
-                if (xBits[slot] == xb && zBits[slot] == zb) {
-                    break;
-                }
-                slot = (slot + 1) & mask;
-            }
-            return slot;
-        }
-
-        private void insert(int slot, long xb, long zb, double min, double max) {
-            xBits[slot] = xb;
-            zBits[slot] = zb;
-            minValues[slot] = min;
-            maxValues[slot] = max;
-            states[slot] = 1;
-            size++;
-            if (size >= resizeThreshold) {
-                grow();
-            }
-        }
-
-        private int mix(long xb, long zb) {
-            long hash = xb * 0x9E3779B97F4A7C15L;
-            hash ^= Long.rotateLeft(zb * 0xC2B2AE3D27D4EB4FL, 32);
-            hash ^= (hash >>> 33);
-            hash *= 0xff51afd7ed558ccdL;
-            hash ^= (hash >>> 33);
-            return (int) hash;
-        }
-
-        private void grow() {
-            long[] previousXBits = xBits;
-            long[] previousZBits = zBits;
-            double[] previousMin = minValues;
-            double[] previousMax = maxValues;
-            byte[] previousStates = states;
-
-            int nextLength = xBits.length << 1;
-            long[] nextXBits = new long[nextLength];
-            long[] nextZBits = new long[nextLength];
-            double[] nextMin = new double[nextLength];
-            double[] nextMax = new double[nextLength];
-            byte[] nextStates = new byte[nextLength];
-
-            xBits = nextXBits;
-            zBits = nextZBits;
-            minValues = nextMin;
-            maxValues = nextMax;
-            states = nextStates;
-            mask = nextLength - 1;
-            resizeThreshold = Math.max(1, (nextLength * 3) >> 2);
-            size = 0;
-
-            for (int i = 0; i < previousStates.length; i++) {
-                if (previousStates[i] == 0) {
-                    continue;
-                }
-                int slot = findSlot(previousXBits[i], previousZBits[i]);
-                xBits[slot] = previousXBits[i];
-                zBits[slot] = previousZBits[i];
-                minValues[slot] = previousMin[i];
-                maxValues[slot] = previousMax[i];
-                states[slot] = 1;
-                size++;
-            }
-        }
-
-        private int tableSizeFor(int value) {
-            int n = value - 1;
-            n |= n >>> 1;
-            n |= n >>> 2;
-            n |= n >>> 4;
-            n |= n >>> 8;
-            n |= n >>> 16;
-            int tableSize = n + 1;
-            if (tableSize < 8) {
-                return 8;
-            }
-            return tableSize;
-        }
-    }
-
     public static double rangeScale(double amin, double amax, double bmin, double bmax, double b) {
         return amin + ((amax - amin) * ((b - bmin) / (bmax - bmin)));
-    }
-
-    public record NoiseKey(double x, double z) {
     }
 }

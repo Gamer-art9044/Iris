@@ -24,14 +24,14 @@ public class IrisEngineDataPersistenceTest {
         IrisEngineData first = new IrisEngineData();
         first.getStatistics().setVersion(10);
 
-        IrisEngine.writeEngineDataAtomically(output, first);
+        EngineDataStore.writeEngineDataAtomically(output, first);
 
         IrisEngineData firstRead = new Gson().fromJson(Files.readString(output.toPath()), IrisEngineData.class);
         assertEquals(10, firstRead.getStatistics().getVersion());
 
         IrisEngineData replacement = new IrisEngineData();
         replacement.getStatistics().setVersion(20);
-        IrisEngine.writeEngineDataAtomically(output, replacement);
+        EngineDataStore.writeEngineDataAtomically(output, replacement);
 
         IrisEngineData replacementRead = new Gson().fromJson(Files.readString(output.toPath()), IrisEngineData.class);
         assertEquals(20, replacementRead.getStatistics().getVersion());
@@ -41,6 +41,6 @@ public class IrisEngineDataPersistenceTest {
 
     @Test(expected = IOException.class)
     public void atomicWriteRejectsParentlessPath() throws Exception {
-        IrisEngine.writeEngineDataAtomically(new File("parentless-engine-data.json"), new IrisEngineData());
+        EngineDataStore.writeEngineDataAtomically(new File("parentless-engine-data.json"), new IrisEngineData());
     }
 }

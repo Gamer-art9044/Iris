@@ -1,5 +1,6 @@
 package art.arcane.iris.core.service;
 
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.pregenerator.cache.PregenCache;
@@ -24,10 +25,11 @@ import java.lang.ref.WeakReference;
 import java.util.function.Function;
 
 public class GlobalCacheSVC implements IrisService {
+    private static final long TRIMMER_JOIN_MS = 2_000;
     private static final KMap<String, Reference<PregenCache>> REFERENCE_CACHE = new KMap<>();
     private final KMap<String, PregenCache> globalCache = new KMap<>();
     private transient boolean lastState;
-    private static boolean disabled = true;
+    private static volatile boolean disabled = true;
     private Looper trimmer;
 
     @Override
@@ -55,10 +57,15 @@ public class GlobalCacheSVC implements IrisService {
     public void onDisable() {
         disabled = true;
         Looper activeTrimmer = trimmer;
+        trimmer = null;
         if (activeTrimmer != null) {
+            activeTrimmer.interrupt();
             try {
-                activeTrimmer.join();
+                activeTrimmer.join(TRIMMER_JOIN_MS);
             } catch (InterruptedException ignored) {
+            }
+            if (activeTrimmer.isAlive()) {
+                IrisLogging.warn("Global cache trimmer did not stop within " + TRIMMER_JOIN_MS + "ms.");
             }
         }
         globalCache.qclear((world, cache) -> cache.write());

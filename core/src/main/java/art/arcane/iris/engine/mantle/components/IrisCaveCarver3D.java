@@ -24,8 +24,10 @@ import art.arcane.iris.engine.mantle.MantleWriter;
 import art.arcane.iris.engine.object.IrisCaveFieldModule;
 import art.arcane.iris.engine.object.IrisCaveProfile;
 import art.arcane.iris.engine.object.IrisRange;
+import art.arcane.iris.engine.object.IrisStyledRange;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
+import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.PowerOfTwoCoordinates;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.Matter;
@@ -35,10 +37,7 @@ import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
-import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
 
 public class IrisCaveCarver3D {
     private static final byte LIQUID_AIR = 0;
@@ -59,7 +58,7 @@ public class IrisCaveCarver3D {
     private final CNG warpDensity;
     private final CNG surfaceBreakDensity;
     private final RNG thresholdRng;
-    private final ModuleState[] modules;
+    private final CaveFieldModuleState[] modules;
     private final double inverseNormalization;
     private final MatterCavern carveAir;
     private final MatterCavern carveWater;
@@ -74,7 +73,12 @@ public class IrisCaveCarver3D {
     private final boolean hasWarp;
     private final boolean hasModules;
     private final int warpResolution;
-    private final ThreadLocal<Scratch> scratchCache = ThreadLocal.withInitial(Scratch::new);
+    private final boolean allowWater;
+    private final boolean waterRequiresFloor;
+    private final int waterMinDepthBelowSurface;
+    private final int fluidHeight;
+    private final int aquiferCeilingY;
+    private final ThreadLocal<CaveCarveScratch> scratchCache = ThreadLocal.withInitial(CaveCarveScratch::new);
 
     public IrisCaveCarver3D(Engine engine, IrisCaveProfile profile) {
         this.engine = engine;
@@ -84,7 +88,7 @@ public class IrisCaveCarver3D {
         this.carveWater = new MatterCavern(true, "", LIQUID_WATER);
         this.carveLava = new MatterCavern(true, "", LIQUID_LAVA);
         this.carveForcedAir = new MatterCavern(true, "", LIQUID_FORCED_AIR);
-        List<ModuleState> moduleStates = new ArrayList<>();
+        List<CaveFieldModuleState> moduleStates = new ArrayList<>();
 
         RNG baseRng = new RNG(engine.getSeedManager().getCarve());
         this.baseDensity = profile.getBaseDensityStyle().create(baseRng.nextParallelRNG(934_447), data);
@@ -97,18 +101,23 @@ public class IrisCaveCarver3D {
         this.warpStrength = profile.getWarpStrength();
         this.hasWarp = this.warpStrength > 0D;
         this.warpResolution = 2;
+        this.allowWater = profile.isAllowWater();
+        this.waterRequiresFloor = profile.isWaterRequiresFloor();
+        this.waterMinDepthBelowSurface = Math.max(0, profile.getWaterMinDepthBelowSurface());
+        this.fluidHeight = engine.getDimension().getFluidHeight();
+        this.aquiferCeilingY = engine.getHeight() - 1;
 
         double weight = Math.abs(baseWeight) + Math.abs(detailWeight);
         int index = 0;
         for (IrisCaveFieldModule module : profile.getModules()) {
             CNG moduleDensity = module.getStyle().create(baseRng.nextParallelRNG(1_000_003L + (index * 65_537L)), data);
-            ModuleState state = new ModuleState(module, moduleDensity);
+            CaveFieldModuleState state = new CaveFieldModuleState(module, moduleDensity);
             moduleStates.add(state);
             weight += Math.abs(state.weight);
             index++;
         }
 
-        this.modules = moduleStates.toArray(new ModuleState[0]);
+        this.modules = moduleStates.toArray(new CaveFieldModuleState[0]);
         double normalization = weight <= 0 ? 1 : weight;
         normalizationFactor = normalization;
         inverseNormalization = 1D / normalization;
@@ -118,7 +127,7 @@ public class IrisCaveCarver3D {
     }
 
     public int carve(MantleWriter writer, int chunkX, int chunkZ) {
-        Scratch scratch = scratchCache.get();
+        CaveCarveScratch scratch = scratchCache.get();
         if (!scratch.fullWeightsInitialized) {
             Arrays.fill(scratch.fullWeights, 1D);
             scratch.fullWeightsInitialized = true;
@@ -173,7 +182,7 @@ public class IrisCaveCarver3D {
             int[] precomputedSurfaceHeights,
             IrisRange overrideVerticalRange
     ) {
-        WaterSupportPlan waterSupportPlan = new WaterSupportPlan();
+        CaveWaterSupportPlan waterSupportPlan = new CaveWaterSupportPlan();
         int carved = carve(writer, chunkX, chunkZ, columnWeights, minWeight, thresholdPenalty,
                 worldYRange, precomputedSurfaceHeights, overrideVerticalRange, waterSupportPlan);
         waterSupportPlan.resolve(writer.acquireChunk(chunkX, chunkZ));
@@ -190,11 +199,11 @@ public class IrisCaveCarver3D {
             IrisRange worldYRange,
             int[] precomputedSurfaceHeights,
             IrisRange overrideVerticalRange,
-            WaterSupportPlan waterSupportPlan
+            CaveWaterSupportPlan waterSupportPlan
     ) {
         PrecisionStopwatch applyStopwatch = PrecisionStopwatch.start();
         try {
-            Scratch scratch = scratchCache.get();
+            CaveCarveScratch scratch = scratchCache.get();
             if (columnWeights == null || columnWeights.length < 256) {
                 if (!scratch.fullWeightsInitialized) {
                     Arrays.fill(scratch.fullWeights, 1D);
@@ -247,6 +256,23 @@ public class IrisCaveCarver3D {
             MatterCavern[] matterByY = prepareMatterByYTable(scratch, minY, maxY);
             prepareSectionCaches(scratch, minY, maxY);
 
+            // IrisStyledRange.get() resolves its CNG per call, which costs a cache-key allocation,
+            // a capturing lambda and a shared LRU touch. The CNG is constant for (thresholdRng, data),
+            // so resolve it once here and replicate the min==max / isFlat short circuits verbatim.
+            IrisStyledRange densityThreshold = profile.getDensityThreshold();
+            double thresholdMin = densityThreshold.getMin();
+            double thresholdMax = densityThreshold.getMax();
+            double thresholdBias = profile.getThresholdBias();
+            CNG thresholdDensity = null;
+            double constantThreshold = 0D;
+            if (thresholdMin == thresholdMax) {
+                constantThreshold = thresholdMin;
+            } else if (densityThreshold.getStyle().isFlat()) {
+                constantThreshold = M.lerp(thresholdMin, thresholdMax, 0.5);
+            } else {
+                thresholdDensity = densityThreshold.getStyle().create(thresholdRng, data);
+            }
+
             for (int lx = 0; lx < 16; lx++) {
                 int x = x0 + lx;
                 for (int lz = 0; lz < 16; lz++) {
@@ -266,10 +292,14 @@ public class IrisCaveCarver3D {
                             : clearanceTopY;
 
                     columnMaxY[index] = columnTopY;
-                    waterMaxY[index] = resolveWaterMaxY(columnSurfaceY);
+                    waterMaxY[index] = allowWater
+                            ? Math.min(fluidHeight, columnSurfaceY - waterMinDepthBelowSurface)
+                            : Integer.MIN_VALUE;
                     surfaceBreakFloorY[index] = Math.max(minY, columnSurfaceY - surfaceBreakDepth);
                     surfaceBreakColumn[index] = breakColumn;
-                    columnThreshold[index] = profile.getDensityThreshold().get(thresholdRng, x, z, data) - profile.getThresholdBias();
+                    columnThreshold[index] = (thresholdDensity == null
+                            ? constantThreshold
+                            : thresholdDensity.fitDouble(thresholdMin, thresholdMax, x, z)) - thresholdBias;
                     clampedWeights[index] = clampColumnWeight(columnWeights[index]);
                 }
             }
@@ -294,7 +324,7 @@ public class IrisCaveCarver3D {
                             clampedWeights,
                             verticalEdgeFade,
                             matterByY,
-                            profile.isWaterRequiresFloor() ? waterSupportPlan : null,
+                            waterRequiresFloor ? waterSupportPlan : null,
                             resolvedMinWeight,
                             resolvedThresholdPenalty,
                             0D,
@@ -316,7 +346,7 @@ public class IrisCaveCarver3D {
                             clampedWeights,
                             verticalEdgeFade,
                             matterByY,
-                            profile.isWaterRequiresFloor() ? waterSupportPlan : null,
+                            waterRequiresFloor ? waterSupportPlan : null,
                             resolvedMinWeight,
                             resolvedThresholdPenalty,
                             0D,
@@ -341,7 +371,7 @@ public class IrisCaveCarver3D {
                         clampedWeights,
                         verticalEdgeFade,
                         matterByY,
-                        profile.isWaterRequiresFloor() ? waterSupportPlan : null,
+                        waterRequiresFloor ? waterSupportPlan : null,
                         resolvedMinWeight,
                         resolvedThresholdPenalty,
                         0D,
@@ -364,7 +394,7 @@ public class IrisCaveCarver3D {
                             clampedWeights,
                             verticalEdgeFade,
                             matterByY,
-                            profile.isWaterRequiresFloor() ? waterSupportPlan : null,
+                            waterRequiresFloor ? waterSupportPlan : null,
                             resolvedMinWeight,
                             resolvedThresholdPenalty,
                             0D,
@@ -394,14 +424,14 @@ public class IrisCaveCarver3D {
             double[] clampedWeights,
             double[] verticalEdgeFade,
             MatterCavern[] matterByY,
-            WaterSupportPlan waterSupportPlan,
+            CaveWaterSupportPlan waterSupportPlan,
             double minWeight,
             double thresholdPenalty,
             double thresholdBoost,
             boolean skipExistingCarved
     ) {
         int carved = 0;
-        Scratch scratch = scratchCache.get();
+        CaveCarveScratch scratch = scratchCache.get();
         double[] passThreshold = scratch.passThreshold;
         int[] activeColumnIndices = scratch.activeColumnIndices;
         int[] activeColumnTopY = scratch.activeColumnTopY;
@@ -457,7 +487,7 @@ public class IrisCaveCarver3D {
                     continue;
                 }
 
-                classifyDensityPlane(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
+                classifyDensityPlane(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
                 int fadeIndex = y - minY;
                 int localY = y & 15;
                 MatterCavern verticalMatter = matterByY[fadeIndex];
@@ -521,14 +551,14 @@ public class IrisCaveCarver3D {
             double[] clampedWeights,
             double[] verticalEdgeFade,
             MatterCavern[] matterByY,
-            WaterSupportPlan waterSupportPlan,
+            CaveWaterSupportPlan waterSupportPlan,
             double minWeight,
             double thresholdPenalty,
             double thresholdBoost,
             boolean skipExistingCarved
     ) {
         int carved = 0;
-        Scratch scratch = scratchCache.get();
+        CaveCarveScratch scratch = scratchCache.get();
         double[] passThreshold = scratch.passThreshold;
         int[] activeColumnIndices = scratch.activeColumnIndices;
         int[] activeColumnTopY = scratch.activeColumnTopY;
@@ -591,6 +621,7 @@ public class IrisCaveCarver3D {
                         effectiveAdaptiveSampleStep
                 );
                 classifyDensityPlaneAdaptive(
+                        scratch,
                         x0,
                         z0,
                         y,
@@ -685,14 +716,14 @@ public class IrisCaveCarver3D {
             double[] clampedWeights,
             double[] verticalEdgeFade,
             MatterCavern[] matterByY,
-            WaterSupportPlan waterSupportPlan,
+            CaveWaterSupportPlan waterSupportPlan,
             double minWeight,
             double thresholdPenalty,
             double thresholdBoost,
             boolean skipExistingCarved
     ) {
         int carved = 0;
-        Scratch scratch = scratchCache.get();
+        CaveCarveScratch scratch = scratchCache.get();
         double[] passThreshold = scratch.passThreshold;
         int[] tileIndices = scratch.tileIndices;
         int[] tileLocalX = scratch.tileLocalX;
@@ -767,7 +798,7 @@ public class IrisCaveCarver3D {
                 }
 
                 for (int y = minY; y <= tileMaxY; y += latticeStep) {
-                    double density = sampleDensityOptimized(x, y, z);
+                    double density = sampleDensityOptimized(scratch, x, y, z);
                     int stampMaxY = Math.min(maxY, y + 1);
                     for (int yy = y; yy <= stampMaxY; yy++) {
                         MatterCavern verticalMatter = matterByY[yy - minY];
@@ -830,14 +861,14 @@ public class IrisCaveCarver3D {
             double[] clampedWeights,
             double[] verticalEdgeFade,
             MatterCavern[] matterByY,
-            WaterSupportPlan waterSupportPlan,
+            CaveWaterSupportPlan waterSupportPlan,
             double minWeight,
             double thresholdPenalty,
             double thresholdBoost,
             boolean skipExistingCarved
     ) {
         int carved = 0;
-        Scratch scratch = scratchCache.get();
+        CaveCarveScratch scratch = scratchCache.get();
 
         for (int lx = 0; lx < 16; lx++) {
             int x = x0 + lx;
@@ -865,7 +896,7 @@ public class IrisCaveCarver3D {
                     }
 
                     localThreshold -= verticalEdgeFade[y - minY];
-                    if (sampleDensityOptimized(x, y, z) > localThreshold) {
+                    if (sampleDensityOptimized(scratch, x, y, z) > localThreshold) {
                         continue;
                     }
 
@@ -909,41 +940,50 @@ public class IrisCaveCarver3D {
     }
 
     private double sampleDensityOptimized(int x, int y, int z) {
+        if (!hasWarp && !hasModules) {
+            return sampleDensityNoWarpNoModules(x, y, z);
+        }
+
+        return sampleDensityOptimized(scratchCache.get(), x, y, z);
+    }
+
+    private double sampleDensityOptimized(CaveCarveScratch scratch, int x, int y, int z) {
         if (!hasWarp) {
             if (!hasModules) {
                 return sampleDensityNoWarpNoModules(x, y, z);
             }
 
-            return sampleDensityNoWarpModules(x, y, z);
+            return sampleDensityNoWarpModules(scratch, x, y, z);
         }
 
         if (!hasModules) {
-            return sampleDensityWarpOnly(x, y, z);
+            return sampleDensityWarpOnly(scratch, x, y, z);
         }
 
-        return sampleDensityWarpModules(x, y, z);
+        return sampleDensityWarpModules(scratch, x, y, z);
     }
 
-    private void classifyDensityPlane(int x0, int z0, int y, int[] planeColumnIndices, double[] planeThresholdLimit, int planeCount, boolean[] planeCarve) {
+    private void classifyDensityPlane(CaveCarveScratch scratch, int x0, int z0, int y, int[] planeColumnIndices, double[] planeThresholdLimit, int planeCount, boolean[] planeCarve) {
         if (!hasWarp) {
             if (!hasModules) {
                 classifyDensityPlaneNoWarpNoModules(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
                 return;
             }
 
-            classifyDensityPlaneNoWarpModules(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
+            classifyDensityPlaneNoWarpModules(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
             return;
         }
 
         if (!hasModules) {
-            classifyDensityPlaneWarpOnly(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
+            classifyDensityPlaneWarpOnly(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
             return;
         }
 
-        classifyDensityPlaneWarpModules(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
+        classifyDensityPlaneWarpModules(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
     }
 
     private void classifyDensityPlaneAdaptive(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -955,26 +995,26 @@ public class IrisCaveCarver3D {
             double adaptiveThresholdMargin
     ) {
         if (adaptiveSampleStep <= 1 || planeCount < ADAPTIVE_MIN_PLANE_COLUMNS) {
-            classifyDensityPlane(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
+            classifyDensityPlane(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
             return;
         }
 
         if (!hasWarp) {
             if (!hasModules) {
-                classifyDensityPlaneAdaptiveNoWarpNoModules(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
+                classifyDensityPlaneAdaptiveNoWarpNoModules(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
                 return;
             }
 
-            classifyDensityPlaneAdaptiveNoWarpModules(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
+            classifyDensityPlaneAdaptiveNoWarpModules(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
             return;
         }
 
         if (!hasModules) {
-            classifyDensityPlaneAdaptiveWarpOnly(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
+            classifyDensityPlaneAdaptiveWarpOnly(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
             return;
         }
 
-        classifyDensityPlaneAdaptiveWarpModules(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
+        classifyDensityPlaneAdaptiveWarpModules(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
     }
 
     private void classifyDensityPlaneNoWarpNoModules(int x0, int z0, int y, int[] planeColumnIndices, double[] planeThresholdLimit, int planeCount, boolean[] planeCarve) {
@@ -986,15 +1026,14 @@ public class IrisCaveCarver3D {
         }
     }
 
-    private void classifyDensityPlaneNoWarpModules(int x0, int z0, int y, int[] planeColumnIndices, double[] planeThresholdLimit, int planeCount, boolean[] planeCarve) {
-        Scratch scratch = scratchCache.get();
+    private void classifyDensityPlaneNoWarpModules(CaveCarveScratch scratch, int x0, int z0, int y, int[] planeColumnIndices, double[] planeThresholdLimit, int planeCount, boolean[] planeCarve) {
         int activeModuleCount = prepareActiveModules(scratch, y);
         if (activeModuleCount == 0) {
             classifyDensityPlaneNoWarpNoModules(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
             return;
         }
 
-        ModuleState[] localModules = scratch.activeModules;
+        CaveFieldModuleState[] localModules = scratch.activeModules;
         double[] remainingMin = scratch.activeModuleRemainingMin;
         double[] remainingMax = scratch.activeModuleRemainingMax;
 
@@ -1015,24 +1054,23 @@ public class IrisCaveCarver3D {
         }
     }
 
-    private void classifyDensityPlaneWarpOnly(int x0, int z0, int y, int[] planeColumnIndices, double[] planeThresholdLimit, int planeCount, boolean[] planeCarve) {
+    private void classifyDensityPlaneWarpOnly(CaveCarveScratch scratch, int x0, int z0, int y, int[] planeColumnIndices, double[] planeThresholdLimit, int planeCount, boolean[] planeCarve) {
         for (int planeIndex = 0; planeIndex < planeCount; planeIndex++) {
             int columnIndex = planeColumnIndices[planeIndex];
             int x = x0 + PowerOfTwoCoordinates.unpackLocal16X(columnIndex);
             int z = z0 + (columnIndex & 15);
-            planeCarve[planeIndex] = classifyDensityPointWarpOnly(x, y, z, planeThresholdLimit[planeIndex]);
+            planeCarve[planeIndex] = classifyDensityPointWarpOnly(scratch, x, y, z, planeThresholdLimit[planeIndex]);
         }
     }
 
-    private void classifyDensityPlaneWarpModules(int x0, int z0, int y, int[] planeColumnIndices, double[] planeThresholdLimit, int planeCount, boolean[] planeCarve) {
-        Scratch scratch = scratchCache.get();
+    private void classifyDensityPlaneWarpModules(CaveCarveScratch scratch, int x0, int z0, int y, int[] planeColumnIndices, double[] planeThresholdLimit, int planeCount, boolean[] planeCarve) {
         int activeModuleCount = prepareActiveModules(scratch, y);
         if (activeModuleCount == 0) {
-            classifyDensityPlaneWarpOnly(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
+            classifyDensityPlaneWarpOnly(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve);
             return;
         }
 
-        ModuleState[] localModules = scratch.activeModules;
+        CaveFieldModuleState[] localModules = scratch.activeModules;
         double[] remainingMin = scratch.activeModuleRemainingMin;
         double[] remainingMax = scratch.activeModuleRemainingMax;
 
@@ -1041,6 +1079,7 @@ public class IrisCaveCarver3D {
             int x = x0 + PowerOfTwoCoordinates.unpackLocal16X(columnIndex);
             int z = z0 + (columnIndex & 15);
             planeCarve[planeIndex] = classifyDensityPointWarpModules(
+                    scratch,
                     x,
                     y,
                     z,
@@ -1054,6 +1093,7 @@ public class IrisCaveCarver3D {
     }
 
     private void classifyDensityPlaneAdaptiveNoWarpNoModules(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -1064,12 +1104,11 @@ public class IrisCaveCarver3D {
             int adaptiveSampleStep,
             double adaptiveThresholdMargin
     ) {
-        Scratch scratch = scratchCache.get();
         double[] adaptivePlaneDensity = scratch.adaptivePlaneDensity;
         int axisCells = (16 + adaptiveSampleStep - 1) / adaptiveSampleStep;
         int axisSamples = axisCells + 1;
         int[] adaptivePlaneSampleBounds = scratch.adaptivePlaneSampleBounds;
-        prepareAdaptivePlaneSampleBounds(planeColumnIndices, planeCount, adaptiveSampleStep, adaptivePlaneSampleBounds, axisCells);
+        prepareAdaptivePlaneSampleBounds(scratch, planeColumnIndices, planeCount, adaptiveSampleStep, adaptivePlaneSampleBounds, axisCells);
         for (int sampleXIndex = adaptivePlaneSampleBounds[0]; sampleXIndex <= adaptivePlaneSampleBounds[1]; sampleXIndex++) {
             int sampleLocalX = Math.min(sampleXIndex * adaptiveSampleStep, 16);
             int x = x0 + sampleLocalX;
@@ -1081,6 +1120,7 @@ public class IrisCaveCarver3D {
         }
 
         classifyAdaptivePlaneColumnsNoWarpNoModules(
+                scratch,
                 x0,
                 z0,
                 y,
@@ -1097,6 +1137,7 @@ public class IrisCaveCarver3D {
     }
 
     private void classifyDensityPlaneAdaptiveNoWarpModules(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -1107,21 +1148,20 @@ public class IrisCaveCarver3D {
             int adaptiveSampleStep,
             double adaptiveThresholdMargin
     ) {
-        Scratch scratch = scratchCache.get();
         int activeModuleCount = prepareActiveModules(scratch, y);
         if (activeModuleCount == 0) {
-            classifyDensityPlaneAdaptiveNoWarpNoModules(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
+            classifyDensityPlaneAdaptiveNoWarpNoModules(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
             return;
         }
 
-        ModuleState[] localModules = scratch.activeModules;
+        CaveFieldModuleState[] localModules = scratch.activeModules;
         double[] remainingMin = scratch.activeModuleRemainingMin;
         double[] remainingMax = scratch.activeModuleRemainingMax;
         double[] adaptivePlaneDensity = scratch.adaptivePlaneDensity;
         int axisCells = (16 + adaptiveSampleStep - 1) / adaptiveSampleStep;
         int axisSamples = axisCells + 1;
         int[] adaptivePlaneSampleBounds = scratch.adaptivePlaneSampleBounds;
-        prepareAdaptivePlaneSampleBounds(planeColumnIndices, planeCount, adaptiveSampleStep, adaptivePlaneSampleBounds, axisCells);
+        prepareAdaptivePlaneSampleBounds(scratch, planeColumnIndices, planeCount, adaptiveSampleStep, adaptivePlaneSampleBounds, axisCells);
         for (int sampleXIndex = adaptivePlaneSampleBounds[0]; sampleXIndex <= adaptivePlaneSampleBounds[1]; sampleXIndex++) {
             int sampleLocalX = Math.min(sampleXIndex * adaptiveSampleStep, 16);
             int x = x0 + sampleLocalX;
@@ -1133,6 +1173,7 @@ public class IrisCaveCarver3D {
         }
 
         classifyAdaptivePlaneColumnsNoWarpModules(
+                scratch,
                 x0,
                 z0,
                 y,
@@ -1153,6 +1194,7 @@ public class IrisCaveCarver3D {
     }
 
     private void classifyDensityPlaneAdaptiveWarpOnly(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -1163,23 +1205,23 @@ public class IrisCaveCarver3D {
             int adaptiveSampleStep,
             double adaptiveThresholdMargin
     ) {
-        Scratch scratch = scratchCache.get();
         double[] adaptivePlaneDensity = scratch.adaptivePlaneDensity;
         int axisCells = (16 + adaptiveSampleStep - 1) / adaptiveSampleStep;
         int axisSamples = axisCells + 1;
         int[] adaptivePlaneSampleBounds = scratch.adaptivePlaneSampleBounds;
-        prepareAdaptivePlaneSampleBounds(planeColumnIndices, planeCount, adaptiveSampleStep, adaptivePlaneSampleBounds, axisCells);
+        prepareAdaptivePlaneSampleBounds(scratch, planeColumnIndices, planeCount, adaptiveSampleStep, adaptivePlaneSampleBounds, axisCells);
         for (int sampleXIndex = adaptivePlaneSampleBounds[0]; sampleXIndex <= adaptivePlaneSampleBounds[1]; sampleXIndex++) {
             int sampleLocalX = Math.min(sampleXIndex * adaptiveSampleStep, 16);
             int x = x0 + sampleLocalX;
             int rowOffset = sampleXIndex * axisSamples;
             for (int sampleZIndex = adaptivePlaneSampleBounds[2]; sampleZIndex <= adaptivePlaneSampleBounds[3]; sampleZIndex++) {
                 int sampleLocalZ = Math.min(sampleZIndex * adaptiveSampleStep, 16);
-                adaptivePlaneDensity[rowOffset + sampleZIndex] = sampleDensityWarpOnly(x, y, z0 + sampleLocalZ);
+                adaptivePlaneDensity[rowOffset + sampleZIndex] = sampleDensityWarpOnly(scratch, x, y, z0 + sampleLocalZ);
             }
         }
 
         classifyAdaptivePlaneColumnsWarpOnly(
+                scratch,
                 x0,
                 z0,
                 y,
@@ -1196,6 +1238,7 @@ public class IrisCaveCarver3D {
     }
 
     private void classifyDensityPlaneAdaptiveWarpModules(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -1206,21 +1249,20 @@ public class IrisCaveCarver3D {
             int adaptiveSampleStep,
             double adaptiveThresholdMargin
     ) {
-        Scratch scratch = scratchCache.get();
         int activeModuleCount = prepareActiveModules(scratch, y);
         if (activeModuleCount == 0) {
-            classifyDensityPlaneAdaptiveWarpOnly(x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
+            classifyDensityPlaneAdaptiveWarpOnly(scratch, x0, z0, y, planeColumnIndices, planeThresholdLimit, planeCount, planeCarve, adaptiveSampleStep, adaptiveThresholdMargin);
             return;
         }
 
-        ModuleState[] localModules = scratch.activeModules;
+        CaveFieldModuleState[] localModules = scratch.activeModules;
         double[] remainingMin = scratch.activeModuleRemainingMin;
         double[] remainingMax = scratch.activeModuleRemainingMax;
         double[] adaptivePlaneDensity = scratch.adaptivePlaneDensity;
         int axisCells = (16 + adaptiveSampleStep - 1) / adaptiveSampleStep;
         int axisSamples = axisCells + 1;
         int[] adaptivePlaneSampleBounds = scratch.adaptivePlaneSampleBounds;
-        prepareAdaptivePlaneSampleBounds(planeColumnIndices, planeCount, adaptiveSampleStep, adaptivePlaneSampleBounds, axisCells);
+        prepareAdaptivePlaneSampleBounds(scratch, planeColumnIndices, planeCount, adaptiveSampleStep, adaptivePlaneSampleBounds, axisCells);
         for (int sampleXIndex = adaptivePlaneSampleBounds[0]; sampleXIndex <= adaptivePlaneSampleBounds[1]; sampleXIndex++) {
             int sampleLocalX = Math.min(sampleXIndex * adaptiveSampleStep, 16);
             int x = x0 + sampleLocalX;
@@ -1239,6 +1281,7 @@ public class IrisCaveCarver3D {
         }
 
         classifyAdaptivePlaneColumnsWarpModulesSampled(
+                scratch,
                 x0,
                 z0,
                 y,
@@ -1259,6 +1302,7 @@ public class IrisCaveCarver3D {
     }
 
     private void classifyAdaptivePlaneColumnsNoWarpNoModules(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -1272,10 +1316,10 @@ public class IrisCaveCarver3D {
             int axisCells,
             int axisSamples
     ) {
-        Scratch scratch = scratchCache.get();
         double[] adaptivePlanePrediction = scratch.adaptivePlanePrediction;
         double[] adaptivePlaneAmbiguity = scratch.adaptivePlaneAmbiguity;
         prepareAdaptivePlaneColumns(
+                scratch,
                 planeColumnIndices,
                 planeCount,
                 adaptiveSampleStep,
@@ -1315,6 +1359,7 @@ public class IrisCaveCarver3D {
     }
 
     private void classifyAdaptivePlaneColumnsNoWarpModules(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -1327,15 +1372,15 @@ public class IrisCaveCarver3D {
             double[] adaptivePlaneDensity,
             int axisCells,
             int axisSamples,
-            ModuleState[] localModules,
+            CaveFieldModuleState[] localModules,
             int activeModuleCount,
             double[] remainingMin,
             double[] remainingMax
     ) {
-        Scratch scratch = scratchCache.get();
         double[] adaptivePlanePrediction = scratch.adaptivePlanePrediction;
         double[] adaptivePlaneAmbiguity = scratch.adaptivePlaneAmbiguity;
         prepareAdaptivePlaneColumns(
+                scratch,
                 planeColumnIndices,
                 planeCount,
                 adaptiveSampleStep,
@@ -1396,6 +1441,7 @@ public class IrisCaveCarver3D {
     }
 
     private void classifyAdaptivePlaneColumnsWarpOnly(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -1409,10 +1455,10 @@ public class IrisCaveCarver3D {
             int axisCells,
             int axisSamples
     ) {
-        Scratch scratch = scratchCache.get();
         double[] adaptivePlanePrediction = scratch.adaptivePlanePrediction;
         double[] adaptivePlaneAmbiguity = scratch.adaptivePlaneAmbiguity;
         prepareAdaptivePlaneColumns(
+                scratch,
                 planeColumnIndices,
                 planeCount,
                 adaptiveSampleStep,
@@ -1447,11 +1493,12 @@ public class IrisCaveCarver3D {
                 continue;
             }
 
-            planeCarve[planeIndex] = classifyDensityPointWarpOnly(x0 + localX, y, z0 + localZ, planeThresholdLimit[planeIndex]);
+            planeCarve[planeIndex] = classifyDensityPointWarpOnly(scratch, x0 + localX, y, z0 + localZ, planeThresholdLimit[planeIndex]);
         }
     }
 
     private void classifyAdaptivePlaneColumnsWarpModules(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -1464,15 +1511,15 @@ public class IrisCaveCarver3D {
             double[] adaptivePlaneDensity,
             int axisCells,
             int axisSamples,
-            ModuleState[] localModules,
+            CaveFieldModuleState[] localModules,
             int activeModuleCount,
             double[] remainingMin,
             double[] remainingMax
     ) {
-        Scratch scratch = scratchCache.get();
         double[] adaptivePlanePrediction = scratch.adaptivePlanePrediction;
         double[] adaptivePlaneAmbiguity = scratch.adaptivePlaneAmbiguity;
         prepareAdaptivePlaneColumns(
+                scratch,
                 planeColumnIndices,
                 planeCount,
                 adaptiveSampleStep,
@@ -1494,6 +1541,7 @@ public class IrisCaveCarver3D {
             double ambiguityMargin = adaptivePlaneAmbiguity[planeIndex];
             if (isAdaptivePlaneSampleAligned(localX, localZ, adaptiveSampleStep)) {
                 planeCarve[planeIndex] = classifyDensityPointWarpModulesFromExactDensity(
+                        scratch,
                         x0 + localX,
                         y,
                         z0 + localZ,
@@ -1516,6 +1564,7 @@ public class IrisCaveCarver3D {
             }
 
             planeCarve[planeIndex] = classifyDensityPointWarpModules(
+                    scratch,
                     x0 + localX,
                     y,
                     z0 + localZ,
@@ -1529,6 +1578,7 @@ public class IrisCaveCarver3D {
     }
 
     private void classifyAdaptivePlaneColumnsWarpModulesSampled(
+            CaveCarveScratch scratch,
             int x0,
             int z0,
             int y,
@@ -1541,15 +1591,15 @@ public class IrisCaveCarver3D {
             double[] adaptivePlaneDensity,
             int axisCells,
             int axisSamples,
-            ModuleState[] localModules,
+            CaveFieldModuleState[] localModules,
             int activeModuleCount,
             double[] remainingMin,
             double[] remainingMax
     ) {
-        Scratch scratch = scratchCache.get();
         double[] adaptivePlanePrediction = scratch.adaptivePlanePrediction;
         double[] adaptivePlaneAmbiguity = scratch.adaptivePlaneAmbiguity;
         prepareAdaptivePlaneColumns(
+                scratch,
                 planeColumnIndices,
                 planeCount,
                 adaptiveSampleStep,
@@ -1585,6 +1635,7 @@ public class IrisCaveCarver3D {
             }
 
             planeCarve[planeIndex] = classifyDensityPointWarpModules(
+                    scratch,
                     x0 + localX,
                     y,
                     z0 + localZ,
@@ -1615,7 +1666,7 @@ public class IrisCaveCarver3D {
             int y,
             int z,
             double thresholdLimit,
-            ModuleState[] localModules,
+            CaveFieldModuleState[] localModules,
             int activeModuleCount,
             double[] remainingMin,
             double[] remainingMax
@@ -1664,8 +1715,7 @@ public class IrisCaveCarver3D {
         return Math.floorDiv(c, g) * g;
     }
 
-    private boolean classifyDensityPointWarpOnly(int x, int y, int z, double thresholdLimit) {
-        Scratch scratch = scratchCache.get();
+    private boolean classifyDensityPointWarpOnly(CaveCarveScratch scratch, int x, int y, int z, double thresholdLimit) {
         int sx = snapWarp(x);
         int sy = snapWarp(y);
         int sz = snapWarp(z);
@@ -1688,20 +1738,20 @@ public class IrisCaveCarver3D {
     }
 
     private boolean classifyDensityPointWarpModules(
+            CaveCarveScratch scratch,
             int x,
             int y,
             int z,
             double thresholdLimit,
-            ModuleState[] localModules,
+            CaveFieldModuleState[] localModules,
             int activeModuleCount,
             double[] remainingMin,
             double[] remainingMax
     ) {
         if (activeModuleCount == 0) {
-            return classifyDensityPointWarpOnly(x, y, z, thresholdLimit);
+            return classifyDensityPointWarpOnly(scratch, x, y, z, thresholdLimit);
         }
 
-        Scratch scratch = scratchCache.get();
         int sx = snapWarp(x);
         int sy = snapWarp(y);
         int sz = snapWarp(z);
@@ -1746,7 +1796,7 @@ public class IrisCaveCarver3D {
             int z,
             double threshold,
             double density,
-            ModuleState[] localModules,
+            CaveFieldModuleState[] localModules,
             int activeModuleCount,
             double[] remainingMin,
             double[] remainingMax
@@ -1778,12 +1828,13 @@ public class IrisCaveCarver3D {
     }
 
     private boolean classifyDensityPointWarpModulesFromExactDensity(
+            CaveCarveScratch scratch,
             int x,
             int y,
             int z,
             double threshold,
             double density,
-            ModuleState[] localModules,
+            CaveFieldModuleState[] localModules,
             int activeModuleCount,
             double[] remainingMin,
             double[] remainingMax
@@ -1801,7 +1852,6 @@ public class IrisCaveCarver3D {
             return true;
         }
 
-        Scratch scratch = scratchCache.get();
         int sx = snapWarp(x);
         int sy = snapWarp(y);
         int sz = snapWarp(z);
@@ -1833,13 +1883,13 @@ public class IrisCaveCarver3D {
     }
 
     private void prepareAdaptivePlaneSampleBounds(
+            CaveCarveScratch scratch,
             int[] planeColumnIndices,
             int planeCount,
             int adaptiveSampleStep,
             int[] adaptivePlaneSampleBounds,
             int axisCells
     ) {
-        Scratch scratch = scratchCache.get();
         prepareAdaptiveGeometry(scratch, adaptiveSampleStep, axisCells, axisCells + 1);
         int[] adaptiveCellX = scratch.adaptiveCellX;
         int[] adaptiveCellZ = scratch.adaptiveCellZ;
@@ -1873,6 +1923,7 @@ public class IrisCaveCarver3D {
     }
 
     private void prepareAdaptivePlaneColumns(
+            CaveCarveScratch scratch,
             int[] planeColumnIndices,
             int planeCount,
             int adaptiveSampleStep,
@@ -1883,7 +1934,6 @@ public class IrisCaveCarver3D {
             double[] adaptivePlanePrediction,
             double[] adaptivePlaneAmbiguity
     ) {
-        Scratch scratch = scratchCache.get();
         prepareAdaptiveGeometry(scratch, adaptiveSampleStep, axisCells, axisSamples);
         int[] adaptiveCellZ = scratch.adaptiveCellZ;
         int[] adaptiveRow0 = scratch.adaptiveRow0;
@@ -1910,7 +1960,7 @@ public class IrisCaveCarver3D {
         }
     }
 
-    private void prepareAdaptiveGeometry(Scratch scratch, int adaptiveSampleStep, int axisCells, int axisSamples) {
+    private void prepareAdaptiveGeometry(CaveCarveScratch scratch, int adaptiveSampleStep, int axisCells, int axisSamples) {
         if (scratch.adaptiveGeometryStep == adaptiveSampleStep && scratch.adaptiveGeometryAxisCells == axisCells) {
             return;
         }
@@ -1942,18 +1992,17 @@ public class IrisCaveCarver3D {
         return density * inverseNormalization;
     }
 
-    private double sampleDensityNoWarpModules(int x, int y, int z) {
-        Scratch scratch = scratchCache.get();
+    private double sampleDensityNoWarpModules(CaveCarveScratch scratch, int x, int y, int z) {
         int activeModuleCount = prepareActiveModules(scratch, y);
         if (activeModuleCount == 0) {
             return sampleDensityNoWarpNoModules(x, y, z);
         }
 
-        ModuleState[] localModules = scratch.activeModules;
+        CaveFieldModuleState[] localModules = scratch.activeModules;
         double density = baseDensity.noiseFastSigned3D(x, y, z) * baseWeight;
         density += detailDensity.noiseFastSigned3D(x, y, z) * detailWeight;
         for (int moduleIndex = 0; moduleIndex < activeModuleCount; moduleIndex++) {
-            ModuleState module = localModules[moduleIndex];
+            CaveFieldModuleState module = localModules[moduleIndex];
             double moduleDensity = module.density.noiseFastSigned3D(x, y, z) - module.threshold;
             if (module.invert) {
                 moduleDensity = -moduleDensity;
@@ -1965,8 +2014,7 @@ public class IrisCaveCarver3D {
         return density * inverseNormalization;
     }
 
-    private double sampleDensityWarpOnly(int x, int y, int z) {
-        Scratch scratch = scratchCache.get();
+    private double sampleDensityWarpOnly(CaveCarveScratch scratch, int x, int y, int z) {
         int sx = snapWarp(x);
         int sy = snapWarp(y);
         int sz = snapWarp(z);
@@ -1981,18 +2029,17 @@ public class IrisCaveCarver3D {
         return density * inverseNormalization;
     }
 
-    private double sampleDensityWarpModules(int x, int y, int z) {
-        Scratch scratch = scratchCache.get();
+    private double sampleDensityWarpModules(CaveCarveScratch scratch, int x, int y, int z) {
         int activeModuleCount = prepareActiveModules(scratch, y);
         if (activeModuleCount == 0) {
-            return sampleDensityWarpOnly(x, y, z);
+            return sampleDensityWarpOnly(scratch, x, y, z);
         }
 
-        ModuleState[] localModules = scratch.activeModules;
+        CaveFieldModuleState[] localModules = scratch.activeModules;
         return sampleDensityWarpModules(scratch, x, y, z, localModules, activeModuleCount);
     }
 
-    private double sampleDensityWarpModules(Scratch scratch, int x, int y, int z, ModuleState[] localModules, int activeModuleCount) {
+    private double sampleDensityWarpModules(CaveCarveScratch scratch, int x, int y, int z, CaveFieldModuleState[] localModules, int activeModuleCount) {
         int sx = snapWarp(x);
         int sy = snapWarp(y);
         int sz = snapWarp(z);
@@ -2005,7 +2052,7 @@ public class IrisCaveCarver3D {
         double density = baseDensity.noiseFastSigned3D(warpedX, warpedY, warpedZ) * baseWeight;
         density += detailDensity.noiseFastSigned3D(warpedX, warpedY, warpedZ) * detailWeight;
         for (int moduleIndex = 0; moduleIndex < activeModuleCount; moduleIndex++) {
-            ModuleState module = localModules[moduleIndex];
+            CaveFieldModuleState module = localModules[moduleIndex];
             double moduleDensity = module.density.noiseFastSigned3D(warpedX, warpedY, warpedZ) - module.threshold;
             if (module.invert) {
                 moduleDensity = -moduleDensity;
@@ -2017,7 +2064,7 @@ public class IrisCaveCarver3D {
         return density * inverseNormalization;
     }
 
-    private int prepareWarpSample(Scratch scratch, int sx, int sy, int sz) {
+    private int prepareWarpSample(CaveCarveScratch scratch, int sx, int sy, int sz) {
         int slot = mixWarpKey(sx, sy, sz) & (scratch.warpCacheX.length - 1);
         if (scratch.warpCacheSet[slot]
                 && scratch.warpCacheX[slot] == sx
@@ -2043,20 +2090,26 @@ public class IrisCaveCarver3D {
         return hash;
     }
 
-    private int prepareActiveModules(Scratch scratch, int y) {
-        ModuleState[] configuredModules = modules;
+    private int prepareActiveModules(CaveCarveScratch scratch, int y) {
+        CaveFieldModuleState[] configuredModules = modules;
         int configuredCount = configuredModules.length;
         if (configuredCount == 0) {
             return 0;
         }
 
+        // Pure function of (y, modules). modules is final and the scratch is per carver per thread,
+        // so the band selection and the remaining-contribution prefix sums only change when y does.
+        if (scratch.activeModulesY == y) {
+            return scratch.activeModuleCount;
+        }
+
         if (scratch.activeModules.length < configuredCount) {
-            scratch.activeModules = new ModuleState[configuredCount];
+            scratch.activeModules = new CaveFieldModuleState[configuredCount];
         }
 
         int activeCount = 0;
         for (int moduleIndex = 0; moduleIndex < configuredCount; moduleIndex++) {
-            ModuleState module = configuredModules[moduleIndex];
+            CaveFieldModuleState module = configuredModules[moduleIndex];
             if (y < module.minY || y > module.maxY) {
                 continue;
             }
@@ -2073,15 +2126,17 @@ public class IrisCaveCarver3D {
         scratch.activeModuleRemainingMin[activeCount] = 0D;
         scratch.activeModuleRemainingMax[activeCount] = 0D;
         for (int moduleIndex = activeCount - 1; moduleIndex >= 0; moduleIndex--) {
-            ModuleState module = scratch.activeModules[moduleIndex];
+            CaveFieldModuleState module = scratch.activeModules[moduleIndex];
             scratch.activeModuleRemainingMin[moduleIndex] = scratch.activeModuleRemainingMin[moduleIndex + 1] + module.minContribution;
             scratch.activeModuleRemainingMax[moduleIndex] = scratch.activeModuleRemainingMax[moduleIndex + 1] + module.maxContribution;
         }
 
+        scratch.activeModulesY = y;
+        scratch.activeModuleCount = activeCount;
         return activeCount;
     }
 
-    private MatterSlice<MatterCavern> resolveCavernSlice(Scratch scratch, MantleChunk<Matter> chunk, int sectionIndex) {
+    private MatterSlice<MatterCavern> resolveCavernSlice(CaveCarveScratch scratch, MantleChunk<Matter> chunk, int sectionIndex) {
         @SuppressWarnings("unchecked")
         MatterSlice<MatterCavern> cachedSlice = (MatterSlice<MatterCavern>) scratch.sectionSlices[sectionIndex];
         if (cachedSlice != null) {
@@ -2099,7 +2154,7 @@ public class IrisCaveCarver3D {
         return resolvedSlice;
     }
 
-    private MatterCavern[] prepareMatterByYTable(Scratch scratch, int minY, int maxY) {
+    private MatterCavern[] prepareMatterByYTable(CaveCarveScratch scratch, int minY, int maxY) {
         int size = Math.max(0, maxY - minY + 1);
         if (scratch.matterByY.length < size) {
             scratch.matterByY = new MatterCavern[size];
@@ -2126,15 +2181,6 @@ public class IrisCaveCarver3D {
         return matterByY;
     }
 
-    private int resolveWaterMaxY(int columnSurfaceY) {
-        if (!profile.isAllowWater()) {
-            return Integer.MIN_VALUE;
-        }
-
-        int minDepth = Math.max(0, profile.getWaterMinDepthBelowSurface());
-        return Math.min(engine.getDimension().getFluidHeight(), columnSurfaceY - minDepth);
-    }
-
     private MatterCavern resolveMatter(MatterCavern verticalMatter, int x, int y, int z,
                                        int columnIndex, int[] waterMaxY, double localThreshold) {
         if (verticalMatter != carveLava
@@ -2146,19 +2192,18 @@ public class IrisCaveCarver3D {
     }
 
     private boolean isAquiferCandidate(int x, int y, int z, double localThreshold) {
-        int fluidHeight = engine.getDimension().getFluidHeight();
         double depthFactor = Math.max(0D, Math.min(1.5D, (fluidHeight - y) / 48D));
         double cutoff = 0.35D + (depthFactor * 0.2D);
         if (detailDensity.noiseFastSigned3D(x, y * 0.5D, z) <= cutoff) {
             return false;
         }
-        return !profile.isWaterRequiresFloor() || hasAquiferCupSupport(x, y, z, localThreshold);
+        return !waterRequiresFloor || hasAquiferCupSupport(x, y, z, localThreshold);
     }
 
     private boolean hasAquiferCupSupport(int x, int y, int z, double threshold) {
         int floorY = Math.max(0, y - 1);
         int deepFloorY = Math.max(0, y - 2);
-        int aboveY = Math.min(engine.getHeight() - 1, y + 1);
+        int aboveY = Math.min(aquiferCeilingY, y + 1);
         if (!isDensitySolid(x, floorY, z, threshold)) {
             return false;
         }
@@ -2190,14 +2235,14 @@ public class IrisCaveCarver3D {
     }
 
     private void writeCavern(MatterSlice<MatterCavern> cavernSlice, int localX, int y, int localZ,
-                             MatterCavern matter, WaterSupportPlan waterSupportPlan) {
+                             MatterCavern matter, CaveWaterSupportPlan waterSupportPlan) {
         cavernSlice.set(localX, y & 15, localZ, matter);
         if (waterSupportPlan != null && matter == carveWater) {
             waterSupportPlan.add(localX, y, localZ, carveWater, carveAir);
         }
     }
 
-    private void prepareSectionCaches(Scratch scratch, int minY, int maxY) {
+    private void prepareSectionCaches(CaveCarveScratch scratch, int minY, int maxY) {
         int minSection = Math.max(0, PowerOfTwoCoordinates.floorDivPow2(minY, 4));
         int maxSection = Math.max(minSection, PowerOfTwoCoordinates.floorDivPow2(maxY, 4));
         int requiredSections = maxSection + 1;
@@ -2233,7 +2278,7 @@ public class IrisCaveCarver3D {
         return (value * 2D) - 1D;
     }
 
-    private double[] prepareVerticalEdgeFadeTable(Scratch scratch, int minY, int maxY) {
+    private double[] prepareVerticalEdgeFadeTable(CaveCarveScratch scratch, int minY, int maxY) {
         int size = Math.max(0, maxY - minY + 1);
         if (scratch.verticalEdgeFade.length < size) {
             scratch.verticalEdgeFade = new double[size];
@@ -2263,177 +2308,5 @@ public class IrisCaveCarver3D {
         }
 
         return verticalEdgeFade;
-    }
-
-    static final class WaterSupportPlan {
-        private final IdentityHashMap<MatterCavern, WaterCandidateGroup> groups = new IdentityHashMap<>();
-
-        void add(int localX, int y, int localZ, MatterCavern water, MatterCavern air) {
-            WaterCandidateGroup group = groups.computeIfAbsent(water, key -> new WaterCandidateGroup(water, air));
-            int columnIndex = PowerOfTwoCoordinates.packLocal16(localX, localZ);
-            group.positions.set((y << 8) | columnIndex);
-        }
-
-        void resolve(MantleChunk<Matter> chunk) {
-            if (chunk == null) {
-                groups.clear();
-                return;
-            }
-
-            for (Map.Entry<MatterCavern, WaterCandidateGroup> entry : groups.entrySet()) {
-                WaterCandidateGroup group = entry.getValue();
-                for (int position = group.positions.nextSetBit(0); position >= 0; position = group.positions.nextSetBit(position + 1)) {
-                    int y = position >>> 8;
-                    int columnIndex = position & 255;
-                    int localX = PowerOfTwoCoordinates.unpackLocal16X(columnIndex);
-                    int localZ = columnIndex & 15;
-                    MatterCavern current = getCavern(chunk, localX, y, localZ);
-                    if (current != group.water || hasCupSupport(chunk, localX, y, localZ)) {
-                        continue;
-                    }
-
-                    Matter section = chunk.get(y >> 4);
-                    MatterSlice<MatterCavern> cavernSlice = section.getSlice(MatterCavern.class);
-                    cavernSlice.set(localX, y & 15, localZ, group.air);
-                }
-            }
-            groups.clear();
-        }
-
-        private static boolean hasCupSupport(MantleChunk<Matter> chunk, int localX, int y, int localZ) {
-            if (localX <= 0 || localX >= 15 || localZ <= 0 || localZ >= 15
-                    || y <= 1 || !isSolid(chunk, localX, y - 1, localZ)
-                    || !isSolid(chunk, localX, y - 2, localZ)) {
-                return false;
-            }
-
-            int support = 0;
-            if (isSolid(chunk, localX + 1, y, localZ)) {
-                support++;
-            }
-            if (isSolid(chunk, localX - 1, y, localZ)) {
-                support++;
-            }
-            if (isSolid(chunk, localX, y, localZ + 1)) {
-                support++;
-            }
-            if (isSolid(chunk, localX, y, localZ - 1)) {
-                support++;
-            }
-            if (isSolid(chunk, localX, y + 1, localZ)) {
-                support++;
-            }
-            return support >= 4;
-        }
-
-        private static boolean isSolid(MantleChunk<Matter> chunk, int localX, int y, int localZ) {
-            if (localX < 0 || localX >= 16 || localZ < 0 || localZ >= 16) {
-                return false;
-            }
-            MatterCavern cavern = getCavern(chunk, localX, y, localZ);
-            return cavern == null || !cavern.isCavern();
-        }
-
-        private static MatterCavern getCavern(MantleChunk<Matter> chunk, int localX, int y, int localZ) {
-            Matter section = chunk.get(y >> 4);
-            if (section == null) {
-                return null;
-            }
-
-            MatterSlice<MatterCavern> cavernSlice = section.getSlice(MatterCavern.class);
-            return cavernSlice == null ? null : cavernSlice.get(localX, y & 15, localZ);
-        }
-    }
-
-    private static final class WaterCandidateGroup {
-        private final MatterCavern water;
-        private final MatterCavern air;
-        private final BitSet positions = new BitSet();
-
-        private WaterCandidateGroup(MatterCavern water, MatterCavern air) {
-            this.water = water;
-            this.air = air;
-        }
-    }
-
-    private static final class ModuleState {
-        private final CNG density;
-        private final int minY;
-        private final int maxY;
-        private final double weight;
-        private final double threshold;
-        private final boolean invert;
-        private final double minContribution;
-        private final double maxContribution;
-
-        private ModuleState(IrisCaveFieldModule module, CNG density) {
-            IrisRange range = module.getVerticalRange();
-            this.density = density;
-            this.minY = (int) Math.floor(range.getMin());
-            this.maxY = (int) Math.ceil(range.getMax());
-            this.weight = module.getWeight();
-            this.threshold = module.getThreshold();
-            this.invert = module.isInvert();
-            double rawMin = invert ? threshold - 1D : -1D - threshold;
-            double rawMax = invert ? threshold + 1D : 1D - threshold;
-            this.minContribution = rawMin * weight;
-            this.maxContribution = rawMax * weight;
-        }
-
-        private double sample(double x, int y, double z) {
-            double sampled = density.noiseFastSigned3D(x, y, z);
-            return invert ? (threshold - sampled) * weight : (sampled - threshold) * weight;
-        }
-
-        private double sample(double x, double y, double z) {
-            double sampled = density.noiseFastSigned3D(x, y, z);
-            return invert ? (threshold - sampled) * weight : (sampled - threshold) * weight;
-        }
-    }
-
-    private static final class Scratch {
-        private final int[] columnMaxY = new int[256];
-        private final int[] waterMaxY = new int[256];
-        private final int[] surfaceBreakFloorY = new int[256];
-        private final boolean[] surfaceBreakColumn = new boolean[256];
-        private final double[] columnThreshold = new double[256];
-        private final double[] passThreshold = new double[256];
-        private final double[] fullWeights = new double[256];
-        private final double[] clampedColumnWeights = new double[256];
-        private final int[] activeColumnIndices = new int[256];
-        private final int[] activeColumnTopY = new int[256];
-        private final int[] planeColumnIndices = new int[256];
-        private final double[] planeThresholdLimit = new double[256];
-        private final boolean[] planeCarve = new boolean[256];
-        private final double[] adaptivePlaneDensity = new double[81];
-        private final double[] adaptivePlanePrediction = new double[256];
-        private final double[] adaptivePlaneAmbiguity = new double[256];
-        private final int[] adaptivePlaneSampleBounds = new int[4];
-        private final int[] adaptiveCellX = new int[256];
-        private final int[] adaptiveCellZ = new int[256];
-        private final int[] adaptiveRow0 = new int[256];
-        private final int[] adaptiveRow1 = new int[256];
-        private final double[] adaptiveTx = new double[256];
-        private final double[] adaptiveTz = new double[256];
-        private final boolean[] warpCacheSet = new boolean[256];
-        private final int[] warpCacheX = new int[256];
-        private final int[] warpCacheY = new int[256];
-        private final int[] warpCacheZ = new int[256];
-        private final double[] warpCacheA = new double[256];
-        private final double[] warpCacheB = new double[256];
-        private final int[] tileIndices = new int[4];
-        private final int[] tileLocalX = new int[4];
-        private final int[] tileLocalZ = new int[4];
-        private final int[] tileTopY = new int[4];
-        private ModuleState[] activeModules = new ModuleState[0];
-        private double[] activeModuleRemainingMin = new double[0];
-        private double[] activeModuleRemainingMax = new double[0];
-        private double[] verticalEdgeFade = new double[0];
-        private MatterCavern[] matterByY = new MatterCavern[0];
-        private Matter[] sectionMatter = new Matter[0];
-        private MatterSlice<?>[] sectionSlices = new MatterSlice<?>[0];
-        private int adaptiveGeometryStep = -1;
-        private int adaptiveGeometryAxisCells = -1;
-        private boolean fullWeightsInitialized;
     }
 }

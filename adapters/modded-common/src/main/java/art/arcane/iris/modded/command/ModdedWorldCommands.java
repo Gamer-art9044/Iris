@@ -20,6 +20,7 @@ package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.BrokenPackException;
+import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.MainWorldService;
@@ -303,7 +304,14 @@ public final class ModdedWorldCommands {
             }
         } catch (Throwable e) {
             LOGGER.error("Iris main world pack load failed for {} (dim={})", pack, packDimension, e);
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_READY_YET_STILL_LOADING_VALIDATING_TRY_COMMAND, MessageArgument.untrusted("pack", pack)));
+            if (PackValidationRegistry.get(pack) == null) {
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_READY_YET_STILL_LOADING_VALIDATING_TRY_COMMAND, MessageArgument.untrusted("pack", pack)));
+                return 0;
+            }
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_VALIDATION_FAILED,
+                    MessageArgument.untrusted("value", pack + ":" + packDimension),
+                    MessageArgument.trusted("value2", e.getClass().getSimpleName() + IrisLanguage.errorDetail(e))));
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_FIX_PACK_RUN_IRIS_PACK_VALIDATE_REVALIDATE, MessageArgument.untrusted("pack", pack)));
             return 0;
         }
         ModdedModConfig.setMainWorld(packRef, seed);

@@ -162,13 +162,14 @@ public class IrisPackBenchmarking {
     }
 
     private double calculateMedian(KList<Integer> list) {
-        Collections.sort(list);
-        int middle = list.size() / 2;
+        KList<Integer> sorted = new KList<>(list);
+        Collections.sort(sorted);
+        int middle = sorted.size() / 2;
 
-        if (list.size() % 2 == 1) {
-            return list.get(middle);
+        if (sorted.size() % 2 == 1) {
+            return sorted.get(middle);
         } else {
-            return (list.get(middle - 1) + list.get(middle)) / 2.0;
+            return (sorted.get(middle - 1) + sorted.get(middle)) / 2.0;
         }
     }
 

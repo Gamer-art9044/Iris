@@ -25,10 +25,13 @@ import art.arcane.iris.Iris;
 import art.arcane.iris.core.edit.BlockSignal;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.util.common.director.DirectorExecutor;
+import art.arcane.iris.util.common.plugin.VolmitSender;
+import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.director.DirectorOrigin;
 import art.arcane.volmlib.util.director.annotations.Director;
 import art.arcane.volmlib.util.director.annotations.Param;
@@ -38,8 +41,10 @@ import org.bukkit.Chunk;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.World;
 import org.bukkit.block.Biome;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Player;
 
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -97,83 +102,115 @@ public class CommandWhat implements DirectorExecutor {
 
     @Director(description = "What region am i in?", descriptionKey = "iris.director.commandwhat.director.what_region_am_i", origin = DirectorOrigin.PLAYER)
     public void region() {
-        try {
-            Chunk chunk = world().getChunkAt(player().getLocation().getBlockX() >> 4, player().getLocation().getBlockZ() >> 4);
-            IrisRegion r = EngineBukkitOps.getRegion(engine(), chunk);
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IREGION, MessageArgument.untrusted("value", r.getLoadKey()), MessageArgument.untrusted("value2", r.getName())));
+        VolmitSender commandSender = sender();
+        Player player = player();
+        World world = world();
+        Engine engine = engine();
 
-        } catch (Throwable e) {
-            Iris.reportError(e);
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IRIS_WORLDS_ONLY));
-        }
+        // Chunk access must happen on the thread owning the player's chunk.
+        onPlayerThread(player, () -> {
+            try {
+                Chunk chunk = world.getChunkAt(player.getLocation().getBlockX() >> 4, player.getLocation().getBlockZ() >> 4);
+                IrisRegion r = EngineBukkitOps.getRegion(engine, chunk);
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IREGION, MessageArgument.untrusted("value", r.getLoadKey()), MessageArgument.untrusted("value2", r.getName())));
+
+            } catch (Throwable e) {
+                Iris.reportError(e);
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IRIS_WORLDS_ONLY));
+            }
+        });
     }
 
     @Director(description = "What block am i looking at?", descriptionKey = "iris.director.commandwhat.director.what_block_am_i_looking_at", origin = DirectorOrigin.PLAYER)
     public void block() {
-        BlockData bd;
-        try {
-            bd = player().getTargetBlockExact(128, FluidCollisionMode.NEVER).getBlockData();
-        } catch (NullPointerException e) {
-            Iris.reportError(e);
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_PLEASE_LOOK_AT_ANY_BLOCK_NOT_AT_SKY));
-            bd = null;
-        }
+        VolmitSender commandSender = sender();
+        Player player = player();
 
-        if (bd != null) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_MATERIAL_3, MessageArgument.untrusted("value", bd.getMaterial().name())));
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FULL_2, MessageArgument.untrusted("value", bd.getAsString(true))));
-
-            if (BukkitBlockResolution.isStorage(bd)) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_STORAGE_BLOCK_LOOT_CAPABLE));
+        // The raycast reads blocks, so it has to run on the thread owning the player.
+        onPlayerThread(player, () -> {
+            BlockData bd;
+            try {
+                bd = player.getTargetBlockExact(128, FluidCollisionMode.NEVER).getBlockData();
+            } catch (NullPointerException e) {
+                Iris.reportError(e);
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_PLEASE_LOOK_AT_ANY_BLOCK_NOT_AT_SKY));
+                bd = null;
             }
 
-            if (BukkitBlockResolution.isLit(bd)) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_LIT_BLOCK_LIGHT_CAPABLE));
-            }
+            if (bd != null) {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_MATERIAL_3, MessageArgument.untrusted("value", bd.getMaterial().name())));
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FULL_2, MessageArgument.untrusted("value", bd.getAsString(true))));
 
-            if (BukkitBlockResolution.isFoliage(bd)) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FOLIAGE_BLOCK));
-            }
+                if (BukkitBlockResolution.isStorage(bd)) {
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_STORAGE_BLOCK_LOOT_CAPABLE));
+                }
 
-            if (BukkitBlockResolution.isDecorant(bd)) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_DECORANT_BLOCK));
-            }
+                if (BukkitBlockResolution.isLit(bd)) {
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_LIT_BLOCK_LIGHT_CAPABLE));
+                }
 
-            if (BukkitBlockResolution.isFluid(bd)) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FLUID_BLOCK));
-            }
+                if (BukkitBlockResolution.isFoliage(bd)) {
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FOLIAGE_BLOCK));
+                }
 
-            if (BukkitBlockResolution.isFoliagePlantable(bd)) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_PLANTABLE_FOLIAGE_BLOCK));
-            }
+                if (BukkitBlockResolution.isDecorant(bd)) {
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_DECORANT_BLOCK));
+                }
 
-            if (BukkitBlockResolution.isSolid(bd)) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_SOLID_BLOCK));
+                if (BukkitBlockResolution.isFluid(bd)) {
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FLUID_BLOCK));
+                }
+
+                if (BukkitBlockResolution.isFoliagePlantable(bd)) {
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_PLANTABLE_FOLIAGE_BLOCK));
+                }
+
+                if (BukkitBlockResolution.isSolid(bd)) {
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_SOLID_BLOCK));
+                }
             }
-        }
+        });
     }
 
     @Director(description = "Show markers in chunk", descriptionKey = "iris.director.commandwhat.director.show_markers_chunk", origin = DirectorOrigin.PLAYER)
     public void markers(@Param(description = "Marker name such as cave_floor or cave_ceiling", descriptionKey = "iris.director.commandwhat.param.marker_name_such_as_cave_floor_cave_ceiling") String marker) {
-        Chunk c = player().getLocation().getChunk();
+        VolmitSender commandSender = sender();
+        Player player = player();
 
-        if (IrisToolbelt.isIrisWorld(c.getWorld())) {
-            int m = 1;
-            AtomicInteger v = new AtomicInteger(0);
+        // Chunk lookup plus the block signals both need the thread owning the player's chunk.
+        onPlayerThread(player, () -> {
+            Chunk c = player.getLocation().getChunk();
 
-            for (int xxx = c.getX() - 4; xxx <= c.getX() + 4; xxx++) {
-                for (int zzz = c.getZ() - 4; zzz <= c.getZ() + 4; zzz++) {
-                    IrisToolbelt.access(c.getWorld()).getEngine().getMantle().findMarkers(xxx, zzz, new MatterMarker(marker))
-                            .convert((i) -> BukkitPlatform.toLocation(i, c.getWorld())).forEach((i) -> {
-                                BlockSignal.of(i.getWorld(), i.getBlockX(), i.getBlockY(), i.getBlockZ(), 100);
-                                v.incrementAndGet();
-                            });
+            if (IrisToolbelt.isIrisWorld(c.getWorld())) {
+                AtomicInteger v = new AtomicInteger(0);
+
+                for (int xxx = c.getX() - 4; xxx <= c.getX() + 4; xxx++) {
+                    for (int zzz = c.getZ() - 4; zzz <= c.getZ() + 4; zzz++) {
+                        IrisToolbelt.access(c.getWorld()).getEngine().getMantle().findMarkers(xxx, zzz, new MatterMarker(marker))
+                                .convert((i) -> BukkitPlatform.toLocation(i, c.getWorld())).forEach((i) -> {
+                                    BlockSignal.of(i.getWorld(), i.getBlockX(), i.getBlockY(), i.getBlockZ(), 100);
+                                    v.incrementAndGet();
+                                });
+                    }
                 }
-            }
 
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FOUND_NEARBY_MARKERS, MessageArgument.untrusted("value", v.get()), MessageArgument.untrusted("marker", marker)));
-        } else {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IRIS_WORLDS_ONLY_2));
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FOUND_NEARBY_MARKERS, MessageArgument.untrusted("value", v.get()), MessageArgument.untrusted("marker", marker)));
+            } else {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IRIS_WORLDS_ONLY_2));
+            }
+        });
+    }
+
+    /**
+     * Runs the body on the thread owning the player, reporting when the hop cannot be scheduled.
+     */
+    private void onPlayerThread(Player player, Runnable body) {
+        if (player == null) {
+            return;
+        }
+
+        if (!J.runEntity(player, body)) {
+            Iris.warn("Could not schedule /iris what on the thread owning " + player.getName() + ".");
         }
     }
 

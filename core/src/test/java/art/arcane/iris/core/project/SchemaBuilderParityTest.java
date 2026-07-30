@@ -50,6 +50,7 @@ import art.arcane.iris.spi.PlatformItem;
 import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.spi.PlatformScheduler;
 import art.arcane.iris.spi.PlatformStructureHooks;
+import art.arcane.iris.spi.PlatformWorld;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.json.JSONArray;
@@ -502,7 +503,7 @@ public class SchemaBuilderParityTest {
         }
 
         @Override
-        public boolean spawnEntity(Object world, String entityKey, double x, double y, double z) {
+        public boolean spawnEntity(PlatformWorld world, String entityKey, double x, double y, double z) {
             return false;
         }
 

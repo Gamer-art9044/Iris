@@ -106,11 +106,26 @@ public class CustomBiomeSource extends BiomeSource {
             return o;
         }
 
-        return invokeFor(type, source);
+        o = invokeFor(type, source);
+
+        if (o != null) {
+            return o;
+        }
+
+        throw new IllegalStateException("Iris cannot resolve a " + type.getName()
+                + " from " + source.getClass().getName() + " on this server version");
     }
 
     private static Object fieldFor(Class<?> returns, Object in) {
-        return fieldForClass(returns, in.getClass(), in);
+        for (Class<?> sourceType = in.getClass(); sourceType != null; sourceType = sourceType.getSuperclass()) {
+            Object o = fieldForClass(returns, sourceType, in);
+
+            if (o != null) {
+                return o;
+            }
+        }
+
+        return null;
     }
 
     private static Object invokeFor(Class<?> returns, Object in) {
@@ -120,8 +135,9 @@ public class CustomBiomeSource extends BiomeSource {
                 try {
                     IrisLogging.debug("[NMS] Found " + returns.getSimpleName() + " in " + in.getClass().getSimpleName() + "." + i.getName() + "()");
                     return i.invoke(in);
-                } catch (Throwable e) {
-                    e.printStackTrace();
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    throw new IllegalStateException("Iris failed to invoke " + in.getClass().getName() + "."
+                            + i.getName() + "() for " + returns.getName(), e);
                 }
             }
         }
@@ -137,8 +153,9 @@ public class CustomBiomeSource extends BiomeSource {
                 try {
                     IrisLogging.debug("[NMS] Found " + returnType.getSimpleName() + " in " + sourceType.getSimpleName() + "." + i.getName());
                     return (T) i.get(in);
-                } catch (IllegalAccessException e) {
-                    e.printStackTrace();
+                } catch (IllegalAccessException | RuntimeException e) {
+                    throw new IllegalStateException("Iris failed to read " + sourceType.getName() + "."
+                            + i.getName() + " for " + returnType.getName(), e);
                 }
             }
         }
@@ -241,7 +258,13 @@ public class CustomBiomeSource extends BiomeSource {
     }
 
     private RegistryAccess registry() {
-        return registryAccess.aquire(() -> (RegistryAccess) getFor(RegistryAccess.Frozen.class, ((CraftServer) Bukkit.getServer()).getHandle().getServer()));
+        RegistryAccess access = registryAccess.aquire(() -> (RegistryAccess) getFor(RegistryAccess.Frozen.class, ((CraftServer) Bukkit.getServer()).getHandle().getServer()));
+
+        if (access == null) {
+            throw new IllegalStateException("Iris cannot resolve the Minecraft registry access on this server version");
+        }
+
+        return access;
     }
 
     @Override

@@ -22,9 +22,9 @@ public final class IrisColumnWalk {
                 int chunkMinBlockX = Math.max(query.minBlockX(), chunkX << 4);
                 int chunkMaxBlockX = Math.min(query.maxBlockX(), (chunkX << 4) + 15);
 
-                for (int blockZ = align(query.minBlockZ(), chunkMinBlockZ, stride); blockZ <= chunkMaxBlockZ; blockZ += stride) {
-                    for (int blockX = align(query.minBlockX(), chunkMinBlockX, stride); blockX <= chunkMaxBlockX; blockX += stride) {
-                        if (!visitor.visit(blockX, blockZ)) {
+                for (long blockZ = align(query.minBlockZ(), chunkMinBlockZ, stride); blockZ <= chunkMaxBlockZ; blockZ += stride) {
+                    for (long blockX = align(query.minBlockX(), chunkMinBlockX, stride); blockX <= chunkMaxBlockX; blockX += stride) {
+                        if (!visitor.visit((int) blockX, (int) blockZ)) {
                             return visited;
                         }
                         visited++;
@@ -36,10 +36,10 @@ public final class IrisColumnWalk {
         return visited;
     }
 
-    private static int align(int origin, int lowerBound, int stride) {
+    private static long align(int origin, int lowerBound, int stride) {
         long offset = (long) lowerBound - (long) origin;
         long steps = (offset + stride - 1L) / stride;
-        return (int) (origin + steps * stride);
+        return origin + steps * stride;
     }
 
     @FunctionalInterface

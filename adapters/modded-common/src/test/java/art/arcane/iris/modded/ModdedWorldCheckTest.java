@@ -28,40 +28,43 @@ public class ModdedWorldCheckTest {
 
     @Test
     public void poiAuditRunsInASecondServerTaskAfterVillageGeneration() throws IOException {
-        Path sourcePath = Path.of(System.getProperty("iris.moddedCommonSources"),
-                "art/arcane/iris/modded/ModdedWorldCheck.java");
-        String source = Files.readString(sourcePath);
+        Path sourceRoot = Path.of(System.getProperty("iris.moddedCommonSources"));
+        String source = Files.readString(sourceRoot.resolve("art/arcane/iris/modded/ModdedWorldCheck.java"));
+        String auditSource = Files.readString(
+                sourceRoot.resolve("art/arcane/iris/modded/WorldCheckStructureAudit.java"));
         int preparationSubmit = source.indexOf(
                 "WorldCheckPreparation preparation = serverRef.submit(() -> run(serverRef)).join();");
         int completionSubmit = source.indexOf(
                 "exitCode = serverRef.submit(() -> runAndRequestStop(", preparationSubmit);
         int completionMethod = source.indexOf("private static boolean completeWorldCheck");
-        int deferredAudit = source.indexOf("PoiAudit poi = auditStructurePois", completionMethod);
-        int structureMethod = source.indexOf("private static StructureCheckResult checkNativeStructure");
-        int structureMethodEnd = source.indexOf("private static StructureStart resolveStructureStart",
+        int deferredAudit = source.indexOf(
+                "PoiAudit poi = WorldCheckStructureAudit.auditStructurePois", completionMethod);
+        int structureMethod = auditSource.indexOf("private static StructureCheckResult checkNativeStructure");
+        int structureMethodEnd = auditSource.indexOf("private static StructureStart resolveStructureStart",
                 structureMethod);
-        String structureSource = source.substring(structureMethod, structureMethodEnd);
+        String structureSource = auditSource.substring(structureMethod, structureMethodEnd);
 
         assertTrue(preparationSubmit >= 0);
         assertTrue(completionSubmit > preparationSubmit);
         assertTrue(deferredAudit > completionMethod);
         assertFalse(structureSource.contains("auditStructurePois"));
         assertFalse(source.contains("prepareDeferredAudits"));
+        assertFalse(auditSource.contains("prepareDeferredAudits"));
     }
 
     @Test
     public void validStructureStartIsGenerationEvidence() {
-        assertTrue(ModdedWorldCheck.hasNativeStructureEvidence(true, 0));
+        assertTrue(WorldCheckPredicates.hasNativeStructureEvidence(true, 0));
     }
 
     @Test
     public void structureReferenceIsGenerationEvidence() {
-        assertTrue(ModdedWorldCheck.hasNativeStructureEvidence(false, 1));
+        assertTrue(WorldCheckPredicates.hasNativeStructureEvidence(false, 1));
     }
 
     @Test
     public void absentStartAndReferencesFailGenerationEvidence() {
-        assertFalse(ModdedWorldCheck.hasNativeStructureEvidence(false, 0));
+        assertFalse(WorldCheckPredicates.hasNativeStructureEvidence(false, 0));
     }
 
     @Test
@@ -91,68 +94,68 @@ public class ModdedWorldCheckTest {
 
     @Test
     public void materialEvidenceMustExist() {
-        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(0, 0, 1));
-        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 0, 1));
-        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 1, 0));
-        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 2, 1));
+        assertFalse(WorldCheckPredicates.hasCharacteristicMaterialEvidence(0, 0, 1));
+        assertFalse(WorldCheckPredicates.hasCharacteristicMaterialEvidence(8, 0, 1));
+        assertFalse(WorldCheckPredicates.hasCharacteristicMaterialEvidence(8, 1, 0));
+        assertFalse(WorldCheckPredicates.hasCharacteristicMaterialEvidence(8, 2, 1));
     }
 
     @Test
     public void singleChunkStructureAcceptsMaterialInItsOnlyChunk() {
-        assertTrue(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 1, 1));
+        assertTrue(WorldCheckPredicates.hasCharacteristicMaterialEvidence(8, 1, 1));
     }
 
     @Test
     public void multiChunkStructureRejectsMaterialConfinedToOneChunk() {
-        assertFalse(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 1, 4));
-        assertTrue(ModdedWorldCheck.hasCharacteristicMaterialEvidence(8, 2, 4));
+        assertFalse(WorldCheckPredicates.hasCharacteristicMaterialEvidence(8, 1, 4));
+        assertTrue(WorldCheckPredicates.hasCharacteristicMaterialEvidence(8, 2, 4));
     }
 
     @Test
     public void configuredVerticalShiftRequiresSafetyClampedGenerationEvidence() {
-        assertTrue(ModdedWorldCheck.verticalShiftMatches(0, null, -32, 20, -64, 320));
-        assertFalse(ModdedWorldCheck.verticalShiftMatches(0, null, -112, -80, -64, 320));
-        assertTrue(ModdedWorldCheck.verticalShiftMatches(0, 0, -32, 20, -64, 320));
-        assertTrue(ModdedWorldCheck.verticalShiftMatches(0, 48, -64, -32, -64, 320));
-        assertTrue(ModdedWorldCheck.verticalShiftMatches(-64, -64, -48, 4, -64, 320));
-        assertTrue(ModdedWorldCheck.verticalShiftMatches(-64, -16, -64, -12, -64, 320));
-        assertFalse(ModdedWorldCheck.verticalShiftMatches(-64, null, -48, 4, -64, 320));
-        assertFalse(ModdedWorldCheck.verticalShiftMatches(-64, -15, -63, -11, -64, 320));
-        assertFalse(ModdedWorldCheck.verticalShiftMatches(0, -1, -33, 19, -64, 320));
+        assertTrue(WorldCheckPredicates.verticalShiftMatches(0, null, -32, 20, -64, 320));
+        assertFalse(WorldCheckPredicates.verticalShiftMatches(0, null, -112, -80, -64, 320));
+        assertTrue(WorldCheckPredicates.verticalShiftMatches(0, 0, -32, 20, -64, 320));
+        assertTrue(WorldCheckPredicates.verticalShiftMatches(0, 48, -64, -32, -64, 320));
+        assertTrue(WorldCheckPredicates.verticalShiftMatches(-64, -64, -48, 4, -64, 320));
+        assertTrue(WorldCheckPredicates.verticalShiftMatches(-64, -16, -64, -12, -64, 320));
+        assertFalse(WorldCheckPredicates.verticalShiftMatches(-64, null, -48, 4, -64, 320));
+        assertFalse(WorldCheckPredicates.verticalShiftMatches(-64, -15, -63, -11, -64, 320));
+        assertFalse(WorldCheckPredicates.verticalShiftMatches(0, -1, -33, 19, -64, 320));
     }
 
     @Test
     public void mansionVegetationGateRejectsRemainingLeaves() {
-        assertTrue(ModdedWorldCheck.mansionVegetationPass(0));
-        assertFalse(ModdedWorldCheck.mansionVegetationPass(1));
+        assertTrue(WorldCheckPredicates.mansionVegetationPass(0));
+        assertFalse(WorldCheckPredicates.mansionVegetationPass(1));
     }
 
     @Test
     public void mansionVegetationAuditIgnoresTemplateBlocksAndRejectsVegetationAbovePieces() {
-        assertFalse(ModdedWorldCheck.mansionVegetationAbovePiece(true, 80, 80));
-        assertFalse(ModdedWorldCheck.mansionVegetationAbovePiece(true, 79, 80));
-        assertTrue(ModdedWorldCheck.mansionVegetationAbovePiece(true, 81, 80));
-        assertFalse(ModdedWorldCheck.mansionVegetationAbovePiece(false, 81, 80));
+        assertFalse(WorldCheckPredicates.mansionVegetationAbovePiece(true, 80, 80));
+        assertFalse(WorldCheckPredicates.mansionVegetationAbovePiece(true, 79, 80));
+        assertTrue(WorldCheckPredicates.mansionVegetationAbovePiece(true, 81, 80));
+        assertFalse(WorldCheckPredicates.mansionVegetationAbovePiece(false, 81, 80));
     }
 
     @Test
     public void villageFoundationGateRejectsUnsupportedColumns() {
-        assertTrue(ModdedWorldCheck.villageFoundationPass(0));
-        assertFalse(ModdedWorldCheck.villageFoundationPass(1));
+        assertTrue(WorldCheckPredicates.villageFoundationPass(0));
+        assertFalse(WorldCheckPredicates.villageFoundationPass(1));
     }
 
     @Test
     public void villagePoiGateRequiresInBoundsPoiWithoutOutOfBoundsRecords() {
-        assertTrue(ModdedWorldCheck.villagePoiPass(1, 0));
-        assertFalse(ModdedWorldCheck.villagePoiPass(0, 0));
-        assertFalse(ModdedWorldCheck.villagePoiPass(1, 1));
+        assertTrue(WorldCheckPredicates.villagePoiPass(1, 0));
+        assertFalse(WorldCheckPredicates.villagePoiPass(0, 0));
+        assertFalse(WorldCheckPredicates.villagePoiPass(1, 1));
     }
 
     @Test
     public void smallStructureFootprintIncludesEveryChunk() {
         BoundingBox bounds = new BoundingBox(-16, -20, -16, 31, 120, 31);
 
-        List<ChunkPos> chunks = ModdedWorldCheck.boundedFootprintChunks(bounds, ChunkPos.ZERO, 96);
+        List<ChunkPos> chunks = WorldCheckStructureAudit.boundedFootprintChunks(bounds, ChunkPos.ZERO, 96);
 
         assertEquals(9, chunks.size());
         assertTrue(chunks.contains(new ChunkPos(-1, -1)));
@@ -163,7 +166,7 @@ public class ModdedWorldCheckTest {
     public void largeStructureFootprintIsBoundedAndSamplesEdges() {
         BoundingBox bounds = new BoundingBox(-512, -64, -512, 511, 300, 511);
 
-        List<ChunkPos> chunks = ModdedWorldCheck.boundedFootprintChunks(bounds, ChunkPos.ZERO, 20);
+        List<ChunkPos> chunks = WorldCheckStructureAudit.boundedFootprintChunks(bounds, ChunkPos.ZERO, 20);
 
         assertTrue(chunks.size() <= 20);
         assertTrue(chunks.size() >= 16);
@@ -174,7 +177,7 @@ public class ModdedWorldCheckTest {
 
     @Test
     public void qaEventsEscapeStructuredValues() {
-        String event = ModdedWorldCheck.qaEventJson("locate\"", "village\n", false, "x\\y\t");
+        String event = WorldCheckPredicates.qaEventJson("locate\"", "village\n", false, "x\\y\t");
 
         assertEquals("QA_EVT {\"event\":\"locate\\\"\",\"structure\":\"village\\n\","
                 + "\"pass\":false,\"detail\":\"x\\\\y\\t\"}", event);
@@ -292,7 +295,7 @@ public class ModdedWorldCheckTest {
     }
 
     private static boolean characteristic(String structureLabel, String structureKey, String blockKey) {
-        return ModdedWorldCheck.isCharacteristicMaterial(structureLabel,
+        return WorldCheckMaterials.isCharacteristicMaterial(structureLabel,
                 Identifier.parse(structureKey), Identifier.parse(blockKey));
     }
 }

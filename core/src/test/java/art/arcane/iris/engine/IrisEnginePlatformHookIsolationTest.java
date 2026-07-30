@@ -49,6 +49,13 @@ public class IrisEnginePlatformHookIsolationTest {
     @Test
     public void sharedGeneratorHotPathsDoNotLinkBukkitImplementations() throws IOException {
         assertNoClassLinks(IrisEngine.class, BUKKIT_ENGINE_CLASSES);
+        assertNoClassLinks(EngineBackgroundTasks.class, BUKKIT_ENGINE_CLASSES);
+        assertNoClassLinks(EngineDataStore.class, BUKKIT_ENGINE_CLASSES);
+        assertNoClassLinks(EngineHotloader.class, BUKKIT_ENGINE_CLASSES);
+        assertNoClassLinks(EngineMetricsReport.class, BUKKIT_ENGINE_CLASSES);
+        assertNoClassLinks(EngineRuntimeBuilder.class, BUKKIT_ENGINE_CLASSES);
+        assertNoClassLinks(EngineShutdownSequence.class, BUKKIT_ENGINE_CLASSES);
+        assertNoClassLinks(EngineTickRegistry.class, BUKKIT_ENGINE_CLASSES);
         assertNoClassLinks(Engine.class, ENGINE_POLICY_CLASSES);
         assertNoClassLinks(EngineMode.class, PLATFORM_POLICY_CLASSES);
         assertNoClassLinks(EngineMantle.class, PLATFORM_POLICY_CLASSES);

@@ -22,31 +22,81 @@ import java.util.List;
 
 /**
  * Neutral access to the host platform's structure, structure-set and configured-feature registries plus placement entry points.
+ * <p>
+ * The key enumerations read registries and are safe from any thread. The two placement methods write blocks
+ * into a live world and must run on the thread owning the target chunks - the region thread on regionized
+ * platforms, the server thread elsewhere. They are used by the authoring tools that capture vanilla and
+ * datapack structures into Iris objects, not by the generation path.
+ * <p>
+ * Internal to Iris; not a published integration surface.
  */
 public interface PlatformStructureHooks {
+    /**
+     * Every registered structure key. Never null.
+     */
     List<String> structureKeys();
 
+    /**
+     * Registered jigsaw structure keys - the subset of {@link #structureKeys()} assembled from template pools.
+     * Empty when the adapter cannot distinguish them.
+     */
     default List<String> jigsawStructureKeys() {
         return List.of();
     }
 
+    /**
+     * Registered jigsaw template pool keys. Empty when the adapter cannot enumerate them.
+     */
     default List<String> templatePoolKeys() {
         return List.of();
     }
 
+    /**
+     * Every registered structure-set key, the placement grouping that decides structure spacing. Never null.
+     */
     List<String> structureSetKeys();
 
+    /**
+     * Biome keys the given structure is allowed to generate in. Empty when the structure is unknown or declares
+     * no biome filter. Never null.
+     */
     List<String> structureBiomeKeys(String structureKey);
 
+    /**
+     * Configured-feature keys that Iris can place as objects - trees, patches and other single-shot features.
+     * Never null.
+     */
     List<String> objectFeatureKeys();
 
+    /**
+     * Structure keys actually reachable in {@code world}, after its dimension's structure sets and biome filter
+     * are applied. Narrower than {@link #structureKeys()}. Never null.
+     */
     List<String> reachableStructureKeys(PlatformWorld world);
 
+    /**
+     * Biome keys the world's biome source can emit. Never null.
+     */
     List<String> possibleBiomeKeys(PlatformWorld world);
 
+    /**
+     * Places a configured feature at world coordinates with the given seed. Returns false when the key is
+     * unknown or the feature declines to place. Mutates the world; see the threading note on this interface.
+     */
     boolean placeFeature(PlatformWorld world, int x, int y, int z, String featureKey, long seed);
 
+    /**
+     * Generates and places a structure anchored at the given chunk.
+     *
+     * @param maxSpan reject the placement if the structure's bounding box exceeds this span in blocks
+     * @return the placed bounding box as {@code {minX, minY, minZ, maxX, maxY, maxZ}}, or null when the key is
+     *         unknown, the structure produced no valid start, or the box exceeded {@code maxSpan}
+     */
     int[] placeStructure(PlatformWorld world, int chunkX, int chunkZ, String structureKey, long seed, int maxSpan);
 
+    /**
+     * Whether this adapter implements {@link #placeStructure(PlatformWorld, int, int, String, long, int)}.
+     * Check before offering structure capture; adapters without the required host access return false.
+     */
     boolean supportsStructurePlacement();
 }

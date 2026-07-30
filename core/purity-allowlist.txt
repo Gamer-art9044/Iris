@@ -40,6 +40,7 @@ art/arcane/iris/core/pregenerator/methods/AsyncPregenMethod.java
 art/arcane/iris/core/pregenerator/methods/HybridPregenMethod.java
 art/arcane/iris/core/pregenerator/methods/MedievalPregenMethod.java
 art/arcane/iris/core/project/IrisProject.java
+art/arcane/iris/core/project/StudioOpenProgressReporter.java
 art/arcane/iris/core/runtime/BukkitPublicRuntimeControlBackend.java
 art/arcane/iris/core/runtime/ChunkClearer.java
 art/arcane/iris/core/runtime/ChunkJobReporter.java
@@ -72,6 +73,11 @@ art/arcane/iris/core/tools/IrisToolbelt.java
 art/arcane/iris/core/tools/IrisWorldCreator.java
 art/arcane/iris/engine/IrisEngineEffects.java
 art/arcane/iris/engine/IrisWorldManager.java
+art/arcane/iris/engine/MarkerSpawnScanner.java
+art/arcane/iris/engine/WorldBlockDropRouter.java
+art/arcane/iris/engine/WorldChunkMaintenance.java
+art/arcane/iris/engine/WorldEntitySpawner.java
+art/arcane/iris/engine/WorldTeleportWarmup.java
 art/arcane/iris/engine/data/chunk/LinkedTerrainChunk.java
 art/arcane/iris/engine/data/chunk/TerrainChunk.java
 art/arcane/iris/engine/decorator/DecoratorCore.java
@@ -85,6 +91,7 @@ art/arcane/iris/engine/object/IPostBlockAccess.java
 art/arcane/iris/engine/object/IrisAttributeModifier.java
 art/arcane/iris/engine/object/IrisBiome.java
 art/arcane/iris/engine/object/IrisBiomeCustomParticle.java
+art/arcane/iris/engine/object/IrisBiomeDerivatives.java
 art/arcane/iris/engine/object/IrisBiomeCustomSpawn.java
 art/arcane/iris/engine/object/IrisBlockDrops.java
 art/arcane/iris/engine/object/IrisCommandRegistry.java
@@ -153,19 +160,12 @@ art/arcane/iris/util/common/misc/Bindings.java
 art/arcane/iris/util/common/nbt/mca/Chunk.java
 art/arcane/iris/util/common/nbt/mca/NBTWorld.java
 art/arcane/iris/util/common/plugin/Chunks.java
-art/arcane/iris/util/common/plugin/CommandDummy.java
-art/arcane/iris/util/common/plugin/IController.java
 art/arcane/iris/util/common/plugin/IrisService.java
-art/arcane/iris/util/common/plugin/MortarCommand.java
-art/arcane/iris/util/common/plugin/MortarPermission.java
-art/arcane/iris/util/common/plugin/RouterCommand.java
-art/arcane/iris/util/common/plugin/VirtualCommand.java
 art/arcane/iris/util/common/plugin/VolmitPlugin.java
 art/arcane/iris/util/common/plugin/VolmitSender.java
 art/arcane/iris/util/common/plugin/chunk/ChunkTickets.java
 art/arcane/iris/util/common/plugin/chunk/TicketHolder.java
 art/arcane/iris/util/common/reflect/KeyedType.java
-art/arcane/iris/util/common/reflect/OldEnum.java
 art/arcane/iris/util/common/scheduling/J.java
 art/arcane/iris/util/project/hunk/Hunk.java
 art/arcane/iris/util/project/hunk/view/ChunkBiomeHunkView.java

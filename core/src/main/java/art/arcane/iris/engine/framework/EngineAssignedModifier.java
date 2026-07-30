@@ -37,7 +37,19 @@ public abstract class EngineAssignedModifier<T> extends EngineAssignedComponent 
             onModify(x, z, output, multicore, context);
         } catch (Throwable e) {
             IrisLogging.error("Modifier Failure: " + getName());
-            e.printStackTrace();
+            IrisLogging.reportError(e);
+
+            // A failed modifier leaves a half-written chunk. Never continue as if it succeeded,
+            // let the chunk generation failure path handle it.
+            if (e instanceof Error error) {
+                throw error;
+            }
+
+            if (e instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+
+            throw new IllegalStateException("Modifier Failure: " + getName(), e);
         }
     }
 }

@@ -87,7 +87,8 @@ public final class ModdedObjectCommands {
             if (engine != null) {
                 return SharedSuggestionProvider.suggest(engine.getData().getObjectLoader().getPossibleKeys(), builder);
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable e) {
+            IrisModdedCommands.warnTabFailure("object keys", context.getSource(), e);
         }
         return builder.buildFuture();
     };

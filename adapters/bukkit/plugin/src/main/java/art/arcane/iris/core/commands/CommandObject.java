@@ -428,8 +428,13 @@ public class CommandObject implements DirectorExecutor {
 
     @Director(description = "Get a powder that reveals objects", descriptionKey = "iris.director.commandobject.director.get_powder_that_reveals_objects", aliases = "d")
     public void dust() {
-        player().getInventory().addItem(WandSVC.createDust());
-        sender().playSound(Sound.AMBIENT_SOUL_SAND_VALLEY_ADDITIONS, 1f, 1.5f);
+        VolmitSender commandSender = sender();
+        Player player = player();
+
+        onPlayerThread(player, () -> {
+            player.getInventory().addItem(WandSVC.createDust());
+            commandSender.playSound(Sound.AMBIENT_SOUL_SAND_VALLEY_ADDITIONS, 1f, 1.5f);
+        });
     }
 
     @Director(description = "Contract a selection based on your looking direction", descriptionKey = "iris.director.commandobject.director.contract_selection_based_on_your_looking_direction", aliases = "-")
@@ -437,28 +442,33 @@ public class CommandObject implements DirectorExecutor {
             @Param(description = "The amount to inset by", descriptionKey = "iris.director.commandobject.param.amount_inset_by", defaultValue = "1")
             int amount
     ) {
-        if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_HOLD_YOUR_WAND));
-            return;
-        }
+        VolmitSender commandSender = sender();
+        Player player = player();
+
+        onPlayerThread(player, () -> {
+            if (!WandSVC.isHoldingWand(player)) {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_HOLD_YOUR_WAND));
+                return;
+            }
 
 
-        Location[] b = WandSVC.getCuboid(player());
-        if (b == null || b[0] == null || b[1] == null) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NO_AREA_SELECTED));
-            return;
-        }
-        Location a1 = b[0].clone();
-        Location a2 = b[1].clone();
-        Cuboid cursor = new Cuboid(a1, a2);
-        Direction d = Direction.closest(player().getLocation().getDirection()).reverse();
-        assert d != null;
-        cursor = cursor.expand(d.f(), -amount);
-        b[0] = cursor.getLowerNE();
-        b[1] = cursor.getUpperSW();
-        player().getInventory().setItemInMainHand(WandSVC.createWand(b[0], b[1]));
-        player().updateInventory();
-        sender().playSound(Sound.ENTITY_ITEM_FRAME_ROTATE_ITEM, 1f, 0.55f);
+            Location[] b = WandSVC.getCuboid(player);
+            if (b == null || b[0] == null || b[1] == null) {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NO_AREA_SELECTED));
+                return;
+            }
+            Location a1 = b[0].clone();
+            Location a2 = b[1].clone();
+            Cuboid cursor = new Cuboid(a1, a2);
+            Direction d = Direction.closest(player.getLocation().getDirection()).reverse();
+            assert d != null;
+            cursor = cursor.expand(d.f(), -amount);
+            b[0] = cursor.getLowerNE();
+            b[1] = cursor.getUpperSW();
+            player.getInventory().setItemInMainHand(WandSVC.createWand(b[0], b[1]));
+            player.updateInventory();
+            commandSender.playSound(Sound.ENTITY_ITEM_FRAME_ROTATE_ITEM, 1f, 0.55f);
+        });
     }
 
     @Director(description = "Set point 1 to look", descriptionKey = "iris.director.commandobject.director.set_point_1_look", aliases = "p1")
@@ -466,25 +476,30 @@ public class CommandObject implements DirectorExecutor {
             @Param(description = "Whether to use your current position, or where you look", descriptionKey = "iris.director.commandobject.param.whether_use_your_current_position_where_you_look", defaultValue = "true")
             boolean here
     ) {
-        if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_READY_YOUR_WAND));
-            return;
-        }
+        VolmitSender commandSender = sender();
+        Player player = player();
 
-        if (WandSVC.isHoldingWand(player())) {
-            Location[] g = WandSVC.getCuboid(player());
-
-            if (g == null) {
+        onPlayerThread(player, () -> {
+            if (!WandSVC.isHoldingWand(player)) {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_READY_YOUR_WAND));
                 return;
             }
-            if (!here) {
-                // TODO: WARNING HEIGHT
-                g[1] = player().getTargetBlock(null, 256).getLocation().clone();
-            } else {
-                g[1] = player().getLocation().getBlock().getLocation().clone().add(0, -1, 0);
+
+            if (WandSVC.isHoldingWand(player)) {
+                Location[] g = WandSVC.getCuboid(player);
+
+                if (g == null) {
+                    return;
+                }
+                if (!here) {
+                    // TODO: WARNING HEIGHT
+                    g[1] = player.getTargetBlock(null, 256).getLocation().clone();
+                } else {
+                    g[1] = player.getLocation().getBlock().getLocation().clone().add(0, -1, 0);
+                }
+                player.getInventory().setItemInMainHand(WandSVC.createWand(g[0], g[1]));
             }
-            player().getInventory().setItemInMainHand(WandSVC.createWand(g[0], g[1]));
-        }
+        });
     }
 
     @Director(description = "Set point 2 to look", descriptionKey = "iris.director.commandobject.director.set_point_2_look", aliases = "p2")
@@ -492,26 +507,31 @@ public class CommandObject implements DirectorExecutor {
             @Param(description = "Whether to use your current position, or where you look", descriptionKey = "iris.director.commandobject.param.whether_use_your_current_position_where_you_look_2", defaultValue = "true")
             boolean here
     ) {
-        if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_READY_YOUR_WAND_2));
-            return;
-        }
+        VolmitSender commandSender = sender();
+        Player player = player();
 
-        if (WandSVC.isHoldingIrisWand(player())) {
-            Location[] g = WandSVC.getCuboid(player());
-
-            if (g == null) {
+        onPlayerThread(player, () -> {
+            if (!WandSVC.isHoldingWand(player)) {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_READY_YOUR_WAND_2));
                 return;
             }
 
-            if (!here) {
-                // TODO: WARNING HEIGHT
-                g[0] = player().getTargetBlock(null, 256).getLocation().clone();
-            } else {
-                g[0] = player().getLocation().getBlock().getLocation().clone().add(0, -1, 0);
+            if (WandSVC.isHoldingIrisWand(player)) {
+                Location[] g = WandSVC.getCuboid(player);
+
+                if (g == null) {
+                    return;
+                }
+
+                if (!here) {
+                    // TODO: WARNING HEIGHT
+                    g[0] = player.getTargetBlock(null, 256).getLocation().clone();
+                } else {
+                    g[0] = player.getLocation().getBlock().getLocation().clone().add(0, -1, 0);
+                }
+                player.getInventory().setItemInMainHand(WandSVC.createWand(g[0], g[1]));
             }
-            player().getInventory().setItemInMainHand(WandSVC.createWand(g[0], g[1]));
-        }
+        });
     }
 
     @Director(description = "Paste an object", descriptionKey = "iris.director.commandobject.director.paste_object", sync = true)
@@ -540,8 +560,10 @@ public class CommandObject implements DirectorExecutor {
         IrisObjectPlacement placement = new IrisObjectPlacement();
         placement.setRotation(IrisObjectRotation.of(0, rotate, 0));
 
-        ItemStack wand = player().getInventory().getItemInMainHand();
-        Location block = player().getTargetBlock(skipBlocks, 256).getLocation().clone().add(0, 1, 0);
+        VolmitSender commandSender = sender();
+        Player player = player();
+        ItemStack wand = player.getInventory().getItemInMainHand();
+        Location block = player.getTargetBlock(skipBlocks, 256).getLocation().clone().add(0, 1, 0);
 
         Map<Block, BlockData> futureChanges = new HashMap<>();
 
@@ -549,30 +571,50 @@ public class CommandObject implements DirectorExecutor {
             o = o.scaled(scale, IrisObjectPlacementScaleInterpolator.TRICUBIC);
         }
 
-        o.place(block.getBlockX(), block.getBlockY() + (int) o.getCenter().getY(), block.getBlockZ(), createPlacer(block.getWorld(), futureChanges), placement, new RNG(), null);
+        // Block writes must run on the thread owning the target chunk; the undo log stays global.
+        final IrisObject placed = o;
+        if (!J.runAt(block, () -> {
+            placed.place(block.getBlockX(), block.getBlockY() + (int) placed.getCenter().getY(), block.getBlockZ(), createPlacer(block.getWorld(), futureChanges), placement, new RNG(), null);
+            J.runGlobal(() -> Iris.service(ObjectSVC.class).addChanges(futureChanges));
 
-        Iris.service(ObjectSVC.class).addChanges(futureChanges);
-
-        if (edit) {
-            Vector center = new Vector(o.getCenter().getX(), o.getCenter().getY(), o.getCenter().getZ());
-            ItemStack newWand = WandSVC.createWand(block.clone().subtract(center).add(o.getW() - 1,
-                    o.getH() + center.getY() - 1, o.getD() - 1), block.clone().subtract(center.clone().setY(0)));
-            if (WandSVC.isWand(wand)) {
-                wand = newWand;
-                player().getInventory().setItemInMainHand(wand);
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_UPDATED_WAND_OBJECTS_IOB, MessageArgument.untrusted("value", o.getLoadKey())));
-            } else {
-                int slot = WandSVC.findWand(player().getInventory());
-                if (slot == -1) {
-                    player().getInventory().addItem(newWand);
-                    sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_GIVEN_NEW_WAND_OBJECTS_IOB, MessageArgument.untrusted("value", o.getLoadKey())));
-                } else {
-                    player().getInventory().setItem(slot, newWand);
-                    sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_UPDATED_WAND_OBJECTS_IOB_2, MessageArgument.untrusted("value", o.getLoadKey())));
-                }
+            if (!edit) {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_PLACED, MessageArgument.untrusted("object", object)));
+                return;
             }
-        } else {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_PLACED, MessageArgument.untrusted("object", object)));
+
+            onPlayerThread(player, () -> {
+                Vector center = new Vector(placed.getCenter().getX(), placed.getCenter().getY(), placed.getCenter().getZ());
+                ItemStack newWand = WandSVC.createWand(block.clone().subtract(center).add(placed.getW() - 1,
+                        placed.getH() + center.getY() - 1, placed.getD() - 1), block.clone().subtract(center.clone().setY(0)));
+                if (WandSVC.isWand(wand)) {
+                    player.getInventory().setItemInMainHand(newWand);
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_UPDATED_WAND_OBJECTS_IOB, MessageArgument.untrusted("value", placed.getLoadKey())));
+                } else {
+                    int slot = WandSVC.findWand(player.getInventory());
+                    if (slot == -1) {
+                        player.getInventory().addItem(newWand);
+                        commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_GIVEN_NEW_WAND_OBJECTS_IOB, MessageArgument.untrusted("value", placed.getLoadKey())));
+                    } else {
+                        player.getInventory().setItem(slot, newWand);
+                        commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_UPDATED_WAND_OBJECTS_IOB_2, MessageArgument.untrusted("value", placed.getLoadKey())));
+                    }
+                }
+            });
+        })) {
+            Iris.warn("Could not schedule the object paste at " + block.getBlockX() + ", " + block.getBlockY() + ", " + block.getBlockZ() + ".");
+        }
+    }
+
+    /**
+     * Runs the body on the thread owning the player, reporting when the hop cannot be scheduled.
+     */
+    private void onPlayerThread(Player player, Runnable body) {
+        if (player == null) {
+            return;
+        }
+
+        if (!J.runEntity(player, body)) {
+            Iris.warn("Could not schedule /iris object on the thread owning " + player.getName() + ".");
         }
     }
 
@@ -616,30 +658,35 @@ public class CommandObject implements DirectorExecutor {
             @Param(description = "The amount to shift by", descriptionKey = "iris.director.commandobject.param.amount_shift_by", defaultValue = "1")
             int amount
     ) {
-        if (!WandSVC.isHoldingWand(player())) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_HOLD_YOUR_WAND_2));
-            return;
-        }
+        VolmitSender commandSender = sender();
+        Player player = player();
 
-        Location[] b = WandSVC.getCuboid(player());
-        if (b == null || b[0] == null || b[1] == null) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NO_AREA_SELECTED_2));
-            return;
-        }
-        Location a1 = b[0].clone();
-        Location a2 = b[1].clone();
-        Direction d = Direction.closest(player().getLocation().getDirection()).reverse();
-        if (d == null) {
-            return; // HOW DID THIS HAPPEN
-        }
-        a1.add(d.toVector().multiply(amount));
-        a2.add(d.toVector().multiply(amount));
-        Cuboid cursor = new Cuboid(a1, a2);
-        b[0] = cursor.getLowerNE();
-        b[1] = cursor.getUpperSW();
-        player().getInventory().setItemInMainHand(WandSVC.createWand(b[0], b[1]));
-        player().updateInventory();
-        sender().playSound(Sound.ENTITY_ITEM_FRAME_ROTATE_ITEM, 1f, 0.55f);
+        onPlayerThread(player, () -> {
+            if (!WandSVC.isHoldingWand(player)) {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_HOLD_YOUR_WAND_2));
+                return;
+            }
+
+            Location[] b = WandSVC.getCuboid(player);
+            if (b == null || b[0] == null || b[1] == null) {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_NO_AREA_SELECTED_2));
+                return;
+            }
+            Location a1 = b[0].clone();
+            Location a2 = b[1].clone();
+            Direction d = Direction.closest(player.getLocation().getDirection()).reverse();
+            if (d == null) {
+                return; // HOW DID THIS HAPPEN
+            }
+            a1.add(d.toVector().multiply(amount));
+            a2.add(d.toVector().multiply(amount));
+            Cuboid cursor = new Cuboid(a1, a2);
+            b[0] = cursor.getLowerNE();
+            b[1] = cursor.getUpperSW();
+            player.getInventory().setItemInMainHand(WandSVC.createWand(b[0], b[1]));
+            player.updateInventory();
+            commandSender.playSound(Sound.ENTITY_ITEM_FRAME_ROTATE_ITEM, 1f, 0.55f);
+        });
     }
 
     @Director(description = "Undo a number of pastes", descriptionKey = "iris.director.commandobject.director.undo_number_pastes", aliases = "u")
@@ -655,20 +702,25 @@ public class CommandObject implements DirectorExecutor {
 
     @Director(description = "Gets an object wand and grabs the current WorldEdit selection.", descriptionKey = "iris.director.commandobject.director.gets_object_wand_grabs_current_worldedit_selection", aliases = "we", origin = DirectorOrigin.PLAYER)
     public void we() {
+        VolmitSender commandSender = sender();
+        Player player = player();
+
         if (!Bukkit.getPluginManager().isPluginEnabled("WorldEdit")) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_YOU_CAN_T_GET_WORLDEDIT_SELECTION_WITHOUT_WORLDEDIT_YOU_KNOW));
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_YOU_CAN_T_GET_WORLDEDIT_SELECTION_WITHOUT_WORLDEDIT_YOU_KNOW));
             return;
         }
 
-        Cuboid locs = WorldEditLink.getSelection(sender().player());
+        Cuboid locs = WorldEditLink.getSelection(player);
 
         if (locs == null) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_YOU_DON_T_HAVE_WORLDEDIT_SELECTION_THIS_WORLD));
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_YOU_DON_T_HAVE_WORLDEDIT_SELECTION_THIS_WORLD));
             return;
         }
 
-        sender().player().getInventory().addItem(WandSVC.createWand(locs.getLowerNE(), locs.getUpperSW()));
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_FRESH_WAND_WITH_YOUR_CURRENT_WORLDEDIT_SELECTION_ON_IT));
+        onPlayerThread(player, () -> {
+            player.getInventory().addItem(WandSVC.createWand(locs.getLowerNE(), locs.getUpperSW()));
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_FRESH_WAND_WITH_YOUR_CURRENT_WORLDEDIT_SELECTION_ON_IT));
+        });
     }
 
     @Director(description = "Get an object wand", descriptionKey = "iris.director.commandobject.director.get_object_wand", sync = true)

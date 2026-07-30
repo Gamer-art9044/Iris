@@ -192,10 +192,49 @@ Per-platform tasks: `./gradlew buildBukkit`, `buildFabric`, `buildForge`, `build
 developer SPI jar (the pure-JVM platform API contract) is built to `spi/build/libs/` by
 `./gradlew :spi:jar`.
 
+`./gradlew buildAll` is a different task: it builds every platform and copies the jars into a
+consumer dropin tree for a local test server. It defaults to `build/consumers/` inside the repo;
+override with `-Plocation=/path/to/consumers`.
+
 If you need help compiling as a developer or contributor, ask in the Discord. Do not come to the
 Discord asking for free copies or a compile tutorial.
+
+## Adapters / modded development
+
+`core/` and `spi/` are pure JVM. `adapters/bukkit/` is part of the root Gradle build; the three
+modded adapters (`adapters/fabric`, `adapters/forge`, `adapters/neoforge`) are standalone builds
+with their own `settings.gradle`, which is what keeps Loom, ForgeGradle, and ModDevGradle off one
+plugin classpath. Drive them with `-p`:
+
+```
+./gradlew -p adapters/fabric   runServer      # or runClient
+./gradlew -p adapters/forge    runServer
+./gradlew -p adapters/neoforge runServer
+./gradlew -p adapters/fabric   test           # shared adapters/modded-common test suite
+```
+
+Each `runServer` accepts determinism and world-integrity flags, forwarded to the game as system
+properties:
+
+| Flag | System property | Purpose |
+|---|---|---|
+| `-PirisParity=<pack>` | `iris.parity` | Run the cross-platform parity harness for a pack |
+| `-PirisParityGolden=<file>` | `iris.parity.golden` | Compare against a captured golden-hash file |
+| `-PirisParityDeep=true` | `iris.parity.deep` | Deep (per-block) parity instead of hash-only |
+| `-PirisWorldCheck=<world>` | `iris.worldcheck` | Post-generation world integrity check |
+
+Fabric additionally takes `-PirisClientRunDir=<dir>` to relocate the `runClient` working directory.
+Shared code lives in `adapters/minecraft-common` (all adapters), `adapters/modded-common`
+(loaders + the shared test suite), and `adapters/client-common` (client HUD and world-type
+screens); every adapter adds those source directories, so one edit reaches all three loaders.
+
+For IDE import you can surface the three adapter builds in the root composite with
+`-PincludeModdedAdapters=true`. It is off by default: each adapter includes the root build back to
+substitute `art.arcane:core` and `art.arcane:spi`, so including them from the root closes a
+composite cycle. The build and release paths do not need it.
 
 ## Maintainer docs
 
 - [Minecraft version bump checklist](docs/mc-version-bump.md)
 - [Release checklist](docs/release-checklist.md)
+- [Release readiness checklist](docs/release-readiness-checklist.md)

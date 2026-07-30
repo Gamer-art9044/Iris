@@ -17,7 +17,7 @@ public class IrisProjectEntityDependencyTest {
         KSet<IrisSpawner> spawners = new KSet<>();
         spawners.add(spawner);
 
-        KSet<String> entityKeys = IrisProject.collectSpawnerEntityKeys(spawners);
+        KSet<String> entityKeys = IrisPackageCompiler.collectSpawnerEntityKeys(spawners);
 
         assertEquals(2, entityKeys.size());
         assertTrue(entityKeys.contains("standard/passive/cow"));
@@ -26,7 +26,7 @@ public class IrisProjectEntityDependencyTest {
 
     @Test
     public void returnsNoEntityDependenciesForEmptySpawnerSet() {
-        KSet<String> entityKeys = IrisProject.collectSpawnerEntityKeys(new KSet<>());
+        KSet<String> entityKeys = IrisPackageCompiler.collectSpawnerEntityKeys(new KSet<>());
 
         assertTrue(entityKeys.isEmpty());
     }

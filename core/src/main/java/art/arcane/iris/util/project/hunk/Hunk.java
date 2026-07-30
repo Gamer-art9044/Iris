@@ -49,6 +49,7 @@ import art.arcane.iris.util.project.hunk.view.ChunkHunkView;
 import art.arcane.iris.util.project.hunk.view.TerrainChunkBiomeHunkView;
 import art.arcane.iris.util.project.interpolation.InterpolationMethod;
 import art.arcane.iris.util.project.interpolation.InterpolationMethod3D;
+import art.arcane.iris.util.project.interpolation.Interpolation3D;
 import art.arcane.iris.util.project.interpolation.IrisInterpolation;
 import art.arcane.volmlib.util.math.BlockPosition;
 import art.arcane.iris.util.common.parallel.MultiBurst;
@@ -1162,7 +1163,7 @@ public interface Hunk<T> extends HunkLike<T> {
                 Hunk::newArrayHunk,
                 interpolated::toDouble,
                 interpolated::fromDouble,
-                (x, y, z, s, noise) -> IrisInterpolation.getNoise3D(d, x, y, z, s, noise));
+                (x, y, z, s, noise) -> Interpolation3D.getNoise3D(d, x, y, z, s, noise));
     }
 
     /**

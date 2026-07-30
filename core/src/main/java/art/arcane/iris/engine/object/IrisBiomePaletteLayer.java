@@ -50,13 +50,13 @@ public class IrisBiomePaletteLayer {
     private IrisGeneratorStyle style = NoiseStyle.STATIC.style();
     @DependsOn({"minHeight", "maxHeight"})
     @MinNumber(0)
-    @MaxNumber(2032) // TODO: WARNING HEIGHT
+    @MaxNumber(2032)
 
     @Desc("The min thickness of this layer")
     private int minHeight = 1;
     @DependsOn({"minHeight", "maxHeight"})
     @MinNumber(1)
-    @MaxNumber(2032) // TODO: WARNING HEIGHT
+    @MaxNumber(2032)
 
     @Desc("The max thickness of this layer")
     private int maxHeight = 1;
@@ -71,28 +71,56 @@ public class IrisBiomePaletteLayer {
     private KList<IrisBlockData> palette = new KList<IrisBlockData>().qadd(new IrisBlockData("GRASS_BLOCK"));
 
     public CNG getHeightGenerator(RNG rng, IrisData data) {
+        CNG cached = heightGenerator.getIfPresent();
+
+        if (cached != null) {
+            return cached;
+        }
+
         return heightGenerator.aquire(() -> CNG.signature(rng.nextParallelRNG(minHeight * maxHeight + getBlockData(data).size())));
     }
 
     public PlatformBlockState get(RNG rng, double x, double y, double z, IrisData data) {
-        if (getBlockData(data).isEmpty()) {
+        return get(rng, 0, x, y, z, data);
+    }
+
+    /**
+     * Resolves a block for this layer without allocating a child RNG per call. The child RNG is
+     * only built inside the lazy layer generator initializer, using the exact same seed derivation
+     * as {@code parent.nextParallelRNG(signature)} followed by the generator signature.
+     */
+    public PlatformBlockState get(RNG parent, int signature, double x, double y, double z, IrisData data) {
+        KList<PlatformBlockState> localBlockData = getBlockData(data);
+
+        if (localBlockData.isEmpty()) {
             return null;
         }
 
-        if (getBlockData(data).size() == 1) {
-            return getBlockData(data).get(0);
+        if (localBlockData.size() == 1) {
+            return localBlockData.get(0);
         }
 
-        double scaledX = x / zoom;
-        double scaledY = y / zoom;
-        double scaledZ = z / zoom;
-        return getLayerGenerator(rng, data).fit(getBlockData(data), scaledX, scaledY, scaledZ);
+        double localZoom = zoom;
+        double scaledX = x / localZoom;
+        double scaledY = y / localZoom;
+        double scaledZ = z / localZoom;
+        return getLayerGenerator(parent, signature, data).fit(localBlockData, scaledX, scaledY, scaledZ);
     }
 
     public CNG getLayerGenerator(RNG rng, IrisData data) {
+        return getLayerGenerator(rng, 0, data);
+    }
+
+    public CNG getLayerGenerator(RNG parent, int signature, IrisData data) {
+        CNG cached = layerGenerator.getIfPresent();
+
+        if (cached != null) {
+            return cached;
+        }
+
         return layerGenerator.aquire(() ->
         {
-            RNG rngx = rng.nextParallelRNG(minHeight + maxHeight + getBlockData(data).size());
+            RNG rngx = parent.nextParallelRNG(signature).nextParallelRNG(minHeight + maxHeight + getBlockData(data).size());
             return style.create(rngx, data);
         });
     }
@@ -104,6 +132,12 @@ public class IrisBiomePaletteLayer {
     }
 
     public KList<PlatformBlockState> getBlockData(IrisData data) {
+        KList<PlatformBlockState> cached = blockData.getIfPresent();
+
+        if (cached != null) {
+            return cached;
+        }
+
         return blockData.aquire(() ->
         {
             KList<PlatformBlockState> blockData = new KList<>();

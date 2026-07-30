@@ -54,12 +54,12 @@ public class IrisDepositGenerator {
     private final transient ConcurrentMap<ClumpCacheKey, KList<IrisObject>> scaledObjects = new ConcurrentHashMap<>();
     @Required
     @MinNumber(0)
-    @MaxNumber(8192) // TODO: WARNING HEIGHT
+    @MaxNumber(8192)
     @Desc("The minimum height this deposit can generate at")
     private int minHeight = 1;
     @Required
     @MinNumber(0)
-    @MaxNumber(8192) // TODO: WARNING HEIGHT
+    @MaxNumber(8192)
     @Desc("The maximum height this deposit can generate at")
     private int maxHeight = 75;
     @Required

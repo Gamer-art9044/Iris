@@ -22,6 +22,7 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.math.M;
 
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 public final class PregenMantleBackpressure {
@@ -31,14 +32,20 @@ public final class PregenMantleBackpressure {
     private final long timeoutMs;
     private final Runnable onBudgetTimeout;
     private final Supplier<String> diagnostics;
+    private final BooleanSupplier cancelled;
 
     public PregenMantleBackpressure(Supplier<Mantle> mantleSupplier, int maxResidentTectonicPlates, int waitMs, long timeoutMs, Runnable onBudgetTimeout, Supplier<String> diagnostics) {
+        this(mantleSupplier, maxResidentTectonicPlates, waitMs, timeoutMs, onBudgetTimeout, diagnostics, () -> false);
+    }
+
+    public PregenMantleBackpressure(Supplier<Mantle> mantleSupplier, int maxResidentTectonicPlates, int waitMs, long timeoutMs, Runnable onBudgetTimeout, Supplier<String> diagnostics, BooleanSupplier cancelled) {
         this.mantleSupplier = mantleSupplier;
         this.maxResidentTectonicPlates = maxResidentTectonicPlates;
         this.waitMs = waitMs;
         this.timeoutMs = timeoutMs;
         this.onBudgetTimeout = onBudgetTimeout;
         this.diagnostics = diagnostics;
+        this.cancelled = cancelled;
     }
 
     public void apply() {
@@ -65,6 +72,10 @@ public final class PregenMantleBackpressure {
         long waitStart = M.ms();
         long lastLog = 0L;
         while (mantle.getLoadedRegionCount() > hardCap) {
+            if (isCancelled()) {
+                return;
+            }
+
             int freed;
             int resident;
             try {
@@ -106,8 +117,13 @@ public final class PregenMantleBackpressure {
 
     public void awaitHeapHeadroom() {
         Mantle mantle = resolveMantle();
+        long waitStart = M.ms();
         long lastLog = 0L;
         while (MantleHeapPressure.overHighWater()) {
+            if (isCancelled()) {
+                return;
+            }
+
             try {
                 if (mantle != null && mantle.getLoadedRegionCount() > maxResidentTectonicPlates) {
                     mantle.trim(0L, 0);
@@ -119,6 +135,15 @@ public final class PregenMantleBackpressure {
 
             if (MantleHeapPressure.overPanicWater()) {
                 MantleHeapPressure.requestPanicReclaim();
+            }
+
+            long elapsed = M.ms() - waitStart;
+            if (elapsed >= timeoutMs) {
+                IrisLogging.warn("Pregen heap pressure wait exceeded " + timeoutMs + "ms at "
+                        + Math.round(MantleHeapPressure.usedFraction() * 100.0D) + "% heap; proceeding to avoid deadlock. "
+                        + diagnostics.get());
+                onBudgetTimeout.run();
+                return;
             }
 
             long logNow = M.ms();
@@ -135,6 +160,18 @@ public final class PregenMantleBackpressure {
                 Thread.currentThread().interrupt();
                 return;
             }
+        }
+    }
+
+    private boolean isCancelled() {
+        if (Thread.currentThread().isInterrupted()) {
+            return true;
+        }
+
+        try {
+            return cancelled.getAsBoolean();
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 

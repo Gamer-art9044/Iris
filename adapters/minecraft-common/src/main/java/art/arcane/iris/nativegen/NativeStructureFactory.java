@@ -63,10 +63,10 @@ public final class NativeStructureFactory {
         }
         StructureStart positioned;
         if (plan.placement().isUnderground()) {
-            positioned = NativeStructurePostProcessor.relocateToMinY(
+            positioned = NativeStructureVerticalPlacer.relocateToMinY(
                     generated, source, plan.baseY(), context.heightAccessor());
         } else {
-            NativeStructurePostProcessor.applyVerticalPlacement(
+            NativeStructureVerticalPlacer.applyVerticalPlacement(
                     generated,
                     plan.source().getStructure(),
                     0,

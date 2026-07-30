@@ -36,24 +36,24 @@ import lombok.experimental.Accessors;
 @Desc("Translate objects")
 @Data
 public class IrisObjectTranslate {
-    @MinNumber(-128) // TODO: WARNING HEIGHT
-    @MaxNumber(128) // TODO: WARNING HEIGHT
+    @MinNumber(-128)
+    @MaxNumber(128)
     @Desc("The x shift in blocks")
     private int x = 0;
 
     @Required
-    @MinNumber(-128) // TODO: WARNING HEIGHT
-    @MaxNumber(128) // TODO: WARNING HEIGHT
+    @MinNumber(-128)
+    @MaxNumber(128)
     @Desc("The y shift in blocks")
     private int y = 0;
 
-    @MinNumber(-128) // TODO: WARNING HEIGHT
-    @MaxNumber(128) // TODO: WARNING HEIGHT
+    @MinNumber(-128)
+    @MaxNumber(128)
     @Desc("Adds an additional amount of height randomly (translateY + rand(0 - yRandom))")
     private int yRandom = 0;
 
-    @MinNumber(-128) // TODO: WARNING HEIGHT
-    @MaxNumber(128) // TODO: WARNING HEIGHT
+    @MinNumber(-128)
+    @MaxNumber(128)
     @Desc("The z shift in blocks")
     private int z = 0;
 

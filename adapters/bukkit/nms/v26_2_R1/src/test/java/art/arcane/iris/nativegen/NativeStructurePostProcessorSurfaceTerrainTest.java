@@ -61,13 +61,13 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
 
     @Test
     public void onlySurfaceBeardThinStructuresPrepareTerrain() {
-        assertTrue(NativeStructurePostProcessor.shouldPrepareSurfaceTerrain(
+        assertTrue(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
                 TerrainAdjustment.BEARD_THIN, GenerationStep.Decoration.SURFACE_STRUCTURES));
-        assertFalse(NativeStructurePostProcessor.shouldPrepareSurfaceTerrain(
+        assertFalse(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
                 TerrainAdjustment.BURY, GenerationStep.Decoration.SURFACE_STRUCTURES));
-        assertFalse(NativeStructurePostProcessor.shouldPrepareSurfaceTerrain(
+        assertFalse(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
                 TerrainAdjustment.BEARD_BOX, GenerationStep.Decoration.SURFACE_STRUCTURES));
-        assertFalse(NativeStructurePostProcessor.shouldPrepareSurfaceTerrain(
+        assertFalse(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
                 TerrainAdjustment.ENCAPSULATE, GenerationStep.Decoration.SURFACE_STRUCTURES));
     }
 
@@ -78,86 +78,86 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 TerrainAdjustment.BURY,
                 TerrainAdjustment.BEARD_BOX,
                 TerrainAdjustment.ENCAPSULATE)) {
-            assertFalse(NativeStructurePostProcessor.shouldPrepareSurfaceTerrain(
+            assertFalse(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
                     adjustment, GenerationStep.Decoration.UNDERGROUND_STRUCTURES));
         }
     }
 
     @Test
     public void surfaceAnchorIsFlushInsideAndUnchangedAtRadius() {
-        NativeStructurePostProcessor.SurfaceAnchor anchor = anchor(80, 2);
+        NativeStructureSurfaceFitter.SurfaceAnchor anchor = anchor(80, 2);
 
-        assertEquals(80, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(80, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(anchor), 2, 2, 64));
-        assertEquals(64, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(64, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(anchor), 16, 2, 64));
-        assertEquals(64, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(64, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(anchor), 17, 2, 64));
     }
 
     @Test
     public void surfaceAnchorRaisesAndLowersThroughTheTaper() {
-        NativeStructurePostProcessor.SurfaceAnchor raised = anchor(80, 2);
-        NativeStructurePostProcessor.SurfaceAnchor lowered = anchor(64, 2);
+        NativeStructureSurfaceFitter.SurfaceAnchor raised = anchor(80, 2);
+        NativeStructureSurfaceFitter.SurfaceAnchor lowered = anchor(64, 2);
 
-        assertEquals(68, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(68, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(raised), 10, 2, 64));
-        assertEquals(76, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(76, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(lowered), 10, 2, 80));
     }
 
     @Test
     public void containingRigidFloorsHaveDeterministicPriority() {
-        NativeStructurePostProcessor.SurfaceAnchor rigid = anchor(70, 2);
-        NativeStructurePostProcessor.SurfaceAnchor junction = anchor(90, 1);
+        NativeStructureSurfaceFitter.SurfaceAnchor rigid = anchor(70, 2);
+        NativeStructureSurfaceFitter.SurfaceAnchor junction = anchor(90, 1);
 
-        assertEquals(70, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(70, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(rigid, junction), 2, 2, 64));
-        assertEquals(70, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(70, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(junction, rigid), 2, 2, 64));
 
-        NativeStructurePostProcessor.SurfaceAnchor weakTie = anchor(48, 1);
-        NativeStructurePostProcessor.SurfaceAnchor strongTie = anchor(80, 2);
-        assertEquals(80, NativeStructurePostProcessor.resolveSurfaceTarget(
+        NativeStructureSurfaceFitter.SurfaceAnchor weakTie = anchor(48, 1);
+        NativeStructureSurfaceFitter.SurfaceAnchor strongTie = anchor(80, 2);
+        assertEquals(80, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(weakTie, strongTie), 2, 2, 64));
-        assertEquals(80, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(80, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(strongTie, weakTie), 2, 2, 64));
     }
 
     @Test
     public void containingFootprintOverridesAnAdjacentPiecesFalloff() {
-        NativeStructurePostProcessor.SurfaceAnchor local =
-                new NativeStructurePostProcessor.SurfaceAnchor(0, 4, 0, 4, 65, 2);
-        NativeStructurePostProcessor.SurfaceAnchor adjacent =
-                new NativeStructurePostProcessor.SurfaceAnchor(5, 9, 0, 4, 80, 2);
+        NativeStructureSurfaceFitter.SurfaceAnchor local =
+                new NativeStructureSurfaceFitter.SurfaceAnchor(0, 4, 0, 4, 65, 2);
+        NativeStructureSurfaceFitter.SurfaceAnchor adjacent =
+                new NativeStructureSurfaceFitter.SurfaceAnchor(5, 9, 0, 4, 80, 2);
 
-        assertEquals(77, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(77, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(adjacent), 4, 2, 64));
-        assertEquals(65, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(65, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(local, adjacent), 4, 2, 64));
-        assertEquals(65, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(65, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(adjacent, local), 4, 2, 64));
     }
 
     @Test
     public void opposingFalloffsBlendWithoutAnAbruptMidpointSeam() {
-        NativeStructurePostProcessor.SurfaceAnchor high =
-                new NativeStructurePostProcessor.SurfaceAnchor(0, 0, 0, 0, 80, 2);
-        NativeStructurePostProcessor.SurfaceAnchor low =
-                new NativeStructurePostProcessor.SurfaceAnchor(12, 12, 0, 0, 48, 2);
-        int previous = NativeStructurePostProcessor.resolveSurfaceTarget(
+        NativeStructureSurfaceFitter.SurfaceAnchor high =
+                new NativeStructureSurfaceFitter.SurfaceAnchor(0, 0, 0, 0, 80, 2);
+        NativeStructureSurfaceFitter.SurfaceAnchor low =
+                new NativeStructureSurfaceFitter.SurfaceAnchor(12, 12, 0, 0, 48, 2);
+        int previous = NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(high, low), 0, 0, 64);
 
         for (int x = 1; x <= 12; x++) {
-            int forward = NativeStructurePostProcessor.resolveSurfaceTarget(
+            int forward = NativeStructureSurfaceFitter.resolveSurfaceTarget(
                     List.of(high, low), x, 0, 64);
-            int reversed = NativeStructurePostProcessor.resolveSurfaceTarget(
+            int reversed = NativeStructureSurfaceFitter.resolveSurfaceTarget(
                     List.of(low, high), x, 0, 64);
             assertEquals(forward, reversed);
             assertTrue(Math.abs(forward - previous) <= 4);
             previous = forward;
         }
-        assertEquals(64, NativeStructurePostProcessor.resolveSurfaceTarget(
+        assertEquals(64, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(high, low), 6, 0, 64));
     }
 
@@ -170,7 +170,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         put(lowered, 0, 64, 0, Blocks.GRASS_BLOCK.defaultBlockState());
         put(lowered, 0, 65, 0, Blocks.DANDELION.defaultBlockState());
 
-        NativeStructurePostProcessor.applySurfaceColumn(
+        NativeStructureSurfaceFitter.applySurfaceColumn(
                 world(lowered), new BlockPos.MutableBlockPos(),
                 0, 0, 64, 62, -64, 319);
 
@@ -185,7 +185,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         put(raised, 0, 64, 0, Blocks.GRASS_BLOCK.defaultBlockState());
         put(raised, 0, 65, 0, Blocks.DANDELION.defaultBlockState());
 
-        NativeStructurePostProcessor.applySurfaceColumn(
+        NativeStructureSurfaceFitter.applySurfaceColumn(
                 world(raised), new BlockPos.MutableBlockPos(),
                 0, 0, 64, 68, -64, 319);
 
@@ -205,7 +205,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         put(blocks, 0, 66, 0, log);
         put(blocks, 0, 68, 0, leaves);
 
-        NativeStructurePostProcessor.applySurfaceColumn(
+        NativeStructureSurfaceFitter.applySurfaceColumn(
                 world(blocks), new BlockPos.MutableBlockPos(),
                 0, 0, 64, 68, -64, 319);
 
@@ -221,7 +221,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         put(blocks, 0, 64, 0, Blocks.GRAVEL.defaultBlockState());
         put(blocks, 0, 65, 0, Blocks.WATER.defaultBlockState());
 
-        NativeStructurePostProcessor.applySurfaceColumn(
+        NativeStructureSurfaceFitter.applySurfaceColumn(
                 world(blocks), new BlockPos.MutableBlockPos(),
                 0, 0, 64, 62, -64, 319);
 
@@ -236,7 +236,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         StructureStart start = desertStart();
         int minY = start.getBoundingBox().minY();
 
-        int offset = NativeStructurePostProcessor.applyVerticalShift(
+        int offset = NativeStructureVerticalPlacer.applyVerticalShift(
                 start, 0, -64, 320, true, true, null, (x, z) -> 40);
 
         assertEquals(0, offset);
@@ -248,7 +248,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         StructureStart start = desertStart();
         int minY = start.getBoundingBox().minY();
 
-        int offset = NativeStructurePostProcessor.applyVerticalShift(
+        int offset = NativeStructureVerticalPlacer.applyVerticalShift(
                 start, -8, -64, 320, true, true, null, (x, z) -> 40);
 
         assertEquals(-8, offset);
@@ -262,7 +262,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         int maxY = start.getBoundingBox().maxY();
         int expected = 40 - 1 - maxY;
 
-        int offset = NativeStructurePostProcessor.applyVerticalShift(
+        int offset = NativeStructureVerticalPlacer.applyVerticalShift(
                 start, 0, -64, 320, true, false, null, (x, z) -> 40);
 
         assertEquals(expected, offset);
@@ -275,7 +275,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         int minY = start.getBoundingBox().minY();
         int worldMinY = minY - 4;
 
-        int offset = NativeStructurePostProcessor.applyVerticalShift(
+        int offset = NativeStructureVerticalPlacer.applyVerticalShift(
                 start, 0, worldMinY, 320, true, false, null, (x, z) -> worldMinY);
 
         assertEquals(-4, offset);
@@ -289,7 +289,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         Map<BlockPos, BlockState> blocks = new HashMap<>();
         put(blocks, bounds.minX(), bounds.minY(), bounds.minZ(), Blocks.STONE.defaultBlockState());
 
-        NativeStructurePostProcessor.integrateTerrain(
+        NativeStructureTerrainIntegrator.integrateTerrain(
                 world(blocks), bounds, "minecraft:desert_pyramid", start,
                 new IrisStructureTerrain().setMode(IrisStructureTerrainMode.VACUUM), null);
 
@@ -310,7 +310,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         put(blocks, bounds.maxX(), bounds.maxY() + 1, bounds.maxZ(),
                 Blocks.STONE.defaultBlockState());
 
-        NativeStructurePostProcessor.integrateTerrain(
+        NativeStructureTerrainIntegrator.integrateTerrain(
                 world(blocks), area, "minecraft:desert_pyramid", start,
                 new IrisStructureTerrain()
                         .setMode(IrisStructureTerrainMode.FORCE_CARVE)
@@ -345,7 +345,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         put(blocks, firstBounds.minX(), y, z, Blocks.STONE.defaultBlockState());
         put(blocks, gapX, y, z, Blocks.STONE.defaultBlockState());
 
-        NativeStructurePostProcessor.integrateTerrain(
+        NativeStructureTerrainIntegrator.integrateTerrain(
                 world(blocks), area, "minecraft:ancient_city", start,
                 new IrisStructureTerrain().setMode(IrisStructureTerrainMode.FORCE_CARVE), null);
 
@@ -372,7 +372,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                         new BlockPos(1, 2, 0), Blocks.DEEPSLATE.defaultBlockState(), null)));
         Map<Long, int[]> columns = new HashMap<>();
 
-        assertTrue(NativeStructurePostProcessor.emitTemplateColumns(
+        assertTrue(NativeStructureTerrainIntegrator.emitTemplateColumns(
                 List.of(template), new BlockPos(0, 0, 0), Rotation.NONE,
                 new BoundingBox(0, 0, 0, 1, 2, 0),
                 (x, z, minY, maxY) -> columns.put((long) x << 32 | z & 0xffffffffL,
@@ -392,7 +392,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                         new BlockPos(0, 1, 0), Blocks.STRUCTURE_VOID.defaultBlockState(), null)));
         Map<Long, int[]> columns = new HashMap<>();
 
-        assertTrue(NativeStructurePostProcessor.emitTemplateColumns(
+        assertTrue(NativeStructureTerrainIntegrator.emitTemplateColumns(
                 List.of(template), new BlockPos(0, 0, 0), Rotation.NONE,
                 new BoundingBox(0, 0, 0, 0, 1, 0),
                 (x, z, minY, maxY) -> columns.put((long) x << 32 | z & 0xffffffffL,
@@ -406,7 +406,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         StructureStart start = desertStart();
         BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
 
-        StructureCarvingFootprint footprint = NativeStructurePostProcessor.carveFootprint(
+        StructureCarvingFootprint footprint = NativeStructureTerrainIntegrator.carveFootprint(
                 start, 4, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
 
         assertEquals(bounds.minX() - 4, footprint.minX());
@@ -423,13 +423,13 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     public void carveFootprintIsComputedOncePerStartAndPadding() {
         StructureStart start = desertStart();
 
-        StructureCarvingFootprint first = NativeStructurePostProcessor.carveFootprint(
+        StructureCarvingFootprint first = NativeStructureTerrainIntegrator.carveFootprint(
                 start, 6, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
-        StructureCarvingFootprint repeated = NativeStructurePostProcessor.carveFootprint(
+        StructureCarvingFootprint repeated = NativeStructureTerrainIntegrator.carveFootprint(
                 start, 6, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
-        StructureCarvingFootprint widened = NativeStructurePostProcessor.carveFootprint(
+        StructureCarvingFootprint widened = NativeStructureTerrainIntegrator.carveFootprint(
                 start, 7, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
-        StructureCarvingFootprint other = NativeStructurePostProcessor.carveFootprint(
+        StructureCarvingFootprint other = NativeStructureTerrainIntegrator.carveFootprint(
                 desertStart(), 6, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
 
         assertSame(first, repeated);
@@ -441,13 +441,13 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     public void organicCarveNeverCutsBelowTheColumnSupportingFloor() {
         StructureStart start = desertStart();
         BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
-        NativeStructurePostProcessor.OrganicCarve carve = organicCarve(start, 6);
+        NativeStructureTerrainIntegrator.OrganicCarve carve = organicCarve(start, 6);
         BoundingBox area = new BoundingBox(
                 bounds.minX() - 6, bounds.minY() - 4, bounds.minZ() - 6,
                 bounds.maxX() + 6, bounds.maxY() + 12, bounds.maxZ() + 6);
         Map<BlockPos, BlockState> blocks = fill(area);
 
-        NativeStructurePostProcessor.carveOrganicColumns(world(blocks), area, carve);
+        NativeStructureTerrainIntegrator.carveOrganicColumns(world(blocks), area, carve);
 
         int centerX = bounds.minX() + bounds.getXSpan() / 2;
         int centerZ = bounds.minZ() + bounds.getZSpan() / 2;
@@ -471,9 +471,9 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         Map<BlockPos, BlockState> uniformBlocks = fill(area);
         Map<BlockPos, BlockState> lobedBlocks = fill(area);
 
-        NativeStructurePostProcessor.carveOrganicColumns(
+        NativeStructureTerrainIntegrator.carveOrganicColumns(
                 world(uniformBlocks), area, organicCarve(start, 10, 0D));
-        NativeStructurePostProcessor.carveOrganicColumns(
+        NativeStructureTerrainIntegrator.carveOrganicColumns(
                 world(lobedBlocks), area, organicCarve(start, 10, 0.85D));
 
         int uniform = 0;
@@ -521,9 +521,9 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         Map<BlockPos, BlockState> narrowBlocks = fill(narrow);
 
         // Each chunk context rebuilds its own noise channels from the shared start identity.
-        NativeStructurePostProcessor.carveOrganicColumns(
+        NativeStructureTerrainIntegrator.carveOrganicColumns(
                 world(wideBlocks), wide, organicCarve(start, 6));
-        NativeStructurePostProcessor.carveOrganicColumns(
+        NativeStructureTerrainIntegrator.carveOrganicColumns(
                 world(narrowBlocks), narrow, organicCarve(start, 6));
 
         int carved = 0;
@@ -552,7 +552,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         int centerX = bounds.minX() + bounds.getXSpan() / 2;
         int centerZ = bounds.minZ() + bounds.getZSpan() / 2;
 
-        NativeStructurePostProcessor.integrateTerrain(
+        NativeStructureTerrainIntegrator.integrateTerrain(
                 world(blocks), area, "minecraft:ancient_city", start,
                 new IrisStructureTerrain()
                         .setMode(IrisStructureTerrainMode.FORCE_CARVE)
@@ -572,21 +572,21 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
 
     @Test
     public void sparseStiltGridIsDeterministicAndPreflightsGround() {
-        assertTrue(NativeStructurePostProcessor.isStiltColumn(0, 0, 4));
-        assertTrue(NativeStructurePostProcessor.isStiltColumn(-4, 8, 4));
-        assertFalse(NativeStructurePostProcessor.isStiltColumn(1, 0, 4));
-        assertTrue(NativeStructurePostProcessor.isStiltColumn(1, 1, 1));
+        assertTrue(NativeStructureFoundationBuilder.isStiltColumn(0, 0, 4));
+        assertTrue(NativeStructureFoundationBuilder.isStiltColumn(-4, 8, 4));
+        assertFalse(NativeStructureFoundationBuilder.isStiltColumn(1, 0, 4));
+        assertTrue(NativeStructureFoundationBuilder.isStiltColumn(1, 1, 1));
 
         Map<BlockPos, BlockState> blocks = new HashMap<>();
         put(blocks, 0, 7, 0, Blocks.DEEPSLATE.defaultBlockState());
         put(blocks, 0, 8, 0, Blocks.SCULK_VEIN.defaultBlockState());
         BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
 
-        assertEquals(7, NativeStructurePostProcessor.findStiltAnchorY(
+        assertEquals(7, NativeStructureFoundationBuilder.findStiltAnchorY(
                 world(blocks), 0, 0, 10, 2, -64, -64, position));
-        assertEquals(Integer.MIN_VALUE, NativeStructurePostProcessor.findStiltAnchorY(
+        assertEquals(Integer.MIN_VALUE, NativeStructureFoundationBuilder.findStiltAnchorY(
                 world(blocks), 0, 0, 10, 1, -64, -64, position));
-        assertEquals(Integer.MIN_VALUE, NativeStructurePostProcessor.findStiltAnchorY(
+        assertEquals(Integer.MIN_VALUE, NativeStructureFoundationBuilder.findStiltAnchorY(
                 world(new HashMap<>()), 0, 0, 10, 64, -64, -64, position));
     }
 
@@ -635,7 +635,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
 
     @Test
     public void singlePoolTemplateFieldMatchesTheRuntimeContract() {
-        Field field = NativeStructurePostProcessor.resolveSinglePoolTemplateField();
+        Field field = NativeStructureReflection.resolveSinglePoolTemplateField();
 
         assertEquals(SinglePoolElement.class, field.getDeclaringClass());
         assertEquals(Either.class, field.getType());
@@ -649,12 +649,12 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     public void runtimeTemplatesAndLegacyAirUseTheExactContract() {
         StructureTemplate runtimeTemplate = new StructureTemplate();
 
-        assertEquals(runtimeTemplate, NativeStructurePostProcessor.resolveTemplateReference(
+        assertEquals(runtimeTemplate, NativeStructureReflection.resolveTemplateReference(
                 Either.right(runtimeTemplate), null));
-        assertFalse(NativeStructurePostProcessor.shouldClearLegacyAir(79, 80, false));
-        assertTrue(NativeStructurePostProcessor.shouldClearLegacyAir(80, 80, false));
-        assertTrue(NativeStructurePostProcessor.shouldClearLegacyAir(96, 80, false));
-        assertFalse(NativeStructurePostProcessor.shouldClearLegacyAir(96, 80, true));
+        assertFalse(NativeStructureTerrainIntegrator.shouldClearLegacyAir(79, 80, false));
+        assertTrue(NativeStructureTerrainIntegrator.shouldClearLegacyAir(80, 80, false));
+        assertTrue(NativeStructureTerrainIntegrator.shouldClearLegacyAir(96, 80, false));
+        assertFalse(NativeStructureTerrainIntegrator.shouldClearLegacyAir(96, 80, true));
     }
 
     @Test
@@ -687,7 +687,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         blocks.put(belowFloorPosition, Blocks.DIRT.defaultBlockState());
         blocks.put(outsidePosition, Blocks.DIRT.defaultBlockState());
 
-        NativeStructurePostProcessor.clearTemplateAir(
+        NativeStructureTerrainIntegrator.clearTemplateAir(
                 world(blocks), template, origin, 80, settings);
 
         assertEquals(Blocks.AIR.defaultBlockState(), blocks.get(clearPosition));
@@ -699,11 +699,11 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     public void unrelatedPieceBoundsAreRejectedBeforeTemplateScanning() {
         BoundingBox area = new BoundingBox(0, -64, 0, 15, 319, 15);
 
-        assertTrue(NativeStructurePostProcessor.intersects(
+        assertTrue(NativeStructureTerrainIntegrator.intersects(
                 new BoundingBox(15, 60, 15, 30, 90, 30), area));
-        assertFalse(NativeStructurePostProcessor.intersects(
+        assertFalse(NativeStructureTerrainIntegrator.intersects(
                 new BoundingBox(16, 60, 16, 30, 90, 30), area));
-        assertFalse(NativeStructurePostProcessor.intersects(
+        assertFalse(NativeStructureTerrainIntegrator.intersects(
                 new BoundingBox(0, 320, 0, 15, 350, 15), area));
     }
 
@@ -717,23 +717,22 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         BlockState log = Blocks.OAK_LOG.defaultBlockState();
         blocks.put(origin, log);
 
-        NativeStructurePostProcessor.clearTemplateAir(world(blocks), template, origin, 80, settings);
+        NativeStructureTerrainIntegrator.clearTemplateAir(world(blocks), template, origin, 80, settings);
 
         assertEquals(log, blocks.get(origin));
     }
 
-    private static NativeStructurePostProcessor.SurfaceAnchor anchor(int meetY, int strength) {
-        return new NativeStructurePostProcessor.SurfaceAnchor(0, 4, 0, 4, meetY, strength);
+    private static NativeStructureSurfaceFitter.SurfaceAnchor anchor(int meetY, int strength) {
+        return new NativeStructureSurfaceFitter.SurfaceAnchor(0, 4, 0, 4, meetY, strength);
     }
 
-    private static NativeStructurePostProcessor.OrganicCarve organicCarve(StructureStart start,
-                                                                         int horizontalPadding) {
+    private static NativeStructureTerrainIntegrator.OrganicCarve organicCarve(
+            StructureStart start, int horizontalPadding) {
         return organicCarve(start, horizontalPadding, 0.85D);
     }
 
-    private static NativeStructurePostProcessor.OrganicCarve organicCarve(StructureStart start,
-                                                                         int horizontalPadding,
-                                                                         double lobeStrength) {
+    private static NativeStructureTerrainIntegrator.OrganicCarve organicCarve(
+            StructureStart start, int horizontalPadding, double lobeStrength) {
         IrisStructureTerrain terrain = new IrisStructureTerrain()
                 .setMode(IrisStructureTerrainMode.FORCE_CARVE)
                 .setShape(IrisStructureCarveShape.ERODED)
@@ -743,8 +742,8 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 .setErosionStrength(1D)
                 .setErosionFrequency(0.05D)
                 .setLobeStrength(lobeStrength);
-        return NativeStructurePostProcessor.organicCarve(
-                NativeStructurePostProcessor.carveFootprint(start, horizontalPadding,
+        return NativeStructureTerrainIntegrator.organicCarve(
+                NativeStructureTerrainIntegrator.carveFootprint(start, horizontalPadding,
                         NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager),
                 terrain, IrisStructureCarveShape.ERODED, TEST_SEED);
     }
@@ -778,8 +777,8 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 SLAB_WIDTH - 1 + SLAB_PADDING, transectY, SLAB_DEPTH - 1);
         Map<BlockPos, BlockState> blocks = fill(area);
 
-        NativeStructurePostProcessor.carveOrganicColumns(world(blocks), area,
-                NativeStructurePostProcessor.organicCarve(
+        NativeStructureTerrainIntegrator.carveOrganicColumns(world(blocks), area,
+                NativeStructureTerrainIntegrator.organicCarve(
                         footprint, terrain, IrisStructureCarveShape.ERODED, TEST_SEED));
 
         int[] depths = new int[SLAB_DEPTH];

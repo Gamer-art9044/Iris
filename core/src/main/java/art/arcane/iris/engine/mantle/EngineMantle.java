@@ -229,23 +229,6 @@ public interface EngineMantle extends MatterGenerator {
         getMantle().set(x, y, z, UpdateMatter.ON);
     }
 
-    @BlockCoordinates
-    default void dropCavernBlock(int x, int y, int z) {
-        Matter matter = getMantle().getChunk(x & 15, z & 15).get(y & 15);
-
-        if (matter != null) {
-            matter.slice(MatterCavern.class).set(x & 15, y & 15, z & 15, null);
-        }
-    }
-
-    default boolean queueRegenerate(int x, int z) {
-        return false; // TODO:
-    }
-
-    default boolean dequeueRegenerate(int x, int z) {
-        return false;// TODO:
-    }
-
     default int getLoadedRegionCount() {
         return getMantle().getLoadedRegionCount();
     }

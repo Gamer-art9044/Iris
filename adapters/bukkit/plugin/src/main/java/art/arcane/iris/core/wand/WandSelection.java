@@ -41,6 +41,10 @@ public class WandSelection {
 
     public void draw() {
         Location playerLoc = p.getLocation();
+        if (c.getWorld() == null || !c.getWorld().equals(playerLoc.getWorld())) {
+            return;
+        }
+
         double maxDistanceSquared = 256 * 256;
         int particleCount = 0;
 

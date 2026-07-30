@@ -103,8 +103,11 @@ configurations.runtimeClasspath.extendsFrom(configurations.devBundle)
 configurations.testCompileClasspath.extendsFrom(configurations.devBundle)
 configurations.testRuntimeClasspath.extendsFrom(configurations.devBundle)
 
+// Jar-in-jar payload: exactly the Fabric API modules declared below, nothing else. Kept
+// non-transitive so the bundled set matches the `jars` list in fabric.mod.json one-for-one — a
+// transitive pull (fabric-transitive-access-wideners-v1) used to land in META-INF/jars undeclared.
 configurations.create('jij') {
-    transitive = true
+    transitive = false
 }
 
 dependencies {

@@ -58,14 +58,6 @@ public class AxisAlignedBB {
         return new AxisAlignedBB(min().add(new IrisPosition((int) x, (int) y, (int) z)), max().add(new IrisPosition((int) x, (int) y, (int) z)));
     }
 
-    public boolean contains(AlignedPoint p) {
-        return p.getX() >= xa && p.getX() <= xb && p.getY() >= ya && p.getZ() <= yb && p.getZ() >= za && p.getZ() <= zb;
-    }
-
-    public boolean contains(IrisPosition p) {
-        return p.getX() >= xa && p.getX() <= xb && p.getY() >= ya && p.getZ() <= yb && p.getZ() >= za && p.getZ() <= zb;
-    }
-
     public boolean intersects(AxisAlignedBB s) {
         return this.xb >= s.xa && this.yb >= s.ya && this.zb >= s.za && s.xb >= this.xa && s.yb >= this.ya && s.zb >= this.za;
     }

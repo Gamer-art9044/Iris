@@ -49,7 +49,7 @@ import java.util.Objects;
 @AllArgsConstructor
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class TileData implements Cloneable {
-    private static final Gson gson = new GsonBuilder().disableHtmlEscaping().setStrictness(Strictness.LENIENT).create();
+    private static final Gson gson = new GsonBuilder().disableHtmlEscaping().setStrictness(Strictness.LENIENT).setObjectToNumberStrategy(com.google.gson.ToNumberPolicy.LONG_OR_DOUBLE).create();
     private static final boolean BUKKIT_PRESENT = detectBukkit();
     private static volatile TileReader PLATFORM_READER = null;
     private static volatile TileFactory PLATFORM_FACTORY = null;

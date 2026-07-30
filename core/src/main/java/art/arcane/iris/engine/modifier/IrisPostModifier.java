@@ -20,7 +20,9 @@ package art.arcane.iris.engine.modifier;
 
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedModifier;
+import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisProceduralBlocks;
 import art.arcane.iris.engine.object.IrisSlopeClip;
 import art.arcane.iris.util.project.context.ChunkContext;
@@ -49,21 +51,54 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         Hunk<PlatformBlockState> sync = output.synchronize();
         int width = output.getWidth();
         int depth = output.getDepth();
+        int planeWidth = width + 2;
+        int[] heights = heightPlane(x, z, width, depth, planeWidth);
+        IrisDimension dimension = getDimension();
+        boolean walls = dimension.isPostProcessingWalls();
+        boolean slabs = dimension.isPostProcessingSlabs();
+        int fluidHeight = dimension.getFluidHeight();
         for (int i = 0; i < width; i++) {
             for (int j = 0; j < depth; j++) {
-                post(i, j, sync, i + x, j + z, context);
+                post(i, j, sync, i + x, j + z, context, heights, planeWidth, walls, slabs, fluidHeight);
             }
         }
 
         getEngine().getMetrics().getPost().put(p.getMilliseconds());
     }
 
-    private void post(int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData, int x, int z, ChunkContext context) {
-        int h = getEngine().getMantle().trueHeight(x, z);
-        int ha = getEngine().getMantle().trueHeight(x + 1, z);
-        int hb = getEngine().getMantle().trueHeight(x, z + 1);
-        int hc = getEngine().getMantle().trueHeight(x - 1, z);
-        int hd = getEngine().getMantle().trueHeight(x, z - 1);
+    /**
+     * Every column reads its own height plus its four neighbours, so adjacent columns would otherwise
+     * resolve the same height stream entry up to five times. Resolve the padded plane once instead. The
+     * four diagonal corners are never read, so they are left unresolved.
+     */
+    private int[] heightPlane(int x, int z, int width, int depth, int planeWidth) {
+        int[] heights = new int[planeWidth * (depth + 2)];
+        EngineMantle mantle = getEngine().getMantle();
+
+        for (int j = -1; j <= depth; j++) {
+            boolean edge = j == -1 || j == depth;
+            int from = edge ? 0 : -1;
+            int to = edge ? width - 1 : width;
+            int row = (j + 1) * planeWidth;
+
+            for (int i = from; i <= to; i++) {
+                heights[row + i + 1] = mantle.trueHeight(x + i, z + j);
+            }
+        }
+
+        return heights;
+    }
+
+    private void post(int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData, int x, int z, ChunkContext context, int[] heights, int planeWidth, boolean walls, boolean slabs, int fluidHeight) {
+        // x/z are world coordinates, the hunk is indexed relative to this chunk origin.
+        int originX = x - currentPostX;
+        int originZ = z - currentPostZ;
+        int center = (currentPostZ + 1) * planeWidth + currentPostX + 1;
+        int h = heights[center];
+        int ha = heights[center + 1];
+        int hb = heights[center + planeWidth];
+        int hc = heights[center - 1];
+        int hd = heights[center - planeWidth];
 
         // Floating Nibs
         int g = 0;
@@ -77,11 +112,11 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         g += hc < h - 1 ? 1 : 0;
         g += hd < h - 1 ? 1 : 0;
 
-        if (g == 4 && isAir(x, h - 1, z, currentPostX, currentPostZ, currentData)) {
-            setPostBlock(x, h, z, States.AIR, currentPostX, currentPostZ, currentData);
+        if (g == 4 && isAir(x, h - 1, z, originX, originZ, currentData)) {
+            setPostBlock(x, h, z, States.AIR, originX, originZ, currentData);
 
             for (int i = h - 1; i > 0; i--) {
-                if (!isAir(x, i, z, currentPostX, currentPostZ, currentData)) {
+                if (!isAir(x, i, z, originX, originZ, currentData)) {
                     h = i;
                     break;
                 }
@@ -96,12 +131,12 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         g += hd == h - 1 ? 1 : 0;
 
         if (g >= 4) {
-            PlatformBlockState bcState = getPostBlock(x, h, z, currentPostX, currentPostZ, currentData);
-            PlatformBlockState bState = getPostBlock(x, h + 1, z, currentPostX, currentPostZ, currentData);
+            PlatformBlockState bcState = getPostBlock(x, h, z, originX, originZ, currentData);
+            PlatformBlockState bState = getPostBlock(x, h + 1, z, originX, originZ, currentData);
 
             if (bState.isOccluding() && bState.isSolid()) {
                 if (bcState.isSolid()) {
-                    setPostBlock(x, h, z, bState, currentPostX, currentPostZ, currentData);
+                    setPostBlock(x, h, z, bState, originX, originZ, currentData);
                     h--;
                 }
             }
@@ -114,10 +149,10 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
             g += hd == h + 1 ? 1 : 0;
 
             if (g >= 4) {
-                PlatformBlockState ba = getPostBlock(x, ha, z, currentPostX, currentPostZ, currentData);
-                PlatformBlockState bb = getPostBlock(x, hb, z, currentPostX, currentPostZ, currentData);
-                PlatformBlockState bc = getPostBlock(x, hc, z, currentPostX, currentPostZ, currentData);
-                PlatformBlockState bd = getPostBlock(x, hd, z, currentPostX, currentPostZ, currentData);
+                PlatformBlockState ba = getPostBlock(x, ha, z, originX, originZ, currentData);
+                PlatformBlockState bb = getPostBlock(x, hb, z, originX, originZ, currentData);
+                PlatformBlockState bc = getPostBlock(x, hc, z, originX, originZ, currentData);
+                PlatformBlockState bd = getPostBlock(x, hd, z, originX, originZ, currentData);
                 g = 0;
                 g = B.isSolid(ba) ? g + 1 : g;
                 g = B.isSolid(bb) ? g + 1 : g;
@@ -125,7 +160,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
                 g = B.isSolid(bd) ? g + 1 : g;
 
                 if (g >= 3) {
-                    setPostBlock(x, h + 1, z, getPostBlock(x, h, z, currentPostX, currentPostZ, currentData), currentPostX, currentPostZ, currentData);
+                    setPostBlock(x, h + 1, z, getPostBlock(x, h, z, originX, originZ, currentData), originX, originZ, currentData);
                     h++;
                 }
             }
@@ -134,7 +169,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         // Wall Patcher
         IrisBiome biome = context.getBiome().get(currentPostX, currentPostZ);
 
-        if (getDimension().isPostProcessingWalls()) {
+        if (walls) {
             if (!biome.getWall().getPalette().isEmpty()) {
                 if (ha < h - 2 || hb < h - 2 || hc < h - 2 || hd < h - 2) {
                     boolean brokeGround = false;
@@ -144,7 +179,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
                         PlatformBlockState d = biome.getWall().get(rng, x + i, i + h, z + i, getData());
 
                         if (d != null) {
-                            if (isAirOrWater(x, i, z, currentPostX, currentPostZ, currentData)) {
+                            if (isAirOrWater(x, i, z, originX, originZ, currentData)) {
                                 if (brokeGround) {
                                     break;
                                 }
@@ -152,7 +187,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
                                 continue;
                             }
 
-                            setPostBlock(x, i, z, d, currentPostX, currentPostZ, currentData);
+                            setPostBlock(x, i, z, d, originX, originZ, currentData);
                             brokeGround = true;
                         }
                     }
@@ -161,12 +196,12 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         }
 
         // Slab
-        if (getDimension().isPostProcessingSlabs()) {
+        if (slabs) {
             //@builder
-            if ((ha == h + 1 && isSolidNonSlab(x + 1, ha, z, currentPostX, currentPostZ, currentData))
-                    || (hb == h + 1 && isSolidNonSlab(x, hb, z + 1, currentPostX, currentPostZ, currentData))
-                    || (hc == h + 1 && isSolidNonSlab(x - 1, hc, z, currentPostX, currentPostZ, currentData))
-                    || (hd == h + 1 && isSolidNonSlab(x, hd, z - 1, currentPostX, currentPostZ, currentData)))
+            if ((ha == h + 1 && isSolidNonSlab(x + 1, ha, z, originX, originZ, currentData))
+                    || (hb == h + 1 && isSolidNonSlab(x, hb, z + 1, originX, originZ, currentData))
+                    || (hc == h + 1 && isSolidNonSlab(x - 1, hc, z, originX, originZ, currentData))
+                    || (hd == h + 1 && isSolidNonSlab(x, hd, z - 1, originX, originZ, currentData)))
             //@done
             {
                 IrisSlopeClip sc = biome.getSlab().getSlopeCondition();
@@ -175,16 +210,16 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
                 if (d != null) {
                     boolean cancel = B.isAir(d);
 
-                    if (IrisProceduralBlocks.materialKey(d).equals("minecraft:snow") && h + 1 <= getDimension().getFluidHeight()) {
+                    if (IrisProceduralBlocks.materialKey(d).equals("minecraft:snow") && h + 1 <= fluidHeight) {
                         cancel = true;
                     }
 
-                    if (isSnowLayer(x, h, z, currentPostX, currentPostZ, currentData)) {
+                    if (isSnowLayer(x, h, z, originX, originZ, currentData)) {
                         cancel = true;
                     }
 
-                    if (!cancel && isAirOrWater(x, h + 1, z, currentPostX, currentPostZ, currentData)) {
-                        setPostBlock(x, h + 1, z, d, currentPostX, currentPostZ, currentData);
+                    if (!cancel && isAirOrWater(x, h + 1, z, originX, originZ, currentData)) {
+                        setPostBlock(x, h + 1, z, d, originX, originZ, currentData);
                         h++;
                     }
                 }
@@ -192,30 +227,30 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         }
 
         // Waterlogging
-        PlatformBlockState b = getPostBlock(x, h, z, currentPostX, currentPostZ, currentData);
+        PlatformBlockState b = getPostBlock(x, h, z, originX, originZ, currentData);
 
         if (IrisProceduralBlocks.hasProperty(b, "waterlogged")) {
             boolean w = false;
 
-            if (h <= getDimension().getFluidHeight() + 1) {
-                if (isWaterOrWaterlogged(x, h + 1, z, currentPostX, currentPostZ, currentData)) {
+            if (h <= fluidHeight + 1) {
+                if (isWaterOrWaterlogged(x, h + 1, z, originX, originZ, currentData)) {
                     w = true;
-                } else if ((isWaterOrWaterlogged(x + 1, h, z, currentPostX, currentPostZ, currentData) || isWaterOrWaterlogged(x - 1, h, z, currentPostX, currentPostZ, currentData) || isWaterOrWaterlogged(x, h, z + 1, currentPostX, currentPostZ, currentData) || isWaterOrWaterlogged(x, h, z - 1, currentPostX, currentPostZ, currentData))) {
+                } else if ((isWaterOrWaterlogged(x + 1, h, z, originX, originZ, currentData) || isWaterOrWaterlogged(x - 1, h, z, originX, originZ, currentData) || isWaterOrWaterlogged(x, h, z + 1, originX, originZ, currentData) || isWaterOrWaterlogged(x, h, z - 1, originX, originZ, currentData))) {
                     w = true;
                 }
             }
 
             if (w != "true".equals(IrisProceduralBlocks.propertyValue(b, "waterlogged"))) {
-                setPostBlock(x, h, z, b.withProperty("waterlogged", String.valueOf(w)), currentPostX, currentPostZ, currentData);
+                setPostBlock(x, h, z, b.withProperty("waterlogged", String.valueOf(w)), originX, originZ, currentData);
             }
-        } else if (IrisProceduralBlocks.materialKey(b).equals("minecraft:air") && h <= getDimension().getFluidHeight()) {
-            if ((isWaterOrWaterlogged(x + 1, h, z, currentPostX, currentPostZ, currentData) || isWaterOrWaterlogged(x - 1, h, z, currentPostX, currentPostZ, currentData) || isWaterOrWaterlogged(x, h, z + 1, currentPostX, currentPostZ, currentData) || isWaterOrWaterlogged(x, h, z - 1, currentPostX, currentPostZ, currentData))) {
-                setPostBlock(x, h, z, States.WATER, currentPostX, currentPostZ, currentData);
+        } else if (IrisProceduralBlocks.materialKey(b).equals("minecraft:air") && h <= fluidHeight) {
+            if ((isWaterOrWaterlogged(x + 1, h, z, originX, originZ, currentData) || isWaterOrWaterlogged(x - 1, h, z, originX, originZ, currentData) || isWaterOrWaterlogged(x, h, z + 1, originX, originZ, currentData) || isWaterOrWaterlogged(x, h, z - 1, originX, originZ, currentData))) {
+                setPostBlock(x, h, z, States.WATER, originX, originZ, currentData);
             }
         }
 
         // Foliage
-        b = getPostBlock(x, h + 1, z, currentPostX, currentPostZ, currentData);
+        b = getPostBlock(x, h + 1, z, originX, originZ, currentData);
 
         if (B.isVineBlock(b)) {
             PlatformBlockState result = b;
@@ -226,77 +261,87 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
                     continue;
                 }
                 int[] mod = IrisProceduralBlocks.faceOffset(face);
-                PlatformBlockState d = getPostBlock(x + mod[0], finalH + mod[1], z + mod[2], currentPostX, currentPostZ, currentData);
+                PlatformBlockState d = getPostBlock(x + mod[0], finalH + mod[1], z + mod[2], originX, originZ, currentData);
                 result = result.withProperty(face, String.valueOf(!B.isAir(d) && !B.isVineBlock(d)));
             }
             if (!result.equals(b)) {
-                setPostBlock(x, h + 1, z, result, currentPostX, currentPostZ, currentData);
+                setPostBlock(x, h + 1, z, result, originX, originZ, currentData);
             }
         }
 
         if (B.isFoliage(b) || IrisProceduralBlocks.materialKey(b).equals("minecraft:dead_bush")) {
-            PlatformBlockState onto = getPostBlock(x, h, z, currentPostX, currentPostZ, currentData);
+            PlatformBlockState onto = getPostBlock(x, h, z, originX, originZ, currentData);
 
             if (!B.canPlaceOnto(b, onto) && !B.isDecorant(b)) {
-                setPostBlock(x, h + 1, z, States.AIR, currentPostX, currentPostZ, currentData);
+                setPostBlock(x, h + 1, z, States.AIR, originX, originZ, currentData);
             }
         }
     }
 
-    public boolean isAir(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        String material = IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, currentPostX, currentPostZ, currentData));
+    public boolean isAir(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        String material = IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, originX, originZ, currentData));
         return material.equals("minecraft:air") || material.equals("minecraft:cave_air");
     }
 
-    public boolean hasGravity(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        String material = IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, currentPostX, currentPostZ, currentData));
+    public boolean hasGravity(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        String material = IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, originX, originZ, currentData));
         return material.equals("minecraft:sand") || material.equals("minecraft:red_sand") || material.endsWith("_concrete_powder");
     }
 
-    public boolean isSolid(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        PlatformBlockState d = getPostBlock(x, y, z, currentPostX, currentPostZ, currentData);
+    public boolean isSolid(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        PlatformBlockState d = getPostBlock(x, y, z, originX, originZ, currentData);
         return B.isSolid(d) && !B.isVineBlock(d);
     }
 
-    public boolean isSolidNonSlab(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        PlatformBlockState d = getPostBlock(x, y, z, currentPostX, currentPostZ, currentData);
+    public boolean isSolidNonSlab(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        PlatformBlockState d = getPostBlock(x, y, z, originX, originZ, currentData);
         return B.isSolid(d) && !IrisProceduralBlocks.materialKey(d).endsWith("_slab");
     }
 
-    public boolean isAirOrWater(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        String material = IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, currentPostX, currentPostZ, currentData));
+    public boolean isAirOrWater(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        String material = IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, originX, originZ, currentData));
         return material.equals("minecraft:water") || material.equals("minecraft:air") || material.equals("minecraft:cave_air");
     }
 
-    public boolean isSlab(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        return IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, currentPostX, currentPostZ, currentData)).endsWith("_slab");
+    public boolean isSlab(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        return IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, originX, originZ, currentData)).endsWith("_slab");
     }
 
-    public boolean isSnowLayer(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        return IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, currentPostX, currentPostZ, currentData)).equals("minecraft:snow");
+    public boolean isSnowLayer(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        return IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, originX, originZ, currentData)).equals("minecraft:snow");
     }
 
-    public boolean isWater(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        return IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, currentPostX, currentPostZ, currentData)).equals("minecraft:water");
+    public boolean isWater(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        return IrisProceduralBlocks.materialKey(getPostBlock(x, y, z, originX, originZ, currentData)).equals("minecraft:water");
     }
 
-    public boolean isWaterOrWaterlogged(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        PlatformBlockState d = getPostBlock(x, y, z, currentPostX, currentPostZ, currentData);
+    public boolean isWaterOrWaterlogged(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        PlatformBlockState d = getPostBlock(x, y, z, originX, originZ, currentData);
         return IrisProceduralBlocks.materialKey(d).equals("minecraft:water") || "true".equals(IrisProceduralBlocks.propertyValue(d, "waterlogged"));
     }
 
-    public boolean isLiquid(int x, int y, int z, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        return IrisProceduralBlocks.hasProperty(getPostBlock(x, y, z, currentPostX, currentPostZ, currentData), "level");
+    public boolean isLiquid(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        return IrisProceduralBlocks.hasProperty(getPostBlock(x, y, z, originX, originZ, currentData), "level");
     }
 
-    public void setPostBlock(int x, int y, int z, PlatformBlockState d, int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData) {
-        if (y < currentData.getHeight()) {
-            currentData.set(x & 15, y, z & 15, d);
+    public void setPostBlock(int x, int y, int z, PlatformBlockState d, int originX, int originZ, Hunk<PlatformBlockState> currentData) {
+        int lx = x - originX;
+        int lz = z - originZ;
+
+        if (lx < 0 || lz < 0 || lx >= currentData.getWidth() || lz >= currentData.getDepth() || y < 0 || y >= currentData.getHeight()) {
+            return;
         }
+
+        currentData.set(lx, y, lz, d);
     }
 
-    public PlatformBlockState getPostBlock(int x, int y, int z, int cpx, int cpz, Hunk<PlatformBlockState> h) {
-        PlatformBlockState b = h.getClosest(x & 15, y, z & 15);
+    /**
+     * Neighbour columns can sit one block outside this chunk, and the blocks of an adjacent chunk are not
+     * available while generating this one. Resolve the hunk index relative to the chunk origin and let
+     * getClosest clamp to the nearest in-chunk column instead of wrapping to the opposite chunk edge.
+     */
+    public PlatformBlockState getPostBlock(int x, int y, int z, int originX, int originZ, Hunk<PlatformBlockState> h) {
+        PlatformBlockState b = h.getClosest(x - originX, y, z - originZ);
 
         return b == null ? States.AIR : b;
     }

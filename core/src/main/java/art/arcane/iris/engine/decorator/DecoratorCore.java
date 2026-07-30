@@ -166,12 +166,10 @@ final class DecoratorCore {
         }
 
         if (!decorator.isForcePlace()) {
-            if (decorator.getWhitelist() != null
-                    && decorator.getWhitelist().stream().noneMatch(d -> d.getBlockData(irisData).equals(bdx))) {
+            if (decorator.getWhitelist() != null && !matchesPalette(decorator.getWhitelistArray(irisData), bdx)) {
                 return;
             }
-            if (decorator.getBlacklist() != null
-                    && decorator.getBlacklist().stream().anyMatch(d -> d.getBlockData(irisData).equals(bdx))) {
+            if (decorator.getBlacklist() != null && matchesPalette(decorator.getBlacklistArray(irisData), bdx)) {
                 return;
             }
         }
@@ -201,6 +199,16 @@ final class DecoratorCore {
         if (targetY < data.getHeight() && B.isAir(data.get(x, targetY, z))) {
             data.set(x, targetY, z, fixFacesForHunk(bd, data, x, z, realX, targetY, realZ, mantle));
         }
+    }
+
+    private static boolean matchesPalette(PlatformBlockState[] palette, PlatformBlockState surface) {
+        for (int i = 0; i < palette.length; i++) {
+            if (palette[i].equals(surface)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     static void placeSingleAt(IrisDecorator decorator, int x, int z,

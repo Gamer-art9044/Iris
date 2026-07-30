@@ -33,7 +33,7 @@ public class NativeStructurePostProcessorMonumentTest {
     public void vanillaSeaLevelKeepsTheVanillaMonumentHeight() {
         StructureStart start = monumentStart(1337L);
 
-        int offset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 start, "minecraft:monument", 0, 63, -64, 320, false, false, null, (x, z) -> 0);
 
         assertEquals(0, offset);
@@ -45,11 +45,11 @@ public class NativeStructurePostProcessorMonumentTest {
     public void shiftedSeaLevelMovesTheShellAndEveryRoomTogether() {
         StructureStart start = monumentStart(1337L);
         OceanMonumentPieces.MonumentBuilding building = monumentBuilding(start);
-        List<StructurePiece> children = NativeStructurePostProcessor.monumentChildPieces(building);
+        List<StructurePiece> children = NativeStructureVerticalPlacer.monumentChildPieces(building);
         int[] childMinY = minimumYs(children);
         BoundingBox cachedBounds = start.getBoundingBox();
 
-        int offset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 start, "minecraft:monument", 0, 50, -256, 512, false, false, null, (x, z) -> 0);
 
         assertEquals(-13, offset);
@@ -63,7 +63,7 @@ public class NativeStructurePostProcessorMonumentTest {
             assertEquals(childMinY[i] - 13, children.get(i).getBoundingBox().minY());
         }
 
-        int repeatedOffset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int repeatedOffset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 start, "minecraft:monument", 0, 50, -256, 512, false, false, null, (x, z) -> 0);
         assertEquals(0, repeatedOffset);
     }
@@ -72,7 +72,7 @@ public class NativeStructurePostProcessorMonumentTest {
     public void configuredOffsetIsRelativeToTheActualSeaLevel() {
         StructureStart start = monumentStart(1337L);
 
-        int offset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 start, "minecraft:monument", 3, 50, -256, 512, false, false, null, (x, z) -> 0);
 
         assertEquals(-10, offset);
@@ -85,7 +85,7 @@ public class NativeStructurePostProcessorMonumentTest {
         long seed = 1337L;
         ChunkPos chunkPos = new ChunkPos(0, 0);
         StructureStart initial = monumentStart(seed);
-        NativeStructurePostProcessor.applyVerticalPlacement(
+        NativeStructureVerticalPlacer.applyVerticalPlacement(
                 initial, "minecraft:monument", 0, 50, -256, 512, false, false, null, (x, z) -> 0);
 
         PiecesContainer regenerated = OceanMonumentStructure.regeneratePiecesAfterLoad(
@@ -94,7 +94,7 @@ public class NativeStructurePostProcessorMonumentTest {
                 monumentStructure(), chunkPos, 0, regenerated);
 
         assertEquals(39, reloaded.getBoundingBox().minY());
-        int offset = NativeStructurePostProcessor.applyVerticalPlacement(
+        int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 reloaded, "minecraft:monument", 0, 50, -256, 512, false, false, null, (x, z) -> 0);
         assertEquals(-13, offset);
         assertEquals(26, reloaded.getBoundingBox().minY());
@@ -105,7 +105,7 @@ public class NativeStructurePostProcessorMonumentTest {
     public void impossibleSeaLevelAlignmentFailsInsteadOfClippingTheMonument() {
         StructureStart start = monumentStart(1337L);
         try {
-            NativeStructurePostProcessor.applyVerticalPlacement(
+            NativeStructureVerticalPlacer.applyVerticalPlacement(
                     start, "minecraft:monument", 0, -50, -64, 320, false, false, null, (x, z) -> 0);
         } catch (IllegalStateException error) {
             assertTrue(error.getMessage().contains("cannot align"));

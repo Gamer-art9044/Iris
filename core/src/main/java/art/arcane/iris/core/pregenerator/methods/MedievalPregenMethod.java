@@ -41,10 +41,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MedievalPregenMethod implements PregeneratorMethod {
+    private static final long CHUNK_WAIT_TIMEOUT_SECONDS = 60L;
+    private static final long UNLOAD_TIMEOUT_SECONDS = 120L;
     private final World world;
     private final KList<CompletableFuture<?>> futures;
     private final Map<Chunk, Long> lastUse;
@@ -105,9 +109,14 @@ public class MedievalPregenMethod implements PregeneratorMethod {
     private void waitForChunks() {
         for (CompletableFuture<?> i : futures) {
             try {
-                i.get();
+                i.get(CHUNK_WAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (TimeoutException e) {
+                IrisLogging.warn("Medieval pregen chunk did not finish in " + CHUNK_WAIT_TIMEOUT_SECONDS + "s, abandoning it.");
             } catch (Throwable e) {
-                e.printStackTrace();
+                IrisLogging.reportError(e);
             }
         }
 
@@ -120,26 +129,32 @@ public class MedievalPregenMethod implements PregeneratorMethod {
             return;
         }
 
-        try {
-            J.sfut(() -> {
-                if (world == null) {
-                    IrisLogging.warn("World was null somehow...");
-                    return;
-                }
+        CompletableFuture<Void> unload = J.sfut(() -> {
+            if (world == null) {
+                IrisLogging.warn("World was null somehow...");
+                return;
+            }
 
-                for (Chunk i : new ArrayList<>(lastUse.keySet())) {
-                    Long lastUseTime = lastUse.get(i);
-                    if (lastUseTime != null && M.ms() - lastUseTime >= 10) {
-                        i.unload();
-                        lastUse.remove(i);
-                    }
+            for (Chunk i : new ArrayList<>(lastUse.keySet())) {
+                Long lastUseTime = lastUse.get(i);
+                if (lastUseTime != null && M.ms() - lastUseTime >= 10) {
+                    i.unload();
+                    lastUse.remove(i);
                 }
-                if (saveWorld) {
-                    world.save();
-                }
-            }).get();
+            }
+            if (saveWorld) {
+                world.save();
+            }
+        });
+
+        try {
+            unload.get(UNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (TimeoutException e) {
+            IrisLogging.warn("Medieval pregen chunk unload did not finish in " + UNLOAD_TIMEOUT_SECONDS + "s, continuing.");
         } catch (Throwable e) {
-            e.printStackTrace();
+            IrisLogging.reportError(e);
         }
     }
 
@@ -150,11 +165,19 @@ public class MedievalPregenMethod implements PregeneratorMethod {
 
     @Override
     public void close() {
-        waitForChunks();
-        if (prefetchPool != null) {
-            prefetchPool.shutdownNow();
+        // A stop request interrupts the pregen worker; shield the drain and save so chunks still hit disk.
+        boolean interrupted = Thread.interrupted();
+        try {
+            waitForChunks();
+            if (prefetchPool != null) {
+                prefetchPool.shutdownNow();
+            }
+            unloadAndSaveAllChunks(true);
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
-        unloadAndSaveAllChunks(true);
     }
 
     @Override
@@ -212,22 +235,26 @@ public class MedievalPregenMethod implements PregeneratorMethod {
         try {
             prefetchPool.submit(() -> {
                 try {
-                    prefetchMantle(engine, x, z);
-                } catch (Throwable e) {
-                    if (prefetchDisabled.compareAndSet(false, true)) {
-                        IrisLogging.warn("Mantle prefetch failed at chunk " + x + "," + z + "; disabling prefetch for this pregen.");
-                        IrisLogging.reportError(e);
+                    try {
+                        prefetchMantle(engine, x, z);
+                    } catch (Throwable e) {
+                        if (prefetchDisabled.compareAndSet(false, true)) {
+                            IrisLogging.warn("Mantle prefetch failed at chunk " + x + "," + z + "; disabling prefetch for this pregen.");
+                            IrisLogging.reportError(e);
+                        }
                     }
-                }
 
-                CompletableFuture<?> chunkFuture = runChunkLoad(x, z, listener);
-                chunkFuture.whenComplete((r, err) -> {
-                    if (err != null) {
-                        aggregate.completeExceptionally(err);
-                    } else {
-                        aggregate.complete(null);
-                    }
-                });
+                    CompletableFuture<?> chunkFuture = runChunkLoad(x, z, listener);
+                    chunkFuture.whenComplete((r, err) -> {
+                        if (err != null) {
+                            aggregate.completeExceptionally(err);
+                        } else {
+                            aggregate.complete(null);
+                        }
+                    });
+                } catch (Throwable e) {
+                    aggregate.completeExceptionally(e);
+                }
             });
         } catch (Throwable rejected) {
             if (prefetchDisabled.compareAndSet(false, true)) {
@@ -268,7 +295,7 @@ public class MedievalPregenMethod implements PregeneratorMethod {
                 }
 
                 try {
-                    generateChunkSync(x, z, listener).get();
+                    generateChunkSync(x, z, listener).get(CHUNK_WAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
                     future.complete(null);
                 } catch (Throwable fallbackError) {
                     future.completeExceptionally(fallbackError);

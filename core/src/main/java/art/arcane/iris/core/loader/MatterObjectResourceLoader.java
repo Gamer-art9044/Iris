@@ -31,8 +31,6 @@ import java.io.IOException;
 import java.util.HashSet;
 
 public class MatterObjectResourceLoader extends ResourceLoader<IrisMatterObject> {
-    private String[] possibleKeys;
-
     public MatterObjectResourceLoader(File root, IrisData idm, String folderName, String resourceTypeName, Options options) {
         super(root, idm, folderName, resourceTypeName, IrisMatterObject.class, options);
         loadCache = new KCache<>(this::loadRaw, IrisSettings.get().getPerformance().getObjectLoaderCacheSize());
@@ -67,7 +65,7 @@ public class MatterObjectResourceLoader extends ResourceLoader<IrisMatterObject>
         }
     }
 
-    private void findMatFiles(File dir, KSet<String> m, HashSet<String> visitedDirectories) {
+    private void findMatFiles(File dir, String prefix, KSet<String> m, HashSet<String> visitedDirectories) {
         if (dir == null || !dir.exists()) {
             return;
         }
@@ -86,9 +84,9 @@ public class MatterObjectResourceLoader extends ResourceLoader<IrisMatterObject>
 
         for (File file : listedFiles) {
             if (file.isFile() && file.getName().endsWith(".mat")) {
-                m.add(file.getName().replaceAll("\\Q.mat\\E", ""));
+                m.add(prefix + file.getName().replaceAll("\\Q.mat\\E", ""));
             } else if (file.isDirectory()) {
-                findMatFiles(file, m, visitedDirectories);
+                findMatFiles(file, prefix + file.getName() + "/", m, visitedDirectories);
             }
         }
     }
@@ -103,7 +101,7 @@ public class MatterObjectResourceLoader extends ResourceLoader<IrisMatterObject>
         HashSet<String> visitedDirectories = new HashSet<>();
 
         for (File folder : getFolders()) {
-            findMatFiles(folder, m, visitedDirectories);
+            findMatFiles(folder, "", m, visitedDirectories);
         }
 
         KList<String> v = new KList<>(m);
@@ -119,40 +117,6 @@ public class MatterObjectResourceLoader extends ResourceLoader<IrisMatterObject>
         }
     }
 
-
-//    public String[] getPossibleKeys() {
-//        if (possibleKeys != null) {
-//            return possibleKeys;
-//        }
-//
-//        IrisLogging.debug("Building " + resourceTypeName + " Possibility Lists");
-//        KSet<String> m = new KSet<>();
-//
-//        for (File i : getFolders()) {
-//            for (File j : i.listFiles()) {
-//                if (j.isFile() && j.getName().endsWith(".mat")) {
-//                    m.add(j.getName().replaceAll("\\Q.mat\\E", ""));
-//                } else if (j.isDirectory()) {
-//                    for (File k : j.listFiles()) {
-//                        if (k.isFile() && k.getName().endsWith(".mat")) {
-//                            m.add(j.getName() + "/" + k.getName().replaceAll("\\Q.mat\\E", ""));
-//                        } else if (k.isDirectory()) {
-//                            for (File l : k.listFiles()) {
-//                                if (l.isFile() && l.getName().endsWith(".mat")) {
-//                                    m.add(j.getName() + "/" + k.getName() + "/" + l.getName().replaceAll("\\Q.mat\\E", ""));
-//                                }
-//                            }
-//                        }
-//                    }
-//                }
-//            }
-//        }
-//
-//        KList<String> v = new KList<>(m);
-//        possibleKeys = v.toArray(new String[0]);
-//        return possibleKeys;
-//    }
-
     public File findFile(String name) {
         if (name == null || name.trim().isEmpty()) {
             return null;
@@ -162,18 +126,10 @@ public class MatterObjectResourceLoader extends ResourceLoader<IrisMatterObject>
             return null;
         }
 
-        for (File i : getFolders(name)) {
-            for (File j : i.listFiles()) {
-                if (j.isFile() && j.getName().endsWith(".mat") && j.getName().split("\\Q.\\E")[0].equals(name)) {
-                    return j;
-                }
-            }
+        File file = resolveFile(name, ".mat");
 
-            File file = new File(i, name + ".mat");
-
-            if (file.exists()) {
-                return file;
-            }
+        if (file != null) {
+            return file;
         }
 
         IrisLogging.warn("Couldn't find " + resourceTypeName + ": " + name + " (called by " + callerHint() + ")");
@@ -186,18 +142,10 @@ public class MatterObjectResourceLoader extends ResourceLoader<IrisMatterObject>
     }
 
     private IrisMatterObject loadRaw(String name) {
-        for (File i : getFolders(name)) {
-            for (File j : i.listFiles()) {
-                if (j.isFile() && j.getName().endsWith(".mat") && j.getName().split("\\Q.\\E")[0].equals(name)) {
-                    return loadFile(j, name);
-                }
-            }
+        File file = resolveFile(name, ".mat");
 
-            File file = new File(i, name + ".mat");
-
-            if (file.exists()) {
-                return loadFile(file, name);
-            }
+        if (file != null) {
+            return loadFile(file, name);
         }
 
         IrisLogging.warn("Couldn't find " + resourceTypeName + ": " + name + " (called by " + callerHint() + ")");

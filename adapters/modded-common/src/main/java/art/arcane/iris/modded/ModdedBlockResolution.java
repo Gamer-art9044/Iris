@@ -45,6 +45,7 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 public final class ModdedBlockResolution {
@@ -86,6 +87,8 @@ public final class ModdedBlockResolution {
             "acacia_leaves", "birch_leaves", "dark_oak_leaves", "jungle_leaves", "oak_leaves", "spruce_leaves");
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
     private static final UnresolvedKeyLog UNRESOLVED = new UnresolvedKeyLog("Iris modded block resolution", 30_000L);
+    private static final int REPORTED_FAILURE_KEYS_MAX = 256;
+    private static final Set<String> REPORTED_FAILURE_KEYS = ConcurrentHashMap.newKeySet();
 
     private ModdedBlockResolution() {
     }
@@ -150,6 +153,17 @@ public final class ModdedBlockResolution {
             }
         }
         return map;
+    }
+
+    private static void reportResolveFailure(String key, Throwable error) {
+        String failureKey = key == null ? "<null>" : key;
+        if (!REPORTED_FAILURE_KEYS.add(failureKey)) {
+            return;
+        }
+        if (REPORTED_FAILURE_KEYS.size() > REPORTED_FAILURE_KEYS_MAX) {
+            REPORTED_FAILURE_KEYS.clear();
+        }
+        IrisLogging.reportError("Iris block data '" + failureKey + "' failed to resolve", error);
     }
 
     private static void warnUnresolved(String key, String message) {
@@ -239,7 +253,7 @@ public final class ModdedBlockResolution {
 
             return bdx;
         } catch (Throwable e) {
-            e.printStackTrace();
+            reportResolveFailure(bdxf, e);
             if (warn) {
                 warnUnresolved(bdxf, "Unknown Block Data '" + bdxf + "'");
             }

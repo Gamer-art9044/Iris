@@ -100,8 +100,8 @@ public final class ModdedWorldEngines {
 
     private static Engine create(ServerLevel level, String pack, String dimensionKey, long seedOverride) {
         ModdedEngineBootstrap.bind();
-        PackValidationRegistry.requireLoadable(pack);
         File packDir = resolvePack(pack, dimensionKey);
+        PackValidationRegistry.requireLoadable(pack);
         IrisData data = IrisData.openRuntime(packDir);
         IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
         if (dimension == null) {

@@ -37,6 +37,22 @@ import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * Registry of {@link ModdedDataProvider} instances and static block-data aliases, and the resolution path Iris
+ * itself calls into.
+ * <p>
+ * Mods should go through {@link IrisModdedAPI#registerProvider(ModdedDataProvider)} and
+ * {@link IrisModdedAPI#registerCustomBlockData(String, String, String)} rather than calling this class directly;
+ * the resolution methods here are Iris internals and are public only because the adapter's generation code lives in
+ * another package.
+ * <p>
+ * <b>Threading.</b> Mutation ({@link #register(ModdedDataProvider)},
+ * {@link #registerCustomBlockData(String, String, String)}, {@link #discover()}) is serialized on the class
+ * monitor. Resolution ({@link #resolveBlock(String)}, {@link #spawnMob}, {@link #processBlockPlacement}) is lock
+ * free over a copy-on-write provider list and a concurrent alias map, so it runs on generation threads. Every
+ * resolution method catches provider throwables, logs them against the provider's mod id, and continues with the
+ * next provider.
+ */
 public final class ModdedCustomContentRegistry {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final List<ModdedDataProvider> PROVIDERS = new CopyOnWriteArrayList<>();
@@ -47,6 +63,11 @@ public final class ModdedCustomContentRegistry {
     private ModdedCustomContentRegistry() {
     }
 
+    /**
+     * Registers a static {@code namespace:key} to block-state alias. Invalid identifiers and unparseable states are
+     * logged and dropped; null arguments are ignored. See
+     * {@link IrisModdedAPI#registerCustomBlockData(String, String, String)}.
+     */
     public static synchronized void registerCustomBlockData(String namespace, String key, String state) {
         if (namespace == null || key == null || state == null) {
             return;
@@ -72,6 +93,11 @@ public final class ModdedCustomContentRegistry {
         LOGGER.info("Iris registered custom block data {}:{} -> {}", namespace, key, state);
     }
 
+    /**
+     * Registers a provider, rejecting a duplicate {@link ModdedDataProvider#modId()} with a warning and ignoring
+     * null. {@link ModdedDataProvider#init()} runs here; a throwable it raises is logged, not propagated. See
+     * {@link IrisModdedAPI#registerProvider(ModdedDataProvider)}.
+     */
     public static synchronized void register(ModdedDataProvider provider) {
         if (provider == null) {
             return;
@@ -96,6 +122,15 @@ public final class ModdedCustomContentRegistry {
         LOGGER.info("Iris registered custom content provider '{}'", provider.modId());
     }
 
+    /**
+     * Runs {@link ServiceLoader} discovery for {@link ModdedDataProvider} against Iris's own class loader, once per
+     * process. Called during Iris mod initialization; a second call is a no-op that returns an inert handle.
+     * <p>
+     * All-or-nothing: a provider whose {@link ModdedDataProvider#init()} throws aborts the pass, restores the
+     * previous provider and alias state, logs the failing provider's identity, and rethrows.
+     *
+     * @return a handle whose {@link Discovery#rollback()} undoes this pass, used by the bootstrap's rollback chain
+     */
     public static synchronized Discovery discover() {
         if (scanned) {
             return Discovery.unchanged();
@@ -110,9 +145,12 @@ public final class ModdedCustomContentRegistry {
         boolean previousDiscoveryComplete = scanned;
         DiscoveryBatch batch = new DiscoveryBatch(previousProviders, previousCustomBlocks);
         discoveryBatch = batch;
+        ModdedDataProvider failingProvider = null;
         try {
             for (ModdedDataProvider provider : discoveredProviders) {
+                failingProvider = provider;
                 batch.add(provider);
+                failingProvider = null;
             }
             PROVIDERS.addAll(batch.additions);
             CUSTOM_BLOCKS.putAll(batch.customBlocks);
@@ -130,7 +168,8 @@ public final class ModdedCustomContentRegistry {
                     failure.addSuppressed(rollbackFailure);
                 }
             }
-            LOGGER.error("Iris custom content provider discovery failed", failure);
+            LOGGER.warn("Iris custom content provider discovery failed at {}",
+                    providerIdentity(failingProvider), failure);
             if (failure instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
@@ -140,6 +179,19 @@ public final class ModdedCustomContentRegistry {
             throw new IllegalStateException("Iris custom content provider discovery failed", failure);
         } finally {
             discoveryBatch = null;
+        }
+    }
+
+    private static String providerIdentity(ModdedDataProvider provider) {
+        if (provider == null) {
+            return "the provider service loader";
+        }
+        String className = provider.getClass().getName();
+        try {
+            String modId = provider.modId();
+            return modId == null || modId.isBlank() ? className : "provider '" + modId + "' (" + className + ")";
+        } catch (Throwable identityFailure) {
+            return className;
         }
     }
 
@@ -156,10 +208,19 @@ public final class ModdedCustomContentRegistry {
         return scanned;
     }
 
+    /**
+     * Whether any provider or alias is registered. Iris checks this to skip custom resolution entirely on a server
+     * with no integrating mods.
+     */
     public static boolean hasProviders() {
         return !PROVIDERS.isEmpty() || !CUSTOM_BLOCKS.isEmpty();
     }
 
+    /**
+     * Resolves a pack block key against aliases first, then each ready provider that claims it, in registration
+     * order. {@code key} may carry {@code [prop=value]} properties, which are parsed and passed along. Returns null
+     * when nothing claims it, which lets the caller fall back to air. Called from generation threads.
+     */
     public static ModdedBlockData resolveBlock(String key) {
         if (key == null || (PROVIDERS.isEmpty() && CUSTOM_BLOCKS.isEmpty())) {
             return null;
@@ -192,6 +253,11 @@ public final class ModdedCustomContentRegistry {
         return null;
     }
 
+    /**
+     * Delivers a deferred placement to the first ready provider claiming {@code key}; later providers are not
+     * consulted for that position. An unparseable key or no matching provider is logged and skipped. Called on the
+     * server thread with the chunk loaded.
+     */
     public static void processBlockPlacement(Engine engine, ServerLevel level, BlockPos position, String key) {
         Identifier base = parseIdentifier(key);
         if (base == null) {
@@ -214,6 +280,10 @@ public final class ModdedCustomContentRegistry {
         LOGGER.warn("Iris deferred custom block placement has no provider for {}", key);
     }
 
+    /**
+     * Asks each ready provider claiming {@code key} to spawn a custom entity, returning the first non-null result.
+     * Null when no provider claims it or every attempt declined. Called on the server thread.
+     */
     public static Entity spawnMob(ServerLevel level, double x, double y, double z, String key) {
         if (PROVIDERS.isEmpty() || level == null || key == null) {
             return null;
@@ -276,6 +346,10 @@ public final class ModdedCustomContentRegistry {
         scanned = discoveryComplete;
     }
 
+    /**
+     * Undo handle for one {@link #discover()} pass, so a failure later in Iris's bootstrap can restore the registry
+     * to its pre-discovery state.
+     */
     public static final class Discovery {
         private final List<ModdedDataProvider> providers;
         private final Map<String, BlockState> customBlocks;
@@ -294,6 +368,10 @@ public final class ModdedCustomContentRegistry {
             return new Discovery(List.of(), Map.of(), true, false);
         }
 
+        /**
+         * Restores the providers and aliases captured before the pass. Idempotent; a no-op on a handle from a
+         * discovery that did not run.
+         */
         public synchronized void rollback() {
             if (!active) {
                 return;

@@ -508,7 +508,7 @@ public class IrisObjectRotation {
                     v.rotateAroundZ(getZRotation(spinz));
                 }
             } else {
-                v.rotateAroundY(getZRotation(spinz));
+                v.rotateAroundZ(getZRotation(spinz));
             }
         }
 

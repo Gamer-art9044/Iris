@@ -290,7 +290,7 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
             }
         }
 
-        getEngine().getMetrics().getDeposit().put(p.getMilliseconds());
+        getEngine().getMetrics().getTerrain().put(p.getMilliseconds());
     }
 
     public void decorateColumns(int x, int z, Hunk<PlatformBlockState> output, boolean multicore, ChunkContext context) {

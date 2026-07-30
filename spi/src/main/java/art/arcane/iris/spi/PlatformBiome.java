@@ -20,11 +20,25 @@ package art.arcane.iris.spi;
 
 /**
  * Neutral handle for a resolved biome backed by an adapter-owned native handle.
+ * <p>
+ * Immutable and safe to share across threads. Internal to Iris; not a published integration surface.
+ *
+ * @see PlatformRegistries#biome(String)
  */
 public interface PlatformBiome {
+    /**
+     * Canonical {@code namespace:path} biome key. Never null.
+     */
     String key();
 
+    /**
+     * Namespace half of {@link #key()}. Never null.
+     */
     String namespace();
 
+    /**
+     * The adapter's backing biome object - {@code org.bukkit.block.Biome} on Bukkit, a {@code Biome} registry
+     * value on a mod loader. Never null. Only code inside the owning adapter may cast it.
+     */
     Object nativeHandle();
 }

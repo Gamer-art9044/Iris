@@ -73,8 +73,11 @@ String forgeArtifactName = irisArtifactName('Forge', "${minecraftVersion}+${load
 String neoForgeArtifactName = irisArtifactName('NeoForge', "${minecraftVersion}+${loaderDisplayVersion(neoForgeVersion)}")
 apply plugin: ApiGenerator
 
+// Where `buildAll` drops the per-platform jars for a local test server. Defaults to a repo-local
+// directory so the task works on a fresh clone; point it at a real server tree with
+// `-Plocation=/path/to/consumers`.
 String consumerLocation = providers.gradleProperty('location')
-    .getOrElse('/Users/brianfopiano/Developer/RemoteGit/[Minecraft Server]/consumers')
+    .getOrElse(layout.buildDirectory.dir('consumers').get().asFile.absolutePath)
 String bukkitConsumerPath = "${consumerLocation}/plugin-consumers/dropins/plugins"
 String fabricConsumerPath = "${consumerLocation}/fabric-mod-consumers/dropins/mods"
 String forgeConsumerPath = "${consumerLocation}/forge-mod-consumers/dropins/mods"

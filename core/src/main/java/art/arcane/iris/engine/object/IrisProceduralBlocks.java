@@ -65,10 +65,20 @@ public final class IrisProceduralBlocks {
     }
 
     public static boolean hasProperty(PlatformBlockState state, String property) {
-        return propertyValue(state, property) != null;
+        String key = state.key();
+        int start = propertyStart(key, property);
+        if (start < 0) {
+            return false;
+        }
+        int valueStart = start + property.length() + 2;
+        return key.indexOf(',', valueStart) >= 0 || key.indexOf(']', valueStart) >= 0;
     }
 
     public static String materialKey(PlatformBlockState state) {
+        String memoized = state.materialKey();
+        if (memoized != null) {
+            return memoized;
+        }
         String key = state.key();
         int bracket = key.indexOf('[');
         return bracket < 0 ? key : key.substring(0, bracket);
@@ -76,18 +86,11 @@ public final class IrisProceduralBlocks {
 
     public static String propertyValue(PlatformBlockState state, String property) {
         String key = state.key();
-        int bracket = key.indexOf('[');
-        if (bracket < 0) {
-            return null;
-        }
-        int start = key.indexOf("[" + property + "=", bracket);
-        if (start < 0) {
-            start = key.indexOf("," + property + "=", bracket);
-        }
+        int start = propertyStart(key, property);
         if (start < 0) {
             return null;
         }
-        int valueStart = key.indexOf('=', start) + 1;
+        int valueStart = start + property.length() + 2;
         int end = key.indexOf(',', valueStart);
         if (end < 0) {
             end = key.indexOf(']', valueStart);
@@ -96,6 +99,30 @@ public final class IrisProceduralBlocks {
             return null;
         }
         return key.substring(valueStart, end);
+    }
+
+    /**
+     * Index of the delimiter opening "[property=" or ",property=" within the key, or -1. Scans in place
+     * rather than building the search needles, and prefers a "[" match over a "," match.
+     */
+    private static int propertyStart(String key, String property) {
+        int bracket = key.indexOf('[');
+        if (bracket < 0) {
+            return -1;
+        }
+        int start = delimitedPropertyIndex(key, property, bracket, '[');
+        return start < 0 ? delimitedPropertyIndex(key, property, bracket, ',') : start;
+    }
+
+    private static int delimitedPropertyIndex(String key, String property, int from, char delimiter) {
+        int length = property.length();
+        int limit = key.length() - length - 2;
+        for (int i = key.indexOf(delimiter, from); i >= 0 && i <= limit; i = key.indexOf(delimiter, i + 1)) {
+            if (key.regionMatches(i + 1, property, 0, length) && key.charAt(i + 1 + length) == '=') {
+                return i;
+            }
+        }
+        return -1;
     }
 
     public static IrisObject assemble(Map<Vector3i, PlatformBlockState> blocks) {

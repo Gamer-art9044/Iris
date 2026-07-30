@@ -1,21 +1,32 @@
 package art.arcane.iris.client;
 
 import art.arcane.iris.spi.protocol.IrisMessage;
+import art.arcane.iris.spi.protocol.IrisProtocol;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 final class IrisTileAssembler {
+    private static final int MAX_CHUNK_COUNT =
+            (IrisTileCodec.MAX_DECODED_BYTES + IrisProtocol.VISION_TILE_MAX_CHUNK_BYTES - 1)
+                    / IrisProtocol.VISION_TILE_MAX_CHUNK_BYTES + 1;
+    private static final int MAX_PENDING_TILES = 64;
+
     private final Map<IrisTileKey, Partial> partials;
 
     IrisTileAssembler() {
-        this.partials = new HashMap<>();
+        this.partials = new LinkedHashMap<>() {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<IrisTileKey, Partial> eldest) {
+                return size() > MAX_PENDING_TILES;
+            }
+        };
     }
 
     IrisTileImage add(IrisMessage.VisionTile tile) {
         int chunkCount = tile.chunkCount();
         int chunkIndex = tile.chunkIndex();
-        if (chunkCount <= 0 || chunkIndex < 0 || chunkIndex >= chunkCount || tile.data() == null) {
+        if (chunkCount <= 0 || chunkCount > MAX_CHUNK_COUNT || chunkIndex < 0 || chunkIndex >= chunkCount || tile.data() == null) {
             return null;
         }
         IrisTileKey key = new IrisTileKey(tile.tileX(), tile.tileZ(), tile.zoomLevel());

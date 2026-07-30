@@ -342,7 +342,7 @@ public final class ModdedEntitySpawner {
         double addition = RNG.r.d();
         double subtraction = RNG.r.d();
         double particleX = entity.getX() + addition - subtraction + RNG.r.d();
-        double particleY = entity.getY() + 0.25 + addition - subtraction + level.getMinY() + RNG.r.i(effect.getParticleOffset());
+        double particleY = entity.getY() + 0.25 + addition - subtraction + RNG.r.i(effect.getParticleOffset());
         double particleZ = entity.getZ() + addition - subtraction + RNG.r.d();
         double altX = effect.isRandomAltX() ? RNG.r.d(-effect.getParticleAltX(), effect.getParticleAltX()) : effect.getParticleAltX();
         double altY = effect.isRandomAltY() ? RNG.r.d(-effect.getParticleAltY(), effect.getParticleAltY()) : effect.getParticleAltY();

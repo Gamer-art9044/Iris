@@ -37,7 +37,7 @@ public class TreeFellerEventOrderTest {
                 false
         );
 
-        assertEquals(List.of(trigger), TreeFellerSVC.positionsForFelling(incomplete, trigger));
+        assertEquals(List.of(trigger), TreeFellingRunner.positionsForFelling(incomplete, trigger));
     }
 
     @Test

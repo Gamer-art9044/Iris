@@ -50,8 +50,12 @@ public final class ModdedDimensionRegistryStore {
     }
 
     static List<PersistentDimension> load(Path file) {
+        return contents(file).dimensions();
+    }
+
+    private static Contents contents(Path file) {
         if (!Files.isRegularFile(file)) {
-            return new ArrayList<>();
+            return new Contents(new ArrayList<>(), new ArrayList<>());
         }
         try {
             JSONObject root = new JSONObject(Files.readString(file, StandardCharsets.UTF_8));
@@ -60,7 +64,9 @@ public final class ModdedDimensionRegistryStore {
                 throw new IllegalArgumentException("registry root has no dimensions array");
             }
             Map<String, PersistentDimension> deduplicated = new LinkedHashMap<>();
+            List<Object> unparsed = new ArrayList<>();
             for (int index = 0; index < entries.length(); index++) {
+                Object raw = entries.opt(index);
                 try {
                     JSONObject entry = entries.getJSONObject(index);
                     String id = required(entry, "id", index, file);
@@ -72,14 +78,18 @@ public final class ModdedDimensionRegistryStore {
                     PersistentDimension previous = deduplicated.putIfAbsent(
                             id, new PersistentDimension(id, pack, dimension, entry.getLong("seed")));
                     if (previous != null) {
-                        throw new IllegalArgumentException("duplicate id '" + id + "'");
+                        LOGGER.warn("Iris persistent dimension registry entry {} in {} duplicates id '{}'; keeping the first",
+                                index, file, id);
                     }
                 } catch (RuntimeException invalidEntry) {
-                    LOGGER.error("Iris persistent dimension registry entry {} in {} is invalid; skipping only that entry",
-                            index, file, invalidEntry);
+                    if (raw != null) {
+                        unparsed.add(raw);
+                    }
+                    LOGGER.warn("Iris persistent dimension registry entry {} in {} is invalid ({}); kept verbatim: {}",
+                            index, file, invalidEntry.getMessage(), raw);
                 }
             }
-            return new ArrayList<>(deduplicated.values());
+            return new Contents(new ArrayList<>(deduplicated.values()), unparsed);
         } catch (RuntimeException | IOException e) {
             throw new IllegalStateException("Iris persistent dimension registry at " + file
                     + " could not be read; refusing to discard persistent worlds", e);
@@ -91,15 +101,19 @@ public final class ModdedDimensionRegistryStore {
     }
 
     public static synchronized void put(MinecraftServer server, PersistentDimension dimension) {
-        Map<String, PersistentDimension> current = index(load(server));
+        Path file = storeFile(server);
+        Contents contents = contents(file);
+        Map<String, PersistentDimension> current = index(contents.dimensions());
         current.put(dimension.id(), dimension);
-        write(server, new ArrayList<>(current.values()));
+        write(file, new ArrayList<>(current.values()), contents.unparsed());
     }
 
     public static synchronized void remove(MinecraftServer server, String id) {
-        Map<String, PersistentDimension> current = index(load(server));
+        Path file = storeFile(server);
+        Contents contents = contents(file);
+        Map<String, PersistentDimension> current = index(contents.dimensions());
         if (current.remove(id) != null) {
-            write(server, new ArrayList<>(current.values()));
+            write(file, new ArrayList<>(current.values()), contents.unparsed());
         }
     }
 
@@ -119,11 +133,11 @@ public final class ModdedDimensionRegistryStore {
         return value;
     }
 
-    private static void write(MinecraftServer server, List<PersistentDimension> dimensions) {
-        write(storeFile(server), dimensions);
+    static void write(Path file, List<PersistentDimension> dimensions) {
+        write(file, dimensions, List.of());
     }
 
-    static void write(Path file, List<PersistentDimension> dimensions) {
+    private static void write(Path file, List<PersistentDimension> dimensions, List<Object> unparsed) {
         JSONArray entries = new JSONArray();
         for (PersistentDimension dimension : dimensions) {
             JSONObject entry = new JSONObject();
@@ -131,6 +145,9 @@ public final class ModdedDimensionRegistryStore {
             entry.put("pack", dimension.pack());
             entry.put("dimension", dimension.dimension());
             entry.put("seed", dimension.seed());
+            entries.put(entry);
+        }
+        for (Object entry : unparsed) {
             entries.put(entry);
         }
         JSONObject root = new JSONObject();
@@ -166,5 +183,8 @@ public final class ModdedDimensionRegistryStore {
     }
 
     public record PersistentDimension(String id, String pack, String dimension, long seed) {
+    }
+
+    private record Contents(List<PersistentDimension> dimensions, List<Object> unparsed) {
     }
 }

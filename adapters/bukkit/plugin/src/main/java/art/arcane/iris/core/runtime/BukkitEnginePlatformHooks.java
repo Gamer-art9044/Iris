@@ -24,6 +24,7 @@ import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.events.IrisEngineHotloadEvent;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.project.IrisProject;
+import art.arcane.iris.core.project.IrisCodeWorkspace;
 import art.arcane.iris.core.service.IrisApiEventSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.core.tools.WorldMaintenance;
@@ -41,7 +42,7 @@ import org.bukkit.World;
 public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
     @Override
     public void refreshWorkspace(Engine engine) {
-        new IrisProject(engine.getData().getDataFolder()).updateWorkspace();
+        new IrisCodeWorkspace(new IrisProject(engine.getData().getDataFolder())).updateWorkspace();
     }
 
     @Override

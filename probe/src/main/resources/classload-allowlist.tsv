@@ -76,11 +76,7 @@ art.arcane.iris.util.common.inventorygui.WindowResolution	BUKKIT_API	org.bukkit.
 art.arcane.iris.util.common.misc.Bindings	BUKKIT_API	org.bukkit.plugin.Plugin
 art.arcane.iris.util.common.misc.ServerProperties	SERVER_RUNTIME_FILE	server.properties
 art.arcane.iris.util.common.misc.SlimJar	BUKKIT_API	org.bukkit.plugin.Plugin
-art.arcane.iris.util.common.plugin.CommandDummy	BUKKIT_API	org.bukkit.command.CommandSender
-art.arcane.iris.util.common.plugin.Controller	BUKKIT_API	org.bukkit.event.Listener
-art.arcane.iris.util.common.plugin.IController	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.util.common.plugin.IrisService	BUKKIT_API	org.bukkit.event.Listener
-art.arcane.iris.util.common.plugin.RouterCommand	BUKKIT_API	org.bukkit.command.Command
 art.arcane.iris.util.common.plugin.VolmitPlugin	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.util.common.plugin.VolmitSender	BUKKIT_API	org.bukkit.command.CommandSender
 art.arcane.iris.util.common.plugin.chunk.ChunkTickets	BUKKIT_API	org.bukkit.event.Listener

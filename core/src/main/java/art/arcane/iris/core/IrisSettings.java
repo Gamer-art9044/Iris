@@ -31,10 +31,11 @@ import lombok.Data;
 import java.io.File;
 import java.io.IOException;
 
-@SuppressWarnings("SynchronizeOnNonFinalField")
 @Data
 public class IrisSettings {
-    public static IrisSettings settings;
+    private static final Object SETTINGS_LOCK = new Object();
+    private static final IrisSettings BOOTSTRAP_DEFAULTS = new IrisSettings();
+    public static volatile IrisSettings settings;
     private IrisSettingsGeneral general = new IrisSettingsGeneral();
     private IrisSettingsWorld world = new IrisSettingsWorld();
     private IrisSettingsGUI gui = new IrisSettingsGUI();
@@ -55,53 +56,82 @@ public class IrisSettings {
     }
 
     public static IrisSettings get() {
-        if (settings != null) {
-            return settings;
+        IrisSettings current = settings;
+
+        if (current != null) {
+            return current;
         }
 
-        settings = new IrisSettings();
+        if (Thread.holdsLock(SETTINGS_LOCK)) {
+            // read() logs and does IO, and the logging path calls back into get().
+            // Serve defaults instead of recursing into another disk read.
+            return BOOTSTRAP_DEFAULTS;
+        }
 
+        synchronized (SETTINGS_LOCK) {
+            current = settings;
+
+            if (current != null) {
+                return current;
+            }
+
+            current = read();
+            settings = current;
+            return current;
+        }
+    }
+
+    private static IrisSettings read() {
+        IrisSettings loaded = new IrisSettings();
         File s = IrisPlatforms.get().dataFile("settings.json");
 
         if (!s.exists()) {
             try {
-                IO.writeAll(s, new JSONObject(new Gson().toJson(settings)).toString(4));
+                IO.writeAll(s, new JSONObject(new Gson().toJson(loaded)).toString(4));
             } catch (JSONException | IOException e) {
                 e.printStackTrace();
                 IrisLogging.reportError(e);
             }
-        } else {
-            try {
-                String ss = IO.readAll(s);
-                settings = new Gson().fromJson(ss, IrisSettings.class);
-                migrateLegacyKeys(ss);
-                try {
-                    IO.writeAll(s, new JSONObject(new Gson().toJson(settings)).toString(4));
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            } catch (Throwable ee) {
-                // IrisLogging.reportError(ee); causes a self-reference & stackoverflow
-                IrisLogging.error("Configuration Error in settings.json! " + ee.getClass().getSimpleName() + ": " + ee.getMessage());
-            }
+
+            return loaded;
         }
 
-        return settings;
+        try {
+            String ss = IO.readAll(s);
+            IrisSettings parsed = new Gson().fromJson(ss, IrisSettings.class);
+
+            if (parsed != null) {
+                loaded = parsed;
+            }
+
+            migrateLegacyKeys(loaded, ss);
+
+            try {
+                IO.writeAll(s, new JSONObject(new Gson().toJson(loaded)).toString(4));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        } catch (Throwable ee) {
+            // IrisLogging.reportError(ee); causes a self-reference & stackoverflow
+            IrisLogging.error("Configuration Error in settings.json! " + ee.getClass().getSimpleName() + ": " + ee.getMessage());
+        }
+
+        return loaded;
     }
 
-    private static void migrateLegacyKeys(String rawJson) {
+    private static void migrateLegacyKeys(IrisSettings target, String rawJson) {
         JSONObject root = new JSONObject(rawJson);
         JSONObject worldObject = root.optJSONObject("world");
         if (worldObject == null || !worldObject.has("anbientEntitySpawningSystem")) {
             return;
         }
 
-        settings.getWorld().setAmbientEntitySpawningSystem(worldObject.optBoolean("anbientEntitySpawningSystem", settings.getWorld().isAmbientEntitySpawningSystem()));
+        target.getWorld().setAmbientEntitySpawningSystem(worldObject.optBoolean("anbientEntitySpawningSystem", target.getWorld().isAmbientEntitySpawningSystem()));
         IrisLogging.info("Migrated legacy settings key world.anbientEntitySpawningSystem -> world.ambientEntitySpawningSystem");
     }
 
     public static void invalidate() {
-        synchronized (settings) {
+        synchronized (SETTINGS_LOCK) {
             settings = null;
         }
     }
@@ -110,7 +140,7 @@ public class IrisSettings {
         File s = IrisPlatforms.get().dataFile("settings.json");
 
         try {
-            IO.writeAll(s, new JSONObject(new Gson().toJson(settings)).toString(4));
+            IO.writeAll(s, new JSONObject(new Gson().toJson(this)).toString(4));
         } catch (JSONException | IOException e) {
             e.printStackTrace();
             IrisLogging.reportError(e);
@@ -158,7 +188,6 @@ public class IrisSettings {
         private static final int MIN_RESIDENT_TECTONIC_PLATES = 16;
         private static final double MANTLE_HEAP_FRACTION = 0.6D;
         private static final int REFERENCE_PLATE_MEGABYTES = 48;
-        public boolean useTicketQueue = true;
         public IrisRuntimeSchedulerMode runtimeSchedulerMode = IrisRuntimeSchedulerMode.AUTO;
         public IrisPaperLikeBackendMode paperLikeBackendMode = IrisPaperLikeBackendMode.AUTO;
         public int chunkLoadTimeoutSeconds = 15;
@@ -276,7 +305,6 @@ public class IrisSettings {
     @Data
     public static class IrisSettingsGenerator {
         public String defaultWorldType = "overworld";
-        public int maxBiomeChildDepth = 4;
         public boolean preventLeafDecay = true;
     }
 
@@ -292,7 +320,6 @@ public class IrisSettings {
 
     @Data
     public static class IrisSettingsStudio {
-        public boolean studio = true;
         public boolean openVSCode = true;
         public boolean disableTimeAndWeather = true;
         public boolean entitySpawning = true;

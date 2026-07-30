@@ -21,34 +21,30 @@ package art.arcane.iris.engine.data.cache;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.function.NastySupplier;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 public class AtomicCache<T> {
-    private transient final AtomicReference<T> t;
-    private transient final AtomicBoolean set;
-    private transient final ReentrantLock lock;
+    private static final Object NULL_VALUE = new Object();
+    private transient final Object initLock = new Object();
     private transient final boolean nullSupport;
+    private transient volatile Object value;
 
     public AtomicCache() {
         this(false);
     }
 
     public AtomicCache(boolean nullSupport) {
-        set = nullSupport ? new AtomicBoolean() : null;
-        t = new AtomicReference<>();
-        lock = new ReentrantLock();
         this.nullSupport = nullSupport;
     }
 
     public void reset() {
-        t.set(null);
-
-        if (nullSupport) {
-            set.set(false);
+        synchronized (initLock) {
+            value = null;
         }
+    }
+
+    public T getIfPresent() {
+        return unwrap(value);
     }
 
     public T aquireNasty(NastySupplier<T> t) {
@@ -73,35 +69,41 @@ public class AtomicCache<T> {
     }
 
     public T aquire(Supplier<T> t) {
-        if (this.t.get() != null) {
-            return this.t.get();
-        } else if (nullSupport && set.get()) {
-            return null;
+        Object v = value;
+
+        if (v != null) {
+            return unwrap(v);
         }
 
-        lock.lock();
+        synchronized (initLock) {
+            v = value;
 
-        if (this.t.get() != null) {
-            lock.unlock();
-            return this.t.get();
-        } else if (nullSupport && set.get()) {
-            lock.unlock();
-            return null;
-        }
-
-        try {
-            this.t.set(t.get());
-
-            if (nullSupport) {
-                set.set(true);
+            if (v != null) {
+                return unwrap(v);
             }
-        } catch (Throwable e) {
-            IrisLogging.error("Atomic cache failure!");
-            e.printStackTrace();
+
+            try {
+                T computed = t.get();
+
+                if (computed != null) {
+                    value = computed;
+                    return computed;
+                }
+
+                if (nullSupport) {
+                    value = NULL_VALUE;
+                }
+            } catch (Throwable e) {
+                IrisLogging.error("Atomic cache failure!");
+                e.printStackTrace();
+            }
+
+            return null;
         }
+    }
 
-        lock.unlock();
-
-        return this.t.get();
+    @SuppressWarnings("unchecked")
+    private T unwrap(Object v) {
+        return v == null || v == NULL_VALUE ? null : (T) v;
     }
 }

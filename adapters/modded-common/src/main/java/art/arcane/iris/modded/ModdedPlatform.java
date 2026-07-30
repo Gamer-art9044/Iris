@@ -26,6 +26,7 @@ import art.arcane.iris.spi.PlatformEntityType;
 import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.spi.PlatformScheduler;
 import art.arcane.iris.spi.PlatformStructureHooks;
+import art.arcane.iris.spi.PlatformWorld;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -141,8 +142,8 @@ public final class ModdedPlatform implements IrisPlatform {
     }
 
     @Override
-    public boolean spawnEntity(Object world, String entityKey, double x, double y, double z) {
-        if (!(world instanceof ServerLevel level) || entityKey == null) {
+    public boolean spawnEntity(PlatformWorld world, String entityKey, double x, double y, double z) {
+        if (world == null || entityKey == null || !(world.nativeHandle() instanceof ServerLevel level)) {
             return false;
         }
         PlatformEntityType resolved = registries.entity(entityKey);

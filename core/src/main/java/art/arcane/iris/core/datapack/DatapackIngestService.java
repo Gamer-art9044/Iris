@@ -26,6 +26,7 @@ import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.ModrinthResolver.ResolvedDatapack;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.project.IrisProject;
+import art.arcane.iris.core.project.IrisCodeWorkspace;
 import art.arcane.iris.core.structure.BulkStructureImporter;
 import art.arcane.iris.core.structure.StructureImporter;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -45,11 +46,14 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -100,7 +104,7 @@ public final class DatapackIngestService {
             return;
         }
         try {
-            new IrisProject(data.getDataFolder()).updateWorkspace();
+            new IrisCodeWorkspace(new IrisProject(data.getDataFolder())).updateWorkspace();
         } catch (Throwable e) {
             IrisLogging.reportError(e);
         }
@@ -319,14 +323,41 @@ public final class DatapackIngestService {
             if (!force && installed && stripStateMatches) {
                 continue;
             }
-            if (!worldFolder.exists()) {
-                worldFolder.mkdirs();
+            if (!worldFolder.isDirectory() && !worldFolder.mkdirs() && !worldFolder.isDirectory()) {
+                throw new IOException("Couldn't create datapacks folder " + worldFolder.getPath());
             }
-            IO.delete(target);
-            IO.copyDirectory(stagedDir.toPath(), target.toPath());
-            if (stripOverrides) {
-                stripVanillaStructureOverrides(target);
-                writeMarker(marker);
+            // Stage outside the datapacks folder so a crash mid-copy can't leave a half-written pack for Minecraft to load.
+            File pendingRoot = worldFolder.getParentFile() == null
+                    ? new File(worldFolder, ".iris-datapack-install")
+                    : new File(worldFolder.getParentFile(), ".iris-datapack-install");
+            File pending = new File(pendingRoot, id);
+            IO.delete(pending);
+            try {
+                IO.copyDirectory(stagedDir.toPath(), pending.toPath());
+                if (stripOverrides) {
+                    stripVanillaStructureOverrides(pending);
+                    writeMarker(new File(pending, OVERRIDES_STRIPPED_MARKER));
+                }
+                if (!new File(pending, "pack.mcmeta").isFile()) {
+                    throw new IOException("Staged datapack " + id + " is missing pack.mcmeta");
+                }
+                IO.delete(target);
+                try {
+                    move(pending.toPath(), target.toPath());
+                } catch (IOException swapFailure) {
+                    IrisLogging.warn("Couldn't swap staged datapack " + id + " into " + target.getPath() + " (" + swapFailure.getMessage() + "); copying instead");
+                    try {
+                        IO.copyDirectory(pending.toPath(), target.toPath());
+                    } catch (UncheckedIOException copyFailure) {
+                        IO.delete(target);
+                        throw copyFailure.getCause();
+                    }
+                }
+            } catch (UncheckedIOException e) {
+                throw e.getCause();
+            } finally {
+                IO.delete(pending);
+                pendingRoot.delete();
             }
         }
     }
@@ -372,12 +403,8 @@ public final class DatapackIngestService {
         }
     }
 
-    private static void writeMarker(File marker) {
-        try {
-            Files.writeString(marker.toPath(), "stripped", StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            IrisLogging.reportError(e);
-        }
+    private static void writeMarker(File marker) throws IOException {
+        Files.writeString(marker.toPath(), "stripped", StandardCharsets.UTF_8);
     }
 
     private static void autoImportDatapackStructures() {
@@ -622,21 +649,43 @@ public final class DatapackIngestService {
             }
             return manifest;
         } catch (Exception e) {
-            IrisLogging.reportError(e);
+            IrisLogging.reportError("Unreadable datapack manifest " + file.getPath()
+                    + "; moving it to manifest.json.corrupt instead of overwriting it", e);
+            quarantine(file.toPath());
             return new Manifest();
         }
     }
 
-    private static void writeManifest(File root, Manifest manifest) {
-        File file = new File(root, "manifest.json");
+    private static void quarantine(Path file) {
         try {
-            File parent = file.getParentFile();
-            if (parent != null) {
-                parent.mkdirs();
-            }
-            Files.writeString(file.toPath(), GSON.toJson(manifest), StandardCharsets.UTF_8);
+            move(file, file.resolveSibling(file.getFileName().toString() + ".corrupt"));
         } catch (IOException e) {
-            IrisLogging.reportError(e);
+            IrisLogging.reportError("Failed to move aside corrupt datapack manifest " + file, e);
+        }
+    }
+
+    private static void writeManifest(File root, Manifest manifest) {
+        Path file = new File(root, "manifest.json").toPath();
+        try {
+            Path parent = file.getParent();
+            Files.createDirectories(parent);
+            Path temp = Files.createTempFile(parent, "manifest", ".json.tmp");
+            try {
+                Files.writeString(temp, GSON.toJson(manifest), StandardCharsets.UTF_8);
+                move(temp, file);
+            } finally {
+                Files.deleteIfExists(temp);
+            }
+        } catch (IOException e) {
+            IrisLogging.reportError("Failed to write datapack manifest " + file, e);
+        }
+    }
+
+    private static void move(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 

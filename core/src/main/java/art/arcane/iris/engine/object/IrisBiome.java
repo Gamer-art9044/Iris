@@ -31,15 +31,10 @@ import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import art.arcane.iris.engine.object.annotations.Required;
-import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
-import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.common.data.DataProvider;
-import art.arcane.iris.util.common.data.registry.RegistryUtil;
-import art.arcane.volmlib.util.data.VanillaBiomeColors;
-import art.arcane.volmlib.util.inventorygui.RandomColor;
 import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
@@ -54,13 +49,19 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.Accessors;
 import art.arcane.iris.spi.PlatformBlockState;
-import org.bukkit.NamespacedKey;
 import org.bukkit.block.Biome;
 
 import java.awt.Color;
 import java.util.EnumMap;
 import java.util.Objects;
 
+/**
+ * Represents a biome in a pack. This type is Gson deserialized straight out of user pack JSON, so
+ * the field block and the transient {@link AtomicCache} block below are load bearing and must not
+ * move. Behavior lives in the same-package companions:
+ * {@link IrisBiomeLayerGenerator}, {@link IrisBiomeDerivatives}, {@link IrisBiomeOres},
+ * {@link IrisBiomeColorRenderer} and {@link IrisBiomeGenLinks}.
+ */
 @Accessors(chain = true)
 @NoArgsConstructor
 @Desc("Represents a biome in iris. Biomes are placed inside of regions and hold objects.\nA biome consists of layers (block palletes), decorations, objects & generators.")
@@ -68,10 +69,6 @@ import java.util.Objects;
 @EqualsAndHashCode(callSuper = false)
 public class IrisBiome extends IrisRegistrant implements IRare {
     private static final int BIOME_GENERATOR_CACHE_SIZE = 8;
-
-    private static final class States {
-        private static final PlatformBlockState BARRIER = B.getState("BARRIER");
-    }
 
     private final transient AtomicCache<KMap<String, IrisBiomeGeneratorLink>> genCache = new AtomicCache<>();
     private final transient AtomicCache<KMap<String, Integer>> genCacheMax = new AtomicCache<>();
@@ -226,24 +223,23 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     private KList<IrisOreGenerator> ores = new KList<>();
 
     public PlatformBlockState generateOres(int x, int y, int z, RNG rng, IrisData data, boolean surface) {
-        KList<IrisOreGenerator> localOres = surface ? getSurfaceOres() : getUndergroundOres();
-        return generateOres(localOres, x, y, z, rng, data);
+        return IrisBiomeOres.generateOres(this, x, y, z, rng, data, surface);
     }
 
     public PlatformBlockState generateSurfaceOres(int x, int y, int z, RNG rng, IrisData data) {
-        return generateOres(getSurfaceOres(), x, y, z, rng, data);
+        return IrisBiomeOres.generateSurfaceOres(this, x, y, z, rng, data);
     }
 
     public PlatformBlockState generateUndergroundOres(int x, int y, int z, RNG rng, IrisData data) {
-        return generateOres(getUndergroundOres(), x, y, z, rng, data);
+        return IrisBiomeOres.generateUndergroundOres(this, x, y, z, rng, data);
     }
 
     public boolean hasSurfaceOres() {
-        return !getSurfaceOres().isEmpty();
+        return IrisBiomeOres.hasSurfaceOres(this);
     }
 
     public boolean hasUndergroundOres() {
-        return !getUndergroundOres().isEmpty();
+        return IrisBiomeOres.hasUndergroundOres(this);
     }
 
     public synchronized IrisBiome setInferredType(InferredType inferredType) {
@@ -277,22 +273,10 @@ public class IrisBiome extends IrisRegistrant implements IRare {
         return variant;
     }
 
-    private PlatformBlockState generateOres(KList<IrisOreGenerator> localOres, int x, int y, int z, RNG rng, IrisData data) {
-        if (localOres.isEmpty()) {
-            return null;
-        }
-
-        int oreCount = localOres.size();
-        for (int oreIndex = 0; oreIndex < oreCount; oreIndex++) {
-            IrisOreGenerator oreGenerator = localOres.get(oreIndex);
-            PlatformBlockState ore = oreGenerator.generate(x, y, z, rng, data);
-            if (ore != null) {
-                return ore;
-            }
-        }
-        return null;
-    }
-
+    /**
+     * Hand written override of the Lombok setter. It must stay here because it invalidates the ore
+     * caches that {@link IrisBiomeOres} reads.
+     */
     public void setOres(KList<IrisOreGenerator> ores) {
         this.ores = ores == null ? new KList<>() : ores;
         surfaceOreCache.reset();
@@ -302,118 +286,68 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     }
 
     public KList<IrisOreGenerator> getSurfaceOreGenerators() {
-        return getOres(true);
+        return IrisBiomeOres.getSurfaceOreGenerators(this);
     }
 
     public KList<IrisOreGenerator> getUndergroundOreGenerators() {
-        return getOres(false);
+        return IrisBiomeOres.getUndergroundOreGenerators(this);
     }
 
     public IrisOreGeneratorBounds getSurfaceOreGeneratorBounds() {
-        return surfaceOreBoundsCache.aquire(() -> IrisOreGeneratorBounds.of(getSurfaceOres()));
+        return IrisBiomeOres.getSurfaceOreGeneratorBounds(this);
     }
 
     public IrisOreGeneratorBounds getUndergroundOreGeneratorBounds() {
-        return undergroundOreBoundsCache.aquire(() -> IrisOreGeneratorBounds.of(getUndergroundOres()));
-    }
-
-    private KList<IrisOreGenerator> getSurfaceOres() {
-        return getOres(true);
-    }
-
-    private KList<IrisOreGenerator> getUndergroundOres() {
-        return getOres(false);
-    }
-
-    private KList<IrisOreGenerator> getOres(boolean surface) {
-        AtomicCache<KList<IrisOreGenerator>> oreCache = surface ? surfaceOreCache : undergroundOreCache;
-        return oreCache.aquire(() -> {
-            KList<IrisOreGenerator> filtered = new KList<>();
-            KList<IrisOreGenerator> localOres = ores;
-            int oreCount = localOres.size();
-            for (int oreIndex = 0; oreIndex < oreCount; oreIndex++) {
-                IrisOreGenerator oreGenerator = localOres.get(oreIndex);
-                if (oreGenerator.isGenerateSurface() == surface) {
-                    filtered.add(oreGenerator);
-                }
-            }
-
-            return filtered;
-        });
+        return IrisBiomeOres.getUndergroundOreGeneratorBounds(this);
     }
 
     public Biome getDerivative() {
-        return derivativeResolved.aquire(() -> resolveBiomeKey(derivative));
+        Biome cached = derivativeResolved.getIfPresent();
+
+        if (cached != null) {
+            return cached;
+        }
+
+        return derivativeResolved.aquire(() -> IrisBiomeDerivatives.resolveBiomeKey(derivative));
     }
 
     public Biome getVanillaDerivative() {
         Biome resolved = vanillaDerivative == null
                 ? null
-                : vanillaDerivativeResolved.aquire(() -> resolveBiomeKey(vanillaDerivative));
+                : vanillaDerivativeResolved.aquire(() -> IrisBiomeDerivatives.resolveBiomeKey(vanillaDerivative));
         return resolved == null ? getDerivative() : resolved;
     }
 
     public String getVanillaDerivativeKey() {
-        String resolved = namespacedBiomeKey(vanillaDerivative);
-        return resolved == null ? namespacedBiomeKey(derivative) : resolved;
+        return IrisBiomeDerivatives.getVanillaDerivativeKey(derivative, vanillaDerivative);
     }
 
     public String getStructureDerivativeKey() {
-        String key = getVanillaDerivativeKey();
-        if (key == null || !key.startsWith("minecraft:")) {
-            return key;
-        }
-        if (isSea() && !isVanillaSeaStructureBiome(key)) {
-            return "minecraft:the_void";
-        }
-        if (isShore() && !isVanillaShoreStructureBiome(key)) {
-            return "minecraft:beach";
-        }
-        return key;
+        return IrisBiomeDerivatives.getStructureDerivativeKey(this);
     }
 
     public String getDerivativeKey() {
-        return namespacedBiomeKey(derivative);
+        return IrisBiomeDerivatives.namespacedBiomeKey(derivative);
     }
 
-    private static String namespacedBiomeKey(String key) {
-        if (key == null || key.isBlank()) {
-            return null;
+    KList<Biome> getBiomeScatterResolved() {
+        KList<Biome> cached = biomeScatterResolved.getIfPresent();
+
+        if (cached != null) {
+            return cached;
         }
-        String trimmed = key.trim();
-        return trimmed.indexOf(':') >= 0 ? trimmed : "minecraft:" + trimmed;
+
+        return biomeScatterResolved.aquire(() -> IrisBiomeDerivatives.resolveBiomeKeys(biomeScatter));
     }
 
-    static boolean isVanillaSeaStructureBiome(String key) {
-        return key != null && (key.contains("ocean") || key.endsWith("river"));
-    }
+    KList<Biome> getBiomeSkyScatterResolved() {
+        KList<Biome> cached = biomeSkyScatterResolved.getIfPresent();
 
-    static boolean isVanillaShoreStructureBiome(String key) {
-        return key != null && (key.endsWith("beach") || key.endsWith("shore"));
-    }
-
-    private KList<Biome> getBiomeScatterResolved() {
-        return biomeScatterResolved.aquire(() -> resolveBiomeKeys(biomeScatter));
-    }
-
-    private KList<Biome> getBiomeSkyScatterResolved() {
-        return biomeSkyScatterResolved.aquire(() -> resolveBiomeKeys(biomeSkyScatter));
-    }
-
-    private static KList<Biome> resolveBiomeKeys(KList<String> keys) {
-        KList<Biome> resolved = new KList<>();
-        for (String key : keys) {
-            resolved.add(resolveBiomeKey(key));
+        if (cached != null) {
+            return cached;
         }
-        return resolved;
-    }
 
-    private static Biome resolveBiomeKey(String key) {
-        if (key == null) {
-            return null;
-        }
-        NamespacedKey namespacedKey = NamespacedKey.fromString(key);
-        return namespacedKey == null ? null : RegistryUtil.lookup(Biome.class).get(namespacedKey);
+        return biomeSkyScatterResolved.aquire(() -> IrisBiomeDerivatives.resolveBiomeKeys(biomeSkyScatter));
     }
 
     public boolean isCustom() {
@@ -421,74 +355,15 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     }
 
     public double getGenLinkMax(String loadKey, Engine engine) {
-        if (loadKey == null || loadKey.isBlank()) {
-            return 0;
-        }
-
-        Integer v = genCacheMax.aquire(() ->
-        {
-            KMap<String, Integer> l = new KMap<>();
-
-            for (IrisBiomeGeneratorLink i : getGenerators()) {
-                String generatorKey = i.getGenerator();
-                if (generatorKey == null || generatorKey.isBlank()) {
-                    continue;
-                }
-
-                l.put(generatorKey, i.getMax());
-
-            }
-
-            return l;
-        }).get(loadKey);
-
-        return v == null ? 0 : v;
+        return IrisBiomeGenLinks.getGenLinkMax(this, loadKey, engine);
     }
 
     public double getGenLinkMin(String loadKey, Engine engine) {
-        if (loadKey == null || loadKey.isBlank()) {
-            return 0;
-        }
-
-        Integer v = genCacheMin.aquire(() ->
-        {
-            KMap<String, Integer> l = new KMap<>();
-
-            for (IrisBiomeGeneratorLink i : getGenerators()) {
-                String generatorKey = i.getGenerator();
-                if (generatorKey == null || generatorKey.isBlank()) {
-                    continue;
-                }
-
-                l.put(generatorKey, i.getMin());
-            }
-
-            return l;
-        }).get(loadKey);
-
-        return v == null ? 0 : v;
+        return IrisBiomeGenLinks.getGenLinkMin(this, loadKey, engine);
     }
 
     public IrisBiomeGeneratorLink getGenLink(String loadKey) {
-        if (loadKey == null || loadKey.isBlank()) {
-            return null;
-        }
-
-        return genCache.aquire(() ->
-        {
-            KMap<String, IrisBiomeGeneratorLink> l = new KMap<>();
-
-            for (IrisBiomeGeneratorLink i : getGenerators()) {
-                String generatorKey = i.getGenerator();
-                if (generatorKey == null || generatorKey.isBlank()) {
-                    continue;
-                }
-
-                l.put(generatorKey, i);
-            }
-
-            return l;
-        }).get(loadKey);
+        return IrisBiomeGenLinks.getGenLink(this, loadKey);
     }
 
     public IrisBiome getRealCarvingBiome(IrisData data) {
@@ -585,250 +460,43 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     }
 
     public KList<PlatformBlockState> generateLayers(IrisDimension dim, double wx, double wz, RNG random, int maxDepth, int height, IrisData rdata, IrisComplex complex) {
-        if (isLockLayers()) {
-            return generateLockedLayers(wx, wz, random, maxDepth, height, rdata, complex);
-        }
-
-        KList<PlatformBlockState> data = new KList<>();
-
-        if (maxDepth <= 0) {
-            return data;
-        }
-
-        for (int i = 0; i < layers.size(); i++) {
-            CNG hgen = getLayerHeightGenerators(random, rdata).get(i);
-            double d = hgen.fit(layers.get(i).getMinHeight(), layers.get(i).getMaxHeight(), wx / layers.get(i).getZoom(), wz / layers.get(i).getZoom());
-
-            IrisSlopeClip sc = getLayers().get(i).getSlopeCondition();
-
-            if (!sc.isDefault()) {
-                if (!sc.isValid(complex.getSlopeStream().get(wx, wz))) {
-                    d = 0;
-                }
-            }
-
-            if (d <= 0) {
-                continue;
-            }
-
-            for (int j = 0; j < d; j++) {
-                if (data.size() >= maxDepth) {
-                    break;
-                }
-
-                try {
-                    data.add(getLayers().get(i).get(random.nextParallelRNG(i + j), (wx + j) / layers.get(i).getZoom(), j, (wz - j) / layers.get(i).getZoom(), rdata));
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
-                    e.printStackTrace();
-                }
-            }
-
-            if (data.size() >= maxDepth) {
-                break;
-            }
-
-            if (dim.isExplodeBiomePalettes()) {
-                for (int j = 0; j < dim.getExplodeBiomePaletteSize(); j++) {
-                    data.add(States.BARRIER);
-
-                    if (data.size() >= maxDepth) {
-                        break;
-                    }
-                }
-            }
-        }
-
-        return data;
+        return IrisBiomeLayerGenerator.generateLayers(this, dim, wx, wz, random, maxDepth, height, rdata, complex);
     }
 
     public KList<PlatformBlockState> generateCeilingLayers(IrisDimension dim, double wx, double wz, RNG random, int maxDepth, int height, IrisData rdata, IrisComplex complex) {
-        KList<PlatformBlockState> data = new KList<>();
-
-        if (maxDepth <= 0) {
-            return data;
-        }
-
-        for (int i = 0; i < caveCeilingLayers.size(); i++) {
-            CNG hgen = getLayerHeightGenerators(random, rdata).get(i);
-            double d = hgen.fit(caveCeilingLayers.get(i).getMinHeight(), caveCeilingLayers.get(i).getMaxHeight(), wx / caveCeilingLayers.get(i).getZoom(), wz / caveCeilingLayers.get(i).getZoom());
-
-            if (d <= 0) {
-                continue;
-            }
-
-            for (int j = 0; j < d; j++) {
-                if (data.size() >= maxDepth) {
-                    break;
-                }
-
-                try {
-                    data.add(getCaveCeilingLayers().get(i).get(random.nextParallelRNG(i + j), (wx + j) / caveCeilingLayers.get(i).getZoom(), j, (wz - j) / caveCeilingLayers.get(i).getZoom(), rdata));
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
-                    e.printStackTrace();
-                }
-            }
-
-            if (data.size() >= maxDepth) {
-                break;
-            }
-
-            if (dim.isExplodeBiomePalettes()) {
-                for (int j = 0; j < dim.getExplodeBiomePaletteSize(); j++) {
-                    data.add(States.BARRIER);
-
-                    if (data.size() >= maxDepth) {
-                        break;
-                    }
-                }
-            }
-        }
-
-        return data;
+        return IrisBiomeLayerGenerator.generateCeilingLayers(this, dim, wx, wz, random, maxDepth, height, rdata, complex);
     }
 
     public KList<PlatformBlockState> generateLockedLayers(double wx, double wz, RNG random, int maxDepthf, int height, IrisData rdata, IrisComplex complex) {
-        KList<PlatformBlockState> data = new KList<>();
-        KList<PlatformBlockState> real = new KList<>();
-        int maxDepth = Math.min(maxDepthf, getLockLayersMax());
-        if (maxDepth <= 0) {
-            return data;
-        }
-
-        for (int i = 0; i < layers.size(); i++) {
-            CNG hgen = getLayerHeightGenerators(random, rdata).get(i);
-            double d = hgen.fit(layers.get(i).getMinHeight(), layers.get(i).getMaxHeight(), wx / layers.get(i).getZoom(), wz / layers.get(i).getZoom());
-
-            IrisSlopeClip sc = getLayers().get(i).getSlopeCondition();
-
-            if (!sc.isDefault()) {
-                if (!sc.isValid(complex.getSlopeStream().get(wx, wz))) {
-                    d = 0;
-                }
-            }
-
-            if (d <= 0) {
-                continue;
-            }
-
-            for (int j = 0; j < d; j++) {
-                try {
-                    data.add(getLayers().get(i).get(random.nextParallelRNG(i + j), (wx + j) / layers.get(i).getZoom(), j, (wz - j) / layers.get(i).getZoom(), rdata));
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
-                    e.printStackTrace();
-                }
-            }
-        }
-
-        if (data.isEmpty()) {
-            return real;
-        }
-
-        for (int i = 0; i < maxDepth; i++) {
-            int offset = (512 - height) - i;
-            int index = offset % data.size();
-            real.add(data.get(Math.max(index, 0)));
-        }
-
-        return real;
-    }
-
-    public int getMaxHeight(Engine engine) {
-        return maxHeight.aquire(() ->
-        {
-            int maxHeight = 0;
-
-            for (IrisBiomeGeneratorLink i : getGenerators()) {
-                maxHeight += i.getMax();
-            }
-
-            return maxHeight;
-        });
-    }
-
-    public int getMaxWithObjectHeight(IrisData data, Engine engine) {
-        return maxWithObjectHeight.aquire(() ->
-        {
-            int maxHeight = 0;
-
-            for (IrisBiomeGeneratorLink i : getGenerators()) {
-                maxHeight += i.getMax();
-            }
-
-            int gg = 0;
-
-            for (IrisObjectPlacement i : getObjects()) {
-                for (IrisObject j : data.getObjectLoader().loadAll(i.getPlace())) {
-                    gg = Math.max(gg, j.getH());
-                }
-            }
-
-            return maxHeight + gg + 3;
-        });
+        return IrisBiomeLayerGenerator.generateLockedLayers(this, wx, wz, random, maxDepthf, height, rdata, complex);
     }
 
     public KList<PlatformBlockState> generateSeaLayers(double wx, double wz, RNG random, int maxDepth, IrisData rdata) {
-        KList<PlatformBlockState> data = new KList<>();
+        return IrisBiomeLayerGenerator.generateSeaLayers(this, wx, wz, random, maxDepth, rdata);
+    }
 
-        for (int i = 0; i < seaLayers.size(); i++) {
-            CNG hgen = getLayerSeaHeightGenerators(random, rdata).get(i);
-            int d = hgen.fit(seaLayers.get(i).getMinHeight(), seaLayers.get(i).getMaxHeight(), wx / seaLayers.get(i).getZoom(), wz / seaLayers.get(i).getZoom());
+    /**
+     * Note the arity split: {@code getMaxHeight()} is the Lombok getter for the height cache field,
+     * {@code getMaxHeight(Engine)} is the resolved biome height.
+     */
+    public int getMaxHeight(Engine engine) {
+        return IrisBiomeLayerGenerator.getMaxHeight(this, engine);
+    }
 
-            if (d < 0) {
-                continue;
-            }
-
-            for (int j = 0; j < d; j++) {
-                if (data.size() >= maxDepth) {
-                    break;
-                }
-
-                try {
-                    data.add(getSeaLayers().get(i).get(random.nextParallelRNG(i + j), (wx + j) / seaLayers.get(i).getZoom(), j, (wz - j) / seaLayers.get(i).getZoom(), rdata));
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
-                    e.printStackTrace();
-                }
-            }
-
-            if (data.size() >= maxDepth) {
-                break;
-            }
-        }
-
-        return data;
+    public int getMaxWithObjectHeight(IrisData data, Engine engine) {
+        return IrisBiomeLayerGenerator.getMaxWithObjectHeight(this, data, engine);
     }
 
     public KList<CNG> getLayerHeightGenerators(RNG rng, IrisData rdata) {
-        return layerHeightGenerators.aquire(() ->
-        {
-            KList<CNG> layerHeightGenerators = new KList<>();
-
-            int m = 7235;
-
-            for (IrisBiomePaletteLayer i : getLayers()) {
-                layerHeightGenerators.add(i.getHeightGenerator(rng.nextParallelRNG((m++) * m * m * m), rdata));
-            }
-
-            return layerHeightGenerators;
-        });
+        return IrisBiomeLayerGenerator.getLayerHeightGenerators(this, rng, rdata);
     }
 
     public KList<CNG> getLayerSeaHeightGenerators(RNG rng, IrisData data) {
-        return layerSeaHeightGenerators.aquire(() ->
-        {
-            KList<CNG> layerSeaHeightGenerators = new KList<>();
+        return IrisBiomeLayerGenerator.getLayerSeaHeightGenerators(this, rng, data);
+    }
 
-            int m = 7735;
-
-            for (IrisBiomePaletteLayer i : getSeaLayers()) {
-                layerSeaHeightGenerators.add(i.getHeightGenerator(rng.nextParallelRNG((m++) * m * m * m), data));
-            }
-
-            return layerSeaHeightGenerators;
-        });
+    public PlatformBlockState getSurfaceBlock(int x, int z, RNG rng, IrisData idm) {
+        return IrisBiomeLayerGenerator.getSurfaceBlock(this, x, z, rng, idm);
     }
 
     public boolean isLand() {
@@ -859,31 +527,19 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     }
 
     public Biome getSkyBiome(RNG rng, double x, double y, double z) {
-        return getSkyBiome(rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
+        return IrisBiomeDerivatives.getSkyBiome(this, rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
     }
 
     public Biome getSkyBiome(RNG rng, Engine engine, double x, double y, double z) {
-        if (biomeSkyScatter.size() == 1) {
-            return getBiomeSkyScatterResolved().get(0);
-        }
-
-        if (biomeSkyScatter.isEmpty()) {
-            return getGroundBiome(rng, engine, x, y, z);
-        }
-
-        return getBiomeSkyScatterResolved().get(getBiomeGenerator(rng, engine).fit(0, biomeSkyScatter.size() - 1, x, y, z));
+        return IrisBiomeDerivatives.getSkyBiome(this, rng, engine, x, y, z);
     }
 
     public IrisBiomeCustom getCustomBiome(RNG rng, double x, double y, double z) {
-        return getCustomBiome(rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
+        return IrisBiomeDerivatives.getCustomBiome(this, rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
     }
 
     public IrisBiomeCustom getCustomBiome(RNG rng, Engine engine, double x, double y, double z) {
-        if (customDerivitives.size() == 1) {
-            return customDerivitives.get(0);
-        }
-
-        return customDerivitives.get(getBiomeGenerator(rng, engine).fit(0, customDerivitives.size() - 1, x, y, z));
+        return IrisBiomeDerivatives.getCustomBiome(this, rng, engine, x, y, z);
     }
 
     public KList<IrisBiome> getRealChildren(DataProvider g) {
@@ -916,116 +572,31 @@ public class IrisBiome extends IrisRegistrant implements IRare {
 
     //TODO: Test
     public Biome getGroundBiome(RNG rng, double x, double y, double z) {
-        return getGroundBiome(rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
+        return IrisBiomeDerivatives.getGroundBiome(this, rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
     }
 
     public Biome getGroundBiome(RNG rng, Engine engine, double x, double y, double z) {
-        if (biomeScatter.isEmpty()) {
-            return getDerivative();
-        }
-
-        if (biomeScatter.size() == 1) {
-            return getBiomeScatterResolved().get(0);
-        }
-
-        return getBiomeGenerator(rng, engine).fit(getBiomeScatterResolved(), x, y, z);
+        return IrisBiomeDerivatives.getGroundBiome(this, rng, engine, x, y, z);
     }
 
     public String getSkyBiomeKey(RNG rng, double x, double y, double z) {
-        return getSkyBiomeKey(rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
+        return IrisBiomeDerivatives.getSkyBiomeKey(this, rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
     }
 
     public String getSkyBiomeKey(RNG rng, Engine engine, double x, double y, double z) {
-        if (biomeSkyScatter.size() == 1) {
-            return namespacedBiomeKey(biomeSkyScatter.get(0));
-        }
-
-        if (biomeSkyScatter.isEmpty()) {
-            return getGroundBiomeKey(rng, engine, x, y, z);
-        }
-
-        return namespacedBiomeKey(biomeSkyScatter.get(getBiomeGenerator(rng, engine).fit(0, biomeSkyScatter.size() - 1, x, y, z)));
+        return IrisBiomeDerivatives.getSkyBiomeKey(this, rng, engine, x, y, z);
     }
 
     public String getGroundBiomeKey(RNG rng, double x, double y, double z) {
-        return getGroundBiomeKey(rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
+        return IrisBiomeDerivatives.getGroundBiomeKey(this, rng, resolveBiomeGeneratorEngine(getLoader()), x, y, z);
     }
 
     public String getGroundBiomeKey(RNG rng, Engine engine, double x, double y, double z) {
-        if (biomeScatter.isEmpty()) {
-            return namespacedBiomeKey(derivative);
-        }
-
-        if (biomeScatter.size() == 1) {
-            return namespacedBiomeKey(biomeScatter.get(0));
-        }
-
-        return namespacedBiomeKey(biomeScatter.get(getBiomeGenerator(rng, engine).fit(0, biomeScatter.size() - 1, x, y, z)));
-    }
-
-    public PlatformBlockState getSurfaceBlock(int x, int z, RNG rng, IrisData idm) {
-        if (getLayers().isEmpty()) {
-            return B.getState("AIR");
-        }
-
-        return getLayers().get(0).get(rng, x, 0, z, idm);
+        return IrisBiomeDerivatives.getGroundBiomeKey(this, rng, engine, x, y, z);
     }
 
     public Color getColor(Engine engine, RenderType type) {
-        switch (type) {
-            case BIOME, HEIGHT, CAVE_LAND, REGION, BIOME_SEA, BIOME_LAND -> {
-                return this.cacheColor.aquire(() -> {
-                    if (this.color == null) {
-                        RandomColor randomColor = new RandomColor(getName().hashCode());
-                        String vanillaKey = this.getVanillaDerivativeKey();
-                        RandomColor.Color col = vanillaKey == null ? null : VanillaBiomeColors.getColorType(vanillaKey);
-                        if (col == null) {
-                            IrisLogging.warn("No vanilla biome found for " + getName());
-                            return new Color(randomColor.randomColor());
-                        }
-                        RandomColor.Luminosity lum = VanillaBiomeColors.getColorLuminosity(vanillaKey);
-                        RandomColor.SaturationType sat = VanillaBiomeColors.getColorSaturation(vanillaKey);
-                        int newColorI = randomColor.randomColor(col, col == RandomColor.Color.MONOCHROME ? RandomColor.SaturationType.MONOCHROME : sat, lum);
-
-                        return new Color(newColorI);
-                    }
-
-                    try {
-                        return Color.decode(this.color);
-                    } catch (NumberFormatException e) {
-                        IrisLogging.warn("Could not parse color \"" + this.color + "\" for biome " + getName());
-                        return new Color(new RandomColor(getName().hashCode()).randomColor());
-                    }
-                });
-            }
-            case OBJECT_LOAD -> {
-                return cacheColorObjectDensity.aquire(() -> {
-                    double density = 0;
-
-                    for (IrisObjectPlacement i : getObjects()) {
-                        density += i.getDensity() * i.getChance();
-                    }
-
-                    return Color.getHSBColor(0.225f, (float) (density / engine.getMaxBiomeObjectDensity()), 1f);
-                });
-            }
-            case DECORATOR_LOAD -> {
-                return cacheColorDecoratorLoad.aquire(() -> {
-                    double density = 0;
-
-                    for (IrisDecorator i : getDecorators()) {
-                        density += i.getChance() * Math.min(1, i.getStackMax()) * 256;
-                    }
-
-                    return Color.getHSBColor(0.41f, (float) (density / engine.getMaxBiomeDecoratorDensity()), 1f);
-                });
-            }
-            case LAYER_LOAD -> {
-                return cacheColorLayerLoad.aquire(() -> Color.getHSBColor(0.625f, (float) (getLayers().size() / engine.getMaxBiomeLayerDensity()), 1f));
-            }
-        }
-
-        return Color.black;
+        return IrisBiomeColorRenderer.getColor(this, engine, type);
     }
 
     @Override

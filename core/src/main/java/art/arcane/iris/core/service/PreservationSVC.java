@@ -86,6 +86,10 @@ public class PreservationSVC implements IrisService, PreservationRegistry {
                 return 60000;
             }
         };
+        dereferencer.setName("Iris Preservation");
+        dereferencer.setDaemon(true);
+        dereferencer.setPriority(Thread.MIN_PRIORITY);
+        dereferencer.start();
     }
 
     @Override

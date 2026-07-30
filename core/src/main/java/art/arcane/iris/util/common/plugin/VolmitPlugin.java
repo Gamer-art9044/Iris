@@ -20,40 +20,22 @@ package art.arcane.iris.util.common.plugin;
 
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
-import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.io.IO;
-import art.arcane.volmlib.util.math.M;
-import art.arcane.volmlib.util.reflect.V;
 import art.arcane.iris.util.common.scheduling.J;
 import org.bukkit.Bukkit;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandMap;
-import org.bukkit.command.CommandSender;
-import org.bukkit.command.PluginCommand;
-import org.bukkit.command.SimpleCommandMap;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
-import org.bukkit.permissions.PermissionDefault;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Modifier;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
 
 @SuppressWarnings("EmptyMethod")
 public abstract class VolmitPlugin extends JavaPlugin implements Listener {
     public static final boolean bad = false;
     private final KList<Runnable> postShutdown = new KList<>();
-    private KMap<KList<String>, VirtualCommand> commands;
-    private KList<MortarCommand> commandCache;
-    private KList<MortarPermission> permissionCache;
 
     public File getJarFile() {
         return getFile();
@@ -84,9 +66,6 @@ public abstract class VolmitPlugin extends JavaPlugin implements Listener {
     }
 
     public void onEnable() {
-        registerInstance();
-        registerPermissions();
-        registerCommands();
         J.a(this::outputInfo);
         registerListener(this);
         start();
@@ -94,9 +73,6 @@ public abstract class VolmitPlugin extends JavaPlugin implements Listener {
 
     public void unregisterAll() {
         unregisterListeners();
-        unregisterCommands();
-        unregisterPermissions();
-        unregisterInstance();
     }
 
     private void outputInfo() {
@@ -104,58 +80,9 @@ public abstract class VolmitPlugin extends JavaPlugin implements Listener {
             IO.delete(getDataFolder("info"));
             getDataFolder("info").mkdirs();
             outputPluginInfo();
-            outputCommandInfo();
-            outputPermissionInfo();
         } catch (Throwable e) {
             IrisLogging.reportError(e);
 
-        }
-    }
-
-    private void outputPermissionInfo() throws IOException {
-        FileConfiguration fc = new YamlConfiguration();
-
-        for (MortarPermission i : permissionCache) {
-            chain(i, fc);
-        }
-
-        fc.save(getDataFile("info", "permissions.yml"));
-    }
-
-    private void chain(MortarPermission i, FileConfiguration fc) {
-        KList<String> ff = new KList<>();
-
-        for (MortarPermission j : i.getChildren()) {
-            ff.add(j.getFullNode());
-        }
-
-        fc.set(i.getFullNode().replaceAll("\\Q.\\E", ",") + "." + "description", i.getDescription());
-        fc.set(i.getFullNode().replaceAll("\\Q.\\E", ",") + "." + "default", i.isDefault());
-        fc.set(i.getFullNode().replaceAll("\\Q.\\E", ",") + "." + "children", ff);
-
-        for (MortarPermission j : i.getChildren()) {
-            chain(j, fc);
-        }
-    }
-
-    private void outputCommandInfo() throws IOException {
-        FileConfiguration fc = new YamlConfiguration();
-
-        for (MortarCommand i : commandCache) {
-            chain(i, "/", fc);
-        }
-
-        fc.save(getDataFile("info", "commands.yml"));
-    }
-
-    private void chain(MortarCommand i, String c, FileConfiguration fc) {
-        String n = c + (c.length() == 1 ? "" : " ") + i.getNode();
-        fc.set(n + "." + "description", i.getDescription());
-        fc.set(n + "." + "required-permissions", i.getRequiredPermissions());
-        fc.set(n + "." + "aliases", i.getAllNodes());
-
-        for (MortarCommand j : i.getChildren()) {
-            chain(j, n, fc);
         }
     }
 
@@ -166,299 +93,12 @@ public abstract class VolmitPlugin extends JavaPlugin implements Listener {
         fc.save(getDataFile("info", "plugin.yml"));
     }
 
-    private void registerPermissions() {
-        permissionCache = new KList<>();
-
-        for (Field i : getClass().getDeclaredFields()) {
-            if (i.isAnnotationPresent(Permission.class)) {
-                try {
-                    i.setAccessible(true);
-                    MortarPermission pc = (MortarPermission) i.getType().getConstructor().newInstance();
-                    i.set(Modifier.isStatic(i.getModifiers()) ? null : this, pc);
-                    registerPermission(pc);
-                    permissionCache.add(pc);
-                    v("Registered Permissions " + pc.getFullNode() + " (" + i.getName() + ")");
-                } catch (IllegalArgumentException | IllegalAccessException | InstantiationException |
-                         InvocationTargetException | NoSuchMethodException | SecurityException e) {
-                    IrisLogging.reportError(e);
-                    w("Failed to register permission (field " + i.getName() + ")");
-                    e.printStackTrace();
-                }
-            }
-        }
-
-        for (org.bukkit.permissions.Permission i : computePermissions()) {
-            try {
-                Bukkit.getPluginManager().addPermission(i);
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
-
-            }
-        }
-    }
-
-    private KList<org.bukkit.permissions.Permission> computePermissions() {
-        KList<org.bukkit.permissions.Permission> g = new KList<>();
-        for (Field i : getClass().getDeclaredFields()) {
-            if (i.isAnnotationPresent(Permission.class)) {
-                try {
-                    MortarPermission x = (MortarPermission) i.get(Modifier.isStatic(i.getModifiers()) ? null : this);
-                    g.add(toPermission(x));
-                    g.addAll(computePermissions(x));
-                } catch (IllegalArgumentException | IllegalAccessException | SecurityException e) {
-                    IrisLogging.reportError(e);
-                    e.printStackTrace();
-                }
-            }
-        }
-
-        return g.removeDuplicates();
-    }
-
-    private KList<org.bukkit.permissions.Permission> computePermissions(MortarPermission p) {
-        KList<org.bukkit.permissions.Permission> g = new KList<>();
-
-        if (p == null) {
-            return g;
-        }
-
-        for (MortarPermission i : p.getChildren()) {
-            if (i == null) {
-                continue;
-            }
-
-            g.add(toPermission(i));
-            g.addAll(computePermissions(i));
-        }
-
-        return g;
-    }
-
-    private org.bukkit.permissions.Permission toPermission(MortarPermission p) {
-        if (p == null) {
-            return null;
-        }
-
-        org.bukkit.permissions.Permission perm = new org.bukkit.permissions.Permission(p.getFullNode() + (p.hasParent() ? "" : ".*"));
-        perm.setDescription(p.getDescription() == null ? "" : p.getDescription());
-        perm.setDefault(p.isDefault() ? PermissionDefault.TRUE : PermissionDefault.OP);
-
-        for (MortarPermission i : p.getChildren()) {
-            perm.getChildren().put(i.getFullNode(), true);
-        }
-
-        return perm;
-    }
-
-    private void registerPermission(MortarPermission pc) {
-
-    }
-
     @Override
     public void onDisable() {
         stop();
         J.cancelPluginTasks();
         unregisterListener(this);
         unregisterAll();
-    }
-
-    private void tickController(IController i) {
-        if (bad) {
-            return;
-        }
-
-        if (i.getTickInterval() < 0) {
-            return;
-        }
-
-        M.tick++;
-        if (M.interval(i.getTickInterval())) {
-            try {
-                i.tick();
-            } catch (Throwable e) {
-                w("Failed to tick controller " + i.getName());
-                e.printStackTrace();
-                IrisLogging.reportError(e);
-            }
-        }
-    }
-
-    private void registerInstance() {
-        if (bad) {
-            return;
-        }
-        for (Field i : getClass().getDeclaredFields()) {
-            if (i.isAnnotationPresent(Instance.class)) {
-                try {
-                    i.setAccessible(true);
-                    i.set(Modifier.isStatic(i.getModifiers()) ? null : this, this);
-                    v("Registered Instance " + i.getName());
-                } catch (IllegalArgumentException | IllegalAccessException | SecurityException e) {
-                    w("Failed to register instance (field " + i.getName() + ")");
-                    e.printStackTrace();
-                    IrisLogging.reportError(e);
-                }
-            }
-        }
-    }
-
-    private void unregisterInstance() {
-        if (bad) {
-            return;
-        }
-        for (Field i : getClass().getDeclaredFields()) {
-            if (i.isAnnotationPresent(Instance.class)) {
-                try {
-                    i.setAccessible(true);
-                    i.set(Modifier.isStatic(i.getModifiers()) ? null : this, null);
-                    v("Unregistered Instance " + i.getName());
-                } catch (IllegalArgumentException | IllegalAccessException | SecurityException e) {
-                    w("Failed to unregister instance (field " + i.getName() + ")");
-                    e.printStackTrace();
-                    IrisLogging.reportError(e);
-                }
-            }
-        }
-    }
-
-    private void registerCommands() {
-        if (bad) {
-            return;
-        }
-        commands = new KMap<>();
-        commandCache = new KList<>();
-
-        for (Field i : getClass().getDeclaredFields()) {
-            if (i.isAnnotationPresent(art.arcane.iris.util.common.plugin.Command.class)) {
-                try {
-                    i.setAccessible(true);
-                    MortarCommand pc = (MortarCommand) i.getType().getConstructor().newInstance();
-                    art.arcane.iris.util.common.plugin.Command c = i.getAnnotation(art.arcane.iris.util.common.plugin.Command.class);
-                    registerCommand(pc, c.value());
-                    commandCache.add(pc);
-                    v("Registered Commands /" + pc.getNode() + " (" + i.getName() + ")");
-                } catch (IllegalArgumentException | IllegalAccessException | InstantiationException |
-                         InvocationTargetException | NoSuchMethodException | SecurityException e) {
-                    w("Failed to register command (field " + i.getName() + ")");
-                    e.printStackTrace();
-                    IrisLogging.reportError(e);
-                }
-            }
-        }
-    }
-
-
-    @Override
-    public List<String> onTabComplete(CommandSender sender, Command command,
-                                      String alias, String[] args) {
-        if (commands == null || commands.isEmpty()) {
-            return super.onTabComplete(sender, command, alias, args);
-        }
-
-        KList<String> chain = new KList<>();
-
-        for (String i : args) {
-            if (i.trim().isEmpty()) {
-                continue;
-            }
-
-            chain.add(i.trim());
-        }
-
-        for (KList<String> i : commands.k()) {
-            for (String j : i) {
-                if (j.equalsIgnoreCase(alias)) {
-                    VirtualCommand cmd = commands.get(i);
-
-                    List<String> v = cmd.hitTab(sender, chain.copy(), alias);
-                    if (v != null) {
-                        return v;
-                    }
-                }
-            }
-        }
-
-        return super.onTabComplete(sender, command, alias, args);
-    }
-
-    @Override
-    public boolean onCommand(CommandSender sender, org.bukkit.command.Command command, String label, String[] args) {
-        if (bad) {
-            return false;
-        }
-        if (commands == null || commands.isEmpty()) {
-            return false;
-        }
-
-        KList<String> chain = new KList<>();
-        chain.add(args);
-
-        for (KList<String> i : commands.k()) {
-            for (String j : i) {
-                if (j.equalsIgnoreCase(label)) {
-                    VirtualCommand cmd = commands.get(i);
-
-                    if (cmd.hit(sender, chain.copy(), label)) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        return false;
-    }
-
-    public void registerCommand(ICommand cmd) {
-        registerCommand(cmd, "");
-    }
-
-    public void registerCommand(ICommand cmd, String subTag) {
-        if (bad) {
-            return;
-        }
-
-        commands.put(cmd.getAllNodes(), new VirtualCommand(cmd, subTag.trim().isEmpty() ? getTag() : getTag(subTag.trim())));
-        PluginCommand cc = getCommand(cmd.getNode().toLowerCase());
-
-        if (cc != null) {
-            cc.setExecutor(this);
-            cc.setUsage(getName() + ":" + getClass().toString() + ":" + cmd.getNode());
-        } else {
-            RouterCommand r = new RouterCommand(cmd, this);
-            r.setUsage(getName() + ":" + getClass().toString());
-            ((CommandMap) new V(Bukkit.getServer()).get("commandMap")).register("", r);
-        }
-    }
-
-    public void unregisterCommand(ICommand cmd) {
-        if (bad) {
-            return;
-        }
-        try {
-            SimpleCommandMap m = new V(Bukkit.getServer()).get("commandMap");
-
-            Map<String, Command> k = new V(m).get("knownCommands");
-
-            for (Iterator<Map.Entry<String, Command>> it = k.entrySet().iterator(); it.hasNext(); ) {
-                Map.Entry<String, Command> entry = it.next();
-                if (entry.getValue() instanceof Command) {
-                    org.bukkit.command.Command c = entry.getValue();
-                    String u = c.getUsage();
-
-                    if (u != null && u.equals(getName() + ":" + getClass().toString() + ":" + cmd.getNode())) {
-                        if (c.unregister(m)) {
-                            it.remove();
-                            v("Unregistered Command /" + cmd.getNode());
-                        } else {
-                            Bukkit.getConsoleSender().sendMessage(getTag() + "Failed to unregister command " + c.getName());
-                        }
-                    }
-                }
-            }
-        } catch (Throwable e) {
-            e.printStackTrace();
-            IrisLogging.reportError(e);
-        }
     }
 
     public String getTag() {
@@ -483,40 +123,6 @@ public abstract class VolmitPlugin extends JavaPlugin implements Listener {
             return;
         }
         HandlerList.unregisterAll((Listener) this);
-    }
-
-    public void unregisterCommands() {
-        if (bad) {
-            return;
-        }
-        if (commands == null || commands.isEmpty()) {
-            return;
-        }
-        for (VirtualCommand i : commands.v()) {
-            try {
-                unregisterCommand(i.getCommand());
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
-
-            }
-        }
-    }
-
-    private void unregisterPermissions() {
-        if (bad) {
-            return;
-        }
-        for (org.bukkit.permissions.Permission i : computePermissions()) {
-            if (i == null) {
-                continue;
-            }
-            try {
-                Bukkit.getPluginManager().removePermission(i);
-                v("Unregistered Permission " + i.getName());
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
-            }
-        }
     }
 
     public File getDataFile(String... strings) {

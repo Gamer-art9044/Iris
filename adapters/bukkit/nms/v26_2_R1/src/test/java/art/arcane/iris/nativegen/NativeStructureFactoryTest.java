@@ -95,7 +95,7 @@ public class NativeStructureFactoryTest {
                 new PiecesContainer(List.of(piece))
         );
 
-        StructureStart relocated = NativeStructurePostProcessor.relocateToMinY(
+        StructureStart relocated = NativeStructureVerticalPlacer.relocateToMinY(
                 start, source, -20, LevelHeightAccessor.create(-64, 384));
 
         assertNotSame(start, relocated);

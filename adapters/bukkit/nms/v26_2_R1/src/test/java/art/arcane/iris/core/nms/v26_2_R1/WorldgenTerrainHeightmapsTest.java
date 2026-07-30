@@ -1,5 +1,6 @@
 package art.arcane.iris.core.nms.v26_2_R1;
 
+import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;
 import com.mojang.serialization.Codec;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;

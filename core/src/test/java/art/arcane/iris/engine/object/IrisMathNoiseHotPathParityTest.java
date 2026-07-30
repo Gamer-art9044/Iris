@@ -1,7 +1,7 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.util.project.interpolation.InterpolationMethod3D;
-import art.arcane.iris.util.project.interpolation.IrisInterpolation;
+import art.arcane.iris.util.project.interpolation.Interpolation3D;
 import art.arcane.iris.util.project.noise.HexJamesNoise;
 import art.arcane.iris.util.project.noise.HexRandomSizeNoise;
 import art.arcane.volmlib.util.collection.KList;
@@ -55,12 +55,12 @@ public class IrisMathNoiseHotPathParityTest {
 
         assertEquals(
                 0.5231950552025616D,
-                IrisInterpolation.getNoise3D(InterpolationMethod3D.TRILINEAR, 5, 7, -3, 2.5D, 3.5D, 4.5D, provider),
+                Interpolation3D.getNoise3D(InterpolationMethod3D.TRILINEAR, 5, 7, -3, 2.5D, 3.5D, 4.5D, provider),
                 0D
         );
         assertEquals(
                 0.5259208842929466D,
-                IrisInterpolation.getNoise3D(InterpolationMethod3D.TRICUBIC, 5, 7, -3, 2.5D, 3.5D, 4.5D, provider),
+                Interpolation3D.getNoise3D(InterpolationMethod3D.TRICUBIC, 5, 7, -3, 2.5D, 3.5D, 4.5D, provider),
                 0D
         );
     }

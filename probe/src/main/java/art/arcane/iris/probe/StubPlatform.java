@@ -671,7 +671,7 @@ public final class StubPlatform implements IrisPlatform {
     }
 
     @Override
-    public boolean spawnEntity(Object world, String entityKey, double x, double y, double z) {
+    public boolean spawnEntity(PlatformWorld world, String entityKey, double x, double y, double z) {
         return false;
     }
 

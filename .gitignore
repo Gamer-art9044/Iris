@@ -20,8 +20,16 @@ TreeGenStuff/
 dist/
 core/plugins/
 adapters/bukkit/plugin/plugins/
-adapters/*/run/
-adapters/**/logs/*.gz
+
+# Dev-run artifacts. `run/` is a loom/ForgeGradle/ModDevGradle working directory and `logs/` is
+# server output; neither is ever source. No source directory in this repo is named run or logs.
+run/
+logs/
+*.log
+*.log.gz
+crash-reports/
+hs_err_pid*.log
+replay_pid*.log
 
 .codegraph/
 
@@ -40,12 +48,14 @@ local.properties
 credentials.json
 service-account*.json
 
-docs/*
-!docs/api/
-
-CROSSPLATFORM_PLAN.md
+# docs/ is hand-written and tracked (maintainer checklists + docs/api/). Nothing under it is
+# generated, so there is nothing to ignore here.
 
 .qa/
 .repro/
+
+# Throwaway worktree copies used by the API / PlaceholderAPI rebuild lanes. Generated, never source.
+.apiwt/
+.papiwt/
 
 __pycache__/

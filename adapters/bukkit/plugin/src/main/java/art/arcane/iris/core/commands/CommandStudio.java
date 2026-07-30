@@ -26,6 +26,7 @@ import art.arcane.iris.core.gui.NoiseExplorerGUI;
 import art.arcane.iris.core.gui.VisionGUI;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.project.IrisProject;
+import art.arcane.iris.core.project.IrisCodeWorkspace;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.core.service.BoardSVC;
 import art.arcane.iris.core.service.StudioSVC;
@@ -104,6 +105,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
@@ -114,6 +117,7 @@ import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
 @Director(name = "studio", aliases = {"std", "s"}, description = "Studio Commands", descriptionKey = "iris.director.commandstudio.director.studio_commands")
 public class CommandStudio implements DirectorExecutor {
+    private static final long CHUNK_SCAN_TIMEOUT_MS = 3_000;
     private CommandEdit edit;
     //private CommandDeepSearch deepSearch;
 
@@ -662,10 +666,18 @@ public class CommandStudio implements DirectorExecutor {
             @Param(description = "The location to spawn the entity at", descriptionKey = "iris.director.commandstudio.param.location_spawn_entity_at", contextual = true)
             Vector location
     ) {
+        VolmitSender commandSender = sender();
+        Engine spawnEngine = engine();
+
         if (!IrisToolbelt.isIrisWorld(player().getWorld())) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_YOU_HAVE_BE_IRIS_WORLD_SPAWN_ENTITIES_PROPERLY_TRYING_SPAWN));
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_YOU_HAVE_BE_IRIS_WORLD_SPAWN_ENTITIES_PROPERLY_TRYING_SPAWN));
         }
-        entity.spawn(engine(), new Location(world(), location.getX(), location.getY(), location.getZ()));
+
+        // Entity creation must run on the thread owning the destination chunk.
+        Location at = new Location(world(), location.getX(), location.getY(), location.getZ());
+        if (!J.runAt(at, () -> entity.spawn(spawnEngine, at))) {
+            Iris.warn("Could not schedule the entity spawn at " + at.getBlockX() + ", " + at.getBlockY() + ", " + at.getBlockZ() + ".");
+        }
     }
 
     @Director(description = "Teleport to the active studio world", descriptionKey = "iris.director.commandstudio.director.teleport_active_studio_world", aliases = "stp", origin = DirectorOrigin.PLAYER, sync = true)
@@ -697,7 +709,7 @@ public class CommandStudio implements DirectorExecutor {
             IrisDimension dimension
     ) {
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_UPDATING_CODE_WORKSPACE, MessageArgument.untrusted("value", dimension.getName())));
-        if (new IrisProject(dimension.getLoader().getDataFolder()).updateWorkspace()) {
+        if (new IrisCodeWorkspace(new IrisProject(dimension.getLoader().getDataFolder())).updateWorkspace()) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_UPDATED_CODE_WORKSPACE, MessageArgument.untrusted("value", dimension.getName())));
         } else {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_INVALID_PROJECT_TRY_DELETING_CODE_WORKSPACE_FILE_TRY_AGAIN, MessageArgument.untrusted("value", dimension.getName())));
@@ -718,20 +730,46 @@ public class CommandStudio implements DirectorExecutor {
             return;
         }
         KList<Chunk> chunks = new KList<>();
-        int bx = player().getLocation().getChunk().getX();
-        int bz = player().getLocation().getChunk().getZ();
+        Player reporter = player();
+        CountDownLatch gathered = new CountDownLatch(1);
 
-        try {
-            Location l = player().getTargetBlockExact(48, FluidCollisionMode.NEVER).getLocation();
+        // The raycast and the chunk loads need the thread owning the player; the report itself stays off it.
+        boolean scheduled = J.runEntity(reporter, () -> {
+            try {
+                int bx = reporter.getLocation().getChunk().getX();
+                int bz = reporter.getLocation().getChunk().getZ();
 
-            int cx = l.getChunk().getX();
-            int cz = l.getChunk().getZ();
-            new Spiraler(3, 3, (x, z) -> chunks.addIfMissing(world.getChunkAt(x + cx, z + cz))).drain();
-        } catch (Throwable e) {
-            Iris.reportError(e);
+                try {
+                    Location l = reporter.getTargetBlockExact(48, FluidCollisionMode.NEVER).getLocation();
+
+                    int cx = l.getChunk().getX();
+                    int cz = l.getChunk().getZ();
+                    new Spiraler(3, 3, (x, z) -> chunks.addIfMissing(world.getChunkAt(x + cx, z + cz))).drain();
+                } catch (Throwable e) {
+                    Iris.reportError(e);
+                }
+
+                new Spiraler(3, 3, (x, z) -> chunks.addIfMissing(world.getChunkAt(x + bx, z + bz))).drain();
+            } finally {
+                gathered.countDown();
+            }
+        });
+
+        if (!scheduled) {
+            Iris.warn("Could not schedule the chunk report scan on the thread owning " + reporter.getName() + ".");
+            return;
         }
 
-        new Spiraler(3, 3, (x, z) -> chunks.addIfMissing(world.getChunkAt(x + bx, z + bz))).drain();
+        try {
+            if (!gathered.await(CHUNK_SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Iris.warn("Timed out waiting for the chunk report scan of " + reporter.getName() + ".");
+                return;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_CAPTURING_IGENDATA_FROM_NEARBY_CHUNKS, MessageArgument.untrusted("value", chunks.size())));
         try {
             File ff = Iris.instance.getDataFile("reports/" + M.ms() + ".txt");

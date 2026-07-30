@@ -8,6 +8,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Iterator;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
@@ -23,6 +24,7 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
     }
 
     public boolean containsKey(@NonNull IrisBlockVector vector) {
+        if (map.isEmpty()) return false;
         var chunk = map.get(chunk(vector));
         return chunk != null && chunk.containsKey(relative(vector));
     }
@@ -32,6 +34,7 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
     }
 
     public @Nullable T get(@NonNull IrisBlockVector vector) {
+        if (map.isEmpty()) return null;
         var chunk = map.get(chunk(vector));
         return chunk == null ? null : chunk.get(relative(vector));
     }
@@ -46,9 +49,19 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
                  .computeIfAbsent(relative(vector), $ -> mappingFunction.apply(vector));
     }
 
+    @SuppressWarnings("unchecked")
     public @Nullable T remove(@NonNull IrisBlockVector vector) {
-        var chunk = map.get(chunk(vector));
-        return chunk == null ? null : chunk.remove(relative(vector));
+        if (map.isEmpty()) return null;
+        Key relative = relative(vector);
+        Object[] removed = new Object[1];
+
+        // computeIfPresent so the emptied bucket is pruned atomically against a concurrent put.
+        map.computeIfPresent(chunk(vector), (key, chunk) -> {
+            removed[0] = chunk.remove(relative);
+            return chunk.isEmpty() ? null : chunk;
+        });
+
+        return (T) removed[0];
     }
 
     public void putAll(@NonNull VectorMap<T> map) {
@@ -85,12 +98,64 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
         return new EntryIterator();
     }
 
+    /**
+     * Allocation-free entry walk. {@link EntryIterator} allocates a resolved vector plus a Map.Entry per element;
+     * the cursor resolves into one reused vector instead. Only valid for callers that do not retain the vector
+     * returned by {@link Cursor#key()} beyond the current step - clone it if it must outlive the next
+     * {@link Cursor#next()}.
+     */
+    public @NotNull Cursor cursor() {
+        return new Cursor();
+    }
+
     public @NotNull KeyIterator keys() {
         return new KeyIterator();
     }
 
     public @NotNull ValueIterator values() {
         return new ValueIterator();
+    }
+
+    public final class Cursor {
+        private final Iterator<Map.Entry<Key, Map<Key, T>>> chunkIterator = map.entrySet().iterator();
+        private final IrisBlockVector position = new IrisBlockVector(0, 0, 0);
+        private Iterator<Map.Entry<Key, T>> relativeIterator;
+        private int rX, rY, rZ;
+        private T value;
+
+        public boolean next() {
+            while (relativeIterator == null || !relativeIterator.hasNext()) {
+                if (!chunkIterator.hasNext()) {
+                    value = null;
+                    return false;
+                }
+
+                Map.Entry<Key, Map<Key, T>> chunk = chunkIterator.next();
+                rX = chunk.getKey().x << 10;
+                rY = chunk.getKey().y << 10;
+                rZ = chunk.getKey().z << 10;
+                relativeIterator = chunk.getValue().entrySet().iterator();
+            }
+
+            Map.Entry<Key, T> entry = relativeIterator.next();
+            Key relative = entry.getKey();
+            position.setX(rX + relative.x);
+            position.setY(rY + relative.y);
+            position.setZ(rZ + relative.z);
+            value = entry.getValue();
+            return true;
+        }
+
+        /**
+         * The position of the current element. The same instance is returned every step.
+         */
+        public @NotNull IrisBlockVector key() {
+            return position;
+        }
+
+        public T value() {
+            return value;
+        }
     }
 
     public class EntryIterator implements Iterator<Map.Entry<IrisBlockVector, T>> {
@@ -100,13 +165,20 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
 
         @Override
         public boolean hasNext() {
-            return relativeIterator != null && relativeIterator.hasNext() || chunkIterator.hasNext();
+            return advance();
         }
 
         @Override
         public Map.Entry<IrisBlockVector, T> next() {
-            if (relativeIterator == null || !relativeIterator.hasNext()) {
-                if (!chunkIterator.hasNext()) throw new IllegalStateException("No more elements");
+            if (!advance()) throw new NoSuchElementException();
+
+            var entry = relativeIterator.next();
+            return Map.entry(entry.getKey().resolve(rX, rY, rZ), entry.getValue());
+        }
+
+        private boolean advance() {
+            while (relativeIterator == null || !relativeIterator.hasNext()) {
+                if (!chunkIterator.hasNext()) return false;
                 var chunk = chunkIterator.next();
                 rX = chunk.getKey().x << 10;
                 rY = chunk.getKey().y << 10;
@@ -114,8 +186,7 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
                 relativeIterator = chunk.getValue().entrySet().iterator();
             }
 
-            var entry = relativeIterator.next();
-            return Map.entry(entry.getKey().resolve(rX, rY, rZ), entry.getValue());
+            return true;
         }
 
         @Override
@@ -132,12 +203,19 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
 
         @Override
         public boolean hasNext() {
-            return relativeIterator != null && relativeIterator.hasNext() || chunkIterator.hasNext();
+            return advance();
         }
 
         @Override
         public IrisBlockVector next() {
-            if (relativeIterator == null || !relativeIterator.hasNext()) {
+            if (!advance()) throw new NoSuchElementException();
+
+            return relativeIterator.next().resolve(rX, rY, rZ);
+        }
+
+        private boolean advance() {
+            while (relativeIterator == null || !relativeIterator.hasNext()) {
+                if (!chunkIterator.hasNext()) return false;
                 var chunk = chunkIterator.next();
                 rX = chunk.getKey().x << 10;
                 rY = chunk.getKey().y << 10;
@@ -145,7 +223,7 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
                 relativeIterator = chunk.getValue().keySet().iterator();
             }
 
-            return relativeIterator.next().resolve(rX, rY, rZ);
+            return true;
         }
 
         @Override
@@ -166,15 +244,23 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
 
         @Override
         public boolean hasNext() {
-            return relativeIterator != null && relativeIterator.hasNext() || chunkIterator.hasNext();
+            return advance();
         }
 
         @Override
         public T next() {
-            if (relativeIterator == null || !relativeIterator.hasNext()) {
+            if (!advance()) throw new NoSuchElementException();
+
+            return relativeIterator.next();
+        }
+
+        private boolean advance() {
+            while (relativeIterator == null || !relativeIterator.hasNext()) {
+                if (!chunkIterator.hasNext()) return false;
                 relativeIterator = chunkIterator.next().values().iterator();
             }
-            return relativeIterator.next();
+
+            return true;
         }
 
         @Override

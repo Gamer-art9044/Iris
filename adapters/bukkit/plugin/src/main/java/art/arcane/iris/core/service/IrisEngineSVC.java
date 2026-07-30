@@ -279,6 +279,11 @@ public final class IrisEngineSVC implements IrisService {
             }
             closing.completion().complete(null);
         } else {
+            // A failed close must still stop conflicting with future registrations,
+            // otherwise the world never regains its maintenance task after a reload.
+            synchronized (registrationLock) {
+                closingGenerators.remove(closing);
+            }
             closing.completion().completeExceptionally(failure);
         }
     }

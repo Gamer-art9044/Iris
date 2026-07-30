@@ -25,14 +25,12 @@ import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.volmlib.util.function.NoiseProvider;
 import art.arcane.iris.util.project.interpolation.InterpolationMethod;
 import art.arcane.iris.util.project.interpolation.IrisInterpolation;
-import art.arcane.iris.util.project.interpolation.IrisInterpolation.NoiseBounds;
-import art.arcane.iris.util.project.interpolation.IrisInterpolation.NoiseBoundsProvider;
+import art.arcane.iris.util.project.interpolation.NoiseBounds;
+import art.arcane.iris.util.project.interpolation.NoiseBoundsProvider;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
-
-import java.util.Objects;
 
 @Accessors(chain = true)
 @NoArgsConstructor
@@ -54,7 +52,11 @@ public class IrisInterpolator {
 
     @Override
     public int hashCode() {
-        return Objects.hash(horizontalScale, function);
+        // Bit-identical to Objects.hash(horizontalScale, function) without the Object[] + Double boxing.
+        // The exact value is load bearing: it decides HashMap bucket order for the generator maps in
+        // IrisComplex, and that order fixes the floating point summation order of interpolated heights.
+        int result = 31 + Double.hashCode(horizontalScale);
+        return (31 * result) + (function == null ? 0 : function.hashCode());
     }
 
     @Override

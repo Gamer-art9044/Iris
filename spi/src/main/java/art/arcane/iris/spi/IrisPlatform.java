@@ -22,22 +22,59 @@ import java.io.File;
 
 /**
  * Root platform service provided by each adapter; the single entry point core uses to reach the host platform.
+ * <p>
+ * Implementations are shared by every Iris thread and must be thread-safe. Accessor methods
+ * ({@link #registries()}, {@link #scheduler()}, {@link #structureHooks()}, {@link #biomeWriter()}, the
+ * version and path methods) are called from generation threads and must not block on the server thread.
+ * The mutating methods ({@link #callEvent(Object)}, {@link #dispatchConsoleCommand(String)},
+ * {@link #spawnEntity(PlatformWorld, String, double, double, double)}) touch live server state and are
+ * expected to be invoked on the thread that owns it - the global/server thread, or the region thread
+ * owning the target chunk on regionized platforms. Use {@link #scheduler()} to get there.
+ * <p>
+ * This interface is internal to Iris. It is not a published integration surface and changes without a
+ * deprecation cycle; adapters in this repository are its only supported implementors.
  */
 public interface IrisPlatform {
+    /**
+     * Short adapter identity, for example {@code Bukkit} or the mod loader name. Never null.
+     */
     String platformName();
 
+    /**
+     * Minecraft version string reported by the host, for example {@code 26.2}. Never null.
+     */
     String minecraftVersion();
 
+    /**
+     * Registry lookups for blocks, biomes, items and entity types. Never null; may be called off the
+     * server thread.
+     */
     PlatformRegistries registries();
 
+    /**
+     * Task dispatch onto the platform's threading model. Never null.
+     */
     PlatformScheduler scheduler();
 
+    /**
+     * Structure, structure-set and configured-feature access. Never null.
+     */
     PlatformStructureHooks structureHooks();
 
+    /**
+     * Biome id resolution used when injecting biomes into the mantle. Never null.
+     */
     PlatformBiomeWriter biomeWriter();
 
+    /**
+     * Root folder Iris owns for packs, settings and generated data. Created if missing. Never null.
+     */
     File dataFolder();
 
+    /**
+     * {@link #dataFolder()} resolved against {@code path} segments, creating the folder and its parents.
+     * A null or empty {@code path} returns {@link #dataFolder()}. Never null.
+     */
     default File dataFolder(String... path) {
         if (path == null || path.length == 0) {
             return dataFolder();
@@ -48,6 +85,10 @@ public interface IrisPlatform {
         return folder;
     }
 
+    /**
+     * Same resolution as {@link #dataFolder(String...)} without creating anything on disk. The returned
+     * {@link File} may not exist. Never null.
+     */
     default File dataFolderNoCreate(String... path) {
         if (path == null || path.length == 0) {
             return dataFolder();
@@ -56,23 +97,72 @@ public interface IrisPlatform {
         return new File(dataFolder(), String.join(File.separator, path));
     }
 
+    /**
+     * A file inside {@link #dataFolder()}, with its parent directories created. The file itself is not
+     * created. Never null.
+     */
     File dataFile(String... path);
 
+    /**
+     * The Iris artifact this runtime was loaded from: the plugin jar on Bukkit, the mod jar on a mod
+     * loader. The Bukkit-flavoured name is retained for source compatibility. Never null; adapters that
+     * cannot locate the real artifact return a placeholder path inside {@link #dataFolder()}.
+     */
     File pluginJar();
 
+    /**
+     * Iris's own version as a comparable integer, derived from the artifact version.
+     */
     int irisVersionNumber();
 
+    /**
+     * The host Minecraft version as a comparable integer, derived from {@link #minecraftVersion()}.
+     */
     int minecraftVersionNumber();
 
+    /**
+     * Publishes an Iris event on the host's event bus.
+     * <p>
+     * The parameter is untyped by design: the event object is a platform type that this module cannot
+     * name. On Bukkit it must be an {@code org.bukkit.event.Event} and the adapter casts it; platforms
+     * without an event bus - every mod loader adapter - ignore the call. Callers therefore must not rely
+     * on delivery, and must construct events from the platform module that owns the type. {@code event} must
+     * not be null and must be the type the active adapter expects; a mismatch fails inside the adapter.
+     * <p>
+     * Invoke on the server thread. Bukkit's event bus is not thread-safe.
+     */
     void callEvent(Object event);
 
+    /**
+     * Runs {@code command} as the server console. Invoke on the server thread.
+     */
     void dispatchConsoleCommand(String command);
 
-    boolean spawnEntity(Object world, String entityKey, double x, double y, double z);
+    /**
+     * Spawns a vanilla entity by namespaced key at the given block-space position.
+     * <p>
+     * Adapters unwrap {@link PlatformWorld#nativeHandle()} to reach the host world, so {@code world} must
+     * be a {@link PlatformWorld} produced by the active adapter. Returns false - never throws - when
+     * {@code world} or {@code entityKey} is null, the world belongs to a different adapter, the key does
+     * not parse, the entity type is unknown, or the platform refuses the spawn.
+     * <p>
+     * Invoke on the thread owning the target chunk.
+     */
+    boolean spawnEntity(PlatformWorld world, String entityKey, double x, double y, double z);
 
+    /**
+     * Routes a log line to the host logger at {@code level}. Safe from any thread. Prefer
+     * {@link IrisLogging}, which tolerates an unbound platform.
+     */
     void log(LogLevel level, String message);
 
+    /**
+     * Routes a formatted, player-facing message to the console. Safe from any thread.
+     */
     void msg(String message);
 
+    /**
+     * Hands a throwable to the host's error reporting. Safe from any thread; must not rethrow.
+     */
     void reportError(Throwable error);
 }

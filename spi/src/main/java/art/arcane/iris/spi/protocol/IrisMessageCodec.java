@@ -21,10 +21,25 @@ package art.arcane.iris.spi.protocol;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Encodes and decodes {@link IrisMessage} frames for the Iris plugin channel.
+ * <p>
+ * Stateless; safe from any thread. Each call allocates its own {@link IrisWireWriter} or
+ * {@link IrisWireReader}, so no instance is shared. Encoding and decoding must stay symmetric - the field order
+ * in each switch arm is the wire format.
+ * <p>
+ * Internal to Iris; not a published integration surface.
+ */
 public final class IrisMessageCodec {
     private IrisMessageCodec() {
     }
 
+    /**
+     * Encodes {@code message} into a frame: type id as a varint, then the record's fields in declaration order.
+     * Never returns null.
+     *
+     * @throws IllegalStateException if the encoded form exceeds {@link IrisProtocol#MAX_FRAME_BYTES}
+     */
     public static byte[] encode(IrisMessage message) {
         IrisWireWriter writer = new IrisWireWriter();
         writer.writeVarInt(message.messageTypeId());
@@ -120,6 +135,14 @@ public final class IrisMessageCodec {
         return writer.toByteArray();
     }
 
+    /**
+     * Decodes a frame produced by {@link #encode(IrisMessage)}.
+     *
+     * @return the decoded message, or null when the type id is unknown - which is how a newer peer's messages are
+     *         skipped rather than treated as corruption. Callers must handle null.
+     * @throws ProtocolException if {@code frame} is null, exceeds {@link IrisProtocol#MAX_FRAME_BYTES}, or is
+     *                           truncated or otherwise malformed
+     */
     public static IrisMessage decode(byte[] frame) throws ProtocolException {
         if (frame == null) {
             throw new ProtocolException("null frame");

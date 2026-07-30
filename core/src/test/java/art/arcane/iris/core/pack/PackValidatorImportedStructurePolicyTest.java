@@ -110,18 +110,18 @@ public class PackValidatorImportedStructurePolicyTest {
     @Test
     public void explicitNullPolicyIsRejectedWhileOmissionUsesDefaults() {
         List<String> missingErrors = new ArrayList<>();
-        PackValidator.validateImportedStructurePolicy("overworld", new JSONObject(), missingErrors);
+        PackDimensionValidator.validateImportedStructurePolicy("overworld", new JSONObject(), missingErrors);
         assertTrue(missingErrors.isEmpty());
 
         List<String> nullErrors = new ArrayList<>();
-        PackValidator.validateImportedStructurePolicy("overworld",
+        PackDimensionValidator.validateImportedStructurePolicy("overworld",
                 new JSONObject().put("importedStructures", JSONObject.NULL), nullErrors);
         assertEquals(List.of("Dimension 'overworld' importedStructures must be an object."), nullErrors);
     }
 
     private List<String> validate(JSONObject policy) {
         List<String> errors = new ArrayList<>();
-        PackValidator.validateImportedStructurePolicy("overworld",
+        PackDimensionValidator.validateImportedStructurePolicy("overworld",
                 new JSONObject().put("importedStructures", policy), errors);
         return errors;
     }

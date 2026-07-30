@@ -6,6 +6,7 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.project.IrisProject;
+import art.arcane.iris.core.project.IrisCodeWorkspace;
 import art.arcane.iris.core.tools.IrisCreator;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
@@ -185,7 +186,7 @@ public final class StudioOpenCoordinator {
                 request.project().setActiveProvider(provider);
             }
             if (request.openWorkspace() && request.project() != null) {
-                request.project().openVSCode(request.sender());
+                new IrisCodeWorkspace(request.project()).openVSCode(request.sender());
             }
             if (request.onDone() != null) {
                 request.onDone().accept(world);

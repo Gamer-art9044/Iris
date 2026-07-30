@@ -94,7 +94,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     private final File dataFolder;
     private final int id;
     private final boolean datapackCompiler;
-    private boolean closed = false;
+    private volatile boolean closed = false;
     private ResourceLoader<IrisBiome> biomeLoader;
     private ResourceLoader<IrisLootTable> lootLoader;
     private ResourceLoader<IrisRegion> regionLoader;
@@ -116,7 +116,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     private Gson gson;
     private Gson snippetLoader;
     private GsonBuilder builder;
-    private KMap<Class<? extends IrisRegistrant>, ResourceLoader<? extends IrisRegistrant>> loaders = new KMap<>();
+    private volatile KMap<Class<? extends IrisRegistrant>, ResourceLoader<? extends IrisRegistrant>> loaders = new KMap<>();
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     private final transient List<Engine> engines = new ArrayList<>();
@@ -367,16 +367,14 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         synchronized (engines) {
             engines.clear();
         }
-        if (dataLoaders.get(dataFolder) == this) {
-            dataLoaders.remove(dataFolder);
-        }
+        dataLoaders.remove(dataFolder, this);
     }
 
     public IrisData copy() {
         return IrisData.get(dataFolder);
     }
 
-    private <T extends IrisRegistrant> ResourceLoader<T> registerLoader(Class<T> registrant) {
+    private <T extends IrisRegistrant> ResourceLoader<T> registerLoader(Class<T> registrant, KMap<Class<? extends IrisRegistrant>, ResourceLoader<? extends IrisRegistrant>> target) {
         try {
             IrisRegistrant rr = registrant.getConstructor().newInstance();
             ResourceLoader<T> r = null;
@@ -397,7 +395,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
                 r = new ResourceLoader<>(dataFolder, this, rr.getFolderName(), rr.getTypeName(), registrant, options);
             }
 
-            loaders.put(registrant, r);
+            target.put(registrant, r);
 
             return r;
         } catch (Throwable e) {
@@ -420,30 +418,31 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
                 .registerTypeAdapterFactory(this)
                 .registerTypeAdapter(MantleFlag.class, new MantleFlagAdapter())
                 .setPrettyPrinting();
-        loaders.clear();
+        KMap<Class<? extends IrisRegistrant>, ResourceLoader<? extends IrisRegistrant>> replacement = new KMap<>();
         File packs = dataFolder;
         packs.mkdirs();
         recoverStructureTransactions();
-        this.lootLoader = registerLoader(IrisLootTable.class);
-        this.spawnerLoader = registerLoader(IrisSpawner.class);
-        this.entityLoader = registerLoader(IrisEntity.class);
-        this.regionLoader = registerLoader(IrisRegion.class);
-        this.biomeLoader = registerLoader(IrisBiome.class);
-        this.modLoader = registerLoader(IrisMod.class);
-        this.dimensionLoader = registerLoader(IrisDimension.class);
-        this.generatorLoader = registerLoader(IrisGenerator.class);
-        this.markerLoader = registerLoader(IrisMarker.class);
-        this.blockLoader = registerLoader(IrisBlockData.class);
-        this.expressionLoader = registerLoader(IrisExpression.class);
-        this.objectLoader = registerLoader(IrisObject.class);
-        this.imageLoader = registerLoader(IrisImage.class);
-        this.matterLoader = registerLoader(IrisMatterObject.class);
-        this.structureLoader = registerLoader(IrisStructure.class);
-        this.jigsawPoolLoader = registerLoader(IrisJigsawPool.class);
-        this.jigsawPieceLoader = registerLoader(IrisJigsawPiece.class);
+        this.lootLoader = registerLoader(IrisLootTable.class, replacement);
+        this.spawnerLoader = registerLoader(IrisSpawner.class, replacement);
+        this.entityLoader = registerLoader(IrisEntity.class, replacement);
+        this.regionLoader = registerLoader(IrisRegion.class, replacement);
+        this.biomeLoader = registerLoader(IrisBiome.class, replacement);
+        this.modLoader = registerLoader(IrisMod.class, replacement);
+        this.dimensionLoader = registerLoader(IrisDimension.class, replacement);
+        this.generatorLoader = registerLoader(IrisGenerator.class, replacement);
+        this.markerLoader = registerLoader(IrisMarker.class, replacement);
+        this.blockLoader = registerLoader(IrisBlockData.class, replacement);
+        this.expressionLoader = registerLoader(IrisExpression.class, replacement);
+        this.objectLoader = registerLoader(IrisObject.class, replacement);
+        this.imageLoader = registerLoader(IrisImage.class, replacement);
+        this.matterLoader = registerLoader(IrisMatterObject.class, replacement);
+        this.structureLoader = registerLoader(IrisStructure.class, replacement);
+        this.jigsawPoolLoader = registerLoader(IrisJigsawPool.class, replacement);
+        this.jigsawPieceLoader = registerLoader(IrisJigsawPiece.class, replacement);
         builder.registerTypeAdapterFactory(KeyedType::createTypeAdapter);
 
         gson = builder.create();
+        loaders = replacement;
 
         for (Engine engine : getEngines()) {
             engine.hotload();
@@ -460,13 +459,14 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
                 .registerTypeAdapterFactory(this)
                 .registerTypeAdapter(MantleFlag.class, new MantleFlagAdapter())
                 .setPrettyPrinting();
-        loaders.clear();
+        KMap<Class<? extends IrisRegistrant>, ResourceLoader<? extends IrisRegistrant>> replacement = new KMap<>();
         dataFolder.mkdirs();
         recoverStructureTransactions();
-        biomeLoader = registerLoader(IrisBiome.class);
-        dimensionLoader = registerLoader(IrisDimension.class);
+        biomeLoader = registerLoader(IrisBiome.class, replacement);
+        dimensionLoader = registerLoader(IrisDimension.class, replacement);
         builder.registerTypeAdapterFactory(KeyedType::createTypeAdapter);
         gson = builder.create();
+        loaders = replacement;
         if (biomeLoader == null || dimensionLoader == null) {
             throw new IllegalStateException("Unable to initialize Iris datapack compiler loaders for " + dataFolder);
         }

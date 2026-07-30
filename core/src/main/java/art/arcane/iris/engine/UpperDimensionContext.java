@@ -14,7 +14,7 @@ import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
-import art.arcane.iris.util.project.interpolation.IrisInterpolation.NoiseBounds;
+import art.arcane.iris.util.project.interpolation.NoiseBounds;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.iris.util.project.stream.interpolation.Interpolated;

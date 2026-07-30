@@ -38,7 +38,8 @@ import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
-import art.arcane.iris.util.project.interpolation.IrisInterpolation.NoiseBounds;
+import art.arcane.iris.util.project.interpolation.NoiseBounds;
+import art.arcane.iris.util.project.interpolation.NoiseBoundsProvider;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.iris.util.project.stream.interpolation.Interpolated;
@@ -49,6 +50,7 @@ import lombok.Getter;
 import lombok.ToString;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -56,16 +58,29 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Data
-@EqualsAndHashCode(exclude = {"data", "gridBoundsCache"})
-@ToString(exclude = {"data", "gridBoundsCache"})
+@EqualsAndHashCode(exclude = {"data", "gridBoundsCache", "frozenInterpolators", "frozenGenerators"})
+@ToString(exclude = {"data", "gridBoundsCache", "frozenInterpolators", "frozenGenerators"})
 public class IrisComplex implements DataProvider {
     private static final NoiseBounds ZERO_NOISE_BOUNDS = new NoiseBounds(0D, 0D);
+    private static final AtomicLong lastBoundsFailureLog = new AtomicLong(0L);
     private static final int GRID_BOUNDS_CACHE_SIZE = 8192;
     private static final int HEIGHT_BOUNDS_GRID = 4;
     @Getter(AccessLevel.NONE)
     private final transient ThreadLocal<GridBoundsCache> gridBoundsCache = ThreadLocal.withInitial(GridBoundsCache::new);
+    /**
+     * Immutable snapshot of {@link #generators} taken once at the end of construction, in the exact
+     * iteration order the map produces. The per-column height paths walk these arrays instead of
+     * allocating map/set iterators, and the frozen order keeps the floating point accumulation order
+     * identical to the map iteration it replaces. Mutating {@link #generators} after construction is
+     * not reflected here.
+     */
+    @Getter(AccessLevel.NONE)
+    private final transient IrisInterpolator[] frozenInterpolators;
+    @Getter(AccessLevel.NONE)
+    private final transient IrisGenerator[][] frozenGenerators;
     private RNG rng;
     private double fluidHeight;
     private IrisData data;
@@ -141,6 +156,15 @@ public class IrisComplex implements DataProvider {
                 prepareInferredBiomes(region);
                 region.getAllBiomes(this).forEach(this::registerGenerators);
             });
+        }
+        int interpolatorCount = generators.size();
+        frozenInterpolators = new IrisInterpolator[interpolatorCount];
+        frozenGenerators = new IrisGenerator[interpolatorCount][];
+        int frozenIndex = 0;
+        for (Map.Entry<IrisInterpolator, Set<IrisGenerator>> entry : generators.entrySet()) {
+            frozenInterpolators[frozenIndex] = entry.getKey();
+            frozenGenerators[frozenIndex] = entry.getValue().toArray(new IrisGenerator[0]);
+            frozenIndex++;
         }
         generatorBounds = buildGeneratorBounds(engine);
         KList<IrisShapedGeneratorStyle> overlayNoise = engine.getDimension().getOverlayNoise();
@@ -364,8 +388,8 @@ public class IrisComplex implements DataProvider {
         return biome;
     }
 
-    private double interpolateGenerators(Engine engine, IrisInterpolator interpolator, int interpolatorIndex, Set<IrisGenerator> generators, double x, double z, long seed) {
-        if (generators.isEmpty()) {
+    private double interpolateGenerators(Engine engine, IrisInterpolator interpolator, int interpolatorIndex, IrisGenerator[] generators, double x, double z, long seed) {
+        if (generators.length == 0) {
             return 0;
         }
 
@@ -379,13 +403,14 @@ public class IrisComplex implements DataProvider {
             d += M.lerp(lo, hi, i.getHeight(x, z, seed + 239945));
         }
 
-        return d / generators.size();
+        return d / generators.length;
     }
 
-    private NoiseBounds gridSampleBounds(Engine engine, IrisInterpolator interpolator, int interpolatorIndex, Set<IrisGenerator> generators, double x, double z) {
+    private NoiseBounds gridSampleBounds(Engine engine, IrisInterpolator interpolator, int interpolatorIndex, IrisGenerator[] generators, double x, double z) {
         int grid = HEIGHT_BOUNDS_GRID;
+        GridBoundsCache cache = gridBoundsCache.get();
         if (grid <= 1) {
-            return sampleBoundsRaw(engine, interpolator, generators, x, z);
+            return sampleBoundsRaw(cache, engine, interpolator, generators, x, z);
         }
 
         int xi = (int) Math.floor(x);
@@ -396,7 +421,6 @@ public class IrisComplex implements DataProvider {
         double fx = (x - gx) / grid;
         double fz = (z - gz) / grid;
 
-        GridBoundsCache cache = gridBoundsCache.get();
         long b00 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx, gz);
         long b10 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx + grid, gz);
         long b01 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx, gz + grid);
@@ -407,13 +431,13 @@ public class IrisComplex implements DataProvider {
         return new NoiseBounds(lo, hi);
     }
 
-    private long cornerBounds(GridBoundsCache cache, Engine engine, IrisInterpolator interpolator, int interpolatorIndex, Set<IrisGenerator> generators, int gx, int gz) {
+    private long cornerBounds(GridBoundsCache cache, Engine engine, IrisInterpolator interpolator, int interpolatorIndex, IrisGenerator[] generators, int gx, int gz) {
         int slot = cache.slot(gx, gz, interpolatorIndex);
         if (cache.valid[slot] && cache.gx[slot] == gx && cache.gz[slot] == gz && cache.idx[slot] == interpolatorIndex) {
             return cache.packed[slot];
         }
 
-        NoiseBounds bounds = sampleBoundsRaw(engine, interpolator, generators, gx, gz);
+        NoiseBounds bounds = sampleBoundsRaw(cache, engine, interpolator, generators, gx, gz);
         long packed = (((long) Float.floatToRawIntBits((float) bounds.min())) << 32) | (Float.floatToRawIntBits((float) bounds.max()) & 0xFFFFFFFFL);
         cache.gx[slot] = gx;
         cache.gz[slot] = gz;
@@ -437,37 +461,23 @@ public class IrisComplex implements DataProvider {
         return a + ((b - a) * fz);
     }
 
-    private NoiseBounds sampleBoundsRaw(Engine engine, IrisInterpolator interpolator, Set<IrisGenerator> generators, double x, double z) {
-        CoordinateBiomeCache sampleCache = new CoordinateBiomeCache(64);
+    private NoiseBounds sampleBoundsRaw(GridBoundsCache cache, Engine engine, IrisInterpolator interpolator, IrisGenerator[] generators, double x, double z) {
         IdentityHashMap<IrisBiome, GeneratorBounds> cachedBounds = generatorBounds.get(interpolator);
-        IdentityHashMap<IrisBiome, GeneratorBounds> localBounds = new IdentityHashMap<>(8);
-        return interpolator.interpolateBounds(x, z, (xx, zz) -> {
-            try {
-                IrisBiome bx = sampleCache.get(xx, zz);
-                if (bx == null) {
-                    bx = baseBiomeStream.get(xx, zz);
-                    sampleCache.put(xx, zz, bx);
-                }
+        BoundsSampler sampler = cache.sampler.isInUse() ? new BoundsSampler() : cache.sampler;
+        sampler.bind(this, engine, generators, cachedBounds);
 
-                GeneratorBounds bounds = resolveGeneratorBounds(engine, generators, bx, cachedBounds, localBounds);
-                return bounds.noiseBounds;
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
-                e.printStackTrace();
-                IrisLogging.error("Failed to sample interpolated biome bounds at " + xx + " " + zz + "...");
-            }
-
-            return ZERO_NOISE_BOUNDS;
-        });
+        try {
+            return interpolator.interpolateBounds(x, z, sampler);
+        } finally {
+            sampler.release();
+        }
     }
 
     private double getInterpolatedHeight(Engine engine, double x, double z, long seed) {
         double h = 0;
 
-        int interpolatorIndex = 0;
-        for (Map.Entry<IrisInterpolator, Set<IrisGenerator>> entry : generators.entrySet()) {
-            h += interpolateGenerators(engine, entry.getKey(), interpolatorIndex, entry.getValue(), x, z, seed);
-            interpolatorIndex++;
+        for (int interpolatorIndex = 0; interpolatorIndex < frozenInterpolators.length; interpolatorIndex++) {
+            h += interpolateGenerators(engine, frozenInterpolators[interpolatorIndex], interpolatorIndex, frozenGenerators[interpolatorIndex], x, z, seed);
         }
 
         return h;
@@ -509,18 +519,18 @@ public class IrisComplex implements DataProvider {
             allBiomes.add(focusBiome);
         }
 
-        for (Map.Entry<IrisInterpolator, Set<IrisGenerator>> entry : generators.entrySet()) {
+        for (int i = 0; i < frozenInterpolators.length; i++) {
             IdentityHashMap<IrisBiome, GeneratorBounds> interpolatorBounds = new IdentityHashMap<>(Math.max(allBiomes.size(), 16));
             for (IrisBiome biome : allBiomes) {
-                interpolatorBounds.put(biome, computeGeneratorBounds(engine, entry.getValue(), biome));
+                interpolatorBounds.put(biome, computeGeneratorBounds(engine, frozenGenerators[i], biome));
             }
-            bounds.put(entry.getKey(), interpolatorBounds);
+            bounds.put(frozenInterpolators[i], interpolatorBounds);
         }
 
         return bounds;
     }
 
-    private GeneratorBounds computeGeneratorBounds(Engine engine, Set<IrisGenerator> generators, IrisBiome biome) {
+    private GeneratorBounds computeGeneratorBounds(Engine engine, IrisGenerator[] generators, IrisBiome biome) {
         double min = 0D;
         double max = 0D;
 
@@ -539,7 +549,7 @@ public class IrisComplex implements DataProvider {
 
     private GeneratorBounds resolveGeneratorBounds(
             Engine engine,
-            Set<IrisGenerator> generators,
+            IrisGenerator[] generators,
             IrisBiome biome,
             IdentityHashMap<IrisBiome, GeneratorBounds> cachedBounds,
             IdentityHashMap<IrisBiome, GeneratorBounds> localBounds
@@ -627,6 +637,7 @@ public class IrisComplex implements DataProvider {
         private final int[] idx = new int[GRID_BOUNDS_CACHE_SIZE];
         private final long[] packed = new long[GRID_BOUNDS_CACHE_SIZE];
         private final boolean[] valid = new boolean[GRID_BOUNDS_CACHE_SIZE];
+        private final BoundsSampler sampler = new BoundsSampler();
 
         private int slot(int cornerX, int cornerZ, int interpolatorIndex) {
             long h = (cornerX * 0x9E3779B97F4A7C15L) ^ (cornerZ * 0xC2B2AE3D27D4EB4FL) ^ (interpolatorIndex * 0x165667B19E3779F9L);
@@ -635,53 +646,193 @@ public class IrisComplex implements DataProvider {
         }
     }
 
-    private static class CoordinateBiomeCache {
+    /**
+     * Reusable per-thread bounds provider. Holds the biome memo and the lazily computed generator
+     * bounds for one sampleBoundsRaw pass so the pass allocates nothing; {@link #bind}
+     * resets both, giving each pass the same empty-scratch semantics a fresh allocation had.
+     * <p>
+     * Single threaded and non reentrant by contract, matching the thread local sample caches in
+     * IrisInterpolation that this provider is invoked through. If a nested pass ever does appear,
+     * {@link #isInUse()} makes the caller fall back to a freshly allocated sampler.
+     */
+    private static final class BoundsSampler implements NoiseBoundsProvider {
+        private final CoordinateBiomeCache sampleCache = new CoordinateBiomeCache(64);
+        private final IdentityHashMap<IrisBiome, GeneratorBounds> localBounds = new IdentityHashMap<>(8);
+        private IrisComplex complex;
+        private Engine engine;
+        private IrisGenerator[] generators;
+        private IdentityHashMap<IrisBiome, GeneratorBounds> cachedBounds;
+        private boolean inUse;
+
+        private boolean isInUse() {
+            return inUse;
+        }
+
+        private void bind(IrisComplex complex, Engine engine, IrisGenerator[] generators, IdentityHashMap<IrisBiome, GeneratorBounds> cachedBounds) {
+            this.complex = complex;
+            this.engine = engine;
+            this.generators = generators;
+            this.cachedBounds = cachedBounds;
+            this.inUse = true;
+            sampleCache.clear();
+
+            if (!localBounds.isEmpty()) {
+                localBounds.clear();
+            }
+        }
+
+        private void release() {
+            complex = null;
+            engine = null;
+            generators = null;
+            cachedBounds = null;
+            inUse = false;
+        }
+
+        @Override
+        public NoiseBounds noise(double xx, double zz) {
+            try {
+                IrisBiome bx = sampleCache.get(xx, zz);
+                if (bx == null) {
+                    bx = complex.baseBiomeStream.get(xx, zz);
+                    sampleCache.put(xx, zz, bx);
+                }
+
+                GeneratorBounds bounds = complex.resolveGeneratorBounds(engine, generators, bx, cachedBounds, localBounds);
+                return bounds.noiseBounds;
+            } catch (Throwable e) {
+                long now = System.currentTimeMillis();
+                long last = lastBoundsFailureLog.get();
+                if (now - last >= 5000L && lastBoundsFailureLog.compareAndSet(last, now)) {
+                    IrisLogging.reportError(e);
+                    IrisLogging.warn("Failed to sample interpolated biome bounds at " + xx + " " + zz + ", flattening height to zero: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                }
+            }
+
+            return ZERO_NOISE_BOUNDS;
+        }
+    }
+
+    /**
+     * Open addressed biome memo keyed on the packed coordinate bits, replacing a linear scan that was
+     * quadratic in the number of columns a wide starcast touches. Single threaded by contract.
+     */
+    private static final class CoordinateBiomeCache {
         private long[] xBits;
         private long[] zBits;
         private IrisBiome[] values;
+        private byte[] states;
+        private int mask;
+        private int resizeThreshold;
         private int size;
 
-        private CoordinateBiomeCache(int initialSize) {
-            xBits = new long[initialSize];
-            zBits = new long[initialSize];
-            values = new IrisBiome[initialSize];
+        private CoordinateBiomeCache(int initialCapacity) {
+            int minimumCapacity = Math.max(8, initialCapacity);
+            int tableSize = tableSizeFor((minimumCapacity << 1) + minimumCapacity);
+            xBits = new long[tableSize];
+            zBits = new long[tableSize];
+            values = new IrisBiome[tableSize];
+            states = new byte[tableSize];
+            mask = tableSize - 1;
+            resizeThreshold = Math.max(1, (tableSize * 3) >> 2);
+            size = 0;
+        }
+
+        private void clear() {
+            if (size == 0) {
+                return;
+            }
+
+            Arrays.fill(states, (byte) 0);
             size = 0;
         }
 
         private IrisBiome get(double x, double z) {
-            long xb = Double.doubleToLongBits(x);
-            long zb = Double.doubleToLongBits(z);
-            for (int i = 0; i < size; i++) {
-                if (xBits[i] == xb && zBits[i] == zb) {
-                    return values[i];
-                }
-            }
-
-            return null;
+            int slot = findSlot(Double.doubleToLongBits(x), Double.doubleToLongBits(z));
+            return states[slot] == 0 ? null : values[slot];
         }
 
         private void put(double x, double z, IrisBiome biome) {
-            if (size >= xBits.length) {
-                grow();
+            long xb = Double.doubleToLongBits(x);
+            long zb = Double.doubleToLongBits(z);
+            int slot = findSlot(xb, zb);
+            boolean occupied = states[slot] != 0;
+            xBits[slot] = xb;
+            zBits[slot] = zb;
+            values[slot] = biome;
+            states[slot] = 1;
+
+            if (occupied) {
+                return;
             }
 
-            xBits[size] = Double.doubleToLongBits(x);
-            zBits[size] = Double.doubleToLongBits(z);
-            values[size] = biome;
             size++;
+            if (size >= resizeThreshold) {
+                grow();
+            }
+        }
+
+        private int findSlot(long xb, long zb) {
+            int slot = mix(xb, zb) & mask;
+            while (states[slot] != 0) {
+                if (xBits[slot] == xb && zBits[slot] == zb) {
+                    break;
+                }
+                slot = (slot + 1) & mask;
+            }
+            return slot;
+        }
+
+        private int mix(long xb, long zb) {
+            long hash = xb * 0x9E3779B97F4A7C15L;
+            hash ^= Long.rotateLeft(zb * 0xC2B2AE3D27D4EB4FL, 32);
+            hash ^= (hash >>> 33);
+            hash *= 0xff51afd7ed558ccdL;
+            hash ^= (hash >>> 33);
+            return (int) hash;
         }
 
         private void grow() {
-            int nextSize = xBits.length << 1;
-            long[] nx = new long[nextSize];
-            long[] nz = new long[nextSize];
-            IrisBiome[] nv = new IrisBiome[nextSize];
-            System.arraycopy(xBits, 0, nx, 0, size);
-            System.arraycopy(zBits, 0, nz, 0, size);
-            System.arraycopy(values, 0, nv, 0, size);
-            xBits = nx;
-            zBits = nz;
-            values = nv;
+            long[] previousXBits = xBits;
+            long[] previousZBits = zBits;
+            IrisBiome[] previousValues = values;
+            byte[] previousStates = states;
+
+            int nextLength = previousXBits.length << 1;
+            xBits = new long[nextLength];
+            zBits = new long[nextLength];
+            values = new IrisBiome[nextLength];
+            states = new byte[nextLength];
+            mask = nextLength - 1;
+            resizeThreshold = Math.max(1, (nextLength * 3) >> 2);
+            size = 0;
+
+            for (int i = 0; i < previousStates.length; i++) {
+                if (previousStates[i] == 0) {
+                    continue;
+                }
+
+                int slot = findSlot(previousXBits[i], previousZBits[i]);
+                xBits[slot] = previousXBits[i];
+                zBits[slot] = previousZBits[i];
+                values[slot] = previousValues[i];
+                states[slot] = 1;
+                size++;
+            }
+        }
+
+        private int tableSizeFor(int value) {
+            int n = value - 1;
+            n |= n >>> 1;
+            n |= n >>> 2;
+            n |= n >>> 4;
+            n |= n >>> 8;
+            n |= n >>> 16;
+            int tableSize = n + 1;
+            if (tableSize < 8) {
+                return 8;
+            }
+            return tableSize;
         }
     }
 

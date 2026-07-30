@@ -27,6 +27,22 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * Everything a provider needs to finish a deferred block placement, handed to
+ * {@link ModdedDataProvider#processBlockPlacement(ModdedBlockPlacementContext)} on the server thread.
+ * <p>
+ * Immutable, and constructed by Iris rather than by mods. {@code state} is defensively copied; {@code position} is
+ * already immutable. Because delivery is on the server thread with the chunk loaded, it is safe to write blocks,
+ * attach block entities and read neighbours from here.
+ *
+ * @param engine     the Iris engine for this level. Internal Iris type - treat it as an opaque token
+ * @param level      the level to write into. Never null
+ * @param position   the block the placeholder was written at. Never null
+ * @param blockId    the identifier the pack named, without state properties. Never null
+ * @param blockState the state currently at {@code position} - normally the placeholder returned as deferred, though
+ *                   another provider or a later generation stage may have replaced it. Never null
+ * @param state      the {@code [prop=value]} pairs from the pack's key, possibly empty. Never null; unmodifiable
+ */
 public record ModdedBlockPlacementContext(
         Engine engine,
         ServerLevel level,
@@ -34,6 +50,9 @@ public record ModdedBlockPlacementContext(
         Identifier blockId,
         Map<String, String> state,
         BlockState blockState) {
+    /**
+     * @throws NullPointerException if any component is null
+     */
     public ModdedBlockPlacementContext {
         Objects.requireNonNull(engine);
         Objects.requireNonNull(level);

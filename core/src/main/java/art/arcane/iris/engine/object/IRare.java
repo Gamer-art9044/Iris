@@ -74,13 +74,13 @@ public interface IRare {
 
         double total = 0;
         for (T i : possibilities) {
-            total += 1d / i.getRarity();
+            total += 1d / IRare.get(i);
         }
 
         double threshold = total * noiseValue;
         double buffer = 0;
         for (T i : possibilities) {
-            buffer += 1d / i.getRarity();
+            buffer += 1d / IRare.get(i);
             if (buffer >= threshold) {
                 return i;
             }

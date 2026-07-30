@@ -152,13 +152,13 @@ public class ModdedDimensionTypeParityTest {
                 .ceiling(TRUE);
         IrisDimension dimension = dimension("runtime_contract", IrisEnvironment.CUSTOM,
                 -128, 384, 384, options);
-        ModdedWorldCheck.DimensionContract expected = ModdedWorldCheck.expectedDimensionContract(dimension);
-        ModdedWorldCheck.DimensionContract fallback = new ModdedWorldCheck.DimensionContract(
+        WorldCheckDimensionContract.DimensionContract expected = WorldCheckDimensionContract.expectedDimensionContract(dimension);
+        WorldCheckDimensionContract.DimensionContract fallback = new WorldCheckDimensionContract.DimensionContract(
                 -256, 768, 512, 1D, 0F, true, false, false, 0);
 
-        assertTrue(ModdedWorldCheck.matchesDimensionContract(-128, 512, expected, expected));
-        assertFalse(ModdedWorldCheck.matchesDimensionContract(-256, 768, expected, fallback));
-        assertFalse(ModdedWorldCheck.matchesDimensionContract(-128, 512, expected, fallback));
+        assertTrue(WorldCheckDimensionContract.matchesDimensionContract(-128, 512, expected, expected));
+        assertFalse(WorldCheckDimensionContract.matchesDimensionContract(-256, 768, expected, fallback));
+        assertFalse(WorldCheckDimensionContract.matchesDimensionContract(-128, 512, expected, fallback));
     }
 
     private static IrisDimension dimension(String key, IrisEnvironment environment, int minY, int maxY,

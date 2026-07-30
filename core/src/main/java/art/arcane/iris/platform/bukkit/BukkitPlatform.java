@@ -43,8 +43,11 @@ import org.bukkit.Registry;
 import org.bukkit.World;
 import org.bukkit.block.Biome;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Player;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.inventory.ItemStack;
@@ -153,6 +156,10 @@ public final class BukkitPlatform implements IrisPlatform {
             throw new IllegalStateException("No Iris HUD boss bar lanes are hosted");
         }
         return hudLanes;
+    }
+
+    public static void showProgressLane(Player player, String laneId, String title, double progress, long staleMillis) {
+        hudLanes().show(player, laneId, title, progress, BarColor.BLUE, BarStyle.SOLID, staleMillis);
     }
 
     public static void hostConsoleSender(Supplier<VolmitSender> supplier) {
@@ -315,8 +322,8 @@ public final class BukkitPlatform implements IrisPlatform {
     }
 
     @Override
-    public boolean spawnEntity(Object world, String entityKey, double x, double y, double z) {
-        if (!(world instanceof World bukkitWorld) || entityKey == null) {
+    public boolean spawnEntity(PlatformWorld world, String entityKey, double x, double y, double z) {
+        if (world == null || entityKey == null || !(world.nativeHandle() instanceof World bukkitWorld)) {
             return false;
         }
         NamespacedKey namespacedKey = NamespacedKey.fromString(entityKey);

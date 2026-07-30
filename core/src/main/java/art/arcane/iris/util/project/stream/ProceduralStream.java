@@ -561,7 +561,7 @@ public interface ProceduralStream<T> extends ProceduralLayer, Interpolated<T> {
     }
 
     default void fill(Hunk<T> h, double x, double y, double z) {
-        fill(h, x, z, 4);
+        fill(h, x, y, z, 4);
     }
 
     default <V> void fill2D(Hunk<V> h, double x, double z, V v) {
@@ -610,7 +610,7 @@ public interface ProceduralStream<T> extends ProceduralLayer, Interpolated<T> {
 
         for (int i = 0; i < 16; i++) {
             for (int j = 0; j < 16; j++) {
-                c[Cache.to1D(i + xs, j + zs, 0, 16, 16)] = get(i + xs, j + zs);
+                c[Cache.to1D(i, j, 0, 16, 16)] = get(i + xs, j + zs);
             }
         }
     }

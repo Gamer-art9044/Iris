@@ -40,7 +40,6 @@ import org.bukkit.event.server.PluginEnableEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.MissingResourceException;
@@ -112,7 +111,13 @@ public class ExternalDataSVC implements IrisService {
     }
 
     public Optional<BlockData> getBlockData(final Identifier key) {
-        Pair<Identifier, KMap<String, String>> pair = parseState(key);
+        Pair<Identifier, KMap<String, String>> pair;
+        try {
+            pair = parseState(key);
+        } catch (IllegalArgumentException e) {
+            IrisLogging.error(e.getMessage());
+            return Optional.empty();
+        }
         Identifier mod = pair.getA();
 
         Optional<ExternalDataProvider> provider = activeProviders.stream().filter(p -> p.isValidProvider(mod, DataType.BLOCK)).findFirst();
@@ -190,15 +195,25 @@ public class ExternalDataSVC implements IrisService {
     }
 
     public static Pair<Identifier, KMap<String, String>> parseState(Identifier key) {
-        if (!key.key().contains("[") || !key.key().contains("]")) {
+        String raw = key.key();
+        int open = raw.indexOf('[');
+        int close = raw.lastIndexOf(']');
+        if (open < 0 || close < open) {
             return new Pair<>(key, new KMap<>());
         }
-        String state = key.key().split("\\Q[\\E")[1].split("\\Q]\\E")[0];
+
+        String state = raw.substring(open + 1, close);
         KMap<String, String> stateMap = new KMap<>();
         if (!state.isEmpty()) {
-            Arrays.stream(state.split(",")).forEach(s -> stateMap.put(s.split("=")[0], s.split("=")[1]));
+            for (String entry : state.split(",")) {
+                String[] pair = entry.split("=", 2);
+                if (pair.length != 2 || pair[0].isBlank() || pair[1].isBlank()) {
+                    throw new IllegalArgumentException("Malformed block state \"" + entry + "\" in \"" + key + "\" (expected key=value)");
+                }
+                stateMap.put(pair[0], pair[1]);
+            }
         }
-        return new Pair<>(new Identifier(key.namespace(), key.key().split("\\Q[\\E")[0]), stateMap);
+        return new Pair<>(new Identifier(key.namespace(), raw.substring(0, open)), stateMap);
     }
 
     public static Identifier buildState(Identifier key, KMap<String, String> state) {

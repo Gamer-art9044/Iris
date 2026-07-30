@@ -178,12 +178,13 @@ public class PregenCacheImpl implements PregenCache {
             return;
         }
 
-        File file = fileForPlate(plate.x, plate.z);
+        File file = null;
         try {
+            file = fileForPlate(plate.x, plate.z);
             IO.write(file, output -> new DataOutputStream(new LZ4BlockOutputStream(output)), plate::write);
             plate.dirty = false;
-        } catch (IOException e) {
-            IrisLogging.error("Failed to write preen cache " + file);
+        } catch (Throwable e) {
+            IrisLogging.error("Failed to write pregen cache " + (file != null ? file : "c." + plate.x + "." + plate.z));
             e.printStackTrace();
             IrisLogging.reportError(e);
         }

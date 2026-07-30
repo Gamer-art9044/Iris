@@ -102,7 +102,8 @@ public final class ModdedStudioCommands {
             if (engine != null) {
                 return SharedSuggestionProvider.suggest(engine.getData().getGeneratorLoader().getPossibleKeys(), builder);
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable e) {
+            IrisModdedCommands.warnTabFailure("generator keys", context.getSource(), e);
         }
         return builder.buildFuture();
     };

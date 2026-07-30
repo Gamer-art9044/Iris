@@ -18,10 +18,12 @@
 
 package art.arcane.iris.util.project.hunk.view;
 
+import art.arcane.iris.engine.data.chunk.LinkedTerrainChunk;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.iris.util.project.hunk.storage.StorageHunk;
+import art.arcane.volmlib.util.hunk.HunkMutationSupport;
 
 public class TerrainChunkBiomeHunkView extends StorageHunk<PlatformBiome> implements Hunk<PlatformBiome> {
     private final TerrainChunk chunk;
@@ -29,6 +31,21 @@ public class TerrainChunkBiomeHunkView extends StorageHunk<PlatformBiome> implem
     public TerrainChunkBiomeHunkView(TerrainChunk chunk) {
         super(16, chunk.getMaxHeight() - chunk.getMinHeight(), 16);
         this.chunk = chunk;
+    }
+
+    /**
+     * A full height single column is the shape the biome actuator writes for every column of the chunk, so
+     * stride the backing biome array in one pass instead of dispatching per block. Any other region falls
+     * through to the generic element wise write.
+     */
+    @Override
+    public void set(int x1, int y1, int z1, int x2, int y2, int z2, PlatformBiome biome) {
+        if (x1 == x2 && z1 == z2 && y1 == 0 && y2 == getHeight() - 1 && chunk instanceof LinkedTerrainChunk linked) {
+            linked.fillBiomeColumn(x1, z1, biome);
+            return;
+        }
+
+        HunkMutationSupport.setRangeInclusive(this, x1, y1, z1, x2, y2, z2, biome);
     }
 
     @Override

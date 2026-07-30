@@ -26,7 +26,7 @@ public class PackValidatorSurfaceSupportTest {
                 "{\"objects\":[{\"place\":[\"a\"],\"surfaceSupportBuffer\":16,\"surfaceSupportDepth\":1,"
                         + "\"requireSurfaceSupport\":false}]}");
 
-        assertEquals(List.of(), PackValidator.validateObjectSurfaceSupport(pack));
+        assertEquals(List.of(), PackObjectSurfaceValidator.validateObjectSurfaceSupport(pack));
     }
 
     @Test
@@ -38,7 +38,7 @@ public class PackValidatorSurfaceSupportTest {
                 "{\"objects\":[{\"place\":[\"a\"],\"surfaceSupportBuffer\":-1,\"surfaceSupportDepth\":0,"
                         + "\"requireSurfaceSupport\":1}]}");
 
-        List<String> errors = PackValidator.validateObjectSurfaceSupport(pack);
+        List<String> errors = PackObjectSurfaceValidator.validateObjectSurfaceSupport(pack);
 
         assertTrue(errors.contains("Dimension 'main'.objectSurfaceSupportBuffer must be at most 16."));
         assertTrue(errors.contains("Dimension 'main'.requireObjectSurfaceSupport must be a boolean."));
@@ -56,7 +56,7 @@ public class PackValidatorSurfaceSupportTest {
         assertEquals(List.of(
                 "Region 'forests'.objects[0] declares removed field 'surfaceOpeningClearance'. "
                         + "Use surfaceSupportBuffer instead."
-        ), PackValidator.validateObjectSurfaceSupport(pack));
+        ), PackObjectSurfaceValidator.validateObjectSurfaceSupport(pack));
     }
 
     @Test

@@ -41,7 +41,7 @@ import java.util.Locale;
 import java.util.function.Supplier;
 
 public final class ModdedTileReader implements TileData.TileReader {
-    private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().setStrictness(Strictness.LENIENT).create();
+    private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().setStrictness(Strictness.LENIENT).setObjectToNumberStrategy(com.google.gson.ToNumberPolicy.LONG_OR_DOUBLE).create();
     private static final int DYE_COLOR_COUNT = 16;
     private static final Identifier DEFAULT_SPAWNER_ENTITY = Identifier.parse("minecraft:pig");
     private static final Identifier DEFAULT_BANNER_PATTERN = Identifier.parse("minecraft:base");

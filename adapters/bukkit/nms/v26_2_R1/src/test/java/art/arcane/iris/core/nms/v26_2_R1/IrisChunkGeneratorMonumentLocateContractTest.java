@@ -79,23 +79,32 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
 
     @Test
     public void stiltSupportUsesPlacedSolidOccupancyWithoutSnapshotDifferenceRequirement() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nativeStructurePostProcessorSource")));
+        Path processor = Path.of(System.getProperty("iris.nativeStructurePostProcessorSource"));
+        String source = Files.readString(processor);
+        String foundation = Files.readString(
+                processor.resolveSibling("NativeStructureFoundationBuilder.java"));
         int placement = source.indexOf("start.placeInChunk(world, structureManager, generator");
         int stiltPlacement = source.indexOf("placeStilts(world, area, structureId, start", placement);
-        int occupancyCheck = source.indexOf("if (state.isSolid())", stiltPlacement);
-        int terrainFloor = source.indexOf("Math.max(terrainY,", stiltPlacement);
+        int stiltDefinition = foundation.indexOf("static void placeStilts(");
+        int occupancyCheck = foundation.indexOf("if (state.isSolid())", stiltDefinition);
+        int terrainFloor = foundation.indexOf("Math.max(terrainY,", stiltDefinition);
 
         assertTrue(placement >= 0);
         assertTrue(stiltPlacement > placement);
-        assertTrue(occupancyCheck > stiltPlacement);
-        assertTrue(terrainFloor > stiltPlacement);
+        assertTrue(stiltDefinition >= 0);
+        assertTrue(occupancyCheck > stiltDefinition);
+        assertTrue(terrainFloor > stiltDefinition);
         assertFalse(source.contains("state.equals("));
+        assertFalse(foundation.contains("state.equals("));
         assertFalse(source.contains("snapshot.states"));
+        assertFalse(foundation.contains("snapshot.states"));
     }
 
     @Test
     public void verticalPlacementMovesPiecesMonumentChildrenJigsawJunctionsAndCachedBoundsTogether() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nativeStructurePostProcessorSource")));
+        String source = Files.readString(
+                Path.of(System.getProperty("iris.nativeStructurePostProcessorSource"))
+                        .resolveSibling("NativeStructureVerticalPlacer.java"));
         int placementStart = source.indexOf("public static int applyVerticalPlacement");
         int shiftStart = source.indexOf("public static int applyVerticalShift", placementStart);
         int alignmentStart = source.indexOf("static int alignOceanMonumentToSeaLevel", shiftStart);

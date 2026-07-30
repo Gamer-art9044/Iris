@@ -118,7 +118,9 @@ public class IrisPregenerator {
                 generatedLast.set(generated.get());
                 if (secondCached == 0 || secondGenerated != 0) {
                     chunksPerSecond.put(secondGenerated);
-                    chunksPerSecondHistory.add((int) secondGenerated);
+                    synchronized (chunksPerSecondHistory) {
+                        chunksPerSecondHistory.add((int) secondGenerated);
+                    }
                 }
 
                 if (minuteLatch.flip()) {
@@ -222,7 +224,13 @@ public class IrisPregenerator {
             logIncompleteCompletion(p);
         }
         if (benchmarking != null) {
-            benchmarking.finishedBenchmark(chunksPerSecondHistory);
+            benchmarking.finishedBenchmark(snapshotChunksPerSecondHistory());
+        }
+    }
+
+    private KList<Integer> snapshotChunksPerSecondHistory() {
+        synchronized (chunksPerSecondHistory) {
+            return new KList<>(chunksPerSecondHistory);
         }
     }
 
@@ -264,18 +272,31 @@ public class IrisPregenerator {
     }
 
     private void shutdown() {
-        listener.onSaving();
-        generator.close();
-        ticker.interrupt();
-        listener.onClose();
-        IrisProtocolServer protocolServer = IrisServices.getOrNull(IrisProtocolServer.class);
-        if (protocolServer != null) {
-            long total = totalChunks.get();
-            protocolServer.pregenEnd(jobId, total > 0 && generated.get() >= total);
-        }
-        Mantle mantle = getMantle();
-        if (mantle != null) {
-            reclaimTectonicPlates(mantle);
+        shutdownStep("saving", listener::onSaving);
+        shutdownStep("generator", generator::close);
+        shutdownStep("ticker", ticker::interrupt);
+        shutdownStep("listener", listener::onClose);
+        shutdownStep("protocol", () -> {
+            IrisProtocolServer protocolServer = IrisServices.getOrNull(IrisProtocolServer.class);
+            if (protocolServer != null) {
+                long total = totalChunks.get();
+                protocolServer.pregenEnd(jobId, total > 0 && generated.get() >= total);
+            }
+        });
+        shutdownStep("mantle", () -> {
+            Mantle mantle = getMantle();
+            if (mantle != null) {
+                reclaimTectonicPlates(mantle);
+            }
+        });
+    }
+
+    private void shutdownStep(String step, Runnable action) {
+        try {
+            action.run();
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            IrisLogging.warn("Pregen shutdown step " + step + " failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 

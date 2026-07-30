@@ -1,11 +1,16 @@
 package art.arcane.iris.core.tools;
 
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.volmlib.util.data.Varint;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
+import art.arcane.volmlib.util.hud.HudPriority;
+import art.arcane.volmlib.util.hud.HudSlotClaim;
+import art.arcane.volmlib.util.hud.HudSlotRequest;
+import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.volmlib.util.nbt.io.NBTUtil;
 import art.arcane.volmlib.util.nbt.io.NamedTag;
 import art.arcane.volmlib.util.nbt.tag.ByteArrayTag;
@@ -19,6 +24,8 @@ import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 import org.apache.commons.io.FileUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
 
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
@@ -26,10 +33,12 @@ import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
@@ -74,16 +83,39 @@ public class IrisConverter {
                     int i = -1;
                     int mv = objW * objH * objD;
                     AtomicInteger v = new AtomicInteger(0);
+                    boolean reportProgress = mv > 2_000_000 && sender.isPlayer();
+                    HudSlotClaim titleClaim = reportProgress
+                            ? BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.TITLE)))
+                            : null;
+                    HudSlotClaim barClaim = reportProgress
+                            ? BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)))
+                            : null;
                     if (mv > 2_000_000) {
                         largeObject = true;
                         IrisLogging.info(C.GRAY + "Converting.. " + schem.getName() + " -> " + schem.getName().replace(".schem", ".iob"));
                         IrisLogging.info(C.GRAY + "- It may take a while");
-                        if (sender.isPlayer()) {
+                        if (reportProgress) {
+                            AtomicLong lastResolveMs = new AtomicLong(0L);
                             i = J.ar(() -> {
+                                long now = System.currentTimeMillis();
+                                if (now - lastResolveMs.get() >= 250L) {
+                                    lastResolveMs.set(now);
+                                    titleClaim.resolve();
+                                    barClaim.resolve();
+                                }
+                                double conversionProgress = (double) v.get() / mv;
+                                HudSurface barSurface = barClaim.granted();
                                 sender.sendProgress(
-                                        (double) v.get() / mv,
-                                        IrisLanguage.text(RuntimeUiMessages.CONVERTING)
+                                        conversionProgress,
+                                        IrisLanguage.text(RuntimeUiMessages.CONVERTING),
+                                        titleClaim.granted(),
+                                        barSurface
                                 );
+                                if (barSurface == HudSurface.BOSS_BAR) {
+                                    BukkitPlatform.hudLanes().show(sender.player(), "iris:job", IrisLanguage.text(RuntimeUiMessages.CONVERTING) + " " + Form.pc(conversionProgress, 0), conversionProgress, BarColor.BLUE, BarStyle.SOLID, 4000L);
+                                } else if (barSurface == HudSurface.ACTION_BAR) {
+                                    BukkitPlatform.hudLanes().hide(sender.player(), "iris:job");
+                                }
                             }, 0);
                         }
                     }
@@ -118,6 +150,13 @@ public class IrisConverter {
                     }
 
                     if (i != -1) J.car(i);
+                    if (titleClaim != null) {
+                        titleClaim.release();
+                    }
+                    if (barClaim != null) {
+                        barClaim.release();
+                        BukkitPlatform.hudLanes().hide(sender.player(), "iris:job");
+                    }
                     try {
                         object.shrinkwrap();
                         object.write(new File(folder, schem.getName().replace(".schem", ".iob")));

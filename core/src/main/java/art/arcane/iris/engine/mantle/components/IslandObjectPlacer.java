@@ -102,6 +102,11 @@ public final class IslandObjectPlacer implements IObjectPlacer {
     }
 
     @Override
+    public boolean isSurfaceSolid(int x, int y, int z) {
+        return wrapped.isSurfaceSolid(x, y, z);
+    }
+
+    @Override
     public void set(int x, int y, int z, PlatformBlockState state) {
         if (!shouldSkipAirColumn(x, y, z)) {
             wrapped.set(x, y, z, state);

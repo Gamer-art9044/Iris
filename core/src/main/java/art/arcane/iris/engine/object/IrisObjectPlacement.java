@@ -121,6 +121,16 @@ public class IrisObjectPlacement {
     private boolean underwater = false;
     @Desc("If set to true, objects will place in carvings (such as underground) or under an overhang.")
     private CarvingMode carvingSupport = CarvingMode.SURFACE_ONLY;
+    @MinNumber(0)
+    @MaxNumber(16)
+    @Desc("Extra buffer, in blocks, around this object's base footprint that must also be solid, un-carved ground. 0 checks only the footprint itself.")
+    private int surfaceSupportBuffer = 2;
+    @MinNumber(1)
+    @MaxNumber(16)
+    @Desc("Minimum thickness, in blocks, of un-carved ground required under every column of this object's base footprint.")
+    private int surfaceSupportDepth = 2;
+    @Desc("Set to false to let this placement sit over carved surface openings such as cave entrances.")
+    private boolean requireSurfaceSupport = true;
     @Desc("When carving placement is enabled, select which carved-space anchor this placement targets.")
     private IrisCaveAnchorMode caveAnchorMode = IrisCaveAnchorMode.PROFILE_DEFAULT;
     @Desc("If this is defined, this object wont place on the terrain heightmap, but instead on this virtual heightmap")
@@ -193,6 +203,9 @@ public class IrisObjectPlacement {
         p.setBottom(bottom);
         p.setSmartBore(smartBore);
         p.setCarvingSupport(carvingSupport);
+        p.setSurfaceSupportBuffer(surfaceSupportBuffer);
+        p.setSurfaceSupportDepth(surfaceSupportDepth);
+        p.setRequireSurfaceSupport(requireSurfaceSupport);
         p.setCaveAnchorMode(caveAnchorMode);
         p.setUnderwater(underwater);
         p.setHeightmap(heightmap);

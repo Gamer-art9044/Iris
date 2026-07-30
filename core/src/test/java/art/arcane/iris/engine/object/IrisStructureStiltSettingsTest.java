@@ -16,6 +16,7 @@ public class IrisStructureStiltSettingsTest {
         IrisStructureStiltSettings settings = new IrisStructureStiltSettings();
 
         assertEquals(64, settings.getMaxDepth());
+        assertEquals(1, settings.getSpacing());
         assertFalse(settings.isSupportNonOccluding());
         assertNotNull(settings.getPalette());
         assertEquals(1, settings.getPalette().getPalette().size());
@@ -32,5 +33,17 @@ public class IrisStructureStiltSettingsTest {
         assertNotNull(maximum);
         assertEquals(1.0, minimum.value(), 0.0);
         assertEquals(4064.0, maximum.value(), 0.0);
+    }
+
+    @Test
+    public void spacingSchemaSupportsSparseFoundations() throws NoSuchFieldException {
+        Field spacing = IrisStructureStiltSettings.class.getDeclaredField("spacing");
+        MinNumber minimum = spacing.getAnnotation(MinNumber.class);
+        MaxNumber maximum = spacing.getAnnotation(MaxNumber.class);
+
+        assertNotNull(minimum);
+        assertNotNull(maximum);
+        assertEquals(1.0, minimum.value(), 0.0);
+        assertEquals(64.0, maximum.value(), 0.0);
     }
 }

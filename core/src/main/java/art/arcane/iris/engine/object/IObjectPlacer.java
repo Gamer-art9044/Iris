@@ -36,6 +36,14 @@ public interface IObjectPlacer {
 
     boolean isCarved(int x, int y, int z);
 
+    /**
+     * Whether the block at this position is real, solid ground. Only live-world placers can answer this;
+     * at mantle time terrain has not been written yet, so the height stream is the authority.
+     */
+    default boolean isSurfaceSolid(int x, int y, int z) {
+        return true;
+    }
+
     boolean isSolid(int x, int y, int z);
 
     boolean isUnderwater(int x, int z);

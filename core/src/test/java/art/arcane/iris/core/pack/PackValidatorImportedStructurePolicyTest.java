@@ -23,6 +23,67 @@ public class PackValidatorImportedStructurePolicyTest {
     }
 
     @Test
+    public void encaseTerrainAndYBandAdjustmentsAreAccepted() {
+        JSONObject policy = new JSONObject()
+                .put("adjustments", new JSONArray().put(new JSONObject()
+                        .put("match", new JSONArray().put("minecraft:stronghold"))
+                        .put("yBand", new JSONObject().put("min", -120).put("max", -20))
+                        .put("terrain", new JSONObject()
+                                .put("mode", "ENCASE")
+                                .put("horizontalPadding", 4)
+                                .put("ceilingPadding", 4)
+                                .put("floorPadding", 4)
+                                .put("encasePalette", new JSONObject()
+                                        .put("palette", new JSONArray()
+                                                .put(new JSONObject()
+                                                        .put("block", "minecraft:stone_bricks")
+                                                        .put("weight", 6))
+                                                .put(new JSONObject()
+                                                        .put("block", "minecraft:cobblestone")
+                                                        .put("weight", 1)))))));
+        List<String> errors = validate(policy);
+
+        assertTrue(errors.toString(), errors.isEmpty());
+    }
+
+    @Test
+    public void nonObjectEncasePaletteIsRejected() {
+        JSONObject policy = new JSONObject()
+                .put("adjustments", new JSONArray().put(new JSONObject()
+                        .put("match", new JSONArray().put("minecraft:stronghold"))
+                        .put("terrain", new JSONObject()
+                                .put("mode", "ENCASE")
+                                .put("encasePalette", "minecraft:stone_bricks"))));
+        List<String> errors = validate(policy);
+
+        assertEquals(1, errors.size());
+        assertTrue(errors.get(0), errors.get(0)
+                .contains("adjustments[0].terrain.encasePalette must be an object"));
+    }
+
+    @Test
+    public void malformedYBandAndTerrainAdjustmentsAreRejected() {
+        JSONObject policy = new JSONObject()
+                .put("adjustments", new JSONArray()
+                        .put(new JSONObject()
+                                .put("match", new JSONArray().put("minecraft:stronghold"))
+                                .put("yBand", -120))
+                        .put(new JSONObject()
+                                .put("match", new JSONArray().put("minecraft:trial_chambers"))
+                                .put("yBand", new JSONObject().put("min", -9000))
+                                .put("terrain", new JSONObject().put("mode", "SOLIDIFY"))));
+        List<String> errors = validate(policy);
+
+        assertEquals(3, errors.size());
+        assertTrue(errors.stream().anyMatch(error ->
+                error.contains("adjustments[0].yBand must be an object")));
+        assertTrue(errors.stream().anyMatch(error ->
+                error.contains("adjustments[1].yBand.min")));
+        assertTrue(errors.stream().anyMatch(error ->
+                error.contains("adjustments[1].terrain.mode")));
+    }
+
+    @Test
     public void legacyModeAndEnabledWhitelistAreRejected() {
         JSONObject policy = new JSONObject()
                 .put("mode", "ALL_OFF")

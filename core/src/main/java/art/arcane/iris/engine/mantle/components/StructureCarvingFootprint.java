@@ -11,7 +11,7 @@ import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 
 import java.util.Arrays;
 
-final class StructureCarvingFootprint {
+public final class StructureCarvingFootprint {
     static final int DEFAULT_MAX_CELLS = 1_048_576;
 
     private final int minX;
@@ -43,17 +43,26 @@ final class StructureCarvingFootprint {
     }
 
     static StructureCarvingFootprint from(KList<PlacedStructurePiece> pieces, int padding, int maxCells) {
+        return fromColumns(sink -> emitPieceColumns(pieces, sink), padding, maxCells);
+    }
+
+    /**
+     * Builds a footprint from any per-column occupancy source. The source reports one contribution per
+     * occupied column; overlapping contributions merge into a single column whose vertical extents span
+     * every contribution.
+     */
+    public static StructureCarvingFootprint fromColumns(ColumnSource source, int padding, int maxCells) {
         if (padding < 0) {
             throw new IllegalArgumentException("padding must be non-negative");
         }
         if (maxCells < 1) {
             throw new IllegalArgumentException("maxCells must be positive");
         }
-        if (pieces == null || pieces.isEmpty()) {
+        if (source == null) {
             return null;
         }
 
-        SourceCollection sources = collectSources(pieces);
+        SourceCollection sources = collectSources(source);
         if (sources == null || sources.columns().isEmpty()) {
             return null;
         }
@@ -93,62 +102,62 @@ final class StructureCarvingFootprint {
         return new StructureCarvingFootprint(data);
     }
 
-    int minX() {
+    public int minX() {
         return minX;
     }
 
-    int maxX() {
+    public int maxX() {
         return maxX;
     }
 
-    int minZ() {
+    public int minZ() {
         return minZ;
     }
 
-    int maxZ() {
+    public int maxZ() {
         return maxZ;
     }
 
-    int width() {
+    public int width() {
         return width;
     }
 
-    int depth() {
+    public int depth() {
         return depth;
     }
 
-    boolean contains(int worldX, int worldZ) {
+    public boolean contains(int worldX, int worldZ) {
         return worldX >= minX && worldX <= maxX && worldZ >= minZ && worldZ <= maxZ;
     }
 
-    int indexAt(int worldX, int worldZ) {
+    public int indexAt(int worldX, int worldZ) {
         if (!contains(worldX, worldZ)) {
             return -1;
         }
         return (worldZ - minZ) * width + worldX - minX;
     }
 
-    long distanceSquaredAt(int worldX, int worldZ) {
+    public long distanceSquaredAt(int worldX, int worldZ) {
         return distanceSquaredAt(requireIndex(worldX, worldZ));
     }
 
-    long distanceSquaredAt(int index) {
+    public long distanceSquaredAt(int index) {
         return distanceSquared[index];
     }
 
-    int sourceMinYAt(int worldX, int worldZ) {
+    public int sourceMinYAt(int worldX, int worldZ) {
         return sourceMinYAt(requireIndex(worldX, worldZ));
     }
 
-    int sourceMinYAt(int index) {
+    public int sourceMinYAt(int index) {
         return sourceMinY[nearestSourceIds[index]];
     }
 
-    int sourceMaxYAt(int worldX, int worldZ) {
+    public int sourceMaxYAt(int worldX, int worldZ) {
         return sourceMaxYAt(requireIndex(worldX, worldZ));
     }
 
-    int sourceMaxYAt(int index) {
+    public int sourceMaxYAt(int index) {
         return sourceMaxY[nearestSourceIds[index]];
     }
 
@@ -160,9 +169,23 @@ final class StructureCarvingFootprint {
         return new Column(distanceSquaredAt(index), sourceMinYAt(index), sourceMaxYAt(index));
     }
 
-    private static SourceCollection collectSources(KList<PlacedStructurePiece> pieces) {
+    private static SourceCollection collectSources(ColumnSource source) {
         Long2LongOpenHashMap columns = new Long2LongOpenHashMap();
         MutableBounds bounds = new MutableBounds();
+        boolean usable = source.emit((worldX, worldZ, minY, maxY) -> {
+            mergeColumn(columns, worldX, worldZ, minY, maxY);
+            bounds.include(worldX, worldZ);
+        });
+        if (!usable) {
+            return null;
+        }
+        return columns.isEmpty() ? null : new SourceCollection(columns, bounds.freeze());
+    }
+
+    private static boolean emitPieceColumns(KList<PlacedStructurePiece> pieces, ColumnSink sink) {
+        if (pieces == null) {
+            return true;
+        }
         for (PlacedStructurePiece piece : pieces) {
             if (piece == null) {
                 continue;
@@ -181,13 +204,12 @@ final class StructureCarvingFootprint {
                 long worldY = (long) piece.getY() + rotated.getBlockY();
                 long worldZ = (long) piece.getZ() + rotated.getBlockZ();
                 if (!fitsInteger(worldX) || !fitsInteger(worldY) || !fitsInteger(worldZ)) {
-                    return null;
+                    return false;
                 }
-                mergeColumn(columns, (int) worldX, (int) worldY, (int) worldZ);
-                bounds.include((int) worldX, (int) worldZ);
+                sink.column((int) worldX, (int) worldZ, (int) worldY, (int) worldY);
             }
         }
-        return columns.isEmpty() ? null : new SourceCollection(columns, bounds.freeze());
+        return true;
     }
 
     private static Bounds paddedBounds(MutableBoundsSnapshot sourceBounds, int padding, int maxCells) {
@@ -211,15 +233,15 @@ final class StructureCarvingFootprint {
                 (int) width, (int) depth, cellCount);
     }
 
-    private static void mergeColumn(Long2LongOpenHashMap columns, int x, int y, int z) {
+    private static void mergeColumn(Long2LongOpenHashMap columns, int x, int z, int minY, int maxY) {
         long key = pack(x, z);
         if (!columns.containsKey(key)) {
-            columns.put(key, packHeights(y, y));
+            columns.put(key, packHeights(minY, maxY));
             return;
         }
         long existing = columns.get(key);
         columns.put(key, packHeights(
-                Math.min(y, unpackMinY(existing)), Math.max(y, unpackMaxY(existing))));
+                Math.min(minY, unpackMinY(existing)), Math.max(maxY, unpackMaxY(existing))));
     }
 
     private static void transformRows(int[] nearestSourceIds, int[] sourceX, int[] sourceZ,
@@ -380,6 +402,20 @@ final class StructureCarvingFootprint {
 
     private static int unpackMaxY(long packed) {
         return (int) packed;
+    }
+
+    @FunctionalInterface
+    public interface ColumnSink {
+        void column(int worldX, int worldZ, int minY, int maxY);
+    }
+
+    @FunctionalInterface
+    public interface ColumnSource {
+        /**
+         * Reports every occupied column to the sink. Returning false abandons the footprint, which is how
+         * a source rejects occupancy it cannot address (for example coordinates outside the integer range).
+         */
+        boolean emit(ColumnSink sink);
     }
 
     record Column(long distanceSquared, int sourceMinY, int sourceMaxY) {

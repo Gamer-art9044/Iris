@@ -20,7 +20,6 @@ package art.arcane.iris.engine.mantle;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.UpperDimensionContext;
@@ -64,7 +63,7 @@ public interface EngineMantle extends MatterGenerator {
     int getRealRadius();
 
     @UnmodifiableView
-    List<Pair<List<MantleComponent>, Integer>> getComponents();
+    List<MantlePass> getComponents();
 
     @UnmodifiableView
     Map<MantleFlag, MantleComponent> getRegisteredComponents();

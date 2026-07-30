@@ -4,6 +4,7 @@ import art.arcane.volmlib.util.collection.KList;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -53,6 +54,9 @@ public class IrisObjectPlacementToPlacementTest {
         source.setBoreExtendMinY(3);
         source.setUnderwater(true);
         source.setCarvingSupport(CarvingMode.ANYWHERE);
+        source.setSurfaceSupportBuffer(3);
+        source.setSurfaceSupportDepth(4);
+        source.setRequireSurfaceSupport(false);
         source.setCaveAnchorMode(IrisCaveAnchorMode.CEILING);
         source.setHeightmap(heightmap);
         source.setSmartBore(true);
@@ -95,6 +99,9 @@ public class IrisObjectPlacementToPlacementTest {
         assertEquals(3, copy.getBoreExtendMinY());
         assertTrue(copy.isUnderwater());
         assertEquals(CarvingMode.ANYWHERE, copy.getCarvingSupport());
+        assertEquals(3, copy.getSurfaceSupportBuffer());
+        assertEquals(4, copy.getSurfaceSupportDepth());
+        assertFalse(copy.isRequireSurfaceSupport());
         assertEquals(IrisCaveAnchorMode.CEILING, copy.getCaveAnchorMode());
         assertSame(heightmap, copy.getHeightmap());
         assertTrue(copy.isSmartBore());

@@ -465,6 +465,12 @@ final class DecoratorCore {
         return ((BlockData) surface.nativeHandle()).isFaceSturdy(BlockFace.UP, BlockSupport.FULL);
     }
 
+    static boolean isValidShorelineSupport(IrisDecorator decorator, PlatformBlockState surface) {
+        return surface != null
+                && B.isSolid(surface)
+                && (decorator.isForcePlace() || canGoOn(null, surface));
+    }
+
     static boolean canReplaceStackTarget(PlatformBlockState state, boolean allowFluid) {
         return B.isAir(state) || allowFluid && B.isFluid(state);
     }

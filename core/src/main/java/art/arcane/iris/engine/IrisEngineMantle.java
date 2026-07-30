@@ -22,11 +22,11 @@ import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.WorldMaintenance;
-import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.MantleComponent;
+import art.arcane.iris.engine.mantle.MantlePass;
 import art.arcane.iris.engine.mantle.components.MantleCarvingComponent;
 import art.arcane.iris.engine.mantle.components.MantleFloatingObjectComponent;
 import art.arcane.iris.engine.mantle.components.MantleObjectComponent;
@@ -79,7 +79,7 @@ public class IrisEngineMantle implements EngineMantle {
     @Getter(AccessLevel.NONE)
     private final KMap<Integer, KList<MantleComponent>> components;
     private final KMap<MantleFlag, MantleComponent> registeredComponents = new KMap<>();
-    private final AtomicCache<List<Pair<List<MantleComponent>, Integer>>> componentsCache = new AtomicCache<>();
+    private final AtomicCache<List<MantlePass>> componentsCache = new AtomicCache<>();
     private final AtomicCache<Set<MantleFlag>> disabledFlags = new AtomicCache<>();
     private final MantleObjectComponent object;
 
@@ -97,40 +97,41 @@ public class IrisEngineMantle implements EngineMantle {
     @Override
     public int getRadius() {
         if (components.isEmpty()) return 0;
-        return getComponents().getFirst().getB();
+        return getComponents().getFirst().passChunkRadius();
     }
 
     @Override
     public int getRealRadius() {
         if (components.isEmpty()) return 0;
-        return getComponents().getLast().getB();
+        return getComponents().getLast().passChunkRadius();
     }
 
     @Override
-    public List<Pair<List<MantleComponent>, Integer>> getComponents() {
+    public List<MantlePass> getComponents() {
         return componentsCache.aquire(() -> {
-            var list = components.keySet()
+            List<List<MantleComponent>> passes = components.keySet()
                     .stream()
                     .sorted()
                     .map(components::get)
-                    .map(components -> {
-                        int radius = components.stream()
-                                .filter(MantleComponent::isEnabled)
-                                .mapToInt(MantleComponent::getRadius)
-                                .max()
-                                .orElse(0);
-                        return new Pair<>(List.copyOf(components), radius);
-                    })
-                    .filter(pair -> !pair.getA().isEmpty())
+                    .map(List::<MantleComponent>copyOf)
+                    .filter(pass -> !pass.isEmpty())
                     .toList();
 
-            int radius = 0;
-            for (var pair : list.reversed()) {
-                radius += pair.getB();
-                pair.setB(Math.ceilDiv(radius, 16));
+            MantlePass[] built = new MantlePass[passes.size()];
+            int downstreamBlockRadius = 0;
+            for (int i = passes.size() - 1; i >= 0; i--) {
+                List<MantleComponent> pass = passes.get(i);
+                int passBlockRadius = pass.stream()
+                        .filter(MantleComponent::isEnabled)
+                        .mapToInt(MantleComponent::getRadius)
+                        .max()
+                        .orElse(0);
+                int cumulative = downstreamBlockRadius + passBlockRadius;
+                built[i] = new MantlePass(pass, Math.ceilDiv(cumulative, 16), downstreamBlockRadius);
+                downstreamBlockRadius = cumulative;
             }
 
-            return list;
+            return List.of(built);
         });
     }
 

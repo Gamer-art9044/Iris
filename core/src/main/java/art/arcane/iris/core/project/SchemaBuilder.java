@@ -41,6 +41,7 @@ import art.arcane.iris.engine.object.annotations.RegistryListEntityType;
 import art.arcane.iris.engine.object.annotations.RegistryListFont;
 import art.arcane.iris.engine.object.annotations.RegistryListFunction;
 import art.arcane.iris.engine.object.annotations.RegistryListItemType;
+import art.arcane.iris.engine.object.annotations.RegistryListNativeJigsawPool;
 import art.arcane.iris.engine.object.annotations.RegistryListPotionEffect;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import art.arcane.iris.engine.object.annotations.RegistryListSpecialEntity;
@@ -314,6 +315,25 @@ public class SchemaBuilder {
                     fancyType = "Block Type";
                     prop.put("$ref", "#/definitions/" + key);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid Block Type (use ctrl+space for auto complete!)");
+
+                } else if (k.isAnnotationPresent(RegistryListNativeJigsawPool.class)) {
+                    String key = "enum-native-jigsaw-pool";
+
+                    if (!definitions.containsKey(key)) {
+                        JSONObject j = new JSONObject();
+                        JSONArray ja = new JSONArray();
+
+                        for (String i : templatePoolKeys()) {
+                            ja.put(i);
+                        }
+
+                        j.put("enum", ja);
+                        definitions.put(key, j);
+                    }
+
+                    fancyType = "Native Jigsaw Pool";
+                    prop.put("$ref", "#/definitions/" + key);
+                    description.add(SYMBOL_TYPE__N + "  Must be a registered vanilla, datapack, or modded template pool key (use ctrl+space for auto complete!)");
 
                 } else if (k.isAnnotationPresent(RegistryListVanillaStructure.class)) {
                     String key = "enum-vanilla-structure";
@@ -593,6 +613,24 @@ public class SchemaBuilder {
                                 items.put("$ref", "#/definitions/" + key);
                                 prop.put("items", items);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla, datapack, or imported Iris structure (use ctrl+space for auto complete!)");
+                            } else if (k.isAnnotationPresent(RegistryListNativeJigsawPool.class)) {
+                                fancyType = "List<Native Jigsaw Pool>";
+                                String key = "enum-native-jigsaw-pool";
+
+                                if (!definitions.containsKey(key)) {
+                                    JSONObject j = new JSONObject();
+                                    JSONArray values = new JSONArray();
+                                    for (String poolKey : templatePoolKeys()) {
+                                        values.put(poolKey);
+                                    }
+                                    j.put("enum", values);
+                                    definitions.put(key, j);
+                                }
+
+                                JSONObject items = new JSONObject();
+                                items.put("$ref", "#/definitions/" + key);
+                                prop.put("items", items);
+                                description.add(SYMBOL_TYPE__N + "  Must be a registered vanilla, datapack, or modded template pool key (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListVanillaStructure.class)) {
                                 fancyType = "List<Vanilla Structure>";
                                 String key = "enum-vanilla-structure";
@@ -931,6 +969,14 @@ public class SchemaBuilder {
             }
         }
         return groups;
+    }
+
+    private List<String> templatePoolKeys() {
+        if (IrisPlatforms.get().structureHooks() == null) {
+            return List.of();
+        }
+        List<String> keys = IrisPlatforms.get().structureHooks().templatePoolKeys();
+        return keys == null ? List.of() : keys;
     }
 
     private String getType(Class<?> c) {

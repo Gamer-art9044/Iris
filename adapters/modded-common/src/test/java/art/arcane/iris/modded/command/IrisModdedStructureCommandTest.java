@@ -34,23 +34,21 @@ public class IrisModdedStructureCommandTest {
     }
 
     @Test
-    public void generatorLocateUsesIrisOnlyForExplicitReplacement() throws IOException {
+    public void generatorLocateUsesEveryIrisPlacedNativeStructure() throws IOException {
         String source = moddedSource("IrisModdedChunkGenerator.java");
         int methodStart = source.indexOf("private Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(");
         int methodEnd = source.indexOf("private HolderSet<Structure> filterReachableNativeStructures(", methodStart);
         String method = source.substring(methodStart, methodEnd);
         int unexploredGuard = method.indexOf("if (findUnexplored)");
         int registryLookup = method.indexOf("level.registryAccess().lookupOrThrow(Registries.STRUCTURE)");
-        int policyResolution = method.indexOf("NativeStructureGenerationPolicy.resolve(current,");
-        int replacementCheck = method.indexOf(
-                "decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS", policyResolution);
-        int irisLocate = method.indexOf("IrisStructureLocator.locate(", replacementCheck);
+        int placedCheck = method.indexOf(
+                "if (!IrisStructureLocator.isPlaced(current, structureId))");
+        int irisLocate = method.indexOf("IrisStructureLocator.locate(", placedCheck);
 
         assertTrue(unexploredGuard >= 0);
         assertTrue(registryLookup > unexploredGuard);
-        assertTrue(policyResolution > registryLookup);
-        assertTrue(replacementCheck > policyResolution);
-        assertTrue(irisLocate > replacementCheck);
+        assertTrue(placedCheck > registryLookup);
+        assertTrue(irisLocate > placedCheck);
         assertTrue(method.contains("LocateStatus.SEARCH_LIMIT_REACHED"));
         assertTrue(method.contains("new BlockPos(result.originX(), result.baseY(), result.originZ())"));
         assertFalse(method.contains("NativeStructureLocateCapability"));

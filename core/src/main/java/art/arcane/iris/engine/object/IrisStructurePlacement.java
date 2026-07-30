@@ -35,20 +35,19 @@ import lombok.experimental.Accessors;
 @Desc("Attaches structures to a biome, region or dimension and controls where and how often they generate. This is independent of a structure's own native generation, so you can add custom placements in tandem with native generation or instead of it.")
 @Data
 public class IrisStructurePlacement {
-    private static final double DEFAULT_OVERBORE_EROSION_STRENGTH = 0.8D;
-    private static final double DEFAULT_OVERBORE_EROSION_FREQUENCY = 0.07D;
-    private static final double MIN_OVERBORE_EROSION_FREQUENCY = 0.001D;
-    private static final double MAX_OVERBORE_EROSION_FREQUENCY = 1D;
-
     @ArrayType(type = String.class, min = 1)
     @RegistryListStructure
-    @Desc("Editable Iris structure resources to place here. Every key must resolve to a structures/*.json resource in this pack. Live vanilla, mod, and datapack registry keys are controlled through importedStructures unless explicitly cloned into Iris resources.")
+    @Desc("Editable Iris assembly resources offered by this placement. Leave empty when nativeStructures supplies the source.")
     private KList<String> structures = new KList<>();
+
+    @ArrayType(type = IrisNativeStructure.class, min = 1)
+    @Desc("Live registered vanilla, datapack, and modded structures offered by this placement. Minecraft runs their native generator directly, independent of normal biome or dimension eligibility.")
+    private KList<IrisNativeStructure> nativeStructures = new KList<>();
 
     @Desc("Stable authored identity for this placement. Set this when multiple placements use the same structure and settings. When empty, Iris derives identity from the placement content so list reordering does not move generated structures.")
     private String placementId = "";
 
-    @Desc("Controls native replacement for this placement. REPLACE_SOURCE suppresses each selected Iris structure's vanillaSource, and is honored only for dimension-level placements. NONE leaves native generation untouched.")
+    @Desc("Controls native replacement for this placement. REPLACE_SOURCE suppresses each selected Iris structure's vanillaSource or registered native source, and is honored only for dimension-level placements. NONE leaves native generation untouched.")
     private NativeStructureSuppression nativeSuppression = NativeStructureSuppression.NONE;
 
     @Desc("How start positions are scattered.")
@@ -89,45 +88,11 @@ public class IrisStructurePlacement {
     @Desc("When underground=false this is the maximum surface Y the placement is allowed at (a gate); when underground=true this is the upper bound of the Y band the structure is placed within.")
     private int maxHeight = 2032;
 
-    @Desc("if true the structure is placed underground at a random world Y inside [minHeight, maxHeight] (raw stamp, no terrain matching) instead of being dropped onto the terrain surface. Use this for deep structures like ancient cities in a deep cave band.")
+    @Desc("If true, the structure starts at a deterministic random world Y inside [minHeight, maxHeight]. Terrain integration is then controlled independently by terrain.")
     private boolean underground = false;
 
-    @Desc("if true, the structure's full bounding box (floor up to roof) is bored out to air before the pieces are stamped, so the structure sits inside an open cavern instead of being encased in solid terrain. Essential for underground structures such as ancient cities to be visible and enterable.")
-    private boolean bore = false;
-
-    @Desc("extra blocks of air clearance added around the bored bounding box (horizontally and above) when bore=true. The floor is never bored below the structure so support is preserved.")
-    private int borePadding = 0;
-
-    @Desc("if true, massively carves the surrounding terrain into an open cavern around the structure instead of only clearing its tight bounding box. The structure's full interior is cleared and the surrounding terrain is excavated out to overboreRadius blocks, doming down to meet the ground at the edges so the structure is no longer buried in solid terrain. The mantle write window and the carve volume cap are expanded automatically to fit. Use for deep structures such as ancient cities so both their interior and surroundings are open and enterable. Takes precedence over bore when both are set.")
-    private boolean overbore = false;
-
-    @MinNumber(0)
-    @MaxNumber(128)
-    @Desc("when overbore=true, how many blocks of terrain to carve horizontally outward. BOX expands the assembled structure bounds; ROUNDED and ERODED expand the transformed non-air block footprint. Larger values produce a wider open cavern and widen the mantle write window for nearby chunks, so increase this deliberately.")
-    private int overboreRadius = 24;
-
-    @MinNumber(0)
-    @MaxNumber(128)
-    @Desc("when overbore=true, how many extra blocks of air to carve above the structure's roof at the cavern apex.")
-    private int overboreHeight = 8;
-
-    @MinNumber(0)
-    @MaxNumber(64)
-    @Desc("when overbore=true, how many blocks of terrain to carve below the structure's floor. 0 keeps the floor solid for support; small values recess the cavern floor around the structure.")
-    private int overboreFloor = 0;
-
-    @Desc("when overbore=true, controls whether the expanded carve has straight, rounded, or noise-eroded boundaries.")
-    private IrisStructureCarveShape overboreShape = IrisStructureCarveShape.ERODED;
-
-    @MinNumber(0)
-    @MaxNumber(1)
-    @Desc("when overboreShape=ERODED, controls how strongly noise cuts into the rounded outer shell. 0 matches ROUNDED; 1 may erode back to the mandatory structure footprint but never remove its required clearance.")
-    private double overboreErosionStrength = DEFAULT_OVERBORE_EROSION_STRENGTH;
-
-    @MinNumber(MIN_OVERBORE_EROSION_FREQUENCY)
-    @MaxNumber(MAX_OVERBORE_EROSION_FREQUENCY)
-    @Desc("when overboreShape=ERODED, controls the spatial frequency of boundary noise. Higher values produce smaller, busier erosion features.")
-    private double overboreErosionFrequency = DEFAULT_OVERBORE_EROSION_FREQUENCY;
+    @Desc("Terrain integration shared by editable Iris assemblies and live registered structures.")
+    private IrisStructureTerrain terrain = new IrisStructureTerrain();
 
     @Desc("Optional foundation columns placed beneath the assembled structure's occupied bottom cells. Columns pass through air and fluids until they reach solid ground, up to maxDepth.")
     private IrisStructureStiltSettings stilt = null;
@@ -135,22 +100,15 @@ public class IrisStructurePlacement {
     @Desc("If false, this placement is skipped underwater.")
     private boolean underwater = false;
 
-    public IrisStructureCarveShape resolvedOverboreShape() {
-        return overboreShape == null ? IrisStructureCarveShape.ERODED : overboreShape;
+    public IrisStructureTerrain resolvedTerrain() {
+        return terrain == null ? new IrisStructureTerrain() : terrain;
     }
 
-    public double resolvedOverboreErosionStrength() {
-        if (!Double.isFinite(overboreErosionStrength)) {
-            return DEFAULT_OVERBORE_EROSION_STRENGTH;
-        }
-        return Math.max(0D, Math.min(1D, overboreErosionStrength));
+    public boolean hasIrisStructures() {
+        return structures != null && !structures.isEmpty();
     }
 
-    public double resolvedOverboreErosionFrequency() {
-        if (!Double.isFinite(overboreErosionFrequency)) {
-            return DEFAULT_OVERBORE_EROSION_FREQUENCY;
-        }
-        return Math.max(MIN_OVERBORE_EROSION_FREQUENCY,
-                Math.min(MAX_OVERBORE_EROSION_FREQUENCY, overboreErosionFrequency));
+    public boolean hasNativeStructures() {
+        return nativeStructures != null && !nativeStructures.isEmpty();
     }
 }

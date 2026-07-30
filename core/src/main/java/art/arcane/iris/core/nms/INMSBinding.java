@@ -98,6 +98,14 @@ public interface INMSBinding {
 
     KList<String> getStructureKeys();
 
+    default KList<String> getJigsawStructureKeys() {
+        return new KList<>();
+    }
+
+    default KList<String> getTemplatePoolKeys() {
+        return new KList<>();
+    }
+
     KList<String> getStructureSetKeys();
 
     KList<String> getReachableStructureKeys(World world);

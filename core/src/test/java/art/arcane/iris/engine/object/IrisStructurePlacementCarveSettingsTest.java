@@ -8,18 +8,60 @@ import java.lang.reflect.Field;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 
 public class IrisStructurePlacementCarveSettingsTest {
     @Test
-    public void defaultsSelectErodedOverbore() {
-        IrisStructurePlacement placement = new IrisStructurePlacement();
+    public void defaultsPreserveTerrainWithBoxCarving() {
+        IrisStructureTerrain terrain = new IrisStructureTerrain();
 
-        assertEquals(IrisStructureCarveShape.ERODED, placement.getOverboreShape());
-        assertEquals(IrisStructureCarveShape.ERODED, placement.resolvedOverboreShape());
-        assertEquals(0.8D, placement.getOverboreErosionStrength(), 0D);
-        assertEquals(0.8D, placement.resolvedOverboreErosionStrength(), 0D);
-        assertEquals(0.07D, placement.getOverboreErosionFrequency(), 0D);
-        assertEquals(0.07D, placement.resolvedOverboreErosionFrequency(), 0D);
+        assertEquals(IrisStructureTerrainMode.PRESERVE, terrain.resolvedMode());
+        assertEquals(IrisStructureCarveShape.BOX, terrain.getShape());
+        assertEquals(IrisStructureCarveShape.BOX, terrain.resolvedShape());
+        assertEquals(0.8D, terrain.getErosionStrength(), 0D);
+        assertEquals(0.8D, terrain.resolvedErosionStrength(), 0D);
+        assertEquals(0.07D, terrain.getErosionFrequency(), 0D);
+        assertEquals(0.07D, terrain.resolvedErosionFrequency(), 0D);
+        assertEquals(0D, terrain.getLobeFrequency(), 0D);
+        assertEquals(0.021D, terrain.resolvedLobeFrequency(), 1.0E-12D);
+        assertEquals(0.85D, terrain.getLobeStrength(), 0D);
+        assertEquals(0.85D, terrain.resolvedLobeStrength(), 0D);
+    }
+
+    @Test
+    public void lobeFrequencyAutoDerivesFromErosionFrequencyUntilAuthored() {
+        IrisStructureTerrain terrain = new IrisStructureTerrain().setErosionFrequency(0.05D);
+
+        assertEquals(0.015D, terrain.resolvedLobeFrequency(), 1.0E-12D);
+
+        terrain.setLobeFrequency(Double.NaN);
+        assertEquals(0.015D, terrain.resolvedLobeFrequency(), 1.0E-12D);
+
+        terrain.setLobeFrequency(-1D);
+        assertEquals(0.015D, terrain.resolvedLobeFrequency(), 1.0E-12D);
+
+        terrain.setLobeFrequency(0.04D);
+        assertEquals(0.04D, terrain.resolvedLobeFrequency(), 0D);
+
+        terrain.setLobeFrequency(2D);
+        assertEquals(1D, terrain.resolvedLobeFrequency(), 0D);
+    }
+
+    @Test
+    public void lobeStrengthClampsToTheAuthoredBand() {
+        IrisStructureTerrain terrain = new IrisStructureTerrain().setLobeStrength(Double.NaN);
+
+        assertEquals(0.85D, terrain.resolvedLobeStrength(), 0D);
+
+        terrain.setLobeStrength(-1D);
+        assertEquals(0D, terrain.resolvedLobeStrength(), 0D);
+
+        terrain.setLobeStrength(2D);
+        assertEquals(1D, terrain.resolvedLobeStrength(), 0D);
+
+        terrain.setLobeStrength(0.4D);
+        assertEquals(0.4D, terrain.resolvedLobeStrength(), 0D);
     }
 
     @Test
@@ -37,47 +79,61 @@ public class IrisStructurePlacementCarveSettingsTest {
 
     @Test
     public void nullAndNonFiniteValuesResolveToDefaults() {
-        IrisStructurePlacement placement = new IrisStructurePlacement()
-                .setOverboreShape(null)
-                .setOverboreErosionStrength(Double.NaN)
-                .setOverboreErosionFrequency(Double.POSITIVE_INFINITY);
+        IrisStructureTerrain terrain = new IrisStructureTerrain()
+                .setShape(null)
+                .setErosionStrength(Double.NaN)
+                .setErosionFrequency(Double.POSITIVE_INFINITY);
 
-        assertEquals(IrisStructureCarveShape.ERODED, placement.resolvedOverboreShape());
-        assertEquals(0.8D, placement.resolvedOverboreErosionStrength(), 0D);
-        assertEquals(0.07D, placement.resolvedOverboreErosionFrequency(), 0D);
+        assertEquals(IrisStructureCarveShape.BOX, terrain.resolvedShape());
+        assertEquals(0.8D, terrain.resolvedErosionStrength(), 0D);
+        assertEquals(0.07D, terrain.resolvedErosionFrequency(), 0D);
 
-        placement.setOverboreErosionStrength(Double.NEGATIVE_INFINITY);
-        placement.setOverboreErosionFrequency(Double.NaN);
+        terrain.setErosionStrength(Double.NEGATIVE_INFINITY);
+        terrain.setErosionFrequency(Double.NaN);
 
-        assertEquals(0.8D, placement.resolvedOverboreErosionStrength(), 0D);
-        assertEquals(0.07D, placement.resolvedOverboreErosionFrequency(), 0D);
+        assertEquals(0.8D, terrain.resolvedErosionStrength(), 0D);
+        assertEquals(0.07D, terrain.resolvedErosionFrequency(), 0D);
     }
 
     @Test
     public void finiteValuesClampToAuthoredBounds() {
-        IrisStructurePlacement placement = new IrisStructurePlacement()
-                .setOverboreErosionStrength(-1D)
-                .setOverboreErosionFrequency(0D);
+        IrisStructureTerrain terrain = new IrisStructureTerrain()
+                .setErosionStrength(-1D)
+                .setErosionFrequency(0D);
 
-        assertEquals(0D, placement.resolvedOverboreErosionStrength(), 0D);
-        assertEquals(0.001D, placement.resolvedOverboreErosionFrequency(), 0D);
+        assertEquals(0D, terrain.resolvedErosionStrength(), 0D);
+        assertEquals(0.001D, terrain.resolvedErosionFrequency(), 0D);
 
-        placement.setOverboreErosionStrength(2D);
-        placement.setOverboreErosionFrequency(2D);
+        terrain.setErosionStrength(2D);
+        terrain.setErosionFrequency(2D);
 
-        assertEquals(1D, placement.resolvedOverboreErosionStrength(), 0D);
-        assertEquals(1D, placement.resolvedOverboreErosionFrequency(), 0D);
+        assertEquals(1D, terrain.resolvedErosionStrength(), 0D);
+        assertEquals(1D, terrain.resolvedErosionFrequency(), 0D);
+    }
+
+    @Test
+    public void encaseModeCarriesAnOptionalPaletteOverride() {
+        IrisStructureTerrain terrain = new IrisStructureTerrain()
+                .setMode(IrisStructureTerrainMode.ENCASE);
+
+        assertEquals(IrisStructureTerrainMode.ENCASE, terrain.resolvedMode());
+        assertNull(terrain.getEncasePalette());
+
+        IrisMaterialPalette palette = new IrisMaterialPalette().qclear().qadd("minecraft:tuff");
+        assertSame(palette, terrain.setEncasePalette(palette).getEncasePalette());
     }
 
     @Test
     public void numericSchemaBoundsMatchRuntimeBounds() throws NoSuchFieldException {
-        assertBounds("overboreErosionStrength", 0D, 1D);
-        assertBounds("overboreErosionFrequency", 0.001D, 1D);
+        assertBounds("erosionStrength", 0D, 1D);
+        assertBounds("erosionFrequency", 0.001D, 1D);
+        assertBounds("lobeFrequency", 0D, 1D);
+        assertBounds("lobeStrength", 0D, 1D);
     }
 
     private void assertBounds(String fieldName, double expectedMinimum,
                               double expectedMaximum) throws NoSuchFieldException {
-        Field field = IrisStructurePlacement.class.getDeclaredField(fieldName);
+        Field field = IrisStructureTerrain.class.getDeclaredField(fieldName);
         MinNumber minimum = field.getAnnotation(MinNumber.class);
         MaxNumber maximum = field.getAnnotation(MaxNumber.class);
 

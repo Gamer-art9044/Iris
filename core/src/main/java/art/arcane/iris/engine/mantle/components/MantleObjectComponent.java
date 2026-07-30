@@ -1171,6 +1171,25 @@ public class MantleObjectComponent extends IrisMantleComponent {
             return objectPlacement;
         }
 
+        return applyDimensionSurfaceSupport(resolveImportedPlacement(objectPlacement, object));
+    }
+
+    /** Dimension acts as the floor: it can force support on and widen the buffer, never weaken either. */
+    private IrisObjectPlacement applyDimensionSurfaceSupport(IrisObjectPlacement placement) {
+        IrisDimension dimension = getDimension();
+        boolean require = placement.isRequireSurfaceSupport() && dimension.isRequireObjectSurfaceSupport();
+        int buffer = Math.max(placement.getSurfaceSupportBuffer(), dimension.getObjectSurfaceSupportBuffer());
+        if (require == placement.isRequireSurfaceSupport() && buffer == placement.getSurfaceSupportBuffer()) {
+            return placement;
+        }
+
+        IrisObjectPlacement resolved = placement.toPlacement(placement.getPlace().toArray(new String[0]));
+        resolved.setRequireSurfaceSupport(require);
+        resolved.setSurfaceSupportBuffer(buffer);
+        return resolved;
+    }
+
+    private IrisObjectPlacement resolveImportedPlacement(IrisObjectPlacement objectPlacement, IrisObject object) {
         String loadKey = object.getLoadKey();
         if (loadKey == null || loadKey.isBlank()) {
             return objectPlacement;
@@ -1271,6 +1290,11 @@ public class MantleObjectComponent extends IrisMantleComponent {
             boolean result = delegate.isCarved(x, y, z);
             IrisLogging.info("Goldendebug query: tag=" + tag + " isCarved(" + x + "," + y + "," + z + ")=" + result);
             return result;
+        }
+
+        @Override
+        public boolean isSurfaceSolid(int x, int y, int z) {
+            return delegate.isSurfaceSolid(x, y, z);
         }
 
         @Override

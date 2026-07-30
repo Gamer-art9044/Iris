@@ -26,12 +26,15 @@ import art.arcane.iris.engine.object.IrisJigsawConnector;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
 import art.arcane.iris.engine.object.IrisJigsawPieceEntry;
 import art.arcane.iris.engine.object.IrisJigsawPool;
+import art.arcane.iris.engine.object.IrisNativeStructure;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.IrisStructureCarveShape;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
+import art.arcane.iris.engine.object.IrisStructureTerrain;
+import art.arcane.iris.engine.object.IrisStructureTerrainMode;
 import art.arcane.iris.engine.object.NativeStructureSuppression;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
 import art.arcane.iris.engine.object.StructureDistribution;
@@ -76,6 +79,28 @@ public class IrisStructureLocatorContractTest {
     @Test
     public void suppressesVanillaIsFalseForNullEngine() {
         assertFalse(IrisStructureLocator.suppressesVanilla(null, "minecraft:ancient_city"));
+    }
+
+    @Test
+    public void nativeStructureReplacementSuppressesOnlyItsRegisteredSource() {
+        IrisData data = mock(IrisData.class);
+        Engine engine = mock(Engine.class);
+        IrisDimension dimension = mock(IrisDimension.class);
+        IrisStructurePlacement placement = new IrisStructurePlacement()
+                .setNativeSuppression(NativeStructureSuppression.REPLACE_SOURCE);
+        placement.getNativeStructures().add(new IrisNativeStructure()
+                .setStructure("minecraft:ancient_city"));
+        KList<IrisStructurePlacement> placements = new KList<>();
+        placements.add(placement);
+        when(engine.getData()).thenReturn(data);
+        when(engine.getDimension()).thenReturn(dimension);
+        when(dimension.getStructures()).thenReturn(placements);
+        when(dimension.getAllRegions(engine)).thenReturn(new KList<>());
+        when(dimension.getReachableBiomes(engine)).thenReturn(new KList<>());
+
+        assertTrue(IrisStructureLocator.isPlaced(engine, "minecraft:ancient_city"));
+        assertTrue(IrisStructureLocator.suppressesVanilla(engine, "minecraft:ancient_city"));
+        assertFalse(IrisStructureLocator.suppressesVanilla(engine, "minecraft:village"));
     }
 
     @Test
@@ -456,7 +481,7 @@ public class IrisStructureLocatorContractTest {
     }
 
     @Test
-    public void undergroundBurialIncludesOverboreCeiling() {
+    public void undergroundBurialIncludesForceCarveCeiling() {
         Engine engine = mock(Engine.class);
         when(engine.getMinHeight()).thenReturn(-64);
         when(engine.getHeight(anyInt(), anyInt(), eq(true))).thenReturn(164);
@@ -464,30 +489,33 @@ public class IrisStructureLocatorContractTest {
         placement.setUnderground(true);
         placement.setMinHeight(-64);
         placement.setMaxHeight(100);
-        placement.setOverbore(true);
-        placement.setOverboreRadius(2);
-        placement.setOverboreHeight(20);
+        IrisStructureTerrain terrain = new IrisStructureTerrain()
+                .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                .setHorizontalPadding(2)
+                .setCeilingPadding(20)
+                .setShape(IrisStructureCarveShape.ERODED);
+        placement.setTerrain(terrain);
         KList<PlacedStructurePiece> pieces = new KList<>();
         pieces.add(piece(0, 60, 0, 1, 80, 1));
 
         assertEquals(Integer.valueOf(-14), IrisStructureLocator.resolveUndergroundBurialShift(
                 engine, pieces, placement, 60, -63, 319));
 
-        placement.setOverboreErosionStrength(0D);
+        terrain.setErosionStrength(0D);
         assertEquals(Integer.valueOf(-1), IrisStructureLocator.resolveUndergroundBurialShift(
                 engine, pieces, placement, 60, -63, 319));
 
-        placement.setOverboreShape(IrisStructureCarveShape.ROUNDED);
+        terrain.setShape(IrisStructureCarveShape.ROUNDED);
         assertEquals(Integer.valueOf(-1), IrisStructureLocator.resolveUndergroundBurialShift(
                 engine, pieces, placement, 60, -63, 319));
 
-        placement.setOverboreHeight(0);
+        terrain.setCeilingPadding(0);
         assertEquals(Integer.valueOf(0), IrisStructureLocator.resolveUndergroundBurialShift(
                 engine, pieces, placement, 60, -63, 319));
     }
 
     @Test
-    public void zeroOverboreRadiusDoesNotExpandTheBurialEnvelope() {
+    public void zeroForceCarvePaddingDoesNotExpandTheBurialEnvelope() {
         Engine engine = mock(Engine.class);
         when(engine.getMinHeight()).thenReturn(-64);
         when(engine.getHeight(anyInt(), anyInt(), eq(true))).thenReturn(164);
@@ -495,10 +523,11 @@ public class IrisStructureLocatorContractTest {
                 .setUnderground(true)
                 .setMinHeight(-64)
                 .setMaxHeight(100)
-                .setOverbore(true)
-                .setOverboreShape(IrisStructureCarveShape.ROUNDED)
-                .setOverboreRadius(0)
-                .setOverboreHeight(0);
+                .setTerrain(new IrisStructureTerrain()
+                        .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                        .setShape(IrisStructureCarveShape.ROUNDED)
+                        .setHorizontalPadding(0)
+                        .setCeilingPadding(0));
         KList<PlacedStructurePiece> pieces = new KList<>();
         pieces.add(piece(4, 60, 7, 4, 80, 7));
 

@@ -41,10 +41,15 @@ import art.arcane.iris.engine.object.IrisSpawner;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.volmlib.util.exceptions.IrisException;
+import art.arcane.volmlib.util.hud.HudPriority;
+import art.arcane.volmlib.util.hud.HudSlotClaim;
+import art.arcane.volmlib.util.hud.HudSlotRequest;
+import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.io.IO;
@@ -66,6 +71,8 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.World;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
 import org.dom4j.Document;
 import org.dom4j.Element;
 import org.zeroturnaround.zip.ZipUtil;
@@ -75,6 +82,7 @@ import java.awt.GraphicsEnvironment;
 import java.io.File;
 import java.io.IOException;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -321,6 +329,7 @@ public class IrisProject {
         AtomicLong startMs = new AtomicLong(System.currentTimeMillis());
         AtomicInteger taskId = new AtomicInteger(-1);
         org.bukkit.boss.BossBar bossBar;
+        HudSlotClaim loaderClaim;
 
         if (sender.isPlayer() && sender.player() != null) {
             bossBar = Bukkit.createBossBar(
@@ -331,8 +340,15 @@ public class IrisProject {
             bossBar.setProgress(0.0D);
             bossBar.addPlayer(sender.player());
             bossBar.setVisible(true);
+            loaderClaim = BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest(
+                    "iris:studio-open",
+                    HudPriority.PROGRESS,
+                    1200L,
+                    List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)
+            ));
         } else {
             bossBar = null;
+            loaderClaim = null;
         }
 
         int scheduledTaskId = J.ar(() -> {
@@ -352,14 +368,29 @@ public class IrisProject {
                                 RuntimeProgressMessages.STUDIO_FAILED_PROGRESS,
                                 MessageArgument.trusted("percent", percent)
                         ));
-                        J.a(() -> { bossBar.removeAll(); bossBar.setVisible(false); }, 60);
+                        J.a(() -> {
+                            bossBar.removeAll();
+                            bossBar.setVisible(false);
+                            loaderClaim.release();
+                            BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
+                        }, 60);
                     }
                     if (sender.isPlayer()) {
-                        sender.sendAction(IrisLanguage.text(
-                                RuntimeProgressMessages.STUDIO_ACTION_FAILED,
-                                MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
-                                MessageArgument.trusted("stage", currentStage)
-                        ));
+                        HudSurface loaderSurface = loaderClaim.resolve();
+                        if (loaderSurface == HudSurface.ACTION_BAR) {
+                            BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
+                            sender.sendAction(IrisLanguage.text(
+                                    RuntimeProgressMessages.STUDIO_ACTION_FAILED,
+                                    MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
+                                    MessageArgument.trusted("stage", currentStage)
+                            ));
+                        } else if (loaderSurface == HudSurface.BOSS_BAR) {
+                            BukkitPlatform.hudLanes().show(sender.player(), "iris:studio-open", IrisLanguage.text(
+                                    RuntimeProgressMessages.STUDIO_ACTION_FAILED,
+                                    MessageArgument.trusted("bar", ""),
+                                    MessageArgument.trusted("stage", currentStage)
+                            ), currentProgress, BarColor.RED, BarStyle.SOLID, 4000L);
+                        }
                     } else {
                         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_STUDIO_OPEN_FAILED_2));
                     }
@@ -368,14 +399,29 @@ public class IrisProject {
                         bossBar.setProgress(1.0D);
                         bossBar.setColor(org.bukkit.boss.BarColor.GREEN);
                         bossBar.setTitle(IrisLanguage.text(RuntimeProgressMessages.STUDIO_READY_PROGRESS));
-                        J.a(() -> { bossBar.removeAll(); bossBar.setVisible(false); }, 60);
+                        J.a(() -> {
+                            bossBar.removeAll();
+                            bossBar.setVisible(false);
+                            loaderClaim.release();
+                            BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
+                        }, 60);
                     }
                     if (sender.isPlayer()) {
-                        sender.sendAction(IrisLanguage.text(
-                                RuntimeProgressMessages.STUDIO_ACTION_READY,
-                                MessageArgument.trusted("bar", buildStudioProgressBar(1.0D)),
-                                MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
-                        ));
+                        HudSurface loaderSurface = loaderClaim.resolve();
+                        if (loaderSurface == HudSurface.ACTION_BAR) {
+                            BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
+                            sender.sendAction(IrisLanguage.text(
+                                    RuntimeProgressMessages.STUDIO_ACTION_READY,
+                                    MessageArgument.trusted("bar", buildStudioProgressBar(1.0D)),
+                                    MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
+                            ));
+                        } else if (loaderSurface == HudSurface.BOSS_BAR) {
+                            BukkitPlatform.hudLanes().show(sender.player(), "iris:studio-open", IrisLanguage.text(
+                                    RuntimeProgressMessages.STUDIO_ACTION_READY,
+                                    MessageArgument.trusted("bar", ""),
+                                    MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
+                            ), 1.0D, BarColor.GREEN, BarStyle.SOLID, 4000L);
+                        }
                     } else {
                         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_STUDIO_READY, MessageArgument.untrusted("value", String.valueOf(Form.duration(elapsed, 1)))));
                     }
@@ -392,13 +438,25 @@ public class IrisProject {
                     ));
                 }
 
-                sender.sendAction(IrisLanguage.text(
-                        RuntimeProgressMessages.STUDIO_ACTION_PROGRESS,
-                        MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
-                        MessageArgument.trusted("percent", percent),
-                        MessageArgument.trusted("stage", currentStage),
-                        MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
-                ));
+                HudSurface loaderSurface = loaderClaim.resolve();
+                if (loaderSurface == HudSurface.ACTION_BAR) {
+                    BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
+                    sender.sendAction(IrisLanguage.text(
+                            RuntimeProgressMessages.STUDIO_ACTION_PROGRESS,
+                            MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
+                            MessageArgument.trusted("percent", percent),
+                            MessageArgument.trusted("stage", currentStage),
+                            MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
+                    ));
+                } else if (loaderSurface == HudSurface.BOSS_BAR) {
+                    BukkitPlatform.hudLanes().show(sender.player(), "iris:studio-open", IrisLanguage.text(
+                            RuntimeProgressMessages.STUDIO_ACTION_PROGRESS,
+                            MessageArgument.trusted("bar", ""),
+                            MessageArgument.trusted("percent", percent),
+                            MessageArgument.trusted("stage", currentStage),
+                            MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
+                    ), currentProgress, BarColor.GREEN, BarStyle.SOLID, 4000L);
+                }
             } else {
                 long now = System.currentTimeMillis();
                 long nextUpdate = nextConsoleUpdate.get();
@@ -417,6 +475,9 @@ public class IrisProject {
         }, 3);
 
         taskId.set(scheduledTaskId);
+        if (complete.get()) {
+            J.car(taskId.get());
+        }
     }
 
     private static String buildStudioProgressBar(double progress) {

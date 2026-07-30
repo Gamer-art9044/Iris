@@ -81,6 +81,8 @@ import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.function.NastyRunnable;
 import art.arcane.volmlib.util.hotload.ConfigHotloadEngine;
+import art.arcane.volmlib.util.hud.HudBossBarLane;
+import art.arcane.volmlib.util.hud.HudSlotService;
 import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.io.InstanceState;
 import art.arcane.volmlib.util.io.JarScanner;
@@ -619,6 +621,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         SimdSupport.install();
         services = new KMap<>();
         setupAudience();
+        BukkitPlatform.hostHud(new HudSlotService(this), new HudBossBarLane());
         Bindings.setupSentry();
         initialize("art.arcane.iris.core.service", IrisService.class).forEach((i) -> {
             Class<? extends IrisService> serviceType = i.getClass().asSubclass(IrisService.class);
@@ -1016,6 +1019,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             services.values().forEach(IrisService::onDisable);
         }
         IrisServices.clear();
+        if (BukkitPlatform.hasHud()) {
+            BukkitPlatform.hudSlots().shutdown();
+            BukkitPlatform.hudLanes().shutdown();
+        }
         if (configHotloadEngine != null) {
             configHotloadEngine.clear();
             configHotloadEngine = null;

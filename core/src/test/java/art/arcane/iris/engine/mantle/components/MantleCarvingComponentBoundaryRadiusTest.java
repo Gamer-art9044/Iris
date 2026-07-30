@@ -1,8 +1,8 @@
 package art.arcane.iris.engine.mantle.components;
 
-import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.mantle.MantleComponent;
+import art.arcane.iris.engine.mantle.MantlePass;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.MatterGenerator;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -99,12 +99,12 @@ public class MantleCarvingComponentBoundaryRadiusTest {
     private static final class TestMatterGenerator implements MatterGenerator {
         private final Engine engine;
         private final Mantle<Matter> mantle;
-        private final List<Pair<List<MantleComponent>, Integer>> components;
+        private final List<MantlePass> components;
 
         private TestMatterGenerator(Engine engine, Mantle<Matter> mantle, MantleComponent component) {
             this.engine = engine;
             this.mantle = mantle;
-            this.components = List.of(new Pair<>(List.of(component), 1));
+            this.components = List.of(new MantlePass(List.of(component), 1, 0));
         }
 
         @Override
@@ -128,7 +128,7 @@ public class MantleCarvingComponentBoundaryRadiusTest {
         }
 
         @Override
-        public List<Pair<List<MantleComponent>, Integer>> getComponents() {
+        public List<MantlePass> getComponents() {
             return components;
         }
     }

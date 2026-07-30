@@ -1,19 +1,32 @@
 package art.arcane.iris.nativegen;
 
+import art.arcane.iris.engine.mantle.components.StructureCarvingFootprint;
+import art.arcane.iris.engine.object.IrisStructureCarveShape;
+import art.arcane.iris.engine.object.IrisStructureTerrain;
+import art.arcane.iris.engine.object.IrisStructureTerrainMode;
 import com.mojang.datafixers.util.Either;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderSet;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.GenerationStep;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.TerrainAdjustment;
+import net.minecraft.world.level.levelgen.structure.pieces.PiecesContainer;
 import net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement;
+import net.minecraft.world.level.levelgen.structure.structures.DesertPyramidPiece;
+import net.minecraft.world.level.levelgen.structure.structures.DesertPyramidStructure;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -26,11 +39,20 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 public class NativeStructurePostProcessorSurfaceTerrainTest {
+    private static final int SLAB_DEPTH = 128;
+    private static final int SLAB_MIN_Y = 64;
+    private static final int SLAB_PADDING = 14;
+    private static final int SLAB_WIDTH = 16;
+    private static final long TEST_SEED = 8675309L;
+
     @BeforeClass
     public static void bootstrapMinecraft() {
         SharedConstants.tryDetectVersion();
@@ -210,6 +232,408 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
+    public void preserveSourceYSkipsBurialAndKeepsTheVanillaStartY() {
+        StructureStart start = desertStart();
+        int minY = start.getBoundingBox().minY();
+
+        int offset = NativeStructurePostProcessor.applyVerticalShift(
+                start, 0, -64, 320, true, true, null, (x, z) -> 40);
+
+        assertEquals(0, offset);
+        assertEquals(minY, start.getBoundingBox().minY());
+    }
+
+    @Test
+    public void preserveSourceYStillAppliesAnExplicitShift() {
+        StructureStart start = desertStart();
+        int minY = start.getBoundingBox().minY();
+
+        int offset = NativeStructurePostProcessor.applyVerticalShift(
+                start, -8, -64, 320, true, true, null, (x, z) -> 40);
+
+        assertEquals(-8, offset);
+        assertEquals(minY - 8, start.getBoundingBox().minY());
+    }
+
+    @Test
+    public void burialStillSinksTheStructureBelowTheLowestTerrainColumn() {
+        StructureStart start = desertStart();
+        int minY = start.getBoundingBox().minY();
+        int maxY = start.getBoundingBox().maxY();
+        int expected = 40 - 1 - maxY;
+
+        int offset = NativeStructurePostProcessor.applyVerticalShift(
+                start, 0, -64, 320, true, false, null, (x, z) -> 40);
+
+        assertEquals(expected, offset);
+        assertEquals(minY + expected, start.getBoundingBox().minY());
+    }
+
+    @Test
+    public void unfittableBurialClampsToTheWorldFloorInsteadOfAborting() {
+        StructureStart start = desertStart();
+        int minY = start.getBoundingBox().minY();
+        int worldMinY = minY - 4;
+
+        int offset = NativeStructurePostProcessor.applyVerticalShift(
+                start, 0, worldMinY, 320, true, false, null, (x, z) -> worldMinY);
+
+        assertEquals(-4, offset);
+        assertEquals(worldMinY, start.getBoundingBox().minY());
+    }
+
+    @Test
+    public void nativeVacuumClearsEveryPieceEnvelopeBeforePlacement() {
+        StructureStart start = desertStart();
+        BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        put(blocks, bounds.minX(), bounds.minY(), bounds.minZ(), Blocks.STONE.defaultBlockState());
+
+        NativeStructurePostProcessor.integrateTerrain(
+                world(blocks), bounds, "minecraft:desert_pyramid", start,
+                new IrisStructureTerrain().setMode(IrisStructureTerrainMode.VACUUM), null);
+
+        assertEquals(Blocks.AIR.defaultBlockState(),
+                state(blocks, bounds.minX(), bounds.minY(), bounds.minZ()));
+    }
+
+    @Test
+    public void nativeForceCarveHonorsConfiguredPadding() {
+        StructureStart start = desertStart();
+        BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
+        BoundingBox area = new BoundingBox(
+                bounds.minX() - 1, bounds.minY(), bounds.minZ() - 1,
+                bounds.maxX() + 1, bounds.maxY() + 1, bounds.maxZ() + 1);
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        put(blocks, bounds.maxX() + 1, bounds.minY(), bounds.maxZ(),
+                Blocks.STONE.defaultBlockState());
+        put(blocks, bounds.maxX(), bounds.maxY() + 1, bounds.maxZ(),
+                Blocks.STONE.defaultBlockState());
+
+        NativeStructurePostProcessor.integrateTerrain(
+                world(blocks), area, "minecraft:desert_pyramid", start,
+                new IrisStructureTerrain()
+                        .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                        .setHorizontalPadding(1)
+                        .setCeilingPadding(1), null);
+
+        assertEquals(Blocks.AIR.defaultBlockState(),
+                state(blocks, bounds.maxX() + 1, bounds.minY(), bounds.maxZ()));
+        assertEquals(Blocks.AIR.defaultBlockState(),
+                state(blocks, bounds.maxX(), bounds.maxY() + 1, bounds.maxZ()));
+    }
+
+    @Test
+    public void nativeForceCarveUsesPieceUnionInsteadOfCombinedBounds() {
+        Structure structure = new DesertPyramidStructure(
+                new Structure.StructureSettings(HolderSet.empty()));
+        DesertPyramidPiece first = new DesertPyramidPiece(RandomSource.create(7L), 0, 0);
+        DesertPyramidPiece second = new DesertPyramidPiece(RandomSource.create(8L), 0, 0);
+        second.move(64, 0, 0);
+        StructureStart start = new StructureStart(
+                structure, new ChunkPos(0, 0), 0,
+                new PiecesContainer(List.of(first, second)));
+        BoundingBox firstBounds = first.getBoundingBox();
+        BoundingBox secondBounds = second.getBoundingBox();
+        int gapX = (firstBounds.maxX() + secondBounds.minX()) / 2;
+        int y = firstBounds.minY();
+        int z = firstBounds.minZ();
+        BoundingBox area = new BoundingBox(
+                firstBounds.minX(), y, z,
+                secondBounds.maxX(), y, z);
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        put(blocks, firstBounds.minX(), y, z, Blocks.STONE.defaultBlockState());
+        put(blocks, gapX, y, z, Blocks.STONE.defaultBlockState());
+
+        NativeStructurePostProcessor.integrateTerrain(
+                world(blocks), area, "minecraft:ancient_city", start,
+                new IrisStructureTerrain().setMode(IrisStructureTerrainMode.FORCE_CARVE), null);
+
+        assertEquals(Blocks.AIR.defaultBlockState(),
+                state(blocks, firstBounds.minX(), y, z));
+        assertEquals(Blocks.STONE.defaultBlockState(),
+                state(blocks, gapX, y, z));
+    }
+
+    @Test
+    public void templateBackedColumnsUseTheTemplateAirComplement() throws Exception {
+        StructureTemplate template = template(List.of(
+                new StructureTemplate.StructureBlockInfo(
+                        new BlockPos(0, 0, 0), Blocks.AIR.defaultBlockState(), null),
+                new StructureTemplate.StructureBlockInfo(
+                        new BlockPos(0, 1, 0), Blocks.AIR.defaultBlockState(), null),
+                new StructureTemplate.StructureBlockInfo(
+                        new BlockPos(0, 2, 0), Blocks.DEEPSLATE_BRICKS.defaultBlockState(), null),
+                new StructureTemplate.StructureBlockInfo(
+                        new BlockPos(1, 0, 0), Blocks.STRUCTURE_VOID.defaultBlockState(), null),
+                new StructureTemplate.StructureBlockInfo(
+                        new BlockPos(1, 1, 0), Blocks.DEEPSLATE.defaultBlockState(), null),
+                new StructureTemplate.StructureBlockInfo(
+                        new BlockPos(1, 2, 0), Blocks.DEEPSLATE.defaultBlockState(), null)));
+        Map<Long, int[]> columns = new HashMap<>();
+
+        assertTrue(NativeStructurePostProcessor.emitTemplateColumns(
+                List.of(template), new BlockPos(0, 0, 0), Rotation.NONE,
+                new BoundingBox(0, 0, 0, 1, 2, 0),
+                (x, z, minY, maxY) -> columns.put((long) x << 32 | z & 0xffffffffL,
+                        new int[]{minY, maxY})));
+
+        assertEquals(2, columns.size());
+        assertArrayEquals(new int[]{2, 2}, columns.get(0L));
+        assertArrayEquals(new int[]{1, 2}, columns.get(1L << 32));
+    }
+
+    @Test
+    public void fullyVoidTemplateColumnsAreNotCarveSources() throws Exception {
+        StructureTemplate template = template(List.of(
+                new StructureTemplate.StructureBlockInfo(
+                        new BlockPos(0, 0, 0), Blocks.AIR.defaultBlockState(), null),
+                new StructureTemplate.StructureBlockInfo(
+                        new BlockPos(0, 1, 0), Blocks.STRUCTURE_VOID.defaultBlockState(), null)));
+        Map<Long, int[]> columns = new HashMap<>();
+
+        assertTrue(NativeStructurePostProcessor.emitTemplateColumns(
+                List.of(template), new BlockPos(0, 0, 0), Rotation.NONE,
+                new BoundingBox(0, 0, 0, 0, 1, 0),
+                (x, z, minY, maxY) -> columns.put((long) x << 32 | z & 0xffffffffL,
+                        new int[]{minY, maxY})));
+
+        assertTrue(columns.isEmpty());
+    }
+
+    @Test
+    public void nonTemplatePiecesFallBackToTheirBoundingBoxColumns() {
+        StructureStart start = desertStart();
+        BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
+
+        StructureCarvingFootprint footprint = NativeStructurePostProcessor.carveFootprint(
+                start, 4, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertEquals(bounds.minX() - 4, footprint.minX());
+        assertEquals(bounds.maxX() + 4, footprint.maxX());
+        assertEquals(bounds.minZ() - 4, footprint.minZ());
+        assertEquals(bounds.maxZ() + 4, footprint.maxZ());
+        assertEquals(0L, footprint.distanceSquaredAt(bounds.minX(), bounds.minZ()));
+        assertEquals(32L, footprint.distanceSquaredAt(bounds.minX() - 4, bounds.minZ() - 4));
+        assertEquals(bounds.minY(), footprint.sourceMinYAt(bounds.minX(), bounds.minZ()));
+        assertEquals(bounds.maxY(), footprint.sourceMaxYAt(bounds.minX(), bounds.minZ()));
+    }
+
+    @Test
+    public void carveFootprintIsComputedOncePerStartAndPadding() {
+        StructureStart start = desertStart();
+
+        StructureCarvingFootprint first = NativeStructurePostProcessor.carveFootprint(
+                start, 6, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+        StructureCarvingFootprint repeated = NativeStructurePostProcessor.carveFootprint(
+                start, 6, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+        StructureCarvingFootprint widened = NativeStructurePostProcessor.carveFootprint(
+                start, 7, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+        StructureCarvingFootprint other = NativeStructurePostProcessor.carveFootprint(
+                desertStart(), 6, NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertSame(first, repeated);
+        assertNotSame(first, widened);
+        assertNotSame(first, other);
+    }
+
+    @Test
+    public void organicCarveNeverCutsBelowTheColumnSupportingFloor() {
+        StructureStart start = desertStart();
+        BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
+        NativeStructurePostProcessor.OrganicCarve carve = organicCarve(start, 6);
+        BoundingBox area = new BoundingBox(
+                bounds.minX() - 6, bounds.minY() - 4, bounds.minZ() - 6,
+                bounds.maxX() + 6, bounds.maxY() + 12, bounds.maxZ() + 6);
+        Map<BlockPos, BlockState> blocks = fill(area);
+
+        NativeStructurePostProcessor.carveOrganicColumns(world(blocks), area, carve);
+
+        int centerX = bounds.minX() + bounds.getXSpan() / 2;
+        int centerZ = bounds.minZ() + bounds.getZSpan() / 2;
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, centerX, bounds.minY(), centerZ));
+        for (int x = area.minX(); x <= area.maxX(); x++) {
+            for (int z = area.minZ(); z <= area.maxZ(); z++) {
+                for (int y = area.minY(); y < bounds.minY(); y++) {
+                    assertEquals(Blocks.STONE.defaultBlockState(), state(blocks, x, y, z));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void lobedCarveStaysInsideTheUniformCarveAndRemovesLess() {
+        StructureStart start = desertStart();
+        BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
+        BoundingBox area = new BoundingBox(
+                bounds.minX() - 10, bounds.minY(), bounds.minZ() - 10,
+                bounds.maxX() + 10, bounds.maxY() + 12, bounds.maxZ() + 10);
+        Map<BlockPos, BlockState> uniformBlocks = fill(area);
+        Map<BlockPos, BlockState> lobedBlocks = fill(area);
+
+        NativeStructurePostProcessor.carveOrganicColumns(
+                world(uniformBlocks), area, organicCarve(start, 10, 0D));
+        NativeStructurePostProcessor.carveOrganicColumns(
+                world(lobedBlocks), area, organicCarve(start, 10, 0.85D));
+
+        int uniform = 0;
+        int lobed = 0;
+        for (int x = area.minX(); x <= area.maxX(); x++) {
+            for (int z = area.minZ(); z <= area.maxZ(); z++) {
+                for (int y = area.minY(); y <= area.maxY(); y++) {
+                    boolean uniformAir = state(uniformBlocks, x, y, z).isAir();
+                    boolean lobedAir = state(lobedBlocks, x, y, z).isAir();
+                    assertTrue("lobe carved outside the uniform padding at "
+                            + x + "," + y + "," + z, uniformAir || !lobedAir);
+                    uniform += uniformAir ? 1 : 0;
+                    lobed += lobedAir ? 1 : 0;
+                }
+            }
+        }
+
+        assertTrue(lobed > 0);
+        assertTrue("uniform " + uniform + " lobed " + lobed, lobed < uniform);
+    }
+
+    @Test
+    public void lobedCarveDepthWandersAlongAStraightFootprintEdge() {
+        int[] uniform = slabEdgeCarveDepths(0D);
+        int[] lobed = slabEdgeCarveDepths(0.85D);
+
+        assertTrue("uniform depths wander " + span(uniform), span(uniform) <= 2);
+        assertTrue("lobed depths wander " + span(lobed), span(lobed) >= 6);
+        for (int depth : lobed) {
+            assertTrue(depth >= 0 && depth <= SLAB_PADDING);
+        }
+    }
+
+    @Test
+    public void organicCarveIsIdenticalAcrossNeighboringChunkContexts() {
+        StructureStart start = desertStart();
+        BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
+        BoundingBox wide = new BoundingBox(
+                bounds.minX() - 6, bounds.minY(), bounds.minZ() - 6,
+                bounds.maxX() + 6, bounds.maxY() + 12, bounds.maxZ() + 6);
+        BoundingBox narrow = new BoundingBox(
+                bounds.maxX() - 3, bounds.minY(), bounds.maxZ() - 3,
+                bounds.maxX() + 6, bounds.maxY() + 12, bounds.maxZ() + 6);
+        Map<BlockPos, BlockState> wideBlocks = fill(wide);
+        Map<BlockPos, BlockState> narrowBlocks = fill(narrow);
+
+        // Each chunk context rebuilds its own noise channels from the shared start identity.
+        NativeStructurePostProcessor.carveOrganicColumns(
+                world(wideBlocks), wide, organicCarve(start, 6));
+        NativeStructurePostProcessor.carveOrganicColumns(
+                world(narrowBlocks), narrow, organicCarve(start, 6));
+
+        int carved = 0;
+        for (int x = narrow.minX(); x <= narrow.maxX(); x++) {
+            for (int z = narrow.minZ(); z <= narrow.maxZ(); z++) {
+                for (int y = narrow.minY(); y <= narrow.maxY(); y++) {
+                    BlockState expected = state(wideBlocks, x, y, z);
+                    assertEquals(expected, state(narrowBlocks, x, y, z));
+                    if (expected.isAir()) {
+                        carved++;
+                    }
+                }
+            }
+        }
+        assertTrue(carved > 0);
+    }
+
+    @Test
+    public void erodedForceCarveShrinkwrapsWithoutUnderminingTheFloor() {
+        StructureStart start = desertStart();
+        BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
+        BoundingBox area = new BoundingBox(
+                bounds.minX() - 6, bounds.minY() - 2, bounds.minZ() - 6,
+                bounds.maxX() + 6, bounds.maxY() + 12, bounds.maxZ() + 6);
+        Map<BlockPos, BlockState> blocks = fill(area);
+        int centerX = bounds.minX() + bounds.getXSpan() / 2;
+        int centerZ = bounds.minZ() + bounds.getZSpan() / 2;
+
+        NativeStructurePostProcessor.integrateTerrain(
+                world(blocks), area, "minecraft:ancient_city", start,
+                new IrisStructureTerrain()
+                        .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                        .setShape(IrisStructureCarveShape.ERODED)
+                        .setHorizontalPadding(6)
+                        .setCeilingPadding(8)
+                        .setFloorPadding(0)
+                        .setErosionStrength(1D)
+                        .setErosionFrequency(0.05D), null);
+
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, centerX, bounds.minY(), centerZ));
+        assertEquals(Blocks.STONE.defaultBlockState(),
+                state(blocks, centerX, bounds.minY() - 1, centerZ));
+        assertEquals(Blocks.STONE.defaultBlockState(),
+                state(blocks, area.minX(), area.maxY(), area.minZ()));
+    }
+
+    @Test
+    public void sparseStiltGridIsDeterministicAndPreflightsGround() {
+        assertTrue(NativeStructurePostProcessor.isStiltColumn(0, 0, 4));
+        assertTrue(NativeStructurePostProcessor.isStiltColumn(-4, 8, 4));
+        assertFalse(NativeStructurePostProcessor.isStiltColumn(1, 0, 4));
+        assertTrue(NativeStructurePostProcessor.isStiltColumn(1, 1, 1));
+
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        put(blocks, 0, 7, 0, Blocks.DEEPSLATE.defaultBlockState());
+        put(blocks, 0, 8, 0, Blocks.SCULK_VEIN.defaultBlockState());
+        BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
+
+        assertEquals(7, NativeStructurePostProcessor.findStiltAnchorY(
+                world(blocks), 0, 0, 10, 2, -64, -64, position));
+        assertEquals(Integer.MIN_VALUE, NativeStructurePostProcessor.findStiltAnchorY(
+                world(blocks), 0, 0, 10, 1, -64, -64, position));
+        assertEquals(Integer.MIN_VALUE, NativeStructurePostProcessor.findStiltAnchorY(
+                world(new HashMap<>()), 0, 0, 10, 64, -64, -64, position));
+    }
+
+    @Test
+    public void nativeTerrainEnvelopePersistsHorizontalReferenceCoverage() {
+        StructureStart generated = desertStart();
+        BoundingBox content = generated.getBoundingBox();
+
+        StructureStart wrapped = NativeStructureReferenceEnvelope.wrap(
+                generated,
+                generated.getStructure(),
+                0,
+                null,
+                new IrisStructureTerrain()
+                        .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                        .setHorizontalPadding(24));
+
+        assertEquals(content, NativeStructureReferenceEnvelope.contentBounds(wrapped));
+        assertEquals(content.minX() - 24, wrapped.getBoundingBox().minX());
+        assertEquals(content.minZ() - 24, wrapped.getBoundingBox().minZ());
+        assertEquals(content.maxX() + 24, wrapped.getBoundingBox().maxX());
+        assertEquals(content.maxZ() + 24, wrapped.getBoundingBox().maxZ());
+        assertEquals(2, wrapped.getPieces().stream()
+                .filter(NativeStructureReferenceEnvelope::isMarker)
+                .count());
+    }
+
+    @Test
+    public void nativeTerrainEnvelopeClipsToMinecraftReferenceCoverage() {
+        StructureStart generated = desertStart();
+
+        StructureStart wrapped = NativeStructureReferenceEnvelope.wrap(
+                generated,
+                generated.getStructure(),
+                0,
+                null,
+                new IrisStructureTerrain()
+                        .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                        .setHorizontalPadding(128));
+
+        assertEquals(-128, wrapped.getBoundingBox().minX());
+        assertEquals(-128, wrapped.getBoundingBox().minZ());
+        assertEquals(143, wrapped.getBoundingBox().maxX());
+        assertEquals(143, wrapped.getBoundingBox().maxZ());
+    }
+
+    @Test
     public void singlePoolTemplateFieldMatchesTheRuntimeContract() {
         Field field = NativeStructurePostProcessor.resolveSinglePoolTemplateField();
 
@@ -302,6 +726,100 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         return new NativeStructurePostProcessor.SurfaceAnchor(0, 4, 0, 4, meetY, strength);
     }
 
+    private static NativeStructurePostProcessor.OrganicCarve organicCarve(StructureStart start,
+                                                                         int horizontalPadding) {
+        return organicCarve(start, horizontalPadding, 0.85D);
+    }
+
+    private static NativeStructurePostProcessor.OrganicCarve organicCarve(StructureStart start,
+                                                                         int horizontalPadding,
+                                                                         double lobeStrength) {
+        IrisStructureTerrain terrain = new IrisStructureTerrain()
+                .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                .setShape(IrisStructureCarveShape.ERODED)
+                .setHorizontalPadding(horizontalPadding)
+                .setCeilingPadding(8)
+                .setFloorPadding(0)
+                .setErosionStrength(1D)
+                .setErosionFrequency(0.05D)
+                .setLobeStrength(lobeStrength);
+        return NativeStructurePostProcessor.organicCarve(
+                NativeStructurePostProcessor.carveFootprint(start, horizontalPadding,
+                        NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager),
+                terrain, IrisStructureCarveShape.ERODED, TEST_SEED);
+    }
+
+    /**
+     * Outward carve depth for every column along the straight +X edge of a slab footprint, measured
+     * inside the source vertical span so the boundary is decided purely by the horizontal threshold.
+     * The slab spans several lobe wavelengths so a lobed boundary is distinguishable from a uniform one.
+     */
+    private static int[] slabEdgeCarveDepths(double lobeStrength) {
+        StructureCarvingFootprint footprint = StructureCarvingFootprint.fromColumns(sink -> {
+            for (int x = 0; x < SLAB_WIDTH; x++) {
+                for (int z = 0; z < SLAB_DEPTH; z++) {
+                    sink.column(x, z, SLAB_MIN_Y, SLAB_MIN_Y + 8);
+                }
+            }
+            return true;
+        }, SLAB_PADDING, 1_000_000);
+        IrisStructureTerrain terrain = new IrisStructureTerrain()
+                .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                .setShape(IrisStructureCarveShape.ERODED)
+                .setHorizontalPadding(SLAB_PADDING)
+                .setCeilingPadding(8)
+                .setFloorPadding(0)
+                .setErosionStrength(1D)
+                .setErosionFrequency(0.05D)
+                .setLobeStrength(lobeStrength);
+        int transectY = SLAB_MIN_Y + 4;
+        BoundingBox area = new BoundingBox(
+                SLAB_WIDTH, transectY, 0,
+                SLAB_WIDTH - 1 + SLAB_PADDING, transectY, SLAB_DEPTH - 1);
+        Map<BlockPos, BlockState> blocks = fill(area);
+
+        NativeStructurePostProcessor.carveOrganicColumns(world(blocks), area,
+                NativeStructurePostProcessor.organicCarve(
+                        footprint, terrain, IrisStructureCarveShape.ERODED, TEST_SEED));
+
+        int[] depths = new int[SLAB_DEPTH];
+        for (int z = 0; z < SLAB_DEPTH; z++) {
+            int depth = 0;
+            while (depth < SLAB_PADDING
+                    && state(blocks, SLAB_WIDTH + depth, transectY, z).isAir()) {
+                depth++;
+            }
+            depths[z] = depth;
+        }
+        return depths;
+    }
+
+    private static int span(int[] values) {
+        int lowest = Integer.MAX_VALUE;
+        int highest = Integer.MIN_VALUE;
+        for (int value : values) {
+            lowest = Math.min(lowest, value);
+            highest = Math.max(highest, value);
+        }
+        return highest - lowest;
+    }
+
+    private static StructureTemplateManager forbiddenTemplateManager() {
+        throw new AssertionError("Bounding-box carve columns must not resolve templates");
+    }
+
+    private static Map<BlockPos, BlockState> fill(BoundingBox area) {
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x = area.minX(); x <= area.maxX(); x++) {
+            for (int z = area.minZ(); z <= area.maxZ(); z++) {
+                for (int y = area.minY(); y <= area.maxY(); y++) {
+                    put(blocks, x, y, z, Blocks.STONE.defaultBlockState());
+                }
+            }
+        }
+        return blocks;
+    }
+
     private static StructureTemplate template(
             List<StructureTemplate.StructureBlockInfo> blocks) throws Exception {
         Constructor<StructureTemplate.Palette> constructor =
@@ -311,6 +829,14 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         StructureTemplate template = new StructureTemplate();
         template.palettes.add(palette);
         return template;
+    }
+
+    private static StructureStart desertStart() {
+        Structure structure = new DesertPyramidStructure(
+                new Structure.StructureSettings(HolderSet.empty()));
+        DesertPyramidPiece piece = new DesertPyramidPiece(RandomSource.create(7L), 0, 0);
+        return new StructureStart(
+                structure, new ChunkPos(0, 0), 0, new PiecesContainer(List.of(piece)));
     }
 
     private static WorldGenLevel world(Map<BlockPos, BlockState> blocks) {
@@ -325,6 +851,9 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 BlockState blockState = (BlockState) arguments[1];
                 put(blocks, position.getX(), position.getY(), position.getZ(), blockState);
                 return true;
+            }
+            if (methodName.equals("getSeed")) {
+                return TEST_SEED;
             }
             if (methodName.equals("hashCode")) {
                 return System.identityHashCode(proxy);

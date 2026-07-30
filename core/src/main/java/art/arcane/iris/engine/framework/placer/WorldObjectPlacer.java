@@ -114,6 +114,11 @@ public class WorldObjectPlacer implements IObjectPlacer {
     }
 
     @Override
+    public boolean isSurfaceSolid(int x, int y, int z) {
+        return isSolid(x, y, z);
+    }
+
+    @Override
     public boolean isSolid(int x, int y, int z) {
         return world.getBlockAt(x, y + world.getMinHeight(), z).getType().isSolid();
     }

@@ -102,6 +102,8 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
 import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import net.minecraft.world.level.levelgen.structure.StructureCheck;
+import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.levelgen.structure.structures.JigsawStructure;
 import net.minecraft.world.level.levelgen.feature.AbstractHugeMushroomFeature;
 import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 import net.minecraft.world.level.levelgen.feature.FallenTreeFeature;
@@ -478,6 +480,36 @@ public class NMSBinding implements INMSBinding {
             registry().lookupOrThrow(Registries.STRUCTURE).keySet().forEach(k -> keys.add(k.toString()));
         } catch (RuntimeException e) {
             throw new IllegalStateException("Iris failed to read registered structure keys from the Minecraft registry", e);
+        }
+        return keys;
+    }
+
+    @Override
+    public KList<String> getJigsawStructureKeys() {
+        KList<String> keys = new KList<>();
+        try {
+            Registry<Structure> structures = registry().lookupOrThrow(Registries.STRUCTURE);
+            for (Map.Entry<ResourceKey<Structure>, Structure> entry : structures.entrySet()) {
+                if (entry.getValue() instanceof JigsawStructure) {
+                    keys.add(entry.getKey().identifier().toString());
+                }
+            }
+        } catch (RuntimeException e) {
+            throw new IllegalStateException(
+                    "Iris failed to read registered jigsaw structure keys from the Minecraft registry", e);
+        }
+        return keys;
+    }
+
+    @Override
+    public KList<String> getTemplatePoolKeys() {
+        KList<String> keys = new KList<>();
+        try {
+            registry().lookupOrThrow(Registries.TEMPLATE_POOL).keySet()
+                    .forEach(key -> keys.add(key.toString()));
+        } catch (RuntimeException e) {
+            throw new IllegalStateException(
+                    "Iris failed to read registered template pool keys from the Minecraft registry", e);
         }
         return keys;
     }

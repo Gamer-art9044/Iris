@@ -161,6 +161,12 @@ public class IrisDimension extends IrisRegistrant {
     private KList<IrisDimensionCarvingEntry> carving = new KList<>();
     @Desc("Profile-driven 3D cave configuration")
     private IrisCaveProfile caveProfile = new IrisCaveProfile();
+    @Desc("Refuse to place surface objects and trees over carved surface openings.")
+    private boolean requireObjectSurfaceSupport = true;
+    @MinNumber(0)
+    @MaxNumber(16)
+    @Desc("Minimum surface-support buffer, in blocks, applied to every surface object placement in this dimension. A placement may ask for more but never less.")
+    private int objectSurfaceSupportBuffer = 2;
     @Desc("forceConvertTo320Height")
     private Boolean forceConvertTo320Height = false;
     @Desc("The world environment")
@@ -267,7 +273,7 @@ public class IrisDimension extends IrisRegistrant {
     @Desc("Controls native vanilla, mod, and ingested datapack structure generation for this dimension. Every registered structure is enabled by default; 'disabled' is the sole generation deny list and autocompletes live structure keys.")
     private IrisImportedStructureControl importedStructures = new IrisImportedStructureControl();
     @ArrayType(type = String.class, min = 1)
-    @Desc("External datapack sources for this dimension. List Modrinth datapack page URLs or direct zip URLs. Registered datapack structures remain native unless explicitly cloned into Iris resources. Replacing native generation requires a dimension-level Iris structure placement with nativeSuppression set to REPLACE_SOURCE; provenance alone never disables native structures.")
+    @Desc("External datapack sources for this dimension. List Modrinth datapack page URLs or direct zip URLs. Any registered datapack structure can be placed directly through nativeStructures without conversion. Replacing native generation requires a dimension-level structure placement with nativeSuppression set to REPLACE_SOURCE; provenance alone never disables native structures.")
     private KList<String> datapackImports = new KList<>();
     @MinNumber(0)
     @MaxNumber(318)

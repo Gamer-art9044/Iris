@@ -22,6 +22,7 @@ import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.math.M;
@@ -232,18 +233,25 @@ public class VolmitSender implements CommandSender {
         }
     }
 
-    public void sendProgress(double percent, String thing) {
-        //noinspection IfStatementWithIdenticalBranches
+    public void sendProgress(double percent, String thing, HudSurface titleSurface, HudSurface barSurface) {
         if (percent < 0) {
             int l = 44;
             int g = (int) (1D * l);
-            sendTitle(C.IRIS + thing + " ", 0, 500, 250);
-            sendActionNoProcessing("" + "" + pulse("#00ff80", "#00373d", 1D) + "<underlined> " + Form.repeat(" ", g) + "<reset>" + Form.repeat(" ", l - g));
+            if (titleSurface == HudSurface.TITLE) {
+                sendTitle(C.IRIS + thing + " ", 0, 500, 250);
+            }
+            if (barSurface == HudSurface.ACTION_BAR) {
+                sendActionNoProcessing("" + "" + pulse("#00ff80", "#00373d", 1D) + "<underlined> " + Form.repeat(" ", g) + "<reset>" + Form.repeat(" ", l - g));
+            }
         } else {
             int l = 44;
             int g = (int) (percent * l);
-            sendTitle(C.IRIS + thing + " " + C.BLUE + "<font:minecraft:uniform>" + Form.pc(percent, 0), 0, 500, 250);
-            sendActionNoProcessing("" + "" + pulse("#00ff80", "#00373d", 1D) + "<underlined> " + Form.repeat(" ", g) + "<reset>" + Form.repeat(" ", l - g));
+            if (titleSurface == HudSurface.TITLE) {
+                sendTitle(C.IRIS + thing + " " + C.BLUE + "<font:minecraft:uniform>" + Form.pc(percent, 0), 0, 500, 250);
+            }
+            if (barSurface == HudSurface.ACTION_BAR) {
+                sendActionNoProcessing("" + "" + pulse("#00ff80", "#00373d", 1D) + "<underlined> " + Form.repeat(" ", g) + "<reset>" + Form.repeat(" ", l - g));
+            }
         }
     }
 
@@ -317,7 +325,7 @@ public class VolmitSender implements CommandSender {
                 return;
             }
 
-            sendProgress(-1, passive);
+            sendProgress(-1, passive, HudSurface.TITLE, HudSurface.ACTION_BAR);
         }, 0));
         J.a(() -> {
             try {

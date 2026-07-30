@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -63,6 +64,41 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_base_height\")"));
         assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_base_column\")"));
         assertTrue(source.contains("catch (GenerationSessionException e)"));
+    }
+
+    @Test
+    public void terrainWritesPrimeTheWorldgenHeightmapsForEveryChunk() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int fillStart = source.indexOf("public CompletableFuture<ChunkAccess> fillFromNoise");
+        int fillEnd = source.indexOf("public WeightedList<MobSpawnSettings.SpawnerData> getMobsAt", fillStart);
+        String fill = source.substring(fillStart, fillEnd);
+        int decorationStart = source.indexOf("public void addVanillaDecorations");
+        int decorationEnd = source.indexOf("public void spawnOriginalMobs", decorationStart);
+        String decorations = source.substring(decorationStart, decorationEnd);
+        int placementStart = source.indexOf("private void placeVanillaStructures");
+        int placementEnd = source.indexOf("private static String nativeStructureBatchContext", placementStart);
+        String placement = source.substring(placementStart, placementEnd);
+
+        assertTrue(fill.contains("thenApply"));
+        assertTrue(fill.contains("primeWorldgenHeightmaps"));
+        assertTrue(decorations.contains("primeWorldgenHeightmaps"));
+        assertFalse(decorations.contains("Heightmap.Types.WORLD_SURFACE_WG"));
+        assertFalse(decorations.contains("Heightmap.Types.OCEAN_FLOOR_WG"));
+        assertEquals(1, occurrences(source, "WorldgenTerrainHeightmaps.primeTerrain("));
+        assertTrue(placement.contains("WorldgenTerrainHeightmaps.primeStructurePlacement("));
+        assertTrue(placement.indexOf("WorldgenTerrainHeightmaps.primeStructurePlacement(")
+                < placement.indexOf("prepareSurfaceStructures"));
+        assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_worldgen_heightmaps\")"));
+    }
+
+    private static int occurrences(String source, String needle) {
+        int count = 0;
+        int index = source.indexOf(needle);
+        while (index >= 0) {
+            count++;
+            index = source.indexOf(needle, index + needle.length());
+        }
+        return count;
     }
 
     @Test

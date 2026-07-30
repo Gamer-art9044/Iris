@@ -65,6 +65,10 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             return;
         }
 
+        if (!DecoratorCore.isValidShorelineSupport(decorator, data.get(x, height, z))) {
+            return;
+        }
+
         if (!decorator.isStacking()) {
             int targetY = height + 1;
             if (targetY >= data.getHeight()

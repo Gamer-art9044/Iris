@@ -20,12 +20,17 @@ package art.arcane.iris.core.runtime;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeProgressMessages;
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.math.ChunkSpiral;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.format.Form;
+import art.arcane.volmlib.util.hud.HudPriority;
+import art.arcane.volmlib.util.hud.HudSlotClaim;
+import art.arcane.volmlib.util.hud.HudSlotRequest;
+import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -57,6 +62,7 @@ public final class ChunkJobReporter {
     private final AtomicInteger failures = new AtomicInteger(0);
     private volatile int total = 0;
     private volatile long startMs = 0L;
+    private volatile HudSlotClaim claim;
 
     public ChunkJobReporter(VolmitSender sender, String title, World world) {
         this.sender = sender;
@@ -121,6 +127,14 @@ public final class ChunkJobReporter {
             bossBar.addPlayer(sender.player());
             bossBar.setVisible(true);
         }
+        if (player) {
+            claim = BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest(
+                    "iris:chunk-job",
+                    HudPriority.PROGRESS,
+                    1200L,
+                    List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)
+            ));
+        }
 
         AtomicInteger taskId = new AtomicInteger(-1);
         taskId.set(J.ar(() -> {
@@ -143,17 +157,33 @@ public final class ChunkJobReporter {
                         MessageArgument.trusted("percent", percent)
                 ));
             }
-            if (sender.isPlayer()) {
-                sender.sendAction(IrisLanguage.text(
-                        RuntimeProgressMessages.CHUNK_ACTION_PROGRESS,
-                        MessageArgument.trusted("bar", progressBar(currentProgress)),
-                        MessageArgument.trusted("percent", percent),
-                        MessageArgument.trusted("stage", stage.get()),
-                        MessageArgument.trusted("applied", applied.get()),
-                        MessageArgument.trusted("total", total <= 0 ? "?" : total)
-                ));
+            if (sender.isPlayer() && claim != null) {
+                HudSurface surface = claim.resolve();
+                if (surface == HudSurface.ACTION_BAR) {
+                    BukkitPlatform.hudLanes().hide(sender.player(), "iris:chunk-job");
+                    sender.sendAction(IrisLanguage.text(
+                            RuntimeProgressMessages.CHUNK_ACTION_PROGRESS,
+                            MessageArgument.trusted("bar", progressBar(currentProgress)),
+                            MessageArgument.trusted("percent", percent),
+                            MessageArgument.trusted("stage", stage.get()),
+                            MessageArgument.trusted("applied", applied.get()),
+                            MessageArgument.trusted("total", total <= 0 ? "?" : total)
+                    ));
+                } else if (surface == HudSurface.BOSS_BAR) {
+                    BukkitPlatform.hudLanes().show(sender.player(), "iris:chunk-job", IrisLanguage.text(
+                            RuntimeProgressMessages.CHUNK_ACTION_PROGRESS,
+                            MessageArgument.trusted("bar", ""),
+                            MessageArgument.trusted("percent", percent),
+                            MessageArgument.trusted("stage", stage.get()),
+                            MessageArgument.trusted("applied", applied.get()),
+                            MessageArgument.trusted("total", total <= 0 ? "?" : total)
+                    ), currentProgress, BarColor.GREEN, BarStyle.SOLID, 4000L);
+                }
             }
         }, REPORT_INTERVAL_TICKS));
+        if (complete.get()) {
+            J.car(taskId.get());
+        }
     }
 
     private void finishReporter(BossBar bossBar, long elapsed) {
@@ -184,15 +214,30 @@ public final class ChunkJobReporter {
             J.a(() -> {
                 bossBar.removeAll();
                 bossBar.setVisible(false);
+                HudSlotClaim finishedClaim = claim;
+                if (finishedClaim != null) {
+                    finishedClaim.release();
+                    BukkitPlatform.hudLanes().hide(sender.player(), "iris:chunk-job");
+                }
             }, FINISH_LINGER_TICKS);
         }
 
-        if (sender.isPlayer()) {
-            sender.sendAction(IrisLanguage.text(
-                    ok ? RuntimeProgressMessages.CHUNK_ACTION_DONE : RuntimeProgressMessages.CHUNK_ACTION_FAILED,
-                    MessageArgument.trusted("bar", progressBar(1.0D)),
-                    MessageArgument.trusted("summary", summary)
-            ));
+        if (sender.isPlayer() && claim != null) {
+            HudSurface surface = claim.resolve();
+            if (surface == HudSurface.ACTION_BAR) {
+                BukkitPlatform.hudLanes().hide(sender.player(), "iris:chunk-job");
+                sender.sendAction(IrisLanguage.text(
+                        ok ? RuntimeProgressMessages.CHUNK_ACTION_DONE : RuntimeProgressMessages.CHUNK_ACTION_FAILED,
+                        MessageArgument.trusted("bar", progressBar(1.0D)),
+                        MessageArgument.trusted("summary", summary)
+                ));
+            } else if (surface == HudSurface.BOSS_BAR) {
+                BukkitPlatform.hudLanes().show(sender.player(), "iris:chunk-job", IrisLanguage.text(
+                        ok ? RuntimeProgressMessages.CHUNK_ACTION_DONE : RuntimeProgressMessages.CHUNK_ACTION_FAILED,
+                        MessageArgument.trusted("bar", ""),
+                        MessageArgument.trusted("summary", summary)
+                ), 1.0D, ok ? BarColor.GREEN : BarColor.RED, BarStyle.SOLID, 4000L);
+            }
         }
         sender.sendMessage(IrisLanguage.text(
                 ok ? RuntimeProgressMessages.CHUNK_COMPLETE : RuntimeProgressMessages.CHUNK_FAILED,

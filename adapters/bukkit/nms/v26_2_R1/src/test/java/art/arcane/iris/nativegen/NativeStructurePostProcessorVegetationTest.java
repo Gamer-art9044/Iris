@@ -63,15 +63,9 @@ public class NativeStructurePostProcessorVegetationTest {
     }
 
     @Test
-    public void undergroundStructuresFailWhenBurialWouldCrossWorldFloor() {
+    public void undergroundBurialClampsToTheWorldFloorInsteadOfFailing() {
         BoundingBox bounds = new BoundingBox(0, 60, 0, 1, 80, 0);
-        try {
-            NativeStructurePostProcessor.resolveBuriedOffset(
-                    bounds, 0, 58, 320, (x, z) -> x == 1 ? 76 : 100);
-        } catch (IllegalStateException e) {
-            assertTrue(e.getMessage().contains("world minimum"));
-            return;
-        }
-        throw new AssertionError("Expected underground burial to fail below the world floor");
+        assertEquals(-2, NativeStructurePostProcessor.resolveBuriedOffset(
+                bounds, 0, 58, 320, (x, z) -> x == 1 ? 76 : 100));
     }
 }

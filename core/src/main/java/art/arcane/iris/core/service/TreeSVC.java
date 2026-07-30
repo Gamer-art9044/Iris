@@ -185,6 +185,11 @@ public class TreeSVC implements IrisService {
             }
 
             @Override
+            public boolean isSurfaceSolid(int x, int y, int z) {
+                return event.getWorld().getBlockAt(x, y, z).getType().isSolid();
+            }
+
+            @Override
             public boolean isSolid(int x, int y, int z) {
                 return event.getWorld().getBlockAt(x, y, z).getBlockData().getMaterial().isSolid();
             }

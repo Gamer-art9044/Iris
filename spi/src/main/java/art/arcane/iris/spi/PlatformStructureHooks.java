@@ -26,6 +26,14 @@ import java.util.List;
 public interface PlatformStructureHooks {
     List<String> structureKeys();
 
+    default List<String> jigsawStructureKeys() {
+        return List.of();
+    }
+
+    default List<String> templatePoolKeys() {
+        return List.of();
+    }
+
     List<String> structureSetKeys();
 
     List<String> structureBiomeKeys(String structureKey);

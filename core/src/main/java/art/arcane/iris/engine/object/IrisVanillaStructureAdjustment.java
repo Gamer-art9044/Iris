@@ -45,11 +45,20 @@ public class IrisVanillaStructureAdjustment {
     @Desc("Vertical block offset. Negative pushes the structure down, positive lifts it. The resolved shift is clamped so the structure remains inside the world's vertical build bounds.")
     private int yShift = 0;
 
+    @Desc("Optional absolute world Y band. The structure is relocated so its vertical midpoint lands inside the band, deterministically from its start chunk and clamped to the world's build bounds. Precedence: preserveSourceY wins over yBand, and yBand wins over both yShift and Iris burial repositioning. Structures with a fixed vanilla alignment (ocean monument sea level, desert and jungle pyramid surface fit) ignore it.")
+    private IrisStructureYBand yBand = null;
+
+    @Desc("When true, skip Iris burial repositioning so the structure keeps the Y its own vanilla placement chose. Underground structures are otherwise pushed below the lowest solid column across their whole footprint, which hides terrain-aware structures such as mineshafts that intentionally breach cliffs and surfaces. Vertical shifts still apply on top of the preserved Y: this dimension's undergroundYShift plus every matching adjustment's yShift.")
+    private boolean preserveSourceY = false;
+
     @Desc("When true, force logs and leaves out of the structure footprint even when the structure does not reach the detected tree base. Normal surface-intersecting structures are protected automatically.")
     private boolean clearVegetation = false;
 
     @Desc("Optional foundation columns placed beneath the native structure piece bases after placement.")
     private IrisStructureStiltSettings stilt = null;
+
+    @Desc("Optional terrain integration override. FORCE_CARVE clears every intersecting chunk before native pieces are placed, ENCASE fills it with solid blocks instead. Left unset, structures whose vanilla terrainAdaptation is BURY or ENCAPSULATE default to ENCASE with 3-block paddings; setting this field disables that default.")
+    private IrisStructureTerrain terrain = null;
 
     public boolean matches(String key) {
         for (String entry : match) {

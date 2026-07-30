@@ -43,6 +43,10 @@ import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
+import art.arcane.volmlib.util.hud.HudPriority;
+import art.arcane.volmlib.util.hud.HudSlotClaim;
+import art.arcane.volmlib.util.hud.HudSlotRequest;
+import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
@@ -53,16 +57,20 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
@@ -204,7 +212,10 @@ public class IrisCreator {
 
         PlatformChunkGenerator access = (PlatformChunkGenerator) wc.generator();
         if (access == null) throw new IrisException("Access is null. Something bad happened.");
-        AtomicInteger createProgressTask = startCreateProgressReporter(access, done);
+        HudSlotClaim createClaim = !benchmark && studioProgressConsumer == null && sender.isPlayer()
+                ? openLoaderClaim("iris:world-create")
+                : null;
+        AtomicInteger createProgressTask = startCreateProgressReporter(access, done, createClaim);
 
 
         World world;
@@ -220,6 +231,7 @@ public class IrisCreator {
         } catch (Throwable e) {
             done.set(true);
             cancelRepeatingTask(createProgressTask);
+            releaseLoaderClaim(createClaim, "iris:world-create");
             if (J.isFolia() && containsCreateWorldUnsupportedOperation(e)) {
                 throw new IrisException("Runtime world creation is blocked and the selected world lifecycle backend could not create the world.", e);
             }
@@ -232,6 +244,7 @@ public class IrisCreator {
 
         done.set(true);
         cancelRepeatingTask(createProgressTask);
+        releaseLoaderClaim(createClaim, "iris:world-create");
         reportStudioProgress(0.86D, "create_world");
 
         if (!studio && !benchmark) {
@@ -248,14 +261,17 @@ public class IrisCreator {
                     .whenDone(() -> ff.complete(true));
 
             AtomicBoolean dx = new AtomicBoolean(false);
-            AtomicInteger pregenProgressTask = startPregenProgressReporter(pp, dx);
+            HudSlotClaim pregenClaim = sender.isPlayer() ? openLoaderClaim("iris:pregen") : null;
+            AtomicInteger pregenProgressTask = startPregenProgressReporter(pp, dx, pregenClaim);
             try {
                 ff.get();
                 dx.set(true);
                 cancelRepeatingTask(pregenProgressTask);
+                releaseLoaderClaim(pregenClaim, "iris:pregen");
             } catch (Throwable e) {
                 dx.set(true);
                 cancelRepeatingTask(pregenProgressTask);
+                releaseLoaderClaim(pregenClaim, "iris:pregen");
                 IrisLogging.reportError(e);
                 e.printStackTrace();
             }
@@ -346,7 +362,7 @@ public class IrisCreator {
         }
     }
 
-    private AtomicInteger startCreateProgressReporter(PlatformChunkGenerator access, AtomicBoolean done) {
+    private AtomicInteger startCreateProgressReporter(PlatformChunkGenerator access, AtomicBoolean done, HudSlotClaim claim) {
         AtomicInteger taskId = new AtomicInteger(-1);
         if (benchmark) {
             return taskId;
@@ -358,6 +374,7 @@ public class IrisCreator {
             }
             return access.getEngine().getGenerated();
         };
+        AtomicLong lastResolveMs = new AtomicLong(0L);
         access.getSpawnChunks().whenComplete((required, throwable) -> {
             if (throwable != null) {
                 IrisLogging.reportError("Failed to resolve studio spawn chunk target for world \"" + name() + "\".", throwable);
@@ -389,22 +406,34 @@ public class IrisCreator {
 
                 int percent = (int) Math.round(progress * 100.0D);
                 int remaining = required - generated;
-                if (sender.isPlayer()) {
-                    int barWidth = 44;
-                    int filled = (int) Math.round(Math.max(0.0D, Math.min(1.0D, progress)) * barWidth);
-                    StringBuilder bar = new StringBuilder(barWidth * 3 + 4);
-                    bar.append(C.DARK_GRAY).append("[");
-                    for (int bi = 0; bi < barWidth; bi++) {
-                        bar.append(bi < filled ? C.GREEN : C.DARK_GRAY).append("|");
+                if (sender.isPlayer() && claim != null) {
+                    HudSurface surface = resolveThrottled(claim, lastResolveMs);
+                    if (surface == HudSurface.ACTION_BAR) {
+                        BukkitPlatform.hudLanes().hide(sender.player(), "iris:world-create");
+                        int barWidth = 44;
+                        int filled = (int) Math.round(Math.max(0.0D, Math.min(1.0D, progress)) * barWidth);
+                        StringBuilder bar = new StringBuilder(barWidth * 3 + 4);
+                        bar.append(C.DARK_GRAY).append("[");
+                        for (int bi = 0; bi < barWidth; bi++) {
+                            bar.append(bi < filled ? C.GREEN : C.DARK_GRAY).append("|");
+                        }
+                        bar.append(C.DARK_GRAY).append("]");
+                        sender.sendAction(IrisLanguage.text(
+                                RuntimeProgressMessages.WORLD_CREATE_ACTION,
+                                MessageArgument.trusted("bar", bar.toString()),
+                                MessageArgument.trusted("percent", percent),
+                                MessageArgument.trusted("generated", Form.f(generated)),
+                                MessageArgument.trusted("required", Form.f(required))
+                        ));
+                    } else if (surface == HudSurface.BOSS_BAR) {
+                        BukkitPlatform.hudLanes().show(sender.player(), "iris:world-create", IrisLanguage.text(
+                                RuntimeProgressMessages.WORLD_CREATE_ACTION,
+                                MessageArgument.trusted("bar", ""),
+                                MessageArgument.trusted("percent", percent),
+                                MessageArgument.trusted("generated", Form.f(generated)),
+                                MessageArgument.trusted("required", Form.f(required))
+                        ), progress, BarColor.GREEN, BarStyle.SOLID, 4000L);
                     }
-                    bar.append(C.DARK_GRAY).append("]");
-                    sender.sendAction(IrisLanguage.text(
-                            RuntimeProgressMessages.WORLD_CREATE_ACTION,
-                            MessageArgument.trusted("bar", bar.toString()),
-                            MessageArgument.trusted("percent", percent),
-                            MessageArgument.trusted("generated", Form.f(generated)),
-                            MessageArgument.trusted("required", Form.f(required))
-                    ));
                     return;
                 }
 
@@ -420,8 +449,9 @@ public class IrisCreator {
         return taskId;
     }
 
-    private AtomicInteger startPregenProgressReporter(AtomicDouble progress, AtomicBoolean done) {
+    private AtomicInteger startPregenProgressReporter(AtomicDouble progress, AtomicBoolean done, HudSlotClaim claim) {
         AtomicInteger taskId = new AtomicInteger(-1);
+        AtomicLong lastResolveMs = new AtomicLong(0L);
         int interval = sender.isPlayer() ? 1 : 20;
         taskId.set(J.ar(() -> {
             if (done.get()) {
@@ -431,20 +461,30 @@ public class IrisCreator {
 
             double p = progress.get();
             int percent = (int) Math.round(p * 100.0D);
-            if (sender.isPlayer()) {
-                int barWidth = 44;
-                int filled = (int) Math.round(Math.max(0.0D, Math.min(1.0D, p)) * barWidth);
-                StringBuilder bar = new StringBuilder(barWidth * 3 + 4);
-                bar.append(C.DARK_GRAY).append("[");
-                for (int bi = 0; bi < barWidth; bi++) {
-                    bar.append(bi < filled ? C.GREEN : C.DARK_GRAY).append("|");
+            if (sender.isPlayer() && claim != null) {
+                HudSurface surface = resolveThrottled(claim, lastResolveMs);
+                if (surface == HudSurface.ACTION_BAR) {
+                    BukkitPlatform.hudLanes().hide(sender.player(), "iris:pregen");
+                    int barWidth = 44;
+                    int filled = (int) Math.round(Math.max(0.0D, Math.min(1.0D, p)) * barWidth);
+                    StringBuilder bar = new StringBuilder(barWidth * 3 + 4);
+                    bar.append(C.DARK_GRAY).append("[");
+                    for (int bi = 0; bi < barWidth; bi++) {
+                        bar.append(bi < filled ? C.GREEN : C.DARK_GRAY).append("|");
+                    }
+                    bar.append(C.DARK_GRAY).append("]");
+                    sender.sendAction(IrisLanguage.text(
+                            RuntimeProgressMessages.WORLD_PREGEN_ACTION,
+                            MessageArgument.trusted("bar", bar.toString()),
+                            MessageArgument.trusted("percent", percent)
+                    ));
+                } else if (surface == HudSurface.BOSS_BAR) {
+                    BukkitPlatform.hudLanes().show(sender.player(), "iris:pregen", IrisLanguage.text(
+                            RuntimeProgressMessages.WORLD_PREGEN_ACTION,
+                            MessageArgument.trusted("bar", ""),
+                            MessageArgument.trusted("percent", percent)
+                    ), p, BarColor.GREEN, BarStyle.SOLID, 4000L);
                 }
-                bar.append(C.DARK_GRAY).append("]");
-                sender.sendAction(IrisLanguage.text(
-                        RuntimeProgressMessages.WORLD_PREGEN_ACTION,
-                        MessageArgument.trusted("bar", bar.toString()),
-                        MessageArgument.trusted("percent", percent)
-                ));
                 return;
             }
 
@@ -454,6 +494,33 @@ public class IrisCreator {
             ));
         }, interval));
         return taskId;
+    }
+
+    private HudSlotClaim openLoaderClaim(String purpose) {
+        return BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest(
+                purpose,
+                HudPriority.PROGRESS,
+                1200L,
+                List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)
+        ));
+    }
+
+    private void releaseLoaderClaim(HudSlotClaim claim, String laneId) {
+        if (claim == null) {
+            return;
+        }
+        claim.release();
+        BukkitPlatform.hudLanes().hide(sender.player(), laneId);
+    }
+
+    private static HudSurface resolveThrottled(HudSlotClaim claim, AtomicLong lastResolveMillis) {
+        long now = System.currentTimeMillis();
+        if (now - lastResolveMillis.get() >= 250L) {
+            lastResolveMillis.set(now);
+            return claim.resolve();
+        }
+        HudSurface granted = claim.granted();
+        return granted == null ? claim.resolve() : granted;
     }
 
     private void cancelRepeatingTask(AtomicInteger taskId) {

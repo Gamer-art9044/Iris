@@ -6,6 +6,7 @@ import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.math.IrisBlockVector;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -18,26 +19,70 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-public class IrisSurfaceOpeningTest {
-    @Test
-    public void carvedSurfaceCellRejectsPlacement() {
-        SurfacePlacer placer = new SurfacePlacer(80);
-        placer.carve(1, 80, 1);
+public class IrisSurfaceSupportTest {
+    private static final List<IrisBlockVector> SINGLE_COLUMN = List.of(new IrisBlockVector(0, 0, 0));
 
-        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
-                List.of(new IrisBlockVector(0, 0, 0))));
-        assertEquals(9, placer.heightQueries());
+    @Test
+    public void carvedSurfaceColumnRejectsPlacement() {
+        SurfacePlacer placer = new SurfacePlacer(80);
+        placer.carve(0, 80, 0);
+
+        assertTrue(isUnsupported(placer, SINGLE_COLUMN, 0, 1));
     }
 
     @Test
-    public void sealedShallowCaveDoesNotRejectPlacement() {
+    public void solidGroundStillPlaces() {
+        SurfacePlacer placer = new SurfacePlacer(80);
+
+        assertFalse(isUnsupported(placer, SINGLE_COLUMN, 2, 2));
+    }
+
+    @Test
+    public void openingInsideBufferRingRejectsPlacement() {
+        SurfacePlacer placer = new SurfacePlacer(80);
+        placer.carve(2, 80, 0);
+
+        assertTrue(isUnsupported(placer, SINGLE_COLUMN, 2, 1));
+    }
+
+    @Test
+    public void openingJustOutsideBufferRingStillPlaces() {
+        SurfacePlacer placer = new SurfacePlacer(80);
+        placer.carve(3, 80, 0);
+
+        assertFalse(isUnsupported(placer, SINGLE_COLUMN, 2, 1));
+    }
+
+    @Test
+    public void crustThinnerThanRequiredDepthRejectsPlacement() {
         SurfacePlacer placer = new SurfacePlacer(80);
         placer.carve(0, 79, 0);
-        placer.carve(0, 78, 0);
-        placer.carve(0, 77, 0);
 
-        assertFalse(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
-                List.of(new IrisBlockVector(0, 0, 0))));
+        assertTrue(isUnsupported(placer, SINGLE_COLUMN, 0, 2));
+        assertFalse(isUnsupported(placer, SINGLE_COLUMN, 0, 1));
+    }
+
+    @Test
+    public void nonSolidSurfaceBlockRejectsPlacement() {
+        SurfacePlacer placer = new SurfacePlacer(80);
+        placer.hollow(0, 80, 0);
+
+        assertTrue(isUnsupported(placer, SINGLE_COLUMN, 0, 1));
+    }
+
+    @Test
+    public void everyUniqueStencilColumnIsQueriedExactlyOnce() {
+        SurfacePlacer placer = new SurfacePlacer(80);
+        List<IrisBlockVector> footprint = new ArrayList<>();
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                footprint.add(new IrisBlockVector(dx, 0, dz));
+            }
+        }
+
+        assertFalse(isUnsupported(placer, footprint, 1, 1));
+        assertEquals(25, placer.heightQueries());
+        assertEquals(25, placer.uniqueColumnsQueried());
     }
 
     @Test
@@ -50,17 +95,7 @@ public class IrisSurfaceOpeningTest {
         }
         placer.carve(1, 82, 1);
 
-        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
-                List.of(new IrisBlockVector(0, 0, 0))));
-    }
-
-    @Test
-    public void openingOutsideSupportStencilDoesNotRejectPlacement() {
-        SurfacePlacer placer = new SurfacePlacer(80);
-        placer.carve(2, 80, 0);
-
-        assertFalse(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
-                List.of(new IrisBlockVector(0, 0, 0))));
+        assertTrue(isUnsupported(placer, SINGLE_COLUMN, 1, 1));
     }
 
     @Test
@@ -68,8 +103,8 @@ public class IrisSurfaceOpeningTest {
         SurfacePlacer placer = new SurfacePlacer(80);
         placer.carve(5, 80, -3);
 
-        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, null, null, 0, 0, 0,
-                List.of(new IrisBlockVector(5, 0, -3))));
+        assertTrue(IrisSurfaceSupport.isUnsupported(placer, null, 0, 0, null, null, 0, 0, 0,
+                List.of(new IrisBlockVector(5, 0, -3)), 0, 1));
     }
 
     @Test
@@ -79,8 +114,8 @@ public class IrisSurfaceOpeningTest {
         IrisObjectRotation rotation = IrisObjectRotation.of(0, 90, 0);
         placer.carve(-3, 80, -7);
 
-        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, translate, rotation, 0, 0, 0,
-                List.of(new IrisBlockVector(2, 0, 0))));
+        assertTrue(IrisSurfaceSupport.isUnsupported(placer, null, 0, 0, translate, rotation, 0, 0, 0,
+                List.of(new IrisBlockVector(2, 0, 0)), 0, 1));
     }
 
     @Test
@@ -89,7 +124,8 @@ public class IrisSurfaceOpeningTest {
         IrisObjectTranslate translate = new IrisObjectTranslate().setX(4).setZ(-2);
         placer.carve(4, 80, -2);
 
-        assertTrue(IrisSurfaceOpening.isOpen(placer, null, 0, 0, translate, null, 0, 0, 0, List.of()));
+        assertTrue(IrisSurfaceSupport.isUnsupported(placer, null, 0, 0, translate, null, 0, 0, 0,
+                List.of(), 0, 1));
     }
 
     @Test
@@ -118,10 +154,29 @@ public class IrisSurfaceOpeningTest {
         assertEquals(-4, updated.getFirst().getBlockY());
     }
 
+    @Test
+    public void formationDefaultsToWiderBufferThanObjectDefault() {
+        IrisFormation formation = new IrisFormation();
+
+        assertEquals(2, new IrisObjectPlacement().getSurfaceSupportBuffer());
+        assertEquals(3, formation.asPlacement().getSurfaceSupportBuffer());
+
+        formation.setSurfaceSupportBuffer(0);
+        assertEquals(0, formation.asPlacement().getSurfaceSupportBuffer());
+    }
+
+    private static boolean isUnsupported(IObjectPlacer placer, List<IrisBlockVector> footprint,
+                                         int buffer, int minSolidDepth) {
+        return IrisSurfaceSupport.isUnsupported(placer, null, 0, 0, null, null, 0, 0, 0,
+                footprint, buffer, minSolidDepth);
+    }
+
     private static final class SurfacePlacer implements IObjectPlacer {
         private final int defaultHeight;
         private final Map<String, Integer> heights = new HashMap<>();
         private final Set<String> carved = new HashSet<>();
+        private final Set<String> hollow = new HashSet<>();
+        private final Set<String> queriedColumns = new HashSet<>();
         private int heightQueries;
 
         private SurfacePlacer(int defaultHeight) {
@@ -136,8 +191,16 @@ public class IrisSurfaceOpeningTest {
             carved.add(blockKey(x, y, z));
         }
 
+        private void hollow(int x, int y, int z) {
+            hollow.add(blockKey(x, y, z));
+        }
+
         private int heightQueries() {
             return heightQueries;
+        }
+
+        private int uniqueColumnsQueried() {
+            return queriedColumns.size();
         }
 
         @Override
@@ -148,6 +211,7 @@ public class IrisSurfaceOpeningTest {
         @Override
         public int getHighest(int x, int z, IrisData data, boolean ignoreFluid) {
             heightQueries++;
+            queriedColumns.add(columnKey(x, z));
             return heights.getOrDefault(columnKey(x, z), defaultHeight);
         }
 
@@ -168,6 +232,11 @@ public class IrisSurfaceOpeningTest {
         @Override
         public boolean isCarved(int x, int y, int z) {
             return carved.contains(blockKey(x, y, z));
+        }
+
+        @Override
+        public boolean isSurfaceSolid(int x, int y, int z) {
+            return !hollow.contains(blockKey(x, y, z));
         }
 
         @Override

@@ -46,6 +46,7 @@ import net.minecraft.world.level.levelgen.feature.TreeFeature;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
+import net.minecraft.world.level.levelgen.structure.structures.JigsawStructure;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 
 import java.util.ArrayList;
@@ -67,6 +68,24 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
     @Override
     public List<String> structureKeys() {
         return registryKeys(Registries.STRUCTURE);
+    }
+
+    @Override
+    public List<String> jigsawStructureKeys() {
+        List<String> keys = new ArrayList<>();
+        MinecraftServer instance = requireServer("read registered jigsaw structures");
+        Registry<Structure> structures = instance.registryAccess().lookupOrThrow(Registries.STRUCTURE);
+        for (Map.Entry<ResourceKey<Structure>, Structure> entry : structures.entrySet()) {
+            if (entry.getValue() instanceof JigsawStructure) {
+                keys.add(entry.getKey().identifier().toString());
+            }
+        }
+        return keys;
+    }
+
+    @Override
+    public List<String> templatePoolKeys() {
+        return registryKeys(Registries.TEMPLATE_POOL);
     }
 
     @Override

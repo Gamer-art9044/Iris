@@ -103,6 +103,11 @@ final class FloatingObjectPlacementTransaction implements IObjectPlacer {
     }
 
     @Override
+    public boolean isSurfaceSolid(int x, int y, int z) {
+        return delegate.isSurfaceSolid(x, y, z);
+    }
+
+    @Override
     public boolean isSolid(int x, int y, int z) {
         PlatformBlockState state = bufferedBlocks.get(new PositionKey(x, y, z));
         return state == null ? delegate.isSolid(x, y, z) : B.isSolid(state);

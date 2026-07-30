@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.engine.object.IrisNativeStructure;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.volmlib.util.math.RNG;
 
@@ -153,10 +154,7 @@ public final class StructurePlacementGrid {
             signature = appendLong(signature, placement.getMaxHeight());
             signature = appendLong(signature, placement.isUnderground() ? 1L : 0L);
             signature = appendLong(signature, placement.isUnderwater() ? 1L : 0L);
-            signature = appendLong(signature, placement.getStructures().size());
-            for (String key : placement.getStructures()) {
-                signature = appendSignature(signature, key == null ? "" : key);
-            }
+            signature = appendSources(signature, placement);
         }
         int identitySalt = (int) (signature ^ (signature >>> 32));
         return mix(seed ^ signature, cx, cz, placementSalt(placement) ^ identitySalt);
@@ -180,6 +178,34 @@ public final class StructurePlacementGrid {
         return result;
     }
 
+    private static long appendSources(long signature, IrisStructurePlacement placement) {
+        long result = signature;
+        if (placement.hasIrisStructures()) {
+            result = appendLong(result, 1L);
+            result = appendLong(result, placement.getStructures().size());
+            for (String key : placement.getStructures()) {
+                result = appendSignature(result, key == null ? "" : key);
+            }
+            return result;
+        }
+        result = appendLong(result, 2L);
+        if (placement.getNativeStructures() == null) {
+            return appendLong(result, 0L);
+        }
+        result = appendLong(result, placement.getNativeStructures().size());
+        for (IrisNativeStructure source : placement.getNativeStructures()) {
+            if (source == null) {
+                result = appendSignature(result, "");
+                result = appendLong(result, 0L);
+                continue;
+            }
+            result = appendSignature(result,
+                    source.getStructure() == null ? "" : source.getStructure());
+            result = appendLong(result, source.getWeight());
+        }
+        return result;
+    }
+
     static int placementSalt(IrisStructurePlacement placement) {
         String placementId = placement.getPlacementId();
         long identity;
@@ -198,10 +224,7 @@ public final class StructurePlacementGrid {
             identity = appendLong(identity, placement.getMaxHeight());
             identity = appendLong(identity, placement.isUnderground() ? 1L : 0L);
             identity = appendLong(identity, placement.isUnderwater() ? 1L : 0L);
-            identity = appendLong(identity, placement.getStructures().size());
-            for (String key : placement.getStructures()) {
-                identity = appendSignature(identity, key == null ? "" : key);
-            }
+            identity = appendSources(identity, placement);
         }
         return placement.getSalt() ^ (int) (identity ^ (identity >>> 32));
     }

@@ -21,6 +21,7 @@ dist/
 core/plugins/
 adapters/bukkit/plugin/plugins/
 adapters/*/run/
+adapters/**/logs/*.gz
 
 .codegraph/
 
@@ -45,5 +46,6 @@ docs/*
 CROSSPLATFORM_PLAN.md
 
 .qa/
+.repro/
 
 __pycache__/

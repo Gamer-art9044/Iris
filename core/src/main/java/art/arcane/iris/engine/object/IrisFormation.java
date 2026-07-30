@@ -74,6 +74,11 @@ public class IrisFormation implements IrisProceduralPlacement {
     @Desc("Whether this formation may place on the terrain surface, under carvings, or both.")
     private CarvingMode carvingSupport = CarvingMode.SURFACE_ONLY;
 
+    @MinNumber(0)
+    @MaxNumber(16)
+    @Desc("Horizontal buffer, in blocks, beyond each lowest solid foundation block that must also be solid, un-carved ground.")
+    private int surfaceSupportBuffer = 3;
+
     @Desc("If true, the formation anchors on the terrain height ignoring the water surface.")
     private boolean underwater = false;
 
@@ -224,6 +229,7 @@ public class IrisFormation implements IrisProceduralPlacement {
         placement.setRotation(rotation);
         placement.setClamp(clamp);
         placement.setCarvingSupport(carvingSupport);
+        placement.setSurfaceSupportBuffer(surfaceSupportBuffer);
         placement.setUnderwater(underwater);
         placement.setTranslate(translate);
         placement.setStiltSettings(stiltSettings);

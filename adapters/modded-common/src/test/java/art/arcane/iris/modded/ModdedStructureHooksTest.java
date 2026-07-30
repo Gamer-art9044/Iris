@@ -59,12 +59,18 @@ public class ModdedStructureHooksTest {
 
         IllegalStateException structureKeys = assertThrows(
                 IllegalStateException.class, hooks::structureKeys);
+        IllegalStateException jigsawStructureKeys = assertThrows(
+                IllegalStateException.class, hooks::jigsawStructureKeys);
+        IllegalStateException templatePoolKeys = assertThrows(
+                IllegalStateException.class, hooks::templatePoolKeys);
         IllegalStateException structureSetKeys = assertThrows(
                 IllegalStateException.class, hooks::structureSetKeys);
         IllegalStateException structureBiomeKeys = assertThrows(
                 IllegalStateException.class, () -> hooks.structureBiomeKeys("minecraft:village"));
 
         assertTrue(structureKeys.getMessage().contains("before the Minecraft server is available"));
+        assertTrue(jigsawStructureKeys.getMessage().contains("before the Minecraft server is available"));
+        assertTrue(templatePoolKeys.getMessage().contains("before the Minecraft server is available"));
         assertTrue(structureSetKeys.getMessage().contains("before the Minecraft server is available"));
         assertTrue(structureBiomeKeys.getMessage().contains("before the Minecraft server is available"));
     }

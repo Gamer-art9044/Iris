@@ -23,9 +23,12 @@ import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.object.IrisBlockData;
 import art.arcane.iris.engine.object.IrisExpression;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
+import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
+import art.arcane.iris.engine.object.IrisVanillaStructureAdjustment;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
@@ -127,6 +130,117 @@ public class SchemaBuilderParityTest {
 
     @Test
     public void structurePlacementSchemaIncludesFoundationSettingsAndOmitsUnsupportedTransforms() {
+        JSONObject schema = new SchemaBuilder(IrisStructurePlacement.class, structureSchemaData()).construct();
+        JSONObject properties = schema.getJSONObject("properties");
+        JSONObject stilt = properties.getJSONObject("stilt");
+        JSONObject stiltDefinition = schema.getJSONObject("definitions")
+                .getJSONObject(stilt.getString("$ref").substring("#/definitions/".length()));
+        JSONObject stiltProperties = stiltDefinition.getJSONObject("properties");
+        JSONObject maxDepth = stiltProperties.getJSONObject("maxDepth");
+        JSONObject terrain = properties.getJSONObject("terrain");
+        JSONObject terrainDefinition = schema.getJSONObject("definitions")
+                .getJSONObject(terrain.getString("$ref").substring("#/definitions/".length()));
+        JSONObject terrainProperties = terrainDefinition.getJSONObject("properties");
+        JSONObject carveShape = terrainProperties.getJSONObject("shape");
+        JSONObject erosionStrength = terrainProperties.getJSONObject("erosionStrength");
+        JSONObject erosionFrequency = terrainProperties.getJSONObject("erosionFrequency");
+        JSONObject lobeFrequency = terrainProperties.getJSONObject("lobeFrequency");
+        JSONObject lobeStrength = terrainProperties.getJSONObject("lobeStrength");
+        String carveShapeDefinition = carveShape.getString("$ref")
+                .substring("#/definitions/".length());
+
+        assertTrue(properties.has("structures"));
+        assertTrue(properties.has("nativeStructures"));
+        assertTrue(properties.has("distribution"));
+        assertEquals(List.of("BOX", "ROUNDED", "ERODED"), oneOfValues(
+                schema.getJSONObject("definitions"), carveShapeDefinition));
+        assertEquals(0D, erosionStrength.getDouble("minimum"), 0D);
+        assertEquals(1D, erosionStrength.getDouble("maximum"), 0D);
+        assertEquals(0.001D, erosionFrequency.getDouble("minimum"), 0D);
+        assertEquals(1D, erosionFrequency.getDouble("maximum"), 0D);
+        assertEquals(0D, lobeFrequency.getDouble("minimum"), 0D);
+        assertEquals(1D, lobeFrequency.getDouble("maximum"), 0D);
+        assertEquals(0D, lobeStrength.getDouble("minimum"), 0D);
+        assertEquals(1D, lobeStrength.getDouble("maximum"), 0D);
+        assertEquals("object", stilt.getString("type"));
+        assertTrue(stiltProperties.has("palette"));
+        assertTrue(stiltProperties.has("supportNonOccluding"));
+        assertEquals(1, maxDepth.getInt("minimum"));
+        assertEquals(4064, maxDepth.getInt("maximum"));
+        assertFalse(properties.has("rotation"));
+        assertFalse(properties.has("translate"));
+        assertFalse(properties.has("scale"));
+    }
+
+    @Test
+    public void nativeAdjustmentSchemaExposesPlacementOverrides() {
+        JSONObject schema = new SchemaBuilder(
+                IrisVanillaStructureAdjustment.class, structureSchemaData()).construct();
+        JSONObject definitions = schema.getJSONObject("definitions");
+        JSONObject properties = schema.getJSONObject("properties");
+        JSONObject band = definitions.getJSONObject(
+                definitionKey(properties.getJSONObject("yBand"))).getJSONObject("properties");
+        JSONObject stiltProperties = definitions.getJSONObject(
+                definitionKey(properties.getJSONObject("stilt"))).getJSONObject("properties");
+        JSONObject terrainProperties = definitions.getJSONObject(
+                definitionKey(properties.getJSONObject("terrain"))).getJSONObject("properties");
+        JSONObject spacing = stiltProperties.getJSONObject("spacing");
+
+        assertEquals("boolean", properties.getJSONObject("preserveSourceY").getString("type"));
+        assertEquals(-4064, band.getJSONObject("min").getInt("minimum"));
+        assertEquals(4064, band.getJSONObject("min").getInt("maximum"));
+        assertEquals(-4064, band.getJSONObject("max").getInt("minimum"));
+        assertEquals(4064, band.getJSONObject("max").getInt("maximum"));
+        assertEquals(1, spacing.getInt("minimum"));
+        assertEquals(64, spacing.getInt("maximum"));
+        assertTrue(terrainProperties.has("mode"));
+        assertTrue(terrainProperties.has("shape"));
+        assertTrue(terrainProperties.has("lobeFrequency"));
+        assertTrue(terrainProperties.has("lobeStrength"));
+        assertTrue(terrainProperties.has("encasePalette"));
+    }
+
+    @Test
+    public void objectPlacementSchemaExposesSurfaceSupportSettings() {
+        JSONObject properties = rootProperties(
+                new SchemaBuilder(IrisObjectPlacement.class, structureSchemaData()).construct());
+        JSONObject buffer = properties.getJSONObject("surfaceSupportBuffer");
+        JSONObject depth = properties.getJSONObject("surfaceSupportDepth");
+
+        assertEquals("integer", buffer.getString("type"));
+        assertEquals(0, buffer.getInt("minimum"));
+        assertEquals(16, buffer.getInt("maximum"));
+        assertEquals("integer", depth.getString("type"));
+        assertEquals(1, depth.getInt("minimum"));
+        assertEquals(16, depth.getInt("maximum"));
+        assertEquals("boolean", properties.getJSONObject("requireSurfaceSupport").getString("type"));
+        assertFalse(properties.has("surfaceOpeningClearance"));
+    }
+
+    @Test
+    public void dimensionSchemaExposesSurfaceSupportDefaults() {
+        JSONObject properties = rootProperties(
+                new SchemaBuilder(IrisDimension.class, structureSchemaData()).construct());
+        JSONObject buffer = properties.getJSONObject("objectSurfaceSupportBuffer");
+
+        assertEquals("integer", buffer.getString("type"));
+        assertEquals(0, buffer.getInt("minimum"));
+        assertEquals(16, buffer.getInt("maximum"));
+        assertEquals("boolean", properties.getJSONObject("requireObjectSurfaceSupport").getString("type"));
+    }
+
+    @Test
+    public void structurePolicyArraysUseLiveRegistryKeys() {
+        JSONObject schema = new SchemaBuilder(StructureArrayModel.class, (IrisData) null).construct();
+        JSONObject disabled = schema.getJSONObject("properties").getJSONObject("disabled");
+
+        assertEquals("#/definitions/enum-vanilla-structure",
+                disabled.getJSONObject("items").getString("$ref"));
+        assertEquals(STRUCTURE_KEYS,
+                enumValues(schema.getJSONObject("definitions"), "enum-vanilla-structure"));
+    }
+
+    private static IrisData structureSchemaData() {
         IrisData data = mock(IrisData.class);
         ResourceLoader<IrisStructure> structureLoader = mock(ResourceLoader.class);
         ResourceLoader<IrisJigsawPiece> pieceLoader = mock(ResourceLoader.class);
@@ -145,47 +259,25 @@ public class SchemaBuilderParityTest {
         when(expressionLoader.getPossibleKeys()).thenReturn(new String[0]);
         when(expressionLoader.getFolderName()).thenReturn("expressions");
         when(expressionLoader.getResourceTypeName()).thenReturn("Expression");
-
-        JSONObject schema = new SchemaBuilder(IrisStructurePlacement.class, data).construct();
-        JSONObject properties = schema.getJSONObject("properties");
-        JSONObject stilt = properties.getJSONObject("stilt");
-        JSONObject stiltDefinition = schema.getJSONObject("definitions")
-                .getJSONObject(stilt.getString("$ref").substring("#/definitions/".length()));
-        JSONObject stiltProperties = stiltDefinition.getJSONObject("properties");
-        JSONObject maxDepth = stiltProperties.getJSONObject("maxDepth");
-        JSONObject overboreShape = properties.getJSONObject("overboreShape");
-        JSONObject overboreErosionStrength = properties.getJSONObject("overboreErosionStrength");
-        JSONObject overboreErosionFrequency = properties.getJSONObject("overboreErosionFrequency");
-        String overboreShapeDefinition = overboreShape.getString("$ref")
-                .substring("#/definitions/".length());
-
-        assertTrue(properties.has("structures"));
-        assertTrue(properties.has("distribution"));
-        assertEquals(List.of("BOX", "ROUNDED", "ERODED"), oneOfValues(
-                schema.getJSONObject("definitions"), overboreShapeDefinition));
-        assertEquals(0D, overboreErosionStrength.getDouble("minimum"), 0D);
-        assertEquals(1D, overboreErosionStrength.getDouble("maximum"), 0D);
-        assertEquals(0.001D, overboreErosionFrequency.getDouble("minimum"), 0D);
-        assertEquals(1D, overboreErosionFrequency.getDouble("maximum"), 0D);
-        assertEquals("object", stilt.getString("type"));
-        assertTrue(stiltProperties.has("palette"));
-        assertTrue(stiltProperties.has("supportNonOccluding"));
-        assertEquals(1, maxDepth.getInt("minimum"));
-        assertEquals(4064, maxDepth.getInt("maximum"));
-        assertFalse(properties.has("rotation"));
-        assertFalse(properties.has("translate"));
-        assertFalse(properties.has("scale"));
+        return data;
     }
 
-    @Test
-    public void structurePolicyArraysUseLiveRegistryKeys() {
-        JSONObject schema = new SchemaBuilder(StructureArrayModel.class, (IrisData) null).construct();
-        JSONObject disabled = schema.getJSONObject("properties").getJSONObject("disabled");
+    private static JSONObject rootProperties(JSONObject schema) {
+        if (schema.has("properties")) {
+            return schema.getJSONObject("properties");
+        }
+        JSONArray anyOf = schema.getJSONArray("anyOf");
+        for (int index = 0; index < anyOf.length(); index++) {
+            JSONObject candidate = anyOf.getJSONObject(index);
+            if (candidate.has("properties")) {
+                return candidate.getJSONObject("properties");
+            }
+        }
+        throw new IllegalStateException("schema exposes no properties");
+    }
 
-        assertEquals("#/definitions/enum-vanilla-structure",
-                disabled.getJSONObject("items").getString("$ref"));
-        assertEquals(STRUCTURE_KEYS,
-                enumValues(schema.getJSONObject("definitions"), "enum-vanilla-structure"));
+    private static String definitionKey(JSONObject reference) {
+        return reference.getString("$ref").substring("#/definitions/".length());
     }
 
     private static String flavorDefinitionKey() {

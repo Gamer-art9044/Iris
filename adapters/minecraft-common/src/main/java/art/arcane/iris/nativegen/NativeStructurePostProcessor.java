@@ -1,19 +1,33 @@
 package art.arcane.iris.nativegen;
 
 import art.arcane.iris.engine.framework.StructureVerticalBounds;
+import art.arcane.iris.engine.mantle.components.StructureCarveEnvelope;
+import art.arcane.iris.engine.mantle.components.StructureCarvingFootprint;
+import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisObjectVacuum;
+import art.arcane.iris.engine.object.IrisStructureCarveShape;
 import art.arcane.iris.engine.object.IrisStructureStiltSettings;
+import art.arcane.iris.engine.object.IrisStructureTerrain;
+import art.arcane.iris.engine.object.IrisStructureTerrainMode;
+import art.arcane.iris.engine.object.IrisStructureYBand;
+import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.volmlib.util.math.RNG;
 import com.mojang.datafixers.util.Either;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.WorldGenLevel;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.SupportType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
@@ -26,6 +40,8 @@ import net.minecraft.world.level.levelgen.structure.ScatteredFeaturePiece;
 import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.TerrainAdjustment;
+import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.levelgen.structure.pieces.PiecesContainer;
 import net.minecraft.world.level.levelgen.structure.pools.JigsawJunction;
 import net.minecraft.world.level.levelgen.structure.pools.LegacySinglePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.ListPoolElement;
@@ -44,21 +60,41 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.IntBinaryOperator;
+import java.util.function.Supplier;
 
 public final class NativeStructurePostProcessor {
+    private static final int AUTO_ENCASE_PADDING = 3;
+    private static final long CARVE_CEILING_ROLL_SIGNATURE = 0x2A17L;
+    private static final long CARVE_FLOOR_ROLL_SIGNATURE = 0x5B3DL;
+    private static final long CARVE_LOBE_SIGNATURE = 0x7C41L;
     private static final String DESERT_PYRAMID_ID = "minecraft:desert_pyramid";
     private static final int FOUNDATION_VERTICAL_TOLERANCE = 1;
     private static final String JUNGLE_PYRAMID_ID = "minecraft:jungle_pyramid";
     private static final int MAX_BURIAL_COLUMNS = 2_000_000;
+    private static final int MAX_CACHED_CARVE_FOOTPRINTS = 4;
+    private static final int MAX_CARVE_COLUMNS = 2_000_000;
+    private static final int MAX_TEMPLATE_OCCUPANCY_CELLS = 4_194_304;
     private static final int MONUMENT_BASE_BELOW_SEA_LEVEL = 24;
     private static final String OCEAN_MONUMENT_ID = "minecraft:monument";
     private static final double SURFACE_TERRAIN_FALLOFF = 2.0;
     private static final long SURFACE_TERRAIN_INFLUENCE_SCALE = 1_000_000L;
     private static final int SURFACE_TERRAIN_RADIUS = 12;
+    private static final List<Block> TEMPLATE_VOID_BLOCKS = List.of(Blocks.AIR, Blocks.STRUCTURE_VOID);
     private static final int UNDERGROUND_SURFACE_CLEARANCE = 1;
+    private static final Map<CarveFootprintKey, StructureCarvingFootprint> CARVE_FOOTPRINTS =
+            Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75F, true) {
+                @Override
+                protected boolean removeEldestEntry(
+                        Map.Entry<CarveFootprintKey, StructureCarvingFootprint> eldest) {
+                    return size() > MAX_CACHED_CARVE_FOOTPRINTS;
+                }
+            });
 
     private NativeStructurePostProcessor() {
     }
@@ -66,31 +102,456 @@ public final class NativeStructurePostProcessor {
     public static void place(WorldGenLevel world, StructureManager structureManager, ChunkGenerator generator,
                              WorldgenRandom random, BoundingBox area, ChunkPos chunkPos, String structureId,
                              StructureStart start, IrisNativeStructureDecision decision,
-                             StiltBlockResolver stiltBlockResolver,
+                             PaletteBlockResolver paletteBlockResolver,
                              IntBinaryOperator surfaceHeight) {
         IrisStructureStiltSettings stilt = decision.stilt();
         ensureMonumentSeaLevelAlignment(start, structureId, decision.yShift(), generator.getSeaLevel(),
                 area.minY(), area.maxY() + 1);
         start.placeInChunk(world, structureManager, generator, random, area, chunkPos);
         if (stilt != null) {
-            placeStilts(world, area, structureId, start, stilt, stiltBlockResolver, surfaceHeight,
+            placeStilts(world, area, structureId, start, stilt, paletteBlockResolver, surfaceHeight,
                     !isUndergroundStep(start.getStructure().step()));
         }
     }
 
+    public static void prepareTerrain(WorldGenLevel world, BoundingBox area,
+                                      List<TerrainTarget> targets,
+                                      PaletteBlockResolver paletteBlockResolver) {
+        if (targets == null || targets.isEmpty()) {
+            return;
+        }
+        for (TerrainTarget target : targets) {
+            integrateTerrain(world, area, target.structureId(), target.start(), target.terrain(),
+                    paletteBlockResolver);
+        }
+    }
+
+    public static IrisStructureTerrain resolveNativeTerrain(StructureStart start,
+                                                            IrisStructureTerrain configuredTerrain) {
+        if (configuredTerrain != null) {
+            return configuredTerrain;
+        }
+        if (start == null || !start.isValid()
+                || !encasesTerrain(start.getStructure().terrainAdaptation())) {
+            return null;
+        }
+        return new IrisStructureTerrain()
+                .setMode(IrisStructureTerrainMode.ENCASE)
+                .setHorizontalPadding(AUTO_ENCASE_PADDING)
+                .setCeilingPadding(AUTO_ENCASE_PADDING)
+                .setFloorPadding(AUTO_ENCASE_PADDING);
+    }
+
+    static boolean encasesTerrain(TerrainAdjustment adjustment) {
+        return adjustment == TerrainAdjustment.BURY || adjustment == TerrainAdjustment.ENCAPSULATE;
+    }
+
+    static void integrateTerrain(WorldGenLevel world, BoundingBox area, String structureId,
+                                 StructureStart start, IrisStructureTerrain configuredTerrain,
+                                 PaletteBlockResolver paletteBlockResolver) {
+        IrisStructureTerrain terrain = configuredTerrain == null
+                ? new IrisStructureTerrain().setMode(IrisStructureTerrainMode.SOURCE)
+                : configuredTerrain;
+        IrisStructureTerrainMode mode = terrain.resolvedMode();
+        if (mode == IrisStructureTerrainMode.SOURCE || mode == IrisStructureTerrainMode.PRESERVE) {
+            return;
+        }
+        if (mode == IrisStructureTerrainMode.VACUUM) {
+            carvePieceBoxes(world, area, start, terrain);
+            return;
+        }
+        if (mode == IrisStructureTerrainMode.ENCASE) {
+            encasePieces(world, area, structureId, start, terrain, paletteBlockResolver);
+            return;
+        }
+        if (mode != IrisStructureTerrainMode.BORE && mode != IrisStructureTerrainMode.FORCE_CARVE) {
+            throw new IllegalStateException("Native structure terrain mode " + mode
+                    + " is not implemented for '" + structureId + "'");
+        }
+        IrisStructureCarveShape shape = mode == IrisStructureTerrainMode.BORE
+                ? IrisStructureCarveShape.BOX : terrain.resolvedShape();
+        if (shape == IrisStructureCarveShape.BOX) {
+            carvePieceBoxes(world, area, start, terrain);
+            return;
+        }
+        carveOrganicColumns(world, area, organicCarve(
+                carveFootprint(start, Math.max(0, terrain.getHorizontalPadding()),
+                        () -> world.getLevel().getStructureManager()),
+                terrain, shape, carveNoiseIdentity(world, structureId, start)));
+    }
+
+    static List<BoundingBox> contentPieceBounds(StructureStart start) {
+        List<BoundingBox> bounds = new ArrayList<>(start.getPieces().size());
+        for (StructurePiece piece : start.getPieces()) {
+            if (!NativeStructureReferenceEnvelope.isMarker(piece)) {
+                bounds.add(piece.getBoundingBox());
+            }
+        }
+        return List.copyOf(bounds);
+    }
+
+    /**
+     * Per-column occupancy of the whole start, cached because a single structure spans many chunks and
+     * every one of them carves against the same shrinkwrapped footprint.
+     */
+    static StructureCarvingFootprint carveFootprint(StructureStart start, int horizontalPadding,
+                                                    Supplier<StructureTemplateManager> templates) {
+        CarveFootprintKey key = new CarveFootprintKey(start, horizontalPadding);
+        StructureCarvingFootprint cached = CARVE_FOOTPRINTS.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        StructureCarvingFootprint footprint = StructureCarvingFootprint.fromColumns(
+                sink -> emitCarveColumns(start, templates, sink), horizontalPadding, MAX_CARVE_COLUMNS);
+        if (footprint == null) {
+            throw new IllegalStateException("Native structure carve footprint is empty or exceeds "
+                    + MAX_CARVE_COLUMNS + " columns");
+        }
+        CARVE_FOOTPRINTS.put(key, footprint);
+        return footprint;
+    }
+
+    static OrganicCarve organicCarve(StructureCarvingFootprint footprint, IrisStructureTerrain terrain,
+                                     IrisStructureCarveShape shape, long identity) {
+        double strength = terrain.resolvedErosionStrength();
+        double lobeStrength = terrain.resolvedLobeStrength();
+        RNG noiseRng = new RNG(identity);
+        CNG blob = null;
+        CNG ceilingRoll = null;
+        CNG floorRoll = null;
+        CNG lobe = null;
+        if (shape == IrisStructureCarveShape.ERODED && strength > 0D) {
+            blob = CNG.signature(noiseRng);
+            ceilingRoll = CNG.signature(noiseRng.nextParallelRNG(CARVE_CEILING_ROLL_SIGNATURE));
+            floorRoll = CNG.signature(noiseRng.nextParallelRNG(CARVE_FLOOR_ROLL_SIGNATURE));
+        }
+        if (shape == IrisStructureCarveShape.ERODED && lobeStrength > 0D) {
+            // A plain single octave channel: the fractured signature noise has no usable low frequency band.
+            lobe = new CNG(noiseRng.nextParallelRNG(CARVE_LOBE_SIGNATURE), 1D, 1);
+        }
+        return new OrganicCarve(footprint, shape,
+                Math.max(0, terrain.getHorizontalPadding()),
+                Math.max(0, terrain.getCeilingPadding()),
+                Math.max(0, terrain.getFloorPadding()),
+                strength, terrain.resolvedErosionFrequency(), blob, ceilingRoll, floorRoll,
+                lobe, terrain.resolvedLobeFrequency(), lobeStrength);
+    }
+
+    static void carveOrganicColumns(WorldGenLevel world, BoundingBox area, OrganicCarve carve) {
+        StructureCarvingFootprint footprint = carve.footprint();
+        int minX = Math.max(area.minX(), footprint.minX());
+        int maxX = Math.min(area.maxX(), footprint.maxX());
+        int minZ = Math.max(area.minZ(), footprint.minZ());
+        int maxZ = Math.min(area.maxZ(), footprint.maxZ());
+        if (minX > maxX || minZ > maxZ) {
+            return;
+        }
+        boolean eroded = carve.blob() != null;
+        BlockState air = Blocks.AIR.defaultBlockState();
+        BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
+        for (int z = minZ; z <= maxZ; z++) {
+            for (int x = minX; x <= maxX; x++) {
+                int index = footprint.indexAt(x, z);
+                long horizontalDistanceSquared = footprint.distanceSquaredAt(index);
+                double sideReach = StructureCarveEnvelope.lobedSideReach(carve.lobe(),
+                        carve.lobeFrequency(), carve.lobeStrength(), x, z, carve.horizontalPadding());
+                double sideReachSquared = sideReach * sideReach;
+                if (horizontalDistanceSquared > sideReachSquared) {
+                    continue;
+                }
+                double normalizedHorizontal = sideReachSquared == 0D
+                        ? 0D : horizontalDistanceSquared / sideReachSquared;
+                int sourceMinY = footprint.sourceMinYAt(index);
+                int sourceMaxY = footprint.sourceMaxYAt(index);
+                double upReach = eroded
+                        ? StructureCarveEnvelope.lobedUpReach(carve.lobe(), carve.lobeFrequency(),
+                                carve.lobeStrength(), x, z,
+                                StructureCarveEnvelope.erodedUpReach(carve.ceilingRoll(),
+                                        carve.frequency(), carve.strength(), x, z,
+                                        carve.ceilingPadding()))
+                        : Math.max(1D, carve.ceilingPadding());
+                double floorReach = eroded
+                        ? StructureCarveEnvelope.erodedDownReach(carve.floorRoll(), carve.frequency(),
+                                carve.strength(), x, z, carve.floorPadding())
+                        : carve.floorPadding();
+                int columnMinY = Math.max(area.minY(), sourceMinY - (int) Math.floor(floorReach));
+                int columnMaxY = Math.min(area.maxY(),
+                        sourceMaxY + (eroded ? (int) Math.ceil(upReach) : carve.ceilingPadding()));
+                double downReach = Math.max(1D, floorReach);
+                for (int y = columnMinY; y <= columnMaxY; y++) {
+                    double normalizedVertical = StructureCarveEnvelope.normalizedVerticalDistance(
+                            y, sourceMinY, sourceMaxY, upReach, downReach);
+                    double distanceSquared = normalizedHorizontal
+                            + normalizedVertical * normalizedVertical;
+                    if (distanceSquared > 1D) {
+                        continue;
+                    }
+                    if (distanceSquared > 0D && eroded) {
+                        double noise = carve.blob().fitDouble(0D, 1D,
+                                x * carve.frequency(), y * carve.frequency(), z * carve.frequency());
+                        if (!StructureCarveEnvelope.shouldCarveOverboreCell(
+                                carve.shape(), distanceSquared, noise, carve.strength())) {
+                            continue;
+                        }
+                    }
+                    world.setBlock(position.set(x, y, z), air, 2);
+                }
+            }
+        }
+    }
+
+    private static boolean emitCarveColumns(StructureStart start,
+                                            Supplier<StructureTemplateManager> templates,
+                                            StructureCarvingFootprint.ColumnSink sink) {
+        for (StructurePiece piece : start.getPieces()) {
+            if (NativeStructureReferenceEnvelope.isMarker(piece)) {
+                continue;
+            }
+            BoundingBox bounds = piece.getBoundingBox();
+            if (!(piece instanceof PoolElementStructurePiece poolPiece)
+                    || !emitTemplateColumns(pieceTemplates(poolPiece, templates),
+                            poolPiece.getPosition(), poolPiece.getRotation(), bounds, sink)) {
+                emitBoxColumns(bounds, sink);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Derives per-column vertical extents from the complement of the template's air and structure-void
+     * cells, so a carve tracks the actual silhouette instead of the piece's rectangular bounding box.
+     */
+    static boolean emitTemplateColumns(List<StructureTemplate> templates, BlockPos position,
+                                       Rotation rotation, BoundingBox bounds,
+                                       StructureCarvingFootprint.ColumnSink sink) {
+        if (templates.isEmpty()) {
+            return false;
+        }
+        int width = bounds.getXSpan();
+        int depth = bounds.getZSpan();
+        long cells = (long) width * depth * bounds.getYSpan();
+        if (cells < 1L || cells > MAX_TEMPLATE_OCCUPANCY_CELLS) {
+            return false;
+        }
+        StructurePlaceSettings settings = new StructurePlaceSettings().setRotation(rotation);
+        boolean[] voidCells = null;
+        for (StructureTemplate template : templates) {
+            boolean[] templateVoid = new boolean[(int) cells];
+            for (Block ignored : TEMPLATE_VOID_BLOCKS) {
+                for (StructureTemplate.StructureBlockInfo info
+                        : template.filterBlocks(position, settings, ignored)) {
+                    BlockPos voidPosition = info.pos();
+                    if (bounds.isInside(voidPosition)) {
+                        templateVoid[templateCellIndex(bounds, width, depth,
+                                voidPosition.getX(), voidPosition.getY(), voidPosition.getZ())] = true;
+                    }
+                }
+            }
+            if (voidCells == null) {
+                voidCells = templateVoid;
+                continue;
+            }
+            for (int cell = 0; cell < voidCells.length; cell++) {
+                voidCells[cell] &= templateVoid[cell];
+            }
+        }
+        for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
+            for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
+                int minY = Integer.MAX_VALUE;
+                int maxY = Integer.MIN_VALUE;
+                for (int y = bounds.minY(); y <= bounds.maxY(); y++) {
+                    if (voidCells[templateCellIndex(bounds, width, depth, x, y, z)]) {
+                        continue;
+                    }
+                    if (minY == Integer.MAX_VALUE) {
+                        minY = y;
+                    }
+                    maxY = y;
+                }
+                if (minY != Integer.MAX_VALUE) {
+                    sink.column(x, z, minY, maxY);
+                }
+            }
+        }
+        return true;
+    }
+
+    private static void emitBoxColumns(BoundingBox bounds, StructureCarvingFootprint.ColumnSink sink) {
+        for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
+            for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
+                sink.column(x, z, bounds.minY(), bounds.maxY());
+            }
+        }
+    }
+
+    private static int templateCellIndex(BoundingBox bounds, int width, int depth,
+                                         int x, int y, int z) {
+        return ((y - bounds.minY()) * depth + z - bounds.minZ()) * width + x - bounds.minX();
+    }
+
+    private static List<StructureTemplate> pieceTemplates(PoolElementStructurePiece poolPiece,
+                                                          Supplier<StructureTemplateManager> templates) {
+        List<StructureTemplate> resolved = new ArrayList<>(1);
+        collectElementTemplates(poolPiece.getElement(), templates, resolved);
+        return resolved;
+    }
+
+    private static void collectElementTemplates(StructurePoolElement element,
+                                                Supplier<StructureTemplateManager> templates,
+                                                List<StructureTemplate> resolved) {
+        if (element instanceof ListPoolElement listElement) {
+            for (StructurePoolElement child : listElement.getElements()) {
+                collectElementTemplates(child, templates, resolved);
+            }
+            return;
+        }
+        if (element instanceof SinglePoolElement singleElement) {
+            resolved.add(resolveTemplate(singleElement, templates));
+        }
+    }
+
+    private static long carveNoiseIdentity(WorldGenLevel world, String structureId,
+                                           StructureStart start) {
+        return world.getSeed()
+                ^ ((long) start.getChunkPos().x() * 341873128712L)
+                ^ ((long) start.getChunkPos().z() * 132897987541L)
+                ^ (structureId == null ? 0 : structureId.hashCode());
+    }
+
+    private static void encasePieces(WorldGenLevel world, BoundingBox area, String structureId,
+                                     StructureStart start, IrisStructureTerrain terrain,
+                                     PaletteBlockResolver paletteBlockResolver) {
+        IrisMaterialPalette palette = terrain.getEncasePalette();
+        RNG rng = null;
+        if (palette != null) {
+            Objects.requireNonNull(paletteBlockResolver,
+                    "Native structure encase palette requires a platform block resolver");
+            rng = new RNG(world.getSeed() ^ (structureId == null ? 0 : structureId.hashCode()));
+        }
+        BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
+        for (BoundingBox bounds : contentPieceBounds(start)) {
+            BoundingBox shell = paddedPieceArea(area, bounds, terrain);
+            if (shell == null) {
+                continue;
+            }
+            for (int x = shell.minX(); x <= shell.maxX(); x++) {
+                for (int z = shell.minZ(); z <= shell.maxZ(); z++) {
+                    for (int y = shell.minY(); y <= shell.maxY(); y++) {
+                        BlockState existing = world.getBlockState(position.set(x, y, z));
+                        if (!isEncaseable(existing)) {
+                            continue;
+                        }
+                        BlockState fill = palette == null
+                                ? defaultEncaseBlock(y)
+                                : Objects.requireNonNull(
+                                        paletteBlockResolver.resolve(palette, rng, x, y, z),
+                                        "Encase palette returned no block for " + structureId + " at "
+                                                + x + "," + y + "," + z);
+                        world.setBlock(position, fill, 2);
+                    }
+                }
+            }
+        }
+    }
+
+    static boolean isEncaseable(BlockState state) {
+        return state.isAir() || !state.getFluidState().isEmpty();
+    }
+
+    static BlockState defaultEncaseBlock(int y) {
+        return y < 0 ? Blocks.DEEPSLATE.defaultBlockState() : Blocks.STONE.defaultBlockState();
+    }
+
+    private static void carvePieceBoxes(WorldGenLevel world, BoundingBox area, StructureStart start,
+                                        IrisStructureTerrain terrain) {
+        BlockState air = Blocks.AIR.defaultBlockState();
+        BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
+        for (BoundingBox bounds : contentPieceBounds(start)) {
+            BoundingBox carve = paddedPieceArea(area, bounds, terrain);
+            if (carve == null) {
+                continue;
+            }
+            for (int x = carve.minX(); x <= carve.maxX(); x++) {
+                for (int z = carve.minZ(); z <= carve.maxZ(); z++) {
+                    for (int y = carve.minY(); y <= carve.maxY(); y++) {
+                        world.setBlock(position.set(x, y, z), air, 2);
+                    }
+                }
+            }
+        }
+    }
+
+    private static BoundingBox paddedPieceArea(BoundingBox area, BoundingBox bounds,
+                                               IrisStructureTerrain terrain) {
+        int horizontalPadding = Math.max(0, terrain.getHorizontalPadding());
+        int minX = Math.max(area.minX(), bounds.minX() - horizontalPadding);
+        int minY = Math.max(area.minY(), bounds.minY() - Math.max(0, terrain.getFloorPadding()));
+        int minZ = Math.max(area.minZ(), bounds.minZ() - horizontalPadding);
+        int maxX = Math.min(area.maxX(), bounds.maxX() + horizontalPadding);
+        int maxY = Math.min(area.maxY(), bounds.maxY() + Math.max(0, terrain.getCeilingPadding()));
+        int maxZ = Math.min(area.maxZ(), bounds.maxZ() + horizontalPadding);
+        if (minX > maxX || minY > maxY || minZ > maxZ) {
+            return null;
+        }
+        return new BoundingBox(minX, minY, minZ, maxX, maxY, maxZ);
+    }
+
     public static int applyVerticalPlacement(StructureStart start, String structureId, int requestedOffset,
                                              int seaLevel, int worldMinY, int worldMaxYExclusive,
-                                             boolean underground, IntBinaryOperator surfaceHeight) {
+                                             boolean underground, boolean preserveSourceY,
+                                             IrisStructureYBand yBand,
+                                             IntBinaryOperator surfaceHeight) {
         if (isOceanMonument(structureId)) {
             return alignOceanMonumentToSeaLevel(
                     start, requestedOffset, seaLevel, worldMinY, worldMaxYExclusive);
         }
-        if (isRaisedScatteredStructure(structureId)) {
+        if (isAdjustedScatteredStructure(structureId)) {
             return alignScatteredStructureToSurface(
                     start, structureId, requestedOffset, worldMinY, worldMaxYExclusive, surfaceHeight);
         }
-        return applyVerticalShift(
-                start, requestedOffset, worldMinY, worldMaxYExclusive, underground, surfaceHeight);
+        return applyVerticalShift(start, requestedOffset, worldMinY, worldMaxYExclusive,
+                underground, preserveSourceY, yBand, surfaceHeight);
+    }
+
+    public static StructureStart relocateToMinY(StructureStart start, Structure source, int targetMinY,
+                                                LevelHeightAccessor heightAccessor) {
+        Objects.requireNonNull(start, "Native structure start must not be null");
+        Objects.requireNonNull(source, "Native structure source must not be null");
+        Objects.requireNonNull(heightAccessor, "Native structure height accessor must not be null");
+        if (!start.isValid()) {
+            return StructureStart.INVALID_START;
+        }
+        List<StructurePiece> pieces = start.getPieces();
+        int minY = Integer.MAX_VALUE;
+        for (StructurePiece piece : pieces) {
+            minY = Math.min(minY, piece.getBoundingBox().minY());
+        }
+        if (minY == Integer.MAX_VALUE) {
+            return StructureStart.INVALID_START;
+        }
+        int offsetY = Math.subtractExact(targetMinY, minY);
+        if (offsetY != 0) {
+            for (StructurePiece piece : pieces) {
+                moveStructurePiece(piece, offsetY);
+            }
+        }
+        int worldMinY = heightAccessor.getMinY() + 1;
+        int worldMaxYExclusive = Math.addExact(
+                heightAccessor.getMinY(), heightAccessor.getHeight());
+        for (StructurePiece piece : pieces) {
+            BoundingBox bounds = piece.getBoundingBox();
+            if (bounds.minY() < worldMinY || bounds.maxY() >= worldMaxYExclusive) {
+                throw new IllegalStateException("Native structure cannot fit target minimum Y "
+                        + targetMinY + " inside world bounds [" + worldMinY + ","
+                        + worldMaxYExclusive + ")");
+            }
+        }
+        return new StructureStart(
+                source,
+                start.getChunkPos(),
+                start.getReferences(),
+                new PiecesContainer(List.copyOf(pieces))
+        );
     }
 
     static int alignScatteredStructureToSurface(StructureStart start, String structureId,
@@ -98,10 +559,10 @@ public final class NativeStructurePostProcessor {
                                                   int worldMaxYExclusive,
                                                   IntBinaryOperator surfaceHeight) {
         Objects.requireNonNull(surfaceHeight, "Scattered native structure requires a terrain height resolver");
-        ScatteredFeaturePiece piece = requireRaisedScatteredPiece(start, structureId);
+        ScatteredFeaturePiece piece = requireAdjustedScatteredPiece(start, structureId);
         BoundingBox bounds = start.getBoundingBox();
         BoundingBox pieceBounds = piece.getBoundingBox();
-        int surfaceY = highestSurfaceY(pieceBounds, surfaceHeight);
+        int surfaceY = representativeScatteredSurfaceY(structureId, pieceBounds, surfaceHeight);
         int targetMinY = Math.addExact(Math.addExact(surfaceY, 1), configuredOffset);
         int requestedMove = Math.subtractExact(targetMinY, pieceBounds.minY());
         int offsetY = StructureVerticalBounds.clampOffset(
@@ -115,21 +576,35 @@ public final class NativeStructurePostProcessor {
 
     public static int applyVerticalShift(StructureStart start, int requestedOffset, int worldMinY,
                                          int worldMaxYExclusive, boolean underground,
+                                         boolean preserveSourceY, IrisStructureYBand yBand,
                                          IntBinaryOperator surfaceHeight) {
         BoundingBox bounds = start.getBoundingBox();
-        int resolvedOffset = underground
-                ? resolveBuriedOffset(bounds, requestedOffset, worldMinY, worldMaxYExclusive, surfaceHeight)
-                : requestedOffset;
+        int resolvedOffset = resolveShiftOffset(start, bounds, requestedOffset, worldMinY,
+                worldMaxYExclusive, underground, preserveSourceY, yBand, surfaceHeight);
         int offsetY = StructureVerticalBounds.clampOffset(
                 bounds.minY(), bounds.maxY(), resolvedOffset, worldMinY, worldMaxYExclusive);
-        if (underground && offsetY > resolvedOffset) {
-            throw new IllegalStateException("Underground native structure cannot fit below terrain and inside world bounds");
-        }
         if (offsetY == 0) {
             return 0;
         }
         moveStructureStart(start, bounds, offsetY);
         return offsetY;
+    }
+
+    private static int resolveShiftOffset(StructureStart start, BoundingBox bounds, int requestedOffset,
+                                          int worldMinY, int worldMaxYExclusive, boolean underground,
+                                          boolean preserveSourceY, IrisStructureYBand yBand,
+                                          IntBinaryOperator surfaceHeight) {
+        if (preserveSourceY) {
+            return requestedOffset;
+        }
+        if (yBand != null) {
+            return resolveYBandOffset(bounds, yBand, start.getChunkPos());
+        }
+        if (underground) {
+            return resolveBuriedOffset(
+                    bounds, requestedOffset, worldMinY, worldMaxYExclusive, surfaceHeight);
+        }
+        return requestedOffset;
     }
 
     static int alignOceanMonumentToSeaLevel(StructureStart start, int configuredOffset, int seaLevel,
@@ -166,12 +641,12 @@ public final class NativeStructurePostProcessor {
         return OCEAN_MONUMENT_ID.equals(structureId);
     }
 
-    private static boolean isRaisedScatteredStructure(String structureId) {
+    private static boolean isAdjustedScatteredStructure(String structureId) {
         return DESERT_PYRAMID_ID.equals(structureId) || JUNGLE_PYRAMID_ID.equals(structureId);
     }
 
-    private static ScatteredFeaturePiece requireRaisedScatteredPiece(StructureStart start,
-                                                                      String structureId) {
+    private static ScatteredFeaturePiece requireAdjustedScatteredPiece(StructureStart start,
+                                                                        String structureId) {
         Objects.requireNonNull(start, "Scattered native structure start must not be null");
         List<StructurePiece> pieces = start.getPieces();
         if (pieces.size() != 1) {
@@ -189,17 +664,43 @@ public final class NativeStructurePostProcessor {
                 + piece.getClass().getName());
     }
 
-    private static int highestSurfaceY(BoundingBox bounds, IntBinaryOperator surfaceHeight) {
-        int highestY = Integer.MIN_VALUE;
+    private static int representativeScatteredSurfaceY(String structureId, BoundingBox bounds,
+                                                        IntBinaryOperator surfaceHeight) {
+        if (DESERT_PYRAMID_ID.equals(structureId)) {
+            return lowestSurfaceY(bounds, surfaceHeight);
+        }
+        if (JUNGLE_PYRAMID_ID.equals(structureId)) {
+            return averageSurfaceY(bounds, surfaceHeight);
+        }
+        throw new IllegalStateException("Unsupported scattered native structure " + structureId);
+    }
+
+    private static int lowestSurfaceY(BoundingBox bounds, IntBinaryOperator surfaceHeight) {
+        int lowestY = Integer.MAX_VALUE;
         for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
             for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
-                highestY = Math.max(highestY, surfaceHeight.applyAsInt(x, z));
+                lowestY = Math.min(lowestY, surfaceHeight.applyAsInt(x, z));
             }
         }
-        if (highestY == Integer.MIN_VALUE) {
+        if (lowestY == Integer.MAX_VALUE) {
             throw new IllegalStateException("Scattered native structure has an empty terrain footprint");
         }
-        return highestY;
+        return lowestY;
+    }
+
+    private static int averageSurfaceY(BoundingBox bounds, IntBinaryOperator surfaceHeight) {
+        long totalY = 0L;
+        long columns = 0L;
+        for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
+            for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
+                totalY += surfaceHeight.applyAsInt(x, z);
+                columns++;
+            }
+        }
+        if (columns == 0L) {
+            throw new IllegalStateException("Scattered native structure has an empty terrain footprint");
+        }
+        return Math.toIntExact(totalY / columns);
     }
 
     private static void setScatteredHeightPosition(ScatteredFeaturePiece piece, int heightPosition) {
@@ -315,6 +816,34 @@ public final class NativeStructurePostProcessor {
         return resolved;
     }
 
+    static int resolveYBandOffset(BoundingBox bounds, IrisStructureYBand yBand, ChunkPos startChunk) {
+        Objects.requireNonNull(bounds, "Native structure bounds must not be null");
+        Objects.requireNonNull(startChunk, "Native structure Y band requires a start chunk");
+        int target = yBandTargetMidpointY(
+                bounds.minY(), bounds.maxY(), yBand.resolvedMin(), yBand.resolvedMax(), startChunk);
+        return Math.subtractExact(target, midpointY(bounds.minY(), bounds.maxY()));
+    }
+
+    static int yBandTargetMidpointY(int minY, int maxY, int bandMin, int bandMax, ChunkPos startChunk) {
+        int height = Math.subtractExact(maxY, minY);
+        int lowest = Math.addExact(bandMin, height / 2);
+        int highest = Math.subtractExact(bandMax, height - height / 2);
+        if (lowest > highest) {
+            // The band is shorter than the structure, so only its midpoint can be honoured.
+            return Math.floorDiv(Math.addExact(bandMin, bandMax), 2);
+        }
+        int span = highest - lowest + 1;
+        if (span == 1) {
+            return lowest;
+        }
+        long identity = (long) startChunk.x() * 341873128712L ^ (long) startChunk.z() * 132897987541L;
+        return lowest + new RNG(identity).nextInt(span);
+    }
+
+    private static int midpointY(int minY, int maxY) {
+        return minY + (maxY - minY) / 2;
+    }
+
     static int resolveBuriedOffset(BoundingBox bounds, int requestedOffset, int worldMinY,
                                    int worldMaxYExclusive, IntBinaryOperator surfaceHeight) {
         Objects.requireNonNull(bounds, "Native structure bounds must not be null");
@@ -335,7 +864,8 @@ public final class NativeStructurePostProcessor {
         int clampedOffset = StructureVerticalBounds.clampOffset(
                 bounds.minY(), bounds.maxY(), maximumOffset, worldMinY, worldMaxYExclusive);
         if (clampedOffset > maximumOffset) {
-            throw new IllegalStateException("Underground native structure cannot be buried without crossing world minimum Y");
+            IrisLogging.warn("Native structure burial at " + bounds.minX() + "," + bounds.minZ()
+                    + " clamped to world floor: wanted " + maximumOffset + ", used " + clampedOffset);
         }
         return clampedOffset;
     }
@@ -362,10 +892,10 @@ public final class NativeStructurePostProcessor {
         if (!anchors.isEmpty()) {
             fitSurfaceTerrain(world, area, anchors, surfaceHeight);
         }
-        StructureTemplateManager templateManager = world.getLevel().getStructureManager();
+        Supplier<StructureTemplateManager> templates = () -> world.getLevel().getStructureManager();
         for (StructureStart start : starts) {
             if (requiresSurfaceTerrain(start)) {
-                clearLegacyTemplateAir(world, area, start, templateManager);
+                clearLegacyTemplateAir(world, area, start, templates);
             }
         }
     }
@@ -454,6 +984,9 @@ public final class NativeStructurePostProcessor {
                 continue;
             }
             for (StructurePiece piece : start.getPieces()) {
+                if (NativeStructureReferenceEnvelope.isMarker(piece)) {
+                    continue;
+                }
                 if (piece instanceof PoolElementStructurePiece poolPiece) {
                     if (poolPiece.getElement().getProjection() == StructureTemplatePool.Projection.RIGID) {
                         BoundingBox bounds = poolPiece.getBoundingBox();
@@ -481,18 +1014,8 @@ public final class NativeStructurePostProcessor {
     static boolean requiresSurfaceTerrain(StructureStart start) {
         return start != null
                 && start.isValid()
-                && (shouldPrepareSurfaceTerrain(
-                        start.getStructure().terrainAdaptation(), start.getStructure().step())
-                || containsRaisedScatteredPiece(start));
-    }
-
-    private static boolean containsRaisedScatteredPiece(StructureStart start) {
-        for (StructurePiece piece : start.getPieces()) {
-            if (piece instanceof DesertPyramidPiece || piece instanceof JungleTemplePiece) {
-                return true;
-            }
-        }
-        return false;
+                && shouldPrepareSurfaceTerrain(
+                        start.getStructure().terrainAdaptation(), start.getStructure().step());
     }
 
     private static void fitSurfaceTerrain(WorldGenLevel world, BoundingBox area,
@@ -602,8 +1125,11 @@ public final class NativeStructurePostProcessor {
 
     private static void clearLegacyTemplateAir(WorldGenLevel world, BoundingBox area,
                                                StructureStart start,
-                                               StructureTemplateManager templateManager) {
+                                               Supplier<StructureTemplateManager> templates) {
         for (StructurePiece piece : start.getPieces()) {
+            if (NativeStructureReferenceEnvelope.isMarker(piece)) {
+                continue;
+            }
             if (!(piece instanceof PoolElementStructurePiece poolPiece)
                     || poolPiece.getElement().getProjection() != StructureTemplatePool.Projection.RIGID
                     || !intersects(poolPiece.getBoundingBox(), area)) {
@@ -614,24 +1140,24 @@ public final class NativeStructurePostProcessor {
                     .setRotation(poolPiece.getRotation())
                     .setBoundingBox(area);
             clearLegacyTemplateAir(world, poolPiece.getElement(), poolPiece.getPosition(),
-                    groundY, settings, templateManager);
+                    groundY, settings, templates);
         }
     }
 
     private static void clearLegacyTemplateAir(WorldGenLevel world, StructurePoolElement element,
                                                BlockPos position, int groundY,
                                                StructurePlaceSettings settings,
-                                               StructureTemplateManager templateManager) {
+                                               Supplier<StructureTemplateManager> templates) {
         if (element instanceof ListPoolElement listElement) {
             for (StructurePoolElement child : listElement.getElements()) {
-                clearLegacyTemplateAir(world, child, position, groundY, settings, templateManager);
+                clearLegacyTemplateAir(world, child, position, groundY, settings, templates);
             }
             return;
         }
         if (!(element instanceof LegacySinglePoolElement legacyElement)) {
             return;
         }
-        StructureTemplate template = resolveTemplate(legacyElement, templateManager);
+        StructureTemplate template = resolveTemplate(legacyElement, templates);
         clearTemplateAir(world, template, position, groundY, settings);
     }
 
@@ -663,7 +1189,7 @@ public final class NativeStructurePostProcessor {
     }
 
     private static StructureTemplate resolveTemplate(SinglePoolElement element,
-                                                     StructureTemplateManager templateManager) {
+                                                     Supplier<StructureTemplateManager> templates) {
         Object value;
         try {
             value = SinglePoolTemplateAccess.FIELD.get(element);
@@ -673,23 +1199,24 @@ public final class NativeStructurePostProcessor {
         if (!(value instanceof Either<?, ?> reference)) {
             throw new IllegalStateException("Native structure pool template field is not an Either");
         }
-        return resolveTemplateReference(reference, templateManager);
+        return resolveTemplateReference(reference, templates);
     }
 
     static StructureTemplate resolveTemplateReference(Either<?, ?> reference,
-                                                       StructureTemplateManager templateManager) {
+                                                       Supplier<StructureTemplateManager> templates) {
         return reference.map(
-                location -> resolveNamedTemplate(location, templateManager),
+                location -> resolveNamedTemplate(location, templates),
                 NativeStructurePostProcessor::requireRuntimeTemplate);
     }
 
     private static StructureTemplate resolveNamedTemplate(Object value,
-                                                          StructureTemplateManager templateManager) {
+                                                          Supplier<StructureTemplateManager> templates) {
         if (!(value instanceof Identifier identifier)) {
             throw new IllegalStateException("Native structure pool template identifier is "
                     + (value == null ? "null" : value.getClass().getName()));
         }
-        return templateManager.getOrCreate(identifier);
+        return Objects.requireNonNull(templates == null ? null : templates.get(),
+                "Native structure template manager is unavailable").getOrCreate(identifier);
     }
 
     private static StructureTemplate requireRuntimeTemplate(Object value) {
@@ -790,6 +1317,9 @@ public final class NativeStructurePostProcessor {
         int[] pieceTops = new int[clearColumns.length];
         Arrays.fill(pieceTops, Integer.MIN_VALUE);
         for (StructurePiece piece : target.start().getPieces()) {
+            if (NativeStructureReferenceEnvelope.isMarker(piece)) {
+                continue;
+            }
             BoundingBox bounds = piece.getBoundingBox();
             int minX = Math.max(area.minX(), bounds.minX());
             int maxX = Math.min(area.maxX(), bounds.maxX());
@@ -854,7 +1384,7 @@ public final class NativeStructurePostProcessor {
     }
 
     private static List<FoundationColumn> foundationEnvelope(BoundingBox area, StructureStart start) {
-        BoundingBox structure = start.getBoundingBox();
+        BoundingBox structure = NativeStructureReferenceEnvelope.contentBounds(start);
         int minX = Math.max(area.minX(), structure.minX());
         int minZ = Math.max(area.minZ(), structure.minZ());
         int maxX = Math.min(area.maxX(), structure.maxX());
@@ -887,6 +1417,9 @@ public final class NativeStructurePostProcessor {
     private static void markFoundationEnvelope(BitSet envelope, List<StructurePiece> pieces, BoundingBox area,
                                                int x, int z) {
         for (StructurePiece piece : pieces) {
+            if (NativeStructureReferenceEnvelope.isMarker(piece)) {
+                continue;
+            }
             BoundingBox bounds = piece.getBoundingBox();
             if (x < bounds.minX() || x > bounds.maxX() || z < bounds.minZ() || z > bounds.maxZ()) {
                 continue;
@@ -908,7 +1441,7 @@ public final class NativeStructurePostProcessor {
 
     private static void placeStilts(WorldGenLevel world, BoundingBox area, String structureId,
                                     StructureStart start, IrisStructureStiltSettings settings,
-                                    StiltBlockResolver stiltBlockResolver,
+                                    PaletteBlockResolver paletteBlockResolver,
                                     IntBinaryOperator surfaceHeight,
                                     boolean surfaceStructure) {
         Objects.requireNonNull(surfaceHeight, "Structure stilts require an Iris terrain height resolver");
@@ -916,6 +1449,9 @@ public final class NativeStructurePostProcessor {
         int structureHash = structureId == null ? 0 : structureId.hashCode();
         RNG rng = new RNG(world.getSeed() ^ structureHash);
         for (FoundationColumn column : foundationEnvelope(area, start)) {
+            if (!isStiltColumn(column.x(), column.z(), settings.getSpacing())) {
+                continue;
+            }
             int foundationY = findFoundationY(world, column, position);
             if (foundationY == Integer.MIN_VALUE) {
                 continue;
@@ -924,21 +1460,47 @@ public final class NativeStructurePostProcessor {
                     ? Math.max(area.minY(), Math.min(
                             area.maxY(), surfaceHeight.applyAsInt(column.x(), column.z())))
                     : area.minY() - 1;
-            for (int depth = 0, y = foundationY - 1;
-                 depth < settings.getMaxDepth() && y > terrainY; depth++, y--) {
+            int anchorY = findStiltAnchorY(
+                    world, column.x(), column.z(), foundationY,
+                    Math.max(1, settings.getMaxDepth()), terrainY, area.minY(), position);
+            if (anchorY == Integer.MIN_VALUE) {
+                continue;
+            }
+            for (int y = foundationY - 1; y > anchorY; y--) {
                 position.set(column.x(), y, column.z());
-                BlockState existingState = world.getBlockState(position);
-                boolean vegetation = existingState.is(BlockTags.LOGS) || existingState.is(BlockTags.LEAVES);
-                if (existingState.isSolid() && !vegetation) {
-                    break;
-                }
-                BlockState stilt = Objects.requireNonNull(
-                        stiltBlockResolver.resolve(settings, rng, column.x(), y, column.z()),
-                        "Stilt palette returned no block for " + structureId + " at "
-                                + column.x() + "," + y + "," + column.z());
+                BlockState stilt = settings.getPalette() == null
+                        ? Blocks.COBBLESTONE.defaultBlockState()
+                        : Objects.requireNonNull(
+                                paletteBlockResolver.resolve(
+                                        settings.getPalette(), rng, column.x(), y, column.z()),
+                                "Stilt palette returned no block for " + structureId + " at "
+                                        + column.x() + "," + y + "," + column.z());
                 world.setBlock(position, stilt, 2);
             }
         }
+    }
+
+    static boolean isStiltColumn(int x, int z, int spacing) {
+        int resolvedSpacing = Math.max(1, spacing);
+        return resolvedSpacing == 1
+                || Math.floorMod(x, resolvedSpacing) == 0
+                && Math.floorMod(z, resolvedSpacing) == 0;
+    }
+
+    static int findStiltAnchorY(
+            WorldGenLevel world, int x, int z, int foundationY, int maxDepth,
+            int terrainY, int areaMinY, BlockPos.MutableBlockPos position) {
+        int minimumAnchorY = Math.max(
+                areaMinY, Math.max(terrainY, foundationY - maxDepth - 1));
+        for (int y = foundationY - 1; y >= minimumAnchorY; y--) {
+            BlockState state = world.getBlockState(position.set(x, y, z));
+            boolean vegetation = state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES);
+            if (!vegetation && state.isFaceSturdy(
+                    world, position, Direction.UP, SupportType.FULL)) {
+                return y;
+            }
+        }
+        return Integer.MIN_VALUE;
     }
 
     public static StiltSupportAudit auditStiltSupport(WorldGenLevel world, BoundingBox area,
@@ -1002,14 +1564,28 @@ public final class NativeStructurePostProcessor {
     }
 
     @FunctionalInterface
-    public interface StiltBlockResolver {
-        BlockState resolve(IrisStructureStiltSettings settings, RNG rng, int x, int y, int z);
+    public interface PaletteBlockResolver {
+        BlockState resolve(IrisMaterialPalette palette, RNG rng, int x, int y, int z);
     }
 
     private record FoundationColumn(int x, int z, int[] ys) {
     }
 
+    // StructureStart has no value equality, so the key pins the exact start instance a chunk carves against.
+    private record CarveFootprintKey(StructureStart start, int padding) {
+    }
+
+    record OrganicCarve(StructureCarvingFootprint footprint, IrisStructureCarveShape shape,
+                        int horizontalPadding, int ceilingPadding, int floorPadding,
+                        double strength, double frequency, CNG blob, CNG ceilingRoll, CNG floorRoll,
+                        CNG lobe, double lobeFrequency, double lobeStrength) {
+    }
+
     public record VegetationTarget(StructureStart start, boolean force) {
+    }
+
+    public record TerrainTarget(String structureId, StructureStart start,
+                                IrisStructureTerrain terrain) {
     }
 
     public record StiltSupportAudit(int baseColumns, int stiltBlocks, int stiltColumns,

@@ -236,6 +236,23 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         return true;
     }
 
+    public void setForcedCarve(int x, int y, int z, MatterCavern value) {
+        if (value == null || y < 0 || y >= mantle.getWorldHeight()) {
+            return;
+        }
+        MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
+        if (chunk == null) {
+            throw new IllegalStateException("Forced structure carve exceeded its prepared Mantle radius at "
+                    + x + "," + y + "," + z);
+        }
+        Matter matter = chunk.getOrCreate(y >> 4);
+        if (matter.hasSlice(PlatformBlockState.class)) {
+            matter.<PlatformBlockState>getSlice(PlatformBlockState.class).set(x & 15, y & 15, z & 15, null);
+        }
+        clearDeferredPlacement(matter, x, y, z);
+        matter.<MatterCavern>slice(MatterCavern.class).set(x & 15, y & 15, z & 15, value);
+    }
+
     public void clearBlock(int x, int y, int z) {
         if (y < 0 || y >= mantle.getWorldHeight()) {
             return;

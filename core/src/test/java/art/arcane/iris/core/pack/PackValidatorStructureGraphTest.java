@@ -37,13 +37,108 @@ public class PackValidatorStructureGraphTest {
     @Test
     public void collectsOnlyStructuresReferencedByRuntimePlacements() throws Exception {
         File pack = temporaryFolder.newFolder("pack");
-        write(pack, "dimensions/main.json", "{\"structures\":[{\"structures\":[\"active\"]}]}");
+        write(pack, "dimensions/main.json", "{\"structures\":[{\"structures\":[\"active\"]},"
+                + "{\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\"}]}]}");
         write(pack, "regions/forest.json", "{\"structures\":[{\"structures\":[\"regional\"]}]}");
         write(pack, "structures/active.json", "{}");
         write(pack, "structures/regional.json", "{}");
         write(pack, "structures/library.json", "{}");
 
         assertEquals(Set.of("active", "regional"), PackValidator.collectPlacedStructureKeys(pack));
+    }
+
+    @Test
+    public void acceptsNativeStructureBackendWithoutConvertedIrisResources() throws Exception {
+        File pack = temporaryFolder.newFolder("native-structure");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\",\"weight\":2,"
+                + "\"jigsaw\":{\"maxDepth\":7,\"maxDistanceHorizontal\":96,"
+                + "\"maxDistanceVertical\":64,\"liquidSettings\":\"IGNORE_WATERLOGGING\"}}],"
+                + "\"underground\":true,\"minHeight\":-48,\"maxHeight\":-20,"
+                + "\"terrain\":{\"mode\":\"FORCE_CARVE\",\"horizontalPadding\":24,"
+                + "\"ceilingPadding\":12,\"floorPadding\":2,"
+                + "\"lobeFrequency\":0.02,\"lobeStrength\":0.85}}]}");
+
+        assertTrue(PackValidator.validateStructureGraph(pack).isEmpty());
+        assertTrue(PackValidator.validateNativeStructureReplacements(
+                pack, Set.of(), Map.of()).isEmpty());
+    }
+
+    @Test
+    public void rejectsNativeTerrainLobeSettingsOutsideTheirRange() throws Exception {
+        File pack = temporaryFolder.newFolder("invalid-lobe");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\"}],"
+                + "\"terrain\":{\"mode\":\"FORCE_CARVE\",\"lobeFrequency\":1.5,"
+                + "\"lobeStrength\":-0.2}}]}");
+
+        List<String> errors = PackValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(
+                message -> message.contains("terrain.lobeFrequency must be at most 1")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(
+                message -> message.contains("terrain.lobeStrength must be at least 0")));
+    }
+
+    @Test
+    public void rejectsNativeTerrainErosionSettingsOutsideTheirRange() throws Exception {
+        File pack = temporaryFolder.newFolder("invalid-erosion");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\"}],"
+                + "\"terrain\":{\"mode\":\"FORCE_CARVE\",\"erosionStrength\":1.4,"
+                + "\"erosionFrequency\":0}}]}");
+
+        List<String> errors = PackValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(
+                message -> message.contains("terrain.erosionStrength must be at most 1")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(
+                message -> message.contains("terrain.erosionFrequency must be at least 0.001")));
+    }
+
+    @Test
+    public void rejectsNonNumericNativeTerrainLobeSettings() throws Exception {
+        File pack = temporaryFolder.newFolder("non-numeric-lobe");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\"}],"
+                + "\"terrain\":{\"mode\":\"FORCE_CARVE\",\"lobeStrength\":\"strong\"}}]}");
+
+        List<String> errors = PackValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(
+                message -> message.contains("terrain.lobeStrength must be a number")));
+    }
+
+    @Test
+    public void rejectsMixedStructureBackends() throws Exception {
+        File pack = temporaryFolder.newFolder("mixed-native");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"structures\":[\"city\"],"
+                + "\"nativeStructures\":[{\"structure\":\"ancient_city\",\"weight\":0,"
+                + "\"jigsaw\":{\"maxDepth\":21}}]}]}");
+        write(pack, "structures/city.json", "{}");
+
+        List<String> errors = PackValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(
+                message -> message.contains("exactly one non-empty backend")));
+    }
+
+    @Test
+    public void rejectsInvalidNativeStructureSourceAndOverrides() throws Exception {
+        File pack = temporaryFolder.newFolder("invalid-native");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"ancient_city\",\"weight\":0,"
+                + "\"jigsaw\":{\"maxDepth\":21}}]}]}");
+
+        List<String> errors = PackValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(
+                message -> message.contains(".structure must be a namespaced registry key")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(
+                message -> message.contains(".weight must be at least 1")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(
+                message -> message.contains(".maxDepth must be at most 20")));
     }
 
     @Test
@@ -126,6 +221,17 @@ public class PackValidatorStructureGraphTest {
 
         assertTrue(PackValidator.validateNativeStructureReplacements(
                 pack, Set.of("city"), sampledEnvelope("city", 1, 0, 0)).isEmpty());
+    }
+
+    @Test
+    public void acceptsDimensionLevelNativeStructureReplacementWithoutConversionGraph() throws Exception {
+        File pack = temporaryFolder.newFolder("native-replacement");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\"}],"
+                + "\"nativeSuppression\":\"REPLACE_SOURCE\"}]}");
+
+        assertTrue(PackValidator.validateNativeStructureReplacements(
+                pack, Set.of(), Map.of()).isEmpty());
     }
 
     @Test

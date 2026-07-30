@@ -95,6 +95,7 @@ public final class PackValidator {
         validateDimensions(packFolder, dimensionFiles, blockingErrors, warnings);
         blockingErrors.addAll(validateLootGraph(packFolder));
         blockingErrors.addAll(validateRemovedWorldgenFields(packFolder));
+        blockingErrors.addAll(validateObjectSurfaceSupport(packFolder));
         blockingErrors.addAll(validateUnsupportedStructureTransforms(packFolder));
         blockingErrors.addAll(validateStructureGraph(packFolder));
         StructureGraphPackValidator.Validation compiledStructures =
@@ -300,6 +301,67 @@ public final class PackValidator {
             }
         }
         return blockingErrors;
+    }
+
+    static List<String> validateObjectSurfaceSupport(File packFolder) {
+        List<String> blockingErrors = new ArrayList<>();
+        if (packFolder == null || !packFolder.isDirectory()) {
+            return blockingErrors;
+        }
+
+        for (String folderName : STRUCTURE_HOST_FOLDERS) {
+            File resourceFolder = new File(packFolder, folderName);
+            if (!resourceFolder.isDirectory()) {
+                continue;
+            }
+            List<File> resourceFiles = listJsonRecursive(resourceFolder);
+            resourceFiles.sort(Comparator.comparing(File::getPath));
+            String resourceType = structureHostType(folderName);
+            for (File resourceFile : resourceFiles) {
+                JSONObject resource = readJson(resourceFile);
+                if (resource == null) {
+                    continue;
+                }
+                String path = resourceType + " '" + deriveKey(resourceFolder, resourceFile) + "'";
+                if ("dimensions".equals(folderName)) {
+                    validateOptionalIntegerRange(path, resource, "objectSurfaceSupportBuffer", 0, 16, blockingErrors);
+                    validateOptionalBoolean(path, resource, "requireObjectSurfaceSupport", blockingErrors);
+                }
+                validateObjectPlacementSurfaceSupport(path, resource.optJSONArray("objects"), blockingErrors);
+            }
+        }
+        return blockingErrors;
+    }
+
+    private static void validateObjectPlacementSurfaceSupport(String path, JSONArray placements,
+                                                              List<String> blockingErrors) {
+        if (placements == null) {
+            return;
+        }
+        for (int i = 0; i < placements.length(); i++) {
+            JSONObject placement = placements.optJSONObject(i);
+            if (placement == null) {
+                continue;
+            }
+            String placementPath = path + ".objects[" + i + "]";
+            if (placement.has("surfaceOpeningClearance")) {
+                blockingErrors.add(placementPath + " declares removed field 'surfaceOpeningClearance'. "
+                        + "Use surfaceSupportBuffer instead.");
+            }
+            validateOptionalIntegerRange(placementPath, placement, "surfaceSupportBuffer", 0, 16, blockingErrors);
+            validateOptionalIntegerRange(placementPath, placement, "surfaceSupportDepth", 1, 16, blockingErrors);
+            validateOptionalBoolean(placementPath, placement, "requireSurfaceSupport", blockingErrors);
+        }
+    }
+
+    private static void validateOptionalBoolean(String path, JSONObject object, String field,
+                                                List<String> blockingErrors) {
+        if (!object.has(field) || object.opt(field) == JSONObject.NULL) {
+            return;
+        }
+        if (!(object.opt(field) instanceof Boolean)) {
+            blockingErrors.add(path + "." + field + " must be a boolean.");
+        }
     }
 
     private static void validateLootTable(String lootKey, JSONObject table, List<String> blockingErrors) {
@@ -532,9 +594,13 @@ public final class PackValidator {
                         continue;
                     }
                     JSONArray references = placement.optJSONArray("structures");
+                    JSONArray nativeStructures = placement.optJSONArray("nativeStructures");
+                    if (nativeStructures != null && nativeStructures.length() > 0) {
+                        continue;
+                    }
                     if (references == null || references.length() == 0) {
                         blockingErrors.add("Dimension '" + resourceKey + "' structures[" + placementIndex
-                                + "] requests REPLACE_SOURCE without any Iris structure references.");
+                                + "] requests REPLACE_SOURCE without any structure backend.");
                         continue;
                     }
                     for (int referenceIndex = 0; referenceIndex < references.length(); referenceIndex++) {
@@ -763,6 +829,9 @@ public final class PackValidator {
     private static void validateStructurePlacements(File packFolder,
                                                     Set<String> structureKeys,
                                                     List<String> blockingErrors) {
+        Set<String> registeredStructures = registeredStructureKeys();
+        Set<String> registeredJigsaws = registeredJigsawKeys();
+        Set<String> registeredPools = registeredTemplatePoolKeys();
         for (String folderName : STRUCTURE_HOST_FOLDERS) {
             File resourceFolder = new File(packFolder, folderName);
             if (!resourceFolder.isDirectory()) {
@@ -787,7 +856,21 @@ public final class PackValidator {
                         continue;
                     }
                     JSONArray references = placement.optJSONArray("structures");
-                    if (references == null) {
+                    JSONArray nativeStructures = placement.optJSONArray("nativeStructures");
+                    boolean hasIrisStructures = references != null && references.length() > 0;
+                    boolean hasNativeStructures = nativeStructures != null && nativeStructures.length() > 0;
+                    String placementPath = resourceType + " '" + resourceKey + "' structures["
+                            + placementIndex + "]";
+                    if (hasIrisStructures == hasNativeStructures) {
+                        blockingErrors.add(placementPath
+                                + " must declare exactly one non-empty backend: structures or nativeStructures.");
+                        continue;
+                    }
+                    if (hasNativeStructures) {
+                        validateNativeStructures(
+                                placementPath, placement, nativeStructures,
+                                registeredStructures, registeredJigsaws,
+                                registeredPools, blockingErrors);
                         continue;
                     }
                     for (int referenceIndex = 0; referenceIndex < references.length(); referenceIndex++) {
@@ -803,6 +886,223 @@ public final class PackValidator {
                     }
                 }
             }
+        }
+    }
+
+    private static Set<String> registeredJigsawKeys() {
+        try {
+            List<String> registered = IrisPlatforms.get().structureHooks().jigsawStructureKeys();
+            if (registered == null || registered.isEmpty()) {
+                return Set.of();
+            }
+            Set<String> keys = new HashSet<>();
+            for (String key : registered) {
+                if (key != null && !key.isBlank()) {
+                    keys.add(key.toLowerCase(Locale.ROOT));
+                }
+            }
+            return Set.copyOf(keys);
+        } catch (Throwable ignored) {
+            return Set.of();
+        }
+    }
+
+    private static Set<String> registeredStructureKeys() {
+        try {
+            List<String> registered = IrisPlatforms.get().structureHooks().structureKeys();
+            if (registered == null || registered.isEmpty()) {
+                return Set.of();
+            }
+            Set<String> keys = new HashSet<>();
+            for (String key : registered) {
+                if (key != null && !key.isBlank()) {
+                    keys.add(key.toLowerCase(Locale.ROOT));
+                }
+            }
+            return Set.copyOf(keys);
+        } catch (Throwable ignored) {
+            return Set.of();
+        }
+    }
+
+    private static Set<String> registeredTemplatePoolKeys() {
+        try {
+            List<String> registered = IrisPlatforms.get().structureHooks().templatePoolKeys();
+            if (registered == null || registered.isEmpty()) {
+                return Set.of();
+            }
+            Set<String> keys = new HashSet<>();
+            for (String key : registered) {
+                if (key != null && !key.isBlank()) {
+                    keys.add(key.toLowerCase(Locale.ROOT));
+                }
+            }
+            return Set.copyOf(keys);
+        } catch (Throwable ignored) {
+            return Set.of();
+        }
+    }
+
+    private static void validateNativeStructures(String placementPath, JSONObject placement,
+                                                 JSONArray nativeStructures,
+                                                 Set<String> registeredStructures,
+                                                 Set<String> registeredJigsaws,
+                                                 Set<String> registeredPools,
+                                                 List<String> blockingErrors) {
+        for (int sourceIndex = 0; sourceIndex < nativeStructures.length(); sourceIndex++) {
+            String sourcePath = placementPath + ".nativeStructures[" + sourceIndex + "]";
+            JSONObject source = nativeStructures.optJSONObject(sourceIndex);
+            if (source == null) {
+                blockingErrors.add(sourcePath + " must be an object.");
+                continue;
+            }
+            String structureKey = source.optString("structure", "").trim();
+            if (!RESOURCE_KEY_PATTERN.matcher(structureKey).matches()) {
+                blockingErrors.add(sourcePath + ".structure must be a namespaced registry key.");
+            } else if (!registeredStructures.isEmpty()
+                    && !registeredStructures.contains(structureKey.toLowerCase(Locale.ROOT))) {
+                blockingErrors.add(sourcePath + ".structure '" + structureKey
+                        + "' is not a registered structure.");
+            }
+            Integer weight = lootInteger(source, "weight", 1, sourcePath, blockingErrors);
+            requireMinimum(sourcePath + ".weight", weight, 1, blockingErrors);
+            JSONObject jigsaw = source.optJSONObject("jigsaw");
+            if (source.has("jigsaw") && source.opt("jigsaw") != JSONObject.NULL && jigsaw == null) {
+                blockingErrors.add(sourcePath + ".jigsaw must be an object.");
+            } else if (jigsaw != null) {
+                if (!registeredJigsaws.isEmpty()
+                        && !registeredJigsaws.contains(structureKey.toLowerCase(Locale.ROOT))) {
+                    blockingErrors.add(sourcePath
+                            + ".jigsaw requires a registered jigsaw structure.");
+                }
+                validateJigsawAssembly(
+                        sourcePath + ".jigsaw", jigsaw, registeredPools, blockingErrors);
+            }
+        }
+        validateNativeTerrain(placementPath, placement, blockingErrors);
+    }
+
+    private static void validateJigsawAssembly(String path, JSONObject assembly,
+                                               Set<String> registeredPools,
+                                               List<String> blockingErrors) {
+        validateOptionalResourceKey(path, assembly, "startPool", false, blockingErrors);
+        String startPool = assembly.optString("startPool", "").trim();
+        if (!startPool.isEmpty() && !registeredPools.isEmpty()
+                && !registeredPools.contains(startPool.toLowerCase(Locale.ROOT))) {
+            blockingErrors.add(path + ".startPool '" + startPool
+                    + "' is not a registered template pool.");
+        }
+        validateOptionalResourceKey(path, assembly, "startJigsawName", true, blockingErrors);
+        validateOptionalIntegerRange(path, assembly, "maxDepth", 0, 20, blockingErrors);
+        validateOptionalIntegerRange(path, assembly, "maxDistanceHorizontal", 1, 128, blockingErrors);
+        validateOptionalIntegerRange(path, assembly, "maxDistanceVertical", 1, 4064, blockingErrors);
+        validateOptionalIntegerRange(
+                path, assembly, "dimensionPaddingBottom", 0, Integer.MAX_VALUE, blockingErrors);
+        validateOptionalIntegerRange(
+                path, assembly, "dimensionPaddingTop", 0, Integer.MAX_VALUE, blockingErrors);
+        if (assembly.has("useExpansionHack")
+                && !(assembly.opt("useExpansionHack") instanceof Boolean)) {
+            blockingErrors.add(path + ".useExpansionHack must be a boolean.");
+        }
+        validateOptionalEnum(path, assembly, "projectStartToHeightmap",
+                Set.of("SOURCE", "NONE", "WORLD_SURFACE_WG", "WORLD_SURFACE",
+                        "OCEAN_FLOOR_WG", "OCEAN_FLOOR", "MOTION_BLOCKING",
+                        "MOTION_BLOCKING_NO_LEAVES"), blockingErrors);
+        validateOptionalEnum(path, assembly, "liquidSettings",
+                Set.of("SOURCE", "IGNORE_WATERLOGGING", "APPLY_WATERLOGGING"), blockingErrors);
+    }
+
+    private static void validateNativeTerrain(String path, JSONObject placement,
+                                              List<String> blockingErrors) {
+        JSONObject terrain = placement.optJSONObject("terrain");
+        if (placement.has("terrain") && placement.opt("terrain") != JSONObject.NULL && terrain == null) {
+            blockingErrors.add(path + ".terrain must be an object.");
+            return;
+        }
+        if (terrain == null) {
+            return;
+        }
+        validateOptionalEnum(path + ".terrain", terrain, "mode",
+                Set.of("SOURCE", "PRESERVE", "BORE", "FORCE_CARVE", "VACUUM", "ENCASE"), blockingErrors);
+        validateOptionalIntegerRange(path + ".terrain", terrain,
+                "horizontalPadding", 0, 128, blockingErrors);
+        validateOptionalIntegerRange(path + ".terrain", terrain,
+                "ceilingPadding", 0, 128, blockingErrors);
+        validateOptionalIntegerRange(path + ".terrain", terrain,
+                "floorPadding", 0, 64, blockingErrors);
+        validateOptionalDoubleRange(path + ".terrain", terrain,
+                "erosionStrength", 0D, 1D, blockingErrors);
+        validateOptionalDoubleRange(path + ".terrain", terrain,
+                "erosionFrequency", 0.001D, 1D, blockingErrors);
+        validateOptionalDoubleRange(path + ".terrain", terrain,
+                "lobeFrequency", 0D, 1D, blockingErrors);
+        validateOptionalDoubleRange(path + ".terrain", terrain,
+                "lobeStrength", 0D, 1D, blockingErrors);
+        if (terrain.has("encasePalette") && terrain.opt("encasePalette") != JSONObject.NULL
+                && terrain.optJSONObject("encasePalette") == null) {
+            blockingErrors.add(path + ".terrain.encasePalette must be an object.");
+        }
+    }
+
+    private static void validateOptionalResourceKey(String path, JSONObject object, String field,
+                                                    boolean allowNone, List<String> blockingErrors) {
+        if (!object.has(field)) {
+            return;
+        }
+        Object rawValue = object.opt(field);
+        if (!(rawValue instanceof String value)) {
+            blockingErrors.add(path + "." + field + " must be a string.");
+            return;
+        }
+        String normalized = value.trim();
+        if (normalized.isEmpty() || allowNone && "NONE".equalsIgnoreCase(normalized)) {
+            return;
+        }
+        if (!RESOURCE_KEY_PATTERN.matcher(normalized).matches()) {
+            blockingErrors.add(path + "." + field + " must be a namespaced registry key.");
+        }
+    }
+
+    private static void validateOptionalIntegerRange(String path, JSONObject object, String field,
+                                                     int minimum, int maximum,
+                                                     List<String> blockingErrors) {
+        if (!object.has(field) || object.opt(field) == JSONObject.NULL) {
+            return;
+        }
+        Integer value = lootInteger(object, field, minimum, path, blockingErrors);
+        requireMinimum(path + "." + field, value, minimum, blockingErrors);
+        requireMaximum(path + "." + field, value, maximum, blockingErrors);
+    }
+
+    private static void validateOptionalDoubleRange(String path, JSONObject object, String field,
+                                                    double minimum, double maximum,
+                                                    List<String> blockingErrors) {
+        if (!object.has(field) || object.opt(field) == JSONObject.NULL) {
+            return;
+        }
+        String fieldPath = path + "." + field;
+        Object rawValue = object.opt(field);
+        if (!(rawValue instanceof Number number) || !Double.isFinite(number.doubleValue())) {
+            blockingErrors.add(fieldPath + " must be a number.");
+            return;
+        }
+        double value = number.doubleValue();
+        if (value < minimum) {
+            blockingErrors.add(fieldPath + " must be at least " + minimum + ".");
+        }
+        if (value > maximum) {
+            blockingErrors.add(fieldPath + " must be at most " + maximum + ".");
+        }
+    }
+
+    private static void validateOptionalEnum(String path, JSONObject object, String field,
+                                             Set<String> values, List<String> blockingErrors) {
+        if (!object.has(field)) {
+            return;
+        }
+        Object rawValue = object.opt(field);
+        if (!(rawValue instanceof String value) || !values.contains(value)) {
+            blockingErrors.add(path + "." + field + " must be one of " + values + ".");
         }
     }
 
@@ -1495,7 +1795,26 @@ public final class PackValidator {
                 continue;
             }
             validateStructureKeyList(dimensionKey, adjustment, "match", blockingErrors);
+            validateAdjustmentYBand(dimensionKey, adjustment, index, blockingErrors);
+            validateNativeTerrain("Dimension '" + dimensionKey
+                    + "' importedStructures.adjustments[" + index + "]", adjustment, blockingErrors);
         }
+    }
+
+    private static void validateAdjustmentYBand(String dimensionKey, JSONObject adjustment, int index,
+                                                List<String> blockingErrors) {
+        if (!adjustment.has("yBand") || adjustment.opt("yBand") == JSONObject.NULL) {
+            return;
+        }
+        String path = "Dimension '" + dimensionKey
+                + "' importedStructures.adjustments[" + index + "].yBand";
+        JSONObject band = adjustment.optJSONObject("yBand");
+        if (band == null) {
+            blockingErrors.add(path + " must be an object.");
+            return;
+        }
+        validateOptionalIntegerRange(path, band, "min", -4064, 4064, blockingErrors);
+        validateOptionalIntegerRange(path, band, "max", -4064, 4064, blockingErrors);
     }
 
     private static void validateStructureKeyList(String dimensionKey, JSONObject owner, String field,

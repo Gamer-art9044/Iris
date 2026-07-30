@@ -694,13 +694,6 @@ public class IrisObject extends IrisRegistrant {
                 return -1;
             }
 
-//            if (config.getCarvingSupport().supportsSurface()) {
-//                int y = placer.getHighest(x, z, rdata);
-//                if (placer.isCarved(x, y, z)) {
-//                    return -1;
-//                }
-//            }
-
             // Rotation calculation
             int slopeRotationY = 0;
             ProceduralStream<Double> heightStream = rdata.getEngine().getComplex().getHeightStream();
@@ -928,17 +921,23 @@ public class IrisObject extends IrisRegistrant {
             return -1;
         }
 
-        if (yv < 0
+        // Surface-anchored placements may never roof or bridge a carved hole. Explicit-Y anchors are only
+        // guarded for SURFACE_ONLY: ANYWHERE covers the inverted upper dimension and CARVING_ONLY covers
+        // cave anchors, and neither reads the terrain surface this stencil samples.
+        boolean surfaceAnchored = yv < 0
+                ? config.getCarvingSupport().supportsSurface()
+                : config.getCarvingSupport() == CarvingMode.SURFACE_ONLY;
+        if (surfaceAnchored
                 && !config.isForcePlace()
                 && !config.isFromBottom()
                 && config.getMode() != ObjectPlaceMode.FLOATING
                 && !rawStructurePiece
-                && !vacuuming
                 && !config.isUnderwater()
                 && !config.isOnwater()
-                && config.getCarvingSupport().supportsSurface()
-                && IrisSurfaceOpening.isOpen(oplacer, getLoader(), x, z, config.getTranslate(),
-                        config.getRotation(), spinx, spiny, spinz, getSurfaceSupportOffsets())) {
+                && config.isRequireSurfaceSupport()
+                && IrisSurfaceSupport.isUnsupported(oplacer, getLoader(), x, z, config.getTranslate(),
+                        config.getRotation(), spinx, spiny, spinz, getSurfaceSupportOffsets(),
+                        config.getSurfaceSupportBuffer(), config.getSurfaceSupportDepth())) {
             return -1;
         }
 

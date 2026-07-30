@@ -76,12 +76,18 @@ import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.O;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
+import art.arcane.volmlib.util.hud.HudPriority;
+import art.arcane.volmlib.util.hud.HudSlotClaim;
+import art.arcane.volmlib.util.hud.HudSlotRequest;
+import art.arcane.volmlib.util.hud.HudSurface;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.Inventory;
@@ -96,8 +102,10 @@ import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 import art.arcane.iris.core.localization.IrisLanguage;
@@ -337,10 +345,30 @@ public class CommandStudio implements DirectorExecutor {
                     var loc = player.getLocation();
                     int totalTasks = d * d;
                     AtomicInteger completedTasks = new AtomicInteger(0);
-                    int c = J.ar(() -> sender.sendProgress(
-                            (double) completedTasks.get() / totalTasks,
-                            IrisLanguage.text(RuntimeUiMessages.FINDING_REGIONS)
-                    ), 0);
+                    HudSlotClaim titleClaim = BukkitPlatform.hudSlots().open(player, new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.TITLE)));
+                    HudSlotClaim barClaim = BukkitPlatform.hudSlots().open(player, new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)));
+                    AtomicLong lastResolveMs = new AtomicLong(0L);
+                    int c = J.ar(() -> {
+                        long now = System.currentTimeMillis();
+                        if (now - lastResolveMs.get() >= 250L) {
+                            lastResolveMs.set(now);
+                            titleClaim.resolve();
+                            barClaim.resolve();
+                        }
+                        double jobProgress = (double) completedTasks.get() / totalTasks;
+                        HudSurface barSurface = barClaim.granted();
+                        sender.sendProgress(
+                                jobProgress,
+                                IrisLanguage.text(RuntimeUiMessages.FINDING_REGIONS),
+                                titleClaim.granted(),
+                                barSurface
+                        );
+                        if (barSurface == HudSurface.BOSS_BAR) {
+                            BukkitPlatform.hudLanes().show(player, "iris:job", IrisLanguage.text(RuntimeUiMessages.FINDING_REGIONS) + " " + Form.pc(jobProgress, 0), jobProgress, BarColor.BLUE, BarStyle.SOLID, 4000L);
+                        } else if (barSurface == HudSurface.ACTION_BAR) {
+                            BukkitPlatform.hudLanes().hide(player, "iris:job");
+                        }
+                    }, 0);
                     new Spiraler(d, d, (x, z) -> executor.queue(() -> {
                         var region = engine.getRegion((x << 4) + 8, (z << 4) + 8);
                         data.computeIfAbsent(region.getLoadKey(), (k) -> new AtomicInteger(0))
@@ -350,6 +378,9 @@ public class CommandStudio implements DirectorExecutor {
                     executor.complete();
                     multiBurst.close();
                     J.car(c);
+                    titleClaim.release();
+                    barClaim.release();
+                    BukkitPlatform.hudLanes().hide(player, "iris:job");
 
                     sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_STUDIO_DONE));
                     var loader = engine.getData().getRegionLoader();

@@ -27,12 +27,11 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
         assertTrue(filterStart > irisHelperStart);
         String outerMethod = source.substring(findStart, irisHelperStart);
         String irisHelper = source.substring(irisHelperStart, filterStart);
-        int policyResolution = irisHelper.indexOf("NativeStructureGenerationPolicy.resolve(engine,");
         int unexploredGuard = irisHelper.indexOf("if (findUnexplored)");
         int registryLookup = irisHelper.indexOf("level.registryAccess().lookupOrThrow(Registries.STRUCTURE)");
-        int replacementCheck = irisHelper.indexOf(
-                "decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS");
-        int irisLocate = irisHelper.indexOf("IrisStructureLocator.locate(", replacementCheck);
+        int placedCheck = irisHelper.indexOf(
+                "if (!IrisStructureLocator.isPlaced(engine, structureId))");
+        int irisLocate = irisHelper.indexOf("IrisStructureLocator.locate(", placedCheck);
         int searchLimit = irisHelper.indexOf("LocateStatus.SEARCH_LIMIT_REACHED", irisLocate);
         int limitSkip = irisHelper.indexOf("continue;", searchLimit);
         int nativeFilter = outerMethod.indexOf("filterReachableStructures(level, holders)");
@@ -47,12 +46,10 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
         int emptyNativePartition = filterMethod.indexOf("if (candidates.isEmpty())", filterContinue);
         int reachabilityLookup = filterMethod.indexOf("reachableStructureKeys(level)", emptyNativePartition);
 
-        assertTrue(policyResolution >= 0);
         assertTrue(unexploredGuard >= 0);
         assertTrue(registryLookup > unexploredGuard);
-        assertTrue(policyResolution > registryLookup);
-        assertTrue(replacementCheck > policyResolution);
-        assertTrue(irisLocate > replacementCheck);
+        assertTrue(placedCheck > registryLookup);
+        assertTrue(irisLocate > placedCheck);
         assertTrue(searchLimit > irisLocate);
         assertTrue(limitSkip > searchLimit);
         assertTrue(nativeFilter >= 0);
@@ -86,7 +83,7 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
         int placement = source.indexOf("start.placeInChunk(world, structureManager, generator");
         int stiltPlacement = source.indexOf("placeStilts(world, area, structureId, start", placement);
         int occupancyCheck = source.indexOf("if (state.isSolid())", stiltPlacement);
-        int terrainFloor = source.indexOf("y > terrainY", stiltPlacement);
+        int terrainFloor = source.indexOf("Math.max(terrainY,", stiltPlacement);
 
         assertTrue(placement >= 0);
         assertTrue(stiltPlacement > placement);

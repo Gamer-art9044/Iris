@@ -163,6 +163,60 @@ public class IrisImportedStructureControlTest {
         assertNull(control.resolve("minecraft:village_plains", false).stilt());
         assertFalse(control.resolve(null, false).clearVegetation());
         assertNull(control.resolve(null, false).stilt());
+        assertFalse(control.resolve("minecraft:mineshaft_mesa", true).preserveSourceY());
+    }
+
+    @Test
+    public void unconfiguredTerrainAndBandStayUnsetSoNativeDefaultsCanApply() {
+        IrisImportedStructureControl control = new IrisImportedStructureControl();
+
+        assertNull(control.resolve("minecraft:stronghold", true).terrain());
+        assertNull(control.resolve("minecraft:stronghold", true).yBand());
+    }
+
+    @Test
+    public void multipleMatchesUseTheLastConfiguredTerrainAndBand() {
+        IrisStructureTerrain broadTerrain = new IrisStructureTerrain()
+                .setMode(IrisStructureTerrainMode.SOURCE);
+        IrisStructureTerrain exactTerrain = new IrisStructureTerrain()
+                .setMode(IrisStructureTerrainMode.ENCASE)
+                .setHorizontalPadding(4);
+        IrisStructureYBand band = new IrisStructureYBand().setMin(-120).setMax(-20);
+        IrisVanillaStructureAdjustment broad = new IrisVanillaStructureAdjustment()
+                .setMatch(keys("minecraft:stronghold"))
+                .setTerrain(broadTerrain);
+        IrisVanillaStructureAdjustment exact = new IrisVanillaStructureAdjustment()
+                .setMatch(keys("minecraft:stronghold"))
+                .setTerrain(exactTerrain)
+                .setYBand(band);
+        KList<IrisVanillaStructureAdjustment> adjustments = new KList<>();
+        adjustments.add(broad);
+        adjustments.add(exact);
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setAdjustments(adjustments);
+
+        IrisNativeStructureDecision stronghold = control.resolve("minecraft:stronghold", true);
+        assertSame(exactTerrain, stronghold.terrain());
+        assertSame(band, stronghold.yBand());
+        assertNull(control.resolve("minecraft:trial_chambers", true).terrain());
+        assertNull(control.resolve("minecraft:trial_chambers", true).yBand());
+    }
+
+    @Test
+    public void preserveSourceYMatchesTheStructureFamilyAndKeepsExplicitShifts() {
+        IrisVanillaStructureAdjustment adjustment = new IrisVanillaStructureAdjustment()
+                .setMatch(keys("minecraft:mineshaft"))
+                .setPreserveSourceY(true)
+                .setYShift(4);
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setUndergroundYShift(-64)
+                .setAdjustments(new KList<IrisVanillaStructureAdjustment>().qadd(adjustment));
+
+        IrisNativeStructureDecision mesa = control.resolve("minecraft:mineshaft_mesa", true);
+        assertTrue(mesa.preserveSourceY());
+        assertEquals(-60, mesa.yShift());
+        assertTrue(control.resolve("minecraft:mineshaft", true).preserveSourceY());
+        assertFalse(control.resolve("minecraft:stronghold", true).preserveSourceY());
     }
 
     @Test

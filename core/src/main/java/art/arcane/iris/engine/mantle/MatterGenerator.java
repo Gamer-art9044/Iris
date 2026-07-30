@@ -1,6 +1,5 @@
 package art.arcane.iris.engine.mantle;
 
-import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.project.context.ChunkContext;
@@ -28,7 +27,7 @@ public interface MatterGenerator {
 
     int getRealRadius();
 
-    List<Pair<List<MantleComponent>, Integer>> getComponents();
+    List<MantlePass> getComponents();
 
     @ChunkCoordinates
     default void generateMatter(int x, int z, boolean multicore, ChunkContext context) {
@@ -40,16 +39,18 @@ public interface MatterGenerator {
         LongOpenHashSet partialChunks = new LongOpenHashSet();
 
         try (MantleWriter writer = new MantleWriter(getEngine().getMantle(), getMantle(), x, z, writeRadius, multicore)) {
-            for (Pair<List<MantleComponent>, Integer> pair : getComponents()) {
-                int passRadius = pair.getB();
-                List<MantleComponent> passComponents = pair.getA();
+            for (MantlePass pass : getComponents()) {
+                int passRadius = pass.passChunkRadius();
+                List<MantleComponent> passComponents = pass.components();
                 MantleComponent[] enabledComponents = new MantleComponent[passComponents.size()];
                 int[] componentPassRadii = new int[passComponents.size()];
                 int enabledComponentCount = 0;
                 for (MantleComponent component : passComponents) {
                     if (component.isEnabled()) {
-                        int componentRadius = component.getRadius();
-                        componentPassRadii[enabledComponentCount] = componentRadius > 0 ? Math.ceilDiv(componentRadius, 16) : 0;
+                        // A component must cover its own reach plus every later pass' reach, or a
+                        // later pass reads this component's data from chunks it never wrote.
+                        int componentReach = component.getRadius() + pass.downstreamBlockRadius();
+                        componentPassRadii[enabledComponentCount] = componentReach > 0 ? Math.ceilDiv(componentReach, 16) : 0;
                         enabledComponents[enabledComponentCount++] = component;
                     }
                 }

@@ -1,3 +1,3 @@
-[20:01:46] [Test worker/INFO]: [STDERR]: [Iris/WARN] Native structure terrain envelope at 0,0 was clipped to Minecraft's 8-chunk structure reference range
-[20:01:46] [Test worker/INFO]: [STDERR]: [Iris/WARN] Native structure burial at 0,0 clamped to world floor: wanted -19, used -4
-[20:01:46] [Test worker/INFO]: [STDERR]: [Iris/WARN] Native structure burial at 0,0 clamped to world floor: wanted -5, used -2
+[01:34:50] [Test worker/INFO]: [STDERR]: [Iris/WARN] Native structure terrain envelope at 0,0 was clipped to Minecraft's 8-chunk structure reference range
+[01:34:50] [Test worker/INFO]: [STDERR]: [Iris/WARN] Native structure burial at 0,0 clamped to world floor: wanted -19, used -4
+[01:34:50] [Test worker/INFO]: [STDERR]: [Iris/WARN] Native structure burial at 0,0 clamped to world floor: wanted -5, used -2

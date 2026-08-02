@@ -54,6 +54,7 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
     private static final long ADAPTIVE_RECOVERY_INTERVAL = 64L;
     private static final long FINAL_SAVE_TIMEOUT_MILLIS = 10_000L;
     private static final long FINAL_SAVE_POLL_MILLIS = 50L;
+    private static final AtomicBoolean SERVER_DEAD_LOGGED = new AtomicBoolean();
 
     private final ServerLevel level;
     private final Engine engine;
@@ -358,6 +359,16 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
     }
 
     private void generateChunkAsync(int x, int z, PregenListener listener) {
+        // A stopped server executes submitted tasks inline and its chunk futures never complete; without
+        // this abort the pregen thread spins hot against the dead chunk source until the JVM dies.
+        if (level.getServer().isStopped() || !level.getServer().isRunning()) {
+            if (SERVER_DEAD_LOGGED.compareAndSet(false, true)) {
+                LOGGER.error("Iris pregen aborting: the server is no longer running (dim={})", level.dimension().identifier());
+            }
+            listener.onChunkFailed(x, z);
+            ModdedPregenJob.stop();
+            return;
+        }
         listener.onChunkGenerating(x, z);
         try {
             synchronized (permitMonitor) {

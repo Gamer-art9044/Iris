@@ -28,7 +28,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class PregenCacheImpl implements PregenCache {
-    private static final ExecutorService DISPATCHER = Executors.newFixedThreadPool(4);
+    // Daemon threads: this static pool is never shut down, and non-daemon threads here block JVM exit
+    // (test workers and integrated servers) the moment this class is initialized.
+    private static final ExecutorService DISPATCHER = Executors.newFixedThreadPool(4, runnable -> {
+        Thread thread = new Thread(runnable, "Iris Pregen Cache Dispatcher");
+        thread.setDaemon(true);
+        return thread;
+    });
     private static final AtomicBoolean DISPATCHER_REGISTERED = new AtomicBoolean();
     private static final short SIZE = 1024;
 

@@ -408,10 +408,27 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     private void requireCompletedShutdown(Engine current) {
-        if (current != null && current.isClosing() && !current.isClosed()) {
-            throw new IllegalStateException("Iris generator '" + dimensionKey
-                    + "' cannot bind while its previous engine shutdown remains incomplete");
+        if (current == null || !current.isClosing() || current.isClosed()) {
+            return;
         }
+        // closing && !closed is usually a TRANSIENT seal: hotloadComplex/hotloadSilently set closing while
+        // they swap the runtime and clear it on completion. Wait the transition out instead of crashing the
+        // chunk pipeline; only a seal that never resolves is a genuine incomplete shutdown.
+        long deadline = System.currentTimeMillis() + 30_000L;
+        while (System.currentTimeMillis() < deadline && !current.hasFailed()) {
+            if (current.isClosed() || !current.isClosing()) {
+                return;
+            }
+            try {
+                Thread.sleep(10L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new IllegalStateException("Iris generator '" + dimensionKey
+                + "' cannot bind while its previous engine shutdown remains incomplete"
+                + (current.hasFailed() ? " (engine failed)" : " (waited 30s)"));
     }
 
     private void requireBindingAllowed() {

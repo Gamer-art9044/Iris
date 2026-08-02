@@ -117,7 +117,9 @@ public final class IrisForgeBootstrap {
                 ModdedBlockBreakHandler.prepare(level, player, event.getPos(), event.getState());
             }
         });
-        BlockEvent.EntityPlaceEvent.BUS.addListener(Priority.MONITOR, false, (BlockEvent.EntityPlaceEvent event) -> {
+        // EventBus 7: the (priority, boolean, consumer) overload's boolean means "always cancels"; passing
+        // false is rejected at registration for listeners that never cancel. Use (priority, consumer).
+        BlockEvent.EntityPlaceEvent.BUS.addListener(Priority.MONITOR, (BlockEvent.EntityPlaceEvent event) -> {
             if (!(event instanceof BlockEvent.EntityMultiPlaceEvent)
                     && event.getLevel() instanceof ServerLevel level) {
                 ModdedBlockBreakHandler.clearPlacedProvenance(level, event.getPos());
@@ -125,7 +127,6 @@ public final class IrisForgeBootstrap {
         });
         BlockEvent.EntityMultiPlaceEvent.BUS.addListener(
                 Priority.MONITOR,
-                false,
                 (BlockEvent.EntityMultiPlaceEvent event) -> {
                     for (BlockSnapshot snapshot : event.getReplacedBlockSnapshots()) {
                         if (snapshot.getLevel() instanceof ServerLevel level) {

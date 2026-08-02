@@ -178,17 +178,27 @@ final class EngineHotloader {
         }
     }
 
+    /**
+     * Never throws. It is called from the hotload failure handler, where a frame-cap
+     * {@code IllegalStateException} out of the codec (a long pack key or exception message overruns
+     * MAX_FRAME_BYTES) would otherwise propagate in place of the real hotload error and lose it.
+     */
     private void broadcastStudioHotload(boolean failed, String message) {
-        IrisProtocolServer protocolServer = IrisServices.getOrNull(IrisProtocolServer.class);
-        if (protocolServer == null) {
-            return;
+        try {
+            IrisProtocolServer protocolServer = IrisServices.getOrNull(IrisProtocolServer.class);
+            if (protocolServer == null) {
+                return;
+            }
+            IrisDimension dimension = engine.getDimension();
+            String packKey = dimension == null ? "" : dimension.getLoadKey();
+            protocolServer.broadcastStudioHotload(packKey, 0, failed, message);
+            protocolServer.broadcastToast(
+                    failed ? IrisMessage.Toast.KIND_ERROR : IrisMessage.Toast.KIND_SUCCESS,
+                    IrisLanguage.plain(ClientUiMessages.TOAST_STUDIO_HOTLOAD),
+                    failed ? IrisLanguage.plain(ClientUiMessages.TOAST_PACK_FAILED, MessageArgument.untrusted("pack", packKey)) : packKey);
+        } catch (Throwable broadcastFailure) {
+            IrisLogging.error("Iris studio hotload broadcast failed: " + broadcastFailure.getClass().getSimpleName()
+                    + ": " + broadcastFailure.getMessage());
         }
-        IrisDimension dimension = engine.getDimension();
-        String packKey = dimension == null ? "" : dimension.getLoadKey();
-        protocolServer.broadcastStudioHotload(packKey, 0, failed, message);
-        protocolServer.broadcastToast(
-                failed ? IrisMessage.Toast.KIND_ERROR : IrisMessage.Toast.KIND_SUCCESS,
-                IrisLanguage.plain(ClientUiMessages.TOAST_STUDIO_HOTLOAD),
-                failed ? IrisLanguage.plain(ClientUiMessages.TOAST_PACK_FAILED, MessageArgument.untrusted("pack", packKey)) : packKey);
     }
 }

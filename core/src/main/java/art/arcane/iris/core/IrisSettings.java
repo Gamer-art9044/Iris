@@ -277,6 +277,8 @@ public class IrisSettings {
         public boolean adjustVanillaHeight = false;
         public boolean autoIngestDatapacks = true;
         public boolean autoImportDatapackStructures = true;
+        /** Unresolved pack content keys and bad block-state properties become blocking pack errors. -Diris.strictContent overrides. */
+        public boolean strictContentKeys = false;
         public int spinh = -20;
         public int spins = 7;
         public int spinb = 8;

@@ -38,11 +38,9 @@ import art.arcane.iris.platform.bukkit.BukkitWorld;
 import art.arcane.iris.spi.PlatformWorld;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.format.C;
-import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.common.plugin.Chunks;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 import lombok.Data;
@@ -545,10 +543,5 @@ public class IrisEntity extends IrisRegistrant {
     @Override
     public String getTypeName() {
         return "Entity";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
-
     }
 }

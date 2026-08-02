@@ -22,6 +22,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
+import art.arcane.iris.modded.ModdedServerLevels;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.mojang.brigadier.suggestion.Suggestions;
@@ -181,7 +182,7 @@ final class ModdedCommandSuggestions {
     private static CompletableFuture<Suggestions> suggestDimensionNames(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
         ModdedCommandFeedback.tab(context.getSource());
         List<String> names = new ArrayList<>();
-        for (ServerLevel level : context.getSource().getServer().getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(context.getSource().getServer())) {
             if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator) {
                 names.add(level.dimension().identifier().toString());
             }

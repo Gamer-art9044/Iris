@@ -206,6 +206,19 @@ public final class BukkitBlockResolution {
         return BASE.getOrNull(bdxf, warn);
     }
 
+    /**
+     * Strict lookup: null when nothing claims the key, never an air substitute. Unlike {@link #getOrNull(String)} this
+     * never reaches the {@link art.arcane.iris.engine.object.IrisCompat} legacy rewrite table, which is a Bukkit-only
+     * layer and must stay off the generation path.
+     */
+    public static BlockData resolveOrNull(String bdxf) {
+        return BASE.resolveOrNull(bdxf, false);
+    }
+
+    public static BlockData resolveOrNull(String bdxf, boolean warn) {
+        return BASE.resolveOrNull(bdxf, warn);
+    }
+
     public static BlockData getNoCompat(String bdxf) {
         return BASE.getNoCompat(bdxf);
     }

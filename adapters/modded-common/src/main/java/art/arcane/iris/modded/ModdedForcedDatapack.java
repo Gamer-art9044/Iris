@@ -44,12 +44,18 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,18 +69,77 @@ public final class ModdedForcedDatapack {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String PACK_ID = "iris_worldgen";
     private static final String PACK_FOLDER = "iris";
+    private static final String HASH_FILE_NAME = "packs.hash";
+    // Bump this whenever the emitted datapack content changes for reasons the pack-directory hash cannot see.
+    // v2: custom biomes now inherit their vanilla derivative's biome tags, so every already-published pack has
+    // to regenerate once.
+    private static final String HASH_SALT = "iris-forced-datapack-v2";
+    private static final String GIT_DIRECTORY = ".git";
+    private static final long PACKS_HASH_TTL_NANOS = 2_000_000_000L;
     private static final Object LOCK = new Object();
     private static final AtomicBoolean LOADED = new AtomicBoolean(false);
+    private static final AtomicBoolean STALE_SERVE_LOGGED = new AtomicBoolean(false);
+    private static volatile PublishedState published;
+    private static volatile HashMemo packsHashMemo;
 
     private ModdedForcedDatapack() {
     }
 
     public static RepositorySource repositorySource() {
         return (Consumer<Pack> consumer) -> {
-            Pack pack = buildPack();
+            Pack pack = servePack();
             consumer.accept(pack);
             LOADED.set(true);
         };
+    }
+
+    /**
+     * Serves the published datapack without regenerating it whenever the installed packs still hash to what
+     * was generated last. That fast path is lock-free; everything else takes LOCK and rechecks, so a boot-time
+     * daemon regeneration and a loadPacks regeneration can never stage concurrently (publishDirectory moves the
+     * live directory aside, which would break a concurrent read).
+     *
+     * <p>A hash mismatch is never served: the HASH_SALT bump alone mismatches every install on its first boot
+     * after an upgrade, and serving that directory hands Create World a pack without the current biome tags.
+     * A published pack whose hash cannot be computed at all is still served, with one warning.
+     */
+    private static Pack servePack() {
+        String currentHash = packsHashOrEmpty();
+        PublishedState current = publishedState();
+        if (current != null && !currentHash.isEmpty() && current.packsHash().equals(currentHash)) {
+            try {
+                return requireReadablePack(current.directory());
+            } catch (RuntimeException unreadable) {
+                published = null;
+                LOGGER.error("Iris could not read the published forced datapack at {}; regenerating",
+                        current.directory(), unreadable);
+            }
+        }
+        synchronized (LOCK) {
+            String hash = packsHashOrEmpty();
+            PublishedState state = publishedState();
+            String reason;
+            if (state == null) {
+                reason = "no published pack";
+            } else if (!hash.isEmpty() && !state.packsHash().equals(hash)) {
+                reason = "stale cache (hash changed)";
+            } else {
+                if (hash.isEmpty() && STALE_SERVE_LOGGED.compareAndSet(false, true)) {
+                    LOGGER.warn("Iris cannot hash the installed packs; serving the last generated forced datapack from {} unverified",
+                            state.directory());
+                }
+                try {
+                    return requireReadablePack(state.directory());
+                } catch (RuntimeException unreadable) {
+                    published = null;
+                    LOGGER.error("Iris could not read the published forced datapack at {}; regenerating",
+                            state.directory(), unreadable);
+                }
+                reason = "unreadable published pack";
+            }
+            LOGGER.info("Iris forced datapack cache is unusable ({}); generating it once now", reason);
+            return buildPack();
+        }
     }
 
     public static void verifyInjected() {
@@ -105,11 +170,11 @@ public final class ModdedForcedDatapack {
         try {
             return requireReadablePack(regenerate());
         } catch (RuntimeException | Error generationFailure) {
-            Path published = packDirectory();
-            if (Files.isRegularFile(published.resolve("pack.mcmeta"))) {
+            Path lastKnownGood = packDirectory();
+            if (Files.isRegularFile(lastKnownGood.resolve("pack.mcmeta"))) {
                 LOGGER.error("Iris kept the last known-good generated datapack after regeneration failed",
                         generationFailure);
-                return requireReadablePack(published);
+                return requireReadablePack(lastKnownGood);
             }
             throw generationFailure;
         }
@@ -148,8 +213,50 @@ public final class ModdedForcedDatapack {
         }
     }
 
+    /**
+     * Regenerates only when the installed packs no longer hash to the published datapack. Used by the boot
+     * trigger so a steady-state restart does not pay the full staging cost.
+     */
+    public static boolean regenerateIfStale(String reason) {
+        synchronized (LOCK) {
+            String currentHash = packsHashOrEmpty();
+            PublishedState state = publishedState();
+            if (state != null && !currentHash.isEmpty() && state.packsHash().equals(currentHash)) {
+                LOGGER.debug("Iris forced datapack is current ({}); skipping regeneration", reason);
+                return false;
+            }
+            LOGGER.info("Iris regenerating the forced datapack ({})", reason);
+            regenerate();
+            return true;
+        }
+    }
+
+    /**
+     * Off-thread regeneration trigger. Call sites that run on the server thread must use this so a command
+     * or lifecycle hook never blocks on pack staging.
+     */
+    public static void scheduleRegeneration(String reason) {
+        Runnable task = () -> {
+            try {
+                regenerateIfStale(reason);
+            } catch (Throwable failure) {
+                LOGGER.error("Iris forced datapack regeneration failed ({})", reason, failure);
+            }
+        };
+        ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
+        if (scheduler != null) {
+            scheduler.async(task);
+            return;
+        }
+        Thread thread = new Thread(task, "iris-modded-datapack-regen");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
     private static Path write() throws IOException {
-        ModdedStartup.ensureDefaultPack();
+        // No ensureDefaultPack() here: write() is reachable from loadPacks on the first boot, and loadPacks
+        // must never touch the network. ModdedStartup.prefetchDefaultPack covers the download at boot.
+        String packsHash = packsHash();
         Path datapackRoot = datapackRoot();
         Files.createDirectories(datapackRoot);
         Path stagingDirectory = Files.createTempDirectory(datapackRoot, PACK_FOLDER + ".staging-");
@@ -157,6 +264,12 @@ public final class ModdedForcedDatapack {
             writeStagedPack(stagingDirectory);
             requireReadablePack(stagingDirectory);
             publishDirectory(stagingDirectory, packDirectory());
+            writePublishedHash(packsHash);
+            published = new PublishedState(packDirectory(), packsHash);
+            // Publish the hash this run was built from as the memo too: a memo captured before staging would
+            // otherwise mismatch what was just published and send the next serve straight back into buildPack.
+            packsHashMemo = new HashMemo(packsHash, System.nanoTime());
+            STALE_SERVE_LOGGED.set(false);
             return packDirectory();
         } catch (IOException | RuntimeException | Error failure) {
             try {
@@ -166,6 +279,115 @@ public final class ModdedForcedDatapack {
             }
             throw failure;
         }
+    }
+
+    private static PublishedState publishedState() {
+        PublishedState current = published;
+        if (current != null) {
+            return current;
+        }
+        Path directory = packDirectory();
+        if (!Files.isRegularFile(directory.resolve("pack.mcmeta"))) {
+            return null;
+        }
+        PublishedState loaded = new PublishedState(directory, readPublishedHash());
+        published = loaded;
+        return loaded;
+    }
+
+    private static String readPublishedHash() {
+        Path hashFile = datapackRoot().resolve(HASH_FILE_NAME);
+        if (!Files.isRegularFile(hashFile)) {
+            return "";
+        }
+        try {
+            return Files.readString(hashFile, StandardCharsets.UTF_8).trim();
+        } catch (IOException unreadable) {
+            LOGGER.warn("Iris could not read the forced datapack hash at {}", hashFile, unreadable);
+            return "";
+        }
+    }
+
+    private static void writePublishedHash(String hash) throws IOException {
+        Path hashFile = datapackRoot().resolve(HASH_FILE_NAME);
+        Path temp = hashFile.resolveSibling(HASH_FILE_NAME + ".tmp-" + UUID.randomUUID());
+        Files.writeString(temp, hash, StandardCharsets.UTF_8);
+        try {
+            Files.move(temp, hashFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException atomicUnsupported) {
+            Files.move(temp, hashFile, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    /**
+     * Short-TTL memo: loadPacks runs on every PackRepository reload and the hash walks every installed pack
+     * file (thousands on a studio install), so back-to-back reloads must not re-walk the tree. The window is
+     * small enough that an operator dropping in a pack still gets picked up on the next reload.
+     */
+    private static String packsHashOrEmpty() {
+        long now = System.nanoTime();
+        HashMemo memo = packsHashMemo;
+        if (memo != null && now - memo.takenAtNanos() < PACKS_HASH_TTL_NANOS) {
+            return memo.hash();
+        }
+        String hash;
+        try {
+            hash = packsHash();
+        } catch (IOException | RuntimeException failure) {
+            LOGGER.warn("Iris could not hash the installed packs directory", failure);
+            hash = "";
+        }
+        packsHashMemo = new HashMemo(hash, now);
+        return hash;
+    }
+
+    /**
+     * Content hash over the installed packs: relative path, size and mtime of every regular file, plus the
+     * pack format and loader the generated datapack is shaped for.
+     */
+    private static String packsHash() throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException missing) {
+            throw new IllegalStateException("SHA-256 is unavailable", missing);
+        }
+        digest.update((HASH_SALT + '|' + ModdedEngineBootstrap.loader().platformName()
+                + '|' + DataVersion.getLatest().getPackFormat() + '\n').getBytes(StandardCharsets.UTF_8));
+        Path root = packsRoot();
+        if (Files.isDirectory(root)) {
+            List<String> entries = new ArrayList<>();
+            Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
+                    // Studio packs can be git checkouts; .git churns constantly and never reaches the datapack.
+                    return GIT_DIRECTORY.equals(directory.getFileName().toString())
+                            ? FileVisitResult.SKIP_SUBTREE
+                            : FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
+                    if (attributes.isRegularFile()) {
+                        entries.add(root.relativize(file).toString().replace('\\', '/')
+                                + '|' + attributes.size() + '|' + attributes.lastModifiedTime().toMillis());
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException failure) {
+                    entries.add(root.relativize(file).toString().replace('\\', '/') + "|unreadable");
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            entries.sort(Comparator.naturalOrder());
+            for (String entry : entries) {
+                digest.update(entry.getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) '\n');
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     private static void writeStagedPack(Path stagingDirectory) throws IOException {
@@ -189,6 +411,9 @@ public final class ModdedForcedDatapack {
         }
 
         writePackMeta(stagingDirectory);
+        // Forge only: FML has no block-drops event Iris can use, so drops are routed through a global loot
+        // modifier. NeoForge does not need one - IrisNeoForgeBootstrap listens to BlockDropsEvent and both
+        // replaces and appends drops there, so emitting a modifier would double-apply them.
         if ("forge".equalsIgnoreCase(ModdedEngineBootstrap.loader().platformName())) {
             writeForgeBlockLootModifier(stagingDirectory);
         }
@@ -211,9 +436,7 @@ public final class ModdedForcedDatapack {
         } catch (Throwable validationFailure) {
             LOGGER.error("Iris excluded pack '{}' from Create World because validation failed",
                     sourcePack.getName(), validationFailure);
-            if (validationFailure instanceof Error fatalError) {
-                throw fatalError;
-            }
+            rethrowIfUnrecoverable(validationFailure);
             return false;
         }
         if (!validation.isLoadable()) {
@@ -235,9 +458,7 @@ public final class ModdedForcedDatapack {
         } catch (Throwable installationFailure) {
             LOGGER.error("Iris excluded pack '{}' from Create World because datapack serialization failed",
                     sourcePack.getName(), installationFailure);
-            if (installationFailure instanceof Error fatalError) {
-                throw fatalError;
-            }
+            rethrowIfUnrecoverable(installationFailure);
             installed = false;
         }
 
@@ -256,6 +477,20 @@ public final class ModdedForcedDatapack {
                 LOGGER.warn("Iris could not remove temporary datapack staging for pack '{}'",
                         sourcePack.getName(), cleanupFailure);
             }
+        }
+    }
+
+    /**
+     * Per-pack staging isolates every failure so one broken pack cannot brick Create World for all of them.
+     * Only a VM-level failure (heap exhausted, native stack blown) is rethrown; LinkageError and
+     * ExceptionInInitializerError are exactly the per-pack failures that must stay contained.
+     */
+    private static void rethrowIfUnrecoverable(Throwable failure) {
+        if (failure instanceof OutOfMemoryError outOfMemory) {
+            throw outOfMemory;
+        }
+        if (failure instanceof StackOverflowError stackOverflow) {
+            throw stackOverflow;
         }
     }
 
@@ -345,15 +580,6 @@ public final class ModdedForcedDatapack {
                     .resolve("worldgen").resolve("world_preset").resolve(presetPath + ".json");
             Files.createDirectories(output.getParent());
             Files.writeString(output, json, StandardCharsets.UTF_8);
-            String legacyPresetKey = dimensionKey.equals(packName)
-                    ? packName
-                    : packName + "_" + dimensionKey;
-            Path legacyOutput = datapackRoot.toPath().resolve("data").resolve("irisworldgen")
-                    .resolve("worldgen").resolve("world_preset").resolve(legacyPresetKey + ".json");
-            if (!Files.exists(legacyOutput)) {
-                Files.createDirectories(legacyOutput.getParent());
-                Files.writeString(legacyOutput, json, StandardCharsets.UTF_8);
-            }
         }
     }
 
@@ -426,6 +652,9 @@ public final class ModdedForcedDatapack {
                     .resolve("dimension_type").resolve(typePath + ".json");
             Files.createDirectories(output.getParent());
             Files.writeString(output, json, StandardCharsets.UTF_8);
+            // Load-bearing, not dead: worlds created before the scoped pack path reference
+            // irisworldgen:<dimensionTypeKey> in their level.dat, and ModdedWorldEngines accepts that legacy
+            // key when validating the runtime dimension contract. Removing this emission unloads those worlds.
             Path legacyOutput = datapackRoot.toPath().resolve("data").resolve("irisworldgen")
                     .resolve("dimension_type").resolve(dimension.getDimensionTypeKey() + ".json");
             if (!Files.exists(legacyOutput)) {
@@ -516,5 +745,11 @@ public final class ModdedForcedDatapack {
 
     private static Path packsRoot() {
         return ModdedEngineBootstrap.loader().configDir().resolve("irisworldgen").resolve("packs");
+    }
+
+    private record PublishedState(Path directory, String packsHash) {
+    }
+
+    private record HashMemo(String hash, long takenAtNanos) {
     }
 }

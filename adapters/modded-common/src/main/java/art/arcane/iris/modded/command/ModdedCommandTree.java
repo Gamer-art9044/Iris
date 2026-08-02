@@ -36,8 +36,23 @@ import java.util.function.Predicate;
 
 final class ModdedCommandTree {
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
+    /**
+     * SP-4: read-only inspection must work for an unopped player in a no-cheats singleplayer world, where the
+     * what/height overlays are the only way to see what Iris generated. Everything that mutates a world,
+     * downloads, opens studio or starts a pregen stays on GATE, and so does the world seed: it is the one
+     * read-only value a plain player must not be handed, so /iris seed is gated and info/worlds omit the seed
+     * field for anyone who fails {@link #isGamemaster(CommandSourceStack)}.
+     */
+    private static final Predicate<CommandSourceStack> READ_ONLY = Commands.hasPermission(Commands.LEVEL_ALL);
 
     private ModdedCommandTree() {
+    }
+
+    /**
+     * Same gate the mutating subtrees use, for output that mixes gated and ungated fields in one command.
+     */
+    static boolean isGamemaster(CommandSourceStack source) {
+        return GATE.test(source);
     }
 
     static LiteralArgumentBuilder<CommandSourceStack> rootTree() {
@@ -46,15 +61,17 @@ final class ModdedCommandTree {
         root.executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), ""));
         root.then(helpTree());
 
-        root.then(Commands.literal("version")
+        root.then(Commands.literal("version").requires(READ_ONLY)
                 .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.version(context.getSource())));
 
-        root.then(Commands.literal("info").requires(GATE)
+        root.then(Commands.literal("info").requires(READ_ONLY)
                 .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), null))
                 .then(Commands.argument("dimension", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.DIMENSION_NAMES)
                         .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), StringArgumentType.getString(context, "dimension")))));
 
-        root.then(ModdedWhatCommands.tree());
+        // ModdedWhatCommands.tree() gates itself at LEVEL_GAMEMASTERS; the /iris what overlays are read-only,
+        // so the root builder relaxes the whole subtree here instead of forking that file.
+        root.then(ModdedWhatCommands.tree().requires(READ_ONLY));
 
         root.then(teleportTree("teleport"));
         root.then(teleportTree("tp"));
@@ -69,9 +86,9 @@ final class ModdedCommandTree {
 
         root.then(Commands.literal("reload").requires(GATE)
                 .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.reload(context.getSource())));
-        root.then(Commands.literal("height").requires(GATE)
+        root.then(Commands.literal("height").requires(READ_ONLY)
                 .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.height(context.getSource())));
-        root.then(Commands.literal("worlds").requires(GATE)
+        root.then(Commands.literal("worlds").requires(READ_ONLY)
                 .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), null)));
         root.then(Commands.literal("accesslist").requires(GATE)
                 .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), null)));
@@ -162,7 +179,7 @@ final class ModdedCommandTree {
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> helpTree() {
-        return Commands.literal("help")
+        return Commands.literal("help").requires(READ_ONLY)
                 .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), ""))
                 .then(Commands.argument("section", StringArgumentType.greedyString())
                         .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), StringArgumentType.getString(context, "section"))));
@@ -202,7 +219,7 @@ final class ModdedCommandTree {
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> metricsTree(String name) {
-        return Commands.literal(name).requires(GATE)
+        return Commands.literal(name).requires(READ_ONLY)
                 .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.metrics(context.getSource()));
     }
 

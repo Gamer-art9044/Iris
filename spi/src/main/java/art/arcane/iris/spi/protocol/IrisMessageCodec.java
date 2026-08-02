@@ -38,7 +38,10 @@ public final class IrisMessageCodec {
      * Encodes {@code message} into a frame: type id as a varint, then the record's fields in declaration order.
      * Never returns null.
      *
-     * @throws IllegalStateException if the encoded form exceeds {@link IrisProtocol#MAX_FRAME_BYTES}
+     * @throws IllegalStateException if the encoded form exceeds {@link IrisProtocol#MAX_FRAME_BYTES}, or if a
+     *                               {@link IrisMessage.VisionMarkers} carries more than
+     *                               {@link IrisProtocol#MAX_VISION_MARKERS} entries (the decoder rejects such a
+     *                               frame, so producing one would only strand the payload)
      */
     public static byte[] encode(IrisMessage message) {
         IrisWireWriter writer = new IrisWireWriter();
@@ -106,6 +109,9 @@ public final class IrisMessageCodec {
                 writer.writeInt(visionMarkers.tileZ());
                 writer.writeInt(visionMarkers.zoomLevel());
                 List<IrisMessage.VisionMarkers.Marker> markers = visionMarkers.markers();
+                if (markers.size() > IrisProtocol.MAX_VISION_MARKERS) {
+                    throw new IllegalStateException("marker count " + markers.size() + " exceeds " + IrisProtocol.MAX_VISION_MARKERS);
+                }
                 writer.writeVarInt(markers.size());
                 for (IrisMessage.VisionMarkers.Marker marker : markers) {
                     writer.writeInt(marker.blockX());
@@ -178,7 +184,10 @@ public final class IrisMessageCodec {
         if (count < 0) {
             throw new ProtocolException("negative marker count");
         }
-        List<IrisMessage.VisionMarkers.Marker> markers = new ArrayList<>(Math.min(count, IrisProtocol.MAX_VISION_MARKERS));
+        if (count > IrisProtocol.MAX_VISION_MARKERS) {
+            throw new ProtocolException("marker count " + count + " exceeds " + IrisProtocol.MAX_VISION_MARKERS);
+        }
+        List<IrisMessage.VisionMarkers.Marker> markers = new ArrayList<>(count);
         for (int index = 0; index < count; index++) {
             markers.add(new IrisMessage.VisionMarkers.Marker(reader.readInt(), reader.readInt(), reader.readInt(), reader.readString()));
         }

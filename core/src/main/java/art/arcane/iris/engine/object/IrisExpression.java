@@ -29,9 +29,7 @@ import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.volmlib.util.collection.KList;
-import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.math.RNG;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.iris.util.project.stream.interpolation.Interpolated;
 import lombok.AllArgsConstructor;
@@ -138,10 +136,5 @@ public class IrisExpression extends IrisRegistrant {
     @Override
     public String getTypeName() {
         return "Expression";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
-
     }
 }

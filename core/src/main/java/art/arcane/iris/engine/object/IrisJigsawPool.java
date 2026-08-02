@@ -23,8 +23,6 @@ import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import art.arcane.volmlib.util.collection.KList;
-import art.arcane.volmlib.util.json.JSONObject;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -54,10 +52,5 @@ public class IrisJigsawPool extends IrisRegistrant {
     @Override
     public String getTypeName() {
         return "Jigsaw Pool";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
-
     }
 }

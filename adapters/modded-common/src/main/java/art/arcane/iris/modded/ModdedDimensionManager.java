@@ -57,12 +57,15 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 public final class ModdedDimensionManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Object LOCK = new Object();
     private static final ConcurrentHashMap<String, Handle> HANDLES = new ConcurrentHashMap<>();
-    private static final TicketType TELEPORT_WARM_TICKET = new TicketType(TicketType.NO_TIMEOUT, TicketType.FLAG_LOADING);
+    private static final TicketType TELEPORT_WARM_TICKET = new TicketType(TicketType.NO_TIMEOUT,
+            TicketType.FLAG_LOADING | TicketType.FLAG_KEEP_DIMENSION_ACTIVE);
+    private static final long TELEPORT_WARM_TIMEOUT_SECONDS = 30L;
     private static volatile ModdedServerAccess access;
 
     private ModdedDimensionManager() {
@@ -96,6 +99,8 @@ public final class ModdedDimensionManager {
             return handle.level();
         }
         ResourceKey<Level> key = levelKey(dimensionId);
+        // Server thread only (create/remove hold LOCK, teleport and the primary-world router tick, command
+        // handlers). Off-thread callers must use ModdedServerLevels.level instead of the live map.
         for (ServerLevel level : server.getAllLevels()) {
             if (level.dimension().equals(key)) {
                 return level;
@@ -270,6 +275,8 @@ public final class ModdedDimensionManager {
         CompletableFuture
                 .supplyAsync(() -> level.getChunkSource().addTicketAndLoadWithRadius(TELEPORT_WARM_TICKET, chunkPos, 1), server)
                 .thenCompose((CompletableFuture<?> inner) -> inner)
+                // The ticket has no timeout of its own: bound the wait so the release below always runs.
+                .orTimeout(TELEPORT_WARM_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .whenComplete((Object result, Throwable error) -> server.execute(() -> {
                     level.getChunkSource().removeTicketWithRadius(TELEPORT_WARM_TICKET, chunkPos, 1);
                     if (error != null) {

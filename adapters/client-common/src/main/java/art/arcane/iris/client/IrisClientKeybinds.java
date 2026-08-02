@@ -4,6 +4,12 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.glfw.GLFW;
 
+/**
+ * CLIENT DIST ONLY. Static KeyMapping fields plus LWJGL constants; loading this on a dedicated server is a
+ * NoClassDefFoundError. Reachable only from the per-loader client shims, which are Dist.CLIENT gated.
+ * ModdedClientPackageIsolationTest enforces that no modded or nativegen class reaches it. No @Environment
+ * annotation: net.fabricmc.api is absent from the Forge and NeoForge compile classpath.
+ */
 public final class IrisClientKeybinds {
     private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(IrisClient.KEYBIND_CATEGORY_ID);
     public static final KeyMapping TOGGLE_HUD = new KeyMapping(IrisClient.KEYBIND_TOGGLE_HUD, GLFW.GLFW_KEY_H, CATEGORY);

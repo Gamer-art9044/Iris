@@ -58,6 +58,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -66,6 +67,8 @@ import art.arcane.iris.core.localization.ModdedCommandMessages;
 public final class ModdedRegen {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int APPLY_AHEAD = 8;
+    private static final long CHUNK_SLOT_TIMEOUT_MILLIS = 120000L;
+    private static final long FINAL_APPLY_TIMEOUT_MILLIS = 300000L;
     private static final AtomicBoolean ACTIVE = new AtomicBoolean(false);
 
     private final CommandSourceStack source;
@@ -139,6 +142,7 @@ public final class ModdedRegen {
     private int regenerate(List<int[]> targets) throws InterruptedException {
         Semaphore inFlight = new Semaphore(APPLY_AHEAD);
         CountDownLatch allApplied = new CountDownLatch(targets.size());
+        AtomicBoolean aborted = new AtomicBoolean(false);
         AtomicInteger completed = new AtomicInteger();
         AtomicInteger applied = new AtomicInteger();
         int total = targets.size();
@@ -149,9 +153,21 @@ public final class ModdedRegen {
         for (int[] target : targets) {
             int chunkX = target[0];
             int chunkZ = target[1];
-            inFlight.acquire();
+            if (!inFlight.tryAcquire(CHUNK_SLOT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                aborted.set(true);
+                LOGGER.error("Iris regen aborted: chunk {},{} waited {}ms for an apply slot ({}/{} done)",
+                        chunkX, chunkZ, CHUNK_SLOT_TIMEOUT_MILLIS, completed.get(), total);
+                fail("Regen aborted: apply pipeline stalled at " + completed.get() + "/" + total + " chunk(s)");
+                break;
+            }
             MultiBurst.burst.lazy(() -> {
                 long chunkStart = M.ms();
+                if (aborted.get()) {
+                    completed.incrementAndGet();
+                    inFlight.release();
+                    allApplied.countDown();
+                    return;
+                }
                 ModdedBlockBuffer blocks = new ModdedBlockBuffer(height, air);
                 Hunk<PlatformBiome> biomes = Hunk.newArrayHunk(16, height, 16);
                 try {
@@ -167,6 +183,9 @@ public final class ModdedRegen {
                 server.execute(() -> {
                     boolean success = false;
                     try {
+                        if (aborted.get()) {
+                            return;
+                        }
                         apply(chunkX, chunkZ, blocks, biomes);
                         success = true;
                         applied.incrementAndGet();
@@ -185,7 +204,18 @@ public final class ModdedRegen {
             });
         }
 
-        allApplied.await();
+        if (aborted.get()) {
+            // Targets were never submitted, so the latch can no longer reach zero; in-flight tasks
+            // observe the abort flag and release themselves.
+            return applied.get();
+        }
+        if (!allApplied.await(FINAL_APPLY_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+            aborted.set(true);
+            long outstanding = allApplied.getCount();
+            LOGGER.error("Iris regen aborted: {} of {} chunk(s) did not finish within {}ms",
+                    outstanding, total, FINAL_APPLY_TIMEOUT_MILLIS);
+            fail("Regen aborted: " + outstanding + " of " + total + " chunk(s) never finished");
+        }
         return applied.get();
     }
 

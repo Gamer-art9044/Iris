@@ -24,14 +24,22 @@ import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
 import art.arcane.iris.modded.command.ModdedPackCommands;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 public final class ModdedStartup {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
@@ -54,15 +62,24 @@ public final class ModdedStartup {
         validateAllPacks();
     }
 
+    /**
+     * Boot trigger for the forced datapack. Runs on its own daemon thread rather than the Iris scheduler:
+     * ModdedEngineBootstrap.start clears the async queue at SERVER_STARTING, which would silently drop this
+     * one-shot task, and the datapack must be regenerated before the level PackRepository reload if it can.
+     */
     public static void prefetchDefaultPack() {
-        ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
-        if (scheduler != null) {
-            scheduler.async(ModdedStartup::ensureDefaultPack);
-            return;
-        }
-        Thread thread = new Thread(ModdedStartup::ensureDefaultPack, "iris-modded-pack-prefetch");
+        Thread thread = new Thread(ModdedStartup::refreshPacksAndDatapack, "iris-modded-pack-prefetch");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private static void refreshPacksAndDatapack() {
+        ensureDefaultPack();
+        try {
+            ModdedForcedDatapack.regenerateIfStale("boot");
+        } catch (Throwable failure) {
+            LOGGER.error("Iris could not refresh the forced datapack at boot", failure);
+        }
     }
 
     public static void runOnce(MinecraftServer server) {
@@ -74,14 +91,15 @@ public final class ModdedStartup {
             return;
         }
         ModdedForcedDatapack.verifyInjected();
+        ModdedMixinAudit.runOnce();
         reinjectPersistentDimensions(server);
 
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
         if (scheduler == null) {
-            ensureDefaultPack();
+            refreshPacksAndDatapack();
             return;
         }
-        scheduler.async(ModdedStartup::ensureDefaultPack);
+        scheduler.async(ModdedStartup::refreshPacksAndDatapack);
     }
 
     public static void validateAllPacks() {
@@ -133,6 +151,12 @@ public final class ModdedStartup {
             throw new BrokenPackException(pack, List.of(
                     "Pack folder does not exist under " + ModdedPackCommands.packsRoot().getAbsolutePath() + "."));
         }
+        PackValidationResult cached = PackValidationRegistry.get(pack);
+        if (cached != null && cached.getValidatedAtMillis() >= newestModificationMillis(packDir.toPath())) {
+            // prepareForStartup already validated this pack and nothing in it changed since; re-validating per
+            // persistent dimension at boot costs a full pack parse each time.
+            return PackValidationRegistry.requireLoadable(pack);
+        }
         try {
             PackValidationResult result = PackValidator.validate(packDir);
             PackValidationRegistry.publish(result);
@@ -156,23 +180,70 @@ public final class ModdedStartup {
     }
 
     private static void reinjectPersistentDimensions(MinecraftServer server) {
-        List<ModdedDimensionRegistryStore.PersistentDimension> dimensions = ModdedDimensionRegistryStore.load(server);
+        List<ModdedDimensionRegistryStore.PersistentDimension> dimensions =
+                ModdedDimensionRegistryStore.loadForStartup(server);
         if (dimensions.isEmpty()) {
             return;
         }
         int injected = 0;
+        int index = 0;
+        long startedAt = System.currentTimeMillis();
         for (ModdedDimensionRegistryStore.PersistentDimension dimension : dimensions) {
+            index++;
+            long dimensionStartedAt = System.currentTimeMillis();
             try {
                 ModdedDimensionManager.create(server, dimension.id(), dimension.pack(), dimension.dimension(), dimension.seed());
                 injected++;
+                LOGGER.info("Iris re-injected {}/{} '{}' (pack={} dim={}) in {}ms",
+                        index, dimensions.size(), dimension.id(), dimension.pack(), dimension.dimension(),
+                        System.currentTimeMillis() - dimensionStartedAt);
             } catch (Throwable e) {
                 LOGGER.error("Iris failed to re-inject persistent dimension '{}' (pack={} dim={} seed={})", dimension.id(), dimension.pack(), dimension.dimension(), dimension.seed(), e);
-                if (e instanceof Error fatalError) {
-                    throw fatalError;
+                if (e instanceof OutOfMemoryError outOfMemory) {
+                    throw outOfMemory;
                 }
             }
         }
-        LOGGER.info("Iris re-injected {} persistent dimension(s) at startup", injected);
+        LOGGER.info("Iris re-injected {}/{} persistent dimension(s) at startup in {}ms",
+                injected, dimensions.size(), System.currentTimeMillis() - startedAt);
+    }
+
+    private static long newestModificationMillis(Path root) {
+        long newest = 0L;
+        try (Stream<Path> walk = Files.walk(root)) {
+            for (Path path : (Iterable<Path>) walk::iterator) {
+                BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class);
+                long modified = attributes.lastModifiedTime().toMillis();
+                if (modified > newest) {
+                    newest = modified;
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            LOGGER.debug("Iris could not stat {} for validation reuse; revalidating", root, unreadable);
+            return Long.MAX_VALUE;
+        }
+        return newest;
+    }
+
+    /**
+     * SP-6: a pack excluded by validation is otherwise only visible in the console. Tell the operators who
+     * can actually act on it when they join.
+     */
+    public static void warnPackFailuresTo(ServerPlayer player) {
+        if (player == null || !Commands.LEVEL_GAMEMASTERS.check(player.permissions())) {
+            return;
+        }
+        for (Map.Entry<String, PackValidationResult> entry : PackValidationRegistry.snapshot().entrySet()) {
+            PackValidationResult result = entry.getValue();
+            if (result == null || result.isLoadable()) {
+                continue;
+            }
+            String reason = result.getBlockingErrors().isEmpty()
+                    ? "unknown validation failure"
+                    : result.getBlockingErrors().getFirst();
+            player.sendSystemMessage(Component.literal("Iris pack '" + entry.getKey()
+                    + "' failed validation and cannot be used: " + reason));
+        }
     }
 
     public static void ensureDefaultPack() {

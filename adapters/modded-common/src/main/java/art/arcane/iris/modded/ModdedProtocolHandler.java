@@ -34,6 +34,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ModdedProtocolHandler {
@@ -43,11 +44,13 @@ public final class ModdedProtocolHandler {
 
     private static final ConcurrentHashMap<String, Engine> SESSION_ENGINES = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, String> SESSION_LEVELS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, String> SESSION_IDS = new ConcurrentHashMap<>();
 
     private static volatile ModdedProtocolChannel channel;
     private static volatile IrisSessionRegistry registry;
     private static volatile IrisProtocolServer protocolServer;
     private static volatile ModdedProtocolTransport transport;
+    private static volatile IrisVisionRequestService visionRequests;
     private static int dimensionSyncTicks;
 
     private ModdedProtocolHandler() {
@@ -64,6 +67,7 @@ public final class ModdedProtocolHandler {
         }
         SESSION_ENGINES.clear();
         SESSION_LEVELS.clear();
+        SESSION_IDS.clear();
         dimensionSyncTicks = 0;
         IrisSessionRegistry sessionRegistry = new IrisSessionRegistry();
         ModdedProtocolTransport serverTransport = new ModdedProtocolTransport(server, boundChannel);
@@ -73,53 +77,85 @@ public final class ModdedProtocolHandler {
             return engine == null || engine.isClosed() ? null : engine;
         };
         protocol.setEngineResolver(engineResolver);
-        protocol.setVisionTileHandler(IrisVisionRequestService.create(engineResolver, sessionRegistry));
+        IrisVisionRequestService visionService = IrisVisionRequestService.create(engineResolver, sessionRegistry);
+        protocol.setVisionTileHandler(visionService);
         registry = sessionRegistry;
         transport = serverTransport;
         protocolServer = protocol;
+        visionRequests = visionService;
         IrisServices.register(IrisProtocolServer.class, protocol);
         if (server.getPlayerList() == null) {
             return;
         }
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            sessionRegistry.register(new IrisSession(player.getUUID().toString(), serverTransport));
+            sessionRegistry.register(new IrisSession(sessionId(player), serverTransport));
         }
     }
 
     public static void stop() {
         IrisServices.remove(IrisProtocolServer.class);
         IrisSessionRegistry current = registry;
+        IrisVisionRequestService vision = visionRequests;
         if (current != null) {
             for (IrisSession session : current.all()) {
                 current.unregister(session.id());
+                if (vision != null) {
+                    vision.clearSession(session.id());
+                }
             }
         }
         SESSION_ENGINES.clear();
         SESSION_LEVELS.clear();
+        SESSION_IDS.clear();
         dimensionSyncTicks = 0;
         registry = null;
         protocolServer = null;
         transport = null;
+        visionRequests = null;
     }
 
     public static void onPlayerJoin(ServerPlayer player) {
-        IrisSessionRegistry current = registry;
-        ModdedProtocolTransport currentTransport = transport;
-        if (player == null || current == null || currentTransport == null) {
+        if (player == null) {
             return;
         }
-        current.register(new IrisSession(player.getUUID().toString(), currentTransport));
+        String sessionId = sessionId(player);
+        ModdedStartup.warnPackFailuresTo(player);
+        IrisSessionRegistry current = registry;
+        ModdedProtocolTransport currentTransport = transport;
+        if (current == null || currentTransport == null) {
+            return;
+        }
+        current.register(new IrisSession(sessionId, currentTransport));
     }
 
     public static void onPlayerDisconnect(ServerPlayer player) {
-        IrisSessionRegistry current = registry;
-        if (player == null || current == null) {
+        if (player == null) {
             return;
         }
-        String sessionId = player.getUUID().toString();
-        current.unregister(sessionId);
+        UUID id = player.getUUID();
+        String sessionId = SESSION_IDS.remove(id);
+        if (sessionId == null) {
+            sessionId = id.toString();
+        }
+        ModdedPrimaryWorldRouter.forget(id);
         SESSION_ENGINES.remove(sessionId);
         SESSION_LEVELS.remove(sessionId);
+        IrisSessionRegistry current = registry;
+        if (current != null) {
+            current.unregister(sessionId);
+        }
+        IrisVisionRequestService vision = visionRequests;
+        if (vision != null) {
+            vision.clearSession(sessionId);
+        }
+    }
+
+    /**
+     * UUID.toString allocates a 36-char string every call; the dimension sync tick runs over every player four
+     * times a second, so the id is interned per player on first use and dropped on disconnect.
+     */
+    private static String sessionId(ServerPlayer player) {
+        return SESSION_IDS.computeIfAbsent(player.getUUID(), UUID::toString);
     }
 
     public static void onInbound(ServerPlayer player, byte[] frame) {
@@ -127,7 +163,7 @@ public final class ModdedProtocolHandler {
         if (player == null || frame == null || current == null) {
             return;
         }
-        String sessionId = player.getUUID().toString();
+        String sessionId = sessionId(player);
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
         if (scheduler == null) {
             current.onClientFrame(sessionId, frame);
@@ -148,7 +184,7 @@ public final class ModdedProtocolHandler {
         }
         dimensionSyncTicks = 0;
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            String sessionId = player.getUUID().toString();
+            String sessionId = sessionId(player);
             IrisSession session = current.get(sessionId);
             if (session == null || !session.isReady()) {
                 continue;
@@ -167,6 +203,8 @@ public final class ModdedProtocolHandler {
 
     private static boolean syncDimension(IrisProtocolServer protocol, String sessionId, ServerLevel level, String levelId) {
         ChunkGenerator generator = level.getChunkSource().getGenerator();
+        // engineIfBound only, never commandEngine: the sync tick runs on the server thread and constructing an
+        // engine there stalls the tick for the whole pack load. An unbound generator simply retries next tick.
         Engine engine = generator instanceof IrisModdedChunkGenerator irisGenerator ? resolveEngine(level, irisGenerator) : null;
         if (generator instanceof IrisModdedChunkGenerator && engine == null) {
             return false;
@@ -185,7 +223,8 @@ public final class ModdedProtocolHandler {
 
     private static Engine resolveEngine(ServerLevel level, IrisModdedChunkGenerator generator) {
         try {
-            return generator.commandEngine();
+            Engine engine = generator.engineIfBound();
+            return engine == null || engine.isClosed() ? null : engine;
         } catch (Throwable failure) {
             LOGGER.error("Iris dimension status engine lookup failed for {}", level.dimension().identifier(), failure);
             return null;

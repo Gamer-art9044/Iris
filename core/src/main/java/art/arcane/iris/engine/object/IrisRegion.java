@@ -36,10 +36,8 @@ import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.volmlib.util.data.VanillaBiomeColors;
 import art.arcane.volmlib.util.inventorygui.RandomColor;
-import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
@@ -488,10 +486,5 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     @Override
     public String getTypeName() {
         return "Region";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
-
     }
 }

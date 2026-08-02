@@ -38,6 +38,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -45,8 +47,43 @@ import java.util.concurrent.atomic.AtomicReference;
  * Binary (.iob) persistence for {@link IrisObject}. The field layout written here is pinned by the on-disk
  * format - do not reorder reads or writes.
  */
-final class IrisObjectIO {
+public final class IrisObjectIO {
+    private static final String V2_HEADER = "Iris V2 IOB;";
+    private static final int MAX_PALETTE_ENTRIES = 32_767;
+
     private IrisObjectIO() {
+    }
+
+    /**
+     * Reads only the V2 palette block-state keys out of an {@code .iob} header. Read-only pack-tooling hook: no
+     * IrisObject is built and no block state is resolved, so it runs without a bound platform.
+     * <p>
+     * Returns an empty list for a legacy (V1) object, an unreadable file, or a truncated header - a scan must never
+     * fail pack validation.
+     */
+    public static List<String> readPaletteKeys(File file) {
+        if (file == null || !file.isFile()) {
+            return List.of();
+        }
+        try (DataInputStream din = new DataInputStream(new BufferedInputStream(new FileInputStream(file)))) {
+            din.readInt();
+            din.readInt();
+            din.readInt();
+            if (!V2_HEADER.equals(din.readUTF())) {
+                return List.of();
+            }
+            int count = din.readShort();
+            if (count <= 0 || count > MAX_PALETTE_ENTRIES) {
+                return List.of();
+            }
+            List<String> palette = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) {
+                palette.add(din.readUTF());
+            }
+            return palette;
+        } catch (Throwable e) {
+            return List.of();
+        }
     }
 
     static IrisBlockVector sampleSize(File file) throws IOException {

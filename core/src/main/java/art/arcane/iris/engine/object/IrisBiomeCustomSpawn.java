@@ -22,6 +22,7 @@ import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListEntityType;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.util.common.data.registry.RegistryUtil;
@@ -43,6 +44,7 @@ import java.util.Locale;
 public class IrisBiomeCustomSpawn {
     private final transient AtomicCache<EntityType> typeResolved = new AtomicCache<>();
     @Required
+    @RegistryListEntityType
     @Desc("The biome's entity type")
     private String type = "minecraft:cow";
 

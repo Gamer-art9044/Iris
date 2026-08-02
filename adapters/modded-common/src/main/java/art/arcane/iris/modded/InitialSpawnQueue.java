@@ -33,6 +33,7 @@ final class InitialSpawnQueue {
     private final long maxAgeNanos;
     private final LongSupplier nanoTime;
     private final ArrayDeque<Long> queue;
+    private final ArrayDeque<Expiry> expiryOrder;
     private final Map<Long, Long> pending;
     private final Set<Long> queued;
     private boolean closed;
@@ -52,6 +53,7 @@ final class InitialSpawnQueue {
         this.maxAgeNanos = maxAgeNanos;
         this.nanoTime = nanoTime;
         this.queue = new ArrayDeque<>(Math.min(capacity, 256));
+        this.expiryOrder = new ArrayDeque<>(Math.min(capacity, 256));
         this.pending = new HashMap<>();
         this.queued = new HashSet<>();
     }
@@ -66,9 +68,12 @@ final class InitialSpawnQueue {
         if (pending.size() >= capacity) {
             return false;
         }
-        pending.put(key, nanoTime.getAsLong());
-        queued.add(key);
-        queue.addLast(key);
+        long offeredAt = nanoTime.getAsLong();
+        pending.put(key, offeredAt);
+        expiryOrder.addLast(new Expiry(key, offeredAt));
+        if (queued.add(key)) {
+            queue.addLast(key);
+        }
         return true;
     }
 
@@ -92,8 +97,10 @@ final class InitialSpawnQueue {
                 pending.remove(key);
                 continue;
             }
+            expire(now);
             return key;
         }
+        expire(now);
         return null;
     }
 
@@ -115,6 +122,7 @@ final class InitialSpawnQueue {
         if (queued.remove(key)) {
             queue.removeFirstOccurrence(key);
         }
+        expire(nanoTime.getAsLong());
     }
 
     synchronized boolean isEmpty() {
@@ -127,6 +135,7 @@ final class InitialSpawnQueue {
 
     synchronized void clear() {
         queue.clear();
+        expiryOrder.clear();
         pending.clear();
         queued.clear();
     }
@@ -136,24 +145,41 @@ final class InitialSpawnQueue {
         clear();
     }
 
+    /**
+     * Drops offers that aged out, plus entries for keys that already left {@code pending}.
+     * {@code expiryOrder} is append-only and {@code nanoTime} is monotonic, so the deque is sorted by
+     * offer time: the loop stops at the first live, unexpired entry. That makes the saturated-queue
+     * call O(1) in the common case instead of the O(capacity) scan it used to be under the monitor,
+     * and running it from poll/complete keeps the deque from growing past the live offers.
+     *
+     * <p>Expired keys are normally left in {@code queue}/{@code queued}: {@link #poll()} already drops keys
+     * that are no longer pending, so the drain deque self-cleans without an O(n) sweep. That only holds while
+     * something polls - a producer that keeps offering into a queue nobody drains would grow both past
+     * {@code capacity} forever - so once the deque is over capacity it is swept against {@code pending} here.
+     */
     private void expire(long now) {
-        Set<Long> expired = new HashSet<>();
-        for (Map.Entry<Long, Long> entry : pending.entrySet()) {
-            if (expired(entry.getValue(), now)) {
-                expired.add(entry.getKey());
+        Expiry head;
+        while ((head = expiryOrder.peekFirst()) != null) {
+            Long offeredAt = pending.get(head.key());
+            boolean live = offeredAt != null && offeredAt.longValue() == head.offeredAt();
+            if (live && !expired(head.offeredAt(), now)) {
+                break;
+            }
+            expiryOrder.pollFirst();
+            if (live) {
+                pending.remove(head.key());
             }
         }
-        if (expired.isEmpty()) {
-            return;
+        if (queue.size() > capacity) {
+            queue.removeIf(key -> !pending.containsKey(key));
+            queued.retainAll(pending.keySet());
         }
-        for (Long key : expired) {
-            pending.remove(key);
-            queued.remove(key);
-        }
-        queue.removeIf(expired::contains);
     }
 
     private boolean expired(long offeredAt, long now) {
         return now - offeredAt >= maxAgeNanos;
+    }
+
+    private record Expiry(long key, long offeredAt) {
     }
 }

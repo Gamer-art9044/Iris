@@ -14,6 +14,7 @@ public final class IrisClientSession {
     private final LongSupplier clock;
     private volatile State state;
     private volatile long serverCapabilities;
+    private volatile int serverProtocolVersion;
     private volatile boolean irisActive;
     private volatile String serverBrand;
     private volatile ClientPacketSink sink;
@@ -28,6 +29,7 @@ public final class IrisClientSession {
         this.clock = clock;
         this.state = State.IDLE;
         this.serverCapabilities = 0L;
+        this.serverProtocolVersion = 0;
         this.irisActive = false;
         this.serverBrand = "";
         this.sink = null;
@@ -55,6 +57,11 @@ public final class IrisClientSession {
         return serverCapabilities;
     }
 
+    /** The version the server reported, retained even on a mismatch so the UI can name it. 0 before any reply. */
+    public int serverProtocolVersion() {
+        return serverProtocolVersion;
+    }
+
     public String serverBrand() {
         return serverBrand;
     }
@@ -79,6 +86,11 @@ public final class IrisClientSession {
     private void sendHelloAttempt() {
         ClientPacketSink activeSink = sink;
         if (activeSink == null) {
+            // No sink yet means the loader has not bound the channel. Still burn an attempt and arm the retry
+            // clock, otherwise nextHelloAt stays MAX_VALUE, tick() never fires again and the UI sits on
+            // "connecting" for the whole session.
+            helloAttempts++;
+            nextHelloAt = clock.getAsLong() + HELLO_RETRY_MILLIS;
             return;
         }
         byte[] frame = IrisMessageCodec.encode(new IrisMessage.ClientHello(IrisProtocol.PROTOCOL_VERSION, CLIENT_CAPABILITIES));
@@ -89,7 +101,9 @@ public final class IrisClientSession {
     }
 
     public void onServerHello(IrisMessage.ServerHello hello) {
+        this.serverProtocolVersion = hello.protocolVersion();
         if (hello.protocolVersion() != IrisProtocol.PROTOCOL_VERSION) {
+            this.serverBrand = hello.serverBrand();
             this.state = State.INCOMPATIBLE;
             return;
         }
@@ -102,6 +116,7 @@ public final class IrisClientSession {
     public void reset() {
         this.state = State.IDLE;
         this.serverCapabilities = 0L;
+        this.serverProtocolVersion = 0;
         this.irisActive = false;
         this.serverBrand = "";
         this.nextHelloAt = Long.MAX_VALUE;

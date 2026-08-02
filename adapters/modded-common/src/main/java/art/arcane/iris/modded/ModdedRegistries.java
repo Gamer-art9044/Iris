@@ -18,12 +18,16 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.modded.api.ModdedCustomContentRegistry;
+import art.arcane.iris.modded.api.ModdedDataType;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockProperty;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformEntityType;
 import art.arcane.iris.spi.PlatformItem;
 import art.arcane.iris.spi.PlatformRegistries;
+import art.arcane.volmlib.util.data.UnresolvedKeyLog;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -45,6 +49,8 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 public final class ModdedRegistries implements PlatformRegistries {
+    private static final UnresolvedKeyLog NOT_READY = new UnresolvedKeyLog("Iris modded registry reads before server ready", 60_000L);
+
     private final Supplier<MinecraftServer> server;
 
     public ModdedRegistries(Supplier<MinecraftServer> server) {
@@ -126,6 +132,7 @@ public final class ModdedRegistries implements PlatformRegistries {
         List<String> keys = new ArrayList<>();
         Registry<Biome> registry = biomeRegistry();
         if (registry == null) {
+            warnNotReady("biome");
             return keys;
         }
         for (Identifier identifier : registry.keySet()) {
@@ -139,6 +146,7 @@ public final class ModdedRegistries implements PlatformRegistries {
         List<String> keys = new ArrayList<>();
         MinecraftServer instance = server.get();
         if (instance == null) {
+            warnNotReady("structure");
             return keys;
         }
         for (Identifier identifier : instance.registryAccess().lookupOrThrow(Registries.STRUCTURE).keySet()) {
@@ -153,7 +161,13 @@ public final class ModdedRegistries implements PlatformRegistries {
         for (Identifier identifier : BuiltInRegistries.ITEM.keySet()) {
             keys.add(identifier.toString());
         }
+        keys.addAll(ModdedCustomContentRegistry.providerKeys(ModdedDataType.ITEM));
         return keys;
+    }
+
+    @Override
+    public List<String> specialEntityKeys() {
+        return ModdedCustomContentRegistry.providerKeys(ModdedDataType.ENTITY);
     }
 
     @Override
@@ -171,6 +185,7 @@ public final class ModdedRegistries implements PlatformRegistries {
         for (Identifier identifier : BuiltInRegistries.BLOCK.keySet()) {
             keys.add(identifier.toString());
         }
+        keys.addAll(customBlockKeys());
         return keys;
     }
 
@@ -179,6 +194,7 @@ public final class ModdedRegistries implements PlatformRegistries {
         List<String> keys = new ArrayList<>();
         Registry<Enchantment> registry = enchantmentRegistry();
         if (registry == null) {
+            warnNotReady("enchantment");
             return keys;
         }
         for (Identifier identifier : registry.keySet()) {
@@ -199,15 +215,48 @@ public final class ModdedRegistries implements PlatformRegistries {
     @Override
     public Map<String, List<PlatformBlockProperty>> blockStateProperties() {
         Map<String, List<PlatformBlockProperty>> properties = new LinkedHashMap<>();
+        // One List instance per identical property group. SchemaBuilder groups consecutive entries by list
+        // identity, so sharing collapses the emitted schema instead of writing a block-state object per block.
+        Map<String, List<PlatformBlockProperty>> shared = new LinkedHashMap<>();
         for (Block block : BuiltInRegistries.BLOCK) {
             BlockState defaultState = block.defaultBlockState();
             List<PlatformBlockProperty> converted = new ArrayList<>();
             for (Property<?> property : block.getStateDefinition().getProperties()) {
                 converted.add(convertProperty(property, defaultState));
             }
-            properties.put(BuiltInRegistries.BLOCK.getKey(block).toString(), List.copyOf(converted));
+            List<PlatformBlockProperty> group = shared.computeIfAbsent(groupSignature(converted), key -> List.copyOf(converted));
+            properties.put(BuiltInRegistries.BLOCK.getKey(block).toString(), group);
+        }
+        List<PlatformBlockProperty> none = shared.computeIfAbsent(groupSignature(List.of()), key -> List.of());
+        for (String key : customBlockKeys()) {
+            properties.putIfAbsent(key, none);
         }
         return properties;
+    }
+
+    private static String groupSignature(List<PlatformBlockProperty> group) {
+        StringBuilder signature = new StringBuilder(group.size() * 24);
+        for (PlatformBlockProperty property : group) {
+            signature.append(property.name()).append(':').append(property.jsonType()).append('=')
+                    .append(property.defaultValue()).append(property.allowedValues()).append(';');
+        }
+        return signature.toString();
+    }
+
+    private static List<String> customBlockKeys() {
+        List<String> keys = new ArrayList<>(ModdedCustomContentRegistry.aliasBlockKeys());
+        keys.addAll(ModdedCustomContentRegistry.providerKeys(ModdedDataType.BLOCK));
+        return keys;
+    }
+
+    private static void warnNotReady(String registryName) {
+        if (NOT_READY.firstOccurrence(registryName)) {
+            IrisLogging.warn("Iris registry read for '" + registryName + "' before the server is ready; returning empty");
+        }
+        String summary = NOT_READY.pollSummary();
+        if (summary != null) {
+            IrisLogging.warn(summary);
+        }
     }
 
     private Registry<Biome> biomeRegistry() {

@@ -50,6 +50,7 @@ import net.minecraft.world.level.NoiseColumn;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.BiomeGenerationSettings;
 import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.MobSpawnSettings;
@@ -106,6 +107,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     private final int runtimeHeight;
     private final int runtimeSeaLevel;
     private final ConcurrentHashMap<SpawnTableKey, WeightedList<MobSpawnSettings.SpawnerData>> mergedSpawnTables = new ConcurrentHashMap<>();
+    private final ImportedFeatureStage importedFeatures;
     private volatile ReachableStructureCache reachableStructureCache;
     private volatile StructureStepCache structureStepCache;
 
@@ -118,6 +120,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         this.delegate = delegate;
         this.engine = engine;
         this.customBiomeSource = customBiomeSource;
+        this.importedFeatures = new ImportedFeatureStage(engine);
         ServerLevel level = ((CraftWorld) world).getHandle();
         this.runtimeMinY = level.getMinY();
         this.runtimeHeight = level.getHeight();
@@ -425,12 +428,31 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void applyBiomeDecoration(WorldGenLevel generatoraccessseed, ChunkAccess ichunkaccess, StructureManager structuremanager, boolean vanilla) {
+        // Bind-time equivalent for Bukkit: the table is built on the first decorated chunk, which is where a
+        // feature-order cycle is reported once and degraded to features-off.
+        importedFeatures.prepare(generatoraccessseed);
         try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_biome_decoration");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             addVanillaDecorations(generatoraccessseed, ichunkaccess, structuremanager);
             placeVanillaStructures(generatoraccessseed, ichunkaccess, structuremanager);
+            // Vanilla's placed-feature pass, on THIS thread. The delegate is still called with
+            // addVanillaDecorations=false below, so the vanilla half never runs twice. Inert unless the
+            // dimension set importedFeatures.enabled.
+            importedFeatures.run(generatoraccessseed, ichunkaccess, this);
             delegate.applyBiomeDecoration(generatoraccessseed, ichunkaccess, structuremanager, false);
         }
+    }
+
+    /**
+     * Iris custom biomes carry no features in their datapack JSON by design; when importedFeatures is on they
+     * inherit the generation settings of the vanilla biome their Iris biome derives from. This is the gate
+     * {@code BiomeFilter} consults, so it has to agree with the feature pass. With the control off this is
+     * exactly the inherited behaviour.
+     */
+    @Override
+    public BiomeGenerationSettings getBiomeGenerationSettings(Holder<Biome> holder) {
+        BiomeGenerationSettings imported = importedFeatures.generationSettings(holder);
+        return imported == null ? super.getBiomeGenerationSettings(holder) : imported;
     }
 
     private void placeVanillaStructures(WorldGenLevel world, ChunkAccess chunk, StructureManager structureManager) {

@@ -54,6 +54,7 @@ public final class IrisNeoForgeClient {
         NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> IrisClient.onDisconnect());
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) -> {
             IrisClient.tick();
+            IrisClientHud.tick();
             IrisClientKeybinds.pollToggle();
         });
     }

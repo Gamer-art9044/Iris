@@ -231,11 +231,12 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
             return false;
         }
 
-        DirectorMiniMenu.deliver(sender, DirectorMiniMenu.render(
+        DirectorMiniMenu.deliver(
+                sender,
                 request.get(),
                 DirectorMiniMenu.Theme.irisGreen(),
                 IrisLanguage.directorResolver()
-        ));
+        );
         return true;
     }
 

@@ -52,6 +52,7 @@ public class IrisProtocolService implements IrisService, PluginMessageListener, 
 
     private IrisSessionRegistry registry;
     private IrisProtocolServer protocolServer;
+    private IrisVisionRequestService visionService;
 
     @Override
     public void onEnable() {
@@ -62,7 +63,8 @@ public class IrisProtocolService implements IrisService, PluginMessageListener, 
         protocolServer = new IrisProtocolServer(registry, SERVER_CAPABILITIES, brand(), true);
         EngineResolver engineResolver = IrisProtocolService::resolveEngine;
         protocolServer.setEngineResolver(engineResolver);
-        protocolServer.setVisionTileHandler(IrisVisionRequestService.create(engineResolver, registry));
+        visionService = IrisVisionRequestService.create(engineResolver, registry);
+        protocolServer.setVisionTileHandler(visionService);
         IrisServices.register(IrisProtocolServer.class, protocolServer);
         for (Player player : Bukkit.getOnlinePlayers()) {
             registry.register(new IrisSession(player.getUniqueId().toString(), this));
@@ -83,6 +85,7 @@ public class IrisProtocolService implements IrisService, PluginMessageListener, 
         }
         registry = null;
         protocolServer = null;
+        visionService = null;
     }
 
     @EventHandler
@@ -109,7 +112,12 @@ public class IrisProtocolService implements IrisService, PluginMessageListener, 
         if (current == null) {
             return;
         }
-        current.unregister(event.getPlayer().getUniqueId().toString());
+        String sessionId = event.getPlayer().getUniqueId().toString();
+        current.unregister(sessionId);
+        IrisVisionRequestService vision = visionService;
+        if (vision != null) {
+            vision.clearSession(sessionId);
+        }
     }
 
     @Override

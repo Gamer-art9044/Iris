@@ -26,6 +26,8 @@ import art.arcane.iris.modded.ModdedBlockResolution;
 import art.arcane.iris.modded.ModdedBlockState;
 import art.arcane.iris.modded.ModdedTileData;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.volmlib.util.mantle.runtime.Mantle;
+import art.arcane.volmlib.util.matter.Matter;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
@@ -43,6 +45,7 @@ import java.util.Map;
 
 final class ModdedObjectPlacer implements IObjectPlacer {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
+    private static final int DEFAULT_FLUID_HEIGHT = 63;
 
     private final ServerLevel level;
     private final Engine engine;
@@ -116,9 +119,21 @@ final class ModdedObjectPlacer implements IObjectPlacer {
         return false;
     }
 
+    /**
+     * Mantle Y is relative to the world minimum height while this placer works in absolute world Y, so shift
+     * before the lookup. Only answers from an already loaded mantle chunk: a hand placed object can sit
+     * anywhere, and loading a mantle chunk to answer a carve probe would generate terrain as a side effect.
+     */
     @Override
     public boolean isCarved(int x, int y, int z) {
-        return false;
+        if (engine == null) {
+            return false;
+        }
+        Mantle<Matter> mantle = engine.getMantle().getMantle();
+        if (mantle.isClosed() || !mantle.isChunkLoaded(x >> 4, z >> 4)) {
+            return false;
+        }
+        return engine.getMantle().isCarved(x, y - engine.getWorld().minHeight(), z);
     }
 
     @Override
@@ -126,14 +141,24 @@ final class ModdedObjectPlacer implements IObjectPlacer {
         return ModdedBlockResolution.isSolid(level.getBlockState(new BlockPos(x, y, z)));
     }
 
+    /**
+     * Engine height stream against the dimension fluid height, both engine relative, so no shift here. Needs a
+     * ready complex; the placer also runs from commands against levels that never bound an engine.
+     */
     @Override
     public boolean isUnderwater(int x, int z) {
-        return false;
+        return engine != null && engine.getComplex() != null && engine.getMantle().isUnderwater(x, z);
     }
 
+    /**
+     * IrisDimension fluid height is engine relative while this placer works in absolute world Y, so shift it
+     * up by the engine minimum before handing it to object placement.
+     */
     @Override
     public int getFluidHeight() {
-        return 63;
+        return engine == null
+                ? DEFAULT_FLUID_HEIGHT
+                : engine.getMinHeight() + engine.getDimension().getFluidHeight();
     }
 
     @Override

@@ -87,7 +87,11 @@ public final class PackValidator {
         blockingErrors.addAll(PackSpawnValidator.validateCustomBiomeSpawns(
                 new File(packFolder, "biomes"), PackSpawnValidator::resolveEntitySpawnCategory));
 
-        ContentKeyValidator.runContentKeyValidation(packFolder, warnings);
+        // Strict content mode promotes unresolved keys and bad block properties from advisory to blocking. Palette
+        // -sourced findings are exempt and stay warnings - see ContentKeyValidator.collectContentKeyIssues.
+        ContentKeyValidator.ContentKeyIssues contentKeys = ContentKeyValidator.collectContentKeyIssues(packFolder);
+        addDistinct(ContentKeyValidator.strictContent() ? blockingErrors : warnings, contentKeys.strict());
+        addDistinct(warnings, contentKeys.advisory());
 
         return new PackValidationResult(packName, blockingErrors, warnings, validatedAt);
     }

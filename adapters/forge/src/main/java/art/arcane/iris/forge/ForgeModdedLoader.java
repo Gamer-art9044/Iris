@@ -43,7 +43,7 @@ import java.nio.file.Path;
 
 public final class ForgeModdedLoader implements ModdedLoader {
     public static final PermissionNode<Boolean> TREE_FELLER_PERMISSION = new PermissionNode<>(
-            "iris",
+            "irisworldgen",
             "treefeller",
             PermissionTypes.BOOLEAN,
             (player, playerId, contexts) ->

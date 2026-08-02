@@ -44,6 +44,16 @@ public final class ModdedPrimaryWorldRouter {
         routed.clear();
     }
 
+    /**
+     * Drops a disconnected player's routing mark. Without this the set grows with every unique player the
+     * server has ever seen, and a returning player is never routed again.
+     */
+    public static void forget(UUID player) {
+        if (player != null) {
+            routed.remove(player);
+        }
+    }
+
     public static void tick(MinecraftServer server) {
         if (server == null) {
             return;

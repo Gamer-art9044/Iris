@@ -24,52 +24,78 @@ import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class ModdedScheduler implements PlatformScheduler {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
-    private static final int ASYNC_CORE_THREADS = 2;
     private static final int ASYNC_MAX_THREADS = Math.max(4, Runtime.getRuntime().availableProcessors());
-    private static final int ASYNC_QUEUE_CAPACITY = 4096;
     private static final long ASYNC_KEEP_ALIVE_SECONDS = 30L;
+    private static final int ASYNC_BACKLOG_WARN = 8192;
+    private static final long ASYNC_BACKLOG_WARN_INTERVAL_MILLIS = 30000L;
+    private static final long DRAIN_BUDGET_NANOS = TimeUnit.MILLISECONDS.toNanos(5L);
+    private static final int DRAIN_TASK_CAP = 512;
 
     private static volatile Thread mainThread;
 
     private volatile ThreadPoolExecutor asyncExecutor;
     private final ConcurrentLinkedQueue<Runnable> mainQueue = new ConcurrentLinkedQueue<>();
-    private final ConcurrentLinkedQueue<DelayedTask> delayedQueue = new ConcurrentLinkedQueue<>();
+    private final PriorityBlockingQueue<DelayedTask> delayedQueue = new PriorityBlockingQueue<>();
+    private final AtomicLong currentTick = new AtomicLong();
+    private final AtomicLong delayedSequence = new AtomicLong();
+    private final AtomicLong lastBacklogWarnAt = new AtomicLong();
 
     public ModdedScheduler() {
         this.asyncExecutor = createAsyncExecutor();
     }
 
     private static ThreadPoolExecutor createAsyncExecutor() {
-        BlockingQueue<Runnable> workQueue = new ArrayBlockingQueue<>(ASYNC_QUEUE_CAPACITY);
+        // Unbounded queue: async work must never be executed inline on a tick thread (CallerRunsPolicy
+        // stalled the server tick under load). Core == max with core timeout keeps the pool elastic,
+        // which a LinkedBlockingQueue would otherwise pin to the core size.
+        BlockingQueue<Runnable> workQueue = new LinkedBlockingQueue<>();
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
-            ASYNC_CORE_THREADS,
+            ASYNC_MAX_THREADS,
             ASYNC_MAX_THREADS,
             ASYNC_KEEP_ALIVE_SECONDS,
             TimeUnit.SECONDS,
             workQueue,
             new AsyncThreadFactory(),
-            new ThreadPoolExecutor.CallerRunsPolicy());
+            dropRejectedTask());
         executor.allowCoreThreadTimeOut(true);
         return executor;
+    }
+
+    private static RejectedExecutionHandler dropRejectedTask() {
+        return (Runnable task, ThreadPoolExecutor executor) -> {
+            if (executor.isShutdown()) {
+                LOGGER.debug("Iris async task dropped: scheduler is shut down");
+                return;
+            }
+            LOGGER.error("Iris async task rejected by the executor (queued={} active={})",
+                    executor.getQueue().size(), executor.getActiveCount());
+        };
     }
 
     public static void tick(MinecraftServer server) {
         if (server == null) {
             return;
         }
-        mainThread = server.getRunningThread();
+        Thread running = server.getRunningThread();
+        if (mainThread != running) {
+            mainThread = running;
+        }
+        // First thing in the Iris tick body: keep the off-thread level snapshot current for levels registered
+        // outside ModdedServerAccess (vanilla boot, other mods) before the rest of the tick reads it.
+        ModdedServerLevels.refreshIfStale(server);
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
         if (scheduler == null) {
             return;
@@ -99,7 +125,9 @@ public final class ModdedScheduler implements PlatformScheduler {
         if (task == null) {
             return;
         }
-        asyncExecutor.execute(() -> runGuarded(task));
+        ThreadPoolExecutor executor = asyncExecutor;
+        warnOnBacklog(executor);
+        executor.execute(() -> runGuarded(task));
     }
 
     @Override
@@ -111,7 +139,7 @@ public final class ModdedScheduler implements PlatformScheduler {
             global(task);
             return;
         }
-        delayedQueue.add(new DelayedTask(task, ticks));
+        delayedQueue.add(new DelayedTask(currentTick.get() + ticks, delayedSequence.getAndIncrement(), task));
     }
 
     @Override
@@ -127,7 +155,10 @@ public final class ModdedScheduler implements PlatformScheduler {
         }
         mainQueue.clear();
         delayedQueue.clear();
-        mainThread = null;
+        // reset() only runs from ModdedEngineBootstrap.start at SERVER_STARTING, which every loader
+        // fires on the server thread: capture it here instead of waiting for the first tick, so
+        // global() cannot mistake a boot-time server-thread call for an off-thread one and defer it.
+        mainThread = Thread.currentThread();
     }
 
     public void shutdown() {
@@ -135,30 +166,54 @@ public final class ModdedScheduler implements PlatformScheduler {
         mainQueue.clear();
         delayedQueue.clear();
         mainThread = null;
+        // Shutdown stage that always runs (ModdedEngineBootstrap.stop): release the level snapshot with it.
+        ModdedServerLevels.forget();
+    }
+
+    private void warnOnBacklog(ThreadPoolExecutor executor) {
+        int queued = executor.getQueue().size();
+        if (queued < ASYNC_BACKLOG_WARN) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long last = lastBacklogWarnAt.get();
+        if (now - last < ASYNC_BACKLOG_WARN_INTERVAL_MILLIS || !lastBacklogWarnAt.compareAndSet(last, now)) {
+            return;
+        }
+        LOGGER.warn("Iris async backlog {} tasks (threads={}); async work is falling behind", queued, executor.getPoolSize());
     }
 
     private void drain() {
-        promoteDelayed();
+        long tick = currentTick.incrementAndGet();
+        promoteDelayed(tick);
+        long deadline = System.nanoTime() + DRAIN_BUDGET_NANOS;
+        int executed = 0;
         Runnable task;
         while ((task = mainQueue.poll()) != null) {
             runGuarded(task);
+            executed++;
+            if (executed >= DRAIN_TASK_CAP || System.nanoTime() >= deadline) {
+                // Budget spent; the remainder stays queued in order and runs next tick.
+                break;
+            }
         }
     }
 
-    private void promoteDelayed() {
-        if (delayedQueue.isEmpty()) {
-            return;
-        }
-        List<DelayedTask> retained = new ArrayList<>();
-        DelayedTask delayed;
-        while ((delayed = delayedQueue.poll()) != null) {
-            if (delayed.tick()) {
-                mainQueue.add(delayed.task());
-            } else {
-                retained.add(delayed);
+    /**
+     * Due-ordered promotion; only the tick thread polls, so the head is always the earliest due task. A task
+     * added while this runs is due at least one tick after the tick being promoted, so it sorts behind
+     * everything this pass drains and is picked up on a later tick instead of being skipped. No per-tick
+     * rebuild of the pending set.
+     */
+    private void promoteDelayed(long tick) {
+        DelayedTask head;
+        while ((head = delayedQueue.peek()) != null && head.dueTick() <= tick) {
+            DelayedTask delayed = delayedQueue.poll();
+            if (delayed == null) {
+                return;
             }
+            mainQueue.add(delayed.task());
         }
-        delayedQueue.addAll(retained);
     }
 
     private boolean onMainThread() {
@@ -174,22 +229,11 @@ public final class ModdedScheduler implements PlatformScheduler {
         }
     }
 
-    private static final class DelayedTask {
-        private final Runnable task;
-        private int remaining;
-
-        private DelayedTask(Runnable task, int remaining) {
-            this.task = task;
-            this.remaining = remaining;
-        }
-
-        private boolean tick() {
-            remaining--;
-            return remaining <= 0;
-        }
-
-        private Runnable task() {
-            return task;
+    private record DelayedTask(long dueTick, long sequence, Runnable task) implements Comparable<DelayedTask> {
+        @Override
+        public int compareTo(DelayedTask other) {
+            int byTick = Long.compare(dueTick, other.dueTick);
+            return byTick != 0 ? byTick : Long.compare(sequence, other.sequence);
         }
     }
 

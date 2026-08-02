@@ -9,6 +9,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 
+/**
+ * CLIENT DIST ONLY. See {@link IrisClientHud} for why the dist marker is a javadoc contract plus a bytecode
+ * test rather than an @Environment annotation.
+ */
 public final class IrisPregenHud {
     private static final int PANEL_COLOR = 0xC0101010;
     private static final int TITLE_COLOR = 0xFF66BB6A;
@@ -17,6 +21,7 @@ public final class IrisPregenHud {
     private static final int BAR_BACK_COLOR = 0xFF2B2B2B;
     private static final int BAR_RUNNING_COLOR = 0xFF66BB6A;
     private static final int PAUSED_COLOR = 0xFFFFD54F;
+    private static final int STALE_COLOR = 0xFF8A8A8A;
     private static final int GRID_BACK_COLOR = 0xFF161616;
     private static final int CELL_PENDING_COLOR = 0xFF3A3A3A;
     private static final int CELL_GENERATING_COLOR = 0xFFFFD54F;
@@ -38,8 +43,9 @@ public final class IrisPregenHud {
         if (!IrisClient.hudVisible()) {
             return;
         }
-        IrisMessage.PregenProgress progress = IrisClient.pregen().active();
-        if (progress == null) {
+        IrisClientPregenState pregen = IrisClient.pregen();
+        IrisMessage.PregenProgress progress = pregen.active();
+        if (progress == null || pregen.activeExpired()) {
             return;
         }
         Minecraft minecraft = Minecraft.getInstance();
@@ -47,6 +53,7 @@ public final class IrisPregenHud {
             return;
         }
         Font font = minecraft.font;
+        boolean stale = pregen.activeStale();
         boolean paused = progress.state() == IrisMessage.PregenProgress.STATE_PAUSED;
         double percent = progress.chunksTotal() > 0L
                 ? clampPercent((double) progress.chunksDone() / (double) progress.chunksTotal() * 100.0D)
@@ -58,8 +65,8 @@ public final class IrisPregenHud {
                 MessageArgument.trusted("total", String.format("%,d", progress.chunksTotal())),
                 MessageArgument.trusted("percent", String.format("%.1f", percent))
         );
-        String tail = paused ? IrisLanguage.plain(ClientUiMessages.PREGEN_PAUSED) : rateAndEta(progress);
-        int accent = paused ? PAUSED_COLOR : BAR_RUNNING_COLOR;
+        String tail = tail(progress, pregen, stale, paused);
+        int accent = stale ? STALE_COLOR : paused ? PAUSED_COLOR : BAR_RUNNING_COLOR;
 
         int lineHeight = font.lineHeight;
         int contentWidth = Math.max(MIN_WIDTH, Math.max(font.width(title), Math.max(font.width(stats), font.width(tail))));
@@ -84,9 +91,9 @@ public final class IrisPregenHud {
         graphics.fill(ORIGIN_X - PADDING, ORIGIN_Y - PADDING, ORIGIN_X + panelWidth + PADDING, ORIGIN_Y + panelHeight + PADDING, PANEL_COLOR);
 
         int cursorY = ORIGIN_Y;
-        graphics.text(font, title, ORIGIN_X, cursorY, TITLE_COLOR);
+        graphics.text(font, title, ORIGIN_X, cursorY, stale ? STALE_COLOR : TITLE_COLOR);
         cursorY += lineHeight + ROW_GAP;
-        graphics.text(font, stats, ORIGIN_X, cursorY, TEXT_COLOR);
+        graphics.text(font, stats, ORIGIN_X, cursorY, stale ? STALE_COLOR : TEXT_COLOR);
         cursorY += lineHeight + ROW_GAP;
 
         int fillWidth = (int) Math.round(contentWidth * (percent / 100.0D));
@@ -96,7 +103,7 @@ public final class IrisPregenHud {
         }
         cursorY += BAR_HEIGHT + ROW_GAP;
 
-        graphics.text(font, tail, ORIGIN_X, cursorY, paused ? PAUSED_COLOR : MUTED_COLOR);
+        graphics.text(font, tail, ORIGIN_X, cursorY, stale ? STALE_COLOR : paused ? PAUSED_COLOR : MUTED_COLOR);
 
         if (showMap) {
             renderMinimap(graphics, regionMap, bounds, cellPx, gridWidth, gridHeight, ORIGIN_Y + contentHeight + MINIMAP_GAP);
@@ -126,6 +133,15 @@ public final class IrisPregenHud {
             case IrisMessage.PregenRegionDelta.STATE_GENERATING -> CELL_GENERATING_COLOR;
             default -> CELL_PENDING_COLOR;
         };
+    }
+
+    private static String tail(IrisMessage.PregenProgress progress, IrisClientPregenState pregen, boolean stale, boolean paused) {
+        if (stale) {
+            return IrisLanguage.plain(
+                    ClientUiMessages.PREGEN_STALE,
+                    MessageArgument.trusted("seconds", pregen.activeAgeMillis() / 1000L));
+        }
+        return paused ? IrisLanguage.plain(ClientUiMessages.PREGEN_PAUSED) : rateAndEta(progress);
     }
 
     private static String rateAndEta(IrisMessage.PregenProgress progress) {

@@ -33,10 +33,12 @@ import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBiome;
 import art.arcane.iris.engine.object.annotations.RegistryListEnchantment;
 import art.arcane.iris.engine.object.annotations.RegistryListEntityType;
 import art.arcane.iris.engine.object.annotations.RegistryListItemType;
 import art.arcane.iris.engine.object.annotations.RegistryListPotionEffect;
+import art.arcane.iris.engine.object.annotations.RegistryListSpecialEntity;
 import art.arcane.iris.engine.object.annotations.RegistryListVanillaStructure;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -77,9 +79,16 @@ public class SchemaBuilderParityTest {
     private static final List<String> ITEM_KEYS = List.of("minecraft:stone", "minecraft:diamond_sword", "cool_mod:ruby");
     private static final List<String> ENTITY_KEYS = List.of("minecraft:zombie", "cool_mod:grizzly_bear");
     private static final List<String> STRUCTURE_KEYS = List.of("minecraft:monument", "minecraft:stronghold", "cool_mod:sky_temple");
+    private static final List<String> BIOME_KEYS = List.of("minecraft:plains", "cool_mod:sky_meadow");
+    private static final List<String> SPECIAL_ENTITY_KEYS = List.of("mythicmobs:skeleton_king");
 
-    private static final List<String> EXPECTED_POTIONS = List.of("SPEED", "SLOW_FALLING", "MEGA_BOOST");
-    private static final List<String> EXPECTED_ENCHANTS = List.of("sharpness", "vorpal");
+    // Namespaced key first, then the legacy short form for the vanilla namespace only. A mod key is addressable
+    // by its full key instead of a namespace-stripped path that could collide with vanilla content.
+    private static final List<String> EXPECTED_POTIONS = List.of(
+            "minecraft:speed", "SPEED", "minecraft:slow_falling", "SLOW_FALLING", "sniffer_mod:mega_boost");
+    private static final List<String> EXPECTED_ENCHANTS = List.of(
+            "minecraft:sharpness", "sharpness", "cool_mod:vorpal");
+    private static final List<String> EXPECTED_BIOMES = List.of("minecraft:plains", "plains", "cool_mod:sky_meadow");
     private static final List<String> EXPECTED_ITEMS = List.of("stone", "diamond_sword", "cool_mod:ruby");
     private static final List<String> EXPECTED_ENTITIES = List.of("minecraft:zombie", "cool_mod:grizzly_bear");
 
@@ -112,6 +121,8 @@ public class SchemaBuilderParityTest {
         assertEquals(EXPECTED_ENCHANTS, enumValues(definitions, "enum-enchantment"));
         assertEquals(EXPECTED_ITEMS, enumValues(definitions, "enum-item-type"));
         assertEquals(EXPECTED_ENTITIES, enumValues(definitions, "enum-entity-type"));
+        assertEquals(EXPECTED_BIOMES, enumValues(definitions, "enum-biome-type"));
+        assertEquals(SPECIAL_ENTITY_KEYS, enumValues(definitions, "enum-reg-specialentity"));
     }
 
     @Test
@@ -320,6 +331,19 @@ public class SchemaBuilderParityTest {
         @Desc("Entity field.")
         @RegistryListEntityType
         private String entity = "";
+
+        @Desc("Biome field.")
+        @RegistryListBiome
+        private String biome = "";
+
+        @Desc("Biome scatter field.")
+        @ArrayType(type = String.class)
+        @RegistryListBiome
+        private KList<String> biomeScatter = new KList<>();
+
+        @Desc("Special entity field.")
+        @RegistryListSpecialEntity
+        private String specialEntity = "";
     }
 
     @Desc("Independent model.")
@@ -397,7 +421,12 @@ public class SchemaBuilderParityTest {
 
         @Override
         public List<String> biomeKeys() {
-            return List.of();
+            return BIOME_KEYS;
+        }
+
+        @Override
+        public List<String> specialEntityKeys() {
+            return SPECIAL_ENTITY_KEYS;
         }
 
         @Override

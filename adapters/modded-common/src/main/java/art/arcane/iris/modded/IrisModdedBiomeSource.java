@@ -40,25 +40,33 @@ import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.stream.Stream;
 
 final class IrisModdedBiomeSource extends BiomeSource {
-    private static final int BIOME_CACHE_MAX = 262144;
     private static final int UNRESOLVED_WARN_KEYS_MAX = 256;
 
     private final BiomeSource serializedSource;
     private final Set<String> warnedUnresolvedBiomeKeys = ConcurrentHashMap.newKeySet();
-    private final ConcurrentHashMap<Long, Holder<Biome>> visibleBiomeCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Holder<Biome>> structureBiomeCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Holder<Biome>> surfaceStructureBiomeCache = new ConcurrentHashMap<>();
     private final Set<StructureStateBiomeSource> structureStateSources = ConcurrentHashMap.newKeySet();
+    // Pack generation. Every cache on this source is keyed by it, which is what keeps memoized tables from
+    // surviving a repoint with the previous pack's content.
+    private final AtomicLong packGeneration = new AtomicLong();
+    private volatile BiomeHolderTable visibleBiomeCache = new BiomeHolderTable();
+    private volatile BiomeHolderTable structureBiomeCache = new BiomeHolderTable();
+    private volatile BiomeHolderTable surfaceStructureBiomeCache = new BiomeHolderTable();
     private volatile IrisModdedChunkGenerator generator;
     private volatile Set<String> possibleStructureBiomeKeys;
+    private volatile BiomeKeySets biomeKeySets;
+    private volatile PossibleBiomes possibleBiomesCache;
 
     IrisModdedBiomeSource(BiomeSource serializedSource) {
         this.serializedSource = serializedSource;
@@ -69,14 +77,29 @@ final class IrisModdedBiomeSource extends BiomeSource {
     }
 
     void clearCaches() {
-        visibleBiomeCache.clear();
-        structureBiomeCache.clear();
-        surfaceStructureBiomeCache.clear();
+        // Republish empty tables instead of iterating: a repoint must not walk hundreds of thousands of slots
+        // on the calling thread, and every reader is a pure function of the key so a lost entry is only a miss.
+        // An empty table allocates no slot array, and a reader that captured the previous table writes its
+        // in-flight value there, which is what keeps a pre-repoint holder from ever landing in the new table.
+        packGeneration.incrementAndGet();
+        visibleBiomeCache = new BiomeHolderTable();
+        structureBiomeCache = new BiomeHolderTable();
+        surfaceStructureBiomeCache = new BiomeHolderTable();
         warnedUnresolvedBiomeKeys.clear();
         possibleStructureBiomeKeys = null;
+        biomeKeySets = null;
+        possibleBiomesCache = null;
         for (StructureStateBiomeSource source : structureStateSources) {
             source.clearCache();
         }
+    }
+
+    /**
+     * Pack generation counter. Platform code that memoizes anything derived from this source (the imported
+     * feature table) keys its memo on this value so {@code repoint} cannot leave stale content behind.
+     */
+    long packGeneration() {
+        return packGeneration.get();
     }
 
     BiomeSource forStructureState(HolderLookup<StructureSet> structureSets) {
@@ -113,12 +136,68 @@ final class IrisModdedBiomeSource extends BiomeSource {
 
     @Override
     protected Stream<Holder<Biome>> collectPossibleBiomes() {
-        Set<String> generatedBiomeKeys = requireConfiguredStructureBiomeKeys(exactStructureBiomeKeys());
+        return resolvePossibleBiomes().ordered().stream();
+    }
+
+    /**
+     * Overridden because {@link BiomeSource#possibleBiomes()} memoizes its answer for the lifetime of the
+     * instance, and this source outlives a {@code repoint} to a different pack. The returned set keeps
+     * biome-registry iteration order: vanilla builds its feature-per-step table with
+     * {@code List.copyOf(possibleBiomes())}, and FeatureSorter's cycle detection walks that list, so an
+     * unordered set makes cycle detection depend on JVM hash order.
+     */
+    @Override
+    public Set<Holder<Biome>> possibleBiomes() {
+        return resolvePossibleBiomes().set();
+    }
+
+    /**
+     * Registry-ordered view of {@link #possibleBiomes()} for platform code that has to build a feature table.
+     */
+    List<Holder<Biome>> orderedPossibleBiomes() {
+        return resolvePossibleBiomes().ordered();
+    }
+
+    /**
+     * Resolves any registered biome holder by key, whether or not this source can emit it. The imported feature
+     * pass needs this: a biome's vanilla derivative is where its features come from, and a sea or shore biome's
+     * structure derivative is rewritten away from that derivative, so the derivative itself is not always one of
+     * the biomes this source claims. Null when the key is unknown or the registry is not up yet.
+     */
+    Holder<Biome> registeredBiome(String key) {
+        Registry<Biome> registry = biomeRegistry();
+        return registry == null ? null : resolveHolder(registry, key);
+    }
+
+    /**
+     * Deliberately lock-free: resolving can bind an engine, which takes the generator monitor, and the
+     * generator takes its monitor before invalidating this cache. A lock here would close that cycle. Two
+     * threads racing only duplicate idempotent work.
+     */
+    private PossibleBiomes resolvePossibleBiomes() {
+        long generation = packGeneration.get();
+        PossibleBiomes cached = possibleBiomesCache;
+        if (cached != null && cached.generation() == generation) {
+            return cached;
+        }
+        List<Holder<Biome>> ordered = collectPossibleBiomeHolders();
+        PossibleBiomes resolved = new PossibleBiomes(generation, ordered,
+                Collections.unmodifiableSet(new LinkedHashSet<>(ordered)));
+        possibleBiomesCache = resolved;
+        return resolved;
+    }
+
+    private List<Holder<Biome>> collectPossibleBiomeHolders() {
+        BiomeKeySets keys = biomeKeySets();
+        Set<String> generatedBiomeKeys = requireConfiguredStructureBiomeKeys(keys.required());
+        Set<String> visibleBiomeKeys = keys.visibleOnly();
         Registry<Biome> registry = biomeRegistry();
         LinkedHashSet<Holder<Biome>> possible = new LinkedHashSet<>();
         if (registry == null) {
             for (Holder<Biome> biome : serializedSource.possibleBiomes()) {
-                if (isGeneratedBiomeKey(holderKey(biome), generatedBiomeKeys)) {
+                String key = holderKey(biome);
+                if (isGeneratedBiomeKey(key, generatedBiomeKeys)
+                        || isGeneratedBiomeKey(key, visibleBiomeKeys)) {
                     possible.add(biome);
                 }
             }
@@ -129,18 +208,44 @@ final class IrisModdedBiomeSource extends BiomeSource {
                 throw new IllegalStateException("Iris structure biomes are not registered: "
                         + missingBiomeKeys);
             }
+            // Registry-ordered, never a hash-ordered walk: see possibleBiomes().
             registry.listElements().forEach((Holder.Reference<Biome> reference) -> {
-                if (isGeneratedBiomeKey(holderKey(reference), generatedBiomeKeys)) {
+                String key = holderKey(reference);
+                if (isGeneratedBiomeKey(key, generatedBiomeKeys)
+                        || isGeneratedBiomeKey(key, visibleBiomeKeys)) {
                     possible.add(reference);
                 }
             });
+            warnUnregisteredVisibleBiomes(registry, visibleBiomeKeys);
         }
         if (possible.isEmpty()) {
             String phase = registry == null ? "serialized biome bootstrap" : "biome registry";
             throw new IllegalStateException("Iris configured structure biomes are absent from the "
                     + phase + ": " + generatedBiomeKeys);
         }
-        return possible.stream();
+        return List.copyOf(possible);
+    }
+
+    /**
+     * Scatter and derivative keys are advisory: a typo there must not stop a world from loading the way a
+     * missing structure biome does, so they are reported once and skipped.
+     */
+    private void warnUnregisteredVisibleBiomes(Registry<Biome> registry, Set<String> visibleBiomeKeys) {
+        if (visibleBiomeKeys.isEmpty()) {
+            return;
+        }
+        Set<String> missing = new LinkedHashSet<>(visibleBiomeKeys);
+        missing.removeAll(registeredBiomeKeys(registry));
+        for (String key : missing) {
+            if (!warnedUnresolvedBiomeKeys.add(key)) {
+                continue;
+            }
+            if (warnedUnresolvedBiomeKeys.size() > UNRESOLVED_WARN_KEYS_MAX) {
+                warnedUnresolvedBiomeKeys.clear();
+            }
+            ModdedIrisLog.warn("Iris biome " + key + " is referenced by derivative or scatter but is not"
+                    + " registered; it is dropped from this dimension's biome source");
+        }
     }
 
     @Override
@@ -167,16 +272,14 @@ final class IrisModdedBiomeSource extends BiomeSource {
             return getSurfaceStructureBiome(engine, quartX, quartZ, sampler);
         }
         long key = packNoiseKey(quartX, quartY, quartZ);
-        Holder<Biome> cached = structureBiomeCache.get(key);
+        BiomeHolderTable cache = structureBiomeCache;
+        Holder<Biome> cached = cache.get(key);
         if (cached != null) {
             return cached;
         }
         Holder<Biome> resolved = resolveStructureBiome(engine, quartX, quartY, quartZ, sampler);
-        Holder<Biome> existing = structureBiomeCache.putIfAbsent(key, resolved);
-        if (structureBiomeCache.size() > BIOME_CACHE_MAX) {
-            structureBiomeCache.clear();
-        }
-        return existing == null ? resolved : existing;
+        cache.put(key, resolved);
+        return resolved;
     }
 
     Holder<Biome> getVisibleNoiseBiome(int quartX, int quartY, int quartZ, Climate.Sampler sampler) {
@@ -193,16 +296,14 @@ final class IrisModdedBiomeSource extends BiomeSource {
                 throw new IllegalStateException("Iris visible biome lookup has no active engine runtime");
             }
             long key = packNoiseKey(quartX, quartY, quartZ);
-            Holder<Biome> cached = visibleBiomeCache.get(key);
+            BiomeHolderTable cache = visibleBiomeCache;
+            Holder<Biome> cached = cache.get(key);
             if (cached != null) {
                 return cached;
             }
             Holder<Biome> resolved = resolveVisibleBiome(engine, quartX, quartY, quartZ, sampler);
-            Holder<Biome> existing = visibleBiomeCache.putIfAbsent(key, resolved);
-            if (visibleBiomeCache.size() > BIOME_CACHE_MAX) {
-                visibleBiomeCache.clear();
-            }
-            return existing == null ? resolved : existing;
+            cache.put(key, resolved);
+            return resolved;
         }
     }
 
@@ -268,16 +369,14 @@ final class IrisModdedBiomeSource extends BiomeSource {
     private Holder<Biome> getSurfaceStructureBiome(Engine engine, int quartX, int quartZ,
                                                    Climate.Sampler sampler) {
         long key = packColumnKey(quartX, quartZ);
-        Holder<Biome> cached = surfaceStructureBiomeCache.get(key);
+        BiomeHolderTable cache = surfaceStructureBiomeCache;
+        Holder<Biome> cached = cache.get(key);
         if (cached != null) {
             return cached;
         }
         Holder<Biome> resolved = resolveSurfaceStructureBiome(engine, quartX, quartZ, sampler);
-        Holder<Biome> existing = surfaceStructureBiomeCache.putIfAbsent(key, resolved);
-        if (surfaceStructureBiomeCache.size() > BIOME_CACHE_MAX) {
-            surfaceStructureBiomeCache.clear();
-        }
-        return existing == null ? resolved : existing;
+        cache.put(key, resolved);
+        return resolved;
     }
 
     private Holder<Biome> resolveSurfaceStructureBiome(Engine engine, int quartX, int quartZ,
@@ -500,13 +599,35 @@ final class IrisModdedBiomeSource extends BiomeSource {
     }
 
     private Set<String> exactStructureBiomeKeys() {
+        return biomeKeySets().required();
+    }
+
+    /**
+     * Required and visible-only biome keys for the current pack generation. Required keys are the structure
+     * derivatives and the generated custom biomes: a missing one is fatal, exactly as before. Visible-only
+     * keys are the raw derivative plus every {@code biomeScatter} and {@code biomeSkyScatter} entry - biomes
+     * Iris writes into chunk sections but which vanilla previously dropped, because
+     * {@code applyBiomeDecoration} intersects the chunk's biomes with {@code possibleBiomes()}.
+     */
+    private BiomeKeySets biomeKeySets() {
+        long generation = packGeneration.get();
+        BiomeKeySets cached = biomeKeySets;
+        if (cached != null && cached.generation() == generation) {
+            return cached;
+        }
+        BiomeKeySets resolved = collectBiomeKeySets(generation);
+        biomeKeySets = resolved;
+        return resolved;
+    }
+
+    private BiomeKeySets collectBiomeKeySets(long generation) {
         IrisModdedChunkGenerator current = generator;
         if (current == null) {
-            return Set.of();
+            return new BiomeKeySets(generation, Set.of(), Set.of());
         }
         Engine engine = current.structureEngineOrNull();
         if (engine == null) {
-            return current.configuredStructureBiomeKeys();
+            return new BiomeKeySets(generation, current.configuredStructureBiomeKeys(), Set.of());
         }
         GenerationSessionLease lease = tryAcquireGenerationLease(engine, "modded_structure_biome_keys");
         if (lease == null) {
@@ -516,20 +637,35 @@ final class IrisModdedBiomeSource extends BiomeSource {
             if (!isReady(engine)) {
                 throw new IllegalStateException("Iris structure biome key lookup has no active engine runtime");
             }
-            LinkedHashSet<String> possible = new LinkedHashSet<>();
+            LinkedHashSet<String> required = new LinkedHashSet<>();
+            LinkedHashSet<String> visible = new LinkedHashSet<>();
             for (IrisBiome irisBiome : engine.getAllBiomes()) {
                 String derivative = normalizeKey(irisBiome.getStructureDerivativeKey());
                 if (derivative != null) {
-                    possible.add(derivative);
+                    required.add(derivative);
                 }
-                if (!irisBiome.isCustom()) {
-                    continue;
+                if (irisBiome.isCustom()) {
+                    for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
+                        required.add(ModdedWorldgenIds.biomeRef(engine, customBiome.getId()));
+                    }
                 }
-                for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                    possible.add(ModdedWorldgenIds.biomeRef(engine, customBiome.getId()));
+                addVisibleBiomeKey(visible, irisBiome.getDerivativeKey());
+                for (String scatter : irisBiome.getBiomeScatter()) {
+                    addVisibleBiomeKey(visible, scatter);
+                }
+                for (String scatter : irisBiome.getBiomeSkyScatter()) {
+                    addVisibleBiomeKey(visible, scatter);
                 }
             }
-            return Set.copyOf(possible);
+            visible.removeAll(required);
+            return new BiomeKeySets(generation, Set.copyOf(required), Set.copyOf(visible));
+        }
+    }
+
+    private static void addVisibleBiomeKey(Set<String> target, String key) {
+        String normalized = normalizeKey(key);
+        if (normalized != null) {
+            target.add(normalized);
         }
     }
 
@@ -608,10 +744,90 @@ final class IrisModdedBiomeSource extends BiomeSource {
                                    int blockZ, RNG rng) {
     }
 
+    private record BiomeKeySets(long generation, Set<String> required, Set<String> visibleOnly) {
+    }
+
+    private record PossibleBiomes(long generation, List<Holder<Biome>> ordered, Set<Holder<Biome>> set) {
+    }
+
+    /**
+     * Fixed-capacity open-addressed long-to-holder cache. Sized once and never resized, so there is no
+     * stop-the-world clear when it fills: a colliding write past the probe limit simply displaces the entry at
+     * the home slot, and the displaced key resolves again on its next lookup. Every cached value is a pure
+     * function of its key, so displacement can only cost work, never correctness. Entries are published as one
+     * immutable record, which is what keeps a concurrent writer from ever pairing one key with another's value.
+     *
+     * <p>The slot array is installed on the first put, never in the field initializer. One biome source is
+     * constructed per emitted world preset at datapack load, and every create-world screen builds them all, so
+     * eager arrays cost tens of megabytes of tables that nothing ever reads. An empty table answers every get
+     * with a miss, which is the same answer a cold table gives.
+     */
+    private static final class BiomeHolderTable {
+        private static final int SLOTS = 32768;
+        private static final int MASK = SLOTS - 1;
+        private static final int PROBE_LIMIT = 8;
+
+        private volatile AtomicReferenceArray<Entry> table;
+
+        Holder<Biome> get(long key) {
+            AtomicReferenceArray<Entry> slots = table;
+            if (slots == null) {
+                return null;
+            }
+            int home = home(key);
+            for (int probe = 0; probe < PROBE_LIMIT; probe++) {
+                Entry entry = slots.get((home + probe) & MASK);
+                if (entry == null) {
+                    return null;
+                }
+                if (entry.key() == key) {
+                    return entry.value();
+                }
+            }
+            return null;
+        }
+
+        void put(long key, Holder<Biome> value) {
+            AtomicReferenceArray<Entry> slots = table;
+            if (slots == null) {
+                slots = install();
+            }
+            int home = home(key);
+            Entry entry = new Entry(key, value);
+            for (int probe = 0; probe < PROBE_LIMIT; probe++) {
+                int slot = (home + probe) & MASK;
+                Entry existing = slots.get(slot);
+                if (existing == null || existing.key() == key) {
+                    slots.set(slot, entry);
+                    return;
+                }
+            }
+            slots.set(home, entry);
+        }
+
+        private synchronized AtomicReferenceArray<Entry> install() {
+            AtomicReferenceArray<Entry> existing = table;
+            if (existing != null) {
+                return existing;
+            }
+            AtomicReferenceArray<Entry> created = new AtomicReferenceArray<>(SLOTS);
+            table = created;
+            return created;
+        }
+
+        private static int home(long key) {
+            long mixed = key * 0x9E3779B97F4A7C15L;
+            return (int) ((mixed ^ (mixed >>> 32)) & MASK);
+        }
+
+        private record Entry(long key, Holder<Biome> value) {
+        }
+    }
+
     private static final class StructureStateBiomeSource extends BiomeSource {
         private final IrisModdedBiomeSource delegate;
         private final Set<Holder<Biome>> possibleBiomes;
-        private final ConcurrentHashMap<Long, Holder<Biome>> resolvedBiomes = new ConcurrentHashMap<>();
+        private volatile BiomeHolderTable resolvedBiomes = new BiomeHolderTable();
 
         private StructureStateBiomeSource(IrisModdedBiomeSource delegate, Set<Holder<Biome>> possibleBiomes) {
             this.delegate = delegate;
@@ -619,7 +835,7 @@ final class IrisModdedBiomeSource extends BiomeSource {
         }
 
         private void clearCache() {
-            resolvedBiomes.clear();
+            resolvedBiomes = new BiomeHolderTable();
         }
 
         @Override
@@ -635,16 +851,14 @@ final class IrisModdedBiomeSource extends BiomeSource {
         @Override
         public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
             long key = packNoiseKey(x, y, z);
-            Holder<Biome> cached = resolvedBiomes.get(key);
+            BiomeHolderTable cache = resolvedBiomes;
+            Holder<Biome> cached = cache.get(key);
             if (cached != null) {
                 return cached;
             }
             Holder<Biome> resolved = delegate.resolveRequiredStructureBiome(x, y, z);
-            Holder<Biome> existing = resolvedBiomes.putIfAbsent(key, resolved);
-            if (resolvedBiomes.size() > BIOME_CACHE_MAX) {
-                resolvedBiomes.clear();
-            }
-            return existing == null ? resolved : existing;
+            cache.put(key, resolved);
+            return resolved;
         }
 
         @Override

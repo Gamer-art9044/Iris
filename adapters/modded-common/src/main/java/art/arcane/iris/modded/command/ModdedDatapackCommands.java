@@ -23,6 +23,7 @@ import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
+import art.arcane.iris.modded.ModdedServerLevels;
 import art.arcane.volmlib.util.collection.KList;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -107,7 +108,7 @@ public final class ModdedDatapackCommands {
         MinecraftServer server = source.getServer();
         int irisLevels = 0;
         int mismatches = 0;
-        for (ServerLevel level : server.getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             if (!(level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator irisGenerator)) {
                 continue;
             }
@@ -150,7 +151,7 @@ public final class ModdedDatapackCommands {
     private static int install(CommandSourceStack source) {
         MinecraftServer server = source.getServer();
         List<String> written = new ArrayList<>();
-        for (ServerLevel level : server.getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             if (!(level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator irisGenerator)) {
                 continue;
             }

@@ -86,17 +86,23 @@ public final class ModdedServiceManager {
         }
     }
 
+    /**
+     * Shutdown path: every service gets a disable attempt and nothing is rethrown. A throw here would abort the
+     * loader's remaining stop handlers, so failures are logged and the manager still ends up disabled.
+     */
     public synchronized void disableAll() {
         if (!enabled) {
             return;
         }
         Throwable failure = null;
+        int failed = 0;
         ModdedService[] ordered = services.values().toArray(new ModdedService[0]);
         for (int i = ordered.length - 1; i >= 0; i--) {
             ModdedService service = ordered[i];
             try {
                 service.onDisable();
             } catch (Throwable serviceFailure) {
+                failed++;
                 LOGGER.error("Iris service onDisable failed for {}", service.getClass().getName(), serviceFailure);
                 if (failure == null) {
                     failure = serviceFailure;
@@ -105,10 +111,10 @@ public final class ModdedServiceManager {
                 }
             }
         }
-        if (failure != null) {
-            throw new IllegalStateException("One or more Iris services failed to disable", failure);
-        }
         enabled = false;
+        if (failure != null) {
+            LOGGER.error("Iris disabled all services with {} failure(s)", failed, failure);
+        }
     }
 
     synchronized void rollback(Throwable failure) {

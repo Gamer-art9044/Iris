@@ -19,11 +19,11 @@ import static org.junit.Assert.assertTrue;
 
 public class ModdedWorldCheckTest {
     @Test
-    public void coordinatorThreadIsNonDaemon() {
+    public void coordinatorThreadIsDaemonSoItCannotWedgeTheJvm() {
         Thread thread = ModdedWorldCheck.coordinatorThread(() -> {
         });
 
-        assertFalse(thread.isDaemon());
+        assertTrue(thread.isDaemon());
     }
 
     @Test
@@ -33,7 +33,7 @@ public class ModdedWorldCheckTest {
         String auditSource = Files.readString(
                 sourceRoot.resolve("art/arcane/iris/modded/WorldCheckStructureAudit.java"));
         int preparationSubmit = source.indexOf(
-                "WorldCheckPreparation preparation = serverRef.submit(() -> run(serverRef)).join();");
+                "WorldCheckPreparation preparation = serverRef.submit(() -> run(serverRef))");
         int completionSubmit = source.indexOf(
                 "exitCode = serverRef.submit(() -> runAndRequestStop(", preparationSubmit);
         int completionMethod = source.indexOf("private static boolean completeWorldCheck");

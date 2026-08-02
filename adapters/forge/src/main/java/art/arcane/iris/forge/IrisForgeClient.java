@@ -47,8 +47,11 @@ public final class IrisForgeClient {
         ClientPlayerNetworkEvent.LoggingIn.BUS.addListener((ClientPlayerNetworkEvent.LoggingIn event) -> IrisClient.onWorldJoin());
         ClientPlayerNetworkEvent.LoggingOut.BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> IrisClient.onDisconnect());
         InputEvent.Key.BUS.addListener((InputEvent.Key event) -> IrisClientKeybinds.pollToggle());
-        TickEvent.ClientTickEvent.Post.BUS.addListener(
-                (TickEvent.ClientTickEvent.Post event) -> IrisClient.tick());
+        TickEvent.ClientTickEvent.Post.BUS.addListener((TickEvent.ClientTickEvent.Post event) -> {
+            IrisClientKeybinds.pollToggle();
+            IrisClient.tick();
+            IrisClientHud.tick();
+        });
     }
 
     private static void sendToServer(byte[] frame) {

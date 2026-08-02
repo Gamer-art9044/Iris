@@ -7,6 +7,7 @@ import art.arcane.iris.spi.PlatformBlockProperty;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformEntityType;
 import art.arcane.iris.spi.PlatformItem;
+import art.arcane.iris.spi.PlatformNumericRange;
 import art.arcane.iris.spi.PlatformRegistries;
 import org.junit.Test;
 
@@ -15,6 +16,7 @@ import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class ContentKeyValidatorTest {
@@ -22,7 +24,56 @@ public class ContentKeyValidatorTest {
         return new FakeRegistries(
                 List.of("minecraft:stone", "minecraft:cobblestone", "minecraft:oak_log", "minecraft:grass_block"),
                 List.of("minecraft:diamond", "minecraft:wooden_pickaxe", "minecraft:stone_pickaxe"),
-                List.of("minecraft:zombie", "minecraft:creeper"));
+                List.of("minecraft:zombie", "minecraft:creeper"),
+                Map.of());
+    }
+
+    private static PlatformRegistries registriesWithProperties() {
+        return new FakeRegistries(
+                List.of("minecraft:stone", "minecraft:oak_log", "create:cogwheel"),
+                List.of(),
+                List.of(),
+                Map.of(
+                        "minecraft:oak_log", List.of(
+                                new PlatformBlockProperty("axis", "string", "y", List.of("x", "y", "z"), null),
+                                new PlatformBlockProperty("waterlogged", "boolean", false, List.of(true, false), null)),
+                        // The Bukkit shape for a numeric property: no enumerable values, bounds instead. Modded
+                        // enumerates 0..15 into allowedValues, so both must be validated the same way.
+                        "minecraft:water", List.of(
+                                new PlatformBlockProperty("level", "integer", 0, List.of(),
+                                        new PlatformNumericRange(0, 15, false, false)),
+                                new PlatformBlockProperty("custom", "string", "a", List.of(), null)),
+                        "create:cogwheel", List.of()));
+    }
+
+    @Test
+    public void validateBlockStatePropertiesFlagsValueAboveDeclaredRange() {
+        List<String> messages = ContentKeyValidator.validateBlockStateProperties(registriesWithProperties(),
+                List.of("minecraft:water[level=99]"));
+        assertEquals(1, messages.size());
+        assertTrue(messages.get(0), messages.get(0).contains("does not accept '99'"));
+        assertTrue(messages.get(0), messages.get(0).contains("at least 0"));
+        assertTrue(messages.get(0), messages.get(0).contains("at most 15"));
+    }
+
+    @Test
+    public void validateBlockStatePropertiesFlagsNonNumericValueForNumericProperty() {
+        List<String> messages = ContentKeyValidator.validateBlockStateProperties(registriesWithProperties(),
+                List.of("minecraft:water[level=full]"));
+        assertEquals(1, messages.size());
+        assertTrue(messages.get(0), messages.get(0).contains("is numeric and does not accept 'full'"));
+    }
+
+    @Test
+    public void validateBlockStatePropertiesAcceptsValueInsideDeclaredRange() {
+        assertTrue(ContentKeyValidator.validateBlockStateProperties(registriesWithProperties(),
+                List.of("minecraft:water[level=0]", "minecraft:water[level=15]", "minecraft:water[level=7]")).isEmpty());
+    }
+
+    @Test
+    public void validateBlockStatePropertiesStaysSilentWithoutValuesOrRange() {
+        assertTrue(ContentKeyValidator.validateBlockStateProperties(registriesWithProperties(),
+                List.of("minecraft:water[custom=anything]")).isEmpty());
     }
 
     @Test
@@ -89,7 +140,74 @@ public class ContentKeyValidatorTest {
         assertTrue(ContentKeyValidator.validate(null, List.of("minecraft:whatever"), List.of(), List.of()).isEmpty());
     }
 
-    private record FakeRegistries(List<String> blocks, List<String> items, List<String> entities) implements PlatformRegistries {
+    @Test
+    public void validateBlockStatePropertiesFlagsUnknownPropertyWithSuggestion() {
+        List<String> messages = ContentKeyValidator.validateBlockStateProperties(registriesWithProperties(),
+                List.of("minecraft:oak_log[axi=y]"));
+        assertEquals(1, messages.size());
+        assertTrue(messages.get(0).contains("has no property 'axi'"));
+        assertTrue(messages.get(0).contains("did you mean 'axis'"));
+    }
+
+    @Test
+    public void validateBlockStatePropertiesFlagsDisallowedValue() {
+        List<String> messages = ContentKeyValidator.validateBlockStateProperties(registriesWithProperties(),
+                List.of("minecraft:oak_log[axis=q]"));
+        assertEquals(1, messages.size());
+        assertTrue(messages.get(0).contains("does not accept 'q'"));
+        assertTrue(messages.get(0).contains("allowed: x, y, z"));
+    }
+
+    @Test
+    public void validateBlockStatePropertiesAcceptsValidState() {
+        assertTrue(ContentKeyValidator.validateBlockStateProperties(registriesWithProperties(),
+                List.of("minecraft:oak_log[axis=z,waterlogged=true]")).isEmpty());
+    }
+
+    @Test
+    public void validateBlockStatePropertiesSkipsBlocksWithoutDeclaredProperties() {
+        assertTrue(ContentKeyValidator.validateBlockStateProperties(registriesWithProperties(),
+                List.of("create:cogwheel[axis=y]", "minecraft:unknown_block[axis=y]")).isEmpty());
+    }
+
+    @Test
+    public void validateBlockStatePropertiesDedupsRepeatedIssue() {
+        List<String> messages = ContentKeyValidator.validateBlockStateProperties(registriesWithProperties(),
+                List.of("minecraft:oak_log[axis=q]", "minecraft:oak_log[axis=q]"));
+        assertEquals(1, messages.size());
+    }
+
+    @Test
+    public void validateBlockStatePropertiesReturnsEmptyWithoutPropertyData() {
+        assertTrue(ContentKeyValidator.validateBlockStateProperties(registries(),
+                List.of("minecraft:oak_log[axi=y]")).isEmpty());
+    }
+
+    @Test
+    public void propertySectionOfExtractsStateBody() {
+        assertEquals("axis=y", ContentKeyValidator.propertySectionOf("minecraft:oak_log[axis=y]"));
+        assertNull(ContentKeyValidator.propertySectionOf("minecraft:oak_log"));
+    }
+
+    @Test
+    public void strictContentFollowsSystemProperty() {
+        String previous = System.getProperty("iris.strictContent");
+        try {
+            System.setProperty("iris.strictContent", "true");
+            assertTrue(ContentKeyValidator.strictContent());
+            System.setProperty("iris.strictContent", "false");
+            assertFalse(ContentKeyValidator.strictContent());
+        } finally {
+            if (previous == null) {
+                System.clearProperty("iris.strictContent");
+            } else {
+                System.setProperty("iris.strictContent", previous);
+            }
+        }
+    }
+
+    private record FakeRegistries(List<String> blocks, List<String> items, List<String> entities,
+                                  Map<String, List<PlatformBlockProperty>> properties) implements PlatformRegistries {
         @Override
         public PlatformBlockState block(String key) {
             return null;
@@ -172,7 +290,7 @@ public class ContentKeyValidatorTest {
 
         @Override
         public Map<String, List<PlatformBlockProperty>> blockStateProperties() {
-            return Map.of();
+            return properties;
         }
     }
 }

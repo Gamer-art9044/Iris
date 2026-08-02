@@ -5,10 +5,14 @@
   "name": "Iris",
   "description": "Iris World Generation Engine (Fabric adapter - native chunk generator, explicit Iris world datapack workflow, engine lifecycle)",
   "authors": ["Arcane Arts (Volmit Software)"],
+  "contributors": ["cyberpwn", "NextdoorPsycho", "Vatuu"],
   "contact": {
+    "homepage": "https://docs.volmit.com/iris/",
+    "issues": "https://github.com/VolmitSoftware/Iris/issues",
     "sources": "https://github.com/VolmitSoftware/Iris"
   },
   "license": "GPL-3.0",
+  "icon": "assets/irisworldgen/icon.png",
   "environment": "*",
   "accessWidener": "irisworldgen.accesswidener",
   "mixins": [

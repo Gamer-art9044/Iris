@@ -23,7 +23,6 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.protocol.IrisMessage;
-import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.protocol.IrisProtocolServer;
 import art.arcane.iris.core.pregenerator.IrisPregenerator;
 import art.arcane.iris.core.pregenerator.PregenApiPhase;
@@ -106,8 +105,11 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         min = new Position2(Integer.MAX_VALUE, Integer.MAX_VALUE);
         service = Executors.newVirtualThreadPerTaskExecutor();
 
-        if (IrisSettings.get().getGui().isUseServerLaunchedGuis() && task.isGui()) {
-            open();
+        switch (GuiHost.serverGuiLaunch(task.isGui())) {
+            case OPEN -> open();
+            case UNAVAILABLE -> IrisLogging.info("Pregen GUI unavailable (headless), continuing");
+            case DISABLED -> {
+            }
         }
 
         worker = new Thread(() -> {

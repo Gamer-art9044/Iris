@@ -1,5 +1,6 @@
 package art.arcane.iris.client.mixin;
 
+import art.arcane.iris.modded.ModdedMixinFlags;
 import art.arcane.iris.modded.ModdedWorldgenIds;
 import net.minecraft.client.gui.screens.worldselection.WorldCreationUiState;
 import net.minecraft.core.Holder;
@@ -15,6 +16,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.Optional;
 
+/**
+ * CLIENT DIST ONLY. Registered from irisworldgen.client.mixins.json, whose "client" block already restricts
+ * application to the client dist.
+ */
 @Mixin(WorldCreationUiState.WorldTypeEntry.class)
 public class IrisWorldTypeEntryMixin {
     @Shadow
@@ -23,6 +28,7 @@ public class IrisWorldTypeEntryMixin {
 
     @Inject(method = "describePreset", at = @At("HEAD"), cancellable = true)
     private void iris$describePreset(CallbackInfoReturnable<Component> info) {
+        ModdedMixinFlags.markWorldTypeEntry();
         Optional<ResourceKey<WorldPreset>> key = preset == null
                 ? Optional.empty()
                 : preset.unwrapKey();

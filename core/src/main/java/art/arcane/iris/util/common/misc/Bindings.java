@@ -86,9 +86,15 @@ public class Bindings {
     }
 
 
+    // bstats.org plugin id; 0 disables submission until the id is assigned
+    private static final int BSTATS_PLUGIN_ID = 0;
+
     public static void setupBstats(VolmitPlugin plugin) {
+        if (BSTATS_PLUGIN_ID <= 0) {
+            return;
+        }
         J.s(() -> {
-            var metrics = new Metrics(plugin, 24220);
+            var metrics = new Metrics(plugin, BSTATS_PLUGIN_ID);
             metrics.addCustomChart(new SingleLineChart("custom_dimensions", () -> Bukkit.getWorlds()
                     .stream()
                     .filter(IrisToolbelt::isIrisWorld)

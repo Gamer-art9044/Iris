@@ -27,10 +27,8 @@ import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.project.interpolation.IrisInterpolation;
-import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CellGenerator;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -254,10 +252,5 @@ public class IrisGenerator extends IrisRegistrant {
     @Override
     public String getTypeName() {
         return "Generator";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
-
     }
 }

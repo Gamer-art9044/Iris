@@ -49,6 +49,17 @@ public class IrisBiomeCustomParticle {
     @Desc("The rarity")
     private int rarity = 35;
 
+    /**
+     * The authored particle key, normalized to a namespaced key. Platform-neutral: datapack
+     * emission must use this and never {@link #getParticle()}, which only resolves on Bukkit.
+     */
+    public String getParticleKey() {
+        if (particle == null || particle.isEmpty()) {
+            return null;
+        }
+        return particle.indexOf(':') >= 0 ? particle : "minecraft:" + particle;
+    }
+
     public Particle getParticle() {
         return particleResolved.aquire(() -> {
             NamespacedKey namespacedKey = NamespacedKey.fromString(particle);

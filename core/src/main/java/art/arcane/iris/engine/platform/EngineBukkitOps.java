@@ -136,9 +136,8 @@ public final class EngineBukkitOps {
                     Block block = c.getBlock(x & 15, worldY, z & 15);
                     if (!TileData.setTileState(block, v.getData())) {
                         NamespacedKey blockTypeKey = KeyedType.getKey(block.getType());
-                        NamespacedKey tileTypeKey = KeyedType.getKey(v.getData().getMaterial());
                         String blockType = blockTypeKey == null ? block.getType().name() : blockTypeKey.toString();
-                        String tileType = tileTypeKey == null ? v.getData().getMaterial().name() : tileTypeKey.toString();
+                        String tileType = v.getData().getMaterialKey();
                         IrisLogging.warn("Failed to set tile entity data at [%d %d %d | %s] for tile %s!", block.getX(), block.getY(), block.getZ(), blockType, tileType);
                     }
                 });

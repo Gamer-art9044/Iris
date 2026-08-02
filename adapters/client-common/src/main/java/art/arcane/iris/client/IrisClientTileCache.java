@@ -3,6 +3,7 @@ package art.arcane.iris.client;
 import art.arcane.iris.spi.protocol.IrisMessage;
 import art.arcane.iris.spi.protocol.IrisMessageCodec;
 import art.arcane.iris.spi.protocol.IrisProtocol;
+import art.arcane.iris.spi.protocol.ProtocolException;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -14,7 +15,10 @@ import java.util.Set;
 import java.util.function.LongSupplier;
 
 public final class IrisClientTileCache {
-    private static final int MAX_CACHED_TILES = 256;
+    /** Enough for a 1080p viewport plus a ring of prefetch. 128x128 ARGB tiles are 64KB each. */
+    static final int DEFAULT_MAX_CACHED_TILES = 256;
+    /** Ceiling for {@link #ensureCapacity(int)}: 4K at scale 1 needs ~660 tiles, so ~64MB of tile images. */
+    static final int ABSOLUTE_MAX_CACHED_TILES = 2048;
     private static final long REQUEST_RETRY_MILLIS = 3000L;
     private static final int REQUESTS_PER_SECOND = IrisProtocol.MAX_VISION_TILE_REQUESTS_PER_SECOND;
 
@@ -25,17 +29,20 @@ public final class IrisClientTileCache {
     private final Map<IrisTileKey, Long> pending;
     private final Deque<IrisTileKey> queue;
     private final Set<IrisTileKey> queued;
+    private int capacity;
     private long windowStartMillis;
     private int sentInWindow;
+    private long droppedMalformed;
 
     public IrisClientTileCache(ClientPacketSink sink, LongSupplier clock) {
         this.sink = sink;
         this.clock = clock;
         this.assembler = new IrisTileAssembler();
+        this.capacity = DEFAULT_MAX_CACHED_TILES;
         this.cache = new LinkedHashMap<>(64, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<IrisTileKey, IrisTileImage> eldest) {
-                return size() > MAX_CACHED_TILES;
+                return size() > capacity;
             }
         };
         this.pending = new HashMap<>();
@@ -43,10 +50,25 @@ public final class IrisClientTileCache {
         this.queued = new HashSet<>();
         this.windowStartMillis = 0L;
         this.sentInWindow = 0;
+        this.droppedMalformed = 0L;
+    }
+
+    /**
+     * Raises the retained-tile budget to cover what the viewport can show at once. Without this a 4K screen at
+     * scale 1 evicts tiles it is still drawing, so every frame re-requests them and the map never fills.
+     */
+    public synchronized void ensureCapacity(int visibleTiles) {
+        capacity = Math.max(DEFAULT_MAX_CACHED_TILES, Math.min(ABSOLUTE_MAX_CACHED_TILES, visibleTiles));
     }
 
     public synchronized void onVisionTile(IrisMessage.VisionTile tile) {
-        IrisTileImage image = assembler.add(tile);
+        IrisTileImage image;
+        try {
+            image = assembler.add(tile);
+        } catch (ProtocolException malformed) {
+            droppedMalformed++;
+            return;
+        }
         if (image == null) {
             return;
         }
@@ -58,6 +80,10 @@ public final class IrisClientTileCache {
 
     public synchronized IrisTileImage get(IrisTileKey key) {
         return cache.get(key);
+    }
+
+    public synchronized long droppedMalformedCount() {
+        return droppedMalformed;
     }
 
     public synchronized void resetRequestQueue() {
@@ -84,6 +110,9 @@ public final class IrisClientTileCache {
         if (now - windowStartMillis >= 1000L) {
             windowStartMillis = now;
             sentInWindow = 0;
+            // An in-flight marker is only meaningful for one retry window. Sweeping it here keeps the map
+            // bounded by tiles requested in the last few seconds instead of by every tile ever panned over.
+            pending.values().removeIf((Long requestedAt) -> now - requestedAt >= REQUEST_RETRY_MILLIS);
         }
         while (sentInWindow < REQUESTS_PER_SECOND && !queue.isEmpty()) {
             IrisTileKey key = queue.pollFirst();
@@ -107,6 +136,7 @@ public final class IrisClientTileCache {
         pending.clear();
         queue.clear();
         queued.clear();
+        capacity = DEFAULT_MAX_CACHED_TILES;
         sentInWindow = 0;
         windowStartMillis = 0L;
     }

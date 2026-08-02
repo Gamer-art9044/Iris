@@ -56,18 +56,26 @@ public final class ModdedPackInstaller {
         synchronized (installLock) {
             File packs = configDir.resolve("irisworldgen").resolve("packs").toFile();
             try {
-                if (PackDownloader.isDefaultOverworld(pack)) {
-                    return PackDownloader.downloadDefaultOverworld(
-                            packs, forceOverwrite, feedback) != null;
+                boolean installed = PackDownloader.isDefaultOverworld(pack)
+                        ? PackDownloader.downloadDefaultOverworld(packs, forceOverwrite, feedback) != null
+                        : PackDownloader.download(
+                                packs,
+                                "IrisDimensions/" + pack,
+                                branch,
+                                forceOverwrite,
+                                false,
+                                feedback) != null;
+                if (installed) {
+                    // Pack-install completion is one of the four forced-datapack regeneration triggers; every
+                    // install call site already runs off the server thread, so regenerate inline here. A
+                    // regeneration failure must never turn a successful install into a failed one.
+                    try {
+                        ModdedForcedDatapack.regenerateIfStale("pack install " + pack);
+                    } catch (Throwable regenerationFailure) {
+                        LOGGER.error("Iris installed pack '{}' but could not regenerate the forced datapack", pack, regenerationFailure);
+                    }
                 }
-                return PackDownloader.download(
-                        packs,
-                        "IrisDimensions/" + pack,
-                        branch,
-                        forceOverwrite,
-                        false,
-                        feedback
-                ) != null;
+                return installed;
             } catch (IOException error) {
                 LOGGER.error("Iris pack download failed for IrisDimensions/{} ({})", pack, branch, error);
                 feedback.accept(IrisLanguage.plain(

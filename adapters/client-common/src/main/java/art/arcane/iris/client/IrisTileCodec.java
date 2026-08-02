@@ -1,8 +1,11 @@
 package art.arcane.iris.client;
 
+import art.arcane.iris.spi.protocol.ProtocolException;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
@@ -17,36 +20,43 @@ public final class IrisTileCodec {
     private IrisTileCodec() {
     }
 
-    public static IrisTileImage decode(byte[] deflatedBlob) {
+    /**
+     * Decodes an assembled tile blob.
+     *
+     * @return null when {@code deflatedBlob} is null or empty - nothing to decode is not an error
+     * @throws ProtocolException when the blob is present but malformed: a corrupt or stalled deflate stream, an
+     *                           oversized payload, bad dimensions, an unknown pixel mode, a bad palette or a
+     *                           truncated pixel run. Callers drop the tile and count it; the wire is untrusted.
+     */
+    public static IrisTileImage decode(byte[] deflatedBlob) throws ProtocolException {
         if (deflatedBlob == null || deflatedBlob.length == 0) {
             return null;
         }
         byte[] raw = inflate(deflatedBlob);
-        if (raw == null) {
-            return null;
-        }
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(raw))) {
             int width = in.readInt();
             int height = in.readInt();
             if (width <= 0 || height <= 0 || width > MAX_DIMENSION || height > MAX_DIMENSION) {
-                return null;
+                throw new ProtocolException("vision tile dimensions " + width + "x" + height + " out of range");
             }
             int mode = in.readUnsignedByte();
             int[] argb = new int[width * height];
             return switch (mode) {
                 case MODE_PALETTE -> decodePalette(in, width, height, argb);
                 case MODE_RAW_RGB -> decodeRaw(in, width, height, argb);
-                default -> null;
+                default -> throw new ProtocolException("unknown vision tile mode " + mode);
             };
+        } catch (EOFException truncated) {
+            throw new ProtocolException("vision tile blob truncated");
         } catch (IOException failure) {
-            return null;
+            throw new ProtocolException("vision tile blob unreadable: " + failure.getMessage());
         }
     }
 
-    private static IrisTileImage decodePalette(DataInputStream in, int width, int height, int[] argb) throws IOException {
+    private static IrisTileImage decodePalette(DataInputStream in, int width, int height, int[] argb) throws IOException, ProtocolException {
         int paletteSize = in.readInt();
         if (paletteSize <= 0 || paletteSize > 256) {
-            return null;
+            throw new ProtocolException("vision tile palette size " + paletteSize + " out of range");
         }
         int[] palette = new int[paletteSize];
         for (int index = 0; index < paletteSize; index++) {
@@ -58,7 +68,7 @@ public final class IrisTileCodec {
         for (int pixel = 0; pixel < argb.length; pixel++) {
             int paletteIndex = in.readUnsignedByte();
             if (paletteIndex >= paletteSize) {
-                return null;
+                throw new ProtocolException("vision tile palette index " + paletteIndex + " beyond size " + paletteSize);
             }
             argb[pixel] = palette[paletteIndex];
         }
@@ -75,7 +85,7 @@ public final class IrisTileCodec {
         return new IrisTileImage(width, height, argb);
     }
 
-    private static byte[] inflate(byte[] input) {
+    private static byte[] inflate(byte[] input) throws ProtocolException {
         Inflater inflater = new Inflater();
         inflater.setInput(input);
         ByteArrayOutputStream out = new ByteArrayOutputStream(Math.max(64, input.length * 2));
@@ -84,17 +94,23 @@ public final class IrisTileCodec {
             while (!inflater.finished()) {
                 int produced = inflater.inflate(buffer);
                 if (produced == 0) {
-                    if (inflater.finished() || inflater.needsInput() || inflater.needsDictionary()) {
+                    if (inflater.finished()) {
                         break;
                     }
+                    // needsInput here means the stream ended mid-member; needsDictionary means it wants a
+                    // preset dictionary the encoder never uses. Either way there is no more progress to make,
+                    // and looping on a zero-progress inflater spins a render thread forever.
+                    throw new ProtocolException(inflater.needsDictionary()
+                            ? "vision tile stream wants a preset dictionary"
+                            : "vision tile stream ended before the deflate member finished");
                 }
                 if (out.size() + produced > MAX_DECODED_BYTES) {
-                    return null;
+                    throw new ProtocolException("vision tile inflates beyond " + MAX_DECODED_BYTES + " bytes");
                 }
                 out.write(buffer, 0, produced);
             }
         } catch (DataFormatException malformed) {
-            return null;
+            throw new ProtocolException("vision tile stream malformed: " + malformed.getMessage());
         } finally {
             inflater.end();
         }

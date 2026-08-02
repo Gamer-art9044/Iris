@@ -22,16 +22,32 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.volmlib.util.io.IO;
 
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 
 /**
  * Download cache helpers over the platform data folder.
+ *
+ * <p>Every request is bounded: URL.openStream had no connect or read timeout, so a hung mirror parked the
+ * calling thread (a command thread, or the boot pack prefetch) forever.
  */
 public final class WebCache {
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10L);
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(120L);
+    private static final int BUFFER_SIZE = 8192;
+
+    private static volatile HttpClient client;
+
     private WebCache() {
     }
 
@@ -44,16 +60,7 @@ public final class WebCache {
         File f = IrisPlatforms.get().dataFile("cache", h.substring(0, 2), h.substring(3, 5), h);
 
         if (!f.exists()) {
-            try (BufferedInputStream in = new BufferedInputStream(URI.create(url).toURL().openStream()); FileOutputStream fileOutputStream = new FileOutputStream(f)) {
-                byte[] dataBuffer = new byte[1024];
-                int bytesRead;
-                while ((bytesRead = in.read(dataBuffer, 0, 1024)) != -1) {
-                    fileOutputStream.write(dataBuffer, 0, bytesRead);
-                    IrisLogging.debug("Aquiring " + name);
-                }
-            } catch (IOException e) {
-                IrisLogging.reportError(e);
-            }
+            download(name, url, f);
         }
 
         return f.exists() ? f : null;
@@ -63,35 +70,76 @@ public final class WebCache {
         String h = IO.hash(name + "*" + url);
         File f = IrisPlatforms.get().dataFile("cache", h.substring(0, 2), h.substring(3, 5), h);
 
-        try (BufferedInputStream in = new BufferedInputStream(URI.create(url).toURL().openStream()); FileOutputStream fileOutputStream = new FileOutputStream(f)) {
-            byte[] dataBuffer = new byte[1024];
-            int bytesRead;
-            while ((bytesRead = in.read(dataBuffer, 0, 1024)) != -1) {
-                fileOutputStream.write(dataBuffer, 0, bytesRead);
-            }
+        if (!download(name, url, f)) {
+            return "";
+        }
+        try {
+            return Files.readString(f.toPath(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             IrisLogging.reportError(e);
+            return "";
         }
-
-        return "";
     }
 
     public static File getNonCachedFile(String name, String url) {
         String h = IO.hash(name + "*" + url);
         File f = IrisPlatforms.get().dataFile("cache", h.substring(0, 2), h.substring(3, 5), h);
         IrisLogging.debug("Download " + name + " -> " + url);
-        try (BufferedInputStream in = new BufferedInputStream(URI.create(url).toURL().openStream()); FileOutputStream fileOutputStream = new FileOutputStream(f)) {
-            byte[] dataBuffer = new byte[1024];
-            int bytesRead;
-            while ((bytesRead = in.read(dataBuffer, 0, 1024)) != -1) {
-                fileOutputStream.write(dataBuffer, 0, bytesRead);
-            }
+        download(name, url, f);
+        return f;
+    }
 
-            fileOutputStream.flush();
+    private static boolean download(String name, String url, File target) {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(REQUEST_TIMEOUT)
+                .GET()
+                .build();
+        try {
+            HttpResponse<InputStream> response = client()
+                    .send(request, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() / 100 != 2) {
+                try (InputStream discard = response.body()) {
+                    discard.readAllBytes();
+                }
+                IrisLogging.reportError(new IOException("HTTP " + response.statusCode()
+                        + " downloading " + name + " from " + url));
+                return false;
+            }
+            try (InputStream in = response.body();
+                 OutputStream out = Files.newOutputStream(target.toPath(),
+                         StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                         StandardOpenOption.TRUNCATE_EXISTING)) {
+                byte[] buffer = new byte[BUFFER_SIZE];
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, read);
+                }
+                out.flush();
+            }
+            return true;
         } catch (IOException e) {
             IrisLogging.reportError(e);
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            IrisLogging.reportError(e);
+            return false;
         }
+    }
 
-        return f;
+    private static HttpClient client() {
+        HttpClient current = client;
+        if (current != null) {
+            return current;
+        }
+        synchronized (WebCache.class) {
+            if (client == null) {
+                client = HttpClient.newBuilder()
+                        .connectTimeout(CONNECT_TIMEOUT)
+                        .followRedirects(HttpClient.Redirect.NORMAL)
+                        .build();
+            }
+            return client;
+        }
     }
 }

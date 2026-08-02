@@ -75,7 +75,10 @@ public final class ForgeProtocolNetworking {
 
         @Override
         public boolean canReceive(ServerPlayer player) {
-            return true;
+            // Forge tracks the channels the remote side announced during handshake. Without this the
+            // server pushes Iris payloads at vanilla clients, which drop them as unknown custom
+            // payloads. Mirrors the NeoForge ICommonPacketListener.hasChannel check.
+            return channel.isRemotePresent(player.connection.getConnection());
         }
 
         @Override

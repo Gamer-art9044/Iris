@@ -42,6 +42,14 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
+/**
+ * Bukkit-only pre-key tile format. Unreachable from the modded loaders: every entry point is
+ * either Bukkit-typed ({@link #fromBukkit(BlockState)}, reached only from
+ * {@link TileData#getTileState(Block, boolean)} and the Bukkit structure importer) or sits behind
+ * the {@code BUKKIT_PRESENT} short-circuit in {@link TileData#read(DataInputStream)}, which hands
+ * off to the bound platform reader before this class is ever referenced. The nested handler types
+ * therefore keep their raw Bukkit fields.
+ */
 @ToString
 @EqualsAndHashCode(callSuper = false)
 public class LegacyTileData extends TileData {
@@ -87,7 +95,12 @@ public class LegacyTileData extends TileData {
     }
 
     @Override
-    public @NonNull Material getMaterial() {
+    public @NonNull String getMaterialKey() {
+        return TileData.materialKey(handler.getMaterial());
+    }
+
+    @Override
+    public Material resolveMaterial() {
         return handler.getMaterial();
     }
 

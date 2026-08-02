@@ -20,8 +20,6 @@ package art.arcane.iris.core.loader;
 
 import com.google.gson.GsonBuilder;
 import art.arcane.iris.spi.IrisLogging;
-import art.arcane.volmlib.util.json.JSONObject;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -54,6 +52,4 @@ public abstract class IrisRegistrant {
 
         return getLoadFile();
     }
-
-    public abstract void scanForErrors(JSONObject p, VolmitSender sender);
 }

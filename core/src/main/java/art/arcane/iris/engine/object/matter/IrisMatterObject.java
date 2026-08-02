@@ -5,10 +5,8 @@ import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.util.project.matter.IrisMatterContext;
 import art.arcane.iris.util.project.matter.IrisMatterSupport;
-import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.matter.IrisMatter;
 import art.arcane.volmlib.util.matter.Matter;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -57,10 +55,5 @@ public class IrisMatterObject extends IrisRegistrant {
     @Override
     public String getTypeName() {
         return "Matter";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
-
     }
 }

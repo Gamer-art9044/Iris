@@ -102,6 +102,35 @@ public class IrisBiomeCustom {
     @Desc("The color of foliage (hex format). Leave blank / don't define to not change")
     private String foliageColor = "";
 
+    /**
+     * The tags this custom biome is installed into: the pack author's own {@code tags} plus the direct tag
+     * membership of the Iris biome's vanilla derivative. Inheriting the derivative's tags is what makes
+     * {@code #minecraft:is_overworld} and every mod-authored tag selector resolve against Iris custom biomes;
+     * without it a custom biome sits in no tag at all and mod content that gates on tags silently never runs.
+     *
+     * <p>Author tags win order but duplicates collapse: the tag files are written through a sorted set.
+     * Structure tags ({@code has_structure/*}) are deliberately not inherited - native structure placement
+     * resolves through the biome's structure derivative, so injecting them would place a structure twice.
+     *
+     * @param vanillaDerivativeKey the owning Iris biome's vanilla derivative key, may be null
+     */
+    public KList<String> getEffectiveTags(String vanillaDerivativeKey) {
+        KList<String> resolved = new KList<>();
+        KList<String> authored = getTags();
+
+        if (authored != null) {
+            for (String tag : authored) {
+                resolved.addIfMissing(tag);
+            }
+        }
+
+        for (String inherited : IrisVanillaBiomeTags.tagsFor(vanillaDerivativeKey)) {
+            resolved.addIfMissing(inherited);
+        }
+
+        return resolved;
+    }
+
     public String generateJson(IDataFixer fixer) {
         JSONObject effects = new JSONObject();
         effects.put("sky_color", parseColor(getSkyColor()));
@@ -110,12 +139,19 @@ public class IrisBiomeCustom {
         effects.put("water_fog_color", parseColor(getWaterFogColor()));
 
         if (ambientParticle != null) {
-            JSONObject particle = new JSONObject();
-            JSONObject po = new JSONObject();
-            po.put("type", ambientParticle.getParticle().name().toLowerCase());
-            particle.put("options", po);
-            particle.put("probability", 1f/ambientParticle.getRarity());
-            effects.put("particle", particle);
+            // Never touch IrisBiomeCustomParticle.getParticle() here: it returns a Bukkit Particle
+            // and this method also runs during modded datapack staging.
+            String particleKey = ambientParticle.getParticleKey();
+            if (particleKey == null) {
+                IrisLogging.warn("Custom biome " + getId() + " declares an ambientParticle with no particle key, skipping it");
+            } else {
+                JSONObject particle = new JSONObject();
+                JSONObject po = new JSONObject();
+                po.put("type", particleKey);
+                particle.put("options", po);
+                particle.put("probability", 1f / ambientParticle.getRarity());
+                effects.put("particle", particle);
+            }
         }
 
         if (!getGrassColor().isEmpty()) {

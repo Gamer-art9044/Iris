@@ -41,6 +41,8 @@ public final class IrisProtocolServer {
     private final AtomicLong capabilityRejected;
     private final AtomicLong noEngineDrops;
     private final AtomicLong cursorInfoServed;
+    private final AtomicLong cursorRateLimited;
+    private final AtomicLong cursorOutOfBounds;
     private final AtomicLong visionTileForwarded;
     private final AtomicLong visionRateLimited;
     private final AtomicLong pregenRegionDeltasBroadcast;
@@ -67,6 +69,8 @@ public final class IrisProtocolServer {
         this.capabilityRejected = new AtomicLong(0L);
         this.noEngineDrops = new AtomicLong(0L);
         this.cursorInfoServed = new AtomicLong(0L);
+        this.cursorRateLimited = new AtomicLong(0L);
+        this.cursorOutOfBounds = new AtomicLong(0L);
         this.visionTileForwarded = new AtomicLong(0L);
         this.visionRateLimited = new AtomicLong(0L);
         this.pregenRegionDeltasBroadcast = new AtomicLong(0L);
@@ -259,6 +263,14 @@ public final class IrisProtocolServer {
         return cursorInfoServed.get();
     }
 
+    public long cursorRateLimitedCount() {
+        return cursorRateLimited.get();
+    }
+
+    public long cursorOutOfBoundsCount() {
+        return cursorOutOfBounds.get();
+    }
+
     public long visionTileForwardedCount() {
         return visionTileForwarded.get();
     }
@@ -303,6 +315,10 @@ public final class IrisProtocolServer {
     private void onClientHello(IrisSession session, IrisMessage.ClientHello clientHello) {
         if (clientHello.protocolVersion() != IrisProtocol.PROTOCOL_VERSION) {
             versionMismatches.incrementAndGet();
+            // Answer anyway with our version so the client lands in INCOMPATIBLE instead of retrying until it
+            // gives up and reports "server does not run Iris". The session stays AWAITING_HELLO and every
+            // later frame from it is dropped by dispatch.
+            session.send(new IrisMessage.ServerHello(IrisProtocol.PROTOCOL_VERSION, serverCapabilities, serverBrand, irisActive));
             return;
         }
         session.markReady(clientHello.protocolVersion(), clientHello.capabilities());
@@ -312,6 +328,14 @@ public final class IrisProtocolServer {
     private void onCursorInfoRequest(IrisSession session, IrisMessage.CursorInfoRequest request) {
         if (!session.hasCapability(IrisProtocol.CAPABILITY_CURSOR)) {
             capabilityRejected.incrementAndGet();
+            return;
+        }
+        if (outOfWorldBounds(request.blockX()) || outOfWorldBounds(request.blockZ())) {
+            cursorOutOfBounds.incrementAndGet();
+            return;
+        }
+        if (!session.allowCursorInfo(clock.getAsLong())) {
+            cursorRateLimited.incrementAndGet();
             return;
         }
         EngineResolver resolver = engineResolver;
@@ -344,5 +368,9 @@ public final class IrisProtocolServer {
         }
         handler.handle(session.id(), request.tileX(), request.tileZ(), request.zoomLevel());
         visionTileForwarded.incrementAndGet();
+    }
+
+    private static boolean outOfWorldBounds(int coordinate) {
+        return coordinate > IrisProtocol.MAX_QUERY_BLOCK_COORDINATE || coordinate < -IrisProtocol.MAX_QUERY_BLOCK_COORDINATE;
     }
 }

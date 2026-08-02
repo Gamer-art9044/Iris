@@ -459,9 +459,9 @@ Release decision:
 - [x] Headless classload validation scans all 1,166 compiled core classes, including all 353 nested classfiles;
       331 nested classes initialize without server APIs and the remaining 22 match exact reviewed class and
       dependency-namespace entries.
-- [x] Modded worldcheck uses a non-daemon coordinator, stops the server before exiting, and returns nonzero
-      for internal failure, timeout, interruption, thrown checks, and shutdown failure; its exit contract is
-      covered by the Fabric shared-source test gate.
+- [x] Modded worldcheck uses a daemon coordinator with bounded waits on every server task, stops the server
+      before exiting, and returns nonzero for internal failure, timeout, interruption, thrown checks, and
+      shutdown failure; its exit contract is covered by the Fabric shared-source test gate.
 - [x] Fabric protocol startup tolerates the pre-player-list server phase.
 - [x] NeoForge registers the shared payload once as bidirectional.
 - [x] Fabric distributable metadata declares the bundled transitive access-widener.

@@ -231,8 +231,29 @@ public final class StubTileData extends TileData {
     }
 
     @Override
+    public String getMaterialKey() {
+        return blockKey;
+    }
+
+    @Override
     public KMap<String, Object> getProperties() {
         return tileProperties;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (!(o instanceof StubTileData other)) {
+            return false;
+        }
+        return blockKey.equals(other.blockKey) && Arrays.equals(binary, other.binary);
+    }
+
+    @Override
+    public int hashCode() {
+        return 31 * blockKey.hashCode() + Arrays.hashCode(binary);
     }
 
     @Override

@@ -1,9 +1,13 @@
-[29Jul2026 23:27:01.214] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_deferred_test'
-[29Jul2026 23:27:01.233] [Test worker/ERROR] [Iris/]: Iris persistent dimension registry entry 1 in /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-partial3400051221726996941/iris-dimensions.json is invalid; skipping only that entry
-java.lang.IllegalArgumentException: entry 1 in /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-partial3400051221726996941/iris-dimensions.json has no dimension
-	at art.arcane.iris.modded.ModdedDimensionRegistryStore.required(ModdedDimensionRegistryStore.java:117) ~[main/:?]
-	at art.arcane.iris.modded.ModdedDimensionRegistryStore.load(ModdedDimensionRegistryStore.java:68) ~[main/:?]
-	at art.arcane.iris.modded.ModdedDimensionRegistryStoreTest.malformedEntryDoesNotDiscardHealthyEntries(ModdedDimensionRegistryStoreTest.java:51) ~[test/:?]
+[01Aug2026 18:39:47.191] [Test worker/WARN] [Iris/]: Iris cannot resolve the biome id for 'minecraft:plains' before the Minecraft server is available; using biome id 0
+[01Aug2026 18:39:47.192] [Test worker/WARN] [Iris/]: Iris cannot enumerate the biome registry before the Minecraft server is available; returning no biomes
+[01Aug2026 18:39:47.231] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_deferred_test'
+[01Aug2026 18:39:47.239] [Test worker/WARN] [Iris/]: Iris persistent dimension registry entry 1 in /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-partial16141925079698469919/iris-dimensions.json is invalid (entry 1 in /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-partial16141925079698469919/iris-dimensions.json has no dimension); kept verbatim: {"id":"iris:broken","pack":"overworld"}
+[01Aug2026 18:39:47.253] [Test worker/ERROR] [Iris/]: Iris persistent dimension registry at /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-corrupt-boot1790066103332136212/iris-dimensions.json is corrupt; quarantining it and continuing boot
+java.lang.IllegalStateException: Iris persistent dimension registry at /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-corrupt-boot1790066103332136212/iris-dimensions.json could not be read; refusing to discard persistent worlds
+	at art.arcane.iris.modded.ModdedDimensionRegistryStore.contents(ModdedDimensionRegistryStore.java:150) ~[main/:?]
+	at art.arcane.iris.modded.ModdedDimensionRegistryStore.load(ModdedDimensionRegistryStore.java:56) ~[main/:?]
+	at art.arcane.iris.modded.ModdedDimensionRegistryStore.loadForStartup(ModdedDimensionRegistryStore.java:69) ~[main/:?]
+	at art.arcane.iris.modded.ModdedDimensionRegistryStoreTest.startupLoadQuarantinesACorruptRegistryInsteadOfFailingBoot(ModdedDimensionRegistryStoreTest.java:99) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
 	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59) ~[junit-4.13.2.jar:4.13.2]
@@ -46,9 +50,21 @@ java.lang.IllegalArgumentException: entry 1 in /var/folders/l1/g6lr3c5x26z_mdmtf
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[29Jul2026 23:27:01.309] [Test worker/ERROR] [Iris/]: Iris service onDisable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
+Caused by: art.arcane.volmlib.util.json.JSONException: A JSONObject text must end with '}' at 34 [character 35 line 1]
+	at art.arcane.volmlib.util.json.JSONTokener.syntaxError(JSONTokener.java:414) ~[shared-local-SNAPSHOT.jar:?]
+	at art.arcane.volmlib.util.json.JSONObject.<init>(JSONObject.java:145) ~[shared-local-SNAPSHOT.jar:?]
+	at art.arcane.volmlib.util.json.JSONTokener.nextValue(JSONTokener.java:345) ~[shared-local-SNAPSHOT.jar:?]
+	at art.arcane.volmlib.util.json.JSONArray.<init>(JSONArray.java:111) ~[shared-local-SNAPSHOT.jar:?]
+	at art.arcane.volmlib.util.json.JSONTokener.nextValue(JSONTokener.java:348) ~[shared-local-SNAPSHOT.jar:?]
+	at art.arcane.volmlib.util.json.JSONObject.<init>(JSONObject.java:159) ~[shared-local-SNAPSHOT.jar:?]
+	at art.arcane.volmlib.util.json.JSONObject.<init>(JSONObject.java:260) ~[shared-local-SNAPSHOT.jar:?]
+	at art.arcane.iris.modded.ModdedDimensionRegistryStore.contents(ModdedDimensionRegistryStore.java:117) ~[main/:?]
+	... 45 more
+[01Aug2026 18:39:47.262] [Test worker/ERROR] [Iris/]: Iris lost 1 persistent dimension(s) from the corrupt registry: iris:lost
+[01Aug2026 18:39:47.262] [Test worker/ERROR] [Iris/]: Iris moved the corrupt persistent dimension registry to /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-corrupt-boot1790066103332136212/iris-dimensions.json.broken-1785623987262
+[01Aug2026 18:39:47.318] [Test worker/ERROR] [Iris/]: Iris service onDisable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
 java.lang.RuntimeException: second disable failed
-	at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndAggregatesFailures(ModdedServiceManagerTest.java:55) ~[test/:?]
+	at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndNeverRethrows(ModdedServiceManagerTest.java:55) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
 	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59) ~[junit-4.13.2.jar:4.13.2]
@@ -91,9 +107,9 @@ java.lang.RuntimeException: second disable failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[29Jul2026 23:27:01.313] [Test worker/ERROR] [Iris/]: Iris service onDisable failed for art.arcane.iris.modded.ModdedServiceManagerTest$FirstService
+[01Aug2026 18:39:47.322] [Test worker/ERROR] [Iris/]: Iris service onDisable failed for art.arcane.iris.modded.ModdedServiceManagerTest$FirstService
 java.lang.RuntimeException: first disable failed
-	at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndAggregatesFailures(ModdedServiceManagerTest.java:54) ~[test/:?]
+	at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndNeverRethrows(ModdedServiceManagerTest.java:54) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
 	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59) ~[junit-4.13.2.jar:4.13.2]
@@ -136,7 +152,55 @@ java.lang.RuntimeException: first disable failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[29Jul2026 23:27:01.316] [Test worker/ERROR] [Iris/]: Iris service rollback failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
+[01Aug2026 18:39:47.329] [Test worker/ERROR] [Iris/]: Iris disabled all services with 2 failure(s)
+java.lang.RuntimeException: second disable failed
+	at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndNeverRethrows(ModdedServiceManagerTest.java:55) ~[test/:?]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
+	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.BlockJUnit4ClassRunner$1.evaluate(BlockJUnit4ClassRunner.java:100) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.ParentRunner.runLeaf(ParentRunner.java:366) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:103) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:63) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:137) ~[junit-4.13.2.jar:4.13.2]
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:115) ~[junit-4.13.2.jar:4.13.2]
+	at org.gradle.api.internal.tasks.testing.junit.JUnitTestExecutor.runRequest(JUnitTestExecutor.java:175) ~[?:?]
+	at org.gradle.api.internal.tasks.testing.junit.JUnitTestExecutor.accept(JUnitTestExecutor.java:84) ~[?:?]
+	at org.gradle.api.internal.tasks.testing.junit.JUnitTestExecutor.accept(JUnitTestExecutor.java:47) ~[?:?]
+	at org.gradle.api.internal.tasks.testing.junit.AbstractJUnitTestDefinitionProcessor.processTestDefinition(AbstractJUnitTestDefinitionProcessor.java:65) ~[?:?]
+	at org.gradle.api.internal.tasks.testing.SuiteTestDefinitionProcessor.processTestDefinition(SuiteTestDefinitionProcessor.java:53) ~[?:?]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
+	at org.gradle.internal.dispatch.MethodInvocation.invokeOn(MethodInvocation.java:77) ~[?:?]
+	at org.gradle.internal.dispatch.ReflectionDispatch.dispatch(ReflectionDispatch.java:28) ~[?:?]
+	at org.gradle.internal.dispatch.ReflectionDispatch.dispatch(ReflectionDispatch.java:19) ~[?:?]
+	at org.gradle.internal.dispatch.ContextClassLoaderDispatch.dispatch(ContextClassLoaderDispatch.java:33) ~[?:?]
+	at org.gradle.internal.dispatch.ProxyDispatchAdapter$DispatchingInvocationHandler.invoke(ProxyDispatchAdapter.java:88) ~[?:?]
+	at jdk.proxy1/jdk.proxy1.$Proxy4.processTestDefinition(Unknown Source) ~[?:?]
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker$2.run(TestWorker.java:178) ~[?:?]
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker.executeAndMaintainThreadName(TestWorker.java:126) ~[?:?]
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker.execute(TestWorker.java:103) ~[?:?]
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker.execute(TestWorker.java:63) ~[?:?]
+	at org.gradle.process.internal.worker.child.ActionExecutionWorker.execute(ActionExecutionWorker.java:56) ~[?:?]
+	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:122) ~[?:?]
+	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
+	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
+	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
+	Suppressed: java.lang.RuntimeException: first disable failed
+		at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndNeverRethrows(ModdedServiceManagerTest.java:54) ~[test/:?]
+		... 42 more
+[01Aug2026 18:39:47.334] [Test worker/ERROR] [Iris/]: Iris service rollback failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
 java.lang.RuntimeException: cleanup failed
 	at art.arcane.iris.modded.ModdedServiceManagerTest.rollsBackEnabledServicesAndPreservesCleanupFailures(ModdedServiceManagerTest.java:32) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -181,7 +245,7 @@ java.lang.RuntimeException: cleanup failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[29Jul2026 23:27:01.320] [Test worker/ERROR] [Iris/]: Iris service onEnable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
+[01Aug2026 18:39:47.337] [Test worker/ERROR] [Iris/]: Iris service onEnable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
 java.lang.RuntimeException: enable failed
 	at art.arcane.iris.modded.ModdedServiceManagerTest.rollsBackEnabledServicesAndPreservesCleanupFailures(ModdedServiceManagerTest.java:31) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -229,11 +293,11 @@ java.lang.RuntimeException: enable failed
 	Suppressed: java.lang.RuntimeException: cleanup failed
 		at art.arcane.iris.modded.ModdedServiceManagerTest.rollsBackEnabledServicesAndPreservesCleanupFailures(ModdedServiceManagerTest.java:32) ~[test/:?]
 		... 42 more
-[29Jul2026 23:27:01.357] [Test worker/ERROR] [Iris/]: [worldcheck] server stop request failed
+[01Aug2026 18:39:47.373] [Test worker/ERROR] [Iris/]: [worldcheck] server stop request failed
 java.lang.IllegalStateException: stop request failed
-	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$stopRequestFailureForcesNonzeroResult$1(ModdedWorldCheckTest.java:235) ~[test/:?]
-	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:179) ~[main/:?]
-	at art.arcane.iris.modded.ModdedWorldCheckTest.stopRequestFailureForcesNonzeroResult(ModdedWorldCheckTest.java:232) ~[test/:?]
+	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$stopRequestFailureForcesNonzeroResult$1(ModdedWorldCheckTest.java:238) ~[test/:?]
+	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:142) ~[main/:?]
+	at art.arcane.iris.modded.ModdedWorldCheckTest.stopRequestFailureForcesNonzeroResult(ModdedWorldCheckTest.java:235) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
 	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59) ~[junit-4.13.2.jar:4.13.2]
@@ -276,11 +340,11 @@ java.lang.IllegalStateException: stop request failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[29Jul2026 23:27:01.360] [Test worker/ERROR] [Iris/]: [worldcheck] waiting for server shutdown failed
+[01Aug2026 18:39:47.376] [Test worker/ERROR] [Iris/]: [worldcheck] waiting for server shutdown failed
 java.lang.IllegalStateException: shutdown wait failed
-	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$shutdownWaitFailureForcesNonzeroExit$0(ModdedWorldCheckTest.java:261) ~[test/:?]
-	at art.arcane.iris.modded.ModdedWorldCheck.awaitStopAndExit(ModdedWorldCheck.java:194) ~[main/:?]
-	at art.arcane.iris.modded.ModdedWorldCheckTest.shutdownWaitFailureForcesNonzeroExit(ModdedWorldCheckTest.java:259) ~[test/:?]
+	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$shutdownWaitFailureForcesNonzeroExit$0(ModdedWorldCheckTest.java:264) ~[test/:?]
+	at art.arcane.iris.modded.ModdedWorldCheck.awaitStopAndExit(ModdedWorldCheck.java:157) ~[main/:?]
+	at art.arcane.iris.modded.ModdedWorldCheckTest.shutdownWaitFailureForcesNonzeroExit(ModdedWorldCheckTest.java:262) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
 	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59) ~[junit-4.13.2.jar:4.13.2]
@@ -323,11 +387,11 @@ java.lang.IllegalStateException: shutdown wait failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[29Jul2026 23:27:01.365] [Test worker/ERROR] [Iris/]: [worldcheck] check failed
+[01Aug2026 18:39:47.382] [Test worker/ERROR] [Iris/]: [worldcheck] check failed
 java.lang.IllegalStateException: check failed
-	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$thrownCheckStillRequestsStop$0(ModdedWorldCheckTest.java:221) ~[test/:?]
-	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:174) ~[main/:?]
-	at art.arcane.iris.modded.ModdedWorldCheckTest.thrownCheckStillRequestsStop(ModdedWorldCheckTest.java:219) ~[test/:?]
+	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$thrownCheckStillRequestsStop$0(ModdedWorldCheckTest.java:224) ~[test/:?]
+	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:137) ~[main/:?]
+	at art.arcane.iris.modded.ModdedWorldCheckTest.thrownCheckStillRequestsStop(ModdedWorldCheckTest.java:222) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?]
 	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59) ~[junit-4.13.2.jar:4.13.2]
@@ -370,8 +434,8 @@ java.lang.IllegalStateException: check failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[29Jul2026 23:27:01.373] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_discovery_success'
-[29Jul2026 23:27:01.373] [Test worker/ERROR] [Iris/]: Iris custom content provider discovery failed
+[01Aug2026 18:39:47.390] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_discovery_success'
+[01Aug2026 18:39:47.391] [Test worker/WARN] [Iris/]: Iris custom content provider discovery failed at provider 'iris_discovery_failure' (art.arcane.iris.modded.api.ModdedCustomContentRegistryTest$TestProvider)
 java.lang.RuntimeException: provider init failed
 	at art.arcane.iris.modded.api.ModdedCustomContentRegistryTest.failedDiscoveryPublishesNothingAndPreservesTheCause(ModdedCustomContentRegistryTest.java:39) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -416,4 +480,4 @@ java.lang.RuntimeException: provider init failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[29Jul2026 23:27:01.397] [Test worker/INFO] [Iris/]: Iris object undo service ready (bounded to 32 paste(s) per player)
+[01Aug2026 18:39:47.408] [Test worker/INFO] [Iris/]: Iris object undo service ready (bounded to 32 paste(s) per player)

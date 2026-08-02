@@ -6,6 +6,10 @@ import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.gui.components.toasts.ToastManager;
 import net.minecraft.network.chat.Component;
 
+/**
+ * CLIENT DIST ONLY. See {@link IrisClientHud} for why the dist marker is a javadoc contract plus a bytecode
+ * test rather than an @Environment annotation.
+ */
 public final class IrisToastPresenter {
     private IrisToastPresenter() {
     }

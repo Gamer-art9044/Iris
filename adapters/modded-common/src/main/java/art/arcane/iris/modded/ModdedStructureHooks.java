@@ -59,6 +59,13 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 public final class ModdedStructureHooks implements PlatformStructureHooks {
+    /**
+     * Hard ceiling on the chunk grid a single capture placement may touch. placeChunks loads every chunk in
+     * the grid synchronously on the server thread, so a structure with a runaway bounding box (or maxSpan 0,
+     * which disables the span check entirely) would otherwise stall the server for thousands of chunk loads.
+     */
+    static final int MAX_PLACEMENT_CHUNKS = 1024;
+
     private final Supplier<MinecraftServer> server;
 
     public ModdedStructureHooks(Supplier<MinecraftServer> server) {
@@ -182,6 +189,13 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
         return keys;
     }
 
+    /**
+     * Swallow contract: a feature that refuses to place, or that throws while placing, is a normal outcome for
+     * the importer that drives this - it probes many keys against arbitrary terrain and treats false as "not
+     * here". So every Throwable is reported through IrisLogging and answered with false; placement never
+     * escalates to the caller. placeStructure below deliberately does the opposite (it rethrows with context)
+     * because a failed structure capture means the capture pass is broken, not that the site was unsuitable.
+     */
     @Override
     public boolean placeFeature(PlatformWorld world, int x, int y, int z, String featureKey, long seed) {
         try {
@@ -211,6 +225,10 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
             Identifier identifier = Identifier.tryParse(structureKey);
             if (level == null || identifier == null) {
                 return null;
+            }
+            if (!level.getServer().isSameThread()) {
+                throw new IllegalStateException("Structure placement loads chunks synchronously and must run on the server thread, not "
+                        + Thread.currentThread().getName());
             }
             ChunkGenerator generator = level.getChunkSource().getGenerator();
             Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
@@ -244,6 +262,12 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
             if (!isWithinSpan(box, maxSpan)) {
                 return null;
             }
+            int placementChunks = chunkGridSize(box);
+            if (placementChunks > MAX_PLACEMENT_CHUNKS) {
+                IrisLogging.warn("Skipped structure capture for " + structureKey + " at " + chunkX + "," + chunkZ
+                        + ": bounding box spans " + placementChunks + " chunks, cap is " + MAX_PLACEMENT_CHUNKS);
+                return null;
+            }
             placeChunks(level, structureManager, generator, start, box, seed);
             return bounds(box);
         } catch (RuntimeException error) {
@@ -273,6 +297,20 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
     static boolean isWithinSpan(BoundingBox box, int maxSpan) {
         return maxSpan <= 0
                 || box.getXSpan() <= maxSpan && box.getYSpan() <= maxSpan && box.getZSpan() <= maxSpan;
+    }
+
+    /**
+     * Number of chunks placeChunks would load for this bounding box. Computed in long arithmetic because a
+     * corrupt box can span the whole coordinate range and the product overflows int.
+     */
+    static int chunkGridSize(BoundingBox box) {
+        long spanX = ((long) (box.maxX() >> 4)) - (box.minX() >> 4) + 1L;
+        long spanZ = ((long) (box.maxZ() >> 4)) - (box.minZ() >> 4) + 1L;
+        if (spanX <= 0L || spanZ <= 0L) {
+            return 0;
+        }
+        long total = spanX * spanZ;
+        return total > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) total;
     }
 
     static int[] bounds(BoundingBox box) {

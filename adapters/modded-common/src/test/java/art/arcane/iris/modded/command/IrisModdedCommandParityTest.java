@@ -7,6 +7,8 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.server.Bootstrap;
 import org.junit.Test;
 
+import java.util.List;
+
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -73,6 +75,33 @@ public class IrisModdedCommandParityTest {
         assertTrue(ModdedCommandHelp.documents("studio", "pkg"));
         assertTrue(ModdedCommandHelp.documents("object", "we"));
         assertTrue(ModdedCommandHelp.documents("world", "mainworld"));
+    }
+
+    @Test
+    public void categoryLiteralsFallBackToHelpWithoutArguments() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+        CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
+
+        IrisModdedCommands.register(dispatcher);
+
+        CommandNode<CommandSourceStack> iris = child(dispatcher.getRoot(), "iris");
+        assertNotNull("iris", iris.getCommand());
+        for (String category : new String[]{"help", "find", "goto", "pregen", "pregenerate", "object", "o",
+                "edit", "studio", "std", "s", "pack", "pk", "world", "w", "datapack", "datapacks", "dp",
+                "structure", "struct", "str", "developer", "dev"}) {
+            assertNotNull(category, child(iris, category).getCommand());
+        }
+    }
+
+    @Test
+    public void consoleHelpListsEveryEntryWithInlineUsageAndDescription() {
+        List<String> root = ModdedCommandHelp.consoleLines("");
+
+        assertTrue(root.stream().anyMatch((String line) -> line.startsWith("/iris developer (dev) - ")));
+        assertTrue(root.stream().anyMatch((String line) -> line.startsWith("/iris teleport <dimension> [player] (tp) - ")));
+        assertTrue(ModdedCommandHelp.consoleLines("pregen").stream().anyMatch((String line) ->
+                line.startsWith("/iris pregen start <radius> [dimension] [at] [x] [z] [gui] [sync] [nocache] - ")));
     }
 
     private static CommandNode<CommandSourceStack> child(

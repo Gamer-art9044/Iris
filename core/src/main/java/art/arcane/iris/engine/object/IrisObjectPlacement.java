@@ -340,7 +340,8 @@ public class IrisObjectPlacement {
     private static IrisVanillaLootTable getVanillaTable(String name) {
         return Optional.ofNullable(NamespacedKey.fromString(name))
                 .map(Bukkit::getLootTable)
-                .map(IrisVanillaLootTable::new)
+                // Hand over the key, not the LootTable: IrisVanillaLootTable holds no Bukkit fields.
+                .map(table -> new IrisVanillaLootTable(String.valueOf(table.getKey())))
                 .orElse(null);
     }
 

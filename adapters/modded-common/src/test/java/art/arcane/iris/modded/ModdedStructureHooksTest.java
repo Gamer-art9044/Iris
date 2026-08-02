@@ -41,6 +41,23 @@ public class ModdedStructureHooksTest {
     }
 
     @Test
+    public void chunkGridSizeCountsEveryChunkPlacementWouldLoad() {
+        assertEquals(1, ModdedStructureHooks.chunkGridSize(new BoundingBox(0, 0, 0, 15, 15, 15)));
+        assertEquals(4, ModdedStructureHooks.chunkGridSize(new BoundingBox(0, 0, 0, 16, 15, 16)));
+        assertEquals(9, ModdedStructureHooks.chunkGridSize(new BoundingBox(-16, 0, -16, 16, 15, 16)));
+    }
+
+    @Test
+    public void chunkGridSizeSaturatesInsteadOfOverflowing() {
+        BoundingBox box = new BoundingBox(
+                Integer.MIN_VALUE / 2, 0, Integer.MIN_VALUE / 2,
+                Integer.MAX_VALUE / 2, 15, Integer.MAX_VALUE / 2);
+
+        assertEquals(Integer.MAX_VALUE, ModdedStructureHooks.chunkGridSize(box));
+        assertTrue(ModdedStructureHooks.chunkGridSize(box) > ModdedStructureHooks.MAX_PLACEMENT_CHUNKS);
+    }
+
+    @Test
     public void structurePlacementReturnsPaperOrderedBounds() {
         BoundingBox box = new BoundingBox(-16, -64, 32, 15, 63, 47);
 

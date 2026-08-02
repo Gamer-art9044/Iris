@@ -20,21 +20,18 @@ package art.arcane.iris.core.project;
 
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
-import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.PlatformBlockProperty;
 import art.arcane.iris.spi.PlatformNumericRange;
-import art.arcane.iris.core.link.Identifier;
-import art.arcane.iris.core.link.data.DataType;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.core.loader.ResourceLoader;
-import art.arcane.iris.core.service.ExternalDataSVC;
 import art.arcane.iris.core.structure.StructureSchemaKeys;
 import art.arcane.iris.engine.framework.ListFunction;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBiome;
 import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.RegistryListEnchantment;
 import art.arcane.iris.engine.object.annotations.RegistryListEntityType;
@@ -63,16 +60,19 @@ import java.lang.reflect.InaccessibleObjectException;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 public class SchemaBuilder {
     private static final String SYMBOL_LIMIT__N = "*";
     private static final String SYMBOL_TYPE__N = "";
     private static final String MINECRAFT_NAMESPACE = "minecraft:";
-    private static final JSONArray FONT_TYPES = new JSONArray(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames());
+    private static volatile JSONArray fontTypes;
     private final KMap<String, JSONObject> definitions;
     private final Class<?> root;
     private final KList<String> warnings;
@@ -115,26 +115,138 @@ public class SchemaBuilder {
         return schema;
     }
 
+    /**
+     * Font families are only used for schema completion. Enumerating them touches AWT, which can fail outright on a
+     * headless or mod-loader JVM - a failure degrades to no completion, never to a broken schema.
+     */
+    private static JSONArray fontTypes() {
+        JSONArray cached = fontTypes;
+        if (cached != null) {
+            return cached;
+        }
+        JSONArray built;
+        try {
+            built = new JSONArray(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames());
+        } catch (Throwable e) {
+            IrisLogging.debug("Schema font family enumeration unavailable: " + e.getMessage());
+            built = new JSONArray();
+        }
+        fontTypes = built;
+        return built;
+    }
+
     private JSONArray potionTypes() {
         if (potionTypes == null) {
-            JSONArray a = new JSONArray();
-            for (String key : IrisPlatforms.get().registries().potionEffectKeys()) {
-                a.put(stripNamespace(key).toUpperCase(Locale.ROOT).replace(" ", "_"));
-            }
-            potionTypes = a;
+            potionTypes = registryKeyForms(IrisPlatforms.get().registries().potionEffectKeys(), true);
         }
         return potionTypes;
     }
 
     private JSONArray enchantTypes() {
         if (enchantTypes == null) {
-            JSONArray a = new JSONArray();
-            for (String key : IrisPlatforms.get().registries().enchantmentKeys()) {
-                a.put(stripNamespace(key));
-            }
-            enchantTypes = a;
+            enchantTypes = registryKeyForms(IrisPlatforms.get().registries().enchantmentKeys(), false);
         }
         return enchantTypes;
+    }
+
+    /**
+     * Emits the full namespaced key for every registry entry, so mod and datapack content is addressable
+     * unambiguously, plus the legacy short form for the vanilla namespace so existing packs stay valid.
+     */
+    private static JSONArray registryKeyForms(List<String> keys, boolean upperCaseLegacy) {
+        JSONArray a = new JSONArray();
+        Set<String> seen = new LinkedHashSet<>();
+        if (keys != null) {
+            for (String key : keys) {
+                if (key == null || key.isBlank()) {
+                    continue;
+                }
+                seen.add(key);
+                if (key.startsWith(MINECRAFT_NAMESPACE) || key.indexOf(':') < 0) {
+                    String path = stripNamespace(key);
+                    seen.add(upperCaseLegacy ? path.toUpperCase(Locale.ROOT).replace(' ', '_') : path);
+                }
+            }
+        }
+        for (String key : seen) {
+            a.put(key);
+        }
+        return a;
+    }
+
+    /**
+     * Biome derivatives resolve through NamespacedKey.fromString, which accepts a full key or a bare vanilla path,
+     * so both forms are offered.
+     */
+    private JSONArray biomeTypes() {
+        return registryKeyForms(IrisPlatforms.get().registries().biomeKeys(), false);
+    }
+
+    private JSONArray entityTypes() {
+        return keysAsArray(IrisPlatforms.get().registries().entityKeys());
+    }
+
+    private JSONArray specialEntityTypes() {
+        return keysAsArray(IrisPlatforms.get().registries().specialEntityKeys());
+    }
+
+    private JSONArray vanillaStructures() {
+        return keysAsArray(IrisPlatforms.get().registries().structureKeys());
+    }
+
+    private JSONArray vanillaStructureSets() {
+        return keysAsArray(IrisPlatforms.get().structureHooks().structureSetKeys());
+    }
+
+    private JSONArray nativeJigsawPools() {
+        return keysAsArray(templatePoolKeys());
+    }
+
+    private static JSONArray keysAsArray(List<String> keys) {
+        JSONArray a = new JSONArray();
+        if (keys != null) {
+            for (String key : keys) {
+                if (key != null && !key.isBlank()) {
+                    a.put(key);
+                }
+            }
+        }
+        return a;
+    }
+
+    /**
+     * Registers a registry-backed enum definition under {@code definitionKey} and points {@code target} at it.
+     * <p>
+     * An empty key list means the registry has nothing to offer yet - the server is still booting, a modded registry
+     * has not been frozen, or the host simply does not expose that catalog. Emitting {@code "enum": []} in that case
+     * writes a schema that rejects every value the author could possibly type, turning a missing autocomplete list
+     * into a pack that reads as broken in the editor. The reference is omitted instead, leaving the field
+     * unconstrained, and the values are only computed when the definition does not exist yet.
+     */
+    private void putRegistryEnumRef(JSONObject target, String definitionKey, Supplier<JSONArray> values) {
+        if (!definitions.containsKey(definitionKey)) {
+            JSONArray built = values.get();
+            if (built == null || built.length() == 0) {
+                IrisLogging.debug("Schema enum '" + definitionKey + "' omitted: the registry returned no keys");
+                return;
+            }
+            JSONObject definition = new JSONObject();
+            definition.put("enum", built);
+            definitions.put(definitionKey, definition);
+        }
+        target.put("$ref", "#/definitions/" + definitionKey);
+    }
+
+    /**
+     * {@link #putRegistryEnumRef(JSONObject, String, Supplier)} for a list-typed property. When the enum is omitted no
+     * {@code items} schema is written at all, which is valid and simply means "any element".
+     */
+    private void putRegistryEnumItems(JSONObject prop, String definitionKey, Supplier<JSONArray> values) {
+        JSONObject items = new JSONObject();
+        putRegistryEnumRef(items, definitionKey, values);
+        if (items.has("$ref")) {
+            prop.put("items", items);
+        }
     }
 
     private JSONArray itemTypes() {
@@ -304,160 +416,56 @@ public class SchemaBuilder {
                     description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla, datapack, or imported Iris structure (use ctrl+space for auto complete!)");
 
                 } else if (k.isAnnotationPresent(RegistryListBlockType.class)) {
-                    String key = "enum-block-type";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        j.put("enum", blockTypes());
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Block Type";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-block-type", this::blockTypes);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid Block Type (use ctrl+space for auto complete!)");
 
                 } else if (k.isAnnotationPresent(RegistryListNativeJigsawPool.class)) {
-                    String key = "enum-native-jigsaw-pool";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        JSONArray ja = new JSONArray();
-
-                        for (String i : templatePoolKeys()) {
-                            ja.put(i);
-                        }
-
-                        j.put("enum", ja);
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Native Jigsaw Pool";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-native-jigsaw-pool", this::nativeJigsawPools);
                     description.add(SYMBOL_TYPE__N + "  Must be a registered vanilla, datapack, or modded template pool key (use ctrl+space for auto complete!)");
 
                 } else if (k.isAnnotationPresent(RegistryListVanillaStructure.class)) {
-                    String key = "enum-vanilla-structure";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        JSONArray ja = new JSONArray();
-
-                        for (String i : IrisPlatforms.get().registries().structureKeys()) {
-                            ja.put(i);
-                        }
-
-                        j.put("enum", ja);
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Vanilla Structure";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-vanilla-structure", this::vanillaStructures);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla/datapack structure key (use ctrl+space for auto complete!)");
 
                 } else if (k.isAnnotationPresent(RegistryListVanillaStructureSet.class)) {
-                    String key = "enum-vanilla-structure-set";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        JSONArray ja = new JSONArray();
-
-                        for (String i : IrisPlatforms.get().structureHooks().structureSetKeys()) {
-                            ja.put(i);
-                        }
-
-                        j.put("enum", ja);
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Vanilla Structure Set";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-vanilla-structure-set", this::vanillaStructureSets);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla/datapack structure SET key (use ctrl+space for auto complete!)");
 
                 } else if (k.isAnnotationPresent(RegistryListItemType.class)) {
-                    String key = "enum-item-type";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        j.put("enum", itemTypes());
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Item Type";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-item-type", this::itemTypes);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid Item Type (use ctrl+space for auto complete!)");
 
                 } else if (k.isAnnotationPresent(RegistryListEntityType.class)) {
-                    String key = "enum-entity-type";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        JSONArray ja = new JSONArray();
-
-                        for (String i : IrisPlatforms.get().registries().entityKeys()) {
-                            ja.put(i);
-                        }
-
-                        j.put("enum", ja);
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Entity Type";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-entity-type", this::entityTypes);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid Entity Type (use ctrl+space for auto complete!)");
 
+                } else if (k.isAnnotationPresent(RegistryListBiome.class)) {
+                    fancyType = "Biome Type";
+                    putRegistryEnumRef(prop, "enum-biome-type", this::biomeTypes);
+                    description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla, datapack, or mod biome key (use ctrl+space for auto complete!)");
+
                 } else if (k.isAnnotationPresent(RegistryListSpecialEntity.class)) {
-                    String key = "enum-reg-specialentity";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        KList<String> list = IrisServices.get(ExternalDataSVC.class)
-                                .getAllIdentifiers(DataType.ENTITY)
-                                .stream()
-                                .map(Identifier::toString)
-                                .collect(KList.collector());
-                        j.put("enum", list.toJSONStringArray());
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Custom Mob Type";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-reg-specialentity", this::specialEntityTypes);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid Custom Mob Type (use ctrl+space for auto complete!)");
                 } else if (k.isAnnotationPresent(RegistryListFont.class)) {
-                    String key = "enum-font";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        j.put("enum", FONT_TYPES);
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Font Family";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-font", SchemaBuilder::fontTypes);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid Font Family (use ctrl+space for auto complete!)");
 
                 } else if (k.isAnnotationPresent(RegistryListEnchantment.class)) {
-                    String key = "enum-enchantment";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        j.put("enum", enchantTypes());
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Enchantment Type";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-enchantment", this::enchantTypes);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid Enchantment Type (use ctrl+space for auto complete!)");
                 } else if (k.isAnnotationPresent(RegistryListPotionEffect.class)) {
-                    String key = "enum-potion-effect-type";
-
-                    if (!definitions.containsKey(key)) {
-                        JSONObject j = new JSONObject();
-                        j.put("enum", potionTypes());
-                        definitions.put(key, j);
-                    }
-
                     fancyType = "Potion Effect Type";
-                    prop.put("$ref", "#/definitions/" + key);
+                    putRegistryEnumRef(prop, "enum-potion-effect-type", this::potionTypes);
                     description.add(SYMBOL_TYPE__N + "  Must be a valid Potion Effect Type (use ctrl+space for auto complete!)");
                 } else if (k.isAnnotationPresent(RegistryListFunction.class)) {
                     Class<? extends ListFunction<KList<String>>> functionClass = k.getDeclaredAnnotation(RegistryListFunction.class).value();
@@ -615,147 +623,43 @@ public class SchemaBuilder {
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla, datapack, or imported Iris structure (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListNativeJigsawPool.class)) {
                                 fancyType = "List<Native Jigsaw Pool>";
-                                String key = "enum-native-jigsaw-pool";
-
-                                if (!definitions.containsKey(key)) {
-                                    JSONObject j = new JSONObject();
-                                    JSONArray values = new JSONArray();
-                                    for (String poolKey : templatePoolKeys()) {
-                                        values.put(poolKey);
-                                    }
-                                    j.put("enum", values);
-                                    definitions.put(key, j);
-                                }
-
-                                JSONObject items = new JSONObject();
-                                items.put("$ref", "#/definitions/" + key);
-                                prop.put("items", items);
+                                putRegistryEnumItems(prop, "enum-native-jigsaw-pool", this::nativeJigsawPools);
                                 description.add(SYMBOL_TYPE__N + "  Must be a registered vanilla, datapack, or modded template pool key (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListVanillaStructure.class)) {
                                 fancyType = "List<Vanilla Structure>";
-                                String key = "enum-vanilla-structure";
-
-                                if (!definitions.containsKey(key)) {
-                                    JSONObject j = new JSONObject();
-                                    JSONArray values = new JSONArray();
-                                    for (String structureKey : IrisPlatforms.get().registries().structureKeys()) {
-                                        values.put(structureKey);
-                                    }
-                                    j.put("enum", values);
-                                    definitions.put(key, j);
-                                }
-
-                                JSONObject items = new JSONObject();
-                                items.put("$ref", "#/definitions/" + key);
-                                prop.put("items", items);
+                                putRegistryEnumItems(prop, "enum-vanilla-structure", this::vanillaStructures);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla/datapack structure key (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListVanillaStructureSet.class)) {
                                 fancyType = "List<Vanilla Structure Set>";
-                                String key = "enum-vanilla-structure-set";
-
-                                if (!definitions.containsKey(key)) {
-                                    JSONObject j = new JSONObject();
-                                    JSONArray values = new JSONArray();
-                                    for (String structureSetKey : IrisPlatforms.get().structureHooks().structureSetKeys()) {
-                                        values.put(structureSetKey);
-                                    }
-                                    j.put("enum", values);
-                                    definitions.put(key, j);
-                                }
-
-                                JSONObject items = new JSONObject();
-                                items.put("$ref", "#/definitions/" + key);
-                                prop.put("items", items);
+                                putRegistryEnumItems(prop, "enum-vanilla-structure-set", this::vanillaStructureSets);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla/datapack structure set key (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListBlockType.class)) {
                                 fancyType = "List of Block Types";
-                                String key = "enum-block-type";
-
-                                if (!definitions.containsKey(key)) {
-                                    JSONObject j = new JSONObject();
-                                    j.put("enum", blockTypes());
-                                    definitions.put(key, j);
-                                }
-
-                                JSONObject items = new JSONObject();
-                                items.put("$ref", "#/definitions/" + key);
-                                prop.put("items", items);
+                                putRegistryEnumItems(prop, "enum-block-type", this::blockTypes);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid Block Type (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListItemType.class)) {
                                 fancyType = "List of Item Types";
-                                String key = "enum-item-type";
-
-                                if (!definitions.containsKey(key)) {
-                                    JSONObject j = new JSONObject();
-                                    j.put("enum", itemTypes());
-                                    definitions.put(key, j);
-                                }
-
-                                JSONObject items = new JSONObject();
-                                items.put("$ref", "#/definitions/" + key);
-                                prop.put("items", items);
+                                putRegistryEnumItems(prop, "enum-item-type", this::itemTypes);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid Item Type (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListEntityType.class)) {
                                 fancyType = "List of Entity Types";
-                                String key = "enum-entity-type";
-
-                                if (!definitions.containsKey(key)) {
-                                    JSONObject j = new JSONObject();
-                                    JSONArray ja = new JSONArray();
-
-                                    for (String i : IrisPlatforms.get().registries().entityKeys()) {
-                                        ja.put(i);
-                                    }
-
-                                    j.put("enum", ja);
-                                    definitions.put(key, j);
-                                }
-
-                                JSONObject items = new JSONObject();
-                                items.put("$ref", "#/definitions/" + key);
-                                prop.put("items", items);
+                                putRegistryEnumItems(prop, "enum-entity-type", this::entityTypes);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid Entity Type (use ctrl+space for auto complete!)");
+                            } else if (k.isAnnotationPresent(RegistryListBiome.class)) {
+                                fancyType = "List of Biome Types";
+                                putRegistryEnumItems(prop, "enum-biome-type", this::biomeTypes);
+                                description.add(SYMBOL_TYPE__N + "  Must be a valid vanilla, datapack, or mod biome key (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListFont.class)) {
-                                String key = "enum-font";
                                 fancyType = "List of Font Families";
-
-                                if (!definitions.containsKey(key)) {
-                                    JSONObject j = new JSONObject();
-                                    j.put("enum", FONT_TYPES);
-                                    definitions.put(key, j);
-                                }
-
-                                JSONObject items = new JSONObject();
-                                items.put("$ref", "#/definitions/" + key);
-                                prop.put("items", items);
+                                putRegistryEnumItems(prop, "enum-font", SchemaBuilder::fontTypes);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid Font Family (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListEnchantment.class)) {
                                 fancyType = "List of Enchantment Types";
-                                String key = "enum-enchantment";
-
-                                if (!definitions.containsKey(key)) {
-                                    JSONObject j = new JSONObject();
-                                    j.put("enum", enchantTypes());
-                                    definitions.put(key, j);
-                                }
-
-                                JSONObject items = new JSONObject();
-                                items.put("$ref", "#/definitions/" + key);
-                                prop.put("items", items);
+                                putRegistryEnumItems(prop, "enum-enchantment", this::enchantTypes);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid Enchantment Type (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListPotionEffect.class)) {
                                 fancyType = "List of Potion Effect Types";
-                                String key = "enum-potion-effect-type";
-
-                                if (!definitions.containsKey(key)) {
-                                    JSONObject j = new JSONObject();
-                                    j.put("enum", potionTypes());
-                                    definitions.put(key, j);
-                                }
-
-                                JSONObject items = new JSONObject();
-                                items.put("$ref", "#/definitions/" + key);
-                                prop.put("items", items);
+                                putRegistryEnumItems(prop, "enum-potion-effect-type", this::potionTypes);
                                 description.add(SYMBOL_TYPE__N + "  Must be a valid Potion Effect Type (use ctrl+space for auto complete!)");
                             } else if (k.isAnnotationPresent(RegistryListFunction.class)) {
                                 Class<? extends ListFunction<KList<String>>> functionClass = k.getDeclaredAnnotation(RegistryListFunction.class).value();

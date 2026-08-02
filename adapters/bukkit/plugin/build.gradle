@@ -42,6 +42,15 @@ tasks.named('processResources').configure {
     }
 }
 
+tasks.named('compileJava', JavaCompile).configure {
+    // lombok.config decides how equals/hashCode/toString are generated (fields, never getters), so editing it
+    // changes this module's bytecode. Gradle does not know that on its own and would serve a stale up-to-date
+    // build until something else in the module changed.
+    inputs.file(rootProject.file('lombok.config'))
+        .withPropertyName('lombokConfig')
+        .withPathSensitivity(PathSensitivity.NONE)
+}
+
 tasks.named('jar', Jar).configure {
     archiveBaseName.set('iris-bukkit-plugin')
 }

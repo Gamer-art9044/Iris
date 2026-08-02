@@ -35,6 +35,19 @@ import java.util.Map;
 @Builder
 @Data
 public class PregenTask {
+    /**
+     * Saturation limits for block bounds. The full int range is safe downstream: the widest derived value is
+     * regionToChunk(blockToRegionFloor(MAX_BLOCK)) + 31 shifted back to blocks, which lands inside int.
+     */
+    static final int MIN_BLOCK = Integer.MIN_VALUE;
+    static final int MAX_BLOCK = Integer.MAX_VALUE;
+    /**
+     * Widest region span a pregen may cover on one axis: the Minecraft world limit of +/- 30,000,000 blocks,
+     * which is 58594 regions each way. Clamping alone is not enough - a saturated bound spans 8.4 million
+     * regions per axis, and the spiral over that is ~7e13 iterations, which never finishes and looks like a
+     * hang. A request past the world limit is a bad request, so it fails at construction.
+     */
+    static final int MAX_REGION_SPAN = 117_189;
     private static final int MAX_CACHED_ORDERS = 512;
     private static final LinkedHashMap<Long, int[]> ORDERS = new LinkedHashMap<>(64, 0.75f, true) {
         @Override
@@ -194,11 +207,16 @@ public class PregenTask {
         private Bound chunk = null;
         private Bound region = null;
 
+        /**
+         * Saturating block bounds. center +/- radius is int arithmetic that wraps for far-out centers or huge
+         * radii, and a wrapped bound silently inverts min/max so every check() fails and the job pregenerates
+         * nothing. Clamp in long space instead.
+         */
         public void update() {
-            int maxX = center.getX() + radiusX;
-            int maxZ = center.getZ() + radiusZ;
-            int minX = center.getX() - radiusX;
-            int minZ = center.getZ() - radiusZ;
+            int maxX = clampBlock((long) center.getX() + radiusX);
+            int maxZ = clampBlock((long) center.getZ() + radiusZ);
+            int minX = clampBlock((long) center.getX() - radiusX);
+            int minZ = clampBlock((long) center.getZ() - radiusZ);
 
             chunk = new Bound(
                     PowerOfTwoCoordinates.blockToChunkFloor(minX),
@@ -212,6 +230,20 @@ public class PregenTask {
                     PowerOfTwoCoordinates.ceilDivPow2(maxX, PowerOfTwoCoordinates.REGION_BITS),
                     PowerOfTwoCoordinates.ceilDivPow2(maxZ, PowerOfTwoCoordinates.REGION_BITS)
             );
+            requireSaneSpan(region);
+        }
+
+        /**
+         * A clamped bound is ordered but can still be absurd. Refuse it here instead of handing the spiral a
+         * span no run could ever finish.
+         */
+        private void requireSaneSpan(Bound region) {
+            if (region.sizeX() > MAX_REGION_SPAN || region.sizeZ() > MAX_REGION_SPAN) {
+                throw new IllegalArgumentException("Pregen area is larger than a Minecraft world: center "
+                        + center.getX() + "," + center.getZ() + " radius " + radiusX + "x" + radiusZ
+                        + " blocks spans " + region.sizeX() + "x" + region.sizeZ() + " regions, limit "
+                        + MAX_REGION_SPAN + ".");
+            }
         }
 
         public Bound chunk() {
@@ -223,6 +255,13 @@ public class PregenTask {
             if (region == null) update();
             return region;
         }
+    }
+
+    static int clampBlock(long block) {
+        if (block > MAX_BLOCK) {
+            return MAX_BLOCK;
+        }
+        return block < MIN_BLOCK ? MIN_BLOCK : (int) block;
     }
 
     private record Bound(int minX, int minZ, int maxX, int maxZ, int sizeX, int sizeZ) {

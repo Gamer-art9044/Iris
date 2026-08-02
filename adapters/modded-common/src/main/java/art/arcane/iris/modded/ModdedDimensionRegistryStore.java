@@ -37,10 +37,13 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class ModdedDimensionRegistryStore {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String FILE_NAME = "iris-dimensions.json";
+    private static final Pattern ID_FIELD = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
 
     private ModdedDimensionRegistryStore() {
     }
@@ -51,6 +54,59 @@ public final class ModdedDimensionRegistryStore {
 
     static List<PersistentDimension> load(Path file) {
         return contents(file).dimensions();
+    }
+
+    /**
+     * Boot-safe load: a corrupt registry must not abort server start. The broken file is renamed aside so the
+     * next write starts clean, and every id we can still recognise in the raw text is reported as lost.
+     */
+    public static List<PersistentDimension> loadForStartup(MinecraftServer server) {
+        return loadForStartup(storeFile(server));
+    }
+
+    static List<PersistentDimension> loadForStartup(Path file) {
+        try {
+            return load(file);
+        } catch (RuntimeException corrupt) {
+            LOGGER.error("Iris persistent dimension registry at {} is corrupt; quarantining it and continuing boot",
+                    file, corrupt);
+            List<String> lostIds = salvageIds(file);
+            if (lostIds.isEmpty()) {
+                LOGGER.error("Iris could not recover any dimension ids from the corrupt registry; re-create the worlds with /iris world create");
+            } else {
+                LOGGER.error("Iris lost {} persistent dimension(s) from the corrupt registry: {}",
+                        lostIds.size(), String.join(", ", lostIds));
+            }
+            quarantine(file);
+            return List.of();
+        }
+    }
+
+    private static List<String> salvageIds(Path file) {
+        List<String> ids = new ArrayList<>();
+        try {
+            Matcher matcher = ID_FIELD.matcher(Files.readString(file, StandardCharsets.UTF_8));
+            while (matcher.find()) {
+                String id = matcher.group(1);
+                if (!ids.contains(id)) {
+                    ids.add(id);
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            LOGGER.warn("Iris could not scan the corrupt persistent dimension registry at {} for lost ids", file, unreadable);
+        }
+        return ids;
+    }
+
+    private static void quarantine(Path file) {
+        Path broken = file.resolveSibling(FILE_NAME + ".broken-" + System.currentTimeMillis());
+        try {
+            Files.move(file, broken, StandardCopyOption.REPLACE_EXISTING);
+            LOGGER.error("Iris moved the corrupt persistent dimension registry to {}", broken);
+        } catch (IOException failure) {
+            LOGGER.error("Iris could not quarantine the corrupt persistent dimension registry at {}; delete it by hand",
+                    file, failure);
+        }
     }
 
     private static Contents contents(Path file) {

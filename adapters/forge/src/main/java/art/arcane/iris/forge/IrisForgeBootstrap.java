@@ -70,6 +70,10 @@ public final class IrisForgeBootstrap {
 
         ForgeProtocolNetworking.register();
 
+        // Dist gate for every client-tainted class. DistExecutor is gone in Forge 26.2 (65.x) - only
+        // net.minecraftforge.api.distmarker.Dist survives, from mergetool-api - so the guard is this branch.
+        // It is equally safe: IrisForgeClient appears only as an invokestatic target, so the JVM resolves the
+        // constant-pool entry lazily on first execution and a dedicated server never loads the class.
         if (FMLEnvironment.dist == Dist.CLIENT) {
             IrisForgeClient.init();
         }

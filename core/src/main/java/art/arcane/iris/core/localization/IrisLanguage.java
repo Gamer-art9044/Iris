@@ -10,6 +10,7 @@ import art.arcane.volmlib.util.localization.LocalizationCandidate;
 import art.arcane.volmlib.util.localization.LocalizationIssue;
 import art.arcane.volmlib.util.localization.LocalizationManager;
 import art.arcane.volmlib.util.localization.LocalizationReloadResult;
+import art.arcane.volmlib.util.localization.LocalizationSnapshot;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.localization.MessageArgumentKind;
 import art.arcane.volmlib.util.localization.MessageArgs;
@@ -34,6 +35,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 public final class IrisLanguage {
@@ -45,6 +48,13 @@ public final class IrisLanguage {
     private static final LocalizationManager MANAGER = new LocalizationManager(
             LocalizationCandidate.english(CATALOG, PluralSelector.oneOther())
     );
+    /**
+     * Memoized argument-free {@link #plain(MessageKey)} results. HUD and overlay code calls it several times
+     * per frame for fixed labels; resolve plus placeholder render plus colour clean is not free at 60fps.
+     * Keyed by message id and pinned to the snapshot it was resolved against, so a locale reload publishes a
+     * new snapshot and the whole memo is discarded. Bounded by the catalog size.
+     */
+    private static final AtomicReference<PlainMemo> PLAIN_MEMO = new AtomicReference<>(null);
 
     private static volatile File dataFolder;
     private static volatile File watchedFile;
@@ -163,7 +173,19 @@ public final class IrisLanguage {
     }
 
     public static String plain(MessageKey key) {
-        return plain(key, MessageArgs.empty());
+        LocalizationSnapshot snapshot = MANAGER.snapshot();
+        PlainMemo memo = PLAIN_MEMO.get();
+        if (memo == null || memo.snapshot() != snapshot) {
+            memo = new PlainMemo(snapshot, new ConcurrentHashMap<>());
+            PLAIN_MEMO.set(memo);
+        }
+        String cached = memo.values().get(key.id());
+        if (cached != null) {
+            return cached;
+        }
+        String resolved = plain(key, MessageArgs.empty());
+        memo.values().put(key.id(), resolved);
+        return resolved;
     }
 
     public static String plain(MessageKey key, MessageArgs arguments) {
@@ -463,5 +485,8 @@ public final class IrisLanguage {
     }
 
     private record RenderedArgument(String token, MessageArgument argument) {
+    }
+
+    private record PlainMemo(LocalizationSnapshot snapshot, Map<String, String> values) {
     }
 }

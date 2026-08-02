@@ -210,12 +210,9 @@ public final class ModdedBlockResolution {
     }
 
     static Parsed resolveGet(String bdxf) {
-        Parsed parsed = resolveOrNull(bdxf, false);
-        if (parsed != null) {
-            return parsed;
-        }
-        IrisLogging.error("Can't find block data for " + bdxf);
-        return new Parsed(AIR, null, null);
+        // Mirrors the Bukkit path: an unknown key warns (rate limited) and falls back to air, instead of
+        // resolving to air with no output at all.
+        return resolveNoCompat(bdxf);
     }
 
     static Parsed resolveNoCompat(String bdxf) {
@@ -226,6 +223,10 @@ public final class ModdedBlockResolution {
         return new Parsed(AIR, null, null);
     }
 
+    /**
+     * Resolves a key, returning null when nothing claims it. Never substitutes air - {@link #resolveNoCompat(String)}
+     * owns the air fallback.
+     */
     static Parsed resolveOrNull(String bdxf, boolean warn) {
         try {
             String bd = bdxf.trim();
@@ -248,7 +249,7 @@ public final class ModdedBlockResolution {
                 if (warn) {
                     warnUnresolved(bd, "Unknown Block Data '" + bd + "'");
                 }
-                return new Parsed(AIR, null, null);
+                return null;
             }
 
             return bdx;
@@ -286,14 +287,33 @@ public final class ModdedBlockResolution {
             return parseStrict(s);
         } catch (IllegalArgumentException e) {
             if (s.contains("[")) {
-                return createBlockData(s.split("\\Q[\\E")[0], warn);
+                String base = s.split("\\Q[\\E")[0];
+                Parsed stripped = createBlockData(base, warn);
+                if (stripped != null && warn) {
+                    // Dedup on the base block key, not the full state string. UnresolvedKeyLog interns every key it
+                    // is handed into a set it never trims, and a rejected property is usually rejected for every
+                    // value and every combination a pack uses - keying on the state string would intern one entry per
+                    // distinct state (16 levels x 6 facings x ...) for a single authoring mistake.
+                    warnUnresolved("props:" + base,
+                            "Block '" + base + "' rejected state '" + propertySection(s) + "'; using its default state");
+                }
+                return stripped;
             }
         }
 
         if (warn) {
-            IrisLogging.warn("Can't find block data for " + s);
+            warnUnresolved(s, "Can't find block data for " + s);
         }
         return null;
+    }
+
+    private static String propertySection(String key) {
+        int open = key.indexOf('[');
+        if (open < 0) {
+            return "";
+        }
+        int close = key.indexOf(']', open);
+        return close < 0 ? key.substring(open + 1) : key.substring(open + 1, close);
     }
 
     private static Parsed materialBlockData(String ix) {

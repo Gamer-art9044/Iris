@@ -134,6 +134,24 @@ public class IrisEngine implements Engine {
     private final AtomicBoolean modeFallbackLogged;
     private final AtomicBoolean prefetchSaveStarted;
 
+    /**
+     * Object identity, not value identity. An engine is a live mutable service, and {@code @Data} would otherwise
+     * generate equals/hashCode over every field above - counters, latches, rolling averages - so an engine's hash
+     * would change on every generated chunk and its equality would depend on transient timing state.
+     * <p>
+     * Three live maps key on an engine: the modded GUI host registry and the two WeakHashMap tree-feller indexes. A
+     * mutating hash silently loses their entries, and a value-based equals lets two distinct engines collide.
+     */
+    @Override
+    public boolean equals(Object o) {
+        return this == o;
+    }
+
+    @Override
+    public int hashCode() {
+        return System.identityHashCode(this);
+    }
+
     public IrisEngine(EngineTarget target, boolean studio) {
         this.studio = studio;
         this.target = target;

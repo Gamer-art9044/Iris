@@ -48,7 +48,9 @@ public class KeyedType {
 
     @Nullable
     public static NamespacedKey getKey(Object value) {
-        if (value == null) {
+        // KEYED_PRESENT first: without it the instanceof below resolves org.bukkit.Keyed and
+        // NoClassDefFoundErrors on the modded loaders instead of degrading to null.
+        if (!KEYED_PRESENT || value == null) {
             return null;
         }
 

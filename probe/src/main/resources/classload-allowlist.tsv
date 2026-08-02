@@ -26,9 +26,11 @@ art.arcane.iris.core.link.data.MythicMobsDataProvider$IrisRegionCondition	MYTHIC
 art.arcane.iris.core.link.data.NexoDataProvider	BUKKIT_API	org.bukkit.block.data.BlockData
 art.arcane.iris.core.nms.INMS	BUKKIT_API	org.bukkit.Bukkit
 art.arcane.iris.core.project.IrisProject	BUKKIT_API	org.bukkit.entity.Entity
+art.arcane.iris.core.runtime.StudioOpenCoordinator	BUKKIT_API	org.bukkit.generator.WorldInfo
 art.arcane.iris.core.runtime.WorldRuntimeControlService	BUKKIT_API	org.bukkit.entity.Entity
 art.arcane.iris.core.service.BoardSVC	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.core.service.BoardSVC$PlayerBoard	BUKKIT_API	org.bukkit.entity.Entity
+art.arcane.iris.core.service.EntityRiseSVC	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.core.service.ExternalDataSVC	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.core.service.GlobalCacheSVC	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.core.service.LogFilterSVC	BUKKIT_API	org.bukkit.event.Listener
@@ -37,10 +39,13 @@ art.arcane.iris.core.service.ObjectStudioSaveService	BUKKIT_API	org.bukkit.event
 art.arcane.iris.core.service.PreservationSVC	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.core.service.StudioSVC	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.core.service.TreeSVC	BUKKIT_API	org.bukkit.event.Listener
+art.arcane.iris.core.tools.IrisCreator	BUKKIT_API	org.bukkit.command.CommandSender
 art.arcane.iris.core.tools.IrisToolbelt	BUKKIT_API	org.bukkit.command.CommandSender
 art.arcane.iris.core.tools.IrisWorldCreator	BUKKIT_API	org.bukkit.generator.ChunkGenerator
-art.arcane.iris.core.tools.TreePlausibilizer	BUKKIT_API	org.bukkit.Keyed
 art.arcane.iris.engine.IrisWorldManager	BUKKIT_API	org.bukkit.event.Listener
+art.arcane.iris.engine.WorldChunkMaintenance	BUKKIT_API	org.bukkit.entity.Entity
+art.arcane.iris.engine.WorldEntitySpawner	BUKKIT_API	org.bukkit.entity.Entity
+art.arcane.iris.engine.WorldTeleportWarmup	BUKKIT_API	org.bukkit.command.CommandSender
 art.arcane.iris.engine.framework.EngineAssignedWorldManager	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.engine.framework.EnginePlayer	BUKKIT_API	org.bukkit.entity.Entity
 art.arcane.iris.engine.framework.placer.WorldObjectPlacer	BUKKIT_API	org.bukkit.event.Event
@@ -60,6 +65,7 @@ art.arcane.iris.engine.platform.BukkitChunkGenerator$2	BUKKIT_API	org.bukkit.Hei
 art.arcane.iris.engine.platform.DummyBiomeProvider	BUKKIT_API	org.bukkit.generator.BiomeProvider
 art.arcane.iris.engine.platform.DummyChunkGenerator	BUKKIT_API	org.bukkit.generator.ChunkGenerator
 art.arcane.iris.engine.platform.EngineBukkitOps	BUKKIT_API	org.bukkit.entity.Entity
+art.arcane.iris.engine.platform.EngineBukkitOps$2	BUKKIT_API	org.bukkit.block.BlockFace
 art.arcane.iris.engine.platform.studio.generators.ObjectStudioGenerator	BUKKIT_API	org.bukkit.Material
 art.arcane.iris.platform.bukkit.BukkitBlockResolution	BUKKIT_API	org.bukkit.Material
 art.arcane.iris.platform.bukkit.BukkitBlockState	BUKKIT_API	org.bukkit.Keyed
@@ -68,7 +74,6 @@ art.arcane.iris.platform.bukkit.BukkitWorldBinding	BUKKIT_API	org.bukkit.generat
 art.arcane.iris.util.common.data.IrisCustomData	BUKKIT_API	org.bukkit.block.data.BlockData
 art.arcane.iris.util.common.data.registry.Attributes	BUKKIT_API	org.bukkit.attribute.Attribute
 art.arcane.iris.util.common.data.registry.Materials	BUKKIT_API	org.bukkit.Material
-art.arcane.iris.util.common.data.registry.Particles	BUKKIT_API	org.bukkit.Particle
 art.arcane.iris.util.common.director.handlers.VectorHandler	BUKKIT_API	org.bukkit.util.Vector
 art.arcane.iris.util.common.director.handlers.WorldHandler	BUKKIT_API	org.bukkit.generator.WorldInfo
 art.arcane.iris.util.common.format.C$DyeMaps	BUKKIT_API	org.bukkit.DyeColor

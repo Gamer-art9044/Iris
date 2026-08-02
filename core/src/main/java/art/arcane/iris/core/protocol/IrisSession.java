@@ -34,6 +34,8 @@ public final class IrisSession {
     private int inboundFramesInWindow;
     private long visionTileWindowStartMillis;
     private int visionTileRequestsInWindow;
+    private long cursorInfoWindowStartMillis;
+    private int cursorInfoRequestsInWindow;
 
     public IrisSession(String id, IrisServerTransport transport) {
         this.id = Objects.requireNonNull(id, "session id");
@@ -45,6 +47,8 @@ public final class IrisSession {
         this.inboundFramesInWindow = 0;
         this.visionTileWindowStartMillis = 0L;
         this.visionTileRequestsInWindow = 0;
+        this.cursorInfoWindowStartMillis = 0L;
+        this.cursorInfoRequestsInWindow = 0;
     }
 
     public String id() {
@@ -98,6 +102,23 @@ public final class IrisSession {
             return false;
         }
         visionTileRequestsInWindow++;
+        return true;
+    }
+
+    /**
+     * Cursor lookups get their own second-window budget instead of sharing
+     * {@link #allowInbound(long)}: a client is free to spend its whole frame budget on cursors otherwise, and
+     * each lookup costs three engine column resolves.
+     */
+    public synchronized boolean allowCursorInfo(long nowMillis) {
+        if (nowMillis - cursorInfoWindowStartMillis >= 1000L) {
+            cursorInfoWindowStartMillis = nowMillis;
+            cursorInfoRequestsInWindow = 0;
+        }
+        if (cursorInfoRequestsInWindow >= IrisProtocol.MAX_CURSOR_INFO_REQUESTS_PER_SECOND) {
+            return false;
+        }
+        cursorInfoRequestsInWindow++;
         return true;
     }
 

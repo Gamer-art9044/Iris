@@ -27,6 +27,7 @@ import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedBlockResolution;
 import art.arcane.iris.modded.ModdedLootApplier;
+import art.arcane.iris.modded.ModdedServerLevels;
 import art.arcane.iris.modded.ModdedTileData;
 import art.arcane.iris.modded.api.ModdedCustomContentRegistry;
 import art.arcane.iris.spi.IrisLogging;
@@ -100,7 +101,7 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
             return;
         }
 
-        for (ServerLevel level : server.getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             if (!(level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator)) {
                 continue;
             }

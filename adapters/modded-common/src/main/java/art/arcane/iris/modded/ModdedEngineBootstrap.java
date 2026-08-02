@@ -125,6 +125,9 @@ public final class ModdedEngineBootstrap {
     }
 
     public static void serverStarted(MinecraftServer server) {
+        // Prime the off-thread level snapshot before anything can read it; the per-tick refresh in
+        // ModdedScheduler.tick has not run yet at this point.
+        ModdedServerLevels.refreshIfStale(server);
         bindWorldGenerators(server);
         ModdedStartup.runOnce(server);
         reconcileSpawn(server);
@@ -174,6 +177,10 @@ public final class ModdedEngineBootstrap {
         ModdedScheduler scheduler = schedulerOrNull();
         if (scheduler != null) {
             failure = runStopStage(failure, "scheduler", scheduler::shutdown);
+        } else {
+            // No bound runtime: the scheduler shutdown that normally drops the level snapshot never runs, and a
+            // static snapshot of a stopped server keeps its whole level graph alive.
+            failure = runStopStage(failure, "level snapshot", ModdedServerLevels::forget);
         }
         failure = runStopStage(failure, "generation pool", IrisModdedChunkGenerator::shutdownGenPool);
         failure = runStopStage(failure, "sentry", ModdedSentry::flush);
@@ -184,8 +191,9 @@ public final class ModdedEngineBootstrap {
             initialSpawnWasDefault = false;
         });
         if (failure != null) {
+            // The shutdown path must not propagate: propagating aborts the remaining loader stop handlers and
+            // can leave the level unsaved. Every stage already logged its own failure.
             LOGGER.error("Iris modded shutdown completed with failures", failure);
-            throw propagateStopFailure(failure);
         }
     }
 
@@ -203,16 +211,6 @@ public final class ModdedEngineBootstrap {
             }
             return failure;
         }
-    }
-
-    private static RuntimeException propagateStopFailure(Throwable failure) {
-        if (failure instanceof RuntimeException runtimeException) {
-            return runtimeException;
-        }
-        if (failure instanceof Error fatalError) {
-            throw fatalError;
-        }
-        return new IllegalStateException("Iris modded shutdown completed with failures", failure);
     }
 
     private static void captureInitialSpawn(MinecraftServer server) {

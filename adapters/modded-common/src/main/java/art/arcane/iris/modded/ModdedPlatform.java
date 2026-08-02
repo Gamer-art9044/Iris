@@ -35,9 +35,17 @@ import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 
 import java.io.File;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public final class ModdedPlatform implements IrisPlatform {
+    private static final int ERROR_SIGNATURE_BURST = 5;
+    private static final int ERROR_SIGNATURE_CAPACITY = 256;
+    private static final long ERROR_SUMMARY_INTERVAL_MILLIS = 300_000L;
+    private static final ConcurrentHashMap<String, ErrorThrottle> ERROR_THROTTLES = new ConcurrentHashMap<>();
+
     private static volatile Consumer<Throwable> ERROR_SINK = null;
     private static volatile Consumer<Throwable> CAPTURE_SINK = null;
 
@@ -166,9 +174,17 @@ public final class ModdedPlatform implements IrisPlatform {
         ModdedIrisLog.info(message);
     }
 
+    /**
+     * Throttled per exception signature. A single broken pack rule can fail on every generated chunk, and this
+     * feeds Sentry, so each distinct signature reports its first few occurrences and then only a periodic
+     * suppressed-count summary.
+     */
     @Override
     public void reportError(Throwable error) {
         if (error == null) {
+            return;
+        }
+        if (!allowErrorReport(error)) {
             return;
         }
         Consumer<Throwable> sink = ERROR_SINK;
@@ -184,6 +200,77 @@ public final class ModdedPlatform implements IrisPlatform {
             } catch (Throwable captureFailure) {
                 ModdedIrisLog.error("Iris error-reporting sink failed", captureFailure);
             }
+        }
+    }
+
+    static void resetErrorThrottles() {
+        ERROR_THROTTLES.clear();
+    }
+
+    private static boolean allowErrorReport(Throwable error) {
+        String signature = errorSignature(error);
+        ErrorThrottle throttle = ERROR_THROTTLES.get(signature);
+        if (throttle == null) {
+            if (ERROR_THROTTLES.size() >= ERROR_SIGNATURE_CAPACITY) {
+                evictLeastRecentlySeen();
+            }
+            throttle = ERROR_THROTTLES.computeIfAbsent(signature, ignored -> new ErrorThrottle());
+        }
+        return throttle.allow(signature);
+    }
+
+    /**
+     * At the cap a new signature used to report through unthrottled for the rest of the uptime, which is the
+     * failure mode the cap exists to prevent: one broken pack rule firing on every chunk with a per-chunk line
+     * number produces new signatures forever. Evict the entry nothing has hit for the longest instead. O(n) on
+     * an error path with n=256, and an evicted signature simply earns a fresh burst if it comes back.
+     */
+    private static void evictLeastRecentlySeen() {
+        String oldest = null;
+        long oldestSeenAt = Long.MAX_VALUE;
+        for (Map.Entry<String, ErrorThrottle> entry : ERROR_THROTTLES.entrySet()) {
+            long seenAt = entry.getValue().lastSeenAt();
+            if (seenAt < oldestSeenAt) {
+                oldestSeenAt = seenAt;
+                oldest = entry.getKey();
+            }
+        }
+        if (oldest != null) {
+            ERROR_THROTTLES.remove(oldest);
+        }
+    }
+
+    static String errorSignature(Throwable error) {
+        StackTraceElement[] trace = error.getStackTrace();
+        String frame = trace.length == 0
+                ? "<no-frame>"
+                : trace[0].getClassName() + '.' + trace[0].getMethodName() + ':' + trace[0].getLineNumber();
+        return error.getClass().getName() + '@' + frame;
+    }
+
+    private static final class ErrorThrottle {
+        private final AtomicLong reported = new AtomicLong();
+        private final AtomicLong suppressed = new AtomicLong();
+        private final AtomicLong nextSummaryAt = new AtomicLong();
+        private final AtomicLong lastSeenAt = new AtomicLong(System.currentTimeMillis());
+
+        private long lastSeenAt() {
+            return lastSeenAt.get();
+        }
+
+        private boolean allow(String signature) {
+            long now = System.currentTimeMillis();
+            lastSeenAt.set(now);
+            if (reported.get() < ERROR_SIGNATURE_BURST) {
+                reported.incrementAndGet();
+                return true;
+            }
+            long total = suppressed.incrementAndGet();
+            long due = nextSummaryAt.get();
+            if (now >= due && nextSummaryAt.compareAndSet(due, now + ERROR_SUMMARY_INTERVAL_MILLIS)) {
+                ModdedIrisLog.warn("Iris suppressed " + total + " repeats of " + signature);
+            }
+            return false;
         }
     }
 

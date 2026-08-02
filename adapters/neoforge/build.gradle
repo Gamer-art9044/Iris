@@ -207,6 +207,7 @@ tasks.named('shadowJar', ShadowJar).configure {
     doFirst {
         delete(fileTree(layout.buildDirectory.dir('libs')) {
             include('Iris v* [NeoForge] *.jar')
+            include('iris-neoforge-*.jar')
         })
         delete(layout.buildDirectory.file("libs/Iris-${project.version}+mc${minecraftVersion}-neoforge.jar"))
     }
@@ -219,15 +220,43 @@ tasks.named('shadowJar', ShadowJar).configure {
     exclude('META-INF/*.SF')
     exclude('META-INF/*.DSA')
     exclude('META-INF/*.RSA')
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    relocate('org.objectweb.asm', 'art.arcane.iris.shadow.asm')
-    relocate('io.sentry', 'art.arcane.iris.shadow.sentry')
+    // The only multi-release entry any bundled dependency contributes is an OSGi manifest. Keeping
+    // it forces `Multi-Release: true` onto the mod jar, which makes the loaders treat the whole
+    // archive as versioned and re-scan it per release directory for nothing.
+    exclude('META-INF/versions/**')
+    addMultiReleaseAttribute.set(false)
+    // Invalid package name on Java 9+ ('enum' is a keyword); a module-path scan chokes on it.
+    exclude('org/apache/commons/lang/enum/**')
+    // Compile-only annotation carriers. Shipping them duplicates packages other mods also ship.
     exclude('org/jspecify/**')
     exclude('com/google/errorprone/**')
     exclude('com/google/j2objc/**')
     exclude('org/checkerframework/**')
     exclude('org/jetbrains/annotations/**')
     exclude('org/intellij/lang/**')
+    // The Bukkit platform binding cannot load without org.bukkit on the classpath, which no mod
+    // loader has. Shipping it only adds dead classes that reference a missing package.
+    exclude('art/arcane/iris/platform/bukkit/**')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    relocate('org.objectweb.asm', 'art.arcane.iris.shadow.asm')
+    relocate('io.sentry', 'art.arcane.iris.shadow.sentry')
+    // Split-package guard. A co-installed mod that ships any of these at their original coordinates
+    // puts two copies of the same package on one module layer, which the loaders reject at boot
+    // (Terra ships paralithic; caffeine and dom4j are common in mod dependency trees). First-party
+    // art.arcane.volmlib is deliberately NOT relocated.
+    relocate('com.github.benmanes.caffeine', 'art.arcane.iris.shadow.caffeine')
+    relocate('com.googlecode.concurrentlinkedhashmap', 'art.arcane.iris.shadow.clhm')
+    relocate('com.dfsek.paralithic', 'art.arcane.iris.shadow.paralithic')
+    relocate('org.dom4j', 'art.arcane.iris.shadow.dom4j')
+    relocate('org.jaxen', 'art.arcane.iris.shadow.jaxen')
+    relocate('org.zeroturnaround.zip', 'art.arcane.iris.shadow.ztzip')
+}
+
+// The thin `jar` output carries valid neoforge.mods.toml metadata but bundles zero dependencies.
+// Installing it is an instant NoClassDefFoundError, and it sits in build/libs right next to the real
+// artifact. shadowJar is the only shippable NeoForge jar.
+tasks.named('jar').configure {
+    enabled = false
 }
 
 tasks.named('assemble').configure {

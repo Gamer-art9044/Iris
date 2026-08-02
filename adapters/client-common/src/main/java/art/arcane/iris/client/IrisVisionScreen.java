@@ -22,12 +22,21 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * CLIENT DIST ONLY. See {@link IrisClientHud} for why the dist marker is a javadoc contract plus a bytecode
+ * test rather than an @Environment annotation.
+ */
 public final class IrisVisionScreen extends Screen {
     private static final int TILE_PIXELS = 128;
     private static final int MIN_ZOOM = 0;
     private static final int MAX_ZOOM = 8;
     private static final int DEFAULT_ZOOM = 2;
-    private static final int MAX_TEXTURES = 220;
+    /** Floor for the GPU texture budget, so a small window still keeps a prefetch ring resident. */
+    private static final int MIN_TEXTURES = 220;
+    /** Ceiling, matching the tile cache: 4K at scale 1 draws ~660 tiles at once. */
+    private static final int MAX_TEXTURES = IrisClientTileCache.ABSOLUTE_MAX_CACHED_TILES;
+    /** Extra rings of tiles kept resident beyond what is on screen right now. */
+    private static final int TEXTURE_SLACK_RINGS = 1;
     private static final int BACKGROUND_COLOR = 0xF00B0E14;
     private static final int PLACEHOLDER_COLOR = 0xFF161A22;
     private static final int GRID_COLOR = 0x33FFFFFF;
@@ -75,7 +84,7 @@ public final class IrisVisionScreen extends Screen {
         graphics.fill(0, 0, width, height, BACKGROUND_COLOR);
         IrisClientSession session = IrisClient.session();
         if (!session.isReady()) {
-            drawCentered(graphics, IrisLanguage.plain(ClientUiMessages.VISION_CONNECTING), MUTED_COLOR);
+            drawCentered(graphics, handshakeMessage(session), MUTED_COLOR);
             drawHeader(graphics, IrisLanguage.plain(ClientUiMessages.VISION_TITLE), IrisLanguage.plain(ClientUiMessages.VISION_NOT_CONNECTED));
             return;
         }
@@ -91,7 +100,9 @@ public final class IrisVisionScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        return true;
+        // The map itself has nothing clickable, but swallowing every click also swallows the ones widgets and
+        // the parent screen need. Let Screen route it; drag and scroll are handled below.
+        return super.mouseClicked(event, doubleClick);
     }
 
     @Override
@@ -102,6 +113,11 @@ public final class IrisVisionScreen extends Screen {
         return true;
     }
 
+    /**
+     * Known limitation, not a bug to chase: a zoom change makes every cached tile the wrong scale, because the
+     * zoom level is part of the tile key. The new level's tiles are re-requested at 8/s, so the map repaints
+     * from placeholders. Rendering the old level scaled would need a second texture path for a transient view.
+     */
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (scrollY == 0.0D) {
@@ -136,9 +152,15 @@ public final class IrisVisionScreen extends Screen {
         int centerTileX = Math.floorDiv((int) Math.floor(centerBlockX), tileSpanBlocks);
         int centerTileZ = Math.floorDiv((int) Math.floor(centerBlockZ), tileSpanBlocks);
 
+        int visibleTiles = (maxTileX - minTileX + 1) * (maxTileZ - minTileZ + 1);
         IrisClientTileCache cache = IrisClient.tiles();
+        cache.ensureCapacity(visibleTiles);
         cache.resetRequestQueue();
         List<IrisTileKey> missing = new ArrayList<>();
+
+        // Evict before the blit loop, never after. A DynamicTexture released mid-frame is a closed GPU handle
+        // that the already-recorded blit still points at, which is a use-after-close on the render thread.
+        evictTextures(textureCapacity(visibleTiles));
 
         for (int tileX = minTileX; tileX <= maxTileX; tileX++) {
             for (int tileZ = minTileZ; tileZ <= maxTileZ; tileZ++) {
@@ -158,7 +180,6 @@ public final class IrisVisionScreen extends Screen {
 
         requestMissing(cache, missing, centerTileX, centerTileZ);
         cache.pump();
-        evictTextures();
 
         drawMarkers(graphics, mouseX, mouseY, minTileX, maxTileX, minTileZ, maxTileZ, originX, originY, blocksPerPixel);
         drawPlayer(graphics, blocksPerPixel);
@@ -246,7 +267,14 @@ public final class IrisVisionScreen extends Screen {
     private Identifier ensureTexture(IrisTileKey key, IrisTileImage image) {
         TileTexture existing = textures.get(key);
         if (existing != null) {
-            return existing.id();
+            if (existing.image() == image) {
+                return existing.id();
+            }
+            // IrisClientTileCache replaced the tile with a freshly decoded image (new sequence from the
+            // server). Identity is the generation counter: a re-decode is always a new record instance, so an
+            // upload keyed only on the tile coordinates would show the stale render forever.
+            Minecraft.getInstance().getTextureManager().release(existing.id());
+            textures.remove(key);
         }
         int tileWidth = image.width();
         int tileHeight = image.height();
@@ -261,17 +289,26 @@ public final class IrisVisionScreen extends Screen {
         DynamicTexture texture = new DynamicTexture(() -> "iris_vision_tile", nativeImage);
         Identifier id = Identifier.fromNamespaceAndPath("irisworldgen", texturePath(key));
         Minecraft.getInstance().getTextureManager().register(id, texture);
-        textures.put(key, new TileTexture(id, texture));
+        textures.put(key, new TileTexture(id, image));
         return id;
     }
 
-    private void evictTextures() {
-        if (textures.size() <= MAX_TEXTURES) {
+    /**
+     * Texture budget for the current viewport: everything on screen plus a slack ring, clamped to sane bounds.
+     * A fixed 220 is under half of what 4K at scale 1 draws, so the eviction pass used to fight the blit loop.
+     */
+    private static int textureCapacity(int visibleTiles) {
+        long required = (long) visibleTiles * (1 + 2 * TEXTURE_SLACK_RINGS);
+        return (int) Math.max(MIN_TEXTURES, Math.min(MAX_TEXTURES, required));
+    }
+
+    private void evictTextures(int capacity) {
+        if (textures.size() <= capacity) {
             return;
         }
         TextureManager manager = Minecraft.getInstance().getTextureManager();
         Iterator<Map.Entry<IrisTileKey, TileTexture>> iterator = textures.entrySet().iterator();
-        while (textures.size() > MAX_TEXTURES && iterator.hasNext()) {
+        while (textures.size() > capacity && iterator.hasNext()) {
             Map.Entry<IrisTileKey, TileTexture> entry = iterator.next();
             manager.release(entry.getValue().id());
             iterator.remove();
@@ -309,6 +346,19 @@ public final class IrisVisionScreen extends Screen {
         }
     }
 
+    /**
+     * Distinct copy per terminal handshake state. UNSUPPORTED means the hello retries ran out with no answer -
+     * no Iris on the server. INCOMPATIBLE means Iris answered with a different wire version. Reporting either
+     * as "connecting" left the screen sitting on a spinner that would never resolve.
+     */
+    private static String handshakeMessage(IrisClientSession session) {
+        return switch (session.state()) {
+            case UNSUPPORTED -> IrisLanguage.plain(ClientUiMessages.VISION_SERVER_WITHOUT_IRIS);
+            case INCOMPATIBLE -> IrisLanguage.plain(ClientUiMessages.VISION_VERSION_MISMATCH);
+            default -> IrisLanguage.plain(ClientUiMessages.VISION_CONNECTING);
+        };
+    }
+
     private static long distanceSquared(IrisTileKey key, int centerTileX, int centerTileZ) {
         long deltaX = (long) key.tileX() - centerTileX;
         long deltaZ = (long) key.tileZ() - centerTileZ;
@@ -342,6 +392,11 @@ public final class IrisVisionScreen extends Screen {
         );
     }
 
-    private record TileTexture(Identifier id, DynamicTexture texture) {
+    /**
+     * The registered texture id plus the exact image instance uploaded into it. The DynamicTexture itself is
+     * not retained: TextureManager owns it after register, and release(id) is the only handle needed. Holding
+     * the source image is what lets {@link #ensureTexture(IrisTileKey, IrisTileImage)} notice a re-decode.
+     */
+    private record TileTexture(Identifier id, IrisTileImage image) {
     }
 }

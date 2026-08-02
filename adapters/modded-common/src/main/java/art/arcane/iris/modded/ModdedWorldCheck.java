@@ -23,6 +23,9 @@ import art.arcane.iris.modded.WorldCheckStructureAudit.PendingVillagePoi;
 import art.arcane.iris.modded.WorldCheckStructureAudit.PoiAudit;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.state.BlockState;
@@ -39,6 +42,8 @@ import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
@@ -47,8 +52,11 @@ public final class ModdedWorldCheck {
     private static final int EXIT_FAILURE = 1;
     private static final long SERVER_WAIT_TIMEOUT_MILLIS = 600000L;
     private static final long SERVER_WAIT_INTERVAL_MILLIS = 250L;
+    private static final long SERVER_TASK_TIMEOUT_MILLIS = 900000L;
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
-    private static final ProcessExit PROCESS_EXIT = Runtime.getRuntime()::exit;
+    // halt, not exit: awaitStopAndExit already waited for MinecraftServer.halt(true), and exit() would run the
+    // shutdown hooks and block behind the server thread it just stopped, so a finished check could hang forever.
+    private static final ProcessExit PROCESS_EXIT = Runtime.getRuntime()::halt;
     private static volatile MinecraftServer startedServer;
 
     private ModdedWorldCheck() {
@@ -70,7 +78,9 @@ public final class ModdedWorldCheck {
 
     static Thread coordinatorThread(Runnable coordinator) {
         Thread thread = new Thread(coordinator, "Iris World Check");
-        thread.setDaemon(false);
+        // Daemon: every wait below is bounded and the coordinator exits the process itself, so this thread
+        // must never be the reason a crashed dev server keeps the JVM alive.
+        thread.setDaemon(true);
         return thread;
     }
 
@@ -95,17 +105,20 @@ public final class ModdedWorldCheck {
             }
 
             MinecraftServer serverRef = server;
-            WorldCheckPreparation preparation = serverRef.submit(() -> run(serverRef)).join();
+            WorldCheckPreparation preparation = serverRef.submit(() -> run(serverRef))
+                    .get(SERVER_TASK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
             exitCode = serverRef.submit(() -> runAndRequestStop(
                     () -> completeWorldCheck(preparation),
                     () -> {
                         stopRequested.set(true);
                         serverRef.halt(false);
                     }
-            )).join();
+            )).get(SERVER_TASK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             LOGGER.error("[worldcheck] coordinator interrupted", e);
             Thread.currentThread().interrupt();
+        } catch (TimeoutException e) {
+            LOGGER.error("[worldcheck] server task did not finish within {}ms", SERVER_TASK_TIMEOUT_MILLIS);
         } catch (Throwable e) {
             LOGGER.error("[worldcheck] check failed", e);
         } finally {
@@ -275,16 +288,18 @@ public final class ModdedWorldCheck {
     private static ServerLevel targetLevel(MinecraftServer server) {
         String target = System.getProperty("iris.worldcheck.dimension");
         if (target != null && !target.isBlank()) {
-            for (ServerLevel level : server.getAllLevels()) {
-                if (level.dimension().identifier().toString().equals(target.trim())) {
-                    return level;
-                }
+            Identifier identifier = Identifier.tryParse(target.trim());
+            ServerLevel requested = identifier == null
+                    ? null
+                    : ModdedServerLevels.level(server, ResourceKey.create(Registries.DIMENSION, identifier));
+            if (requested != null) {
+                return requested;
             }
             LOGGER.error("[worldcheck] requested dimension '{}' is not loaded", target);
             return null;
         }
 
-        for (ServerLevel level : server.getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator) {
                 return level;
             }

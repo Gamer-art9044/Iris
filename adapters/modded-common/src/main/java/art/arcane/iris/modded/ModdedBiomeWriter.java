@@ -34,13 +34,20 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 public final class ModdedBiomeWriter implements PlatformBiomeWriter {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String VANILLA_FALLBACK_KEY = "minecraft:plains";
+    private static final int MAX_CACHED_IDS = 4096;
+    /** NUL cannot occur in a pack or registry key, so the composite cache key stays unambiguous. */
+    private static final char SCOPE_SEPARATOR = (char) 0;
 
     private final Supplier<MinecraftServer> server;
+    private final AtomicBoolean serverMissingReported = new AtomicBoolean();
+    private volatile RegistryCache cache;
 
     public ModdedBiomeWriter(Supplier<MinecraftServer> server) {
         this.server = server;
@@ -50,9 +57,33 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
     public int biomeIdFor(String key) {
         Registry<Biome> registry = biomeRegistry();
         if (registry == null) {
+            reportMissingServer("resolve the biome id for '" + key + "'", "using biome id 0");
             return 0;
         }
-        int direct = idForKey(registry, scopedBiomeKey(key));
+        if (key == null) {
+            LOGGER.warn("Iris biome writer got a null biome key; falling back to {}", VANILLA_FALLBACK_KEY);
+            return fallbackId(registry);
+        }
+
+        RegistryCache cached = cacheFor(registry);
+        String scoped = scopedBiomeKey(key);
+        // The scoped key depends on the calling engine, so the same pack key can resolve differently per
+        // dimension. Cache on both halves; the derivative path below reads the raw key.
+        String cacheKey = scoped.equals(key) ? key : key + SCOPE_SEPARATOR + scoped;
+        Integer hit = cached.ids.get(cacheKey);
+        if (hit != null) {
+            return hit;
+        }
+
+        int resolved = resolve(registry, key, scoped);
+        if (cached.ids.size() < MAX_CACHED_IDS) {
+            cached.ids.put(cacheKey, resolved);
+        }
+        return resolved;
+    }
+
+    private int resolve(Registry<Biome> registry, String key, String scoped) {
+        int direct = idForKey(registry, scoped);
         if (direct >= 0) {
             return direct;
         }
@@ -79,17 +110,25 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
     @Override
     public List<PlatformBiome> allBiomes() {
         Registry<Biome> registry = biomeRegistry();
-        List<PlatformBiome> biomes = new ArrayList<>();
         if (registry == null) {
-            return biomes;
+            reportMissingServer("enumerate the biome registry", "returning no biomes");
+            return new ArrayList<>();
         }
-        for (Identifier identifier : registry.keySet()) {
-            Biome biome = registry.getValue(identifier);
-            if (biome != null) {
-                biomes.add(ModdedBiome.of(biome, identifier.toString()));
+
+        RegistryCache cached = cacheFor(registry);
+        List<PlatformBiome> snapshot = cached.biomes;
+        if (snapshot == null) {
+            List<PlatformBiome> built = new ArrayList<>();
+            for (Identifier identifier : registry.keySet()) {
+                Biome biome = registry.getValue(identifier);
+                if (biome != null) {
+                    built.add(ModdedBiome.of(biome, identifier.toString()));
+                }
             }
+            snapshot = List.copyOf(built);
+            cached.biomes = snapshot;
         }
-        return biomes;
+        return new ArrayList<>(snapshot);
     }
 
     private int idForKey(Registry<Biome> registry, String key) {
@@ -151,6 +190,44 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
         if (instance == null) {
             return null;
         }
+        // Read before write: this runs for every biome id on every generation thread, and an unconditional
+        // store on a shared cache line is a contended write on the hot path for a flag that is almost always
+        // already false.
+        if (serverMissingReported.get()) {
+            serverMissingReported.set(false);
+        }
         return instance.registryAccess().lookupOrThrow(Registries.BIOME);
+    }
+
+    /**
+     * The SPI requires biome writers to cache their registry lookups: biomeIdFor runs from generation threads
+     * for every biome a pack names, and the derivative path walks every active engine and every custom biome.
+     * The cache is keyed on the biome Registry instance, which the server replaces whenever datapacks reload,
+     * so a reload invalidates everything for free.
+     */
+    private RegistryCache cacheFor(Registry<Biome> registry) {
+        RegistryCache current = cache;
+        if (current != null && current.registry == registry) {
+            return current;
+        }
+        RegistryCache replacement = new RegistryCache(registry);
+        cache = replacement;
+        return replacement;
+    }
+
+    private void reportMissingServer(String operation, String fallback) {
+        if (serverMissingReported.compareAndSet(false, true)) {
+            LOGGER.warn("Iris cannot {} before the Minecraft server is available; {}", operation, fallback);
+        }
+    }
+
+    private static final class RegistryCache {
+        private final Registry<Biome> registry;
+        private final ConcurrentHashMap<String, Integer> ids = new ConcurrentHashMap<>();
+        private volatile List<PlatformBiome> biomes;
+
+        private RegistryCache(Registry<Biome> registry) {
+            this.registry = registry;
+        }
     }
 }

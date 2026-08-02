@@ -33,6 +33,29 @@ workspaces with schema autocomplete over the server's live registries, entity sp
 including death loot, pregeneration with a boss bar or client HUD, the `/iris` command tree, and
 the goldenhash determinism gate, which is interchangeable across all four platforms.
 
+### Native worldgen over Iris terrain
+
+Iris replaces the chunk generator, so vanilla and mod worldgen only runs where Iris runs it. This
+is identical on every platform.
+
+| Vanilla / mod worldgen | Over Iris terrain | Control |
+|---|---|---|
+| Structures (vanilla, datapack, mod) | Yes, on by default | `importedStructures.disabled` denies individual keys |
+| Placed features: ores, trees, plants, springs, geodes | Yes, **off by default** | `importedFeatures.enabled` per dimension, with per-step and per-key filters |
+| Carvers (caves, canyons, mod carvers) | Never - architectural | Iris has no `NoiseGeneratorSettings` for a carver to sample; use pack `caves`/`carvings` |
+| Surface builders and surface rules | Never | Iris builds its surface from pack palettes |
+| Mod biomes | Only as a `derivative`, `vanillaDerivative`, `biomeScatter` or `biomeSkyScatter` target | Iris chooses biomes from the pack, not from a biome source |
+| Mob spawning, including mod mobs | Yes | Biome spawn tables are merged with the vanilla derivative's |
+
+With `importedFeatures` off - the default - chunk output is byte-for-byte what Iris has always
+produced. See [docs/api/modded.md](docs/api/modded.md) for the full control reference, including
+which `pointed_dripstone` keys the 26.2 `speleothem` rename does and does not affect.
+
+Independently of that flag, Iris custom biomes now inherit the biome tags of their vanilla
+derivative on every platform, so the emitted datapack tag files change. Anything driven by biome
+tags therefore applies to Iris custom biomes: mob variants, spawn rules, and any vanilla or mod
+content selecting on `#minecraft:is_overworld` and friends.
+
 ## Install
 
 **Plugin (Paper/Purpur/Leaf/Canvas/Folia/Spigot):** drop the plugin jar into `plugins/` and start
@@ -42,7 +65,7 @@ the server. On first boot Iris downloads the default `overworld` pack automatica
 self-contained (core, SPI, and required Fabric API modules are bundled). On first boot Iris
 downloads the default `overworld` pack before the worldgen datapack is written, so the default
 pack is fully active immediately. Packs installed later register their custom dimension types
-(height ranges) and custom biomes through the forced datapack at server start — restart once after
+(height ranges) and custom biomes through the forced datapack at server start - restart once after
 adding a pack so worlds get its full heights and biomes; worlds created before that restart run
 with fallback heights.
 
@@ -91,7 +114,7 @@ console/status output. `/iris pregen status` reports progress on the plugin.
 ## Studio and VSCode workspace
 
 The studio is the pack authoring environment, available on all platforms. Studio worlds are
-transient — they are deleted on close and purged at startup.
+transient - they are deleted on close and purged at startup.
 
 ```
 /iris studio create <name> [template]   scaffold a new pack (default template: example)
@@ -142,8 +165,8 @@ returns `---`. A real zero returns `0`.
 The world values are the surface reading at the player's block column. Walking refreshes them at most
 once per second per player, so a whole board of `world.*` keys costs one refresh per player per
 second no matter how many of them are on it, and a value may lag a sprinting player by up to a
-second. A jump that is not walking — joining, respawning, changing worlds, stepping through a portal,
-or any teleport including `/iris goto`, `/tp`, an ender pearl and a random teleport — is published
+second. A jump that is not walking - joining, respawning, changing worlds, stepping through a portal,
+or any teleport including `/iris goto`, `/tp`, an ender pearl and a random teleport - is published
 immediately, so a player who arrives somewhere and then stands still never keeps reading the biome,
 region or dimension of where they came from. `pregen.*` is global: there is one pregeneration job per
 server, and `%iris_pregen.world%` says which world it is.

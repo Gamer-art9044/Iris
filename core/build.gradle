@@ -214,6 +214,12 @@ tasks.named('compileJava', JavaCompile).configure {
     options.compilerArgs.addAll(['--add-modules', 'jdk.incubator.vector'])
     options.encoding = 'UTF-8'
     options.debugOptions.debugLevel = 'none'
+    // lombok.config decides how equals/hashCode/toString are generated (fields, never getters), so editing it
+    // changes this module's bytecode. Gradle does not know that on its own and would serve a stale up-to-date
+    // build until something else in the module changed.
+    inputs.file(rootProject.file('lombok.config'))
+        .withPropertyName('lombokConfig')
+        .withPathSensitivity(PathSensitivity.NONE)
 }
 
 tasks.named('test', Test).configure {

@@ -68,6 +68,14 @@ public final class ModdedBlockBreakHandler {
         if (engineFor(level) == null) {
             return;
         }
+        ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
+        if (scheduler == null) {
+            // finishPending is the only thing that evicts an unconsumed entry. With no scheduler there is no
+            // sweep, so an entry inserted here would leak for the rest of the server uptime.
+            LOGGER.debug("Iris skipped block-break provenance at {},{},{}: scheduler unavailable",
+                    position.getX(), position.getY(), position.getZ());
+            return;
+        }
         BreakKey key = new BreakKey(level, position.asLong());
         ModdedTreeFellerService treeFeller = treeFellerService();
         ModdedTreeFellerService.PreparedOrigin preparedOrigin = treeFeller == null
@@ -75,10 +83,7 @@ public final class ModdedBlockBreakHandler {
                 : treeFeller.prepare(level, player, position, brokenState);
         PendingBreak pending = new PendingBreak(brokenState, preparedOrigin);
         PENDING.put(key, pending);
-        ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
-        if (scheduler != null) {
-            scheduler.laterGlobal(() -> finishPending(key, pending, position), 1);
-        }
+        scheduler.laterGlobal(() -> finishPending(key, pending, position), 1);
     }
 
     public static void clear() {

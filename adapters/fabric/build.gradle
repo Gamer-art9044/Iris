@@ -114,6 +114,14 @@ dependencies {
     minecraft("com.mojang:minecraft:${minecraftVersion}")
     implementation("net.fabricmc:fabric-loader:${fabricLoaderVersion}")
     testImplementation('junit:junit:4.13.2')
+    // registrySync and resourceLoader are LOAD-BEARING despite zero imports anywhere in Iris:
+    //   fabric-registry-sync-v0   delays registry freeze past mod init, which is what lets
+    //                             IrisFabricBootstrap register the CHUNK_GENERATOR codec in
+    //                             onInitialize instead of crashing on a frozen registry.
+    //   fabric-resource-loader-v1 is what makes assets/irisworldgen/lang/*.json (and the keybind
+    //                             labels) resolve from a mod jar.
+    // Removing either one produces a boot crash / silent missing-translation regression, not a
+    // compile error. Do not prune them as unused.
     List<Object> fabricApi = [
         libs.fabricApi.base,
         libs.fabricApi.registrySync,
@@ -180,6 +188,7 @@ loom {
             vmArg('-Xmx8G')
         }
         server {
+            runDir(providers.gradleProperty('irisServerRunDir').getOrElse('run'))
             String parity = providers.gradleProperty('irisParity').getOrNull()
             if (parity != null) {
                 property('iris.parity', parity)
@@ -210,10 +219,28 @@ processResources {
     }
 }
 
+// META-INF/jars filenames are declared verbatim in the fabric.mod.json `jars[]` array, and Fabric
+// loader resolves them by that exact string. Map every bundled module to its declared filename
+// instead of stripping the version with a regex: a version containing a '-' silently defeats the
+// strip and leaves an undeclared nested jar (which loader then ignores) behind.
+Map<String, String> nestedFabricApiJars = [
+    'fabric-api-base'            : 'fabric-api-base.jar',
+    'fabric-registry-sync-v0'    : 'fabric-registry-sync-v0.jar',
+    'fabric-resource-loader-v1'  : 'fabric-resource-loader-v1.jar',
+    'fabric-lifecycle-events-v1' : 'fabric-lifecycle-events-v1.jar',
+    'fabric-command-api-v2'      : 'fabric-command-api-v2.jar',
+    'fabric-events-interaction-v0': 'fabric-events-interaction-v0.jar',
+    'fabric-networking-api-v1'   : 'fabric-networking-api-v1.jar',
+    'fabric-rendering-v1'        : 'fabric-rendering-v1.jar',
+    'fabric-key-mapping-api-v1'  : 'fabric-key-mapping-api-v1.jar',
+    'fabric-permission-api-v1'   : 'fabric-permission-api-v1.jar'
+]
+
 tasks.named('shadowJar', ShadowJar).configure {
     doFirst {
         delete(fileTree(layout.buildDirectory.dir('libs')) {
             include('Iris v* [Fabric] *.jar')
+            include('iris-fabric-*.jar')
         })
         delete(layout.buildDirectory.file("libs/Iris-${project.version}+mc${minecraftVersion}-fabric.jar"))
     }
@@ -225,13 +252,61 @@ tasks.named('shadowJar', ShadowJar).configure {
     exclude('META-INF/*.SF')
     exclude('META-INF/*.DSA')
     exclude('META-INF/*.RSA')
+    // The only multi-release entry any bundled dependency contributes is an OSGi manifest. Keeping
+    // it forces `Multi-Release: true` onto the mod jar, which makes the loaders treat the whole
+    // archive as versioned and re-scan it per release directory for nothing.
+    exclude('META-INF/versions/**')
+    addMultiReleaseAttribute.set(false)
+    // Invalid package name on Java 9+ ('enum' is a keyword); a module-path scan chokes on it.
+    exclude('org/apache/commons/lang/enum/**')
+    // Compile-only annotation carriers. Shipping them duplicates packages other mods also ship.
+    exclude('org/jspecify/**')
+    exclude('com/google/errorprone/**')
+    exclude('com/google/j2objc/**')
+    exclude('org/checkerframework/**')
+    exclude('org/jetbrains/annotations/**')
+    exclude('org/intellij/lang/**')
+    // The Bukkit platform binding cannot load without org.bukkit on the classpath, which no mod
+    // loader has. Shipping it only adds dead classes that reference a missing package.
+    exclude('art/arcane/iris/platform/bukkit/**')
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     relocate('org.objectweb.asm', 'art.arcane.iris.shadow.asm')
     relocate('io.sentry', 'art.arcane.iris.shadow.sentry')
+    // Split-package guard. A co-installed mod that ships any of these at their original coordinates
+    // puts two copies of the same package on one module layer, which the loaders reject at boot
+    // (Terra ships paralithic; caffeine and dom4j are common in mod dependency trees). First-party
+    // art.arcane.volmlib is deliberately NOT relocated.
+    relocate('com.github.benmanes.caffeine', 'art.arcane.iris.shadow.caffeine')
+    relocate('com.googlecode.concurrentlinkedhashmap', 'art.arcane.iris.shadow.clhm')
+    relocate('com.dfsek.paralithic', 'art.arcane.iris.shadow.paralithic')
+    relocate('org.dom4j', 'art.arcane.iris.shadow.dom4j')
+    relocate('org.jaxen', 'art.arcane.iris.shadow.jaxen')
+    relocate('org.zeroturnaround.zip', 'art.arcane.iris.shadow.ztzip')
     from(project.configurations.named('jij')) {
         into('META-INF/jars')
-        rename { String fileName -> fileName.replaceAll(/-[0-9][^-]*\.jar$/, '.jar') }
+        rename { String fileName ->
+            String module = nestedFabricApiJars.keySet()
+                .sort { String key -> -key.length() }
+                .find { String key -> fileName.startsWith(key + '-') }
+            if (module == null) {
+                throw new GradleException("Undeclared Fabric API nested jar: ${fileName}. Add it to "
+                    + 'nestedFabricApiJars and to the jars[] array in fabric.mod.json.')
+            }
+
+            return nestedFabricApiJars.get(module)
+        }
     }
+}
+
+// The thin `jar`/`remapJar` outputs carry valid fabric.mod.json metadata but bundle zero
+// dependencies. Installing one is an instant NoClassDefFoundError, and they sit in build/libs right
+// next to the real artifact. shadowJar is the only shippable Fabric jar.
+tasks.named('jar').configure {
+    enabled = false
+}
+
+tasks.matching { it.name == 'remapJar' }.configureEach {
+    enabled = false
 }
 
 tasks.named('assemble').configure {

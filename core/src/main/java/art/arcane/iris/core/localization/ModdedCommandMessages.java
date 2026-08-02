@@ -1153,7 +1153,7 @@ public final class ModdedCommandMessages {
     );
     public static final TextKey MODDED_WORLD_COMMANDS_FAILED_WRITE_SERVER_PROPERTIES_CHECK_FILE_PERMISSIONS_SET_LEVEL_TYPE = TextKey.of(
             "iris.modded.moddedworldcommands.failed_write_server_properties_check_file_permissions_set_level_type",
-            "Failed to write server.properties; check file permissions and set level-type manually."
+            "Could not update server.properties (missing at the server working directory, or unwritable); see the server log, or set level-type manually."
     );
     public static final TextKey MODDED_WORLD_COMMANDS_IRIS_MAIN_WORLD_SET_PRESET_SEED = TextKey.of(
             "iris.modded.moddedworldcommands.iris_main_world_set_preset_seed",

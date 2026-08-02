@@ -106,6 +106,23 @@ public class InitialSpawnQueueTest {
     }
 
     @Test
+    public void expireKeepsYoungerOffersWhenReleasingCapacity() {
+        AtomicLong now = new AtomicLong();
+        InitialSpawnQueue queue = new InitialSpawnQueue(2, 100L, now::get);
+        queue.offer(1L);
+        now.set(60L);
+        queue.offer(2L);
+
+        now.set(100L);
+
+        assertTrue(queue.offer(3L));
+        assertEquals(2, queue.size());
+        assertEquals(Long.valueOf(2L), queue.poll());
+        assertEquals(Long.valueOf(3L), queue.poll());
+        assertNull(queue.poll());
+    }
+
+    @Test
     public void expiredInFlightEntryCannotRetry() {
         AtomicLong now = new AtomicLong();
         InitialSpawnQueue queue = new InitialSpawnQueue(2, 100L, now::get);

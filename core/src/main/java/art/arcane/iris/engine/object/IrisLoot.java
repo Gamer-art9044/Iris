@@ -126,6 +126,21 @@ public class IrisLoot {
         return BukkitBlockResolution.getMaterial(type);
     }
 
+    /**
+     * The authored item key, exactly as written in the pack. Platform-neutral: {@link #getType()} resolves it against
+     * Bukkit, mod loaders resolve it against their own item registry.
+     */
+    public String getTypeKey() {
+        return type;
+    }
+
+    /**
+     * The authored dye colour name, or null when unset. Platform-neutral counterpart to {@link #getDyeColor()}.
+     */
+    public String getDyeColorKey() {
+        return dyeColor;
+    }
+
     public DyeColor getDyeColor() {
         if (dyeColor == null) {
             return null;

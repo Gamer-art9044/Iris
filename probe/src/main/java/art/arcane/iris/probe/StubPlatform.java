@@ -592,6 +592,11 @@ public final class StubPlatform implements IrisPlatform {
         }
 
         @Override
+        public List<String> specialEntityKeys() {
+            return List.of();
+        }
+
+        @Override
         public List<String> enchantmentKeys() {
             return List.of();
         }

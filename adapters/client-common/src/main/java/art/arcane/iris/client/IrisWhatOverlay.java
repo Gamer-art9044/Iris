@@ -15,6 +15,10 @@ import net.minecraft.world.phys.HitResult;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * CLIENT DIST ONLY. See {@link IrisClientHud} for why the dist marker is a javadoc contract plus a bytecode
+ * test rather than an @Environment annotation.
+ */
 public final class IrisWhatOverlay {
     private static final int PANEL_COLOR = 0xC0101010;
     private static final int TITLE_COLOR = 0xFF66BB6A;

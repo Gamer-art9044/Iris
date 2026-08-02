@@ -29,16 +29,15 @@ import art.arcane.iris.engine.object.annotations.DependsOn;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBiome;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.iris.util.common.data.DataProvider;
-import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.project.context.IrisContext;
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import lombok.AccessLevel;
@@ -139,15 +138,19 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     @Desc("A color for visualizing this biome with a color. I.e. #F13AF5. This will show up on the map.")
     private String color = null;
     @Required
+    @RegistryListBiome
     @Desc("The raw derivative of this biome. This is required or the terrain will not properly generate. Use any vanilla biome type. Look in examples/biome-list.txt")
     private String derivative = "minecraft:the_void";
     @Required
+    @RegistryListBiome
     @Desc("Override the derivative used for vanilla structure selection. Iris still enforces the generated terrain role: land-only Minecraft derivatives on sea biomes expose no native structure biome, and land-only derivatives on shore biomes resolve as beach, while exact ocean, river, beach, and shore variants remain eligible. Non-Minecraft namespaces remain authoritative. Not defining this value selects derivative.")
     private String vanillaDerivative = null;
     @ArrayType(min = 1, type = String.class)
+    @RegistryListBiome
     @Desc("You can instead specify multiple biome derivatives to randomly scatter colors in this biome")
     private KList<String> biomeScatter = new KList<>();
     @ArrayType(min = 1, type = String.class)
+    @RegistryListBiome
     @Desc("Since 1.13 supports 3D biomes, you can add different derivative colors for anything above the terrain. (Think swampy tree leaves with a desert looking grass surface)")
     private KList<String> biomeSkyScatter = new KList<>();
     @DependsOn({"children"})
@@ -623,11 +626,6 @@ public class IrisBiome extends IrisRegistrant implements IRare {
 
     public String getTypeName() {
         return "Biome";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
-
     }
 
     private static final class SeededBiomeGenerator {

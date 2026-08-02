@@ -37,6 +37,8 @@ import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 
+import java.util.Locale;
+
 
 @Snippet("enchantment")
 @Accessors(chain = true)
@@ -65,7 +67,7 @@ public class IrisEnchantment {
 
     public void apply(RNG rng, ItemMeta meta) {
         try {
-            Enchantment enchant = Registry.ENCHANTMENT.get(NamespacedKey.minecraft(getEnchantment()));
+            Enchantment enchant = resolve();
             if (enchant == null) {
                 IrisLogging.warn("Unknown Enchantment: " + getEnchantment());
                 return;
@@ -81,6 +83,20 @@ public class IrisEnchantment {
             IrisLogging.reportError(e);
 
         }
+    }
+
+    /**
+     * Resolves the authored key against the live enchantment registry. Accepts a bare path
+     * ({@code sharpness}) or a full namespaced key ({@code mymod:vorpal}) - parity with the modded resolver.
+     */
+    private Enchantment resolve() {
+        String raw = getEnchantment();
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String value = raw.trim().toLowerCase(Locale.ROOT).replace(' ', '_');
+        NamespacedKey key = value.indexOf(':') >= 0 ? NamespacedKey.fromString(value) : NamespacedKey.minecraft(value);
+        return key == null ? null : Registry.ENCHANTMENT.get(key);
     }
 
     public int getLevel(RNG rng) {

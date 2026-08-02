@@ -2,15 +2,18 @@ package art.arcane.iris.client;
 
 import art.arcane.iris.spi.protocol.IrisMessage;
 import art.arcane.iris.spi.protocol.IrisProtocol;
+import art.arcane.iris.spi.protocol.ProtocolException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 final class IrisTileAssembler {
-    private static final int MAX_CHUNK_COUNT =
+    /** More chunks than the largest legal tile can occupy means the header is lying. */
+    static final int MAX_CHUNK_COUNT =
             (IrisTileCodec.MAX_DECODED_BYTES + IrisProtocol.VISION_TILE_MAX_CHUNK_BYTES - 1)
                     / IrisProtocol.VISION_TILE_MAX_CHUNK_BYTES + 1;
-    private static final int MAX_PENDING_TILES = 64;
+    /** Half-assembled tiles retained at once; the oldest is dropped past this. */
+    static final int MAX_PENDING_TILES = 64;
 
     private final Map<IrisTileKey, Partial> partials;
 
@@ -23,7 +26,13 @@ final class IrisTileAssembler {
         };
     }
 
-    IrisTileImage add(IrisMessage.VisionTile tile) {
+    /**
+     * @return the finished image once the last chunk of a set lands, or null while the set is incomplete or the
+     *         frame is structurally unusable (impossible index or count, missing payload, a chunk from a set
+     *         older than the one being assembled)
+     * @throws ProtocolException when a complete set decodes to a malformed blob
+     */
+    IrisTileImage add(IrisMessage.VisionTile tile) throws ProtocolException {
         int chunkCount = tile.chunkCount();
         int chunkIndex = tile.chunkIndex();
         if (chunkCount <= 0 || chunkCount > MAX_CHUNK_COUNT || chunkIndex < 0 || chunkIndex >= chunkCount || tile.data() == null) {
@@ -31,14 +40,12 @@ final class IrisTileAssembler {
         }
         IrisTileKey key = new IrisTileKey(tile.tileX(), tile.tileZ(), tile.zoomLevel());
         Partial partial = partials.get(key);
+        if (partial != null && tile.sequence() < partial.sequence()) {
+            return null;
+        }
         if (partial == null || tile.sequence() > partial.sequence() || partial.chunkCount() != chunkCount) {
-            if (partial != null && tile.sequence() < partial.sequence()) {
-                return null;
-            }
             partial = new Partial(tile.sequence(), chunkCount);
             partials.put(key, partial);
-        } else if (tile.sequence() < partial.sequence()) {
-            return null;
         }
         if (!partial.accept(chunkIndex, tile.data())) {
             return null;

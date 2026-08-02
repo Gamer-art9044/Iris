@@ -56,7 +56,7 @@ public class IrisProtocolServerTest {
     }
 
     @Test
-    public void wrongProtocolVersionNeverReachesReady() {
+    public void wrongProtocolVersionNeverReachesReadyButStillGetsAnswered() {
         RecordingTransport transport = new RecordingTransport();
         IrisSessionRegistry registry = new IrisSessionRegistry();
         IrisProtocolServer server = new IrisProtocolServer(registry, SERVER_CAPABILITIES, BRAND, true);
@@ -67,7 +67,76 @@ public class IrisProtocolServerTest {
 
         assertEquals(IrisSession.State.AWAITING_HELLO, session.state());
         assertEquals(1L, server.versionMismatchCount());
-        assertEquals(0, transport.sent.size());
+        // The reply is what lets the client resolve to INCOMPATIBLE instead of retrying five times and then
+        // reporting "server does not run Iris", which is a different and wrong diagnosis.
+        assertEquals(1, transport.sent.size());
+        IrisMessage.ServerHello answer = (IrisMessage.ServerHello) transport.sent.get(0);
+        assertEquals(IrisProtocol.PROTOCOL_VERSION, answer.protocolVersion());
+        assertEquals(BRAND, answer.serverBrand());
+    }
+
+    @Test
+    public void mismatchedHelloStillLeavesTheSessionUnableToRequestAnything() {
+        RecordingTransport transport = new RecordingTransport();
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        IrisProtocolServer server = new IrisProtocolServer(registry, SERVER_CAPABILITIES, BRAND, true);
+        IrisSession session = new IrisSession("s1", transport);
+        registry.register(session);
+        server.setEngineResolver(sessionId -> {
+            throw new AssertionError("an incompatible session must never reach the engine");
+        });
+
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.ClientHello(IrisProtocol.PROTOCOL_VERSION + 1, IrisProtocol.CAPABILITY_CURSOR)));
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.CursorInfoRequest(1, 2)));
+
+        assertEquals(0L, session.capabilities());
+        assertEquals(1L, server.droppedBeforeHelloCount());
+        assertEquals(1, transport.sent.size());
+    }
+
+    @Test
+    public void cursorRequestBeyondWorldBoundsRejectedWithoutResolvingEngine() {
+        RecordingTransport transport = new RecordingTransport();
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        IrisProtocolServer server = new IrisProtocolServer(registry, SERVER_CAPABILITIES, BRAND, true);
+        IrisSession session = new IrisSession("s1", transport);
+        registry.register(session);
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.ClientHello(IrisProtocol.PROTOCOL_VERSION, IrisProtocol.CAPABILITY_CURSOR)));
+        server.setEngineResolver(sessionId -> {
+            throw new AssertionError("an out-of-bounds column must never reach the engine");
+        });
+
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.CursorInfoRequest(IrisProtocol.MAX_QUERY_BLOCK_COORDINATE + 1, 0)));
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.CursorInfoRequest(0, -IrisProtocol.MAX_QUERY_BLOCK_COORDINATE - 1)));
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.CursorInfoRequest(Integer.MIN_VALUE, Integer.MAX_VALUE)));
+
+        assertEquals(3L, server.cursorOutOfBoundsCount());
+        assertEquals(0L, server.cursorInfoServedCount());
+        assertEquals(1, transport.sent.size());
+    }
+
+    @Test
+    public void cursorBurstBeyondItsOwnBudgetShedsWithoutTouchingTheFrameBudget() {
+        RecordingTransport transport = new RecordingTransport();
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        IrisProtocolServer server = new IrisProtocolServer(registry, SERVER_CAPABILITIES, BRAND, true, () -> 1000L);
+        IrisSession session = new IrisSession("s1", transport);
+        registry.register(session);
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.ClientHello(IrisProtocol.PROTOCOL_VERSION, IrisProtocol.CAPABILITY_CURSOR)));
+        server.setEngineResolver(sessionId -> cursorEngine("iris:plains", "iris:temperate", "", 64, "overworld"));
+
+        int overflow = 3;
+        int total = IrisProtocol.MAX_CURSOR_INFO_REQUESTS_PER_SECOND + overflow;
+        byte[] request = IrisMessageCodec.encode(new IrisMessage.CursorInfoRequest(8, 8));
+        for (int index = 0; index < total; index++) {
+            server.onClientFrame("s1", request);
+        }
+
+        assertEquals(IrisProtocol.MAX_CURSOR_INFO_REQUESTS_PER_SECOND, server.cursorInfoServedCount());
+        assertEquals(overflow, server.cursorRateLimitedCount());
+        assertEquals(0L, server.rateLimitedFrameCount());
+        assertTrue("the cursor budget must be tighter than the frame budget",
+                IrisProtocol.MAX_CURSOR_INFO_REQUESTS_PER_SECOND < IrisProtocol.MAX_INBOUND_FRAMES_PER_SECOND);
     }
 
     @Test

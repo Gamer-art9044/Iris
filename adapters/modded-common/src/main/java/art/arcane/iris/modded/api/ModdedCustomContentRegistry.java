@@ -29,11 +29,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -214,6 +217,44 @@ public final class ModdedCustomContentRegistry {
      */
     public static boolean hasProviders() {
         return !PROVIDERS.isEmpty() || !CUSTOM_BLOCKS.isEmpty();
+    }
+
+    /**
+     * Every statically registered {@code namespace:key} block alias. Read-only snapshot for pack tooling
+     * (schema completion, key validation); not on the resolution path.
+     */
+    public static List<String> aliasBlockKeys() {
+        return List.copyOf(CUSTOM_BLOCKS.keySet());
+    }
+
+    /**
+     * Every key claimed by a registered provider for {@code type}, in registration order, deduplicated. Read-only
+     * snapshot for pack tooling; a provider that throws is logged against its mod id and skipped.
+     */
+    public static List<String> providerKeys(ModdedDataType type) {
+        if (type == null || PROVIDERS.isEmpty()) {
+            return List.of();
+        }
+        List<String> keys = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (ModdedDataProvider provider : PROVIDERS) {
+            Collection<Identifier> types;
+            try {
+                types = provider.getTypes(type);
+            } catch (Throwable error) {
+                LOGGER.error("Iris custom content provider '{}' failed listing {} types", provider.modId(), type, error);
+                continue;
+            }
+            if (types == null) {
+                continue;
+            }
+            for (Identifier identifier : types) {
+                if (identifier != null && seen.add(identifier.toString())) {
+                    keys.add(identifier.toString());
+                }
+            }
+        }
+        return List.copyOf(keys);
     }
 
     /**

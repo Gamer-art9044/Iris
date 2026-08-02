@@ -6,7 +6,7 @@ placed by an Iris pack.
 
 It ships in the Fabric, Forge and NeoForge jars only. It is absent from the Bukkit plugin jar, shares no types
 with `art.arcane.iris.api`, and is not covered by [terrain.md](terrain.md), [world-events.md](world-events.md)
-or [tree-feller.md](tree-feller.md) — those describe the Bukkit surface, which does not exist on a mod loader.
+or [tree-feller.md](tree-feller.md) - those describe the Bukkit surface, which does not exist on a mod loader.
 
 Everything here assumes Minecraft 26.2, Java 25, and one of Fabric, Forge or NeoForge. The mod id is
 `irisworldgen` on all three.
@@ -25,7 +25,7 @@ Everything here assumes Minecraft 26.2, Java 25, and one of Fabric, Forge or Neo
 `maven-publish`, and the JitPack route documented in [README.md](README.md) resolves the Bukkit sources, not
 the modded adapter. Until that changes, building from source is the only path.
 
-The three adapters are standalone Gradle builds — each `adapters/<loader>/settings.gradle` does
+The three adapters are standalone Gradle builds - each `adapters/<loader>/settings.gradle` does
 `includeBuild('../..')` to substitute `art.arcane:core` and `art.arcane:spi` from the root build, which is what
 keeps Loom, ForgeGradle and ModDevGradle off one plugin classpath. The root build drives them through their own
 wrappers:
@@ -49,10 +49,10 @@ import only; it closes a composite build cycle (root -> adapter -> root) and Gra
 
 ### Soft dependency
 
-Declare the optional relationship, then do not rely on load order — the ServiceLoader path below works
+Declare the optional relationship, then do not rely on load order - the ServiceLoader path below works
 regardless of it, because Iris does the discovering.
 
-Fabric (`fabric.mod.json`) — `suggests`, not `depends`; a hard `depends` makes Iris mandatory:
+Fabric (`fabric.mod.json`) - `suggests`, not `depends`; a hard `depends` makes Iris mandatory:
 
 ```json
 {
@@ -76,7 +76,7 @@ Forge (`META-INF/mods.toml`) is the same with `mandatory = false` instead of `ty
 
 Two checks, and they answer different questions.
 
-**Is the mod present?** Ask the loader — `FabricLoader.getInstance().isModLoaded("irisworldgen")`, or
+**Is the mod present?** Ask the loader - `FabricLoader.getInstance().isModLoaded("irisworldgen")`, or
 `ModList.get().isLoaded("irisworldgen")` on Forge and NeoForge. Cheap, but tells you nothing about whether
 Iris actually generates anything.
 
@@ -126,7 +126,7 @@ have to pre-check.
 ### `Engine` is internal
 
 `getEngine` returns `art.arcane.iris.engine.framework.Engine`. That type is **internal to Iris** and changes
-without a deprecation cycle — as do `art.arcane.iris.core.*`, `art.arcane.iris.util.*` and
+without a deprecation cycle - as do `art.arcane.iris.core.*`, `art.arcane.iris.util.*` and
 `art.arcane.iris.spi.*`. Treat the returned `Engine` as an opaque token to hand back to Iris. Every method in
 the table above that needs one resolves it for you; prefer those.
 
@@ -136,7 +136,7 @@ Never cache an `Engine`. A pack hotload or a level unload replaces it, and the o
 ### Pregeneration
 
 `pregenerate` returns as soon as the job is queued. Progress goes to Iris's own logging and boss bar, not to
-your caller. Only one job runs server-wide, so it returns `false` if one is already active — and `false` also
+your caller. Only one job runs server-wide, so it returns `false` if one is already active - and `false` also
 means "not an Iris level", so check `isIrisLevel` first if you need to tell those apart. Call it on the server
 thread.
 
@@ -149,9 +149,9 @@ The mantle is Iris's own per-block storage, independent of chunk NBT, and it is 
 generation stages. Three things to know:
 
 1. **Coordinates are world-space.** `y` is translated by the engine's minimum height internally. A `y` outside
-   the engine's height range reads as null and writes as a no-op — no exception.
+   the engine's height range reads as null and writes as a no-op - no exception.
 2. **Reads never create storage; writes do.** `getMantleData` returns null when no mantle region exists for
-   that column yet. `setMantleData` and `deleteMantleData` create the region, which can touch disk — do not
+   that column yet. `setMantleData` and `deleteMantleData` create the region, which can touch disk - do not
    call them per block in a tick loop on the server thread.
 3. **Declare your types or lose them.** Iris discards mantle slices it does not need once a region's
    generation data has served its purpose. Any type you write and expect to read back later must be declared
@@ -184,7 +184,7 @@ public interface ModdedDataProvider {
 }
 ```
 
-`ModdedDataType` is `BLOCK`, `ITEM` or `ENTITY`. Constants may be added — write a `default` arm in any switch
+`ModdedDataType` is `BLOCK`, `ITEM` or `ENTITY`. Constants may be added - write a `default` arm in any switch
 expression over it.
 
 ### The contract
@@ -199,7 +199,7 @@ for every key it could not resolve itself. Keep it to a namespace comparison or 
 returns false rather than treating it as absent, so returning false is strictly better than returning wrong
 answers.
 
-`getTypes(type)` feeds command suggestion and pack tooling. It is not the resolution path — return an empty
+`getTypes(type)` feeds command suggestion and pack tooling. It is not the resolution path - return an empty
 collection rather than null, and do not do work here that `isValidProvider` should do.
 
 `getBlockData(blockId, state)` resolves a claimed block. `state` holds the `[prop=value]` pairs from the pack's
@@ -207,14 +207,14 @@ key, already parsed, possibly empty, never null. Return null to decline and Iris
 falls back to air. Return `ModdedBlockData.direct(blockState)` when the state is final.
 
 `processBlockPlacement(context)` finishes a **deferred** placement. Return
-`ModdedBlockData.deferred(placeholder)` from `getBlockData` when the real block needs a loaded level — a block
+`ModdedBlockData.deferred(placeholder)` from `getBlockData` when the real block needs a loaded level - a block
 entity, neighbour state, or mod registries not reachable from a generation thread. Iris writes your placeholder
 during generation and calls you back later on the server thread with the chunk loaded. Pick a placeholder with
 the same shape and occlusion as the final block so terrain around it generates correctly. Only the *first*
 provider claiming the identifier is called for a given position.
 
 `ModdedBlockPlacementContext` is an immutable record: `engine`, `level`, `position`, `blockId`, `state`,
-`blockState`. `blockState` is what is currently at `position` — normally your placeholder, though a later
+`blockState`. `blockState` is what is currently at `position` - normally your placeholder, though a later
 generation stage may have replaced it. `state` is defensively copied and unmodifiable.
 
 `spawnMob(...)` spawns a claimed custom entity on the server thread. Return null to decline.
@@ -257,7 +257,7 @@ fall back to `registerProvider`.
 ### When discovery runs
 
 `ModdedCustomContentRegistry.discover()` runs inside `ModdedEngineBootstrap.bootCommon(...)`, which is the very
-first thing each loader's entrypoint calls — `IrisFabricBootstrap.onInitialize`,
+first thing each loader's entrypoint calls - `IrisFabricBootstrap.onInitialize`,
 `IrisForgeBootstrap`/`IrisNeoForgeBootstrap` construction. That is **before** the Iris chunk generator is
 registered and long before any server starts. Consequences:
 
@@ -279,7 +279,7 @@ A second registration under a `modId()` already present is logged and ignored. `
 
 ### How discovery and failures are reported
 
-Everything below is logged under the `Iris` logger. One line per accepted provider confirms registration —
+Everything below is logged under the `Iris` logger. One line per accepted provider confirms registration -
 this is what to grep for when checking whether your service file was seen:
 
 ```
@@ -289,7 +289,7 @@ Iris registered custom content provider 'yourmod'
 A duplicate `modId()` is rejected with `already registered; ignoring duplicate`.
 
 Iris catches throwables from every provider callback, logs them against your `modId()`, and continues with the
-remaining providers — one broken provider does not stop world generation:
+remaining providers - one broken provider does not stop world generation:
 
 ```
 Iris custom content provider 'yourmod' failed resolving block yourmod:thing
@@ -318,7 +318,7 @@ For the common case of "my key is really this vanilla block", skip the provider:
 IrisModdedAPI.registerCustomBlockData("yourmod", "fancy_log", "minecraft:oak_log[axis=y]");
 ```
 
-The state string uses the same syntax packs use and is parsed **immediately** — a typo is logged at startup and
+The state string uses the same syntax packs use and is parsed **immediately** - a typo is logged at startup and
 the registration dropped, rather than surfacing later as missing blocks. Aliases take precedence over provider
 lookups for the same key. Null arguments are ignored.
 
@@ -331,12 +331,12 @@ Paths are relative to the loader's config directory (`config/` on a normal serve
 | Path | What it is |
 |---|---|
 | `config/irisworldgen/packs/<pack>/` | Installed packs. A pack is valid when `dimensions/<dimension>.json` exists |
-| `config/irisworldgen/generated/datapack/iris/` | The generated forced datapack. Iris owns this — do not edit it |
+| `config/irisworldgen/generated/datapack/iris/` | The generated forced datapack. Iris owns this - do not edit it |
 | `config/irisworldgen/modded.json` | Mod-side config: default pack, auto-download, primary world routing |
 | `config/iris/` | Engine data directory: settings and per-world engine state |
 
-Note the split: the engine's data folder is `config/iris`, but every modded pack path — installer, validator,
-command suggestions, forced datapack, engine creation — resolves under `config/irisworldgen/packs`. Install
+Note the split: the engine's data folder is `config/iris`, but every modded pack path - installer, validator,
+command suggestions, forced datapack, engine creation - resolves under `config/irisworldgen/packs`. Install
 packs there.
 
 At `bootCommon`, Iris kicks off an async default-pack prefetch. If `modded.json` has
@@ -345,7 +345,7 @@ At `bootCommon`, Iris kicks off an async default-pack prefetch. If `modded.json`
 `/iris download <pack>`. A pack that is already installed is left alone.
 
 When a level asks for its pack, `ModdedWorldEngines.packFolder(pack)` resolves
-`config/irisworldgen/packs/<pack>`. A missing pack is a hard failure with the expected absolute path printed —
+`config/irisworldgen/packs/<pack>`. A missing pack is a hard failure with the expected absolute path printed -
 Iris does not silently generate vanilla terrain in its place.
 
 ### The forced datapack
@@ -358,7 +358,7 @@ a built-in, top-priority repository source:
 - Forge and NeoForge: `event.addRepositorySource(ModdedForcedDatapack.repositorySource())`
 
 It contributes world presets, dimension types and biomes under the `irisworldgen` namespace, with ids derived
-from the pack and dimension names — `irisworldgen:packs/<pack>/dimensions/<dimension>/preset`,
+from the pack and dimension names - `irisworldgen:packs/<pack>/dimensions/<dimension>/preset`,
 `.../dimension_type`, `.../biomes/<biome>`. This is why an Iris dimension shows up in the vanilla world
 creation screen as `IRIS:<Pack>`.
 
@@ -366,8 +366,8 @@ It is regenerated when the pack changes: a studio hotload calls `ModdedForcedDat
 regeneration fails and a previously published pack is still readable, Iris keeps the last known-good one and
 logs the failure rather than starting with no dimension types.
 
-**The failure you need to recognise.** If injection did not happen for your loader — a mixin that failed to
-apply, an event that never fired — Iris logs this once at startup and world creation will fail no matter how
+**The failure you need to recognise.** If injection did not happen for your loader - a mixin that failed to
+apply, an event that never fired - Iris logs this once at startup and world creation will fail no matter how
 many times you restart:
 
 ```
@@ -386,7 +386,7 @@ The modded command tree is `/iris`, aliased `/ir` and `/irs`, gated at gamemaste
 | Command | What it tells you |
 |---|---|
 | `/iris pack validate [pack]` | Validates every installed pack, or one. Runs on a worker thread, reports per pack, and counts unloadable packs |
-| `/iris pack status [pack]` | Replays the **recorded** validation results — blocking errors and warnings per pack. Says so and returns nothing if `validate` has not run this session |
+| `/iris pack status [pack]` | Replays the **recorded** validation results - blocking errors and warnings per pack. Says so and returns nothing if `validate` has not run this session |
 | `/iris pack cleanup <pack> [apply]` | Previews unused pack resources; `apply` deletes them |
 | `/iris pack restore <pack> [apply]` | Previews a restore of pack resources; `apply` performs it |
 | `/iris datapack status` | Per Iris dimension: active dimension type, its min/max/logical height, what the pack wants, and whether they match |
@@ -401,7 +401,113 @@ created before a pack's height range changed. `install` writes the override; the
 
 `/iris datapack ingest`, `pull` and `remove` exist but refuse on modded, with a message explaining why: the
 Modrinth ingest workflow is Bukkit tooling. Native vanilla and datapack structure placement **does** work on
-modded — install the datapack into `<world>/datapacks/` and restart, and its registered structures generate.
+modded - install the datapack into `<world>/datapacks/` and restart, and its registered structures generate.
+
+---
+
+## Native worldgen passthrough: what generates over Iris terrain
+
+Iris replaces the chunk generator outright. Every piece of vanilla or mod worldgen therefore only runs if Iris
+runs it. This is the honest matrix.
+
+| Vanilla / mod worldgen | Runs over Iris terrain? | How |
+|---|---|---|
+| Structures (vanilla, datapack, mod) | **Yes**, on by default | Iris runs its own structure pass with vertical fitting, foundation stilts and vegetation clearing. Deny with `importedStructures.disabled` |
+| Placed features: ores, trees, plants, springs, geodes (vanilla, datapack, mod) | **Yes**, off by default | Set `importedFeatures.enabled` on the dimension |
+| Carvers (caves, canyons, mod carvers) | **Never** | Architectural. See below |
+| Mod biomes | Only as a `derivative` / `vanillaDerivative` / `biomeScatter` target | Iris chooses biomes from the pack, not from a biome source |
+| Mob spawning, including mod mobs | **Yes** | Iris merges the biome's own spawn table with the vanilla derivative's |
+| Surface builders / surface rules | **Never** | Iris generates its own surface from the pack palettes |
+
+### `importedFeatures`
+
+A dimension-level control block, disabled by default. With it absent or `enabled: false` chunk output is
+byte-for-byte what Iris has always produced, and no feature table is built.
+
+Biome tags are not part of that guarantee, and are not gated on this flag at all: Iris custom biomes inherit
+the biome tags of their vanilla derivative on every platform, so the emitted datapack tag files differ from
+older Iris builds regardless of `importedFeatures`. Anything driven by biome tags - mob variants, spawn rules,
+mod content selecting on `#minecraft:is_overworld` and friends - therefore applies to Iris custom biomes.
+
+```json
+{
+  "importedFeatures": {
+    "enabled": true,
+    "steps": ["UNDERGROUND_ORES"],
+    "disabledSteps": ["VEGETAL_DECORATION"],
+    "disabled": ["minecraft:ore_diamond", "minecraft:trees"]
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `enabled` | Master switch. Default `false` |
+| `steps` | Allow-list of decoration steps. Empty (default) means every step |
+| `disabledSteps` | Deny-list of decoration steps, applied after `steps` |
+| `disabled` | Placed-feature key deny-list. A `namespace:path` prefix matches on namespace, slash and underscore boundaries, so `minecraft:ore` denies every vanilla ore |
+
+Steps are the vanilla ones, in order: `RAW_GENERATION`, `LAKES`, `LOCAL_MODIFICATIONS`,
+`UNDERGROUND_STRUCTURES`, `SURFACE_STRUCTURES`, `STRONGHOLDS`, `UNDERGROUND_ORES`, `UNDERGROUND_DECORATION`,
+`FLUID_SPRINGS`, `VEGETAL_DECORATION`, `TOP_LAYER_MODIFICATION`. Ores live in `UNDERGROUND_ORES`; trees, grass
+and flowers in `VEGETAL_DECORATION`.
+
+What you get, and what it costs:
+
+- Features are read from the biome's **vanilla derivative**. An Iris custom biome declares no features of its
+  own by design (its generated datapack JSON has empty `features` and `carvers` arrays); passthrough comes from
+  the chunk generator's generation-settings getter, which maps the custom biome onto the derivative.
+- Iris terrain is not vanilla terrain. A feature that assumes a vanilla surface can land oddly - floating
+  sugar cane, ore veins in unexpected rock, trees on a slope Iris carved. Turn it on per dimension and look
+  before shipping.
+- Feature seeds are derived exactly as vanilla derives them, so the same pack plus the same registries places
+  the same features. Denying one feature never shifts another: each takes its seed from its own global index.
+- The pass runs on the worldgen thread that owns the chunk, never on the Iris generation pool. The vanilla
+  FEATURES step writes into neighbouring chunks and is not parallel-safe.
+- The whole feature pass runs after Iris has placed its structures, not interleaved per step the way vanilla
+  orders them. An early-step feature - `RAW_GENERATION`, `LAKES`, `LOCAL_MODIFICATIONS` - therefore sees placed
+  structures and can cut into one, so a lake can open into a structure vanilla would have flooded before
+  placing it.
+- Both platforms behave identically: the Bukkit plugin has the same control with the same semantics.
+
+**Feature order cycles.** Vanilla topologically sorts every placed feature across every biome. Content that
+declares mutually inconsistent orderings makes that sort fail with `Feature order cycle found`. Iris builds the
+table at bind and catches that failure: `importedFeatures` degrades to off for the dimension and Iris logs an
+ERROR naming the involved sources. It never becomes a chunk-generation crash.
+
+### Why carvers can never be imported
+
+A carver runs against `NoiseGeneratorSettings` - the noise router, aquifer state and surface rules of a
+`NoiseBasedChunkGenerator`. Iris has none of those; its terrain comes from the pack's own generators and its
+caves from the Iris carving system. There is nothing for a vanilla carver to sample, so `applyCarvers` is empty
+by design and there is no flag to change that. Use Iris `caves` and `carvings` in the pack instead.
+
+### 26.2 pack-content note: `pointed_dripstone` and `speleothem`
+
+26.2 renamed the *feature type* `minecraft:pointed_dripstone` to `minecraft:speleothem`, and
+`minecraft:dripstone_cluster` to `minecraft:speleothem_cluster`. Verified against the 26.2 built-in data:
+
+| Registry | 26.2 key |
+|---|---|
+| Block (`minecraft:block`) | `minecraft:pointed_dripstone` - **unchanged** |
+| Placed feature (`minecraft:worldgen/placed_feature`) | `minecraft:pointed_dripstone` - **unchanged** |
+| Configured feature (`minecraft:worldgen/configured_feature`) | `minecraft:pointed_dripstone` - **unchanged** |
+| Feature type (`minecraft:worldgen/feature`) | `minecraft:speleothem` - **renamed** |
+
+So a pack that lists `minecraft:pointed_dripstone` in a palette, an object, or an
+`importedFeatures.disabled` entry is still correct - those are block and placed-feature keys. Only content that
+names the *feature type* directly, which is a datapack-authoring concern rather than an Iris pack concern, needs
+updating.
+
+### Biome tags
+
+Generated Iris custom biomes inherit the **biome tag membership of their vanilla derivative**, on top of any
+tags the pack declares in `tags`. That is what makes `#minecraft:is_overworld` and mod-authored tag selectors
+resolve against Iris terrain; without it a custom biome sits in no tag at all. Structure tags
+(`#minecraft:has_structure/*`) are deliberately **not** inherited - Iris resolves native structure placement
+through the biome's structure derivative, so inheriting them would place a structure twice.
+
+Tag files are written with `"replace": false`, so vanilla tags are extended, never replaced.
 
 ---
 
@@ -419,5 +525,6 @@ modded — install the datapack into `<world>/datapacks/` and restart, and its r
   the mod jars. There is no modded terrain-query surface yet.
 - **No PlaceholderAPI.** [placeholders.md](placeholders.md) is Bukkit-only.
 - **Datapack ingest is Bukkit-only**, per the command note above.
+- **Vanilla carvers and surface rules never run.** See the passthrough matrix above.
 - **`ModdedCustomContentRegistry`'s resolution methods are Iris internals.** They are public only because the
   adapter's generation code lives in another package. Go through `IrisModdedAPI`.

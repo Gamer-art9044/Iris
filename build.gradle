@@ -172,6 +172,73 @@ tasks.register('buildBukkit', Copy) {
     }
 }
 
+// The three loader jars come out of nested standalone Gradle builds driven through Exec, so Gradle
+// cannot see through to their real inputs and re-runs all three on every buildAll. The declarations
+// below give each Exec a truthful input set. Anything that feeds a loader jar has to be listed here,
+// including the VolmLib checkout when source substitution is active - an unlisted source tree means
+// an edit there is silently ignored and a stale jar is treated as up to date.
+Closure<File> resolveLocalVolmLibDirectory = { ->
+    String configured = localVolmLibDirectory != null && !localVolmLibDirectory.isBlank()
+        ? localVolmLibDirectory
+        : System.getenv('VOLMLIB_DIR')
+    if (configured != null && !configured.isBlank()) {
+        File configuredDirectory = new File(configured)
+        if (!configuredDirectory.isAbsolute()) {
+            configuredDirectory = new File(rootDir, configured)
+        }
+        return configuredDirectory.isDirectory() ? configuredDirectory : null
+    }
+
+    File current = rootDir
+    while (current != null) {
+        File candidate = new File(current, 'VolmLib')
+        if (new File(candidate, 'settings.gradle').isFile() || new File(candidate, 'settings.gradle.kts').isFile()) {
+            return candidate
+        }
+
+        current = current.parentFile
+    }
+
+    return null
+}
+
+List<Object> moddedSharedInputs = []
+[
+    'adapters/modded-common/src',
+    'adapters/minecraft-common/src',
+    'adapters/client-common/src',
+    'core/src/main',
+    'core/build.gradle',
+    'spi/src/main',
+    'spi/build.gradle',
+    'build.gradle',
+    'settings.gradle',
+    'gradle.properties',
+    'gradle/libs.versions.toml',
+    'gradle/volmlib-resolution.settings.gradle'
+].each { String path -> moddedSharedInputs.add(layout.projectDirectory.file(path).asFile) }
+File localVolmLibCheckout = useLocalVolmLib.equalsIgnoreCase('true') ? resolveLocalVolmLibDirectory() : null
+if (localVolmLibCheckout != null) {
+    moddedSharedInputs.add(new File(localVolmLibCheckout, 'shared/src/main'))
+}
+
+Closure<Void> declareModdedJarIo = { Exec task, String adapter, String artifactName, Map<String, String> versions ->
+    task.inputs.files(moddedSharedInputs).withPropertyName('moddedSharedSources')
+    task.inputs.files(
+        layout.projectDirectory.file("adapters/${adapter}/src").asFile,
+        layout.projectDirectory.file("adapters/${adapter}/build.gradle").asFile,
+        layout.projectDirectory.file("adapters/${adapter}/settings.gradle").asFile
+    ).withPropertyName('adapterSources')
+    versions.each { String key, String value -> task.inputs.property(key, value) }
+    task.inputs.property('useLocalVolmLib', useLocalVolmLib)
+    task.inputs.property('volmLibCoordinate', volmLibCoordinate)
+    task.inputs.property('localVolmLibCheckout', localVolmLibCheckout == null ? '' : localVolmLibCheckout.absolutePath)
+    task.outputs.file(layout.projectDirectory.file("adapters/${adapter}/build/libs/${artifactName}"))
+    // The nested build owns its own caching; a remote cache entry here would be a lie.
+    task.outputs.cacheIf { false }
+    return null
+}
+
 tasks.register('fabricJar', Exec) {
     group = 'iris'
     workingDir = layout.projectDirectory.dir('adapters/fabric').asFile
@@ -190,6 +257,11 @@ tasks.register('fabricJar', Exec) {
         command.add("-PlocalVolmLibDirectory=${localVolmLibDirectory}")
     }
     commandLine(command)
+    declareModdedJarIo(it, 'fabric', fabricArtifactName, [
+        irisVersion: project.version.toString(),
+        minecraftVersion: minecraftVersion,
+        fabricLoaderVersion: fabricLoaderVersion
+    ])
 }
 
 tasks.register('buildFabric', Copy) {
@@ -223,6 +295,11 @@ tasks.register('forgeJar', Exec) {
         command.add("-PlocalVolmLibDirectory=${localVolmLibDirectory}")
     }
     commandLine(command)
+    declareModdedJarIo(it, 'forge', forgeArtifactName, [
+        irisVersion: project.version.toString(),
+        minecraftVersion: minecraftVersion,
+        forgeVersion: forgeVersion
+    ])
 }
 
 tasks.register('buildForge', Copy) {
@@ -256,6 +333,11 @@ tasks.register('neoforgeJar', Exec) {
         command.add("-PlocalVolmLibDirectory=${localVolmLibDirectory}")
     }
     commandLine(command)
+    declareModdedJarIo(it, 'neoforge', neoForgeArtifactName, [
+        irisVersion: project.version.toString(),
+        minecraftVersion: minecraftVersion,
+        neoForgeVersion: neoForgeVersion
+    ])
 }
 
 tasks.register('buildNeoforge', Copy) {
@@ -289,8 +371,46 @@ List<String> commonModdedArtifactEntries = [
     'art/arcane/iris/engine/IrisEngine.class',
     'art/arcane/iris/spi/IrisPlatform.class',
     'art/arcane/volmlib/util/mantle/io/Lz4IOWorkerCodecSupport.class',
-    'art/arcane/iris/util/common/misc/getHardware.class'
+    'art/arcane/iris/util/common/misc/getHardware.class',
+    // Both shared mixin configs plus the lang file and mod icon every loader's metadata points at.
+    // A shadowJar exclude or a renamed resource that drops any of these is silent at build time and
+    // shows up as a non-applied mixin or a missing-translation report from a user.
+    'irisworldgen.entity.mixins.json',
+    'irisworldgen.client.mixins.json',
+    'assets/irisworldgen/lang/en_us.json',
+    'assets/irisworldgen/icon.png'
 ]
+
+// Frozen inventory of shipped classes that extend or implement an org.bukkit type. They come from
+// core and VolmLib, sit on Bukkit-only code paths the mod loaders never resolve, and are inert dead
+// weight rather than a boot hazard - excluding them means chasing the whole core reference graph.
+// The verifier fails on anything NEW outside this set, which is the part that would be a regression.
+// Shrinking the set (WP4 deletions, retypes) needs no edit here; growing it does.
+Set<String> knownBukkitSupertypeClasses = [
+    'art/arcane/iris/core/events/IrisEngineEvent.class',
+    'art/arcane/iris/core/events/IrisLootEvent.class',
+    'art/arcane/iris/core/events/IrisLootEvent$1.class',
+    'art/arcane/iris/core/events/IrisLootEvent$2.class',
+    'art/arcane/iris/core/link/data/ItemAdderDataProvider.class',
+    'art/arcane/iris/core/link/data/MythicMobsDataProvider.class',
+    'art/arcane/iris/engine/framework/EngineAssignedWorldManager.class',
+    'art/arcane/iris/engine/object/IrisEntity$BukkitOps$1.class',
+    'art/arcane/iris/engine/object/LegacyTileData$SignTags$1.class',
+    'art/arcane/iris/engine/platform/BukkitChunkGenerator.class',
+    'art/arcane/iris/engine/platform/DummyBiomeProvider.class',
+    'art/arcane/iris/engine/platform/DummyChunkGenerator.class',
+    'art/arcane/iris/util/common/data/IrisCustomData.class',
+    'art/arcane/iris/util/common/plugin/IrisService.class',
+    'art/arcane/iris/util/common/plugin/VolmitPlugin.class',
+    'art/arcane/iris/util/common/plugin/VolmitSender.class',
+    'art/arcane/iris/util/common/plugin/chunk/ChunkTickets.class',
+    'art/arcane/volmlib/util/board/BoardUpdateTask.class',
+    'art/arcane/volmlib/util/bukkit/Events.class',
+    'art/arcane/volmlib/util/data/Cuboid.class',
+    'art/arcane/volmlib/util/data/InvertedBiomeGrid.class',
+    'art/arcane/volmlib/util/data/IrisBiomeStorage.class',
+    'art/arcane/volmlib/util/inventorygui/UIWindow.class'
+] as Set
 
 tasks.register('verifyFabricArtifact') {
     group = 'verification'
@@ -300,10 +420,12 @@ tasks.register('verifyFabricArtifact') {
     doLast {
         List<String> requiredEntries = commonModdedArtifactEntries + [
             'fabric.mod.json',
+            'irisworldgen.mixins.json',
+            'irisworldgen.accesswidener',
             'art/arcane/iris/fabric/IrisFabricBootstrap.class'
         ]
-        ModdedArtifactVerifier.verify(artifact, requiredEntries)
-        logger.lifecycle("Verified ${artifact.name} uses Minecraft-provided LZ4, OSHI, and JNA")
+        ModdedArtifactVerifier.verify(artifact, requiredEntries, knownBukkitSupertypeClasses)
+        logger.lifecycle("Verified ${artifact.name} packaging, mixin compat, and nested jars")
     }
 }
 
@@ -315,10 +437,11 @@ tasks.register('verifyForgeArtifact') {
     doLast {
         List<String> requiredEntries = commonModdedArtifactEntries + [
             'META-INF/mods.toml',
+            'META-INF/accesstransformer.cfg',
             'art/arcane/iris/forge/IrisForgeBootstrap.class'
         ]
-        ModdedArtifactVerifier.verify(artifact, requiredEntries)
-        logger.lifecycle("Verified ${artifact.name} uses Minecraft-provided LZ4, OSHI, and JNA")
+        ModdedArtifactVerifier.verify(artifact, requiredEntries, knownBukkitSupertypeClasses)
+        logger.lifecycle("Verified ${artifact.name} packaging, mixin compat, and nested jars")
     }
 }
 
@@ -330,10 +453,11 @@ tasks.register('verifyNeoforgeArtifact') {
     doLast {
         List<String> requiredEntries = commonModdedArtifactEntries + [
             'META-INF/neoforge.mods.toml',
+            'META-INF/accesstransformer.cfg',
             'art/arcane/iris/neoforge/IrisNeoForgeBootstrap.class'
         ]
-        ModdedArtifactVerifier.verify(artifact, requiredEntries)
-        logger.lifecycle("Verified ${artifact.name} uses Minecraft-provided LZ4, OSHI, and JNA")
+        ModdedArtifactVerifier.verify(artifact, requiredEntries, knownBukkitSupertypeClasses)
+        logger.lifecycle("Verified ${artifact.name} packaging, mixin compat, and nested jars")
     }
 }
 

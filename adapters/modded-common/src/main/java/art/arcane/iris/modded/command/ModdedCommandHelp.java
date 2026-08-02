@@ -231,12 +231,16 @@ final class ModdedCommandHelp {
             return 0;
         }
 
+        ModdedCommandFeedback.clear(source);
+
+        if (source.getPlayer() == null) {
+            return sendConsole(source, request.section());
+        }
+
         int totalPages = Math.max(1, (int) Math.ceil(entries.size() / (double) PAGE_SIZE));
         int page = Math.max(0, Math.min(request.page(), totalPages - 1));
         int from = page * PAGE_SIZE;
         int to = Math.min(entries.size(), from + PAGE_SIZE);
-
-        ModdedCommandFeedback.clear(source);
 
         sendHeader(source, request.section(), page, totalPages);
         if (!Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(source)) {
@@ -250,6 +254,45 @@ final class ModdedCommandHelp {
         }
         ModdedCommandFeedback.ok(source, footer(request.section(), page, totalPages));
         return 1;
+    }
+
+    private static int sendConsole(CommandSourceStack source, String section) {
+        sendHeader(source, section, 0, 1);
+        if (!Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(source)) {
+            ModdedCommandFeedback.send(source, opNotice());
+        }
+        for (String line : consoleLines(section)) {
+            ModdedCommandFeedback.send(source, Component.literal(line));
+        }
+        return 1;
+    }
+
+    static List<String> consoleLines(String section) {
+        List<Entry> entries = SECTIONS.get(section);
+        if (entries == null) {
+            return List.of();
+        }
+
+        List<String> lines = new ArrayList<>(entries.size());
+        for (Entry entry : entries) {
+            lines.add(consoleLine(section, entry));
+        }
+        return lines;
+    }
+
+    private static String consoleLine(String section, Entry entry) {
+        StringBuilder line = new StringBuilder(section.isEmpty() ? "/iris " : "/iris " + section + " ");
+        line.append(entry.name());
+        if (!entry.usage().isBlank()) {
+            line.append(' ').append(entry.usage());
+        }
+        if (entry.aliases().length > 0) {
+            line.append(" (").append(String.join(", ", entry.aliases())).append(')');
+        }
+        if (entry.group()) {
+            line.append(" - ").append(IrisLanguage.plain(DirectorHelpMessages.CATEGORY));
+        }
+        return line.append(" - ").append(IrisLanguage.plain(entry.description())).toString();
     }
 
     private static void sendHeader(CommandSourceStack source, String path, int page, int totalPages) {

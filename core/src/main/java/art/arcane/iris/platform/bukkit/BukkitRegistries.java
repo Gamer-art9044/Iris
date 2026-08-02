@@ -59,15 +59,18 @@ public final class BukkitRegistries implements PlatformRegistries {
         return data == null ? null : BukkitBlockState.of(data);
     }
 
+    // blockOrNull must stay null-honest to match the modded adapters, so it uses the strict lookup rather than
+    // BukkitBlockResolution.getOrNull, which substitutes air for an unregistered key and feeds the Bukkit-only
+    // IrisCompat rewrite table used by block().
     @Override
     public PlatformBlockState blockOrNull(String key) {
-        BlockData data = BukkitBlockResolution.getOrNull(key);
+        BlockData data = BukkitBlockResolution.resolveOrNull(key);
         return data == null ? null : BukkitBlockState.of(data);
     }
 
     @Override
     public PlatformBlockState blockOrNull(String key, boolean warn) {
-        BlockData data = BukkitBlockResolution.getOrNull(key, warn);
+        BlockData data = BukkitBlockResolution.resolveOrNull(key, warn);
         return data == null ? null : BukkitBlockState.of(data);
     }
 
@@ -164,6 +167,19 @@ public final class BukkitRegistries implements PlatformRegistries {
     @Override
     public List<String> blockTypeKeys() {
         return new ArrayList<>(Arrays.asList(BukkitBlockResolution.getBlockTypes()));
+    }
+
+    @Override
+    public List<String> specialEntityKeys() {
+        ExternalDataSVC external = IrisServices.getOrNull(ExternalDataSVC.class);
+        if (external == null) {
+            return List.of();
+        }
+        List<String> keys = new ArrayList<>();
+        for (Identifier identifier : external.getAllIdentifiers(DataType.ENTITY)) {
+            keys.add(identifier.toString());
+        }
+        return keys;
     }
 
     @Override

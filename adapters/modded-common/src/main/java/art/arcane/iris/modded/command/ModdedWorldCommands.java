@@ -29,6 +29,7 @@ import art.arcane.iris.modded.ModdedEngineBootstrap;
 import art.arcane.iris.modded.ModdedModConfig;
 import art.arcane.iris.modded.ModdedPackInstaller;
 import art.arcane.iris.modded.ModdedPrimaryWorldRouter;
+import art.arcane.iris.modded.ModdedServerLevels;
 import art.arcane.iris.modded.ModdedStartup;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -436,7 +437,7 @@ public final class ModdedWorldCommands {
     private static int status(CommandSourceStack source) {
         MinecraftServer server = source.getServer();
         int loaded = 0;
-        for (ServerLevel level : server.getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator) {
                 loaded++;
                 IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_LOADED_IRIS_LEVEL_PACK_DIMENSION, MessageArgument.untrusted("value", level.dimension().identifier()), MessageArgument.untrusted("value2", generator.activePack()), MessageArgument.untrusted("value3", generator.activeDimensionKey())));
@@ -466,7 +467,7 @@ public final class ModdedWorldCommands {
 
     private static List<String> loadedIrisDimensions(MinecraftServer server) {
         List<String> dimensions = new ArrayList<>();
-        for (ServerLevel level : server.getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator) {
                 dimensions.add(level.dimension().identifier().toString());
             }

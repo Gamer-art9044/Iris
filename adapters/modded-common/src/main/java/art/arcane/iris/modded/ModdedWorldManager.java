@@ -45,14 +45,17 @@ import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterMarker;
 import art.arcane.volmlib.util.matter.slices.MarkerMatter;
-import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.AABB;
 
 import java.util.HashSet;
@@ -70,20 +73,23 @@ public final class ModdedWorldManager implements EngineWorldManager {
     private static final int MAX_INITIAL_DRAIN_PER_TICK = 8;
     private static final int MAX_INITIAL_RECOVERY_PER_PASS = 128;
     private static final int MANTLE_WARMUP_QUEUE_CAPACITY = 256;
+    private static final int AMBIENT_CHUNK_SAMPLE = 64;
     private static final long INITIAL_RECOVERY_INTERVAL_MS = 1_000L;
-    private static final long COUNT_INTERVAL_MS = 3_000L;
 
     private final Engine engine;
     private final InitialSpawnQueue initialSpawnQueue;
     private final Set<Long> mantleWarmups;
     private final ThreadPoolExecutor mantleWarmupExecutor;
+    private final long[] ambientChunkSample = new long[AMBIENT_CHUNK_SAMPLE];
+    private int ambientChunkSampleSeen;
     private long lastAmbientAt;
-    private long lastCountAt;
     private long lastInitialRecoveryAt;
     private boolean initialSpawnQueueClosed;
     private boolean mantleWarmupExecutorStopped;
     private boolean mantleWarmupsCleared;
+    private boolean spawnStateMissingLogged;
     private volatile boolean closed;
+    private volatile boolean entityCountAvailable;
     private volatile int cachedEntityCount;
     private volatile int cachedConsideredChunks;
     private volatile double cachedSaturation;
@@ -114,9 +120,16 @@ public final class ModdedWorldManager implements EngineWorldManager {
             return;
         }
         EngineWorldManager worldManager = engine.getWorldManager();
-        if (worldManager instanceof ModdedWorldManager moddedWorldManager) {
-            moddedWorldManager.initialSpawnQueue.offer(pack(chunkX, chunkZ));
+        if (!(worldManager instanceof ModdedWorldManager moddedWorldManager)) {
+            return;
         }
+        if (moddedWorldManager.closed || moddedWorldManager.isPregenActive()) {
+            // runServerTick skips the drain while a pregen targets this world, so every offer from the
+            // generation threads can only expire or overflow while contending for the queue monitor.
+            // recoverLoadedInitialSpawns re-offers the chunks that matter once the job ends.
+            return;
+        }
+        moddedWorldManager.initialSpawnQueue.offer(pack(chunkX, chunkZ));
     }
 
     public void serverTick(ServerLevel level) {
@@ -328,19 +341,23 @@ public final class ModdedWorldManager implements EngineWorldManager {
             return;
         }
 
-        long[] candidates = loadedChunkPositionsSnapshot(level);
-        refreshEntityCount(level, now, candidates.length);
+        int loadedChunks = sampleLoadedChunks(level);
+        refreshEntityCount(level, loadedChunks);
+        if (!entityCountAvailable) {
+            return;
+        }
         if (cachedSaturation > IrisSettings.get().getWorld().getTargetSpawnEntitiesPerChunk()) {
             return;
         }
 
-        if (candidates.length == 0) {
+        int sampled = Math.min(loadedChunks, ambientChunkSample.length);
+        if (sampled == 0) {
             return;
         }
 
         int spawnBuffer = RNG.r.i(2, 12);
         while (spawnBuffer-- > 0) {
-            long key = candidates[RNG.r.nextInt(candidates.length)];
+            long key = ambientChunkSample[RNG.r.nextInt(sampled)];
             try {
                 ambientSpawnChunk(level, unpackX(key), unpackZ(key));
             } catch (Throwable e) {
@@ -673,29 +690,66 @@ public final class ModdedWorldManager implements EngineWorldManager {
         return (position.getX() >> 4) == chunkX && (position.getZ() >> 4) == chunkZ;
     }
 
-    private void refreshEntityCount(ServerLevel level, long now, int loadedChunks) {
+    /**
+     * ServerChunkCache.tickChunks rebuilds NaturalSpawner.SpawnState every tick from every entity in the
+     * level, so read that instead of walking all entities again on an Iris timer. The count is the natural
+     * spawn cap population (non persistent mobs in loaded chunks, MISC excluded), which is exactly the
+     * population the ambient spawn gate throttles against. No state means the level has not ticked chunks
+     * yet, so hold spawning rather than guess.
+     */
+    private void refreshEntityCount(ServerLevel level, int loadedChunks) {
         cachedConsideredChunks = loadedChunks;
-        cachedSaturation = cachedEntityCount / (loadedChunks + 1.0) * 1.28;
-        if (now - lastCountAt < COUNT_INTERVAL_MS) {
+        NaturalSpawner.SpawnState spawnState = level.getChunkSource().getLastSpawnState();
+        if (spawnState == null) {
+            entityCountAvailable = false;
+            if (!spawnStateMissingLogged) {
+                spawnStateMissingLogged = true;
+                IrisLogging.warn("No spawn state for " + engine.getName() + " yet; ambient spawning held");
+            }
             return;
         }
-        lastCountAt = now;
 
-        int livingEntities = 0;
-        for (Entity entity : level.getAllEntities()) {
-            if (entity instanceof LivingEntity && entity.isAlive()) {
-                livingEntities++;
-            }
+        Object2IntMap<MobCategory> counts = spawnState.getMobCategoryCounts();
+        int mobs = 0;
+        for (MobCategory category : counts.keySet()) {
+            mobs += counts.getInt(category);
         }
 
-        cachedEntityCount = livingEntities;
-        cachedSaturation = livingEntities / (loadedChunks + 1.0) * 1.28;
+        entityCountAvailable = true;
+        cachedEntityCount = mobs;
+        // Metric = natural-spawn-cap population over natural-spawn chunk count: numerator and denominator both
+        // come from MC's own spawn state, so the ratio is not diluted by chunks the spawner never counts.
+        cachedSaturation = mobs / (spawnState.getSpawnableChunkCount() + 1.0) * 1.28;
     }
 
-    private long[] loadedChunkPositionsSnapshot(ServerLevel level) {
-        LongArrayList positions = new LongArrayList(level.getChunkSource().getLoadedChunksCount());
-        level.getChunkSource().chunkMap.forEachReadyToSendChunk(chunk -> positions.add(chunk.getPos().pack()));
-        return positions.toLongArray();
+    /**
+     * Reservoir sample (algorithm R) of the ready to send chunks into a fixed buffer. ambientTick only picks
+     * up to 12 random chunks per pass, so materializing every loaded chunk position once per interval was
+     * pure garbage. Returns how many chunks the walk saw, which is the same considered-chunk count the old
+     * snapshot length reported. Server thread only, so the reservoir and its counter are plain fields.
+     */
+    private int sampleLoadedChunks(ServerLevel level) {
+        ambientChunkSampleSeen = 0;
+        level.getChunkSource().chunkMap.forEachReadyToSendChunk((LevelChunk chunk) -> {
+            int index = ambientChunkSampleSeen++;
+            int capacity = ambientChunkSample.length;
+            int slot = reservoirSlot(index, capacity, index < capacity ? 0 : RNG.r.nextInt(index + 1));
+            if (slot >= 0) {
+                ambientChunkSample[slot] = chunk.getPos().pack();
+            }
+        });
+        return ambientChunkSampleSeen;
+    }
+
+    /**
+     * Algorithm R slot for the item at {@code index}: fill the reservoir first, then keep the item only when
+     * {@code roll} (uniform over 0..index) lands inside the reservoir. Negative means drop the item.
+     */
+    static int reservoirSlot(int index, int capacity, int roll) {
+        if (index < capacity) {
+            return index;
+        }
+        return roll < capacity ? roll : -1;
     }
 
     private boolean isPregenActive() {

@@ -151,7 +151,8 @@ public class ModdedLifecycleFailureContractTest {
         assertBefore(stop, "\"services\"", "\"world engines\"");
         assertBefore(stop, "\"world engines\"", "\"dimension manager\"");
         assertBefore(stop, "\"server state\"", "if (failure != null)");
-        assertTrue(stop.contains("throw propagateStopFailure(failure);"));
+        assertFalse(stop.contains("throw"));
+        assertTrue(stop.contains("LOGGER.error(\"Iris modded shutdown completed with failures\", failure);"));
 
         String runStage = method(source, "private static Throwable runStopStage(");
         assertTrue(runStage.contains("catch (Throwable stageFailure)"));

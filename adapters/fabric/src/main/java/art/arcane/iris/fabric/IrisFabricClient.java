@@ -47,6 +47,7 @@ public final class IrisFabricClient implements ClientModInitializer {
         HudElementRegistry.addLast(IrisClient.HUD_ELEMENT_ID, (graphics, delta) -> IrisClientHud.render(graphics));
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             IrisClient.tick();
+            IrisClientHud.tick();
             IrisClientKeybinds.pollToggle();
         });
     }

@@ -41,6 +41,10 @@ public interface PlatformRegistries {
 
     /**
      * Resolves a block key, returning null instead of an air fallback when it does not resolve. Silent.
+     * <p>
+     * Unlike {@link #block(String)} this never consults the platform's compatibility layer. On Bukkit that layer only
+     * sees keys the underlying lookup could not answer at all, so an unregistered key resolves to air through
+     * {@link #block(String)} on every platform - the Bukkit-only legacy rewrite table cannot fork generation output.
      */
     PlatformBlockState blockOrNull(String key);
 
@@ -108,6 +112,18 @@ public interface PlatformRegistries {
      * {@link #blockKeys()}. Never null.
      */
     List<String> blockTypeKeys();
+
+    /**
+     * Every entity key contributed by third-party content integrations rather than the vanilla entity registry -
+     * Bukkit item/mob plugins on the Bukkit side, registered custom-content providers on mod loaders. Feeds pack
+     * schema completion for custom mob types only; never the spawn path. Never null.
+     * <p>
+     * Defaults to empty so a platform with no integration surface needs no implementation, and so schema
+     * generation never has to reference a platform-specific service type directly.
+     */
+    default List<String> specialEntityKeys() {
+        return List.of();
+    }
 
     /**
      * Every registered enchantment key. Never null.

@@ -1,6 +1,7 @@
 package art.arcane.iris.modded.mixin;
 
 import art.arcane.iris.modded.ModdedEntityAwareness;
+import art.arcane.iris.modded.ModdedMixinFlags;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
 import net.minecraft.world.entity.ai.goal.WrappedGoal;
@@ -21,6 +22,7 @@ public abstract class MobAwarenessMixin {
                     shift = At.Shift.AFTER),
             cancellable = true)
     private void iris$tickUnawareMob(CallbackInfo info) {
+        ModdedMixinFlags.markMobAwareness();
         Mob mob = (Mob) (Object) this;
         if (ModdedEntityAwareness.isAware(mob)) {
             return;

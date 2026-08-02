@@ -59,7 +59,6 @@ import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -69,8 +68,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class ModdedItemTranslator {
     private static final Set<String> WARNED = ConcurrentHashMap.newKeySet();
-    private static final Field TYPE_FIELD = lootField("type");
-    private static final Field DYE_COLOR_FIELD = lootField("dyeColor");
     private static final String COLOR_CODES = "0123456789AaBbCcDdEeFfKkLlMmNnOoRrXx";
 
     private ModdedItemTranslator() {
@@ -140,7 +137,7 @@ public final class ModdedItemTranslator {
     }
 
     private static ItemStack baseStack(IrisLoot loot, RNG rng) {
-        String raw = readString(TYPE_FIELD, loot);
+        String raw = loot.getTypeKey();
         if (raw == null || raw.isBlank()) {
             return null;
         }
@@ -187,7 +184,7 @@ public final class ModdedItemTranslator {
             }
         }
 
-        String dye = readString(DYE_COLOR_FIELD, loot);
+        String dye = loot.getDyeColorKey();
         if (dye != null) {
             applyDyeColor(stack, dye);
         }
@@ -214,7 +211,9 @@ public final class ModdedItemTranslator {
             if (name == null || name.isBlank()) {
                 continue;
             }
-            String key = name.toLowerCase(Locale.ROOT);
+            // Same normalization as IrisEnchantment.resolve() on Bukkit: trim, lowercase, spaces to underscores.
+            // Without it 'Fire Aspect' resolves on Bukkit and warns as unknown here, for the same pack.
+            String key = name.trim().toLowerCase(Locale.ROOT).replace(' ', '_');
             Identifier id = Identifier.tryParse(key.contains(":") ? key : "minecraft:" + key);
             Optional<Holder.Reference<Enchantment>> holder = id == null ? Optional.empty() : registry.get(id);
             if (holder.isEmpty()) {
@@ -405,22 +404,4 @@ public final class ModdedItemTranslator {
         }
     }
 
-    private static Field lootField(String name) {
-        try {
-            Field field = IrisLoot.class.getDeclaredField(name);
-            field.setAccessible(true);
-            return field;
-        } catch (NoSuchFieldException e) {
-            throw new IllegalStateException("IrisLoot field missing: " + name, e);
-        }
-    }
-
-    private static String readString(Field field, IrisLoot loot) {
-        try {
-            Object value = field.get(loot);
-            return value == null ? null : value.toString();
-        } catch (IllegalAccessException e) {
-            return null;
-        }
-    }
 }

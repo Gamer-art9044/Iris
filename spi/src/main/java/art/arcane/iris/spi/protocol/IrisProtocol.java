@@ -39,6 +39,17 @@ public final class IrisProtocol {
     public static final int MAX_INBOUND_FRAMES_PER_SECOND = 32;
     /** Vision tile requests accepted per client per second, tighter than the general frame budget because each one costs a render. */
     public static final int MAX_VISION_TILE_REQUESTS_PER_SECOND = 8;
+    /**
+     * Cursor lookups accepted per client per second. Its own budget rather than a slice of
+     * {@link #MAX_INBOUND_FRAMES_PER_SECOND}: each lookup drives three engine column queries, so a client that
+     * spent its whole frame budget on cursors would cost 32 column resolves per second per player.
+     */
+    public static final int MAX_CURSOR_INFO_REQUESTS_PER_SECOND = 4;
+    /**
+     * Largest absolute block coordinate a client may ask the generator about - the vanilla world border limit.
+     * Coordinates outside it are rejected rather than clamped so a spoofed frame is counted, not served.
+     */
+    public static final int MAX_QUERY_BLOCK_COORDINATE = 29_999_999;
     /** Fixed header size of a vision tile frame, subtracted when splitting a tile into chunks. */
     public static final int VISION_TILE_HEADER_BYTES = 25;
     /** Largest payload carried by one vision tile chunk. */

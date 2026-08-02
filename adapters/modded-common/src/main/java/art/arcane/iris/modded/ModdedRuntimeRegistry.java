@@ -47,7 +47,9 @@ public final class ModdedRuntimeRegistry {
             return;
         }
         throw new IllegalStateException("Iris dimension type '" + typeRef
-                + "' is not synchronized. Restart after installing the pack before creating its world.");
+                + "' is not registered. Minecraft freezes the dimension-type registry before Iris can add it,"
+                + " so a pack installed after boot only takes effect on the next start."
+                + restartAdvice());
     }
 
     static void ensureCustomBiomes(RegistryAccess registryAccess, IrisDimension dimension, String pack) {
@@ -78,8 +80,26 @@ public final class ModdedRuntimeRegistry {
         }
         if (!missing.isEmpty()) {
             throw new IllegalStateException("Iris pack '" + pack + "' has " + missing.size()
-                    + " unsynchronized custom biome(s). Restart before creating its world. First missing entry: "
+                    + " custom biome(s) that are not registered. Pack '" + pack
+                    + "' was installed after boot, and Minecraft freezes the biome registry before Iris can add them."
+                    + restartAdvice() + " First missing entry: "
                     + missing.getFirst());
         }
+    }
+
+    /**
+     * One complete instruction per environment. Singleplayer has no /iris world create step to follow the
+     * restart, so the client branch must not be suffixed with one.
+     */
+    private static String restartAdvice() {
+        boolean client;
+        try {
+            client = ModdedEngineBootstrap.loader().clientEnvironment();
+        } catch (RuntimeException unbound) {
+            client = false;
+        }
+        return client
+                ? " Quit to the title screen and re-create the world from the Iris world type."
+                : " Restart the server, then run /iris world create again.";
     }
 }

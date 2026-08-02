@@ -45,7 +45,6 @@ import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import art.arcane.volmlib.util.math.Position2;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
@@ -272,6 +271,8 @@ public class IrisDimension extends IrisRegistrant {
     private KList<IrisStructurePlacement> structures = new KList<>();
     @Desc("Controls native vanilla, mod, and ingested datapack structure generation for this dimension. Every registered structure is enabled by default; 'disabled' is the sole generation deny list and autocompletes live structure keys.")
     private IrisImportedStructureControl importedStructures = new IrisImportedStructureControl();
+    @Desc("Controls native vanilla, mod, and ingested datapack PLACED FEATURE generation (ores, trees, plants, springs, geodes) for this dimension. Disabled by default: leaving this out generates exactly the terrain Iris always has. Set 'enabled' true to run the vanilla decoration feature pass over Iris terrain. Carvers are never imported.")
+    private IrisImportedFeatureControl importedFeatures = new IrisImportedFeatureControl();
     @ArrayType(type = String.class, min = 1)
     @Desc("External datapack sources for this dimension. List Modrinth datapack page URLs or direct zip URLs. Any registered datapack structure can be placed directly through nativeStructures without conversion. Replacing native generation requires a dimension-level structure placement with nativeSuppression set to REPLACE_SOURCE; provenance alone never disables native structures.")
     private KList<String> datapackImports = new KList<>();
@@ -535,10 +536,21 @@ public class IrisDimension extends IrisRegistrant {
 
     public void installBiomes(IDataFixer fixer, DataProvider data, KList<File> datapackRoots,
                               String namespace, String pathPrefix, KSet<String> biomes) throws IOException {
+        // Tag membership is accumulated in memory and flushed once per tag at the end of the walk. Writing a
+        // tag file per (biome, tag) pair made staging quadratic: every write re-read, re-parsed and re-emitted
+        // a file that grows with every biome added to that tag.
+        KMap<String, KSet<String>> tagMembership = new KMap<>();
+
         for (IrisBiome irisBiome : getAllBiomes(data)) {
             if (!irisBiome.isCustom()) {
                 continue;
             }
+
+            // Tag membership is inherited from the biome's vanilla derivative so that #minecraft:is_overworld
+            // style selectors (vanilla's own, and every mod that writes them) hit Iris custom biomes. The
+            // features and carvers arrays in the emitted biome JSON stay empty: native feature passthrough
+            // comes from the chunk generator's generation-settings getter, not from the datapack.
+            String derivativeKey = irisBiome.getVanillaDerivativeKey();
 
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
                 String customBiomeId = customBiome.getId();
@@ -551,18 +563,23 @@ public class IrisDimension extends IrisRegistrant {
                     }
                 }
 
+                String biomePath = pathPrefix.isBlank()
+                        ? customBiomeId
+                        : pathPrefix + "/" + customBiomeId;
                 for (File datapackRoot : datapackRoots) {
-                    String biomePath = pathPrefix.isBlank()
-                            ? customBiomeId
-                            : pathPrefix + "/" + customBiomeId;
                     File output = new File(datapackRoot, "data/" + namespace + "/worldgen/biome/" + biomePath + ".json");
 
                     IrisLogging.debug("    Installing Data Pack Biome: " + output.getPath());
                     output.getParentFile().mkdirs();
                     IO.writeAll(output, json);
-                    installBiomeTags(datapackRoot, namespace + ":" + biomePath, customBiome.getTags());
                 }
+                collectBiomeTags(tagMembership, namespace + ":" + biomePath,
+                        customBiome.getEffectiveTags(derivativeKey));
             }
+        }
+
+        for (File datapackRoot : datapackRoots) {
+            installBiomeTags(datapackRoot, tagMembership);
         }
     }
 
@@ -579,7 +596,11 @@ public class IrisDimension extends IrisRegistrant {
         }
     }
 
-    static void installBiomeTags(File datapackRoot, String biomeKey, KList<String> tags) throws IOException {
+    /**
+     * Accumulates one biome's tag membership into the tag-to-biomes map. Normalization and rejection happen
+     * here so a malformed author tag is reported once, against the biome that declared it.
+     */
+    static void collectBiomeTags(KMap<String, KSet<String>> tagMembership, String biomeKey, KList<String> tags) {
         if (tags == null || tags.isEmpty()) {
             return;
         }
@@ -589,6 +610,20 @@ public class IrisDimension extends IrisRegistrant {
                 IrisLogging.error("Invalid custom biome tag '" + rawTag + "' for " + biomeKey);
                 continue;
             }
+            tagMembership.computeIfAbsent(tag, ignored -> new KSet<>()).add(biomeKey);
+        }
+    }
+
+    /**
+     * Writes every accumulated tag exactly once into one datapack root, merging with whatever a previous
+     * dimension or pack already wrote to the same file.
+     */
+    static void installBiomeTags(File datapackRoot, KMap<String, KSet<String>> tagMembership) throws IOException {
+        if (tagMembership == null || tagMembership.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, KSet<String>> entry : tagMembership.entrySet()) {
+            String tag = entry.getKey();
             int separator = tag.indexOf(':');
             String namespace = tag.substring(0, separator);
             String path = tag.substring(separator + 1);
@@ -596,10 +631,10 @@ public class IrisDimension extends IrisRegistrant {
                     .toAbsolutePath().normalize();
             Path output = tagRoot.resolve(path + ".json").normalize();
             if (!output.startsWith(tagRoot)) {
-                IrisLogging.error("Unsafe custom biome tag '" + rawTag + "' for " + biomeKey);
+                IrisLogging.error("Unsafe custom biome tag '" + tag + "' for " + entry.getValue());
                 continue;
             }
-            writeBiomeTag(output, biomeKey);
+            writeBiomeTag(output, entry.getValue());
         }
     }
 
@@ -614,7 +649,10 @@ public class IrisDimension extends IrisRegistrant {
         return RESOURCE_KEY_PATTERN.matcher(normalized).matches() ? normalized : null;
     }
 
-    static void writeBiomeTag(Path output, String biomeKey) throws IOException {
+    static void writeBiomeTag(Path output, Set<String> biomeKeys) throws IOException {
+        if (biomeKeys == null || biomeKeys.isEmpty()) {
+            return;
+        }
         synchronized (IrisDimension.class) {
             Set<String> values = new TreeSet<>();
             if (Files.isRegularFile(output)) {
@@ -629,7 +667,7 @@ public class IrisDimension extends IrisRegistrant {
                     }
                 }
             }
-            values.add(biomeKey);
+            values.addAll(biomeKeys);
 
             JSONArray outputValues = new JSONArray();
             for (String value : values) {
@@ -720,11 +758,6 @@ public class IrisDimension extends IrisRegistrant {
     @Override
     public String getTypeName() {
         return "Dimension";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
-
     }
 
     public static void writeShared(

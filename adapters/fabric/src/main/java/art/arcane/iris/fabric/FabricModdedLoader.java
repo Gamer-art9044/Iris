@@ -38,7 +38,7 @@ import java.io.File;
 import java.nio.file.Path;
 
 public final class FabricModdedLoader implements ModdedLoader {
-    private static final Identifier TREE_FELLER_PERMISSION = Identifier.fromNamespaceAndPath("iris", "treefeller");
+    private static final Identifier TREE_FELLER_PERMISSION = Identifier.fromNamespaceAndPath("irisworldgen", "treefeller");
 
     @Override
     public String platformName() {
@@ -67,6 +67,8 @@ public final class FabricModdedLoader implements ModdedLoader {
 
     @Override
     public void invalidateLevelCache(MinecraftServer server) {
+        // Intentionally empty: Fabric keeps no cached level view of its own (getAllLevels reads the live
+        // map). Off-thread readers rely on the ModdedServerLevels snapshot, which the caller republishes.
     }
 
     @Override

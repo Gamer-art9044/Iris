@@ -20,8 +20,6 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.spi.IrisLogging;
-import art.arcane.volmlib.util.json.JSONObject;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
@@ -116,11 +114,6 @@ public class IrisImage extends IrisRegistrant {
     @Override
     public String getTypeName() {
         return "Image";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
-
     }
 
     public void writeDebug(IrisImageChannel channel) {

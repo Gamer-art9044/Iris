@@ -32,7 +32,6 @@ import art.arcane.iris.util.common.math.IrisVector;
 import art.arcane.iris.util.common.math.Vector3i;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.volmlib.util.collection.KList;
-import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.math.BlockPosition;
 import art.arcane.volmlib.util.math.RNG;
 import lombok.EqualsAndHashCode;
@@ -346,9 +345,5 @@ public class IrisObject extends IrisRegistrant {
     @Override
     public String getTypeName() {
         return "Object";
-    }
-
-    @Override
-    public void scanForErrors(JSONObject p, VolmitSender sender) {
     }
 }

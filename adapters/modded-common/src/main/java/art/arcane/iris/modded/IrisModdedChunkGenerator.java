@@ -21,6 +21,7 @@ package art.arcane.iris.modded;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.NativeFeatureGenerationPolicy;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
@@ -96,6 +97,11 @@ import java.util.function.IntBinaryOperator;
 
 public final class IrisModdedChunkGenerator extends ChunkGenerator {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
+    // Vanilla-shaped fallback for an unbound generator (matches IrisDimension defaults). getMinY,
+    // getSeaLevel and getGenDepth are called from world creation and client screens, so they must
+    // answer without disk I/O and without throwing before a level is bound.
+    private static final ModdedDimensionMetadata.DimensionMetadata UNBOUND_HEIGHTS =
+            new ModdedDimensionMetadata.DimensionMetadata(-64, 320, 63);
     public static final MapCodec<IrisModdedChunkGenerator> CODEC = RecordCodecBuilder.mapCodec((RecordCodecBuilder.Instance<IrisModdedChunkGenerator> instance) -> instance.group(
             BiomeSource.CODEC.fieldOf("biome_source").forGetter((IrisModdedChunkGenerator generator) -> generator.serializedBiomeSource),
             Codec.STRING.fieldOf("dimension").forGetter((IrisModdedChunkGenerator generator) -> generator.dimensionKey)
@@ -117,6 +123,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     private final ModdedEngineBinding<Engine> engineBinding = new ModdedEngineBinding<>(60L, TimeUnit.SECONDS);
     private final ModdedNativeStructureStage nativeStructures = new ModdedNativeStructureStage(this);
     private final ModdedSpawnTableMerger spawnTables = new ModdedSpawnTableMerger(this);
+    private final ModdedImportedFeatureStage importedFeatures;
     private final AtomicBoolean announced = new AtomicBoolean(false);
     private volatile boolean unloading;
     private volatile Engine engine;
@@ -126,13 +133,28 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     private volatile long lastChunkGenAt = 0L;
     private volatile Set<String> configuredStructureBiomeKeys;
     private volatile ModdedDimensionMetadata.ConfiguredPack configuredPack;
+    private volatile ModdedDimensionMetadata.DimensionMetadata heightMetadata;
+    private volatile ServerLevel boundLevel;
 
     public IrisModdedChunkGenerator(BiomeSource biomeSource, String dimensionKey) {
         this(biomeSource, dimensionKey, new IrisModdedBiomeSource(biomeSource));
     }
 
     private IrisModdedChunkGenerator(BiomeSource serializedBiomeSource, String dimensionKey, IrisModdedBiomeSource structureBiomeSource) {
-        super(structureBiomeSource);
+        this(serializedBiomeSource, dimensionKey, structureBiomeSource,
+                new ModdedImportedFeatureStage(structureBiomeSource));
+    }
+
+    private IrisModdedChunkGenerator(BiomeSource serializedBiomeSource, String dimensionKey,
+                                     IrisModdedBiomeSource structureBiomeSource,
+                                     ModdedImportedFeatureStage importedFeatures) {
+        // Two-argument ChunkGenerator constructor: the getter maps Iris custom-biome holders onto the
+        // generation settings of their vanilla derivative, which is what feeds the per-step feature lists and
+        // BiomeFilter's hasFeature gate. It is a pass-through to vanilla's default getter until a pack turns
+        // importedFeatures on, so with the control off nothing about generation changes.
+        super(structureBiomeSource, importedFeatures::generationSettings);
+        this.importedFeatures = importedFeatures;
+        importedFeatures.bind(this);
         this.dimensionKey = dimensionKey;
         this.serializedBiomeSource = serializedBiomeSource;
         this.structureBiomeSource = structureBiomeSource;
@@ -177,18 +199,25 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             }
             throw new IllegalStateException("Iris generator '" + dimensionKey + "' failed to replace its engine", error);
         }
+        this.boundLevel = level;
         this.activePack = pack;
         this.activeDimensionKey = packDimensionKey;
         this.seedOverride = seed;
         this.engine = replacement;
         this.configuredStructureBiomeKeys = null;
         this.configuredPack = null;
+        this.heightMetadata = engineHeights(replacement);
         this.engineBinding.reset();
         this.engineBinding.complete(replacement);
         this.announced.set(false);
         this.structureBiomeSource.clearCaches();
+        this.importedFeatures.invalidate();
         this.nativeStructures.clearWorldCheckStructureShifts();
         this.spawnTables.resetVanillaSpawnBiomes();
+        // Bind time: a feature-order cycle in the new pack is reported here, once, and degrades to features-off.
+        // Never waits on a build owned by another thread: this method owns the generator monitor and the build
+        // path can need it.
+        this.importedFeatures.prepareWithoutWaiting(replacement);
     }
 
     public synchronized void unbindEngine() {
@@ -207,11 +236,13 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
 
     private void clearEngineBinding() {
         this.engine = null;
+        this.boundLevel = null;
         this.configuredStructureBiomeKeys = null;
         this.configuredPack = null;
         this.engineBinding.reset();
         this.announced.set(false);
         this.structureBiomeSource.clearCaches();
+        this.importedFeatures.invalidate();
         this.nativeStructures.clearWorldCheckStructureShifts();
         this.spawnTables.resetVanillaSpawnBiomes();
     }
@@ -221,13 +252,16 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         this.activeDimensionKey = packDimensionKey;
         this.seedOverride = seed;
         this.engine = null;
+        this.boundLevel = null;
         this.configuredStructureBiomeKeys = null;
         this.configuredPack = null;
         this.engineBinding.reset();
         this.announced.set(false);
         this.structureBiomeSource.clearCaches();
+        this.importedFeatures.invalidate();
         this.nativeStructures.clearWorldCheckStructureShifts();
         this.spawnTables.resetVanillaSpawnBiomes();
+        primeHeightMetadata();
     }
 
     public synchronized void resetToDefault() {
@@ -276,12 +310,18 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     }
 
     private ServerLevel boundLevel() {
+        ServerLevel cached = boundLevel;
+        if (cached != null) {
+            return cached;
+        }
         MinecraftServer server = ModdedEngineBootstrap.currentServer();
         if (server == null) {
             return null;
         }
-        for (ServerLevel level : server.getAllLevels()) {
+        // Snapshot, never server.getAllLevels(): this runs off the server thread from data queries.
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             if (level.getChunkSource().getGenerator() == this) {
+                boundLevel = level;
                 return level;
             }
         }
@@ -308,7 +348,11 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         }
         requireCompletedShutdown(engine);
         unloading = false;
-        bindEngine(level);
+        Engine bound = bindEngine(level);
+        // Bind time: a feature-order cycle is reported here, once, and degrades to features-off. Non-waiting for
+        // the same reason as repointAndBind: this method owns the generator monitor.
+        importedFeatures.prepareWithoutWaiting(bound);
+        LOGGER.info("Iris bound {}: chunk system {}", level.dimension().identifier(), ModdedGenPool.describeChunkSystem());
     }
 
     private Engine bindEngine(ServerLevel level) {
@@ -320,6 +364,8 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             engineBinding.fail(error);
             throw error;
         }
+        // Cache the owning level so hot paths never scan the level map to find themselves.
+        boundLevel = level;
         Engine cached = engine;
         requireCompletedShutdown(cached);
         if (cached != null && !cached.isClosed() && cached.getComplex() != null) {
@@ -342,6 +388,8 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
                             + "' created an engine without a ready biome complex");
                 }
                 engine = created;
+                boundLevel = level;
+                heightMetadata = engineHeights(created);
                 configuredStructureBiomeKeys = null;
                 structureBiomeSource.clearCaches();
                 engineBinding.complete(created);
@@ -376,9 +424,22 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         if (enabled) {
             return;
         }
+        String remedy = integratedEnvironment()
+                ? "enable 'Generate Structures' for this world; Iris requires it, and individual structures "
+                        + "are denied through importedStructures.disabled"
+                : "set generate-structures=true in server.properties, restart the server, "
+                        + "and deny individual structures through importedStructures.disabled";
         throw new IllegalStateException("Iris generator '" + dimensionKey
-                + "' cannot bind while generate-structures=false; set generate-structures=true, restart the server, "
-                + "and deny individual structures through importedStructures.disabled");
+                + "' cannot bind while generate-structures=false; " + remedy);
+    }
+
+    private static boolean integratedEnvironment() {
+        try {
+            return ModdedEngineBootstrap.loader().clientEnvironment();
+        } catch (Throwable e) {
+            // No loader bound (unit tests, very early boot): assume dedicated wording.
+            return false;
+        }
     }
 
     Engine engineOrNull() {
@@ -490,6 +551,41 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         }
     }
 
+    private static ModdedDimensionMetadata.DimensionMetadata engineHeights(Engine engine) {
+        IrisDimension dimension = engine.getDimension();
+        int minY = engine.getMinHeight();
+        return new ModdedDimensionMetadata.DimensionMetadata(minY, engine.getMaxHeight(),
+                dimension == null ? minY : minY + dimension.getFluidHeight());
+    }
+
+    /**
+     * Resolves the pack height metadata on the calling thread so the vanilla height accessors stay pure
+     * reads. Never fatal: a pack that cannot be read here falls back to {@link #UNBOUND_HEIGHTS} until a
+     * bind succeeds.
+     */
+    private void primeHeightMetadata() {
+        try {
+            heightMetadata = configuredPack().metadata();
+        } catch (Throwable e) {
+            LOGGER.warn("Iris generator '{}' could not pre-resolve pack heights for {}:{}: {}",
+                    dimensionKey, activePack, activeDimensionKey, e.toString());
+        }
+    }
+
+    private ModdedDimensionMetadata.DimensionMetadata heightMetadata() {
+        ModdedDimensionMetadata.DimensionMetadata cached = heightMetadata;
+        if (cached != null) {
+            return cached;
+        }
+        ModdedDimensionMetadata.ConfiguredPack pack = configuredPack;
+        if (pack == null) {
+            return UNBOUND_HEIGHTS;
+        }
+        ModdedDimensionMetadata.DimensionMetadata resolved = pack.metadata();
+        heightMetadata = resolved;
+        return resolved;
+    }
+
     private ModdedDimensionMetadata.ConfiguredPack configuredPack() {
         ModdedDimensionMetadata.ConfiguredPack cached = configuredPack;
         if (cached != null) {
@@ -510,12 +606,25 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             ModdedDimensionMetadata.ConfiguredPack resolved = new ModdedDimensionMetadata.ConfiguredPack(
                     data, dimension, ModdedDimensionMetadata.dimensionMetadata(dimension));
             configuredPack = resolved;
+            heightMetadata = resolved.metadata();
             return resolved;
         }
     }
 
     public String dimensionKey() {
         return dimensionKey;
+    }
+
+    /**
+     * Operator-facing importedFeatures state: null when the control is off, "on" when the feature table is
+     * live, "degraded" when the control is enabled but the table failed to build (feature-order cycle).
+     */
+    public String importedFeaturesStatus() {
+        Engine current = engineIfBound();
+        if (current == null || !NativeFeatureGenerationPolicy.isEnabled(current)) {
+            return null;
+        }
+        return importedFeatures.active() ? "on" : "degraded";
     }
 
     public Engine engineIfBound() {
@@ -534,6 +643,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     public void onHotload() {
         configuredStructureBiomeKeys = null;
         structureBiomeSource.clearCaches();
+        importedFeatures.invalidate();
         nativeStructures.clearWorldCheckStructureShifts();
         spawnTables.resetVanillaSpawnBiomes();
     }
@@ -711,9 +821,15 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     @Override
     public void applyBiomeDecoration(WorldGenLevel level, ChunkAccess chunk, StructureManager structureManager) {
         Engine current = engine();
+        // Self-heal for an engine bound through a data-query path instead of bindLevel; a no-op once prepared.
+        importedFeatures.prepare(current);
         try (GenerationSessionLease lease = requireGenerationLease(current, "modded_biome_decoration");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
             nativeStructures.placeVanillaStructures(level, chunk, structureManager);
+            // Vanilla's placed-feature pass, on THIS thread and never on ModdedGenPool: the FEATURES chunk
+            // step writes into the eight neighbouring chunks and is not parallel-safe. Inert unless the
+            // dimension set importedFeatures.enabled.
+            importedFeatures.run(level, chunk, current);
         }
     }
 
@@ -771,7 +887,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     public int getGenDepth() {
         Engine current = engine;
         return current == null || current.isClosed()
-                ? configuredPack().metadata().depth()
+                ? heightMetadata().depth()
                 : current.getMaxHeight() - current.getMinHeight();
     }
 
@@ -779,7 +895,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     public int getSeaLevel() {
         Engine current = engine;
         return current == null || current.isClosed()
-                ? configuredPack().metadata().seaLevel()
+                ? heightMetadata().seaLevel()
                 : current.getMinHeight() + current.getDimension().getFluidHeight();
     }
 
@@ -787,7 +903,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     public int getMinY() {
         Engine current = engine;
         return current == null || current.isClosed()
-                ? configuredPack().metadata().minY()
+                ? heightMetadata().minY()
                 : current.getMinHeight();
     }
 

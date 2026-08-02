@@ -97,13 +97,30 @@ public final class IrisNeoForgeBootstrap {
         NeoForge.EVENT_BUS.addListener((RegisterCommandsEvent event) -> IrisModdedCommands.register(event.getDispatcher()));
         NeoForge.EVENT_BUS.addListener((PermissionGatherEvent.Nodes event) ->
                 event.addNodes(NeoForgeModdedLoader.TREE_FELLER_PERMISSION));
-        NeoForge.EVENT_BUS.addListener((BreakBlockEvent event) -> {
-            if (event.getLevel() instanceof ServerLevel level
-                    && event.getPlayer() instanceof ServerPlayer player
-                    && !event.isCanceled()) {
-                ModdedBlockBreakHandler.prepare(level, player, event.getPos(), event.getState());
-            }
-        });
+        // LOWEST so every other mod has already had its say about cancelling the break before Iris records
+        // provenance for it.
+        NeoForge.EVENT_BUS.addListener(
+                EventPriority.LOWEST,
+                false,
+                (BreakBlockEvent event) -> {
+                    if (event.getLevel() instanceof ServerLevel level
+                            && event.getPlayer() instanceof ServerPlayer player) {
+                        ModdedBlockBreakHandler.prepare(level, player, event.getPos(), event.getState());
+                    }
+                }
+        );
+        // Parity with the Fabric PlayerBlockBreakEvents.CANCELED hook: drop the prepared entry when the break
+        // never happens. It only observes cancellations from listeners registered before it at LOWEST; the
+        // 1-tick sweeper ModdedBlockBreakHandler.prepare schedules covers every other case.
+        NeoForge.EVENT_BUS.addListener(
+                EventPriority.LOWEST,
+                true,
+                (BreakBlockEvent event) -> {
+                    if (event.isCanceled() && event.getLevel() instanceof ServerLevel level) {
+                        ModdedBlockBreakHandler.cancel(level, event.getPos());
+                    }
+                }
+        );
         NeoForge.EVENT_BUS.addListener(
                 EventPriority.LOWEST,
                 false,

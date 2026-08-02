@@ -86,6 +86,61 @@ public class IrisVisionRequestServiceTest {
         assertEquals(0L, service.tilesEncodedCount());
     }
 
+    @Test
+    public void clearSessionDropsOnlyThatSessionsQueuedRequests() {
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        registerReady(registry, "s1", IrisProtocol.CAPABILITY_VISION);
+        registerReady(registry, "s10", IrisProtocol.CAPABILITY_VISION);
+        EngineResolver resolver = sessionId -> {
+            throw new AssertionError("disabled executor must not process requests");
+        };
+        IrisVisionRequestService service = new IrisVisionRequestService(resolver, registry, DISABLED, 8);
+
+        service.handle("s1", 0, 0, 0);
+        service.handle("s1", 1, 0, 0);
+        service.handle("s10", 0, 0, 0);
+        assertEquals(3, service.pendingSize());
+
+        service.clearSession("s1");
+
+        assertEquals(1, service.pendingSize());
+        assertEquals(0L, service.droppedSaturatedCount());
+    }
+
+    @Test
+    public void clearSessionIgnoresBlankIdsWithoutTouchingTheQueue() {
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        registerReady(registry, "s1", IrisProtocol.CAPABILITY_VISION);
+        EngineResolver resolver = sessionId -> {
+            throw new AssertionError("disabled executor must not process requests");
+        };
+        IrisVisionRequestService service = new IrisVisionRequestService(resolver, registry, DISABLED, 8);
+
+        service.handle("s1", 0, 0, 0);
+        service.clearSession(null);
+        service.clearSession("");
+
+        assertEquals(1, service.pendingSize());
+    }
+
+    @Test
+    public void saturationCountsEveryShedRequestNotJustTheLastBurst() {
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        registerReady(registry, "s1", IrisProtocol.CAPABILITY_VISION);
+        EngineResolver resolver = sessionId -> {
+            throw new AssertionError("disabled executor must not process requests");
+        };
+        int maxPending = 2;
+        IrisVisionRequestService service = new IrisVisionRequestService(resolver, registry, DISABLED, maxPending);
+
+        for (int index = 0; index < 10; index++) {
+            service.handle("s1", index, 0, 0);
+        }
+
+        assertEquals(8L, service.droppedSaturatedCount());
+        assertEquals(maxPending, service.pendingSize());
+    }
+
     private static CountingTransport registerReady(IrisSessionRegistry registry, String sessionId, long capabilities) {
         CountingTransport transport = new CountingTransport();
         IrisSession session = new IrisSession(sessionId, transport);

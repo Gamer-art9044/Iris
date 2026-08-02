@@ -21,6 +21,7 @@ package art.arcane.iris.modded.service;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineWorldManager;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
+import art.arcane.iris.modded.ModdedServerLevels;
 import art.arcane.iris.modded.ModdedWorldManager;
 import art.arcane.iris.spi.IrisLogging;
 import net.minecraft.server.MinecraftServer;
@@ -37,7 +38,7 @@ public final class ModdedEntitySpawnService implements ModdedTickableService {
 
     @Override
     public void onServerTick(MinecraftServer server) {
-        for (ServerLevel level : server.getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             if (!(level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator)) {
                 continue;
             }

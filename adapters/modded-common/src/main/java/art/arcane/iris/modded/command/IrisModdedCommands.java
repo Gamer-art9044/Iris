@@ -25,9 +25,11 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
+import art.arcane.iris.modded.ModdedForcedDatapack;
 import art.arcane.iris.modded.ModdedLoader;
 import art.arcane.iris.modded.ModdedPackInstaller;
 import art.arcane.iris.modded.ModdedScheduler;
+import art.arcane.iris.modded.ModdedServerLevels;
 import art.arcane.iris.modded.ModdedWorldgenIds;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KMap;
@@ -121,6 +123,9 @@ public final class IrisModdedCommands {
             IrisSettings.invalidate();
         }
         IrisSettings.get();
+        // Forced-datapack regeneration trigger. Async: staging revalidates every pack and must never run on
+        // the server thread.
+        ModdedForcedDatapack.scheduleRegeneration("/iris reload");
         boolean localeLoaded = IrisLanguage.reload();
         if (localeLoaded) {
             ok(source, IrisLanguage.plain(
@@ -178,10 +183,13 @@ public final class IrisModdedCommands {
 
     static int info(CommandSourceStack source, String filter) {
         MinecraftServer server = source.getServer();
+        // The seed is the one field in this listing that is not free to hand a plain player, and /iris worlds
+        // routes here too: emit it only for sources that pass the same gate /iris seed requires.
+        boolean showSeed = ModdedCommandTree.isGamemaster(source);
         List<String> lines = new ArrayList<>();
         int total = 0;
         int iris = 0;
-        for (ServerLevel level : server.getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             total++;
             ChunkGenerator generator = level.getChunkSource().getGenerator();
             if (!(generator instanceof IrisModdedChunkGenerator irisGenerator)) {
@@ -201,12 +209,14 @@ public final class IrisModdedCommands {
                         + " world=" + dimensionId + " (engine not started yet)");
                 continue;
             }
+            String featureStatus = irisGenerator.importedFeaturesStatus();
             lines.add(irisIdentity + ": pack=" + engine.getDimension().getLoadKey()
                     + " world=" + dimensionId
-                    + " seed=" + level.getSeed()
+                    + (showSeed ? " seed=" + level.getSeed() : "")
                     + " height=" + engine.getMinHeight() + ".." + engine.getMaxHeight()
                     + " generated=" + engine.getGenerated()
-                    + " data=" + engine.getData().getDataFolder().getAbsolutePath());
+                    + (featureStatus == null ? "" : " importedFeatures=" + featureStatus)
+                    + " data=" + engine.getData().getDataFolder().getName());
         }
         ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_LOADED_DIMENSIONS_IRIS, MessageArgument.untrusted("total", total), MessageArgument.untrusted("iris", iris)));
         if (lines.isEmpty()) {
@@ -321,7 +331,7 @@ public final class IrisModdedCommands {
 
     private static int engineCount(MinecraftServer server) {
         int count = 0;
-        for (ServerLevel level : server.getAllLevels()) {
+        for (ServerLevel level : ModdedServerLevels.levels(server)) {
             if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator) {
                 count++;
             }

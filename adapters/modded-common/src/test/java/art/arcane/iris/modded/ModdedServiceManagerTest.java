@@ -49,7 +49,7 @@ public class ModdedServiceManagerTest {
     }
 
     @Test
-    public void disableAttemptsEveryServiceInReverseOrderAndAggregatesFailures() {
+    public void disableAttemptsEveryServiceInReverseOrderAndNeverRethrows() {
         ModdedServiceManager manager = new ModdedServiceManager();
         RuntimeException firstFailure = new RuntimeException("first disable failed");
         RuntimeException secondFailure = new RuntimeException("second disable failed");
@@ -59,13 +59,16 @@ public class ModdedServiceManagerTest {
                 SecondService.class, new SecondService(null, secondFailure));
 
         manager.enableAll();
-        IllegalStateException thrown = assertThrows(IllegalStateException.class, manager::disableAll);
+        manager.disableAll();
 
         assertEquals(1, first.disableCount);
         assertEquals(1, second.disableCount);
-        assertSame(secondFailure, thrown.getCause());
         assertEquals(1, secondFailure.getSuppressed().length);
         assertSame(firstFailure, secondFailure.getSuppressed()[0]);
+
+        manager.disableAll();
+        assertEquals(1, first.disableCount);
+        assertEquals(1, second.disableCount);
     }
 
     private static final class FirstService implements ModdedService {

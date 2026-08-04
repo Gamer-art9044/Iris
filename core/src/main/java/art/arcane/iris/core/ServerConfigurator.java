@@ -363,6 +363,7 @@ public class ServerConfigurator {
         File[] packs = IrisPlatforms.get().dataFolder("packs").listFiles(File::isDirectory);
         Stream<File> locals = packs == null ? Stream.empty() : Arrays.stream(packs);
         return Stream.concat(locals
+                .filter(base -> !base.getName().contains(".importing-"))
                 .filter( base -> {
                     var content = new File(base, "dimensions").listFiles();
                     return content != null && content.length > 0;

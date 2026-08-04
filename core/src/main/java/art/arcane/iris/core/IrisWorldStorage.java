@@ -7,19 +7,64 @@ import org.bukkit.World;
 import org.bukkit.generator.WorldInfo;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Properties;
 
 public final class IrisWorldStorage {
     private static final String IRIS_NAMESPACE = "iris";
+    private static final String DEFAULT_LEVEL_NAME = "world";
+
+    /**
+     * Server#getLevelDirectory is Paper-API-only. Once a call throws NoSuchMethodError (plain
+     * Spigot/CraftBukkit) this flips and every later call goes straight to the fallback.
+     */
+    private static volatile boolean levelDirectoryUnavailable;
+    private static volatile String cachedFallbackLevelName;
 
     private IrisWorldStorage() {
     }
 
     public static File levelRoot() {
-        return Bukkit.getServer().getLevelDirectory().toAbsolutePath().normalize().toFile();
+        if (!levelDirectoryUnavailable) {
+            try {
+                return Bukkit.getServer().getLevelDirectory().toAbsolutePath().normalize().toFile();
+            } catch (NoSuchMethodError e) {
+                levelDirectoryUnavailable = true;
+            }
+        }
+        return new File(Bukkit.getWorldContainer(), fallbackLevelName()).getAbsoluteFile();
+    }
+
+    private static String fallbackLevelName() {
+        String cached = cachedFallbackLevelName;
+        if (cached == null) {
+            cached = levelNameFromProperties(new File("server.properties"));
+            cachedFallbackLevelName = cached;
+        }
+        return cached;
+    }
+
+    static String levelNameFromProperties(File serverProperties) {
+        Properties properties = new Properties();
+        if (Objects.requireNonNull(serverProperties, "serverProperties").isFile()) {
+            try (InputStream in = new FileInputStream(serverProperties)) {
+                properties.load(in);
+            } catch (IOException ignored) {
+                // Unreadable server.properties: fall through to the default level name.
+            }
+        }
+        return levelNameFromProperties(properties);
+    }
+
+    static String levelNameFromProperties(Properties properties) {
+        String levelName = Objects.requireNonNull(properties, "properties").getProperty("level-name", DEFAULT_LEVEL_NAME).trim();
+        return levelName.isEmpty() ? DEFAULT_LEVEL_NAME : levelName;
     }
 
     public static File levelRoot(File dimensionRoot) {

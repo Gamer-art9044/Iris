@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "packs フォルダー内の別のディメンションがキー {key} をすでに使用しています。インポートに失敗しました!",
     "iris.runtime.pack_download.pack_key_conflict": "別のパックがキー {key} を使用しています。インポートに失敗しました!",
     "iris.runtime.pack_download.acquired": "{name} を取得しました。",
+    "iris.runtime.pack_download.already_installed": "パック {key} は既にインストールされているため、ダウンロードをスキップします。",
     "iris.runtime.pack_download.validation_failed": "パック '{pack}' は検証に失敗しました。ワールドと Studio の作成を拒否します。理由:",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

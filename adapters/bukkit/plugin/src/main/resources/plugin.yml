@@ -20,7 +20,7 @@ softdepend:
   - WorldEdit
 loadbefore: [ Multiverse-Core ]
 authors: [ cyberpwn, NextdoorPsycho, Vatuu ]
-website: volmit.com
+website: VolmitSoftware.com
 description: More than a Dimension!
 commands:
   iris:

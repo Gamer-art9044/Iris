@@ -19,6 +19,7 @@
 package art.arcane.iris.core.tools;
 
 import art.arcane.iris.core.IrisWorldStorage;
+import art.arcane.iris.core.WorldCreatorCompat;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
@@ -92,7 +93,7 @@ public class IrisWorldCreator {
                 new File(w.worldFolder(), "iris/pack"), dimensionName);
 
 
-        return WorldCreator.ofKey(worldKey)
+        return WorldCreatorCompat.ofKey(worldKey)
                 .environment(environment)
                 .generateStructures(true)
                 .generator(g).seed(seed);

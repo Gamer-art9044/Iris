@@ -145,7 +145,7 @@ public final class DatapackIngestService {
 
         if (report.changed()) {
             message(sender, C.YELLOW + "New datapack structures were installed. A server restart is required for them to register and generate.");
-            message(sender, C.GRAY + "After the restart their jigsaw pools, pieces & objects are imported automatically (set general.autoImportDatapackStructures=false to disable), or run /iris structure import <dimension> to import everything on demand. Reference an imported key from a 'structures' placement to position it manually.");
+            message(sender, C.GRAY + "After the restart they generate natively - no import needed. To get editable Iris copies (jigsaw pools, pieces & objects written into the pack) run /iris structure import <dimension>, or set general.autoImportDatapackStructures=true to do it on every ingest. Place any registered key directly with a 'structures' placement using nativeStructures.");
             message(sender, C.GRAY + "Datapacks replace matching vanilla structure keys by default. Set 'importedStructures.datapackOverrides' to false to keep minecraft-namespaced structure definitions untouched; deny non-minecraft datapack and mod structures explicitly with importedStructures.disabled.");
             if (restart) {
                 ServerConfigurator.restart();

@@ -32,6 +32,7 @@ import org.zeroturnaround.zip.commons.FileUtils;
 import java.io.File;
 import java.io.IOException;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
@@ -42,6 +43,7 @@ public final class PackDownloader {
     private static final Pattern GITHUB_REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
     private static final Pattern GITHUB_REF = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]*");
     private static final Pattern COMMIT_SHA = Pattern.compile("[0-9a-fA-F]{40}");
+    private static final ConcurrentHashMap<String, Object> DOWNLOAD_LOCKS = new ConcurrentHashMap<>();
 
     private PackDownloader() {
     }
@@ -50,11 +52,51 @@ public final class PackDownloader {
         return DEFAULT_OVERWORLD_PACK.equals(pack);
     }
 
-    public static String downloadDefaultOverworld(File packsFolder, boolean forceOverwrite, Consumer<String> feedback) throws IOException {
-        return download(packsFolder, DEFAULT_OVERWORLD_REPOSITORY, defaultOverworldReleaseUrl(), forceOverwrite, true, feedback);
+    public static String defaultOverworldPack() {
+        return DEFAULT_OVERWORLD_PACK;
     }
 
-    public static String download(File packsFolder, String repo, String ref, boolean forceOverwrite, boolean directUrl, Consumer<String> feedback) throws IOException {
+    /**
+     * Whether a pack folder for {@code key} already exists with at least one dimension file.
+     * Presence is judged on disk, not on loadability: a pack that exists but fails to parse must
+     * surface as an error, never as a redownload. A folder without any dimensions/*.json is a
+     * partial import (an interrupted copy) and counts as absent so it can be replaced.
+     */
+    public static boolean isPackPresent(File packsFolder, String key) {
+        if (packsFolder == null || key == null || key.isBlank()) {
+            return false;
+        }
+        File[] dimensions = new File(new File(packsFolder, key), "dimensions")
+                .listFiles((File dir, String name) -> name.endsWith(".json"));
+        return dimensions != null && dimensions.length > 0;
+    }
+
+    public static String downloadDefaultOverworld(File packsFolder, boolean forceOverwrite, Consumer<String> feedback) throws IOException {
+        return download(packsFolder, DEFAULT_OVERWORLD_REPOSITORY, defaultOverworldReleaseUrl(), forceOverwrite, true, DEFAULT_OVERWORLD_PACK, feedback);
+    }
+
+    /**
+     * Downloads and imports a pack. {@code expectedKey} is the pack key the caller is trying to
+     * obtain (null when unknown, e.g. arbitrary repo/branch downloads); when the key is already
+     * present on disk and {@code forceOverwrite} is false, the network is never touched. The
+     * per-repo lock keeps concurrent startup triggers (async default-pack install racing world
+     * resolution) from downloading the same archive twice.
+     */
+    public static String download(File packsFolder, String repo, String ref, boolean forceOverwrite, boolean directUrl, String expectedKey, Consumer<String> feedback) throws IOException {
+        // Lock on the destination pack key when known: concurrent triggers for the same pack can
+        // arrive with different refs (release URL vs listing branch) and must still serialize.
+        String lockKey = expectedKey != null && !expectedKey.isBlank() ? "key:" + expectedKey : "ref:" + repo + "|" + ref;
+        Object lock = DOWNLOAD_LOCKS.computeIfAbsent(lockKey, key -> new Object());
+        synchronized (lock) {
+            if (!forceOverwrite && isPackPresent(packsFolder, expectedKey)) {
+                feedback.accept(IrisLanguage.plain(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
+                return expectedKey;
+            }
+            return downloadLocked(packsFolder, repo, ref, forceOverwrite, directUrl, feedback);
+        }
+    }
+
+    private static String downloadLocked(File packsFolder, String repo, String ref, boolean forceOverwrite, boolean directUrl, Consumer<String> feedback) throws IOException {
         String url = directUrl ? ref : resolveGithubArchiveUrl(repo, ref);
         feedback.accept(IrisLanguage.plain(PackDownloadMessages.DOWNLOADING, MessageArgument.untrusted("url", url)) + " "); //The extra space stops a bug in adventure API from repeating the last letter of the URL
         File zip = WebCache.getNonCachedFile("pack-" + repo, url);
@@ -122,6 +164,12 @@ public final class PackDownloader {
         String key = d.getLoadKey();
         feedback.accept(IrisLanguage.plain(PackDownloadMessages.IMPORTING, MessageArgument.untrusted("name", d.getName()), MessageArgument.untrusted("key", key)));
         File packEntry = new File(packsFolder, key);
+        File[] staleStaging = packsFolder.listFiles((File parent, String name) -> name.startsWith(key + ".importing-"));
+        if (staleStaging != null) {
+            for (File stale : staleStaging) {
+                IO.delete(stale);
+            }
+        }
 
         if (forceOverwrite) {
             IO.delete(packEntry);
@@ -134,11 +182,29 @@ public final class PackDownloader {
 
         File[] existingEntries = packEntry.listFiles();
         if (packEntry.exists() && existingEntries != null && existingEntries.length > 0) {
-            feedback.accept(IrisLanguage.plain(PackDownloadMessages.PACK_KEY_CONFLICT, MessageArgument.untrusted("key", key)));
-            return null;
+            if (isPackPresent(packsFolder, key)) {
+                feedback.accept(IrisLanguage.plain(PackDownloadMessages.PACK_KEY_CONFLICT, MessageArgument.untrusted("key", key)));
+                return null;
+            }
+            // Non-empty but no dimension file: a partial import from an interrupted copy.
+            // Replace it instead of refusing forever.
+            IrisLogging.warn("Replacing partial pack folder " + packEntry.getPath() + " (no dimension files found).");
+            IO.delete(packEntry);
         }
 
-        FileUtils.copyDirectory(dir, packEntry);
+        // Stage inside the packs folder and move into place so packs/<key> is never partial:
+        // an interrupted copy previously left a folder without dimensions/, which then blocked
+        // every future import as a key conflict.
+        File staging = new File(packsFolder, key + ".importing-" + UUID.randomUUID());
+        try {
+            FileUtils.copyDirectory(dir, staging);
+            if (!staging.renameTo(packEntry)) {
+                throw new IOException("Unable to move imported pack into place: " + packEntry.getPath());
+            }
+        } catch (IOException | RuntimeException e) {
+            IO.delete(staging);
+            throw e;
+        }
 
         IrisData.getLoaded(packEntry)
                 .ifPresent(IrisData::hotloaded);

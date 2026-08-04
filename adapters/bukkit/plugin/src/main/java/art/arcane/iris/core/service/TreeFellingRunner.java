@@ -67,6 +67,9 @@ final class TreeFellingRunner {
                         )
                 );
                 List<TreeMarkerTraversal.Position> positions = positionsForFelling(discovery, run.candidate.trigger());
+                if (!discovery.complete()) {
+                    run.abortReason = "discovery-incomplete";
+                }
                 preflight(run, positions, discovery.complete());
             } catch (Throwable error) {
                 IrisLogging.reportError("Failed to discover an Iris tree for felling.", error);
@@ -96,6 +99,7 @@ final class TreeFellingRunner {
             Runnable task = () -> {
                 try {
                     if (!run.candidate.world().isChunkLoaded(chunk.x(), chunk.z())) {
+                        run.abortReason = "chunk-unloaded";
                         failed.set(true);
                         return;
                     }
@@ -151,6 +155,7 @@ final class TreeFellingRunner {
 
         List<TreeMember> ordered = orderMembers(run.candidate.trigger(), members);
         if (ordered.isEmpty() || !ordered.getFirst().position().equals(run.candidate.trigger())) {
+            run.abortReason = "trigger-drift";
             finish(run);
             return;
         }
@@ -212,8 +217,9 @@ final class TreeFellingRunner {
                 "Failed to prepare an Iris tree-feller block.",
                 () -> prepareBreak(run, member)
         );
-        if (!J.runRegion(run.candidate.world(), chunk.x(), chunk.z(), task)) {
+        if (!runMemberRegion(run, chunk.x(), chunk.z(), task)) {
             if (member.log()) {
+                run.abortReason = "schedule-refused";
                 finish(run);
             } else {
                 continueRun(run);
@@ -221,10 +227,34 @@ final class TreeFellingRunner {
         }
     }
 
+    // On Paper, J.runRegion/J.runEntity always defer a full tick even when already on the
+    // main thread, which collapsed the pulse pacing to one block per tick and forced players
+    // to hold sneak for 10+ seconds on large trees. Folia keeps the scheduler hop.
+    static boolean shouldRunInline(boolean folia, boolean primaryThread) {
+        return !folia && primaryThread;
+    }
+
+    private boolean runMemberRegion(FellingRun run, int chunkX, int chunkZ, Runnable task) {
+        if (shouldRunInline(J.isFolia(), Bukkit.isPrimaryThread())) {
+            task.run();
+            return true;
+        }
+        return J.runRegion(run.candidate.world(), chunkX, chunkZ, task);
+    }
+
+    private boolean runMemberEntity(FellingRun run, Runnable task) {
+        if (shouldRunInline(J.isFolia(), Bukkit.isPrimaryThread())) {
+            task.run();
+            return true;
+        }
+        return J.runEntity(run.candidate.player(), task);
+    }
+
     private void prepareBreak(FellingRun run, TreeMember member) {
         Block block = liveMemberBlock(run, member);
         if (block == null) {
             if (member.log()) {
+                run.abortReason = "member-drift";
                 finish(run);
             } else {
                 continueRun(run);
@@ -247,7 +277,8 @@ final class TreeFellingRunner {
                 "Failed to reserve Iris tree-feller tool durability.",
                 () -> reserveDamage(run, member)
         );
-        if (!J.runEntity(run.candidate.player(), task)) {
+        if (!runMemberEntity(run, task)) {
+            run.abortReason = "schedule-refused";
             finish(run);
         }
     }
@@ -255,6 +286,7 @@ final class TreeFellingRunner {
     private void reserveDamage(FellingRun run, TreeMember member) {
         Player player = run.candidate.player();
         if (!isRunControlActive(run, player)) {
+            run.abortReason = "control-released";
             finish(run);
             return;
         }
@@ -264,11 +296,13 @@ final class TreeFellingRunner {
                 || inventory.getHeldItemSlot() != run.heldSlot
                 || !current.isSimilar(run.expectedTool)
                 || !TreeFellerSVC.isAxe(current)) {
+            run.abortReason = "tool-changed";
             finish(run);
             return;
         }
 
         if (!reserveLogCost(run)) {
+            run.abortReason = "log-cost-refused";
             finish(run);
             return;
         }
@@ -304,8 +338,8 @@ final class TreeFellingRunner {
         Runnable task = () -> runMutationTask(run, member, reservation, mutationSucceeded);
         boolean scheduled;
         try {
-            scheduled = J.runRegion(
-                    run.candidate.world(),
+            scheduled = runMemberRegion(
+                    run,
                     position.x() >> 4,
                     position.z() >> 4,
                     task
@@ -368,8 +402,10 @@ final class TreeFellingRunner {
         try {
             if (probe.isCancelled()) {
                 if (reservation.charged() || reservation.logCostReserved()) {
+                    run.abortReason = "probe-cancelled";
                     refundAndFinish(run, reservation);
                 } else if (member.log()) {
+                    run.abortReason = "probe-cancelled";
                     finish(run);
                 } else {
                     continueRun(run);
@@ -379,6 +415,9 @@ final class TreeFellingRunner {
 
             block = liveMemberBlock(run, member);
             if (run.finished.get() || block == null) {
+                if (block == null) {
+                    run.abortReason = "member-drift";
+                }
                 probe.setCancelled(true);
                 refundAndFinish(run, reservation);
                 return;
@@ -525,6 +564,7 @@ final class TreeFellingRunner {
 
     private void completeSuccessfulMutation(FellingRun run, DamageReservation reservation) {
         if (reservation.broke()) {
+            run.abortReason = "tool-broke";
             finish(run);
             return;
         }
@@ -564,6 +604,9 @@ final class TreeFellingRunner {
                 }
             }
             run.presentation.finish();
+            IrisLogging.debug("Tree feller run ended: members=" + run.work.size()
+                    + " processed=" + run.processed.get()
+                    + " reason=" + (run.abortReason == null ? "complete" : run.abortReason));
         }
     }
 
@@ -573,6 +616,9 @@ final class TreeFellingRunner {
             return;
         }
         for (FellingRun run : List.copyOf(runs)) {
+            if (run.abortReason == null) {
+                run.abortReason = "halted";
+            }
             finish(run);
         }
     }

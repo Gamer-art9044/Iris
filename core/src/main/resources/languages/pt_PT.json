@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "Outra dimensão na pasta pacotes já está usando a chave {key}.  A importação falhou!",
     "iris.runtime.pack_download.pack_key_conflict": "Outro pacote está usando a chave {key}.  A importação falhou!",
     "iris.runtime.pack_download.acquired": "Adquirido com sucesso {name}.",
+    "iris.runtime.pack_download.already_installed": "O pack {key} já está instalado, download ignorado.",
     "iris.runtime.pack_download.validation_failed": "Embalar '{pack}' validação falhada; a criação de mundo e estúdio será recusada.  Motivos:",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

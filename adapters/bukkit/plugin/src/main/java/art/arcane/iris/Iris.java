@@ -581,6 +581,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 watch::normalizeSettingsContent
         );
         configHotloadEngine.configure(3_000L, List.of(watch.settingsFile()), List.of());
+        // Stale-temp cleanup must complete before services enable: StudioSVC.onEnable downloads
+        // packs through cache/temp on an async thread, and a concurrent delete of that folder
+        // truncated pack imports mid-copy (partial packs/<key> without dimensions/).
+        IO.delete(getTemp());
         services.values().forEach(IrisService::onEnable);
         services.values().forEach(this::registerListener);
         addShutdownHook();
@@ -593,7 +597,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
 
         J.s(() -> {
-            J.a(() -> IO.delete(getTemp()));
             J.a(this::bstats);
             J.ar(() -> settingsHotloadWatch.checkConfigHotload(configHotloadEngine), 60);
             J.sr(this::tickQueue, 0);

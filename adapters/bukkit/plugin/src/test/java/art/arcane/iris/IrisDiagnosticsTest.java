@@ -21,10 +21,15 @@ import static org.junit.Assert.assertTrue;
 public class IrisDiagnosticsTest {
     @Test
     public void serviceInitializationSkipsPackageHelperClasses() throws Exception {
-        Class<?> registrar = Class.forName("art.arcane.iris.core.service.PaperCommandRegistrar");
+        Class<?> registrar = Class.forName("art.arcane.iris.core.commands.PaperCommandRegistrar");
 
         assertFalse(Iris.isConcreteImplementation(registrar, IrisService.class));
         assertTrue(Iris.isConcreteImplementation(CommandSVC.class, IrisService.class));
+        // The service package is eagerly Class.forName-scanned by JarScanner at enable; a class
+        // referencing Paper-only types there prints an NCDFE stack trace on plain Spigot.
+        assertFalse(
+                "Paper-only command registrar must stay out of the JarScanner-scanned services package",
+                "art.arcane.iris.core.service".equals(registrar.getPackageName()));
     }
 
     @Test

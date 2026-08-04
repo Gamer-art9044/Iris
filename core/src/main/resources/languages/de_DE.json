@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "Eine andere Dimension im Pack-Ordner verwendet bereits den Schlüssel {key}. Import fehlgeschlagen!",
     "iris.runtime.pack_download.pack_key_conflict": "Ein anderer Pack verwendet bereits den Schlüssel {key}. Import fehlgeschlagen!",
     "iris.runtime.pack_download.acquired": "{name} erfolgreich abgerufen.",
+    "iris.runtime.pack_download.already_installed": "Pack {key} ist bereits installiert, Download wird übersprungen.",
     "iris.runtime.pack_download.validation_failed": "Pack '{pack}' hat die Validierung nicht bestanden; Welt- und Studio-Erstellung werden verweigert. Gründe:",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "Inny wymiar w folderze pakietów już używa klucza {key}.  Import nie powiódł się!",
     "iris.runtime.pack_download.pack_key_conflict": "Inny pakiet używa klucza {key}.  Import nie powiódł się!",
     "iris.runtime.pack_download.acquired": "Udane nabycie {name}.",
+    "iris.runtime.pack_download.already_installed": "Pakiet {key} jest już zainstalowany, pomijanie pobierania.",
     "iris.runtime.pack_download.validation_failed": "Paczka \"{pack}\"nieudaną walidację; świat i tworzenie studia zostaną odrzucone.  Uzasadnienie:",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

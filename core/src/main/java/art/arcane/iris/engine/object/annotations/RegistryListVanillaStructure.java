@@ -29,5 +29,12 @@ import static java.lang.annotation.RetentionPolicy.RUNTIME;
 @Retention(RUNTIME)
 @Target({PARAMETER, TYPE, FIELD})
 public @interface RegistryListVanillaStructure {
-
+    /**
+     * When true the field accepts family/namespace prefixes in addition to exact registered keys
+     * (the {@code IrisImportedStructureControl.matchesKey} contract: "minecraft:village" matches
+     * every village variant, "nova_structures:" matches a whole namespace). The generated editor
+     * schema then validates entries against the registry enum OR a key/prefix pattern instead of
+     * rejecting anything that is not an exact registered key.
+     */
+    boolean prefixes() default false;
 }

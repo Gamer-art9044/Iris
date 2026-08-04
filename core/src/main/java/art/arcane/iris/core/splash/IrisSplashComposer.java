@@ -22,10 +22,10 @@ public final class IrisSplashComposer {
                 prefix + style.title(" Iris, ") + style.subtitle("Dimension Engine ") + style.tag("[" + releaseTrain + "]"),
                 prefix + style.label(" Version: ") + style.value(version),
                 prefix + style.label(" By: ") + style.value("Volmit Software (Arcane Arts)"),
+                prefix + style.label(" Web: ") + style.value("VolmitSoftware.com"),
                 prefix + style.label(" Server: ") + style.value(serverLine),
                 prefix + style.label(" Java: ") + style.value(String.valueOf(javaVersion())) + style.label(" | Date: ") + style.value(startupDate()),
                 prefix + style.label(" Commit: ") + style.value(BuildConstants.COMMIT) + style.label("/") + style.value(BuildConstants.ENVIRONMENT),
-                "",
                 "",
                 "",
                 ""

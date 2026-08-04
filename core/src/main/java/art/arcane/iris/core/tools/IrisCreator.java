@@ -27,6 +27,7 @@ import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.IrisRuntimeSchedulerMode;
 import art.arcane.iris.core.IrisWorldStorage;
+import art.arcane.iris.core.WorldCreatorCompat;
 import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.ServerConfigurator;
@@ -204,7 +205,7 @@ public class IrisCreator {
                 .studio(studio)
                 .create();
         if (!studio()) {
-            IrisWorlds.get().put(wc.key().toString(), dimension());
+            IrisWorlds.get().put(WorldCreatorCompat.keyOf(wc).toString(), dimension());
         }
         ServerConfigurator.installDataPacksIfChanged(!studio());
         IrisLogging.debug("[Studio timing]   create.packPrep + datapacks = " + (System.currentTimeMillis() - createStart) + "ms (cumulative in create)");

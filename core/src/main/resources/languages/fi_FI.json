@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "Toinen ulottuvuus pakkauskansiossa jo käyttää avainta {key}.  Tuonti epäonnistui!",
     "iris.runtime.pack_download.pack_key_conflict": "Toinen pakkaus käyttää avainta {key}.  Tuonti epäonnistui!",
     "iris.runtime.pack_download.acquired": "Onnistunut hankinta {name}.",
+    "iris.runtime.pack_download.already_installed": "Pack {key} on jo asennettu, lataus ohitetaan.",
     "iris.runtime.pack_download.validation_failed": "Pakkaus{pack}' Epäonnistunut validointi; maailma ja Studio luominen hylätään.  Perusteet:",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

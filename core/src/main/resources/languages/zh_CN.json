@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "包文件夹中的另一个维度已经使用密钥 {key}.  导入失败 !",
     "iris.runtime.pack_download.pack_key_conflict": "另一个包是用钥匙 {key}.  导入失败 !",
     "iris.runtime.pack_download.acquired": "已成功获取 {name}.",
+    "iris.runtime.pack_download.already_installed": "包 {key} 已安装，跳过下载。",
     "iris.runtime.pack_download.validation_failed": "包{pack}' 验证失败; 世界和工作室的创建将被拒绝.  原因:",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

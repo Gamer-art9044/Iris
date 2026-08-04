@@ -1,5 +1,6 @@
-package art.arcane.iris.core.service;
+package art.arcane.iris.core.commands;
 
+import art.arcane.iris.core.service.CommandSVC;
 import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.bukkit.Location;
@@ -74,14 +75,14 @@ public class PaperCommandRegistrarTest {
         private String[] arguments;
 
         @Override
-        void executeRoot(CommandSender sender, String label, String[] args) {
+        public void executeRoot(CommandSender sender, String label, String[] args) {
             this.sender = sender;
             this.label = label;
             this.arguments = args;
         }
 
         @Override
-        List<String> tabCompleteRoot(CommandSender sender, String alias, String[] args) {
+        public List<String> tabCompleteRoot(CommandSender sender, String alias, String[] args) {
             return List.of("first", "second");
         }
     }

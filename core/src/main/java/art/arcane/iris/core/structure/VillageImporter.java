@@ -41,6 +41,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -49,9 +50,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class VillageImporter {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final Set<String> PRINTED_FAILURE_SIGNATURES = ConcurrentHashMap.newKeySet();
 
     public record Result(boolean success, String message, int pools, int pieces, List<StructureLoss> losses) {
         public Result {
@@ -686,23 +689,60 @@ public final class VillageImporter {
         return opt;
     }
 
-    private static int readIntMember(Object value, String memberName) throws Exception {
+    static int readIntMember(Object value, String memberName) throws Exception {
         Class<?> type = value.getClass();
         while (type != null) {
             try {
                 Field field = type.getDeclaredField(memberName);
                 field.setAccessible(true);
-                return field.getInt(value);
+                return coerceInt(field.get(value), memberName, value);
             } catch (NoSuchFieldException ignored) {
                 type = type.getSuperclass();
             }
         }
         Method method = findMethod(value.getClass(), memberName);
-        if (method != null && Number.class.isAssignableFrom(boxedType(method.getReturnType()))) {
+        if (method != null) {
             method.setAccessible(true);
-            return ((Number) method.invoke(value)).intValue();
+            return coerceInt(method.invoke(value), memberName, value);
         }
         throw new NoSuchFieldException(memberName + " on " + value.getClass().getName());
+    }
+
+    /**
+     * Members that are plain numbers on one server build are wrapper objects on another
+     * (JigsawStructure.maxDistanceFromCenter became a MaxDistance{horizontal, vertical} record).
+     * Numbers pass through; a wrapper contributes its horizontal component, else its largest
+     * integral component, so a distance bound is never under-read.
+     */
+    private static int coerceInt(Object member, String memberName, Object owner) throws Exception {
+        if (member instanceof Number n) {
+            return n.intValue();
+        }
+        if (member == null) {
+            throw new NoSuchFieldException(memberName + " on " + owner.getClass().getName() + " is null");
+        }
+        Method horizontal = findMethod(member.getClass(), "horizontal");
+        if (horizontal != null && Number.class.isAssignableFrom(boxedType(horizontal.getReturnType()))) {
+            horizontal.setAccessible(true);
+            return ((Number) horizontal.invoke(member)).intValue();
+        }
+        Integer widest = null;
+        for (Field component : member.getClass().getDeclaredFields()) {
+            if (Modifier.isStatic(component.getModifiers())
+                    || !Number.class.isAssignableFrom(boxedType(component.getType()))) {
+                continue;
+            }
+            component.setAccessible(true);
+            Object componentValue = component.get(member);
+            if (componentValue instanceof Number n && (widest == null || n.intValue() > widest)) {
+                widest = n.intValue();
+            }
+        }
+        if (widest != null) {
+            return widest;
+        }
+        throw new NoSuchFieldException(memberName + " on " + owner.getClass().getName()
+                + " is a " + member.getClass().getName() + " with no integral component");
     }
 
     private static Class<?> boxedType(Class<?> type) {
@@ -828,7 +868,28 @@ public final class VillageImporter {
 
     private static void reportFailure(Throwable failure) {
         IrisLogging.reportError(failure);
-        failure.printStackTrace();
+        if (shouldPrintFullTrace(failure)) {
+            failure.printStackTrace();
+        }
+    }
+
+    /**
+     * True the first time a failure signature is seen. A bulk import repeats the same failure once
+     * per registered structure, so printing every trace buries the boot log in hundreds of copies
+     * of one problem; the per-structure "[fail] key: message" line still reports each occurrence.
+     */
+    static boolean shouldPrintFullTrace(Throwable failure) {
+        if (failure == null) {
+            return false;
+        }
+        StackTraceElement[] trace = failure.getStackTrace();
+        String signature = failure.getClass().getName() + '|' + failure.getMessage()
+                + '|' + (trace.length == 0 ? "" : trace[0].toString());
+        return PRINTED_FAILURE_SIGNATURES.add(signature);
+    }
+
+    static void resetFailureLogState() {
+        PRINTED_FAILURE_SIGNATURES.clear();
     }
 
     private static void reportWriteFailure(StructureWriteResult result) {

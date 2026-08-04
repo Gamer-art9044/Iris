@@ -25,6 +25,7 @@ final class FellingRun {
     volatile int effectStride = 1;
     volatile ItemStack expectedTool;
     volatile List<TreeMember> work = List.of();
+    volatile String abortReason;
 
     FellingRun(
             TreeClaim claim,

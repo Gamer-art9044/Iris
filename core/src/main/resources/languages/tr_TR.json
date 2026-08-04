@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "Paketlerdeki başka bir boyut zaten anahtarı kullanıyor {key}.  İthalat başarısız oldu!",
     "iris.runtime.pack_download.pack_key_conflict": "Başka bir paket anahtarı kullanıyor {key}.  İthalat başarısız oldu!",
     "iris.runtime.pack_download.acquired": "Başarılı bir şekilde satın alındı {name}.",
+    "iris.runtime.pack_download.already_installed": "{key} paketi zaten kurulu, indirme atlanıyor.",
     "iris.runtime.pack_download.validation_failed": "Pack \"{pack}“Başarısız doğrulama; dünya ve Stüdyo yaratımı reddedilecektir.  Sebepler:",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

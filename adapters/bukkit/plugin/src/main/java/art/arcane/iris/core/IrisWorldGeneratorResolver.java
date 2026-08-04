@@ -22,9 +22,11 @@ import art.arcane.iris.Iris;
 import art.arcane.iris.core.lifecycle.WorldLifecycleStaging;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.BrokenPackException;
+import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
@@ -61,6 +63,9 @@ public final class IrisWorldGeneratorResolver {
         }
         PackValidationRegistry.clear();
         for (File packDir : packDirs) {
+            if (packDir.getName().contains(".importing-")) {
+                continue;
+            }
             try {
                 PackValidationResult result = PackValidator.validate(packDir);
                 PackValidationRegistry.publish(result);
@@ -90,6 +95,12 @@ public final class IrisWorldGeneratorResolver {
         IrisDimension dimension = pack.isDirectory() ? IrisData.get(pack).getDimensionLoader().load(id) : null;
         if (dimension == null) dimension = IrisData.loadAnyDimension(id, null);
         if (dimension == null) {
+            File packsRoot = IrisPlatforms.get().dataFolderNoCreate(StudioSVC.WORKSPACE_NAME);
+            if (PackDownloader.isPackPresent(packsRoot, id)) {
+                Iris.error("Pack '" + id + "' exists at " + new File(packsRoot, id).getPath()
+                        + " but its dimension failed to load; not redownloading. Fix or delete the pack folder.");
+                return null;
+            }
             Iris.warn("Unable to find dimension type " + id + " Looking for online packs...");
             Iris.service(StudioSVC.class).downloadSearch(new VolmitSender(Bukkit.getConsoleSender()), id, false);
             dimension = IrisData.loadAnyDimension(id, null);

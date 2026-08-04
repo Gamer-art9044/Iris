@@ -40,8 +40,7 @@ import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.director.DirectorOrigin;
 import art.arcane.volmlib.util.director.annotations.Director;
 import art.arcane.volmlib.util.director.annotations.Param;
-import io.papermc.paper.registry.RegistryAccess;
-import io.papermc.paper.registry.RegistryKey;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
@@ -187,7 +186,10 @@ public class CommandFind implements DirectorExecutor {
     }
 
     private static Structure resolveNativeStructure(String structureKey) {
-        Registry<Structure> structureRegistry = RegistryAccess.registryAccess().getRegistry(RegistryKey.STRUCTURE);
+        Registry<Structure> structureRegistry = Bukkit.getRegistry(Structure.class);
+        if (structureRegistry == null) {
+            return null;
+        }
         for (Structure candidate : structureRegistry) {
             NamespacedKey key = structureRegistry.getKey(candidate);
             if (key != null && key.toString().equalsIgnoreCase(structureKey)) {

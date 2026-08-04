@@ -1,6 +1,7 @@
 package art.arcane.iris.core;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -159,6 +160,12 @@ public class IrisWorlds {
             dimension = IrisData.loadAnyDimension(id, null);
         }
         if (dimension == null) {
+            File packsRoot = IrisPlatforms.get().dataFolderNoCreate(StudioSVC.WORKSPACE_NAME);
+            if (PackDownloader.isPackPresent(packsRoot, id)) {
+                IrisLogging.error("Pack '" + id + "' exists at " + new File(packsRoot, id).getPath()
+                        + " but its dimension failed to load; not redownloading. Fix or delete the pack folder.");
+                return null;
+            }
             IrisLogging.warn("Unable to find dimension type " + id + " Looking for online packs...");
             IrisServices.get(StudioSVC.class).downloadSearch(new VolmitSender(Bukkit.getConsoleSender()), id, false);
             dimension = IrisData.loadAnyDimension(id, null);

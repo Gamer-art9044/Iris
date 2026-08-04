@@ -94,6 +94,10 @@ public final class PackDownloadMessages {
             "iris.runtime.pack_download.acquired",
             "Successfully acquired {name}."
     );
+    public static final TextKey ALREADY_INSTALLED = TextKey.of(
+            "iris.runtime.pack_download.already_installed",
+            "Pack {key} is already installed, skipping download."
+    );
     public static final TextKey VALIDATION_FAILED = TextKey.of(
             "iris.runtime.pack_download.validation_failed",
             "Pack '{pack}' failed validation; world and Studio creation will be refused. Reasons:"
@@ -136,6 +140,7 @@ public final class PackDownloadMessages {
             DIMENSION_KEY_CONFLICT,
             PACK_KEY_CONFLICT,
             ACQUIRED,
+            ALREADY_INSTALLED,
             VALIDATION_FAILED,
             VALIDATION_REASON,
             VALIDATED_WITH_WARNINGS,

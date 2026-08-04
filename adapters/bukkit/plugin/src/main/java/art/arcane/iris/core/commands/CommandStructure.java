@@ -49,8 +49,6 @@ import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.common.scheduling.J;
-import io.papermc.paper.registry.RegistryAccess;
-import io.papermc.paper.registry.RegistryKey;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
@@ -146,11 +144,13 @@ public class CommandStructure implements DirectorExecutor {
             return;
         }
         KList<String> structureKeys = new KList<>();
-        Registry<Structure> structureRegistry = RegistryAccess.registryAccess().getRegistry(RegistryKey.STRUCTURE);
-        for (Structure structure : structureRegistry) {
-            NamespacedKey key = structureRegistry.getKey(structure);
-            if (key != null) {
-                structureKeys.add(key.toString());
+        Registry<Structure> structureRegistry = Bukkit.getRegistry(Structure.class);
+        if (structureRegistry != null) {
+            for (Structure structure : structureRegistry) {
+                NamespacedKey key = structureRegistry.getKey(structure);
+                if (key != null) {
+                    structureKeys.add(key.toString());
+                }
             }
         }
         VolmitSender commandSender = sender();

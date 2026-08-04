@@ -39,6 +39,13 @@ public final class NativeStructureGenerationPolicy {
                 "Dimension importedStructures must not be null");
         IrisNativeStructureDecision decision = control.resolve(structureKey, undergroundStep);
         if (!decision.generate()) {
+            // A disabled key with an active Iris placement is the "blanket-disable, re-place
+            // explicitly" pattern: the placement planner ignores the disable list, so generation
+            // places it — report REPLACED_BY_IRIS so find/goto/verify locate the placement.
+            if (decision.status() == NativeStructureGenerationStatus.DISABLED_BY_PACK
+                    && IrisStructureLocator.isPlaced(activeEngine, structureKey)) {
+                return decision.withStatus(NativeStructureGenerationStatus.REPLACED_BY_IRIS);
+            }
             return decision;
         }
         if (IrisStructureLocator.suppressesVanilla(activeEngine, structureKey)) {

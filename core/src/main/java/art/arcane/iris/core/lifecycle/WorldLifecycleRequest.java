@@ -1,5 +1,6 @@
 package art.arcane.iris.core.lifecycle;
 
+import art.arcane.iris.core.WorldCreatorCompat;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
@@ -24,7 +25,7 @@ public record WorldLifecycleRequest(
     public static WorldLifecycleRequest fromCreator(WorldCreator creator, boolean studio, boolean benchmark, WorldLifecycleCaller callerKind) {
         return new WorldLifecycleRequest(
                 creator.name(),
-                creator.key(),
+                WorldCreatorCompat.keyOf(creator),
                 creator.environment(),
                 creator.generator(),
                 creator.biomeProvider(),
@@ -39,7 +40,7 @@ public record WorldLifecycleRequest(
     }
 
     public WorldCreator toWorldCreator() {
-        WorldCreator creator = WorldCreator.ofKey(worldKey)
+        WorldCreator creator = WorldCreatorCompat.ofKey(worldKey)
                 .environment(environment)
                 .generateStructures(generateStructures)
                 .hardcore(hardcore)

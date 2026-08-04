@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "Một chiều không gian khác trong thư mục gói là đã sử dụng phím {key}.  Nhập thất bại!",
     "iris.runtime.pack_download.pack_key_conflict": "Name {key}.  Nhập thất bại!",
     "iris.runtime.pack_download.acquired": "Được thành công {name}.",
+    "iris.runtime.pack_download.already_installed": "Gói {key} đã được cài đặt, bỏ qua tải xuống.",
     "iris.runtime.pack_download.validation_failed": "Gói '{pack}'Đã thất bại trong việc xác nhận; thế giới và phòng thu sẽ bị từ chối.  Lý do:",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

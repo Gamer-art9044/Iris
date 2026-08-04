@@ -159,7 +159,7 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
         return true;
     }
 
-    void executeRoot(CommandSender sender, String label, String[] args) {
+    public void executeRoot(CommandSender sender, String label, String[] args) {
         if (!sender.hasPermission(ROOT_PERMISSION)) {
             sender.sendMessage(IrisLanguage.text(
                     IrisMessages.COMMAND_PERMISSION_DENIED,
@@ -171,7 +171,7 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
         J.aBukkit(() -> executeCommand(sender, label, args));
     }
 
-    List<String> tabCompleteRoot(CommandSender sender, String alias, String[] args) {
+    public List<String> tabCompleteRoot(CommandSender sender, String alias, String[] args) {
         List<String> suggestions = runDirectorTab(sender, alias, args);
         if (sender instanceof Player player && IrisSettings.get().getGeneral().isCommandSounds()) {
             player.playSound(player.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.25f, RNG.r.f(0.125f, 1.95f));
@@ -190,7 +190,7 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     private void registerPaperCommand() {
         try {
             Class<?> registrarType = Class.forName(
-                    "art.arcane.iris.core.service.PaperCommandRegistrar",
+                    "art.arcane.iris.core.commands.PaperCommandRegistrar",
                     true,
                     getClass().getClassLoader()
             );

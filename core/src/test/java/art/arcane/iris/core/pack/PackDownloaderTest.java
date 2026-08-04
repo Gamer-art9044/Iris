@@ -18,7 +18,15 @@
 
 package art.arcane.iris.core.pack;
 
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -26,6 +34,8 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class PackDownloaderTest {
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
     @Test
     public void resolvesDefaultOverworldBetaRelease() {
         assertEquals(
@@ -72,6 +82,55 @@ public class PackDownloaderTest {
                 "https://github.com/IrisDimensions/overworld/archive/8e32852ee6ecd039fae27a36f701f57cdc02e83f.zip",
                 PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "8e32852ee6ecd039fae27a36f701f57cdc02e83f")
         );
+    }
+
+    @Test
+    public void isPackPresentRequiresNonEmptyFolder() throws IOException {
+        File packsFolder = temp.newFolder("packs");
+
+        assertFalse(PackDownloader.isPackPresent(packsFolder, "overworld"));
+        assertFalse(PackDownloader.isPackPresent(packsFolder, null));
+        assertFalse(PackDownloader.isPackPresent(packsFolder, ""));
+        assertFalse(PackDownloader.isPackPresent(null, "overworld"));
+
+        File pack = new File(packsFolder, "overworld");
+        assertTrue(pack.mkdirs());
+        assertFalse(PackDownloader.isPackPresent(packsFolder, "overworld"));
+
+        // A partial import (content but no dimension file) counts as absent so it can be replaced.
+        File biomes = new File(pack, "biomes");
+        assertTrue(biomes.mkdirs());
+        Files.writeString(new File(biomes, "plains.json").toPath(), "{}");
+        assertFalse(PackDownloader.isPackPresent(packsFolder, "overworld"));
+
+        File dimensions = new File(pack, "dimensions");
+        assertTrue(dimensions.mkdirs());
+        Files.writeString(new File(dimensions, "overworld.json").toPath(), "{}");
+        assertTrue(PackDownloader.isPackPresent(packsFolder, "overworld"));
+    }
+
+    @Test
+    public void downloadSkipsWhenExpectedPackAlreadyPresent() throws IOException {
+        File packsFolder = temp.newFolder("packs");
+        File dimensions = new File(packsFolder, "overworld/dimensions");
+        assertTrue(dimensions.mkdirs());
+        Files.writeString(new File(dimensions, "overworld.json").toPath(), "{}");
+
+        List<String> feedback = new ArrayList<>();
+        // The URL is unreachable on purpose: reaching the network would fail the download and
+        // return null, so a non-null key proves the presence check ran before any fetch.
+        String key = PackDownloader.download(
+                packsFolder,
+                "IrisDimensions/overworld",
+                "http://127.0.0.1:9/unreachable.zip",
+                false,
+                true,
+                "overworld",
+                feedback::add
+        );
+
+        assertEquals("overworld", key);
+        assertFalse(feedback.isEmpty());
     }
 
     @Test

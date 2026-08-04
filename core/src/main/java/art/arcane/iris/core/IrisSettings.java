@@ -276,7 +276,13 @@ public class IrisSettings {
         public boolean useCustomColorsIngame = true;
         public boolean adjustVanillaHeight = false;
         public boolean autoIngestDatapacks = true;
-        public boolean autoImportDatapackStructures = true;
+        /**
+         * Converting every registered datapack structure into editable Iris resources writes
+         * thousands of objects/pools/pieces into the pack folder. Native generation and
+         * nativeStructures placements never need those copies, so this stays opt-in; run
+         * /iris structure import &lt;dimension&gt; when you actually want editable copies.
+         */
+        public boolean autoImportDatapackStructures = false;
         /** Unresolved pack content keys and bad block-state properties become blocking pack errors. -Diris.strictContent overrides. */
         public boolean strictContentKeys = false;
         public int spinh = -20;

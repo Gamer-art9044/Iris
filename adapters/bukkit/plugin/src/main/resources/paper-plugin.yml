@@ -6,7 +6,7 @@ folia-supported: true
 api-version: '${apiVersion}'
 load: STARTUP
 authors: [ cyberpwn, NextdoorPsycho, Vatuu ]
-website: volmit.com
+website: VolmitSoftware.com
 description: More than a Dimension!
 permissions:
   iris.treefeller:

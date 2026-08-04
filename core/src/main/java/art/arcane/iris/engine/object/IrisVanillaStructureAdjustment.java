@@ -36,7 +36,7 @@ import lombok.experimental.Accessors;
 @Data
 public class IrisVanillaStructureAdjustment {
     @ArrayType(type = String.class, min = 1)
-    @RegistryListVanillaStructure
+    @RegistryListVanillaStructure(prefixes = true)
     @Desc("Structure keys this adjustment applies to, e.g. 'minecraft:stronghold'. A namespace:path prefix also matches, so 'minecraft:village' adjusts every village variant and 'minecraft:ruined_portal' adjusts every ruined portal. Empty matches nothing.")
     private KList<String> match = new KList<>();
 

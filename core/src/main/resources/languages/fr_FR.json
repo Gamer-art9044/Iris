@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "Une autre dimension du dossier packs utilise déjà la clé {key}. Échec de l'importation !",
     "iris.runtime.pack_download.pack_key_conflict": "Un autre pack utilise la clé {key}. Échec de l'importation !",
     "iris.runtime.pack_download.acquired": "{name} obtenu avec succès.",
+    "iris.runtime.pack_download.already_installed": "Le pack {key} est déjà installé, téléchargement ignoré.",
     "iris.runtime.pack_download.validation_failed": "Le pack '{pack}' a échoué à la validation ; la création de mondes et de Studio sera refusée. Raisons :",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

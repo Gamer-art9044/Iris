@@ -57,7 +57,7 @@ public final class BukkitWorldReconciler {
                     assert dim != null && gen != null;
 
                     Iris.info(C.LIGHT_PURPLE + "Preparing Spawn for " + s + "' using Iris:" + generator + "...");
-                    WorldCreator c = WorldCreator.ofKey(worldKey)
+                    WorldCreator c = WorldCreatorCompat.ofKey(worldKey)
                             .generator(gen)
                             .environment(BukkitEnvironment.from(dim.getEnvironment()));
                     Long stagedSeed = IrisWorlds.readBukkitWorldSeed(s);

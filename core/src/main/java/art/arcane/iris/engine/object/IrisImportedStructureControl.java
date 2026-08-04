@@ -39,7 +39,7 @@ import java.util.Objects;
 @Data
 public class IrisImportedStructureControl {
     @ArrayType(type = String.class, min = 1)
-    @RegistryListVanillaStructure
+    @RegistryListVanillaStructure(prefixes = true)
     @Desc("Structure keys to deny explicitly, e.g. 'minecraft:stronghold'. A namespace:path prefix also matches, so 'minecraft:village' disables every village variant and 'minecraft:ruined_portal' disables every ruined portal. Every key not matched here remains enabled.")
     private KList<String> disabled = new KList<>();
 

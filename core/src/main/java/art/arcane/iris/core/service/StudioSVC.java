@@ -26,7 +26,6 @@ import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.pack.IrisPack;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
@@ -63,6 +62,7 @@ import java.util.function.Consumer;
 
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.PackDownloadMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public class StudioSVC implements IrisService {
     public static final String LISTING = "https://raw.githubusercontent.com/IrisDimensions/_listing/main/listing-v2.json";
@@ -76,9 +76,10 @@ public class StudioSVC implements IrisService {
     public void onEnable() {
         J.a(() -> {
             String pack = IrisSettings.get().getGenerator().getDefaultWorldType();
-            File f = IrisPack.packsPack(pack);
 
-            if (!f.exists()) {
+            // Presence means a non-empty pack folder: an empty leftover folder must still
+            // trigger the install instead of shadowing it forever.
+            if (!PackDownloader.isPackPresent(getWorkspaceFolder(), pack)) {
                 if (PackDownloader.isDefaultOverworld(pack)) {
                     IrisLogging.info("Downloading Default Pack " + pack + " (beta release)");
                     IrisServices.get(StudioSVC.class).downloadDefaultOverworld(BukkitPlatform.console(), false);
@@ -203,8 +204,8 @@ public class StudioSVC implements IrisService {
                         }
                     }
                 }
-
-                IO.delete(downloaded);
+                // The downloaded pack stays in the packs workspace: deleting it here made the
+                // next startup see a missing pack and download it again.
             }
         }
 
@@ -231,6 +232,14 @@ public class StudioSVC implements IrisService {
     }
 
     public void downloadSearch(VolmitSender sender, String key, boolean forceOverwrite) {
+        // The default overworld always comes from the pinned release
+        // (PackDownloader.DEFAULT_OVERWORLD_RELEASE_URL), never from the listing,
+        // so every code path ships the same pack build.
+        if (PackDownloader.isDefaultOverworld(key)) {
+            downloadDefaultOverworld(sender, forceOverwrite);
+            return;
+        }
+
         try {
             String url = getListing(false).get(key);
 
@@ -244,7 +253,8 @@ public class StudioSVC implements IrisService {
             String[] nodes = url.split("\\Q/\\E");
             String repo = nodes.length == 1 ? "IrisDimensions/" + nodes[0] : nodes[0] + "/" + nodes[1];
             String branch = nodes.length > 2 ? nodes[2] : "stable";
-            download(sender, repo, branch, forceOverwrite, false);
+            String expectedKey = key.contains("/") ? null : key;
+            download(sender, repo, branch, forceOverwrite, false, expectedKey);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
@@ -253,6 +263,13 @@ public class StudioSVC implements IrisService {
     }
 
     public void downloadDefaultOverworld(VolmitSender sender, boolean forceOverwrite) {
+        // Same guard as download(): a present pack must not reach installDataPacks(true),
+        // which can trigger an automatic restart.
+        if (!forceOverwrite && PackDownloader.isPackPresent(getWorkspaceFolder(), PackDownloader.defaultOverworldPack())) {
+            sender.sendMessage(IrisLanguage.text(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", PackDownloader.defaultOverworldPack())));
+            return;
+        }
+
         try {
             String key = PackDownloader.downloadDefaultOverworld(getWorkspaceFolder(), forceOverwrite, sender::sendMessage);
             if (key != null) {
@@ -280,7 +297,18 @@ public class StudioSVC implements IrisService {
     }
 
     public void download(VolmitSender sender, String repo, String branch, boolean forceOverwrite, boolean directUrl) throws JsonSyntaxException, IOException {
-        String key = PackDownloader.download(getWorkspaceFolder(), repo, branch, forceOverwrite, directUrl, sender::sendMessage);
+        download(sender, repo, branch, forceOverwrite, directUrl, null);
+    }
+
+    public void download(VolmitSender sender, String repo, String branch, boolean forceOverwrite, boolean directUrl, String expectedKey) throws JsonSyntaxException, IOException {
+        // Skip before PackDownloader so an already-present pack never reaches
+        // installDataPacks(true), which can trigger an automatic restart.
+        if (!forceOverwrite && PackDownloader.isPackPresent(getWorkspaceFolder(), expectedKey)) {
+            sender.sendMessage(IrisLanguage.text(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
+            return;
+        }
+
+        String key = PackDownloader.download(getWorkspaceFolder(), repo, branch, forceOverwrite, directUrl, expectedKey, sender::sendMessage);
 
         if (key == null) {
             return;

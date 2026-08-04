@@ -1295,6 +1295,7 @@
     "iris.runtime.pack_download.dimension_key_conflict": "Kitas matmuo paketų aplanke jau naudoja raktą {key}.  Importuoti nepavyko!",
     "iris.runtime.pack_download.pack_key_conflict": "Kita pakuotė naudoja raktą {key}.  Importuoti nepavyko!",
     "iris.runtime.pack_download.acquired": "Sėkmingai įgyta {name}.",
+    "iris.runtime.pack_download.already_installed": "Paketas {key} jau įdiegtas, atsisiuntimas praleidžiamas.",
     "iris.runtime.pack_download.validation_failed": "Pakuotė \"{pack}\"nepavyko patvirtinimas; pasaulio ir Studio kūrimas bus atsisakyta.  Motyvai:",
     "iris.runtime.pack_download.validation_reason": "  - {reason}",
     "iris.runtime.pack_download.validated_with_warnings": {

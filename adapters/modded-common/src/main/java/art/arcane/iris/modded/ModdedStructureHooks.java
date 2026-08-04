@@ -114,15 +114,19 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
             if (structure == null) {
                 throw new IllegalArgumentException("Registered structure does not exist: " + structureKey);
             }
+            boolean hasFilterEntries = false;
             for (Holder<Biome> holder : structure.biomes()) {
+                hasFilterEntries = true;
                 Optional<ResourceKey<Biome>> key = holder.unwrapKey();
                 if (key.isPresent()) {
                     keys.add(key.get().identifier().toString());
                 }
             }
-            if (keys.isEmpty()) {
+            // An empty biome filter is legal datapack content (opt-in structures whose tags only
+            // reference absent modded biomes); the structure is unreachable, not an error state.
+            if (keys.isEmpty() && hasFilterEntries) {
                 throw new IllegalStateException("Registered structure '" + structureKey
-                        + "' exposes no registered biome keys");
+                        + "' has biome filter entries but none resolve to registered biome keys");
             }
         } catch (RuntimeException error) {
             throw new IllegalStateException("Iris failed to resolve biome keys for registered structure '"

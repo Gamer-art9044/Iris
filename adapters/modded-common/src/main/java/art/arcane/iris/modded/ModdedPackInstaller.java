@@ -64,6 +64,7 @@ public final class ModdedPackInstaller {
                                 branch,
                                 forceOverwrite,
                                 false,
+                                pack,
                                 feedback) != null;
                 if (installed) {
                     // Pack-install completion is one of the four forced-datapack regeneration triggers; every

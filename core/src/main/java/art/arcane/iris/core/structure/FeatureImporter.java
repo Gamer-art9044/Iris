@@ -19,6 +19,7 @@
 package art.arcane.iris.core.structure;
 
 import art.arcane.iris.core.IrisWorldStorage;
+import art.arcane.iris.core.WorldCreatorCompat;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
@@ -301,7 +302,7 @@ public final class FeatureImporter {
             if (existing != null) {
                 return existing;
             }
-            WorldCreator creator = WorldCreator.ofKey(IrisWorldStorage.keyFromName(SCRATCH_WORLD_NAME))
+            WorldCreator creator = WorldCreatorCompat.ofKey(IrisWorldStorage.keyFromName(SCRATCH_WORLD_NAME))
                     .environment(World.Environment.NORMAL)
                     .type(WorldType.FLAT)
                     .generateStructures(false);

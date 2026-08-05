@@ -56,7 +56,7 @@ public class NativeStructureFailureContractTest {
     }
 
     @Test
-    public void structureTerrainPreparationPrecedesVegetationAndPlacement() throws IOException {
+    public void structureVegetationCleanupPrecedesTerrainPreparationAndPlacement() throws IOException {
         String source = moddedSource("ModdedNativeStructureStage.java");
         int placementStart = source.indexOf("void placeVanillaStructures");
         int placementEnd = source.indexOf("private static String nativeStructureBatchContext", placementStart);
@@ -65,9 +65,9 @@ public class NativeStructureFailureContractTest {
         assertTrue(placement.contains("\"terrain integration\""));
         assertTrue(placement.contains("prepareSurfaceStructures"));
         assertTrue(placement.contains("clearIntersectingVegetation"));
-        assertTrue(placement.indexOf("prepareSurfaceStructures")
-                < placement.indexOf("clearIntersectingVegetation"));
         assertTrue(placement.indexOf("clearIntersectingVegetation")
+                < placement.indexOf("prepareSurfaceStructures"));
+        assertTrue(placement.indexOf("prepareSurfaceStructures")
                 < placement.indexOf("for (NativePlacementGroup group"));
     }
 
@@ -86,6 +86,7 @@ public class NativeStructureFailureContractTest {
                 < placement.indexOf("prepareSurfaceStructures"));
         assertTrue(source.contains("generationEngine.getHeight(x, z, false) + runtimeMinY + 1"));
         assertTrue(source.contains("generationEngine.getHeight(x, z, true) + runtimeMinY + 1"));
+        assertTrue(source.contains("int minY = chunk.getMinY() + 1;"));
     }
 
     @Test

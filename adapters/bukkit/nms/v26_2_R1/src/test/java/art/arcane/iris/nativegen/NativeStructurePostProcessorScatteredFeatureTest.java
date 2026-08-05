@@ -135,6 +135,27 @@ public class NativeStructurePostProcessorScatteredFeatureTest {
         assertTrue(field.trySetAccessible());
     }
 
+    @Test
+    public void datapackOverridesOfSpecialVanillaIdsUseGenericPlacement() {
+        StructureStart pyramidOverride = swampStart(
+                new SwampHutPiece(RandomSource.create(43L), 0, 0));
+        int pyramidMinY = pyramidOverride.getBoundingBox().minY();
+        int pyramidOffset = NativeStructureVerticalPlacer.applyVerticalPlacement(
+                pyramidOverride, "minecraft:desert_pyramid", 5,
+                63, -64, 320, false, false, null, (x, z) -> 200);
+
+        assertEquals(5, pyramidOffset);
+        assertEquals(pyramidMinY + 5, pyramidOverride.getBoundingBox().minY());
+
+        StructureStart monumentOverride = swampStart(
+                new SwampHutPiece(RandomSource.create(47L), 0, 0));
+        int monumentMinY = monumentOverride.getBoundingBox().minY();
+        NativeStructureVerticalPlacer.ensureMonumentSeaLevelAlignment(
+                monumentOverride, "minecraft:monument", 0, 40, -64, 320);
+
+        assertEquals(monumentMinY, monumentOverride.getBoundingBox().minY());
+    }
+
     private static StructureStart desertStart(StructurePiece piece) {
         Structure structure = new DesertPyramidStructure(new Structure.StructureSettings(HolderSet.empty()));
         return start(structure, piece);

@@ -41,6 +41,7 @@ import org.bukkit.block.Biome;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.EntityType;
+import org.bukkit.loot.LootTables;
 import org.bukkit.potion.PotionEffectType;
 
 import java.util.ArrayList;
@@ -202,6 +203,15 @@ public final class BukkitRegistries implements PlatformRegistries {
             if (key != null) {
                 keys.add(key.toString());
             }
+        }
+        return keys;
+    }
+
+    @Override
+    public List<String> lootTableKeys() {
+        List<String> keys = new ArrayList<>();
+        for (LootTables table : LootTables.values()) {
+            keys.add(table.getKey().toString());
         }
         return keys;
     }

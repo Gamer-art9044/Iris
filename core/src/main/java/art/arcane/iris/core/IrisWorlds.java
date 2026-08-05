@@ -22,8 +22,15 @@ import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
+import java.io.UncheckedIOException;
 import java.lang.reflect.Type;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.Objects;
 import java.util.stream.Stream;
 
@@ -62,9 +69,42 @@ public class IrisWorlds {
         });
     }
 
-    public void put(String identity, String type) {
-        put0(identity, type);
-        save();
+    public synchronized void put(String identity, String type) {
+        String canonicalIdentity = WorldIdentity.parse(identity).toString();
+        String requiredType = Objects.requireNonNull(type, "type");
+        String previous = worlds.put(canonicalIdentity, requiredType);
+        if (requiredType.equals(previous)) {
+            return;
+        }
+        dirty = true;
+        try {
+            saveOrThrow();
+        } catch (IOException e) {
+            if (previous == null) {
+                worlds.remove(canonicalIdentity);
+            } else {
+                worlds.put(canonicalIdentity, previous);
+            }
+            dirty = true;
+            throw new UncheckedIOException("Failed to persist Iris world registry entry for " + canonicalIdentity, e);
+        }
+    }
+
+    public synchronized boolean remove(String identity) {
+        String canonicalIdentity = WorldIdentity.parse(identity).toString();
+        String previous = worlds.remove(canonicalIdentity);
+        if (previous == null) {
+            return false;
+        }
+        dirty = true;
+        try {
+            saveOrThrow();
+            return true;
+        } catch (IOException e) {
+            worlds.put(canonicalIdentity, previous);
+            dirty = true;
+            throw new UncheckedIOException("Failed to remove Iris world registry entry for " + canonicalIdentity, e);
+        }
     }
 
     private void put0(String identity, String type) {
@@ -74,7 +114,7 @@ public class IrisWorlds {
             dirty = true;
     }
 
-    public KMap<String, String> getWorlds() {
+    public synchronized KMap<String, String> getWorlds() {
         clean();
         KMap<String, String> result = new KMap<>();
         readBukkitWorlds().forEach((name, type) -> result.put(IrisWorldStorage.keyFromName(name).toString(), type));
@@ -95,7 +135,7 @@ public class IrisWorlds {
                 .filter(Objects::nonNull);
     }
 
-    public void clean() {
+    public synchronized void clean() {
         boolean removed = worlds.entrySet().removeIf(entry -> {
             try {
                 File packRoot = IrisWorldStorage.packRoot(WorldIdentity.parse(entry.getKey()));
@@ -108,15 +148,40 @@ public class IrisWorlds {
     }
 
     public synchronized void save() {
-        clean();
-        if (!dirty) return;
         try {
-            IO.write(IrisPlatforms.get().dataFile("worlds.json"), OutputStreamWriter::new, writer -> GSON.toJson(worlds, TYPE, writer));
-            dirty = false;
+            saveOrThrow();
         } catch (IOException e) {
             IrisLogging.error("Failed to save worlds.json!");
-            e.printStackTrace();
             IrisLogging.reportError(e);
+        }
+    }
+
+    private void saveOrThrow() throws IOException {
+        clean();
+        if (!dirty) {
+            return;
+        }
+
+        Path target = IrisPlatforms.get().dataFile("worlds.json").toPath().toAbsolutePath().normalize();
+        Path parent = target.getParent();
+        if (parent == null) {
+            throw new IOException("worlds.json target has no parent: " + target);
+        }
+        Files.createDirectories(parent);
+        Path staged = Files.createTempFile(parent, ".iris-worlds-", ".json");
+        try {
+            Files.writeString(staged, GSON.toJson(worlds, TYPE), StandardCharsets.UTF_8);
+            try (FileChannel channel = FileChannel.open(staged, StandardOpenOption.WRITE)) {
+                channel.force(true);
+            }
+            try {
+                Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(staged, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+            dirty = false;
+        } finally {
+            Files.deleteIfExists(staged);
         }
     }
 

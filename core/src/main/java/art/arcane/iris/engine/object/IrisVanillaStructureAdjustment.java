@@ -57,7 +57,7 @@ public class IrisVanillaStructureAdjustment {
     @Desc("Optional foundation columns placed beneath the native structure piece bases after placement.")
     private IrisStructureStiltSettings stilt = null;
 
-    @Desc("Optional terrain integration override. FORCE_CARVE clears every intersecting chunk before native pieces are placed, ENCASE fills it with solid blocks instead. Left unset, structures whose vanilla terrainAdaptation is BURY or ENCAPSULATE default to ENCASE with 3-block paddings; setting this field disables that default.")
+    @Desc("Optional terrain integration override. FORCE_CARVE clears every intersecting chunk before native pieces are placed, ENCASE fills it with solid blocks instead. Left unset, SOURCE replays the registered structure's authored terrain adaptation, including surface fitting, burial, and encapsulation.")
     private IrisStructureTerrain terrain = null;
 
     public boolean matches(String key) {

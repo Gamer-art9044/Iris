@@ -45,6 +45,14 @@ public final class PackValidator {
     }
 
     public static PackValidationResult validate(File packFolder) {
+        return validate(packFolder, true);
+    }
+
+    public static PackValidationResult validateForDatapackBootstrap(File packFolder) {
+        return validate(packFolder, false);
+    }
+
+    private static PackValidationResult validate(File packFolder, boolean validateLiveRegistries) {
         String packName = packFolder == null ? "<unknown>" : packFolder.getName();
         List<String> blockingErrors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
@@ -72,7 +80,8 @@ public final class PackValidator {
         blockingErrors.addAll(PackObjectSurfaceValidator.validateRemovedWorldgenFields(packFolder));
         blockingErrors.addAll(PackObjectSurfaceValidator.validateObjectSurfaceSupport(packFolder));
         blockingErrors.addAll(PackObjectSurfaceValidator.validateUnsupportedStructureTransforms(packFolder));
-        blockingErrors.addAll(PackObjectSurfaceValidator.validateStructureGraph(packFolder));
+        blockingErrors.addAll(PackObjectSurfaceValidator.validateStructureGraph(
+                packFolder, validateLiveRegistries));
         StructureGraphPackValidator.Validation compiledStructures =
                 StructureGraphPackValidator.validate(
                         packFolder.toPath(), PackObjectSurfaceValidator.collectPlacedStructureKeys(packFolder));

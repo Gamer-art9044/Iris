@@ -180,12 +180,14 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
     EngineMetrics getMetrics();
 
     default void save() {
+        NativeStructureOwnershipStore.flush(this);
         getMantle().save();
         getWorldManager().onSave();
         saveEngineData();
     }
 
     default void saveNow() {
+        NativeStructureOwnershipStore.flush(this);
         getMantle().saveAllNow();
         saveEngineData();
     }

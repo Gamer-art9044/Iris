@@ -23,7 +23,7 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
-import art.arcane.iris.core.pack.PackValidationRegistry;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -74,7 +74,6 @@ public final class ModdedForcedDatapack {
     // v2: custom biomes now inherit their vanilla derivative's biome tags, so every already-published pack has
     // to regenerate once.
     private static final String HASH_SALT = "iris-forced-datapack-v2";
-    private static final String GIT_DIRECTORY = ".git";
     private static final long PACKS_HASH_TTL_NANOS = 2_000_000_000L;
     private static final Object LOCK = new Object();
     private static final AtomicBoolean LOADED = new AtomicBoolean(false);
@@ -147,13 +146,13 @@ public final class ModdedForcedDatapack {
             return;
         }
         Path packsRoot = packsRoot();
-        File[] packs = packsRoot.toFile().listFiles(File::isDirectory);
-        if (packs == null || packs.length == 0) {
+        List<File> packs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot.toFile());
+        if (packs.isEmpty()) {
             return;
         }
         LOGGER.error("===============================================================");
         LOGGER.error("Iris forced datapack '{}' was never loaded by this server.", PACK_ID);
-        LOGGER.error("{} installed pack(s) at {} contributed no dimension types or custom biomes.", packs.length, packsRoot);
+        LOGGER.error("{} installed pack(s) at {} contributed no dimension types or custom biomes.", packs.size(), packsRoot);
         LOGGER.error("Datapack source injection failed for this loader (mixin/event not applied), so world creation will fail and restarting will not fix it.");
         LOGGER.error("===============================================================");
     }
@@ -360,8 +359,8 @@ public final class ModdedForcedDatapack {
             Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
-                    // Studio packs can be git checkouts; .git churns constantly and never reaches the datapack.
-                    return GIT_DIRECTORY.equals(directory.getFileName().toString())
+                    return !directory.equals(root)
+                            && PackDirectoryResolver.isHiddenName(directory.getFileName().toString())
                             ? FileVisitResult.SKIP_SUBTREE
                             : FileVisitResult.CONTINUE;
                 }
@@ -397,16 +396,10 @@ public final class ModdedForcedDatapack {
         int packCount = 0;
         KList<String> presetIds = new KList<>();
         File root = packsRoot().toFile();
-        File[] packs = root.listFiles(File::isDirectory);
-        if (packs == null && root.exists()) {
-            throw new IOException("Iris could not read installed pack directory " + root.getAbsolutePath());
-        }
-        if (packs != null) {
-            Arrays.sort(packs, Comparator.comparing(File::getName));
-            for (File pack : packs) {
-                if (stagePack(pack, fixer, stagingDirectory, seenBiomes, presetIds)) {
-                    packCount++;
-                }
+        List<File> packs = PackDirectoryResolver.listVisiblePackDirectoriesOrThrow(root);
+        for (File pack : packs) {
+            if (stagePack(pack, fixer, stagingDirectory, seenBiomes, presetIds)) {
+                packCount++;
             }
         }
 
@@ -431,8 +424,7 @@ public final class ModdedForcedDatapack {
                                      KList<String> presetIds) throws IOException {
         PackValidationResult validation;
         try {
-            validation = PackValidator.validate(sourcePack);
-            PackValidationRegistry.publish(validation);
+            validation = PackValidator.validateForDatapackBootstrap(sourcePack);
         } catch (Throwable validationFailure) {
             LOGGER.error("Iris excluded pack '{}' from Create World because validation failed",
                     sourcePack.getName(), validationFailure);

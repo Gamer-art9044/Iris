@@ -23,14 +23,17 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -39,6 +42,7 @@ public final class ModrinthResolver {
     private static final String API = "https://api.modrinth.com/v2";
     private static final String USER_AGENT = "VolmitSoftware/Iris (datapack-ingest)";
     private static final String DATAPACK_LOADER = "datapack";
+    private static final int MAX_API_RESPONSE_CHARS = 8 * 1024 * 1024;
 
     private ModrinthResolver() {
     }
@@ -63,8 +67,18 @@ public final class ModrinthResolver {
                 ? selectLatestDatapackVersion(versions, serverMcVersion)
                 : selectVersionByToken(versions, ref.versionToken);
         if (version == null) {
-            String detail = ref.versionToken == null ? "no datapack-loader version" : "no version matching '" + ref.versionToken + "'";
+            String detail = ref.versionToken == null
+                    ? (serverMcVersion == null || serverMcVersion.isBlank()
+                    ? "no datapack-loader version"
+                    : "no datapack-loader version compatible with Minecraft " + serverMcVersion)
+                    : "no version matching '" + ref.versionToken + "'";
             throw new IOException("Modrinth project '" + ref.slug + "' has " + detail);
+        }
+        if (!isDatapack(version)) {
+            throw new IOException("Modrinth version for '" + ref.slug + "' is not published for the datapack loader");
+        }
+        if (serverMcVersion != null && !serverMcVersion.isBlank() && !gameVersionsContains(version, serverMcVersion)) {
+            throw new IOException("Modrinth version for '" + ref.slug + "' is not compatible with Minecraft " + serverMcVersion);
         }
 
         JsonObject file = selectFile(version);
@@ -76,41 +90,30 @@ public final class ModrinthResolver {
     }
 
     private static ModrinthRef parse(String url) {
-        if (!url.toLowerCase(Locale.ROOT).contains("modrinth.com/")) {
+        URI uri;
+        try {
+            uri = new URI(url);
+        } catch (URISyntaxException e) {
+            return null;
+        }
+        String host = uri.getHost();
+        if (host == null || !(host.equalsIgnoreCase("modrinth.com") || host.equalsIgnoreCase("www.modrinth.com"))) {
             return null;
         }
 
-        String path = url.replaceFirst("^[a-zA-Z][a-zA-Z0-9+.-]*://", "");
-        int query = path.indexOf('?');
-        if (query >= 0) {
-            path = path.substring(0, query);
-        }
-        int fragment = path.indexOf('#');
-        if (fragment >= 0) {
-            path = path.substring(0, fragment);
-        }
-
         List<String> parts = new ArrayList<>();
-        for (String segment : path.split("/")) {
+        for (String segment : uri.getPath().split("/")) {
             if (!segment.isBlank()) {
                 parts.add(segment);
             }
         }
-
-        int base = -1;
-        for (int i = 0; i < parts.size(); i++) {
-            if (parts.get(i).equalsIgnoreCase("modrinth.com")) {
-                base = i;
-                break;
-            }
-        }
-        if (base < 0 || parts.size() < base + 3) {
+        if (parts.size() < 2) {
             return null;
         }
 
-        String slug = parts.get(base + 2);
+        String slug = parts.get(1);
         String token = null;
-        for (int i = base + 3; i + 1 < parts.size(); i++) {
+        for (int i = 2; i + 1 < parts.size(); i++) {
             if (parts.get(i).equalsIgnoreCase("version")) {
                 token = parts.get(i + 1);
                 break;
@@ -125,6 +128,9 @@ public final class ModrinthResolver {
         String normalizedToken = normalizeVersion(token);
 
         for (JsonElement element : versions) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
             JsonObject version = element.getAsJsonObject();
             String id = optString(version, "id");
             String number = optString(version, "version_number");
@@ -146,25 +152,24 @@ public final class ModrinthResolver {
         return datapackMatch != null ? datapackMatch : anyMatch;
     }
 
-    private static JsonObject selectLatestDatapackVersion(JsonArray versions, String serverMcVersion) {
-        JsonObject firstDatapack = null;
+    static JsonObject selectLatestDatapackVersion(JsonArray versions, String serverMcVersion) {
         for (JsonElement element : versions) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
             JsonObject version = element.getAsJsonObject();
             if (!isDatapack(version)) {
                 continue;
             }
-            if (firstDatapack == null) {
-                firstDatapack = version;
-            }
-            if (serverMcVersion != null && !serverMcVersion.isBlank() && gameVersionsContains(version, serverMcVersion)) {
+            if (serverMcVersion == null || serverMcVersion.isBlank() || gameVersionsContains(version, serverMcVersion)) {
                 return version;
             }
         }
-        return firstDatapack;
+        return null;
     }
 
-    private static JsonObject selectFile(JsonObject version) {
-        JsonArray files = version.getAsJsonArray("files");
+    static JsonObject selectFile(JsonObject version) {
+        JsonArray files = optArray(version, "files");
         if (files == null || files.isEmpty()) {
             return null;
         }
@@ -174,11 +179,14 @@ public final class ModrinthResolver {
         JsonObject primary = null;
         JsonObject first = null;
         for (JsonElement element : files) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
             JsonObject file = element.getAsJsonObject();
             if (first == null) {
                 first = file;
             }
-            boolean isPrimary = file.has("primary") && file.get("primary").getAsBoolean();
+            boolean isPrimary = optBoolean(file, "primary");
             boolean isZip = optString(file, "filename").toLowerCase(Locale.ROOT).endsWith(".zip");
             if (isPrimary && primary == null) {
                 primary = file;
@@ -203,14 +211,20 @@ public final class ModrinthResolver {
         return first;
     }
 
-    private static ResolvedDatapack toResolved(JsonObject version, JsonObject file, String slug) {
+    private static ResolvedDatapack toResolved(JsonObject version, JsonObject file, String slug) throws IOException {
         String downloadUrl = optString(file, "url");
         String filename = optString(file, "filename");
+        if (downloadUrl.isBlank() || filename.isBlank()) {
+            throw new IOException("Modrinth version for '" + slug + "' has an invalid downloadable file");
+        }
         String sha1 = null;
         if (file.has("hashes") && file.get("hashes").isJsonObject()) {
             sha1 = optString(file.getAsJsonObject("hashes"), "sha1");
+            if (!sha1.isBlank() && !sha1.matches("(?i)[0-9a-f]{40}")) {
+                throw new IOException("Modrinth version for '" + slug + "' has an invalid SHA-1 checksum");
+            }
         }
-        return new ResolvedDatapack(downloadUrl, filename, sha1, optString(version, "id"), optString(version, "version_number"), slug);
+        return new ResolvedDatapack(downloadUrl, filename, sha1, optString(version, "id"), optString(version, "version_number"), slug, false);
     }
 
     private static ResolvedDatapack directResolve(String url) {
@@ -226,16 +240,45 @@ public final class ModrinthResolver {
         if (filename.isBlank()) {
             filename = "datapack.zip";
         }
-        return new ResolvedDatapack(url, filename, null, "direct", "direct", null);
+        String identity = directIdentity(url);
+        return new ResolvedDatapack(url, filename, null, "direct-" + identity, "direct", null, true);
+    }
+
+    static String directIdentity(String url) {
+        String normalized = url;
+        try {
+            URI parsed = new URI(url).normalize();
+            normalized = new URI(
+                    parsed.getScheme() == null ? null : parsed.getScheme().toLowerCase(Locale.ROOT),
+                    parsed.getUserInfo(),
+                    parsed.getHost() == null ? null : parsed.getHost().toLowerCase(Locale.ROOT),
+                    parsed.getPort(),
+                    parsed.getPath(),
+                    parsed.getQuery(),
+                    null
+            ).toASCIIString();
+        } catch (URISyntaxException ignored) {
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(normalized.getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder(16);
+            for (int i = 0; i < 8; i++) {
+                builder.append(String.format("%02x", hash[i]));
+            }
+            return builder.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm unavailable", e);
+        }
     }
 
     private static boolean isDatapack(JsonObject version) {
-        JsonArray loaders = version.getAsJsonArray("loaders");
+        JsonArray loaders = optArray(version, "loaders");
         if (loaders == null) {
             return false;
         }
         for (JsonElement loader : loaders) {
-            if (DATAPACK_LOADER.equalsIgnoreCase(loader.getAsString())) {
+            if (isString(loader) && DATAPACK_LOADER.equalsIgnoreCase(loader.getAsString())) {
                 return true;
             }
         }
@@ -243,12 +286,12 @@ public final class ModrinthResolver {
     }
 
     private static boolean gameVersionsContains(JsonObject version, String mc) {
-        JsonArray gameVersions = version.getAsJsonArray("game_versions");
+        JsonArray gameVersions = optArray(version, "game_versions");
         if (gameVersions == null) {
             return false;
         }
         for (JsonElement gv : gameVersions) {
-            if (mc.equalsIgnoreCase(gv.getAsString())) {
+            if (isString(gv) && mc.equalsIgnoreCase(gv.getAsString())) {
                 return true;
             }
         }
@@ -267,19 +310,42 @@ public final class ModrinthResolver {
     }
 
     private static String optString(JsonObject object, String key) {
-        if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
+        if (object == null || !object.has(key) || !isString(object.get(key))) {
             return "";
         }
         return object.get(key).getAsString();
     }
 
+    private static JsonArray optArray(JsonObject object, String key) {
+        if (object == null || !object.has(key) || !object.get(key).isJsonArray()) {
+            return null;
+        }
+        return object.getAsJsonArray(key);
+    }
+
+    private static boolean optBoolean(JsonObject object, String key) {
+        if (object == null || !object.has(key) || !object.get(key).isJsonPrimitive()
+                || !object.get(key).getAsJsonPrimitive().isBoolean()) {
+            return false;
+        }
+        return object.get(key).getAsBoolean();
+    }
+
+    private static boolean isString(JsonElement element) {
+        return element != null && element.isJsonPrimitive() && element.getAsJsonPrimitive().isString();
+    }
+
     private static JsonArray getJsonArray(String url) throws IOException {
         String body = httpGet(url);
-        JsonElement parsed = JsonParser.parseString(body);
-        if (!parsed.isJsonArray()) {
-            throw new IOException("Unexpected response from " + url);
+        try {
+            JsonElement parsed = JsonParser.parseString(body);
+            if (!parsed.isJsonArray()) {
+                throw new IOException("Unexpected response from " + url);
+            }
+            return parsed.getAsJsonArray();
+        } catch (RuntimeException e) {
+            throw new IOException("Invalid JSON response from " + url, e);
         }
-        return parsed.getAsJsonArray();
     }
 
     private static String httpGet(String url) throws IOException {
@@ -298,17 +364,36 @@ public final class ModrinthResolver {
             throw new IOException("HTTP " + code + " from " + url);
         }
 
-        StringBuilder builder = new StringBuilder();
         try (InputStream input = connection.getInputStream();
-             BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                builder.append(line);
-            }
+             InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8)) {
+            return readBoundedApiResponse(reader, url, MAX_API_RESPONSE_CHARS);
         } finally {
             connection.disconnect();
         }
-        return builder.toString();
+    }
+
+    static String readBoundedApiResponse(Reader reader, String source, int maxChars) throws IOException {
+        if (maxChars < 1) {
+            throw new IllegalArgumentException("Response character limit must be positive");
+        }
+        int bufferSize = maxChars < 8192 ? maxChars + 1 : 8192;
+        char[] buffer = new char[bufferSize];
+        StringBuilder builder = new StringBuilder(Math.min(maxChars, 8192));
+        while (true) {
+            int remaining = maxChars - builder.length();
+            int requested = remaining >= buffer.length ? buffer.length : remaining + 1;
+            int length = reader.read(buffer, 0, requested);
+            if (length == -1) {
+                return builder.toString();
+            }
+            if (length == 0) {
+                continue;
+            }
+            if (length > remaining) {
+                throw new IOException("Oversized response from " + source);
+            }
+            builder.append(buffer, 0, length);
+        }
     }
 
     private static final class ModrinthRef {
@@ -328,14 +413,16 @@ public final class ModrinthResolver {
         private final String versionId;
         private final String versionNumber;
         private final String projectSlug;
+        private final boolean direct;
 
-        public ResolvedDatapack(String downloadUrl, String fileName, String sha1, String versionId, String versionNumber, String projectSlug) {
+        public ResolvedDatapack(String downloadUrl, String fileName, String sha1, String versionId, String versionNumber, String projectSlug, boolean direct) {
             this.downloadUrl = downloadUrl;
             this.fileName = fileName;
             this.sha1 = sha1;
             this.versionId = versionId;
             this.versionNumber = versionNumber;
             this.projectSlug = projectSlug;
+            this.direct = direct;
         }
 
         public String getDownloadUrl() {
@@ -360,6 +447,10 @@ public final class ModrinthResolver {
 
         public String getProjectSlug() {
             return projectSlug;
+        }
+
+        public boolean isDirect() {
+            return direct;
         }
     }
 }

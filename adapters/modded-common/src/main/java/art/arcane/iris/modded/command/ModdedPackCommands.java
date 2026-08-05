@@ -110,14 +110,12 @@ public final class ModdedPackCommands {
 
         List<File> targets = new ArrayList<>();
         if (pack == null || pack.isBlank()) {
-            File[] dirs = packsRoot.listFiles(File::isDirectory);
-            if (dirs == null || dirs.length == 0) {
+            List<File> dirs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
+            if (dirs.isEmpty()) {
                 IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_NO_PACKS_VALIDATE_UNDER, MessageArgument.untrusted("value", packsRoot.getAbsolutePath())));
                 return 0;
             }
-            for (File dir : dirs) {
-                targets.add(dir);
-            }
+            targets.addAll(dirs);
         } else {
             File target = PackDirectoryResolver.resolveExisting(packsRoot, pack);
             if (target == null) {

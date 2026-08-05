@@ -1,9 +1,14 @@
 package art.arcane.iris.nativegen;
 
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
+import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
+import art.arcane.iris.engine.framework.NativeStructureOwnershipStore;
 import art.arcane.iris.engine.framework.NativeStructurePlacementPlanner;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
+import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.engine.object.NativeStructureSuppression;
+import art.arcane.iris.spi.IrisLogging;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistryAccess;
@@ -17,6 +22,7 @@ import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
@@ -24,8 +30,12 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemp
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class NativeStructureStartInjector {
+    private static final Set<String> WARNED_DUPLICATE_STRUCTURES = ConcurrentHashMap.newKeySet();
+
     private NativeStructureStartInjector() {
     }
 
@@ -48,14 +58,22 @@ public final class NativeStructureStartInjector {
             }
             Holder<Structure> holder = registry.wrapAsHolder(structure);
             if (configuredStarts.containsKey(structure)) {
-                throw new IllegalStateException("Multiple configured native structure placements selected '"
-                        + identifier + "' in chunk " + chunk.getPos().x() + "," + chunk.getPos().z()
-                        + "; Minecraft can persist only one start per registered structure per chunk");
+                if (WARNED_DUPLICATE_STRUCTURES.add(identifier.toString())) {
+                    IrisLogging.warn("Ignoring duplicate native structure placements for '"
+                            + identifier + "'; the first deterministic candidate owns each chunk start");
+                }
+                continue;
             }
             StructureStart existing = context.structureManager().getStartForStructure(
                     section, structure, chunk);
             boolean replacement = plan.placement().getNativeSuppression()
                     == NativeStructureSuppression.REPLACE_SOURCE;
+            if (!replacement && existing != null && existing.isValid()) {
+                NativeStructureGenerationStatus sourceStatus = NativeStructureGenerationPolicy.resolve(
+                        context.engine(), identifier.toString(),
+                        NativeStructureVegetationClearer.isUndergroundStep(structure.step())).status();
+                replacement = sourceStatus == NativeStructureGenerationStatus.REPLACED_BY_IRIS;
+            }
             if (!replacement && existing != null && existing.isValid()) {
                 continue;
             }
@@ -77,16 +95,41 @@ public final class NativeStructureStartInjector {
                     );
             StructureStart generated = NativeStructureFactory.generate(
                     generationContext, holder, plan, references);
-            if (!generated.isValid()) {
-                throw new IllegalStateException("Configured native structure '" + identifier
-                        + "' produced no valid start in chunk " + chunk.getPos().x()
-                        + "," + chunk.getPos().z());
+            if (!isUsableGeneratedStart(generated)) {
+                if (replacement) {
+                    context.structureManager().setStartForStructure(
+                            section, structure, StructureStart.INVALID_START, chunk);
+                }
+                NativeStructureOwnershipStore.discard(
+                        context.engine(), identifier.toString(),
+                        chunk.getPos().x(), chunk.getPos().z());
+                continue;
             }
-            context.structureManager().setStartForStructure(
-                    section, structure, generated, chunk);
+            BoundingBox referenceBounds = NativeStructureReferenceEnvelope.referenceBounds(
+                    generated, structure, plan.placement().resolvedTerrain(), identifier.toString());
+            NativeStructureOwnershipRecord ownership = NativeStructureOwnershipFingerprint.capture(
+                    identifier.toString(), generated, plan, referenceBounds);
+            NativeStructureOwnershipStore.record(context.engine(), ownership);
+            try {
+                context.structureManager().setStartForStructure(
+                        section, structure, generated, chunk);
+            } catch (RuntimeException | Error publicationError) {
+                try {
+                    NativeStructureOwnershipStore.discard(
+                            context.engine(), identifier.toString(),
+                            chunk.getPos().x(), chunk.getPos().z());
+                } catch (RuntimeException | Error cleanupError) {
+                    publicationError.addSuppressed(cleanupError);
+                }
+                throw publicationError;
+            }
             configuredStarts.put(structure, plan);
         }
         return Map.copyOf(configuredStarts);
+    }
+
+    static boolean isUsableGeneratedStart(StructureStart start) {
+        return start != null && start.isValid();
     }
 
     public record InjectionContext(

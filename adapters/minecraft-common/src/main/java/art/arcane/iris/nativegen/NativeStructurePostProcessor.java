@@ -42,9 +42,18 @@ public final class NativeStructurePostProcessor {
         if (targets == null || targets.isEmpty()) {
             return;
         }
+        NativeStructureTerrainIntegrator.SourceTerrainSnapshot sourceTerrain =
+                NativeStructureTerrainIntegrator.captureSourceTerrain(world, area, targets);
         for (NativeStructureTerrainIntegrator.TerrainTarget target : targets) {
             NativeStructureTerrainIntegrator.integrateTerrain(world, area, target.structureId(), target.start(),
-                    target.terrain(), paletteBlockResolver);
+                    target.terrain(), paletteBlockResolver, sourceTerrain);
+        }
+        for (NativeStructureTerrainIntegrator.TerrainTarget target : targets) {
+            if (NativeStructureTerrainIntegrator.clearsLegacyTemplateAir(
+                    target.start(), target.terrain())) {
+                NativeStructureTerrainIntegrator.clearLegacyTemplateAir(
+                        world, area, target.start(), () -> world.getLevel().getStructureManager());
+            }
         }
     }
 

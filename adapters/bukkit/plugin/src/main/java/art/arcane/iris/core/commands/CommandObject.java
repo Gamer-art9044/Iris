@@ -22,6 +22,7 @@ import art.arcane.iris.Iris;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.link.WorldEditLink;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.runtime.ObjectStudioActivation;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.core.service.ObjectSVC;
@@ -73,7 +74,6 @@ import java.io.File;
 import java.io.IOException;
 import java.text.NumberFormat;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -109,25 +109,20 @@ public class CommandObject implements DirectorExecutor {
             sources.put(data.getDataFolder().getName(), data);
         } else {
             File workspace = Iris.service(StudioSVC.class).getWorkspaceFolder();
-            File[] packs = workspace == null ? null : workspace.listFiles();
-            if (packs != null) {
-                Arrays.sort(packs, Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER));
-                for (File pack : packs) {
-                    if (!pack.isDirectory()) continue;
-                    File dimensionsDir = new File(pack, "dimensions");
-                    if (!dimensionsDir.isDirectory()) continue;
-                    IrisData data = IrisData.get(pack);
-                    String[] keys = data.getObjectLoader().getPossibleKeys();
-                    if (keys == null || keys.length == 0) continue;
-                    sources.put(pack.getName(), data);
-                    if (hostDimension == null) {
-                        File[] dimFiles = dimensionsDir.listFiles((f) -> f.isFile() && f.getName().endsWith(".json"));
-                        if (dimFiles != null && dimFiles.length > 0) {
-                            String loadKey = dimFiles[0].getName().replaceFirst("\\.json$", "");
-                            IrisDimension loaded = data.getDimensionLoader().load(loadKey);
-                            if (loaded != null) {
-                                hostDimension = loaded;
-                            }
+            for (File pack : PackDirectoryResolver.listVisiblePackDirectories(workspace)) {
+                File dimensionsDir = new File(pack, "dimensions");
+                if (!dimensionsDir.isDirectory()) continue;
+                IrisData data = IrisData.get(pack);
+                String[] keys = data.getObjectLoader().getPossibleKeys();
+                if (keys == null || keys.length == 0) continue;
+                sources.put(pack.getName(), data);
+                if (hostDimension == null) {
+                    File[] dimFiles = dimensionsDir.listFiles((f) -> f.isFile() && f.getName().endsWith(".json"));
+                    if (dimFiles != null && dimFiles.length > 0) {
+                        String loadKey = dimFiles[0].getName().replaceFirst("\\.json$", "");
+                        IrisDimension loaded = data.getDimensionLoader().load(loadKey);
+                        if (loaded != null) {
+                            hostDimension = loaded;
                         }
                     }
                 }
@@ -394,11 +389,7 @@ public class CommandObject implements DirectorExecutor {
     private static List<TreePlausibilizeBatch.Target> resolveFromPacks(String target) {
         List<TreePlausibilizeBatch.Target> out = new ArrayList<>();
         File packsFolder = Iris.instance.getDataFolder("packs");
-        File[] packs = packsFolder.listFiles(File::isDirectory);
-        if (packs == null) {
-            return out;
-        }
-        for (File pack : packs) {
+        for (File pack : PackDirectoryResolver.listVisiblePackDirectories(packsFolder)) {
             File objectsRoot = new File(pack, "objects");
             if (!objectsRoot.isDirectory()) {
                 continue;

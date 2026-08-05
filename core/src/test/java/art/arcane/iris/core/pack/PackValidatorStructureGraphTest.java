@@ -1,5 +1,9 @@
 package art.arcane.iris.core.pack;
 
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformStructureHooks;
+import art.arcane.iris.spi.PlatformStructureHooks.JigsawSourceMetadata;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -16,6 +20,11 @@ import java.util.Set;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class PackValidatorStructureGraphTest {
     @Rule
@@ -62,6 +71,52 @@ public class PackValidatorStructureGraphTest {
         assertTrue(PackObjectSurfaceValidator.validateStructureGraph(pack).isEmpty());
         assertTrue(PackNativeStructureValidator.validateNativeStructureReplacements(
                 pack, Set.of(), Map.of()).isEmpty());
+    }
+
+    @Test
+    public void datapackBootstrapDefersOnlyLiveRegistryValidation() throws Exception {
+        File pack = temporaryFolder.newFolder("bootstrap-native-structure");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"test:structure\"}]}],"
+                + "\"regions\":[\"main\"]}");
+        write(pack, "regions/main.json", "{\"landBiomes\":[\"main\"]}");
+        write(pack, "biomes/main.json", "{\"name\":\"Main\"}");
+        IrisPlatform previous = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformStructureHooks hooks = mock(PlatformStructureHooks.class);
+        when(platform.structureHooks()).thenReturn(hooks);
+        when(hooks.structureKeys()).thenThrow(
+                new IllegalStateException("server unavailable"));
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(platform);
+        try {
+            PackValidationResult bootstrap = PackValidator.validateForDatapackBootstrap(pack);
+            PackValidationResult live = PackValidator.validate(pack);
+
+            assertTrue(bootstrap.getBlockingErrors().toString(), bootstrap.isLoadable());
+            assertFalse(live.isLoadable());
+            assertTrue(live.getBlockingErrors().toString(), live.getBlockingErrors().stream().anyMatch(
+                    error -> error.contains("server unavailable")));
+        } finally {
+            IrisPlatforms.unbind();
+            if (previous != null) {
+                IrisPlatforms.bind(previous);
+            }
+        }
+    }
+
+    @Test
+    public void datapackBootstrapStillRejectsMalformedPlacementConfiguration() throws Exception {
+        File pack = temporaryFolder.newFolder("bootstrap-invalid-placement");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"test:structure\"}],"
+                + "\"spacing\":0}]}");
+
+        PackValidationResult result = PackValidator.validateForDatapackBootstrap(pack);
+
+        assertFalse(result.isLoadable());
+        assertTrue(result.getBlockingErrors().toString(), result.getBlockingErrors().stream().anyMatch(
+                error -> error.contains("spacing must be at least 1")));
     }
 
     @Test
@@ -139,6 +194,316 @@ public class PackValidatorStructureGraphTest {
                 message -> message.contains(".weight must be at least 1")));
         assertTrue(errors.toString(), errors.stream().anyMatch(
                 message -> message.contains(".maxDepth must be at most 20")));
+    }
+
+    @Test
+    public void rejectsMalformedPlacementGridAndPolicyFields() throws Exception {
+        File pack = temporaryFolder.newFolder("invalid-placement-grid");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\"}],"
+                + "\"placementId\":42,\"distribution\":\"UNKNOWN\",\"spacing\":0,"
+                + "\"separation\":32,\"density\":\"often\",\"ringCount\":0,"
+                + "\"minHeight\":90,\"maxHeight\":20,\"underwater\":\"yes\","
+                + "\"nativeSuppression\":\"SOMETIMES\","
+                + "\"terrain\":{\"mode\":\"SURFACE_FIT\",\"shape\":\"CUBE\"}}]}");
+
+        List<String> errors = PackObjectSurfaceValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("placementId must be a string")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("distribution must be one of")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("spacing must be at least 1")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("density must be a number")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("inverted height band")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("underwater must be a boolean")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("terrain.mode must be one of")));
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("terrain.shape must be one of")));
+    }
+
+    @Test
+    public void rejectsDuplicatePlacementIdsAcrossResources() throws Exception {
+        File pack = temporaryFolder.newFolder("duplicate-placement-id");
+        write(pack, "dimensions/main.json", "{\"structures\":[{\"placementId\":\"shared\","
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\"}]}]}");
+        write(pack, "regions/forest.json", "{\"structures\":[{\"placementId\":\"shared\","
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:village_plains\"}]}]}");
+
+        List<String> errors = PackObjectSurfaceValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("placementId duplicates 'shared'")));
+    }
+
+    @Test
+    public void rejectsCanonicalAnonymousGridDuplicatesAcrossResources() throws Exception {
+        File pack = temporaryFolder.newFolder("duplicate-anonymous-grid");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\"}]}]}");
+        write(pack, "regions/forest.json", "{\"structures\":[{"
+                + "\"spacing\":32,\"separation\":8,\"density\":0.02,"
+                + "\"nativeStructures\":[{\"weight\":1,\"structure\":\"minecraft:ancient_city\"}]}]}");
+
+        List<String> errors = PackObjectSurfaceValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("duplicates an anonymous placement grid")));
+    }
+
+    @Test
+    public void rejectsDuplicateEditableStructureKeysIgnoringCase() throws Exception {
+        File pack = temporaryFolder.newFolder("duplicate-editable-key");
+        write(pack, "dimensions/main.json", "{\"structures\":[{\"structures\":["
+                + "\"castle\",\"CASTLE\"]}]}");
+        write(pack, "structures/castle.json", "{}");
+
+        List<String> errors = PackObjectSurfaceValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(message -> message.contains("duplicates Iris structure")));
+    }
+
+    @Test
+    public void optionalJigsawTerrainEnvelopeOverflowDoesNotBlockThePack() throws Exception {
+        File pack = temporaryFolder.newFolder("oversized-envelope");
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"minecraft:ancient_city\","
+                + "\"jigsaw\":{\"maxDistanceHorizontal\":96}}],"
+                + "\"terrain\":{\"mode\":\"FORCE_CARVE\",\"horizontalPadding\":40}}]}");
+
+        assertTrue(PackObjectSurfaceValidator.validateStructureGraph(pack).isEmpty());
+    }
+
+    @Test
+    public void sharedOverworldAncientCityTerrainEnvelopeDoesNotBlockThePack() throws Exception {
+        File pack = nativeSourceEnvelopePack(
+                "shared-overworld-ancient-city", "minecraft:ancient_city", "FORCE_CARVE", 24);
+
+        assertTrue(validateWithJigsawMetadata(
+                pack, "minecraft:ancient_city", 116, 12, 0, 0).isEmpty());
+    }
+
+    @Test
+    public void sourceAndPreserveIgnoreConfiguredEnvelopePadding() throws Exception {
+        File source = nativeEnvelopePack("source-padding", "SOURCE", 128, 128);
+        File preserve = nativeEnvelopePack("preserve-padding", "PRESERVE", 128, 128);
+
+        assertTrue(validateWithReferenceExpansion(source, 0).isEmpty());
+        assertTrue(validateWithReferenceExpansion(preserve, 12).isEmpty());
+    }
+
+    @Test
+    public void sourceTerrainAdjustmentOverflowDoesNotBlockThePack() throws Exception {
+        File boundary = nativeEnvelopePack("source-adjustment-boundary", "SOURCE", 116, 64);
+        File oversized = nativeEnvelopePack("source-adjustment-oversized", "SOURCE", 117, 0);
+
+        assertTrue(validateWithReferenceExpansion(boundary, 12).isEmpty());
+        assertTrue(validateWithReferenceExpansion(oversized, 12).isEmpty());
+    }
+
+    @Test
+    public void customTerrainEnvelopeOverflowDoesNotBlockThePack() throws Exception {
+        File boundary = nativeEnvelopePack("custom-envelope-boundary", "ENCASE", 96, 32);
+        File oversized = nativeEnvelopePack("custom-envelope-oversized", "ENCASE", 96, 33);
+
+        assertTrue(validateWithReferenceExpansion(boundary, 12).isEmpty());
+        assertTrue(validateWithReferenceExpansion(oversized, 12).isEmpty());
+    }
+
+    @Test
+    public void registeredJigsawOptionalPaddingDoesNotExpandItsBlockingSpan() throws Exception {
+        File boundary = nativeSourceEnvelopePack("dnt-source-boundary", "ENCASE", 48);
+        File oversized = nativeSourceEnvelopePack("dnt-source-oversized", "ENCASE", 49);
+
+        assertTrue(validateWithJigsawMetadata(boundary, 80, 12).isEmpty());
+        assertTrue(validateWithJigsawMetadata(oversized, 80, 12).isEmpty());
+    }
+
+    @Test
+    public void jigsawOverrideReplacesLiveSourceDistance() throws Exception {
+        File pack = nativeEnvelopePack("source-distance-override", "ENCASE", 80, 36);
+
+        assertTrue(validateWithJigsawMetadata(pack, 120, 12).isEmpty());
+    }
+
+    @Test
+    public void oversizedLiveStartElementCannotBypassAssemblyDistance() throws Exception {
+        File pack = nativeSourceEnvelopePack("oversized-live-start", "SOURCE", 0);
+
+        List<String> errors = validateWithJigsawMetadata(pack, 80, 0, 129, 0);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(message ->
+                message.contains("129-block maximum start element")
+                        && message.contains("128-block (8-chunk)")));
+    }
+
+    @Test
+    public void liveStartElementSpanUsesInclusiveReferenceBoundary() throws Exception {
+        File pack = nativeSourceEnvelopePack("live-start-boundary", "SOURCE", 0);
+
+        assertTrue(validateWithJigsawMetadata(pack, 80, 12, 116, 0).isEmpty());
+    }
+
+    @Test
+    public void overriddenStartPoolUsesItsLiveSpan() throws Exception {
+        File pack = nativePoolOverrideEnvelopePack("oversized-pool-override");
+
+        List<String> errors = validateWithJigsawMetadata(pack, 80, 0, 20, 129);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(message ->
+                message.contains("129-block maximum start element")
+                        && message.contains("128-block (8-chunk)")));
+    }
+
+    @Test
+    public void smallerOverriddenStartPoolReplacesTheSourcePoolSpan() throws Exception {
+        File pack = nativePoolOverrideEnvelopePack("smaller-pool-override");
+
+        assertTrue(validateWithJigsawMetadata(pack, 80, 0, 129, 20).isEmpty());
+    }
+
+    @Test
+    public void unresolvedOverriddenStartPoolSpanFailsClosed() throws Exception {
+        File pack = nativePoolOverrideEnvelopePack("unresolved-pool-override");
+        IrisPlatform previous = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformStructureHooks hooks = mock(PlatformStructureHooks.class);
+        when(platform.structureHooks()).thenReturn(hooks);
+        when(hooks.structureKeys()).thenReturn(List.of("test:structure"));
+        when(hooks.jigsawStructureKeys()).thenReturn(List.of("test:structure"));
+        when(hooks.templatePoolKeys()).thenReturn(List.of("test:start", "test:override"));
+        when(hooks.jigsawSourceMetadata("test:structure"))
+                .thenReturn(new JigsawSourceMetadata(80, 0, 20));
+        when(hooks.jigsawStartPoolHorizontalSpan("test:structure", "test:override"))
+                .thenThrow(new IllegalStateException("missing template"));
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(platform);
+        try {
+            List<String> errors = PackObjectSurfaceValidator.validateStructureGraph(pack);
+
+            assertTrue(errors.toString(), errors.stream().anyMatch(message ->
+                    message.contains("could not resolve a bounded live horizontal span")
+                            && message.contains("missing template")));
+        } finally {
+            IrisPlatforms.unbind();
+            if (previous != null) {
+                IrisPlatforms.bind(previous);
+            }
+        }
+    }
+
+    @Test
+    public void registeredJigsawSourceAdjustmentOverflowDoesNotBlockThePack() throws Exception {
+        File pack = nativeSourceEnvelopePack("source-adjustment-no-override", "SOURCE", 0);
+
+        assertTrue(validateWithJigsawMetadata(pack, 117, 12).isEmpty());
+    }
+
+    @Test
+    public void registeredJigsawAssemblyBeyondReferenceRangeStillBlocksThePack() throws Exception {
+        File pack = nativeEnvelopePack("oversized-live-assembly", "ENCASE", 129, 0);
+
+        List<String> errors = PackObjectSurfaceValidator.validateStructureGraph(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(message ->
+                message.contains(".jigsaw.maxDistanceHorizontal")
+                        && message.contains("129-block maximum assembly distance")
+                        && message.contains("128-block (8-chunk)")));
+    }
+
+    @Test
+    public void liveJigsawMetadataFailureBlocksValidation() throws Exception {
+        File pack = nativeSourceEnvelopePack("missing-source-metadata", "SOURCE", 0);
+
+        List<String> errors = validateWithUnavailableJigsawMetadata(pack);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(message ->
+                message.contains("returned null jigsaw metadata for 'test:structure'")));
+    }
+
+    @Test
+    public void validationResolvesOnlyReferencedJigsawMetadataAndCachesDuplicates() throws Exception {
+        File pack = temporaryFolder.newFolder("lazy-jigsaw-metadata");
+        write(pack, "dimensions/main.json", "{\"structures\":["
+                + "{\"placementId\":\"first\",\"nativeStructures\":["
+                + "{\"structure\":\"test:used\"}]},"
+                + "{\"placementId\":\"second\",\"nativeStructures\":["
+                + "{\"structure\":\"test:used\"}]}]}");
+        IrisPlatform previous = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformStructureHooks hooks = mock(PlatformStructureHooks.class);
+        when(platform.structureHooks()).thenReturn(hooks);
+        when(hooks.structureKeys()).thenReturn(List.of("test:used", "test:unused"));
+        when(hooks.jigsawStructureKeys()).thenReturn(List.of("test:used", "test:unused"));
+        when(hooks.templatePoolKeys()).thenReturn(List.of("test:start"));
+        when(hooks.jigsawSourceMetadata("test:used"))
+                .thenReturn(new JigsawSourceMetadata(80, 0, 20));
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(platform);
+        try {
+            List<String> errors = PackObjectSurfaceValidator.validateStructureGraph(pack);
+
+            assertTrue(errors.toString(), errors.isEmpty());
+            verify(hooks, times(1)).jigsawSourceMetadata("test:used");
+            verify(hooks, never()).jigsawSourceMetadata("test:unused");
+        } finally {
+            IrisPlatforms.unbind();
+            if (previous != null) {
+                IrisPlatforms.bind(previous);
+            }
+        }
+    }
+
+    @Test
+    public void optionalTerrainPaddingForNonJigsawSourceDoesNotBlockThePack() throws Exception {
+        File pack = nativeSourceEnvelopePack("non-jigsaw-envelope", "ENCASE", 1);
+
+        assertTrue(validateWithNonJigsawSource(pack).isEmpty());
+    }
+
+    @Test
+    public void acceptsZeroReferencePaddingForRegisteredNonJigsawSource() throws Exception {
+        File pack = nativeSourceEnvelopePack("non-jigsaw-zero-envelope", "ENCASE", 0);
+
+        assertTrue(validateWithNonJigsawSource(pack).isEmpty());
+    }
+
+    @Test
+    public void optionalTerrainPaddingForNaturalNonJigsawAdjustmentDoesNotBlockThePack() throws Exception {
+        File pack = nativeAdjustmentEnvelopePack(
+                "natural-non-jigsaw-envelope", "test:structure", "ENCASE", 1);
+
+        assertTrue(validateWithNonJigsawSource(pack).isEmpty());
+    }
+
+    @Test
+    public void optionalTerrainPaddingForNaturalJigsawAdjustmentDoesNotBlockThePack() throws Exception {
+        File boundary = nativeAdjustmentEnvelopePack(
+                "natural-jigsaw-envelope-boundary", "test:structure", "ENCASE", 48);
+        File oversized = nativeAdjustmentEnvelopePack(
+                "natural-jigsaw-envelope-oversized", "test:structure", "ENCASE", 49);
+
+        assertTrue(validateWithJigsawMetadata(boundary, 80, 12).isEmpty());
+        assertTrue(validateWithJigsawMetadata(oversized, 80, 12).isEmpty());
+    }
+
+    @Test
+    public void actualNaturalJigsawContentBeyondReferenceRangeStillBlocksThePack() throws Exception {
+        File pack = nativeAdjustmentEnvelopePack(
+                "natural-jigsaw-oversized-content", "test:structure", "ENCASE", 1);
+
+        List<String> errors = validateWithJigsawMetadata(pack, 80, 0, 129, 0);
+
+        assertTrue(errors.toString(), errors.stream().anyMatch(message ->
+                message.contains("importedStructures.adjustments[0]")
+                        && message.contains("129-block maximum start element")
+                        && message.contains("128-block (8-chunk)")));
+    }
+
+    @Test
+    public void lastMatchingNaturalTerrainAdjustmentControlsEnvelopeValidation() throws Exception {
+        File pack = temporaryFolder.newFolder("natural-adjustment-precedence");
+        write(pack, "dimensions/main.json", "{\"importedStructures\":{\"adjustments\":["
+                + "{\"match\":[\"test:structure\"],\"terrain\":{\"mode\":\"ENCASE\","
+                + "\"horizontalPadding\":128}},"
+                + "{\"match\":[\"test:structure\"],\"terrain\":{\"mode\":\"PRESERVE\"}}]}}}");
+
+        assertTrue(validateWithNonJigsawSource(pack).isEmpty());
     }
 
     @Test
@@ -413,6 +778,156 @@ public class PackValidatorStructureGraphTest {
         write(pack, "structures/city.json", "{\"vanillaSource\":\"minecraft:ancient_city\","
                 + "\"placeMode\":\"" + placeMode + "\"}");
         return pack;
+    }
+
+    private File nativeEnvelopePack(String name, String mode, int maximumDistance,
+                                    int horizontalPadding) throws Exception {
+        File pack = temporaryFolder.newFolder(name);
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"test:structure\","
+                + "\"jigsaw\":{\"maxDistanceHorizontal\":" + maximumDistance + "}}],"
+                + "\"terrain\":{\"mode\":\"" + mode + "\",\"horizontalPadding\":"
+                + horizontalPadding + "}}]}");
+        return pack;
+    }
+
+    private File nativeSourceEnvelopePack(String name, String mode,
+                                          int horizontalPadding) throws Exception {
+        return nativeSourceEnvelopePack(name, "test:structure", mode, horizontalPadding);
+    }
+
+    private File nativeSourceEnvelopePack(String name, String structureKey, String mode,
+                                          int horizontalPadding) throws Exception {
+        File pack = temporaryFolder.newFolder(name);
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"" + structureKey + "\"}],"
+                + "\"terrain\":{\"mode\":\"" + mode + "\",\"horizontalPadding\":"
+                + horizontalPadding + "}}]}");
+        return pack;
+    }
+
+    private File nativePoolOverrideEnvelopePack(String name) throws Exception {
+        File pack = temporaryFolder.newFolder(name);
+        write(pack, "dimensions/main.json", "{\"structures\":[{"
+                + "\"nativeStructures\":[{\"structure\":\"test:structure\","
+                + "\"jigsaw\":{\"startPool\":\"test:override\","
+                + "\"maxDistanceHorizontal\":80}}],"
+                + "\"terrain\":{\"mode\":\"SOURCE\"}}]}");
+        return pack;
+    }
+
+    private File nativeAdjustmentEnvelopePack(String name, String match, String mode,
+                                              int horizontalPadding) throws Exception {
+        File pack = temporaryFolder.newFolder(name);
+        write(pack, "dimensions/main.json", "{\"importedStructures\":{\"adjustments\":[{"
+                + "\"match\":[\"" + match + "\"],\"terrain\":{\"mode\":\"" + mode
+                + "\",\"horizontalPadding\":" + horizontalPadding + "}}]}}}");
+        return pack;
+    }
+
+    private List<String> validateWithReferenceExpansion(File pack, int expansion) {
+        IrisPlatform previous = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformStructureHooks hooks = mock(PlatformStructureHooks.class);
+        when(platform.structureHooks()).thenReturn(hooks);
+        when(hooks.structureKeys()).thenReturn(List.of("test:structure"));
+        when(hooks.jigsawStructureKeys()).thenReturn(List.of("test:structure"));
+        when(hooks.templatePoolKeys()).thenReturn(List.of("test:start"));
+        when(hooks.jigsawSourceMetadata("test:structure"))
+                .thenReturn(new JigsawSourceMetadata(80, expansion));
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(platform);
+        try {
+            return PackObjectSurfaceValidator.validateStructureGraph(pack);
+        } finally {
+            IrisPlatforms.unbind();
+            if (previous != null) {
+                IrisPlatforms.bind(previous);
+            }
+        }
+    }
+
+    private List<String> validateWithJigsawMetadata(File pack, int maximumDistance, int expansion) {
+        return validateWithJigsawMetadata(pack, maximumDistance, expansion, 0, 0);
+    }
+
+    private List<String> validateWithJigsawMetadata(File pack, int maximumDistance, int expansion,
+                                                    int sourceSpan, int overrideSpan) {
+        return validateWithJigsawMetadata(
+                pack, "test:structure", maximumDistance, expansion, sourceSpan, overrideSpan);
+    }
+
+    private List<String> validateWithJigsawMetadata(
+            File pack,
+            String structureKey,
+            int maximumDistance,
+            int expansion,
+            int sourceSpan,
+            int overrideSpan
+    ) {
+        IrisPlatform previous = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformStructureHooks hooks = mock(PlatformStructureHooks.class);
+        when(platform.structureHooks()).thenReturn(hooks);
+        when(hooks.structureKeys()).thenReturn(List.of(structureKey));
+        when(hooks.jigsawStructureKeys()).thenReturn(List.of(structureKey));
+        when(hooks.templatePoolKeys()).thenReturn(List.of("test:start", "test:override"));
+        when(hooks.jigsawSourceMetadata(structureKey))
+                .thenReturn(new JigsawSourceMetadata(maximumDistance, expansion, sourceSpan));
+        when(hooks.jigsawStartPoolHorizontalSpan(
+                structureKey, "test:override")).thenReturn(overrideSpan);
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(platform);
+        try {
+            return PackObjectSurfaceValidator.validateStructureGraph(pack);
+        } finally {
+            IrisPlatforms.unbind();
+            if (previous != null) {
+                IrisPlatforms.bind(previous);
+            }
+        }
+    }
+
+    private List<String> validateWithUnavailableJigsawMetadata(File pack) {
+        IrisPlatform previous = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformStructureHooks hooks = mock(PlatformStructureHooks.class);
+        when(platform.structureHooks()).thenReturn(hooks);
+        when(hooks.structureKeys()).thenReturn(List.of("test:structure"));
+        when(hooks.jigsawStructureKeys()).thenReturn(List.of("test:structure"));
+        when(hooks.templatePoolKeys()).thenReturn(List.of("test:start"));
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(platform);
+        try {
+            return PackObjectSurfaceValidator.validateStructureGraph(pack);
+        } finally {
+            IrisPlatforms.unbind();
+            if (previous != null) {
+                IrisPlatforms.bind(previous);
+            }
+        }
+    }
+
+    private List<String> validateWithNonJigsawSource(File pack) {
+        IrisPlatform previous = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformStructureHooks hooks = mock(PlatformStructureHooks.class);
+        when(platform.structureHooks()).thenReturn(hooks);
+        when(hooks.structureKeys()).thenReturn(List.of("test:structure", "test:jigsaw"));
+        when(hooks.jigsawStructureKeys()).thenReturn(List.of("test:jigsaw"));
+        when(hooks.templatePoolKeys()).thenReturn(List.of("test:start"));
+        when(hooks.jigsawSourceMetadata("test:jigsaw"))
+                .thenReturn(new JigsawSourceMetadata(80, 0));
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(platform);
+        try {
+            return PackObjectSurfaceValidator.validateStructureGraph(pack);
+        } finally {
+            IrisPlatforms.unbind();
+            if (previous != null) {
+                IrisPlatforms.bind(previous);
+            }
+        }
     }
 
     private Map<String, List<StructureGraphPackValidator.SampledVerticalEnvelope>> sampledEnvelope(

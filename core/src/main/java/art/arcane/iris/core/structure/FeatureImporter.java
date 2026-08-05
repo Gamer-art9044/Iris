@@ -19,20 +19,27 @@
 package art.arcane.iris.core.structure;
 
 import art.arcane.iris.core.IrisWorldStorage;
+import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.WorldCreatorCompat;
-import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
+import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
+import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
+import art.arcane.iris.core.runtime.WorldDeletionQueue;
+import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.core.tools.TreePlausibilizer;
 import art.arcane.iris.engine.object.IrisObject;
+import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
-import art.arcane.volmlib.util.io.IO;
-import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.WorldType;
@@ -41,16 +48,27 @@ import org.bukkit.block.Block;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
@@ -59,13 +77,18 @@ public final class FeatureImporter {
     public record Report(int total, int imported, int skipped, int failed) {
     }
 
-    private static final String SCRATCH_WORLD_NAME = "iris_vanilla_import";
+    private static final String SCRATCH_WORLD_PREFIX = "iris-feature-import-";
+    private static final int SCRATCH_ID_ATTEMPTS = 32;
+    private static final long SCRATCH_CREATE_TIMEOUT_SECONDS = 120L;
+    private static final long SCRATCH_TEARDOWN_TIMEOUT_SECONDS = 120L;
     private static final int CAPTURE_RADIUS = 16;
     private static final int CAPTURE_HEIGHT = 40;
     private static final int CELL_STRIDE = 48;
     private static final int CELL_COLUMNS = 16;
     private static final int PLACE_ATTEMPTS = 6;
     private static final long REGION_TIMEOUT_SECONDS = 30L;
+    private static final Set<String> RESERVED_SCRATCH_NAMES = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentHashMap<String, ScratchWorldState> ACTIVE_SCRATCH_WORLDS = new ConcurrentHashMap<>();
 
     private FeatureImporter() {
     }
@@ -297,22 +320,123 @@ public final class FeatureImporter {
     }
 
     static World createScratchWorld(VolmitSender sender) {
+        LifecycleOperationCoordinator.Lease lease = null;
+        ScratchWorldReservation reservation = null;
+        World createdWorld = null;
         try {
-            World existing = WorldIdentity.resolve(IrisWorldStorage.keyFromName(SCRATCH_WORLD_NAME)).orElse(null);
-            if (existing != null) {
-                return existing;
-            }
-            WorldCreator creator = WorldCreatorCompat.ofKey(IrisWorldStorage.keyFromName(SCRATCH_WORLD_NAME))
+            reservation = reserveScratchWorld();
+            lease = LifecycleOperationCoordinator.get().acquire(
+                    LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
+                    LifecycleOperationCoordinator.OperationKind.WORLD_CREATE,
+                    reservation.key().toString()
+            );
+            requireUnusedReservation(reservation);
+            WorldCreator creator = WorldCreatorCompat.ofKey(reservation.key())
                     .environment(World.Environment.NORMAL)
                     .type(WorldType.FLAT)
                     .generateStructures(false);
-            return J.sfut(() -> INMS.get().createWorldAsync(creator))
+            createdWorld = J.sfut(() -> INMS.get().createWorldAsync(creator))
                     .thenCompose(Function.identity())
-                    .get();
+                    .get(SCRATCH_CREATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (createdWorld == null) {
+                throw new IllegalStateException("Scratch world creation returned no world.");
+            }
+            if (!reservation.key().equals(WorldIdentity.key(createdWorld))) {
+                throw new IllegalStateException("Scratch world creation returned an unexpected world identity.");
+            }
+            Path createdFolder = createdWorld.getWorldFolder().toPath().toAbsolutePath().normalize();
+            if (!reservation.folder().equals(createdFolder)) {
+                throw new IllegalStateException("Scratch world creation returned an unexpected storage folder.");
+            }
+
+            String identity = WorldIdentity.serialize(createdWorld);
+            ScratchWorldState state = new ScratchWorldState(reservation, lease);
+            if (ACTIVE_SCRATCH_WORLDS.putIfAbsent(identity, state) != null) {
+                throw new IllegalStateException("Scratch world identity is already active: " + identity);
+            }
+            lease = null;
+            reservation = null;
+            return createdWorld;
         } catch (Throwable e) {
-            IrisLogging.reportError(e);
-            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_COULD_NOT_CREATE_SCRATCH_WORLD_FEATURE_IMPORT_SKIPPING_TREE_OBJECT_PASS, MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
+            Throwable failure = unwrapFailure(e);
+            IrisLogging.reportError(failure);
+            boolean settled = createdWorld != null
+                    && reservation != null
+                    && settleFailedScratchCreation(createdWorld, reservation, failure);
+            if (reservation != null && (!settled || !matchesReservation(createdWorld, reservation))) {
+                queueScratchCleanup(reservation.name(), failure);
+            }
+            if (containsTimeout(failure)) {
+                ServerConfigurator.restart("Feature-import scratch world creation timed out for \""
+                        + (reservation == null ? "unreserved" : reservation.name()) + "\".");
+            }
+            if (sender != null) {
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.FEATURE_IMPORTER_COULD_NOT_CREATE_SCRATCH_WORLD_FEATURE_IMPORT_SKIPPING_TREE_OBJECT_PASS, MessageArgument.untrusted("error", String.valueOf(failure.getMessage()))));
+            }
             return null;
+        } finally {
+            if (reservation != null) {
+                RESERVED_SCRATCH_NAMES.remove(reservation.name());
+            }
+            if (lease != null) {
+                lease.close();
+            }
+        }
+    }
+
+    private static boolean settleFailedScratchCreation(
+            World world,
+            ScratchWorldReservation expectedReservation,
+            Throwable creationFailure
+    ) {
+        ScratchWorldReservation actualReservation = reservationForCreatedScratch(world, creationFailure);
+        if (actualReservation == null) {
+            return false;
+        }
+
+        PlatformChunkGenerator generator = null;
+        try {
+            generator = IrisToolbelt.access(world);
+        } catch (Throwable accessFailure) {
+            creationFailure.addSuppressed(accessFailure);
+        }
+
+        AtomicBoolean terminalTimeout = new AtomicBoolean(false);
+        PlatformChunkGenerator capturedGenerator = generator;
+        CompletableFuture<Void> sequence = sequenceScratchTeardown(
+                () -> WorldLifecycleService.get().unloadAsync(world, false),
+                () -> WorldIdentity.resolve(actualReservation.key()).isPresent(),
+                () -> capturedGenerator == null
+                        ? CompletableFuture.completedFuture(null)
+                        : capturedGenerator.closeAsync(),
+                () -> {
+                    try {
+                        deleteScratchFolder(actualReservation, world);
+                        return CompletableFuture.completedFuture(null);
+                    } catch (IOException deletionFailure) {
+                        return CompletableFuture.failedFuture(deletionFailure);
+                    }
+                },
+                actualReservation.name(),
+                terminalTimeout::get);
+        try {
+            guardScratchTeardown(sequence, terminalTimeout, actualReservation.name()).join();
+            if (!expectedReservation.name().equals(actualReservation.name())) {
+                queueScratchCleanup(expectedReservation.name(), creationFailure);
+            }
+            return true;
+        } catch (Throwable cleanupFailure) {
+            Throwable cause = unwrapFailure(cleanupFailure);
+            creationFailure.addSuppressed(cause);
+            queueScratchCleanup(actualReservation.name(), creationFailure);
+            if (!expectedReservation.name().equals(actualReservation.name())) {
+                queueScratchCleanup(expectedReservation.name(), creationFailure);
+            }
+            if (containsTimeout(cause) || WorldIdentity.resolve(actualReservation.key()).isPresent()) {
+                ServerConfigurator.restart("Feature-import scratch cleanup did not reach a safe boundary for \""
+                        + actualReservation.name() + "\".");
+            }
+            return false;
         }
     }
 
@@ -320,21 +444,281 @@ public final class FeatureImporter {
         if (world == null) {
             return;
         }
-        File folder = world.getWorldFolder();
+
+        String identity = WorldIdentity.serialize(world);
+        ScratchWorldState state = ACTIVE_SCRATCH_WORLDS.remove(identity);
+        if (state == null) {
+            IrisLogging.warn("Refusing to destroy unreserved feature-import scratch world \"" + world.getName() + "\".");
+            return;
+        }
+
+        Throwable failure = null;
         try {
-            J.sfut(() -> {
-                Bukkit.unloadWorld(world, false);
-                return Boolean.TRUE;
-            }).get();
+            PlatformChunkGenerator generator = IrisToolbelt.access(world);
+            AtomicBoolean terminalTimeout = new AtomicBoolean(false);
+            CompletableFuture<Void> sequence = sequenceScratchTeardown(
+                    () -> WorldLifecycleService.get().unloadAsync(world, false),
+                    () -> WorldIdentity.resolve(state.reservation().key()).isPresent(),
+                    () -> generator == null ? CompletableFuture.completedFuture(null) : generator.closeAsync(),
+                    () -> {
+                        try {
+                            deleteScratchFolder(state, world);
+                            return CompletableFuture.completedFuture(null);
+                        } catch (IOException deletionFailure) {
+                            return CompletableFuture.failedFuture(deletionFailure);
+                        }
+                    },
+                    state.reservation().name(),
+                    terminalTimeout::get
+            );
+            guardScratchTeardown(sequence, terminalTimeout, state.reservation().name()).join();
         } catch (Throwable e) {
-            IrisLogging.reportError(e);
+            failure = unwrapFailure(e);
+            queueScratchCleanup(state.reservation().name(), failure);
+            if (containsTimeout(failure) || WorldIdentity.resolve(state.reservation().key()).isPresent()) {
+                ServerConfigurator.restart("Feature-import scratch cleanup did not reach a safe boundary for \""
+                        + state.reservation().name() + "\".");
+            }
+            IrisLogging.reportError("Feature-import scratch world cleanup failed for \""
+                    + state.reservation().name() + "\"; startup cleanup was queued.", failure);
+        } finally {
+            RESERVED_SCRATCH_NAMES.remove(state.reservation().name());
+            state.lease().close();
+        }
+        if (failure != null && sender != null) {
+            sender.sendMessage("Feature-import scratch world cleanup was deferred until the next startup: "
+                    + failure.getMessage());
+        }
+    }
+
+    private static ScratchWorldReservation reserveScratchWorld() throws IOException {
+        for (int attempt = 0; attempt < SCRATCH_ID_ATTEMPTS; attempt++) {
+            String name = SCRATCH_WORLD_PREFIX + UUID.randomUUID();
+            if (!RESERVED_SCRATCH_NAMES.add(name)) {
+                continue;
+            }
+
+            NamespacedKey key = IrisWorldStorage.managedKeyFromName(name);
+            Path folder = IrisWorldStorage.requireSafeManagedDimensionRoot(key)
+                    .toPath()
+                    .toAbsolutePath()
+                    .normalize();
+            ScratchWorldReservation reservation = new ScratchWorldReservation(name, key, folder);
+            if (isReservationUnused(reservation)) {
+                return reservation;
+            }
+            RESERVED_SCRATCH_NAMES.remove(name);
+        }
+        throw new IOException("Could not reserve a collision-free feature-import scratch world identity.");
+    }
+
+    private static void requireUnusedReservation(ScratchWorldReservation reservation) throws IOException {
+        if (!RESERVED_SCRATCH_NAMES.contains(reservation.name()) || !isReservationUnused(reservation)) {
+            throw new IOException("Feature-import scratch world reservation was claimed before creation: "
+                    + reservation.name());
+        }
+    }
+
+    private static boolean isReservationUnused(ScratchWorldReservation reservation) {
+        return WorldIdentity.resolve(reservation.key()).isEmpty()
+                && !Files.exists(reservation.folder(), LinkOption.NOFOLLOW_LINKS)
+                && !Files.isSymbolicLink(reservation.folder());
+    }
+
+    private static boolean matchesReservation(World world, ScratchWorldReservation reservation) {
+        if (world == null || reservation == null) {
+            return false;
         }
         try {
-            if (folder != null && folder.exists()) {
-                IO.delete(folder);
+            return reservation.key().equals(WorldIdentity.key(world))
+                    && reservation.folder().equals(world.getWorldFolder().toPath().toAbsolutePath().normalize());
+        } catch (Throwable failure) {
+            return false;
+        }
+    }
+
+    private static ScratchWorldReservation reservationForCreatedScratch(World world, Throwable failure) {
+        try {
+            NamespacedKey key = WorldIdentity.key(world);
+            String name = IrisWorldStorage.logicalName(key);
+            if (!isReservedScratchWorldName(name)) {
+                failure.addSuppressed(new IllegalStateException(
+                        "Refusing cleanup for unexpected scratch world identity \"" + key + "\"."));
+                return null;
             }
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
+            Path folder = IrisWorldStorage.requireSafeManagedDimensionRoot(key)
+                    .toPath()
+                    .toAbsolutePath()
+                    .normalize();
+            return new ScratchWorldReservation(name, key, folder);
+        } catch (Throwable identityFailure) {
+            failure.addSuppressed(identityFailure);
+            return null;
+        }
+    }
+
+    private static void deleteScratchFolder(ScratchWorldState state, World world) throws IOException {
+        deleteScratchFolder(state.reservation(), world);
+    }
+
+    private static void deleteScratchFolder(ScratchWorldReservation reservation, World world) throws IOException {
+        Path actualFolder = world.getWorldFolder().toPath().toAbsolutePath().normalize();
+        if (!reservation.folder().equals(actualFolder)) {
+            throw new IOException("Scratch world storage changed during import; refusing deletion.");
+        }
+        if (WorldIdentity.resolve(reservation.key()).isPresent()) {
+            throw new IOException("Scratch world is still loaded; refusing deletion.");
+        }
+        AtomicDirectoryPublisher.deleteTree(reservation.folder());
+    }
+
+    private static void queueScratchCleanup(String worldName, Throwable failure) {
+        try {
+            WorldDeletionQueue queue = IrisServices.getOrNull(WorldDeletionQueue.class);
+            if (queue == null) {
+                throw new IllegalStateException("World deletion queue is unavailable.");
+            }
+            queue.queueExactForStartupDeletion(List.of(worldName));
+        } catch (Throwable queueFailure) {
+            if (failure != null) {
+                failure.addSuppressed(queueFailure);
+            }
+            IrisLogging.reportError("Failed to queue startup cleanup for feature-import scratch world \""
+                    + worldName + "\".", queueFailure);
+        }
+    }
+
+    private static Throwable unwrapFailure(Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor instanceof CompletionException || cursor instanceof ExecutionException) {
+            if (cursor.getCause() == null) {
+                break;
+            }
+            cursor = cursor.getCause();
+        }
+        return cursor;
+    }
+
+    static CompletableFuture<Void> sequenceScratchTeardown(
+            Supplier<CompletableFuture<Boolean>> unload,
+            BooleanSupplier stillLoaded,
+            Supplier<CompletableFuture<Void>> closeGenerator,
+            Supplier<CompletableFuture<Void>> deleteFolder,
+            String worldName
+    ) {
+        return sequenceScratchTeardown(
+                unload,
+                stillLoaded,
+                closeGenerator,
+                deleteFolder,
+                worldName,
+                () -> false);
+    }
+
+    static CompletableFuture<Void> sequenceScratchTeardown(
+            Supplier<CompletableFuture<Boolean>> unload,
+            BooleanSupplier stillLoaded,
+            Supplier<CompletableFuture<Void>> closeGenerator,
+            Supplier<CompletableFuture<Void>> deleteFolder,
+            String worldName,
+            BooleanSupplier terminalTimeout
+    ) {
+        CompletableFuture<Boolean> unloadFuture;
+        try {
+            unloadFuture = unload.get();
+        } catch (Throwable failure) {
+            return CompletableFuture.failedFuture(failure);
+        }
+        if (unloadFuture == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Scratch world unload returned no completion future."));
+        }
+
+        return unloadFuture.thenCompose(unloaded -> {
+            if (terminalTimeout.getAsBoolean()) {
+                return CompletableFuture.failedFuture(new TimeoutException(
+                        "Scratch world cleanup stopped after its terminal timeout."));
+            }
+            if (!Boolean.TRUE.equals(unloaded) || stillLoaded.getAsBoolean()) {
+                return CompletableFuture.failedFuture(new IllegalStateException(
+                        "Scratch world unload was not confirmed for \"" + worldName + "\"."));
+            }
+            return invokeScratchPhase(closeGenerator, "generator close");
+        }).thenCompose(ignored -> {
+            if (terminalTimeout.getAsBoolean()) {
+                return CompletableFuture.failedFuture(new TimeoutException(
+                        "Scratch world cleanup stopped after its terminal timeout."));
+            }
+            return invokeScratchPhase(deleteFolder, "folder deletion");
+        });
+    }
+
+    private static CompletableFuture<Void> guardScratchTeardown(
+            CompletableFuture<Void> source,
+            AtomicBoolean terminalTimeout,
+            String worldName
+    ) {
+        CompletableFuture<Void> guarded = new CompletableFuture<>();
+        AtomicBoolean settled = new AtomicBoolean(false);
+        source.whenComplete((ignored, throwable) -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
+            if (throwable == null) {
+                guarded.complete(null);
+            } else {
+                guarded.completeExceptionally(throwable);
+            }
+        });
+        CompletableFuture.delayedExecutor(SCRATCH_TEARDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS).execute(() -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
+            terminalTimeout.set(true);
+            TimeoutException timeout = new TimeoutException(
+                    "Scratch world cleanup did not settle within " + SCRATCH_TEARDOWN_TIMEOUT_SECONDS
+                            + " seconds for \"" + worldName + "\".");
+            ServerConfigurator.restart("Feature-import scratch cleanup timed out for \"" + worldName + "\".");
+            guarded.completeExceptionally(timeout);
+        });
+        return guarded;
+    }
+
+    private static CompletableFuture<Void> invokeScratchPhase(
+            Supplier<CompletableFuture<Void>> phase,
+            String phaseName
+    ) {
+        try {
+            CompletableFuture<Void> future = phase.get();
+            if (future == null) {
+                return CompletableFuture.failedFuture(new IllegalStateException(
+                        "Scratch world " + phaseName + " returned no completion future."));
+            }
+            return future;
+        } catch (Throwable failure) {
+            return CompletableFuture.failedFuture(failure);
+        }
+    }
+
+    private static boolean containsTimeout(Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor != null) {
+            if (cursor instanceof TimeoutException) {
+                return true;
+            }
+            cursor = cursor.getCause();
+        }
+        return false;
+    }
+
+    static boolean isReservedScratchWorldName(String worldName) {
+        if (worldName == null || !worldName.startsWith(SCRATCH_WORLD_PREFIX)) {
+            return false;
+        }
+        try {
+            String identifier = worldName.substring(SCRATCH_WORLD_PREFIX.length());
+            return UUID.fromString(identifier).toString().equals(identifier);
+        } catch (IllegalArgumentException failure) {
+            return false;
         }
     }
 
@@ -342,5 +726,14 @@ public final class FeatureImporter {
     }
 
     private record CaptureResult(boolean placed, IrisObject object) {
+    }
+
+    private record ScratchWorldReservation(String name, NamespacedKey key, Path folder) {
+    }
+
+    private record ScratchWorldState(
+            ScratchWorldReservation reservation,
+            LifecycleOperationCoordinator.Lease lease
+    ) {
     }
 }

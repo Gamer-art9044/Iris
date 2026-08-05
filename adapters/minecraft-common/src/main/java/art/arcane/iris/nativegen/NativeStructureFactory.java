@@ -4,6 +4,7 @@ import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.object.IrisJigsawConfiguration;
 import art.arcane.iris.engine.object.IrisJigsawHeightmap;
 import art.arcane.iris.engine.object.IrisJigsawLiquidSettings;
+import art.arcane.iris.spi.PlatformStructureHooks.JigsawSourceMetadata;
 import net.minecraft.core.Holder;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.nbt.CompoundTag;
@@ -18,6 +19,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.structures.JigsawStructure;
@@ -43,7 +45,7 @@ public final class NativeStructureFactory {
                 .orElseThrow(() -> new IllegalStateException("Configured native structure '"
                         + plan.source().getStructure() + "' has no usable generation biome"));
         ChunkGenerator forcedGenerator = new ForcedStructureChunkGenerator(
-                context.generator(), sourceBiome, plan.baseY());
+                context.generator(), sourceBiome);
         StructureStart generated = configured.generate(
                 sourceHolder,
                 context.levelKey(),
@@ -82,13 +84,39 @@ public final class NativeStructureFactory {
         if (!positioned.isValid()) {
             return StructureStart.INVALID_START;
         }
-        return NativeStructureReferenceEnvelope.wrap(
+        return NativeStructureReferenceEnvelope.wrapForPublication(
                 positioned,
                 source,
                 references,
-                context.templateManager(),
-                plan.placement().resolvedTerrain()
+                plan.placement().resolvedTerrain(),
+                plan.source().getStructure()
         );
+    }
+
+    public static JigsawSourceMetadata sourceMetadata(RegistryAccess registryAccess,
+                                                       StructureTemplateManager templateManager,
+                                                       JigsawStructure source) {
+        CompoundTag sourceTag = encodeJigsaw(registryAccess, source);
+        return new JigsawSourceMetadata(
+                sourceDistance(sourceTag, "horizontal"),
+                horizontalReferenceExpansion(source),
+                NativeStructureTemplatePoolBounds.sourceHorizontalSpan(
+                        registryAccess, templateManager, source));
+    }
+
+    public static int templatePoolHorizontalSpan(RegistryAccess registryAccess,
+                                                 StructureTemplateManager templateManager,
+                                                 String templatePoolKey) {
+        return NativeStructureTemplatePoolBounds.horizontalSpan(
+                registryAccess, templateManager, templatePoolKey);
+    }
+
+    public static int jigsawStartPoolHorizontalSpan(RegistryAccess registryAccess,
+                                                    StructureTemplateManager templateManager,
+                                                    JigsawStructure source,
+                                                    String templatePoolKey) {
+        return NativeStructureTemplatePoolBounds.horizontalSpan(
+                registryAccess, templateManager, source, templatePoolKey);
     }
 
     static Structure configure(RegistryAccess registryAccess, Structure source,
@@ -103,10 +131,7 @@ public final class NativeStructureFactory {
             return source;
         }
         RegistryOps<Tag> registryOps = RegistryOps.create(NbtOps.INSTANCE, registryAccess);
-        Tag encoded = Structure.DIRECT_CODEC.encodeStart(registryOps, sourceJigsaw).getOrThrow();
-        if (!(encoded instanceof CompoundTag structureTag)) {
-            throw new IllegalStateException("Native jigsaw codec did not produce a compound");
-        }
+        CompoundTag structureTag = encodeJigsaw(registryOps, sourceJigsaw);
         CompoundTag configuredTag = structureTag.copy();
         if (underground) {
             CompoundTag height = new CompoundTag();
@@ -121,6 +146,20 @@ public final class NativeStructureFactory {
                     + decoded.getClass().getName());
         }
         return configured;
+    }
+
+    private static CompoundTag encodeJigsaw(RegistryAccess registryAccess,
+                                             JigsawStructure source) {
+        return encodeJigsaw(RegistryOps.create(NbtOps.INSTANCE, registryAccess), source);
+    }
+
+    private static CompoundTag encodeJigsaw(RegistryOps<Tag> registryOps,
+                                             JigsawStructure source) {
+        Tag encoded = Structure.DIRECT_CODEC.encodeStart(registryOps, source).getOrThrow();
+        if (!(encoded instanceof CompoundTag structureTag)) {
+            throw new IllegalStateException("Native jigsaw codec did not produce a compound");
+        }
+        return structureTag;
     }
 
     private static void applyConfiguration(CompoundTag tag, IrisJigsawConfiguration configuration) {
@@ -168,12 +207,20 @@ public final class NativeStructureFactory {
         tag.put("max_distance_from_center", distance);
     }
 
-    private static int sourceDistance(CompoundTag tag, String axis) {
+    static int sourceDistance(CompoundTag tag, String axis) {
         Tag raw = tag.get("max_distance_from_center");
         if (raw instanceof CompoundTag compound) {
             return compound.getIntOr(axis, 128);
         }
         return tag.getIntOr("max_distance_from_center", 128);
+    }
+
+    static int horizontalReferenceExpansion(Structure structure) {
+        BoundingBox content = new BoundingBox(0, 0, 0, 0, 0, 0);
+        BoundingBox adjusted = structure.adjustBoundingBox(content);
+        int expansion = Math.max(content.minX() - adjusted.minX(), adjusted.maxX() - content.maxX());
+        expansion = Math.max(expansion, content.minZ() - adjusted.minZ());
+        return Math.max(0, Math.max(expansion, adjusted.maxZ() - content.maxZ()));
     }
 
     private static void applyHeightmap(CompoundTag tag, IrisJigsawHeightmap heightmap) {

@@ -32,6 +32,7 @@ import art.arcane.iris.core.pregenerator.PregenPerformanceProfile;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
 import art.arcane.iris.core.pregenerator.cache.PregenCache;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.project.IrisProject;
 import art.arcane.iris.core.pregenerator.methods.CachedPregenMethod;
 import art.arcane.iris.core.pregenerator.methods.HybridPregenMethod;
@@ -57,6 +58,7 @@ import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -94,23 +96,27 @@ public class IrisToolbelt {
         }
 
         File packsFolder = IrisPlatforms.get().dataFolder("packs");
-        File pack = new File(packsFolder, reference.pack());
-        if (!pack.exists()) {
+        File pack = PackDirectoryResolver.resolveExisting(packsFolder, reference.pack());
+        if (pack == null) {
             File found = findCaseInsensitivePack(packsFolder, reference.pack());
             if (found != null) {
                 pack = found;
             }
         }
 
-        if (!pack.exists()) {
+        if (pack == null) {
             IrisServices.get(StudioSVC.class).downloadSearch(new VolmitSender(Bukkit.getConsoleSender(), BukkitPlatform.volmitPlugin().getTag()), reference.pack(), false);
-            File found = findCaseInsensitivePack(packsFolder, reference.pack());
+            String installedPackName = installedPackName(reference.pack());
+            File found = PackDirectoryResolver.resolveExisting(packsFolder, installedPackName);
+            if (found == null) {
+                found = findCaseInsensitivePack(packsFolder, installedPackName);
+            }
             if (found != null) {
                 pack = found;
             }
         }
 
-        if (!pack.exists()) {
+        if (pack == null) {
             return null;
         }
 
@@ -155,24 +161,64 @@ public class IrisToolbelt {
         }
         int separator = requested.indexOf(':');
         if (separator < 0) {
-            return new PackReference(requested, requested, false);
+            if (!isSafePackDescriptor(requested)) {
+                return null;
+            }
+            return new PackReference(requested, installedPackName(requested), false);
         }
         String pack = requested.substring(0, separator).trim();
         String dimension = requested.substring(separator + 1).trim();
-        if (pack.isEmpty() || dimension.isEmpty()) {
+        if (!isSafePackDescriptor(pack) || !isSafeDimensionKey(dimension)) {
             return null;
         }
         return new PackReference(pack, dimension, true);
     }
 
-    private static File findCaseInsensitivePack(File packsFolder, String requested) {
-        File[] children = packsFolder.listFiles();
-        if (children == null) {
-            return null;
+    private static boolean isSafePackDescriptor(String value) {
+        String[] segments = value.split("/", -1);
+        if (segments.length < 1 || segments.length > 3) {
+            return false;
         }
+        for (String segment : segments) {
+            if (segment.isEmpty()
+                    || segment.equals(".")
+                    || segment.equals("..")
+                    || segment.startsWith(".")
+                    || !segment.matches("[A-Za-z0-9_-]+")) {
+                return false;
+            }
+        }
+        return true;
+    }
 
-        for (File child : children) {
-            if (child.isDirectory() && child.getName().equalsIgnoreCase(requested)) {
+    private static boolean isSafeDimensionKey(String value) {
+        if (value.isEmpty() || value.length() > 256) {
+            return false;
+        }
+        String[] segments = value.split("/", -1);
+        if (segments.length > 16) {
+            return false;
+        }
+        for (String segment : segments) {
+            if (segment.isEmpty()
+                    || segment.equals(".")
+                    || segment.equals("..")
+                    || segment.startsWith(".")
+                    || !segment.matches("[A-Za-z0-9_-]+")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String installedPackName(String descriptor) {
+        String[] segments = descriptor.split("/");
+        return segments.length > 1 ? segments[1] : segments[0];
+    }
+
+    private static File findCaseInsensitivePack(File packsFolder, String requested) {
+        for (File child : PackDirectoryResolver.listVisiblePackDirectories(packsFolder)) {
+            if (child.getName().equalsIgnoreCase(requested)) {
                 return child;
             }
         }
@@ -357,26 +403,11 @@ public class IrisToolbelt {
      * @param world the world to evac
      */
     public static boolean evacuate(World world) {
-        if (world == null || isServerStopping()) {
-            return false;
-        }
+        return beginEvacuation(evacuateAsync(world));
+    }
 
-        for (World i : Bukkit.getWorlds()) {
-            if (!WorldIdentity.key(i).equals(WorldIdentity.key(world))) {
-                for (Player j : new ArrayList<>(world.getPlayers())) {
-                    new VolmitSender(j, BukkitPlatform.volmitPlugin().getTag()).sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_TOOLBELT_YOU_HAVE_BEEN_EVACUATED_FROM_THIS_WORLD));
-                    Location target = i.getSpawnLocation();
-                    Runnable teleportTask = () -> teleportAsyncSafely(j, target);
-                    if (!J.runEntity(j, teleportTask)) {
-                        teleportTask.run();
-                    }
-                }
-
-                return true;
-            }
-        }
-
-        return false;
+    public static CompletableFuture<Boolean> evacuateAsync(World world) {
+        return evacuateAsync(world, null, false);
     }
 
     /**
@@ -387,25 +418,11 @@ public class IrisToolbelt {
      * @return true if it was evacuated.
      */
     public static boolean evacuate(World world, String m) {
-        if (world == null || isServerStopping()) {
-            return false;
-        }
+        return beginEvacuation(evacuateAsync(world, m));
+    }
 
-        for (World i : Bukkit.getWorlds()) {
-            if (!WorldIdentity.key(i).equals(WorldIdentity.key(world))) {
-                for (Player j : new ArrayList<>(world.getPlayers())) {
-                    new VolmitSender(j, BukkitPlatform.volmitPlugin().getTag()).sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_TOOLBELT_YOU_HAVE_BEEN_EVACUATED_FROM_THIS_WORLD_2, MessageArgument.untrusted("m", String.valueOf(m))));
-                    Location target = i.getSpawnLocation();
-                    Runnable teleportTask = () -> teleportAsyncSafely(j, target);
-                    if (!J.runEntity(j, teleportTask)) {
-                        teleportTask.run();
-                    }
-                }
-                return true;
-            }
-        }
-
-        return false;
+    public static CompletableFuture<Boolean> evacuateAsync(World world, String message) {
+        return evacuateAsync(world, message, true);
     }
 
     public static boolean isStudio(World i) {
@@ -417,25 +434,125 @@ public class IrisToolbelt {
         return generator != null && generator.isStudio();
     }
 
-    private static void teleportAsyncSafely(Player player, Location target) {
+    static CompletableFuture<Boolean> settleEvacuations(List<CompletableFuture<Boolean>> evacuations) {
+        List<CompletableFuture<Boolean>> pending = List.copyOf(evacuations);
+        if (pending.isEmpty()) {
+            return CompletableFuture.completedFuture(true);
+        }
+
+        return CompletableFuture.allOf(pending.toArray(CompletableFuture[]::new))
+                .handle((ignored, throwable) -> {
+                    if (throwable != null) {
+                        return false;
+                    }
+                    for (CompletableFuture<Boolean> evacuation : pending) {
+                        if (!Boolean.TRUE.equals(evacuation.getNow(false))) {
+                            return false;
+                        }
+                    }
+                    return true;
+                });
+    }
+
+    private static CompletableFuture<Boolean> evacuateAsync(World world, String message, boolean customMessage) {
+        if (world == null || isServerStopping()) {
+            return CompletableFuture.completedFuture(false);
+        }
+
+        ArrayList<Player> players = new ArrayList<>(world.getPlayers());
+        if (players.isEmpty()) {
+            return CompletableFuture.completedFuture(true);
+        }
+
+        World targetWorld = null;
+        for (World candidate : Bukkit.getWorlds()) {
+            if (!WorldIdentity.key(candidate).equals(WorldIdentity.key(world))) {
+                targetWorld = candidate;
+                break;
+            }
+        }
+        if (targetWorld == null) {
+            return CompletableFuture.completedFuture(false);
+        }
+
+        Location target = targetWorld.getSpawnLocation();
+        ArrayList<CompletableFuture<Boolean>> evacuations = new ArrayList<>(players.size());
+        for (Player player : players) {
+            CompletableFuture<Boolean> evacuation = new CompletableFuture<>();
+            Runnable teleportTask = () -> {
+                try {
+                    if (customMessage) {
+                        new VolmitSender(player, BukkitPlatform.volmitPlugin().getTag()).sendMessage(IrisLanguage.text(
+                                BukkitRuntimeMessages.IRIS_TOOLBELT_YOU_HAVE_BEEN_EVACUATED_FROM_THIS_WORLD_2,
+                                MessageArgument.untrusted("m", String.valueOf(message))));
+                    } else {
+                        new VolmitSender(player, BukkitPlatform.volmitPlugin().getTag()).sendMessage(IrisLanguage.text(
+                                BukkitRuntimeMessages.IRIS_TOOLBELT_YOU_HAVE_BEEN_EVACUATED_FROM_THIS_WORLD));
+                    }
+                    teleportAsyncSafely(player, target).whenComplete((teleported, throwable) -> {
+                        if (throwable == null) {
+                            evacuation.complete(Boolean.TRUE.equals(teleported));
+                        } else {
+                            evacuation.completeExceptionally(throwable);
+                        }
+                    });
+                } catch (Throwable failure) {
+                    evacuation.completeExceptionally(failure);
+                }
+            };
+            try {
+                if (!J.runEntity(player, teleportTask)) {
+                    teleportTask.run();
+                }
+            } catch (Throwable failure) {
+                evacuation.completeExceptionally(failure);
+            }
+            evacuations.add(evacuation);
+        }
+        return settleEvacuations(evacuations);
+    }
+
+    private static boolean beginEvacuation(CompletableFuture<Boolean> evacuation) {
+        if (evacuation.isDone()) {
+            try {
+                return Boolean.TRUE.equals(evacuation.getNow(false));
+            } catch (Throwable failure) {
+                if (!isServerStopping()) {
+                    IrisLogging.reportError(failure);
+                }
+                return false;
+            }
+        }
+        evacuation.exceptionally(throwable -> {
+            if (!isServerStopping()) {
+                IrisLogging.reportError(throwable);
+            }
+            return false;
+        });
+        return true;
+    }
+
+    private static CompletableFuture<Boolean> teleportAsyncSafely(Player player, Location target) {
         if (player == null || target == null || isServerStopping()) {
-            return;
+            return CompletableFuture.completedFuture(false);
         }
 
         try {
             CompletableFuture<Boolean> teleportFuture = PaperLib.teleportAsync(player, target);
-            if (teleportFuture != null) {
-                teleportFuture.exceptionally(throwable -> {
-                    if (!isServerStopping()) {
-                        IrisLogging.reportError(throwable);
-                    }
-                    return false;
-                });
+            if (teleportFuture == null) {
+                return CompletableFuture.completedFuture(false);
             }
+            return teleportFuture.exceptionally(throwable -> {
+                if (!isServerStopping()) {
+                    IrisLogging.reportError(throwable);
+                }
+                return false;
+            });
         } catch (Throwable throwable) {
             if (!isServerStopping()) {
                 IrisLogging.reportError(throwable);
             }
+            return CompletableFuture.completedFuture(false);
         }
     }
 

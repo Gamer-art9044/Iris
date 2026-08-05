@@ -60,9 +60,6 @@ public final class NativeStructureFoundationBuilder {
     private static void markFoundationEnvelope(BitSet envelope, List<StructurePiece> pieces, BoundingBox area,
                                                int x, int z) {
         for (StructurePiece piece : pieces) {
-            if (NativeStructureReferenceEnvelope.isMarker(piece)) {
-                continue;
-            }
             BoundingBox bounds = piece.getBoundingBox();
             if (x < bounds.minX() || x > bounds.maxX() || z < bounds.minZ() || z > bounds.maxZ()) {
                 continue;

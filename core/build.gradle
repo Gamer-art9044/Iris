@@ -119,6 +119,10 @@ dependencies {
     testRuntimeOnly(libs.paper.api)
 }
 
+tasks.named('test').configure {
+    maxHeapSize = '1g'
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)

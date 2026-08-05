@@ -5,8 +5,10 @@ import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.nms.INMSBinding;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
+import art.arcane.volmlib.util.scheduling.FoliaScheduler;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
@@ -414,36 +416,83 @@ final class WorldLifecycleSupport {
         }
     }
 
-    static boolean unloadWorld(CapabilitySnapshot capabilities, World world, boolean save) {
+    static CompletableFuture<Boolean> unloadWorldAsync(CapabilitySnapshot capabilities, World world, boolean save) {
         if (world == null) {
-            return false;
+            return CompletableFuture.completedFuture(false);
         }
 
-        CompletableFuture<Boolean> asyncUnload = unloadWorldViaAsyncApi(capabilities, world, save);
-        if (asyncUnload != null) {
-            return resolveAsyncUnload(asyncUnload);
+        CompletableFuture<Boolean> result = new CompletableFuture<>();
+        Runnable invokeTask = () -> beginUnload(capabilities, world, save, result);
+        boolean folia = J.isFolia();
+        if ((!folia && J.isPrimaryThread()) || (folia && isGlobalTickThread())) {
+            invokeTask.run();
+            return result;
         }
 
-        try {
-            return Bukkit.unloadWorld(world, save);
-        } catch (UnsupportedOperationException unsupported) {
-            if (capabilities.minecraftServer() == null || capabilities.removeLevelMethod() == null) {
-                throw unsupported;
+        CompletableFuture<Void> scheduled = runGlobalAsync(invokeTask);
+        scheduled.whenComplete((unused, throwable) -> {
+            if (throwable != null) {
+                result.completeExceptionally(unwrap(throwable));
             }
+        });
+        return result;
+    }
+
+    private static void beginUnload(
+            CapabilitySnapshot capabilities,
+            World world,
+            boolean save,
+            CompletableFuture<Boolean> result
+    ) {
+        CompletableFuture<Boolean> operation;
+        try {
+            operation = unloadWorldViaAsyncApi(capabilities, world, save);
+            if (operation == null) {
+                operation = unloadWorldWithoutAsyncApi(capabilities, world, save);
+            }
+        } catch (Throwable e) {
+            result.completeExceptionally(unwrap(e));
+            return;
         }
 
+        operation.whenComplete((unloaded, throwable) -> {
+            if (throwable == null) {
+                result.complete(Boolean.TRUE.equals(unloaded));
+            } else {
+                result.completeExceptionally(unwrap(throwable));
+            }
+        });
+    }
+
+    private static CompletableFuture<Boolean> unloadWorldWithoutAsyncApi(
+            CapabilitySnapshot capabilities,
+            World world,
+            boolean save
+    ) {
+        String worldName = world.getName();
         try {
+            try {
+                return CompletableFuture.completedFuture(Bukkit.unloadWorld(world, save));
+            } catch (UnsupportedOperationException unsupported) {
+                if (capabilities.minecraftServer() == null || capabilities.removeLevelMethod() == null) {
+                    return CompletableFuture.failedFuture(unsupported);
+                }
+            }
+
             if (save) {
                 world.save();
             }
-
             Method getHandleMethod = world.getClass().getMethod("getHandle");
             Object serverLevel = getHandleMethod.invoke(world);
-            closeServerLevel(world, serverLevel);
-            detachServerLevel(capabilities, serverLevel, world);
-            return WorldIdentity.resolve(WorldIdentity.key(world)).isEmpty();
+            CompletableFuture<Boolean> operation = closeServerLevelAsync(world, serverLevel)
+                    .thenCompose(unused -> detachServerLevelAsync(capabilities, serverLevel, world))
+                    .thenApply(unused -> WorldIdentity.resolve(WorldIdentity.key(world)).isEmpty());
+            return contextualizeUnloadFailure(worldName, operation);
         } catch (Throwable e) {
-            throw new IllegalStateException("Failed to unload world \"" + world.getName() + "\" through the selected world lifecycle backend.", unwrap(e));
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Failed to unload world \"" + worldName + "\" through the selected world lifecycle backend.",
+                    unwrap(e)
+            ));
         }
     }
 
@@ -452,63 +501,70 @@ final class WorldLifecycleSupport {
             return null;
         }
 
+        return invokeAsyncUnload(
+                capabilities.bukkitServer(),
+                capabilities.unloadWorldAsyncMethod(),
+                world,
+                save
+        );
+    }
+
+    static CompletableFuture<Boolean> invokeAsyncUnload(
+            Object bukkitServer,
+            Method unloadWorldAsyncMethod,
+            World world,
+            boolean save
+    ) {
         CompletableFuture<Boolean> callbackFuture = new CompletableFuture<>();
-        Runnable invokeTask = () -> {
-            Consumer<Boolean> callback = result -> callbackFuture.complete(Boolean.TRUE.equals(result));
-            try {
-                capabilities.unloadWorldAsyncMethod().invoke(capabilities.bukkitServer(), world, save, callback);
-            } catch (Throwable e) {
-                callbackFuture.completeExceptionally(unwrap(e));
-            }
-        };
-
-        if (J.isFolia() && !isGlobalTickThread()) {
-            CompletableFuture<Void> scheduled = J.sfut(invokeTask);
-            if (scheduled == null) {
-                callbackFuture.completeExceptionally(new IllegalStateException("Failed to schedule global unload task."));
-                return callbackFuture;
-            }
-            scheduled.whenComplete((unused, throwable) -> {
-                if (throwable != null) {
-                    callbackFuture.completeExceptionally(unwrap(throwable));
-                }
-            });
-            return callbackFuture;
+        Consumer<Boolean> callback = unloaded -> callbackFuture.complete(Boolean.TRUE.equals(unloaded));
+        try {
+            unloadWorldAsyncMethod.invoke(bukkitServer, world, save, callback);
+        } catch (Throwable e) {
+            callbackFuture.completeExceptionally(unwrap(e));
         }
-
-        invokeTask.run();
         return callbackFuture;
     }
 
-    private static boolean resolveAsyncUnload(CompletableFuture<Boolean> asyncUnload) {
-        if (J.isPrimaryThread()) {
-            if (!asyncUnload.isDone()) {
-                return true;
+    private static CompletableFuture<Boolean> contextualizeUnloadFailure(
+            String worldName,
+            CompletableFuture<Boolean> operation
+    ) {
+        CompletableFuture<Boolean> result = new CompletableFuture<>();
+        operation.whenComplete((unloaded, throwable) -> {
+            if (throwable == null) {
+                result.complete(Boolean.TRUE.equals(unloaded));
+            } else {
+                result.completeExceptionally(new IllegalStateException(
+                        "Failed to unload world \"" + worldName + "\" through the selected world lifecycle backend.",
+                        unwrap(throwable)
+                ));
             }
-
-            try {
-                return Boolean.TRUE.equals(asyncUnload.join());
-            } catch (Throwable e) {
-                throw new IllegalStateException("Failed to consume async world unload result.", unwrap(e));
-            }
-        }
-
-        try {
-            return Boolean.TRUE.equals(asyncUnload.get(120, TimeUnit.SECONDS));
-        } catch (Throwable e) {
-            throw new IllegalStateException("Failed while waiting for async world unload result.", unwrap(e));
-        }
+        });
+        return result;
     }
 
-    private static void closeServerLevel(World world, Object serverLevel) throws Throwable {
-        Method closeMethod = CapabilityResolution.resolveMethod(serverLevel.getClass(), "close", method -> method.getParameterCount() == 0);
+    private static CompletableFuture<Void> closeServerLevelAsync(World world, Object serverLevel) {
+        Method closeMethod;
+        try {
+            closeMethod = CapabilityResolution.resolveMethod(
+                    serverLevel.getClass(),
+                    "close",
+                    method -> method.getParameterCount() == 0
+            );
+        } catch (Throwable e) {
+            return CompletableFuture.failedFuture(unwrap(e));
+        }
         if (closeMethod == null) {
-            return;
+            return CompletableFuture.completedFuture(null);
         }
 
         if (!J.isFolia()) {
-            closeMethod.invoke(serverLevel);
-            return;
+            try {
+                closeMethod.invoke(serverLevel);
+                return CompletableFuture.completedFuture(null);
+            } catch (Throwable e) {
+                return CompletableFuture.failedFuture(unwrap(e));
+            }
         }
 
         Location spawn = world.getSpawnLocation();
@@ -524,9 +580,11 @@ final class WorldLifecycleSupport {
             }
         });
         if (!scheduled) {
-            throw new IllegalStateException("Failed to schedule region close task for world \"" + world.getName() + "\".");
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Failed to schedule region close task for world \"" + world.getName() + "\"."
+            ));
         }
-        closeFuture.get(90, TimeUnit.SECONDS);
+        return closeFuture.orTimeout(90L, TimeUnit.SECONDS);
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
@@ -545,7 +603,11 @@ final class WorldLifecycleSupport {
         }
     }
 
-    private static void detachServerLevel(CapabilitySnapshot capabilities, Object serverLevel, World world) throws Throwable {
+    private static CompletableFuture<Void> detachServerLevelAsync(
+            CapabilitySnapshot capabilities,
+            Object serverLevel,
+            World world
+    ) {
         Runnable detachTask = () -> {
             try {
                 capabilities.removeLevelMethod().invoke(capabilities.minecraftServer(), serverLevel);
@@ -556,15 +618,41 @@ final class WorldLifecycleSupport {
         };
 
         if (!J.isFolia() || isGlobalTickThread()) {
-            detachTask.run();
-            return;
+            try {
+                detachTask.run();
+                return CompletableFuture.completedFuture(null);
+            } catch (Throwable e) {
+                return CompletableFuture.failedFuture(unwrap(e));
+            }
         }
 
-        CompletableFuture<Void> detachFuture = J.sfut(detachTask);
-        if (detachFuture == null) {
-            throw new IllegalStateException("Failed to schedule global detach task for world \"" + world.getName() + "\".");
+        CompletableFuture<Void> detachFuture = runGlobalAsync(detachTask);
+        return detachFuture.orTimeout(15L, TimeUnit.SECONDS);
+    }
+
+    private static CompletableFuture<Void> runGlobalAsync(Runnable task) {
+        if (!J.isFolia()) {
+            return J.sfut(task);
         }
-        detachFuture.get(15, TimeUnit.SECONDS);
+
+        CompletableFuture<Void> result = new CompletableFuture<>();
+        Runnable settlement = () -> {
+            try {
+                task.run();
+                result.complete(null);
+            } catch (Throwable e) {
+                result.completeExceptionally(unwrap(e));
+            }
+        };
+
+        try {
+            if (!FoliaScheduler.runGlobal(BukkitPlatform.plugin(), settlement)) {
+                result.completeExceptionally(new IllegalStateException("Failed to schedule global world lifecycle task."));
+            }
+        } catch (Throwable e) {
+            result.completeExceptionally(unwrap(e));
+        }
+        return result;
     }
 
     static boolean isGlobalTickThread() {

@@ -15,8 +15,11 @@ import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.pieces.PiecesContainer;
 import net.minecraft.world.level.levelgen.structure.pools.JigsawJunction;
 import net.minecraft.world.level.levelgen.structure.structures.DesertPyramidPiece;
+import net.minecraft.world.level.levelgen.structure.structures.DesertPyramidStructure;
 import net.minecraft.world.level.levelgen.structure.structures.JungleTemplePiece;
+import net.minecraft.world.level.levelgen.structure.structures.JungleTempleStructure;
 import net.minecraft.world.level.levelgen.structure.structures.OceanMonumentPieces;
+import net.minecraft.world.level.levelgen.structure.structures.OceanMonumentStructure;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,11 +42,11 @@ public final class NativeStructureVerticalPlacer {
                                              boolean underground, boolean preserveSourceY,
                                              IrisStructureYBand yBand,
                                              IntBinaryOperator surfaceHeight) {
-        if (isOceanMonument(structureId)) {
+        if (isOceanMonument(start, structureId)) {
             return alignOceanMonumentToSeaLevel(
                     start, requestedOffset, seaLevel, worldMinY, worldMaxYExclusive);
         }
-        if (isAdjustedScatteredStructure(structureId)) {
+        if (isAdjustedScatteredStructure(start, structureId)) {
             return alignScatteredStructureToSurface(
                     start, structureId, requestedOffset, worldMinY, worldMaxYExclusive, surfaceHeight);
         }
@@ -169,18 +172,28 @@ public final class NativeStructureVerticalPlacer {
     static void ensureMonumentSeaLevelAlignment(StructureStart start, String structureId,
                                                  int configuredOffset, int seaLevel,
                                                  int worldMinY, int worldMaxYExclusive) {
-        if (isOceanMonument(structureId)) {
+        if (!isOceanMonument(start, structureId)) {
+            return;
+        }
+        synchronized (start) {
             alignOceanMonumentToSeaLevel(
                     start, configuredOffset, seaLevel, worldMinY, worldMaxYExclusive);
         }
     }
 
-    private static boolean isOceanMonument(String structureId) {
-        return OCEAN_MONUMENT_ID.equals(structureId);
+    private static boolean isOceanMonument(StructureStart start, String structureId) {
+        return OCEAN_MONUMENT_ID.equals(structureId)
+                && start != null
+                && start.getStructure() instanceof OceanMonumentStructure;
     }
 
-    private static boolean isAdjustedScatteredStructure(String structureId) {
-        return DESERT_PYRAMID_ID.equals(structureId) || JUNGLE_PYRAMID_ID.equals(structureId);
+    private static boolean isAdjustedScatteredStructure(StructureStart start, String structureId) {
+        if (start == null) {
+            return false;
+        }
+        Structure source = start.getStructure();
+        return (DESERT_PYRAMID_ID.equals(structureId) && source instanceof DesertPyramidStructure)
+                || (JUNGLE_PYRAMID_ID.equals(structureId) && source instanceof JungleTempleStructure);
     }
 
     private static ScatteredFeaturePiece requireAdjustedScatteredPiece(StructureStart start,
@@ -252,9 +265,15 @@ public final class NativeStructureVerticalPlacer {
     private static OceanMonumentPieces.MonumentBuilding requireOceanMonumentBuilding(StructureStart start) {
         Objects.requireNonNull(start, "Ocean monument start must not be null");
         List<StructurePiece> pieces = start.getPieces();
-        if (pieces.size() != 1 || !(pieces.get(0) instanceof OceanMonumentPieces.MonumentBuilding building)) {
+        OceanMonumentPieces.MonumentBuilding building = null;
+        for (StructurePiece piece : pieces) {
+            if (piece instanceof OceanMonumentPieces.MonumentBuilding monumentBuilding) {
+                building = monumentBuilding;
+            }
+        }
+        if (pieces.size() != 1 || building == null) {
             throw new IllegalStateException("minecraft:monument must contain exactly one MonumentBuilding, found "
-                    + pieces.size() + " top-level pieces");
+                    + pieces.size() + " pieces");
         }
         return building;
     }

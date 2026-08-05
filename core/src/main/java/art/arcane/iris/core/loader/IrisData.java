@@ -31,6 +31,7 @@ import com.google.gson.stream.JsonToken;
 import com.google.gson.stream.JsonWriter;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
@@ -244,15 +245,14 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
                 }
             }
 
-            for (File i : Objects.requireNonNull(IrisPlatforms.get().dataFolder("packs").listFiles())) {
-                if (i.isDirectory()) {
-                    IrisData dm = get(i);
-                    if (dm == nearest) continue;
-                    T t = dm.load(type, key, false);
+            for (File i : PackDirectoryResolver.listVisiblePackDirectories(
+                    IrisPlatforms.get().dataFolder("packs"))) {
+                IrisData dm = get(i);
+                if (dm == nearest) continue;
+                T t = dm.load(type, key, false);
 
-                    if (t != null) {
-                        return t;
-                    }
+                if (t != null) {
+                    return t;
                 }
             }
         } catch (Throwable e) {

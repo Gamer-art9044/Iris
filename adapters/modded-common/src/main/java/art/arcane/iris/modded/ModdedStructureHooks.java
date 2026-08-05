@@ -19,8 +19,10 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.nativegen.NativeStructureGenerationException;
+import art.arcane.iris.nativegen.NativeStructureFactory;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformStructureHooks;
+import art.arcane.iris.spi.PlatformStructureHooks.JigsawSourceMetadata;
 import art.arcane.iris.spi.PlatformWorld;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -93,6 +95,67 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
     @Override
     public List<String> templatePoolKeys() {
         return registryKeys(Registries.TEMPLATE_POOL);
+    }
+
+    @Override
+    public JigsawSourceMetadata jigsawSourceMetadata(String structureKey) {
+        MinecraftServer instance = requireServer("resolve live jigsaw metadata for registered structure '"
+                + structureKey + "'");
+        try {
+            Identifier identifier = Identifier.tryParse(structureKey);
+            if (identifier == null) {
+                throw new IllegalArgumentException("Invalid registered structure key: " + structureKey);
+            }
+            Registry<Structure> registry = instance.registryAccess().lookupOrThrow(Registries.STRUCTURE);
+            Structure structure = registry.getValue(identifier);
+            if (structure == null) {
+                throw new IllegalArgumentException("Registered structure does not exist: " + structureKey);
+            }
+            if (!(structure instanceof JigsawStructure jigsaw)) {
+                throw new IllegalArgumentException("Registered structure is not a jigsaw: " + structureKey);
+            }
+            return NativeStructureFactory.sourceMetadata(
+                    instance.registryAccess(), instance.getStructureManager(), jigsaw);
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to resolve live jigsaw metadata for registered structure '"
+                    + structureKey + "' from the modded structure registry", error);
+        }
+    }
+
+    @Override
+    public int templatePoolHorizontalSpan(String templatePoolKey) {
+        MinecraftServer instance = requireServer("resolve the live horizontal span for registered template pool '"
+                + templatePoolKey + "'");
+        try {
+            return NativeStructureFactory.templatePoolHorizontalSpan(
+                    instance.registryAccess(), instance.getStructureManager(), templatePoolKey);
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to resolve the live horizontal span for registered "
+                    + "template pool '" + templatePoolKey + "' from the modded template-pool registry", error);
+        }
+    }
+
+    @Override
+    public int jigsawStartPoolHorizontalSpan(String structureKey, String templatePoolKey) {
+        MinecraftServer instance = requireServer("resolve the effective start-pool span for registered jigsaw '"
+                + structureKey + "'");
+        try {
+            Identifier identifier = Identifier.tryParse(structureKey);
+            if (identifier == null) {
+                throw new IllegalArgumentException("Invalid registered structure key: " + structureKey);
+            }
+            Structure structure = instance.registryAccess().lookupOrThrow(Registries.STRUCTURE)
+                    .getValue(identifier);
+            if (!(structure instanceof JigsawStructure jigsaw)) {
+                throw new IllegalArgumentException("Registered structure is not a jigsaw: " + structureKey);
+            }
+            return NativeStructureFactory.jigsawStartPoolHorizontalSpan(
+                    instance.registryAccess(), instance.getStructureManager(), jigsaw, templatePoolKey);
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to resolve the effective start-pool span for registered "
+                    + "jigsaw structure '" + structureKey + "' and pool '" + templatePoolKey
+                    + "' from the modded registries", error);
+        }
     }
 
     @Override

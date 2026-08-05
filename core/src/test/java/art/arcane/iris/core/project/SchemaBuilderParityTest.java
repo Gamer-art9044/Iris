@@ -36,10 +36,12 @@ import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.RegistryListBiome;
 import art.arcane.iris.engine.object.annotations.RegistryListEnchantment;
 import art.arcane.iris.engine.object.annotations.RegistryListEntityType;
+import art.arcane.iris.engine.object.annotations.RegistryListFunction;
 import art.arcane.iris.engine.object.annotations.RegistryListItemType;
 import art.arcane.iris.engine.object.annotations.RegistryListPotionEffect;
 import art.arcane.iris.engine.object.annotations.RegistryListSpecialEntity;
 import art.arcane.iris.engine.object.annotations.RegistryListVanillaStructure;
+import art.arcane.iris.engine.object.annotations.functions.LootTableKeyFunction;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.LogLevel;
@@ -81,6 +83,7 @@ public class SchemaBuilderParityTest {
     private static final List<String> STRUCTURE_KEYS = List.of("minecraft:monument", "minecraft:stronghold", "cool_mod:sky_temple");
     private static final List<String> BIOME_KEYS = List.of("minecraft:plains", "cool_mod:sky_meadow");
     private static final List<String> SPECIAL_ENTITY_KEYS = List.of("mythicmobs:skeleton_king");
+    private static final List<String> LOOT_TABLE_KEYS = List.of("minecraft:chests/simple_dungeon", "cool_mod:chests/sky_temple");
 
     // Namespaced key first, then the legacy short form for the vanilla namespace only. A mod key is addressable
     // by its full key instead of a namespace-stripped path that could collide with vanilla content.
@@ -252,6 +255,16 @@ public class SchemaBuilderParityTest {
                 enumValues(schema.getJSONObject("definitions"), "enum-vanilla-structure"));
     }
 
+    @Test
+    public void lootTableFunctionUsesPlatformRegistryKeys() {
+        JSONObject schema = new SchemaBuilder(LootTableModel.class, (IrisData) null).construct();
+        JSONObject lootTable = schema.getJSONObject("properties").getJSONObject("lootTable");
+
+        assertEquals("#/definitions/loot-table-key", lootTable.getString("$ref"));
+        assertEquals(LOOT_TABLE_KEYS,
+                schema.getJSONObject("definitions").getJSONObject("loot-table-key").get("enum"));
+    }
+
     private static IrisData structureSchemaData() {
         IrisData data = mock(IrisData.class);
         ResourceLoader<IrisStructure> structureLoader = mock(ResourceLoader.class);
@@ -368,6 +381,13 @@ public class SchemaBuilderParityTest {
         private KList<String> disabled = new KList<>();
     }
 
+    @Desc("Loot table model.")
+    public static class LootTableModel {
+        @Desc("Loot table.")
+        @RegistryListFunction(LootTableKeyFunction.class)
+        private String lootTable = "";
+    }
+
     public enum Flavor {
         ALPHA,
         BETA
@@ -457,6 +477,11 @@ public class SchemaBuilderParityTest {
         @Override
         public List<String> potionEffectKeys() {
             return POTION_KEYS;
+        }
+
+        @Override
+        public List<String> lootTableKeys() {
+            return LOOT_TABLE_KEYS;
         }
 
         @Override

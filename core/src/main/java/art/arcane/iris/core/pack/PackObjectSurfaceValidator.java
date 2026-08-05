@@ -117,6 +117,10 @@ final class PackObjectSurfaceValidator {
     }
 
     static List<String> validateStructureGraph(File packFolder) {
+        return validateStructureGraph(packFolder, true);
+    }
+
+    static List<String> validateStructureGraph(File packFolder, boolean validateLiveRegistries) {
         List<String> blockingErrors = new ArrayList<>();
         if (packFolder == null || !packFolder.isDirectory()) {
             return blockingErrors;
@@ -131,7 +135,8 @@ final class PackObjectSurfaceValidator {
         Set<String> pieceKeys = ContentKeyValidator.deriveRegistrantKeysExact(piecesFolder);
         Set<String> objectKeys = ContentKeyValidator.deriveObjectKeysExact(objectsFolder);
 
-        PackStructurePlacementValidator.validateStructurePlacements(packFolder, structureKeys, blockingErrors);
+        PackStructurePlacementValidator.validateStructurePlacements(
+                packFolder, structureKeys, validateLiveRegistries, blockingErrors);
         PackStructurePlacementValidator.validateStructureStartPools(structuresFolder, poolKeys, blockingErrors);
         PackStructurePlacementValidator.validateJigsawPools(poolsFolder, poolKeys, pieceKeys, blockingErrors);
         PackStructurePlacementValidator.validateJigsawPieces(piecesFolder, poolKeys, objectKeys, blockingErrors);

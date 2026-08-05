@@ -15,7 +15,9 @@ import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.nativegen.NativeStructureFactory;
 import art.arcane.iris.nativegen.NativeStructureGenerationException;
+import art.arcane.iris.spi.PlatformStructureHooks.JigsawSourceMetadata;
 import art.arcane.iris.util.project.agent.Agent;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
@@ -102,6 +104,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
 import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import net.minecraft.world.level.levelgen.structure.StructureCheck;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.structures.JigsawStructure;
 import net.minecraft.world.level.levelgen.feature.AbstractHugeMushroomFeature;
@@ -558,6 +561,62 @@ public class NMSBinding implements INMSBinding {
     }
 
     @Override
+    public JigsawSourceMetadata getJigsawSourceMetadata(String structureKey) {
+        try {
+            Identifier identifier = Identifier.tryParse(structureKey);
+            if (identifier == null) {
+                throw new IllegalArgumentException("Invalid registered structure key: " + structureKey);
+            }
+            Registry<Structure> structures = registry().lookupOrThrow(Registries.STRUCTURE);
+            Structure structure = structures.getValue(identifier);
+            if (structure == null) {
+                throw new IllegalArgumentException("Registered structure does not exist: " + structureKey);
+            }
+            if (!(structure instanceof JigsawStructure jigsaw)) {
+                throw new IllegalArgumentException("Registered structure is not a jigsaw: " + structureKey);
+            }
+            MinecraftServer server = ((CraftServer) Bukkit.getServer()).getHandle().getServer();
+            return NativeStructureFactory.sourceMetadata(
+                    registry(), server.getStructureManager(), jigsaw);
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to resolve live jigsaw metadata for registered structure '"
+                    + structureKey + "'", error);
+        }
+    }
+
+    @Override
+    public int getTemplatePoolHorizontalSpan(String templatePoolKey) {
+        try {
+            MinecraftServer server = ((CraftServer) Bukkit.getServer()).getHandle().getServer();
+            return NativeStructureFactory.templatePoolHorizontalSpan(
+                    registry(), server.getStructureManager(), templatePoolKey);
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to resolve the live horizontal span for registered "
+                    + "template pool '" + templatePoolKey + "'", error);
+        }
+    }
+
+    @Override
+    public int getJigsawStartPoolHorizontalSpan(String structureKey, String templatePoolKey) {
+        try {
+            Identifier identifier = Identifier.tryParse(structureKey);
+            if (identifier == null) {
+                throw new IllegalArgumentException("Invalid registered structure key: " + structureKey);
+            }
+            Structure structure = registry().lookupOrThrow(Registries.STRUCTURE).getValue(identifier);
+            if (!(structure instanceof JigsawStructure jigsaw)) {
+                throw new IllegalArgumentException("Registered structure is not a jigsaw: " + structureKey);
+            }
+            MinecraftServer server = ((CraftServer) Bukkit.getServer()).getHandle().getServer();
+            return NativeStructureFactory.jigsawStartPoolHorizontalSpan(
+                    registry(), server.getStructureManager(), jigsaw, templatePoolKey);
+        } catch (RuntimeException error) {
+            throw new IllegalStateException("Iris failed to resolve the effective start-pool span for registered "
+                    + "jigsaw structure '" + structureKey + "' and pool '" + templatePoolKey + "'", error);
+        }
+    }
+
+    @Override
     public KList<String> getStructureSetKeys() {
         KList<String> keys = new KList<>();
         try {
@@ -700,7 +759,7 @@ public class NMSBinding implements INMSBinding {
                 return null;
             }
 
-            net.minecraft.world.level.levelgen.structure.BoundingBox box = start.getBoundingBox();
+            BoundingBox box = start.getBoundingBox();
             int spanX = box.maxX() - box.minX() + 1;
             int spanY = box.maxY() - box.minY() + 1;
             int spanZ = box.maxZ() - box.minZ() + 1;
@@ -717,7 +776,7 @@ public class NMSBinding implements INMSBinding {
                 for (int cz = minCZ; cz <= maxCZ; cz++) {
                     level.getChunk(cx, cz);
                     net.minecraft.world.level.ChunkPos cp = new net.minecraft.world.level.ChunkPos(cx, cz);
-                    net.minecraft.world.level.levelgen.structure.BoundingBox chunkBox = new net.minecraft.world.level.levelgen.structure.BoundingBox(
+                    BoundingBox chunkBox = new BoundingBox(
                             cp.getMinBlockX(), box.minY(), cp.getMinBlockZ(),
                             cp.getMaxBlockX(), box.maxY(), cp.getMaxBlockZ());
                     start.placeInChunk(level, structureManager, generator, random, chunkBox, cp);

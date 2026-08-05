@@ -10,8 +10,6 @@ import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.biome.FixedBiomeSource;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -22,16 +20,11 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 final class ForcedStructureChunkGenerator extends ChunkGenerator {
-    private static final int MIN_SAFE_STRUCTURE_Y = 80;
-    private static final int VERTICAL_MARGIN = 32;
-
     private final ChunkGenerator delegate;
-    private final int targetY;
 
-    ForcedStructureChunkGenerator(ChunkGenerator delegate, Holder<Biome> sourceBiome, int targetY) {
+    ForcedStructureChunkGenerator(ChunkGenerator delegate, Holder<Biome> sourceBiome) {
         super(new FixedBiomeSource(sourceBiome));
         this.delegate = delegate;
-        this.targetY = targetY;
     }
 
     @Override
@@ -72,7 +65,7 @@ final class ForcedStructureChunkGenerator extends ChunkGenerator {
 
     @Override
     public int getSeaLevel() {
-        return delegate.getMinY() + 1;
+        return delegate.getSeaLevel();
     }
 
     @Override
@@ -83,21 +76,13 @@ final class ForcedStructureChunkGenerator extends ChunkGenerator {
     @Override
     public int getBaseHeight(int x, int z, Heightmap.Types type,
                              LevelHeightAccessor heightAccessor, RandomState randomState) {
-        return safeOccupiedY(heightAccessor) + 1;
+        return delegate.getBaseHeight(x, z, type, heightAccessor, randomState);
     }
 
     @Override
     public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor heightAccessor,
                                      RandomState randomState) {
-        int minY = heightAccessor.getMinY();
-        BlockState[] states = new BlockState[heightAccessor.getHeight()];
-        for (int index = 0; index < states.length; index++) {
-            int y = minY + index;
-            states[index] = (y & 1) == 0
-                    ? Blocks.STONE.defaultBlockState()
-                    : Blocks.AIR.defaultBlockState();
-        }
-        return new NoiseColumn(minY, states);
+        return delegate.getBaseColumn(x, z, heightAccessor, randomState);
     }
 
     @Override
@@ -106,13 +91,4 @@ final class ForcedStructureChunkGenerator extends ChunkGenerator {
         delegate.addDebugScreenInfo(result, randomState, feetPos);
     }
 
-    private int safeOccupiedY(LevelHeightAccessor heightAccessor) {
-        int minY = heightAccessor.getMinY() + VERTICAL_MARGIN;
-        int maxY = heightAccessor.getMaxY() - VERTICAL_MARGIN;
-        if (minY > maxY) {
-            return heightAccessor.getMinY()
-                    + Math.max(0, heightAccessor.getHeight() / 2);
-        }
-        return Math.max(minY, Math.min(maxY, Math.max(MIN_SAFE_STRUCTURE_Y, targetY)));
-    }
 }

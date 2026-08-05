@@ -38,12 +38,29 @@ public class IrisToolbeltPackReferenceTest {
     }
 
     @Test
+    public void repositoryShorthandUsesRepositoryAsDefaultDimension() {
+        IrisToolbelt.PackReference reference = IrisToolbelt.parsePackReference("IrisDimensions/overworld/stable");
+
+        assertEquals("IrisDimensions/overworld/stable", reference.pack());
+        assertEquals("overworld", reference.dimension());
+        assertFalse(reference.explicitDimension());
+    }
+
+    @Test
     public void malformedReferencesAreRejected() {
         assertNull(IrisToolbelt.parsePackReference(null));
         assertNull(IrisToolbelt.parsePackReference(""));
         assertNull(IrisToolbelt.parsePackReference(":"));
         assertNull(IrisToolbelt.parsePackReference("pack:"));
         assertNull(IrisToolbelt.parsePackReference(":dimension"));
+        assertNull(IrisToolbelt.parsePackReference("../outside:dimension"));
+        assertNull(IrisToolbelt.parsePackReference("owner/../outside:dimension"));
+        assertNull(IrisToolbelt.parsePackReference("/absolute:dimension"));
+        assertNull(IrisToolbelt.parsePackReference(".iris-import-stage:dimension"));
+        assertNull(IrisToolbelt.parsePackReference("pack:../../outside"));
+        assertNull(IrisToolbelt.parsePackReference("pack:/absolute"));
+        assertNull(IrisToolbelt.parsePackReference("pack:nested\\outside"));
+        assertNull(IrisToolbelt.parsePackReference("pack:.hidden"));
     }
 
     @Test

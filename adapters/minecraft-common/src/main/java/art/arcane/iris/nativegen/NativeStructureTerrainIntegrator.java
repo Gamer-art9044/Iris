@@ -9,16 +9,24 @@ import art.arcane.iris.engine.object.IrisStructureTerrainMode;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.volmlib.util.math.RNG;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
+import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.PoolElementStructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.TerrainAdjustment;
+import net.minecraft.world.level.levelgen.structure.pools.JigsawJunction;
 import net.minecraft.world.level.levelgen.structure.pools.LegacySinglePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.ListPoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement;
@@ -29,62 +37,80 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemp
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.BitSet;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 public final class NativeStructureTerrainIntegrator {
-    private static final int AUTO_ENCASE_PADDING = 3;
     private static final long CARVE_CEILING_ROLL_SIGNATURE = 0x2A17L;
     private static final long CARVE_FLOOR_ROLL_SIGNATURE = 0x5B3DL;
     private static final long CARVE_LOBE_SIGNATURE = 0x7C41L;
-    private static final int MAX_CACHED_CARVE_FOOTPRINTS = 4;
+    private static final int MAX_CACHED_CARVE_CELLS = 2_000_000;
     private static final int MAX_CARVE_COLUMNS = 2_000_000;
     private static final int MAX_TEMPLATE_OCCUPANCY_CELLS = 4_194_304;
+    private static final int SOURCE_BURY_HORIZONTAL_RADIUS = 6;
+    private static final int SOURCE_BURY_VERTICAL_RADIUS = 12;
+    private static final int SOURCE_ENCAPSULATE_RADIUS = 12;
+    private static final int SOURCE_JUNCTION_RADIUS = 12;
+    private static final int SOURCE_MATERIAL_SAMPLE_RADIUS = 8;
     private static final List<Block> TEMPLATE_VOID_BLOCKS = List.of(Blocks.AIR, Blocks.STRUCTURE_VOID);
-    private static final Map<CarveFootprintKey, StructureCarvingFootprint> CARVE_FOOTPRINTS =
-            Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75F, true) {
-                @Override
-                protected boolean removeEldestEntry(
-                        Map.Entry<CarveFootprintKey, StructureCarvingFootprint> eldest) {
-                    return size() > MAX_CACHED_CARVE_FOOTPRINTS;
-                }
-            });
+    private static final Set<Block> VANILLA_SOURCE_TERRAIN_BLOCKS = Set.of(
+            Blocks.STONE, Blocks.GRANITE, Blocks.DIORITE, Blocks.ANDESITE,
+            Blocks.TUFF, Blocks.DEEPSLATE, Blocks.NETHERRACK, Blocks.BASALT,
+            Blocks.BLACKSTONE, Blocks.DIRT, Blocks.COARSE_DIRT, Blocks.ROOTED_DIRT,
+            Blocks.GRASS_BLOCK, Blocks.PODZOL, Blocks.MYCELIUM, Blocks.MUD,
+            Blocks.MOSS_BLOCK, Blocks.SAND, Blocks.RED_SAND, Blocks.TERRACOTTA,
+            Blocks.CRIMSON_NYLIUM, Blocks.WARPED_NYLIUM, Blocks.SNOW_BLOCK,
+            Blocks.ICE, Blocks.PACKED_ICE, Blocks.BLUE_ICE, Blocks.SOUL_SAND,
+            Blocks.SOUL_SOIL, Blocks.END_STONE, Blocks.GRAVEL, Blocks.CLAY,
+            Blocks.CALCITE, Blocks.DRIPSTONE_BLOCK, Blocks.SANDSTONE,
+            Blocks.RED_SANDSTONE, Blocks.SCULK);
+    private static final Map<CarveFootprintKey, CachedCarveFootprint> CARVE_FOOTPRINTS =
+            new LinkedHashMap<>(16, 0.75F, true);
+    private static final ConcurrentHashMap<CarveFootprintKey, CompletableFuture<StructureCarvingFootprint>>
+            CARVE_FOOTPRINT_BUILDS = new ConcurrentHashMap<>();
+    private static int cachedCarveCells;
 
     private NativeStructureTerrainIntegrator() {
     }
 
     public static IrisStructureTerrain resolveNativeTerrain(StructureStart start,
                                                             IrisStructureTerrain configuredTerrain) {
-        if (configuredTerrain != null) {
-            return configuredTerrain;
-        }
-        if (start == null || !start.isValid()
-                || !encasesTerrain(start.getStructure().terrainAdaptation())) {
-            return null;
-        }
-        return new IrisStructureTerrain()
-                .setMode(IrisStructureTerrainMode.ENCASE)
-                .setHorizontalPadding(AUTO_ENCASE_PADDING)
-                .setCeilingPadding(AUTO_ENCASE_PADDING)
-                .setFloorPadding(AUTO_ENCASE_PADDING);
-    }
-
-    static boolean encasesTerrain(TerrainAdjustment adjustment) {
-        return adjustment == TerrainAdjustment.BURY || adjustment == TerrainAdjustment.ENCAPSULATE;
+        return configuredTerrain == null
+                ? new IrisStructureTerrain().setMode(IrisStructureTerrainMode.SOURCE)
+                : configuredTerrain;
     }
 
     static void integrateTerrain(WorldGenLevel world, BoundingBox area, String structureId,
                                  StructureStart start, IrisStructureTerrain configuredTerrain,
                                  NativeStructurePostProcessor.PaletteBlockResolver paletteBlockResolver) {
+        SourceTerrainSnapshot sourceTerrain = requiresSourceTerrainFill(start, configuredTerrain)
+                ? captureSourceTerrain(world, area, start, configuredTerrain) : null;
+        integrateTerrain(world, area, structureId, start, configuredTerrain,
+                paletteBlockResolver, sourceTerrain);
+    }
+
+    static void integrateTerrain(WorldGenLevel world, BoundingBox area, String structureId,
+                                 StructureStart start, IrisStructureTerrain configuredTerrain,
+                                 NativeStructurePostProcessor.PaletteBlockResolver paletteBlockResolver,
+                                 SourceTerrainSnapshot sourceTerrain) {
         IrisStructureTerrain terrain = configuredTerrain == null
                 ? new IrisStructureTerrain().setMode(IrisStructureTerrainMode.SOURCE)
                 : configuredTerrain;
         IrisStructureTerrainMode mode = terrain.resolvedMode();
-        if (mode == IrisStructureTerrainMode.SOURCE || mode == IrisStructureTerrainMode.PRESERVE) {
+        if (mode == IrisStructureTerrainMode.SOURCE) {
+            integrateSourceTerrain(world, area, start, sourceTerrain);
+            return;
+        }
+        if (mode == IrisStructureTerrainMode.PRESERVE) {
             return;
         }
         if (mode == IrisStructureTerrainMode.VACUUM) {
@@ -111,12 +137,381 @@ public final class NativeStructureTerrainIntegrator {
                 terrain, shape, carveNoiseIdentity(world, structureId, start)));
     }
 
+    static SourceTerrainSnapshot captureSourceTerrain(
+            WorldGenLevel world, BoundingBox area, List<TerrainTarget> targets) {
+        BitSet requiredLayers = new BitSet(area.getYSpan());
+        boolean requiresSnapshot = false;
+        for (TerrainTarget target : targets) {
+            if (target != null && requiresSourceTerrainFill(target.start(), target.terrain())) {
+                requiresSnapshot = true;
+                markSourceTerrainLayers(area, target.start(), target.terrain(), requiredLayers);
+            }
+        }
+        return requiresSnapshot ? SourceTerrainSnapshot.capture(world, area, requiredLayers) : null;
+    }
+
+    private static SourceTerrainSnapshot captureSourceTerrain(
+            WorldGenLevel world, BoundingBox area, StructureStart start,
+            IrisStructureTerrain configuredTerrain) {
+        BitSet requiredLayers = new BitSet(area.getYSpan());
+        markSourceTerrainLayers(area, start, configuredTerrain, requiredLayers);
+        return SourceTerrainSnapshot.capture(world, area, requiredLayers);
+    }
+
+    private static void markSourceTerrainLayers(
+            BoundingBox area, StructureStart start, IrisStructureTerrain configuredTerrain,
+            BitSet requiredLayers) {
+        if (!requiresSourceTerrainFill(start, configuredTerrain)) {
+            return;
+        }
+        TerrainAdjustment adjustment = start.getStructure().terrainAdaptation();
+        for (StructurePiece piece : start.getPieces()) {
+            if (!isSourceRigidPiece(piece)) {
+                continue;
+            }
+            BoundingBox bounds = piece.getBoundingBox();
+            long horizontalDistanceSquared = minimumHorizontalDistanceSquared(area, bounds);
+            if (adjustment == TerrainAdjustment.BURY) {
+                long remainingDistanceSquared = (long) SOURCE_BURY_VERTICAL_RADIUS
+                        * SOURCE_BURY_VERTICAL_RADIUS - 1L - horizontalDistanceSquared * 4L;
+                if (remainingDistanceSquared < 0L) {
+                    continue;
+                }
+                int verticalRadius = (int) Math.floor(Math.sqrt(remainingDistanceSquared));
+                long groundY = bounds.minY();
+                if (piece instanceof PoolElementStructurePiece poolPiece) {
+                    groundY += poolPiece.getGroundLevelDelta();
+                }
+                markLayers(area, requiredLayers,
+                        groundY - verticalRadius, groundY + verticalRadius);
+            } else {
+                long remainingDistanceSquared = (long) SOURCE_ENCAPSULATE_RADIUS
+                        * SOURCE_ENCAPSULATE_RADIUS - 1L - horizontalDistanceSquared;
+                if (remainingDistanceSquared < 0L) {
+                    continue;
+                }
+                int verticalRadius = (int) Math.floor(Math.sqrt(remainingDistanceSquared));
+                markLayers(area, requiredLayers,
+                        (long) bounds.minY() - verticalRadius,
+                        (long) bounds.maxY() + verticalRadius);
+            }
+        }
+        markSourceJunctionLayers(area, start, requiredLayers);
+    }
+
+    private static void markSourceJunctionLayers(
+            BoundingBox area, StructureStart start, BitSet requiredLayers) {
+        Set<JunctionAnchor> anchors = sourceJunctionAnchors(start);
+        for (JunctionAnchor anchor : anchors) {
+            long deltaX = intervalDistance(area.minX(), area.maxX(), anchor.x(), anchor.x());
+            long deltaZ = intervalDistance(area.minZ(), area.maxZ(), anchor.z(), anchor.z());
+            long horizontalDistanceSquared = deltaX * deltaX + deltaZ * deltaZ;
+            long remainingDistanceSquared = (long) SOURCE_JUNCTION_RADIUS
+                    * SOURCE_JUNCTION_RADIUS - 1L - horizontalDistanceSquared;
+            if (remainingDistanceSquared < 1L) {
+                continue;
+            }
+            int verticalRadius = (int) Math.floor(Math.sqrt(remainingDistanceSquared));
+            markLayers(area, requiredLayers,
+                    (long) anchor.y() - verticalRadius, (long) anchor.y() - 1L);
+        }
+    }
+
+    private static long minimumHorizontalDistanceSquared(BoundingBox area, BoundingBox bounds) {
+        long deltaX = intervalDistance(area.minX(), area.maxX(), bounds.minX(), bounds.maxX());
+        long deltaZ = intervalDistance(area.minZ(), area.maxZ(), bounds.minZ(), bounds.maxZ());
+        return deltaX * deltaX + deltaZ * deltaZ;
+    }
+
+    private static long intervalDistance(int firstMin, int firstMax, int secondMin, int secondMax) {
+        if (firstMax < secondMin) {
+            return (long) secondMin - firstMax;
+        }
+        if (firstMin > secondMax) {
+            return (long) firstMin - secondMax;
+        }
+        return 0L;
+    }
+
+    private static void markLayers(
+            BoundingBox area, BitSet requiredLayers, long minimumY, long maximumY) {
+        long clippedMinimumY = Math.max(area.minY(), minimumY);
+        long clippedMaximumY = Math.min(area.maxY(), maximumY);
+        if (clippedMinimumY > clippedMaximumY) {
+            return;
+        }
+        int fromIndex = Math.toIntExact(clippedMinimumY - area.minY());
+        int toIndex = Math.toIntExact(clippedMaximumY - area.minY() + 1L);
+        requiredLayers.set(fromIndex, toIndex);
+    }
+
+    private static boolean requiresSourceTerrainFill(
+            StructureStart start, IrisStructureTerrain configuredTerrain) {
+        if (start == null || !start.isValid()) {
+            return false;
+        }
+        IrisStructureTerrain terrain = configuredTerrain == null
+                ? new IrisStructureTerrain().setMode(IrisStructureTerrainMode.SOURCE)
+                : configuredTerrain;
+        if (terrain.resolvedMode() != IrisStructureTerrainMode.SOURCE) {
+            return false;
+        }
+        TerrainAdjustment adjustment = start.getStructure().terrainAdaptation();
+        return adjustment == TerrainAdjustment.BURY
+                || adjustment == TerrainAdjustment.ENCAPSULATE;
+    }
+
+    static boolean clearsLegacyTemplateAir(StructureStart start, IrisStructureTerrain terrain) {
+        if (start == null || !start.isValid() || terrain == null) {
+            return false;
+        }
+        IrisStructureTerrainMode mode = terrain.resolvedMode();
+        return mode == IrisStructureTerrainMode.ENCASE
+                || mode == IrisStructureTerrainMode.SOURCE
+                && start.getStructure().terrainAdaptation() != TerrainAdjustment.NONE;
+    }
+
+    private static void integrateSourceTerrain(WorldGenLevel world, BoundingBox area,
+                                               StructureStart start,
+                                               SourceTerrainSnapshot sourceTerrain) {
+        if (start == null || !start.isValid()) {
+            return;
+        }
+        TerrainAdjustment adjustment = start.getStructure().terrainAdaptation();
+        if (adjustment == TerrainAdjustment.BURY) {
+            fillBuriedTerrain(world, area, start, requireSourceTerrain(
+                    world, area, start, sourceTerrain));
+        } else if (adjustment == TerrainAdjustment.ENCAPSULATE) {
+            fillEncapsulatedTerrain(world, area, start, requireSourceTerrain(
+                    world, area, start, sourceTerrain));
+        }
+    }
+
+    private static SourceTerrainSnapshot requireSourceTerrain(
+            WorldGenLevel world, BoundingBox area, StructureStart start,
+            SourceTerrainSnapshot sourceTerrain) {
+        return sourceTerrain == null
+                ? captureSourceTerrain(world, area, start, null) : sourceTerrain;
+    }
+
+    private static void fillBuriedTerrain(WorldGenLevel world, BoundingBox area,
+                                          StructureStart start,
+                                          SourceTerrainSnapshot sourceTerrain) {
+        BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
+        for (StructurePiece piece : start.getPieces()) {
+            if (!isSourceRigidPiece(piece)) {
+                continue;
+            }
+            BoundingBox bounds = piece.getBoundingBox();
+            int groundY = bounds.minY();
+            if (piece instanceof PoolElementStructurePiece poolPiece) {
+                groundY += poolPiece.getGroundLevelDelta();
+            }
+            int minX = Math.max(area.minX(), bounds.minX() - SOURCE_BURY_HORIZONTAL_RADIUS);
+            int maxX = Math.min(area.maxX(), bounds.maxX() + SOURCE_BURY_HORIZONTAL_RADIUS);
+            int minY = Math.max(area.minY(), groundY - SOURCE_BURY_VERTICAL_RADIUS);
+            int maxY = Math.min(area.maxY(), groundY + SOURCE_BURY_VERTICAL_RADIUS);
+            int minZ = Math.max(area.minZ(), bounds.minZ() - SOURCE_BURY_HORIZONTAL_RADIUS);
+            int maxZ = Math.min(area.maxZ(), bounds.maxZ() + SOURCE_BURY_HORIZONTAL_RADIUS);
+            for (int x = minX; x <= maxX; x++) {
+                int outX = outset(x, bounds.minX(), bounds.maxX());
+                for (int z = minZ; z <= maxZ; z++) {
+                    int outZ = outset(z, bounds.minZ(), bounds.maxZ());
+                    for (int y = minY; y <= maxY; y++) {
+                        int vertical = Math.abs(y - groundY);
+                        if (!insideBurialEnvelope(outX, vertical, outZ)) {
+                            continue;
+                        }
+                        fillEncaseable(world, position.set(x, y, z), sourceTerrain);
+                    }
+                }
+            }
+        }
+        fillSourceJunctionTerrain(world, area, start, position, sourceTerrain);
+    }
+
+    private static void fillEncapsulatedTerrain(WorldGenLevel world, BoundingBox area,
+                                                StructureStart start,
+                                                SourceTerrainSnapshot sourceTerrain) {
+        BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
+        for (StructurePiece piece : start.getPieces()) {
+            if (!isSourceRigidPiece(piece)) {
+                continue;
+            }
+            BoundingBox bounds = piece.getBoundingBox();
+            int minX = Math.max(area.minX(), bounds.minX() - SOURCE_ENCAPSULATE_RADIUS);
+            int maxX = Math.min(area.maxX(), bounds.maxX() + SOURCE_ENCAPSULATE_RADIUS);
+            int minY = Math.max(area.minY(), bounds.minY() - SOURCE_ENCAPSULATE_RADIUS);
+            int maxY = Math.min(area.maxY(), bounds.maxY() + SOURCE_ENCAPSULATE_RADIUS);
+            int minZ = Math.max(area.minZ(), bounds.minZ() - SOURCE_ENCAPSULATE_RADIUS);
+            int maxZ = Math.min(area.maxZ(), bounds.maxZ() + SOURCE_ENCAPSULATE_RADIUS);
+            for (int x = minX; x <= maxX; x++) {
+                int outX = outset(x, bounds.minX(), bounds.maxX());
+                for (int z = minZ; z <= maxZ; z++) {
+                    int outZ = outset(z, bounds.minZ(), bounds.maxZ());
+                    for (int y = minY; y <= maxY; y++) {
+                        int outY = outset(y, bounds.minY(), bounds.maxY());
+                        if (!insideEncapsulationEnvelope(outX, outY, outZ)) {
+                            continue;
+                        }
+                        fillEncaseable(world, position.set(x, y, z), sourceTerrain);
+                    }
+                }
+            }
+        }
+        fillSourceJunctionTerrain(world, area, start, position, sourceTerrain);
+    }
+
+    static boolean insideBurialEnvelope(int outX, int verticalDistance, int outZ) {
+        long horizontalSquared = (long) outX * outX + (long) outZ * outZ;
+        long verticalSquared = (long) verticalDistance * verticalDistance;
+        return horizontalSquared * 4L + verticalSquared
+                < (long) SOURCE_BURY_VERTICAL_RADIUS * SOURCE_BURY_VERTICAL_RADIUS;
+    }
+
+    static boolean insideEncapsulationEnvelope(int outX, int outY, int outZ) {
+        return (long) outX * outX + (long) outY * outY + (long) outZ * outZ
+                < (long) SOURCE_ENCAPSULATE_RADIUS * SOURCE_ENCAPSULATE_RADIUS;
+    }
+
+    static boolean isSourceRigidPiece(StructurePiece piece) {
+        if (piece == null) {
+            return false;
+        }
+        return !(piece instanceof PoolElementStructurePiece poolPiece)
+                || poolPiece.getElement().getProjection() == StructureTemplatePool.Projection.RIGID;
+    }
+
+    static boolean insideSourceJunctionEnvelope(int deltaX, int deltaY, int deltaZ) {
+        if (deltaY >= 0) {
+            return false;
+        }
+        return (long) deltaX * deltaX + (long) deltaY * deltaY + (long) deltaZ * deltaZ
+                < (long) SOURCE_JUNCTION_RADIUS * SOURCE_JUNCTION_RADIUS;
+    }
+
+    private static void fillSourceJunctionTerrain(WorldGenLevel world, BoundingBox area,
+                                                  StructureStart start,
+                                                  BlockPos.MutableBlockPos position,
+                                                  SourceTerrainSnapshot sourceTerrain) {
+        Set<JunctionAnchor> anchors = sourceJunctionAnchors(start);
+        for (JunctionAnchor anchor : anchors) {
+            int minX = Math.max(area.minX(), anchor.x() - SOURCE_JUNCTION_RADIUS + 1);
+            int maxX = Math.min(area.maxX(), anchor.x() + SOURCE_JUNCTION_RADIUS - 1);
+            int minY = Math.max(area.minY(), anchor.y() - SOURCE_JUNCTION_RADIUS + 1);
+            int maxY = Math.min(area.maxY(), anchor.y() - 1);
+            int minZ = Math.max(area.minZ(), anchor.z() - SOURCE_JUNCTION_RADIUS + 1);
+            int maxZ = Math.min(area.maxZ(), anchor.z() + SOURCE_JUNCTION_RADIUS - 1);
+            for (int x = minX; x <= maxX; x++) {
+                int deltaX = x - anchor.x();
+                for (int z = minZ; z <= maxZ; z++) {
+                    int deltaZ = z - anchor.z();
+                    for (int y = minY; y <= maxY; y++) {
+                        if (insideSourceJunctionEnvelope(deltaX, y - anchor.y(), deltaZ)) {
+                            fillEncaseable(world, position.set(x, y, z), sourceTerrain);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static Set<JunctionAnchor> sourceJunctionAnchors(StructureStart start) {
+        Set<JunctionAnchor> anchors = new HashSet<>();
+        for (StructurePiece piece : start.getPieces()) {
+            if (!(piece instanceof PoolElementStructurePiece poolPiece)) {
+                continue;
+            }
+            for (JigsawJunction junction : poolPiece.getJunctions()) {
+                anchors.add(new JunctionAnchor(
+                        junction.getSourceX(), junction.getSourceGroundY(), junction.getSourceZ()));
+            }
+        }
+        return anchors;
+    }
+
+    private static int outset(int value, int minimum, int maximum) {
+        if (value < minimum) {
+            return minimum - value;
+        }
+        return Math.max(0, value - maximum);
+    }
+
+    private static void fillEncaseable(WorldGenLevel world, BlockPos position,
+                                       SourceTerrainSnapshot sourceTerrain) {
+        if (isEncaseable(world.getBlockState(position))) {
+            world.setBlock(position, sourceEncaseBlock(world, position, sourceTerrain), 2);
+        }
+    }
+
+    static BlockState sourceEncaseBlock(WorldGenLevel world, BlockPos position) {
+        int minX = Math.subtractExact(position.getX(), SOURCE_MATERIAL_SAMPLE_RADIUS);
+        int minZ = Math.subtractExact(position.getZ(), SOURCE_MATERIAL_SAMPLE_RADIUS);
+        int maxX = Math.addExact(position.getX(), SOURCE_MATERIAL_SAMPLE_RADIUS);
+        int maxZ = Math.addExact(position.getZ(), SOURCE_MATERIAL_SAMPLE_RADIUS);
+        BoundingBox sampleArea = new BoundingBox(minX, position.getY(), minZ,
+                maxX, position.getY(), maxZ);
+        BitSet requiredLayers = new BitSet(1);
+        requiredLayers.set(0);
+        SourceTerrainSnapshot sourceTerrain = SourceTerrainSnapshot.capture(
+                world, sampleArea, requiredLayers);
+        return sourceEncaseBlock(world, position, sourceTerrain);
+    }
+
+    static BlockState sourceEncaseBlock(WorldGenLevel world, BlockPos position,
+                                        SourceTerrainSnapshot sourceTerrain) {
+        BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
+        for (int distance = 1; distance <= SOURCE_MATERIAL_SAMPLE_RADIUS; distance++) {
+            BlockState sampled = sourceTerrain.stateAt(probe.set(
+                    position.getX() - distance, position.getY(), position.getZ()));
+            if (sampled != null) {
+                return sampled;
+            }
+            sampled = sourceTerrain.stateAt(probe.set(
+                    position.getX() + distance, position.getY(), position.getZ()));
+            if (sampled != null) {
+                return sampled;
+            }
+            sampled = sourceTerrain.stateAt(probe.set(
+                    position.getX(), position.getY(), position.getZ() - distance));
+            if (sampled != null) {
+                return sampled;
+            }
+            sampled = sourceTerrain.stateAt(probe.set(
+                    position.getX(), position.getY(), position.getZ() + distance));
+            if (sampled != null) {
+                return sampled;
+            }
+        }
+        return defaultEncaseBlock(world, position.getY());
+    }
+
+    private static BlockState sourceTerrainBlock(BlockState state) {
+        if (!state.isSolid() || NativeStructureVegetationClearer.isTreeBlock(state)) {
+            return null;
+        }
+        return VANILLA_SOURCE_TERRAIN_BLOCKS.contains(state.getBlock())
+                || state.is(BlockTags.BASE_STONE_OVERWORLD)
+                || state.is(BlockTags.BASE_STONE_NETHER)
+                || state.is(BlockTags.SUBSTRATE_OVERWORLD)
+                || state.is(BlockTags.DIRT)
+                || state.is(BlockTags.SAND)
+                || state.is(BlockTags.TERRACOTTA)
+                || state.is(BlockTags.MUD)
+                || state.is(BlockTags.MOSS_BLOCKS)
+                || state.is(BlockTags.GRASS_BLOCKS)
+                || state.is(BlockTags.NYLIUM)
+                || state.is(BlockTags.SNOW)
+                || state.is(BlockTags.ICE)
+                || state.is(BlockTags.CORAL_BLOCKS)
+                || state.is(BlockTags.SOUL_FIRE_BASE_BLOCKS)
+                ? state : null;
+    }
+
     static List<BoundingBox> contentPieceBounds(StructureStart start) {
         List<BoundingBox> bounds = new ArrayList<>(start.getPieces().size());
         for (StructurePiece piece : start.getPieces()) {
-            if (!NativeStructureReferenceEnvelope.isMarker(piece)) {
-                bounds.add(piece.getBoundingBox());
-            }
+            bounds.add(piece.getBoundingBox());
         }
         return List.copyOf(bounds);
     }
@@ -128,18 +523,84 @@ public final class NativeStructureTerrainIntegrator {
     static StructureCarvingFootprint carveFootprint(StructureStart start, int horizontalPadding,
                                                     Supplier<StructureTemplateManager> templates) {
         CarveFootprintKey key = new CarveFootprintKey(start, horizontalPadding);
-        StructureCarvingFootprint cached = CARVE_FOOTPRINTS.get(key);
+        StructureCarvingFootprint cached = cachedCarveFootprint(key);
         if (cached != null) {
             return cached;
         }
-        StructureCarvingFootprint footprint = StructureCarvingFootprint.fromColumns(
-                sink -> emitCarveColumns(start, templates, sink), horizontalPadding, MAX_CARVE_COLUMNS);
-        if (footprint == null) {
-            throw new IllegalStateException("Native structure carve footprint is empty or exceeds "
-                    + MAX_CARVE_COLUMNS + " columns");
+        CompletableFuture<StructureCarvingFootprint> build = new CompletableFuture<>();
+        CompletableFuture<StructureCarvingFootprint> active = CARVE_FOOTPRINT_BUILDS.putIfAbsent(key, build);
+        if (active != null) {
+            return awaitCarveFootprint(active);
         }
-        CARVE_FOOTPRINTS.put(key, footprint);
-        return footprint;
+        try {
+            StructureCarvingFootprint footprint = StructureCarvingFootprint.fromColumns(
+                    sink -> emitCarveColumns(start, templates, sink), horizontalPadding, MAX_CARVE_COLUMNS);
+            if (footprint == null) {
+                throw new IllegalStateException("Native structure carve footprint is empty or exceeds "
+                        + MAX_CARVE_COLUMNS + " columns");
+            }
+            cacheCarveFootprint(key, footprint);
+            build.complete(footprint);
+            return footprint;
+        } catch (RuntimeException | Error error) {
+            build.completeExceptionally(error);
+            throw error;
+        } finally {
+            CARVE_FOOTPRINT_BUILDS.remove(key, build);
+        }
+    }
+
+    static int cachedCarveFootprintCells() {
+        synchronized (CARVE_FOOTPRINTS) {
+            return cachedCarveCells;
+        }
+    }
+
+    static int maximumCachedCarveFootprintCells() {
+        return MAX_CACHED_CARVE_CELLS;
+    }
+
+    private static StructureCarvingFootprint cachedCarveFootprint(CarveFootprintKey key) {
+        synchronized (CARVE_FOOTPRINTS) {
+            CachedCarveFootprint cached = CARVE_FOOTPRINTS.get(key);
+            return cached == null ? null : cached.footprint();
+        }
+    }
+
+    private static StructureCarvingFootprint awaitCarveFootprint(
+            CompletableFuture<StructureCarvingFootprint> future) {
+        try {
+            return future.join();
+        } catch (CompletionException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (cause instanceof Error fatal) {
+                throw fatal;
+            }
+            throw new IllegalStateException("Native structure carve footprint build failed", cause);
+        }
+    }
+
+    private static void cacheCarveFootprint(CarveFootprintKey key,
+                                            StructureCarvingFootprint footprint) {
+        int cells = Math.multiplyExact(footprint.width(), footprint.depth());
+        synchronized (CARVE_FOOTPRINTS) {
+            CachedCarveFootprint previous = CARVE_FOOTPRINTS.remove(key);
+            if (previous != null) {
+                cachedCarveCells -= previous.cells();
+            }
+            while (!CARVE_FOOTPRINTS.isEmpty()
+                    && cachedCarveCells + cells > MAX_CACHED_CARVE_CELLS) {
+                Map.Entry<CarveFootprintKey, CachedCarveFootprint> eldest =
+                        CARVE_FOOTPRINTS.entrySet().iterator().next();
+                cachedCarveCells -= eldest.getValue().cells();
+                CARVE_FOOTPRINTS.remove(eldest.getKey());
+            }
+            CARVE_FOOTPRINTS.put(key, new CachedCarveFootprint(footprint, cells));
+            cachedCarveCells += cells;
+        }
     }
 
     static OrganicCarve organicCarve(StructureCarvingFootprint footprint, IrisStructureTerrain terrain,
@@ -235,9 +696,6 @@ public final class NativeStructureTerrainIntegrator {
                                             Supplier<StructureTemplateManager> templates,
                                             StructureCarvingFootprint.ColumnSink sink) {
         for (StructurePiece piece : start.getPieces()) {
-            if (NativeStructureReferenceEnvelope.isMarker(piece)) {
-                continue;
-            }
             BoundingBox bounds = piece.getBoundingBox();
             if (!(piece instanceof PoolElementStructurePiece poolPiece)
                     || !emitTemplateColumns(pieceTemplates(poolPiece, templates),
@@ -373,7 +831,7 @@ public final class NativeStructureTerrainIntegrator {
                             continue;
                         }
                         BlockState fill = palette == null
-                                ? defaultEncaseBlock(y)
+                                ? defaultEncaseBlock(world, y)
                                 : Objects.requireNonNull(
                                         paletteBlockResolver.resolve(palette, rng, x, y, z),
                                         "Encase palette returned no block for " + structureId + " at "
@@ -391,6 +849,41 @@ public final class NativeStructureTerrainIntegrator {
 
     static BlockState defaultEncaseBlock(int y) {
         return y < 0 ? Blocks.DEEPSLATE.defaultBlockState() : Blocks.STONE.defaultBlockState();
+    }
+
+    static BlockState defaultEncaseBlock(WorldGenLevel world, int y) {
+        ServerLevel level = world == null ? null : world.getLevel();
+        if (level == null) {
+            return defaultEncaseBlock(y);
+        }
+        Holder<DimensionType> dimensionType = level.dimensionTypeRegistration();
+        ResourceKey<DimensionType> dimensionTypeKey = dimensionType.unwrapKey().orElse(null);
+        return defaultEncaseBlock(level.dimension(), dimensionTypeKey, dimensionType.value(), y);
+    }
+
+    static BlockState defaultEncaseBlock(ResourceKey<Level> dimension, int y) {
+        return defaultEncaseBlock(dimension, null, null, y);
+    }
+
+    static BlockState defaultEncaseBlock(ResourceKey<Level> dimension,
+                                         ResourceKey<DimensionType> dimensionTypeKey,
+                                         DimensionType dimensionType, int y) {
+        if (Level.NETHER.equals(dimension)) {
+            return Blocks.NETHERRACK.defaultBlockState();
+        }
+        if (Level.END.equals(dimension)) {
+            return Blocks.END_STONE.defaultBlockState();
+        }
+        if (BuiltinDimensionTypes.NETHER.equals(dimensionTypeKey)
+                || dimensionType != null && dimensionType.hasCeiling() && !dimensionType.hasSkyLight()) {
+            return Blocks.NETHERRACK.defaultBlockState();
+        }
+        if (BuiltinDimensionTypes.END.equals(dimensionTypeKey)
+                || dimensionType != null && (dimensionType.hasEnderDragonFight()
+                || dimensionType.hasEndFlashes())) {
+            return Blocks.END_STONE.defaultBlockState();
+        }
+        return defaultEncaseBlock(y);
     }
 
     private static void carvePieceBoxes(WorldGenLevel world, BoundingBox area, StructureStart start,
@@ -431,9 +924,6 @@ public final class NativeStructureTerrainIntegrator {
                                        StructureStart start,
                                        Supplier<StructureTemplateManager> templates) {
         for (StructurePiece piece : start.getPieces()) {
-            if (NativeStructureReferenceEnvelope.isMarker(piece)) {
-                continue;
-            }
             if (!(piece instanceof PoolElementStructurePiece poolPiece)
                     || poolPiece.getElement().getProjection() != StructureTemplatePool.Projection.RIGID
                     || !intersects(poolPiece.getBoundingBox(), area)) {
@@ -494,6 +984,80 @@ public final class NativeStructureTerrainIntegrator {
 
     // StructureStart has no value equality, so the key pins the exact start instance a chunk carves against.
     private record CarveFootprintKey(StructureStart start, int padding) {
+    }
+
+    private record CachedCarveFootprint(StructureCarvingFootprint footprint, int cells) {
+    }
+
+    private record JunctionAnchor(int x, int y, int z) {
+    }
+
+    static final class SourceTerrainSnapshot {
+        private final BoundingBox area;
+        private final int width;
+        private final BlockState[][] statesByLayer;
+        private final int sampledCells;
+
+        private SourceTerrainSnapshot(BoundingBox area, int width,
+                                      BlockState[][] statesByLayer, int sampledCells) {
+            this.area = area;
+            this.width = width;
+            this.statesByLayer = statesByLayer;
+            this.sampledCells = sampledCells;
+        }
+
+        static SourceTerrainSnapshot capture(
+                WorldGenLevel world, BoundingBox area, BitSet requiredLayers) {
+            Objects.requireNonNull(world, "Source terrain snapshot requires a generation level");
+            Objects.requireNonNull(area, "Source terrain snapshot requires writable bounds");
+            Objects.requireNonNull(requiredLayers, "Source terrain snapshot requires sampled layers");
+            int width = area.getXSpan();
+            int depth = area.getZSpan();
+            int height = area.getYSpan();
+            int horizontalCells = Math.multiplyExact(width, depth);
+            BlockState[][] statesByLayer = new BlockState[height][];
+            int sampledCells = 0;
+            BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
+            for (int layer = requiredLayers.nextSetBit(0);
+                 layer >= 0; layer = requiredLayers.nextSetBit(layer + 1)) {
+                if (layer >= height) {
+                    throw new IllegalArgumentException(
+                            "Source terrain snapshot layer exceeds writable bounds: " + layer);
+                }
+                BlockState[] states = new BlockState[horizontalCells];
+                statesByLayer[layer] = states;
+                sampledCells = Math.addExact(sampledCells, horizontalCells);
+                int y = Math.addExact(area.minY(), layer);
+                for (int z = area.minZ(); z <= area.maxZ(); z++) {
+                    for (int x = area.minX(); x <= area.maxX(); x++) {
+                        int index = (z - area.minZ()) * width + x - area.minX();
+                        states[index] = sourceTerrainBlock(
+                                world.getBlockState(position.set(x, y, z)));
+                    }
+                }
+            }
+            return new SourceTerrainSnapshot(new BoundingBox(
+                    area.minX(), area.minY(), area.minZ(),
+                    area.maxX(), area.maxY(), area.maxZ()), width,
+                    statesByLayer, sampledCells);
+        }
+
+        BlockState stateAt(BlockPos position) {
+            if (!area.isInside(position)) {
+                return null;
+            }
+            BlockState[] states = statesByLayer[position.getY() - area.minY()];
+            if (states == null) {
+                return null;
+            }
+            int index = (position.getZ() - area.minZ()) * width
+                    + position.getX() - area.minX();
+            return states[index];
+        }
+
+        int sampledCells() {
+            return sampledCells;
+        }
     }
 
     record OrganicCarve(StructureCarvingFootprint footprint, IrisStructureCarveShape shape,

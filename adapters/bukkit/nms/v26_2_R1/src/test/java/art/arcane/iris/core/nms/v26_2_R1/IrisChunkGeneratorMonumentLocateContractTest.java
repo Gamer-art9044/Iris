@@ -10,7 +10,9 @@ import org.junit.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
@@ -27,17 +29,19 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
         assertTrue(filterStart > irisHelperStart);
         String outerMethod = source.substring(findStart, irisHelperStart);
         String irisHelper = source.substring(irisHelperStart, filterStart);
-        int unexploredGuard = irisHelper.indexOf("if (findUnexplored)");
         int registryLookup = irisHelper.indexOf("level.registryAccess().lookupOrThrow(Registries.STRUCTURE)");
         int placedCheck = irisHelper.indexOf(
-                "if (!IrisStructureLocator.isPlaced(engine, structureId))");
-        int irisLocate = irisHelper.indexOf("IrisStructureLocator.locate(", placedCheck);
+                "if (!IrisStructureLocator.hasNativePlacement(engine, structureId))");
+        int irisLocate = irisHelper.indexOf("NativeStructureLocatePersistence.search(", placedCheck);
         int searchLimit = irisHelper.indexOf("LocateStatus.SEARCH_LIMIT_REACHED", irisLocate);
-        int limitSkip = irisHelper.indexOf("continue;", searchLimit);
         int nativeFilter = outerMethod.indexOf("filterReachableStructures(level, holders)");
-        int delegateLocate = outerMethod.indexOf("delegate.findNearestMapStructure(level, reachable");
-        int nearestSelection = outerMethod.indexOf(
-                "NativeStructureLocateResults.nearest(pos, irisPlaced, nativeLocated)");
+        int nativePrediction = outerMethod.indexOf("NativeStructureVanillaLocator.predict(", nativeFilter);
+        int irisResolution = outerMethod.indexOf("return findNearestIrisStructure(", nativePrediction);
+        int nearestSelection = irisHelper.indexOf(
+                "NativeStructureLocateResults.nearest(pos, predicted, nativeLocated)");
+        int selectedVerification = irisHelper.indexOf("bestSearch.search().verify(bestResult)", nearestSelection);
+        int selectedReference = irisHelper.indexOf(
+                "selectedSearch.search().reference(selectedStart)", selectedVerification);
         int reachabilityStart = source.indexOf("private Set<String> reachableStructureKeys", filterStart);
         assertTrue(reachabilityStart > filterStart);
         String filterMethod = source.substring(filterStart, reachabilityStart);
@@ -46,22 +50,28 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
         int emptyNativePartition = filterMethod.indexOf("if (candidates.isEmpty())", filterContinue);
         int reachabilityLookup = filterMethod.indexOf("reachableStructureKeys(level)", emptyNativePartition);
 
-        assertTrue(unexploredGuard >= 0);
-        assertTrue(registryLookup > unexploredGuard);
+        assertTrue(registryLookup >= 0);
         assertTrue(placedCheck > registryLookup);
         assertTrue(irisLocate > placedCheck);
         assertTrue(searchLimit > irisLocate);
-        assertTrue(limitSkip > searchLimit);
         assertTrue(nativeFilter >= 0);
-        assertTrue(delegateLocate > nativeFilter);
-        assertTrue(nearestSelection > delegateLocate);
+        assertTrue(nativePrediction > nativeFilter);
+        assertTrue(irisResolution > nativePrediction);
+        assertTrue(nearestSelection > irisLocate);
+        assertTrue(selectedVerification > nearestSelection);
+        assertTrue(selectedReference > selectedVerification);
         assertTrue(policyFilter >= 0);
         assertTrue(filterContinue > policyFilter);
         assertTrue(emptyNativePartition > filterContinue);
         assertTrue(reachabilityLookup > emptyNativePartition);
         assertFalse(filterMethod.contains("NativeStructureLocateCapability"));
         assertFalse(irisHelper.contains("NativeStructureLocateCapability.isPaperUnavailable(structureId)"));
-        assertTrue(irisHelper.contains("new BlockPos(result.originX(), result.baseY(), result.originZ())"));
+        assertTrue(irisHelper.contains("NativeStructureLocatePersistence.probe("));
+        assertTrue(irisHelper.contains("NativeStructureLocateResults.selectAndReference("));
+        assertTrue(irisHelper.contains("selectedSearch.search().reference(selectedStart)"));
+        assertTrue(irisHelper.contains("findUnexplored"));
+        assertTrue(irisHelper.contains("verified.ownership().locatorY()"));
+        assertFalse(outerMethod.contains("delegate.findNearestMapStructure("));
     }
 
     @Test
@@ -75,6 +85,50 @@ public class IrisChunkGeneratorMonumentLocateContractTest {
         assertSame(irisNear, NativeStructureLocateResults.nearest(origin, irisNear, nativeFar));
         assertSame(nativeNear, NativeStructureLocateResults.nearest(origin, irisNear, nativeNear));
         assertSame(nativeTie, NativeStructureLocateResults.nearest(origin, irisNear, nativeTie));
+    }
+
+    @Test
+    public void mixedUnexploredLocateReferencesOnlyTheSelectedProvider() {
+        BlockPos origin = BlockPos.ZERO;
+        Pair<BlockPos, Holder<Structure>> irisNear = Pair.of(new BlockPos(4, 70, 0), null);
+        Pair<BlockPos, Holder<Structure>> nativeFar = Pair.of(new BlockPos(8, 70, 0), null);
+        AtomicInteger irisReferences = new AtomicInteger();
+        AtomicInteger nativeReferences = new AtomicInteger();
+
+        Pair<BlockPos, Holder<Structure>> irisSelected =
+                NativeStructureLocateResults.selectAndReference(
+                        origin,
+                        irisNear, () -> irisReferences.incrementAndGet(),
+                        nativeFar, () -> nativeReferences.incrementAndGet());
+
+        assertSame(irisNear, irisSelected);
+        assertEquals(1, irisReferences.get());
+        assertEquals(0, nativeReferences.get());
+
+        Pair<BlockPos, Holder<Structure>> nativeNear = Pair.of(new BlockPos(2, 70, 0), null);
+        Pair<BlockPos, Holder<Structure>> nativeSelected =
+                NativeStructureLocateResults.selectAndReference(
+                        origin,
+                        irisNear, () -> irisReferences.incrementAndGet(),
+                        nativeNear, () -> nativeReferences.incrementAndGet());
+
+        assertSame(nativeNear, nativeSelected);
+        assertEquals(1, irisReferences.get());
+        assertEquals(1, nativeReferences.get());
+    }
+
+    @Test
+    public void nativePredictionIsReadOnlyUntilTheWinnerIsCommitted() throws IOException {
+        Path nativegen = Path.of(System.getProperty("iris.nativeStructurePostProcessorSource")).getParent();
+        String source = Files.readString(nativegen.resolve("NativeStructureVanillaLocator.java"));
+        int predictionStart = source.indexOf("private static Candidate predictAt(");
+        int candidateStart = source.indexOf("public static final class Candidate", predictionStart);
+        String prediction = source.substring(predictionStart, candidateStart);
+        String candidate = source.substring(candidateStart);
+
+        assertFalse(prediction.contains("addReference("));
+        assertTrue(candidate.contains("structureManager.addReference(referenceStart)"));
+        assertTrue(candidate.contains("committed.compareAndSet(false, true)"));
     }
 
     @Test

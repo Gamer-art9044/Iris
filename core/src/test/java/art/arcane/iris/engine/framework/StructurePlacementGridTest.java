@@ -206,6 +206,23 @@ public class StructurePlacementGridTest {
     }
 
     @Test
+    public void anonymousIdentityPreservesAuthoredSourceOrder() {
+        IrisStructurePlacement first = placement(StructureDistribution.RANDOM_SPREAD);
+        first.getStructures().add("test:second");
+        IrisStructurePlacement reordered = placement(StructureDistribution.RANDOM_SPREAD);
+        reordered.getStructures().clear();
+        reordered.getStructures().add("test:second");
+        reordered.getStructures().add("test:structure");
+
+        assertNotEquals(StructurePlacementGrid.placementIdentity(first),
+                StructurePlacementGrid.placementIdentity(reordered));
+        assertNotEquals(StructurePlacementGrid.placementSalt(first),
+                StructurePlacementGrid.placementSalt(reordered));
+        assertNotEquals(StructurePlacementGrid.placementRng(first, 7, -11, 123L).getSeed(),
+                StructurePlacementGrid.placementRng(reordered, 7, -11, 123L).getSeed());
+    }
+
+    @Test
     public void blankIdsDeriveDistinctStableConcentricRingsFromContent() {
         IrisStructurePlacement first = placement(StructureDistribution.CONCENTRIC_RINGS);
         IrisStructurePlacement recreatedFirst = placement(StructureDistribution.CONCENTRIC_RINGS);

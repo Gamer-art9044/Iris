@@ -52,8 +52,8 @@ public class CommandPack implements DirectorExecutor {
         }
 
         if (pack == null || pack.isBlank()) {
-            File[] dirs = packsRoot.listFiles(File::isDirectory);
-            if (dirs == null || dirs.length == 0) {
+            List<File> dirs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
+            if (dirs.isEmpty()) {
                 s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_NO_PACKS_VALIDATE));
                 return;
             }
@@ -64,7 +64,7 @@ public class CommandPack implements DirectorExecutor {
                     broken++;
                 }
             }
-            s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_VALIDATION_COMPLETE_BROKEN_PACKS, MessageArgument.untrusted("broken", String.valueOf(broken)), MessageArgument.untrusted("value", String.valueOf(dirs.length))));
+            s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_VALIDATION_COMPLETE_BROKEN_PACKS, MessageArgument.untrusted("broken", String.valueOf(broken)), MessageArgument.untrusted("value", String.valueOf(dirs.size()))));
             return;
         }
 

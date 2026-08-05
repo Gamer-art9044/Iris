@@ -13,10 +13,10 @@ import static org.junit.Assert.assertSame;
 
 public class IrisStructurePlacementCarveSettingsTest {
     @Test
-    public void defaultsPreserveTerrainWithBoxCarving() {
+    public void defaultsToSourceTerrainWithBoxCarving() {
         IrisStructureTerrain terrain = new IrisStructureTerrain();
 
-        assertEquals(IrisStructureTerrainMode.PRESERVE, terrain.resolvedMode());
+        assertEquals(IrisStructureTerrainMode.SOURCE, terrain.resolvedMode());
         assertEquals(IrisStructureCarveShape.BOX, terrain.getShape());
         assertEquals(IrisStructureCarveShape.BOX, terrain.resolvedShape());
         assertEquals(0.8D, terrain.getErosionStrength(), 0D);

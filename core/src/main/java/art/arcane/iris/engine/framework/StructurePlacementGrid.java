@@ -134,7 +134,7 @@ public final class StructurePlacementGrid {
         return rng.chance(density);
     }
 
-    private static long placementSeed(IrisStructurePlacement placement, int cx, int cz, long seed) {
+    public static long placementIdentity(IrisStructurePlacement placement) {
         long signature = 1469598103934665603L;
         signature = appendLong(signature, placement.getDistribution().ordinal());
         signature = appendLong(signature, placement.getSalt());
@@ -156,6 +156,11 @@ public final class StructurePlacementGrid {
             signature = appendLong(signature, placement.isUnderwater() ? 1L : 0L);
             signature = appendSources(signature, placement);
         }
+        return signature;
+    }
+
+    private static long placementSeed(IrisStructurePlacement placement, int cx, int cz, long seed) {
+        long signature = placementIdentity(placement);
         int identitySalt = (int) (signature ^ (signature >>> 32));
         return mix(seed ^ signature, cx, cz, placementSalt(placement) ^ identitySalt);
     }

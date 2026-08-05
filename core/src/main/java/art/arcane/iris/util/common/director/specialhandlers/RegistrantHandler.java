@@ -3,6 +3,7 @@ package art.arcane.iris.util.common.director.specialhandlers;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.director.DirectorParameterHandler;
 import art.arcane.volmlib.util.director.exceptions.DirectorParsingException;
@@ -34,14 +35,12 @@ public abstract class RegistrantHandler<T extends IrisRegistrant> implements Dir
             }
         }
 
-        //noinspection ConstantConditions
-        for (File i : IrisPlatforms.get().dataFolder("packs").listFiles()) {
-            if (i.isDirectory()) {
-                data = IrisData.get(i);
-                for (T j : data.getLoader(type).loadAll(data.getLoader(type).getPossibleKeys())) {
-                    if (known.add(j.getLoadKey()))
-                        p.add(j);
-                }
+        for (File i : PackDirectoryResolver.listVisiblePackDirectories(
+                IrisPlatforms.get().dataFolder("packs"))) {
+            data = IrisData.get(i);
+            for (T j : data.getLoader(type).loadAll(data.getLoader(type).getPossibleKeys())) {
+                if (known.add(j.getLoadKey()))
+                    p.add(j);
             }
         }
 

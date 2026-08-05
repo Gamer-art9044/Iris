@@ -8,6 +8,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Properties;
 
 import static org.junit.Assert.assertEquals;
@@ -42,6 +43,32 @@ public class IrisWorldStorageTest {
         assertEquals(NamespacedKey.minecraft("the_nether"), IrisWorldStorage.keyFromName("world_nether", "world"));
         assertEquals(NamespacedKey.minecraft("the_end"), IrisWorldStorage.keyFromName("world_the_end", "world"));
         assertEquals(new NamespacedKey("iris", "iris_world"), IrisWorldStorage.keyFromName("Iris World", "world"));
+    }
+
+    @Test
+    public void managedKeyRejectsMainWorldsAndUnsafePaths() {
+        assertEquals(new NamespacedKey("iris", "iris_world"),
+                IrisWorldStorage.managedKeyFromName("Iris World", "world"));
+        assertEquals(new NamespacedKey("iris", "iris_world"),
+                IrisWorldStorage.managedKeyFromName("iris:iris_world", "world"));
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.managedKeyFromName("world", "world"));
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.managedKeyFromName("minecraft:overworld", "world"));
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.managedKeyFromName("../world", "world"));
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.managedKeyFromName("iris:nested/world", "world"));
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.managedKeyFromName("iris:unsafe.world", "world"));
+    }
+
+    @Test
+    public void explicitManagedIdentityDoesNotRequireServerLevelLookup() {
+        NamespacedKey worldKey = new NamespacedKey("iris", "probe");
+
+        assertEquals(worldKey, IrisWorldStorage.managedKeyFromName(worldKey.toString()));
+        assertEquals("probe", IrisWorldStorage.logicalName(worldKey));
     }
 
     @Test
@@ -89,5 +116,17 @@ public class IrisWorldStorageTest {
         NamespacedKey key = NamespacedKey.minecraft("../outside");
 
         assertThrows(IllegalArgumentException.class, () -> IrisWorldStorage.dimensionRoot(levelRoot, key));
+    }
+
+    @Test
+    public void safeManagedDimensionRootRejectsSymlinkedStorage() throws Exception {
+        File levelRoot = temporaryFolder.newFolder("managed-world");
+        Path dimensions = Files.createDirectories(levelRoot.toPath().resolve("dimensions"));
+        Path outside = temporaryFolder.newFolder("outside").toPath();
+        Files.createSymbolicLink(dimensions.resolve("iris"), outside);
+
+        assertThrows(IllegalArgumentException.class, () -> IrisWorldStorage.requireSafeManagedDimensionRoot(
+                levelRoot,
+                new NamespacedKey("iris", "probe")));
     }
 }

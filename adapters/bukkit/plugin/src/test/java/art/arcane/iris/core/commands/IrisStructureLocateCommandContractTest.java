@@ -25,7 +25,7 @@ public class IrisStructureLocateCommandContractTest {
     }
 
     @Test
-    public void findRoutesOnlyExplicitNativeReplacementThroughIrisLocate() throws IOException {
+    public void findRoutesRegisteredReplacementThroughPersistedNativeLocate() throws IOException {
         String source = Files.readString(Path.of(System.getProperty("iris.commandFindSource")));
         int methodStart = source.indexOf("public void structure(");
         int methodEnd = source.indexOf("private static Structure resolveNativeStructure", methodStart);
@@ -34,16 +34,19 @@ public class IrisStructureLocateCommandContractTest {
         int policyResolution = method.indexOf("NativeStructureGenerationPolicy.resolve(", nativeResolution);
         int replacementCheck = method.indexOf(
                 "decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS", policyResolution);
-        int replacementLocate = method.indexOf("locateIrisStructure(e, structureKey, commandSender)", replacementCheck);
         int genericIrisLookup = method.indexOf(
-                "nativeStructure == null && IrisStructureLocator.isPlaced(e, structureKey)", replacementLocate);
+                "nativeStructure == null && IrisStructureLocator.isPlaced(e, structureKey)", replacementCheck);
+        int replacementLocate = method.indexOf("final boolean replacementLocate = irisReplacement", genericIrisLookup);
         int nativeLocate = method.indexOf("targetWorld.locateNearestStructure(", genericIrisLookup);
         assertTrue(nativeResolution >= 0);
         assertTrue(policyResolution > nativeResolution);
         assertTrue(replacementCheck > policyResolution);
-        assertTrue(replacementLocate > replacementCheck);
-        assertTrue(genericIrisLookup > replacementLocate);
+        assertTrue(genericIrisLookup > replacementCheck);
+        assertTrue(replacementLocate > genericIrisLookup);
         assertTrue(nativeLocate > policyResolution);
+        assertTrue(method.contains("irisReplacement && !IrisStructureLocator.hasNativePlacement"));
+        assertTrue(method.contains("!replacementLocate && !explicitNativePlacement"));
+        assertTrue(method.contains("&& !StructureReachability.isReachable"));
         assertTrue(method.contains("decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS"));
         assertFalse(method.contains("NativeStructureLocateCapability"));
     }
@@ -82,7 +85,8 @@ public class IrisStructureLocateCommandContractTest {
         int methodEnd = source.indexOf("private void sendVerificationMessages(", methodStart);
         String method = source.substring(methodStart, methodEnd);
         int policyResolution = method.indexOf("NativeStructureGenerationPolicy.resolve(engine, keyName, false)");
-        int nativeRequirement = method.indexOf("requiresNativeReachability |= decision.generate()", policyResolution);
+        int nativeRequirement = method.indexOf(
+                "requiresNativeReachability |= !IrisStructureLocator.isPlaced", policyResolution);
         int reachabilityGuard = method.indexOf("if (requiresNativeReachability)", nativeRequirement);
         int reachabilityLookup = method.indexOf("StructureReachability.reachableKeys(engine)", reachabilityGuard);
 

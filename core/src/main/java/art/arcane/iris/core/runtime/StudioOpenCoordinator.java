@@ -2,9 +2,13 @@ package art.arcane.iris.core.runtime;
 
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.core.IrisWorldStorage;
+import art.arcane.iris.core.ServerConfigurator;
+import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
+import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
+import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.project.IrisProject;
 import art.arcane.iris.core.project.IrisCodeWorkspace;
 import art.arcane.iris.core.tools.IrisCreator;
@@ -14,7 +18,6 @@ import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
-import art.arcane.volmlib.util.io.IO;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -22,17 +25,27 @@ import org.bukkit.entity.Player;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public final class StudioOpenCoordinator {
+    private static final long STUDIO_CLOSE_TIMEOUT_SECONDS = 120L;
     private static volatile StudioOpenCoordinator instance;
 
     private StudioOpenCoordinator() {
@@ -61,31 +74,20 @@ public final class StudioOpenCoordinator {
     }
 
     public CompletableFuture<StudioCloseResult> closeProject(IrisProject project) {
-        CompletableFuture<StudioCloseResult> future = new CompletableFuture<>();
-        J.aBukkit(() -> future.complete(executeClose(project)));
-        return future;
-    }
-
-    private StudioCloseResult executeClose(IrisProject project) {
         if (project == null) {
-            return new StudioCloseResult(null, true, true, false, null);
+            return CompletableFuture.completedFuture(new StudioCloseResult(null, true, true, false, null));
         }
 
         PlatformChunkGenerator provider = project.getActiveProvider();
         if (provider == null) {
-            return new StudioCloseResult(null, true, true, false, null);
+            return CompletableFuture.completedFuture(new StudioCloseResult(null, true, true, false, null));
         }
 
         World world = BukkitWorldBinding.world(provider.getTarget().getWorld());
         String worldName = world == null
                 ? IrisWorldStorage.logicalName(WorldIdentity.parse(provider.getTarget().getWorld().identity()))
                 : IrisWorldStorage.logicalName(world);
-        try {
-            return closeWorld(provider, worldName, world, true, project);
-        } catch (Throwable e) {
-            project.setActiveProvider(null);
-            return new StudioCloseResult(worldName, false, false, false, e);
-        }
+        return closeWorldCoordinated(provider, worldName, world, true, project);
     }
 
     private void executeOpen(StudioOpenRequest request, CompletableFuture<StudioOpenResult> future) {
@@ -200,7 +202,16 @@ public final class StudioOpenCoordinator {
             if (!request.retainOnFailure()) {
                 try {
                     updateStage(request, "cleanup", 1.00D);
-                    closeWorld(provider, request.worldName(), world, true, request.project());
+                    StudioCloseResult cleanupResult = closeWorldCoordinated(
+                            provider,
+                            request.worldName(),
+                            world,
+                            true,
+                            request.project()
+                    ).get(45L, TimeUnit.SECONDS);
+                    if (cleanupResult.failureCause() != null) {
+                        throw cleanupResult.failureCause();
+                    }
                 } catch (Throwable cleanupError) {
                     IrisLogging.reportError("Studio cleanup failed for world \"" + request.worldName() + "\".", cleanupError);
                 }
@@ -240,162 +251,342 @@ public final class StudioOpenCoordinator {
         return loaded;
     }
 
-    private StudioCloseResult closeWorld(
+    private CompletableFuture<StudioCloseResult> closeWorldCoordinated(
             PlatformChunkGenerator provider,
             String worldName,
             World world,
             boolean deleteFolder,
             IrisProject project
     ) {
-        Throwable failure = null;
-        boolean unloadCompletedLive = world == null || !isWorldFamilyLoaded(worldName);
-        boolean folderDeletionCompletedLive = !deleteFolder;
-        boolean startupCleanupQueued = false;
-        CompletableFuture<Void> closeFuture = CompletableFuture.completedFuture(null);
-
-        if (world != null) {
-            try {
-                evacuatePlayers(world);
-            } catch (Throwable e) {
-                failure = e;
-            }
+        String operationTarget = worldName == null || worldName.isBlank() ? "unknown-studio-world" : worldName;
+        LifecycleOperationCoordinator.Lease lease;
+        try {
+            lease = LifecycleOperationCoordinator.get().acquire(
+                    LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
+                    LifecycleOperationCoordinator.OperationKind.STUDIO_CLOSE,
+                    operationTarget
+            );
+        } catch (Throwable failure) {
+            boolean queued = deleteFolder && queueStartupCleanup(worldName, failure);
+            return CompletableFuture.completedFuture(new StudioCloseResult(
+                    worldName,
+                    false,
+                    false,
+                    queued,
+                    failure
+            ));
         }
 
+        CompletableFuture<StudioCloseResult> closeFuture;
+        try {
+            closeFuture = closeWorldReserved(provider, worldName, world, deleteFolder, project);
+        } catch (Throwable failure) {
+            boolean queued = deleteFolder && queueStartupCleanup(worldName, failure);
+            closeFuture = CompletableFuture.completedFuture(new StudioCloseResult(
+                    worldName,
+                    false,
+                    false,
+                    queued,
+                    failure
+            ));
+        }
+        return closeFuture.whenComplete((result, throwable) -> lease.close());
+    }
+
+    private CompletableFuture<StudioCloseResult> closeWorldReserved(
+            PlatformChunkGenerator provider,
+            String worldName,
+            World world,
+            boolean deleteFolder,
+            IrisProject project
+    ) {
+        AtomicBoolean unloadConfirmed = new AtomicBoolean(false);
+        AtomicBoolean folderDeleted = new AtomicBoolean(!deleteFolder);
+        AtomicBoolean terminalTimeout = new AtomicBoolean(false);
         if (world != null) {
             IrisToolbelt.beginWorldMaintenance(world, "studio-close", true);
         }
 
-        try {
-            if (project != null) {
-                project.setActiveProvider(null);
-            }
-            if (provider != null) {
-                closeFuture = provider.closeAsync();
-            }
-
-            if (worldName != null && !worldName.isBlank()) {
-                requestWorldFamilyUnload(worldName);
-            }
-
-            if (worldName != null && !worldName.isBlank()) {
-                long unloadDeadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(20L);
-                CompletableFuture<Void> unloadFuture = waitForWorldFamilyUnload(worldName, unloadDeadline);
-                try {
-                    unloadFuture.get(Math.max(1000L, unloadDeadline - System.currentTimeMillis()), TimeUnit.MILLISECONDS);
-                    unloadCompletedLive = true;
-                } catch (TimeoutException e) {
-                    unloadCompletedLive = !isWorldFamilyLoaded(worldName);
-                } catch (Throwable e) {
-                    failure = failure == null ? unwrapFailure(e) : failure;
-                }
-            }
-
-            try {
-                closeFuture.get(20L, TimeUnit.SECONDS);
-            } catch (Throwable e) {
-                Throwable cause = unwrapFailure(e);
-                if (failure == null) {
-                    failure = cause;
-                }
-            }
-
-            if (deleteFolder && worldName != null && !worldName.isBlank()) {
-                WorldFamilyDeleteResult deleteResult = deleteWorldFamily(worldName, unloadCompletedLive);
-                folderDeletionCompletedLive = deleteResult.liveDeleted();
-                startupCleanupQueued = deleteResult.startupCleanupQueued();
-            }
-        } finally {
+        CompletableFuture<Void> sequence = sequenceStudioClose(
+                () -> evacuateWorldFamily(worldName, world),
+                () -> unloadWorldFamily(worldName, world).thenRun(() -> {
+                    if (terminalTimeout.get()) {
+                        throw new CompletionException(new TimeoutException(
+                                "Studio close stopped after its terminal timeout."));
+                    }
+                    unloadConfirmed.set(true);
+                    if (project != null) {
+                        project.setActiveProvider(null);
+                    }
+                }),
+                () -> provider == null ? CompletableFuture.completedFuture(null) : provider.closeAsync(),
+                () -> deleteFolder
+                        ? deleteWorldFamily(worldName).thenRun(() -> folderDeleted.set(true))
+                        : CompletableFuture.completedFuture(null),
+                terminalTimeout::get
+        );
+        CompletableFuture<StudioCloseResult> operation = guardCloseCompletion(
+                sequence,
+                terminalTimeout,
+                worldName)
+                .thenApply(ignored -> new StudioCloseResult(
+                        worldName,
+                        true,
+                        folderDeleted.get(),
+                        false,
+                        null
+                ))
+                .exceptionally(throwable -> {
+                    Throwable failure = unwrapFailure(throwable);
+                    boolean queued = deleteFolder && queueStartupCleanup(worldName, failure);
+                    return new StudioCloseResult(
+                            worldName,
+                            unloadConfirmed.get(),
+                            folderDeleted.get(),
+                            queued,
+                            failure
+                    );
+                });
+        return operation.whenComplete((result, throwable) -> {
             if (world != null) {
                 IrisToolbelt.endWorldMaintenance(world, "studio-close");
             }
-        }
-
-        return new StudioCloseResult(worldName, unloadCompletedLive, folderDeletionCompletedLive, startupCleanupQueued, failure);
+        });
     }
 
-    private void evacuatePlayers(World world) throws Exception {
-        if (world == null) {
-            return;
+    static CompletableFuture<Void> sequenceStudioClose(
+            Supplier<CompletableFuture<Void>> evacuate,
+            Supplier<CompletableFuture<Void>> unload,
+            Supplier<CompletableFuture<Void>> closeGenerator,
+            Supplier<CompletableFuture<Void>> deleteFolders
+    ) {
+        return sequenceStudioClose(evacuate, unload, closeGenerator, deleteFolders, () -> false);
+    }
+
+    static CompletableFuture<Void> sequenceStudioClose(
+            Supplier<CompletableFuture<Void>> evacuate,
+            Supplier<CompletableFuture<Void>> unload,
+            Supplier<CompletableFuture<Void>> closeGenerator,
+            Supplier<CompletableFuture<Void>> deleteFolders,
+            BooleanSupplier terminalTimeout
+    ) {
+        return invokePhase(evacuate)
+                .thenCompose(ignored -> invokePhaseUnlessTimedOut(unload, terminalTimeout))
+                .thenCompose(ignored -> invokePhaseUnlessTimedOut(closeGenerator, terminalTimeout))
+                .thenCompose(ignored -> invokePhaseUnlessTimedOut(deleteFolders, terminalTimeout));
+    }
+
+    private static CompletableFuture<Void> invokePhase(Supplier<CompletableFuture<Void>> phase) {
+        try {
+            CompletableFuture<Void> future = phase.get();
+            if (future == null) {
+                return CompletableFuture.failedFuture(new IllegalStateException("Studio close phase returned no completion future."));
+            }
+            return future;
+        } catch (Throwable failure) {
+            return CompletableFuture.failedFuture(failure);
+        }
+    }
+
+    private static CompletableFuture<Void> invokePhaseUnlessTimedOut(
+            Supplier<CompletableFuture<Void>> phase,
+            BooleanSupplier terminalTimeout
+    ) {
+        if (terminalTimeout.getAsBoolean()) {
+            return CompletableFuture.failedFuture(new TimeoutException(
+                    "Studio close stopped after its terminal timeout."));
+        }
+        return invokePhase(phase);
+    }
+
+    private CompletableFuture<Void> guardCloseCompletion(
+            CompletableFuture<Void> source,
+            AtomicBoolean terminalTimeout,
+            String worldName
+    ) {
+        CompletableFuture<Void> guarded = new CompletableFuture<>();
+        AtomicBoolean settled = new AtomicBoolean(false);
+        source.whenComplete((ignored, throwable) -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
+            if (throwable == null) {
+                guarded.complete(null);
+            } else {
+                guarded.completeExceptionally(throwable);
+            }
+        });
+        CompletableFuture.delayedExecutor(STUDIO_CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS).execute(() -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
+            terminalTimeout.set(true);
+            TimeoutException timeout = new TimeoutException(
+                    "Studio close did not settle within " + STUDIO_CLOSE_TIMEOUT_SECONDS
+                            + " seconds for \"" + worldName + "\".");
+            ServerConfigurator.restart("Studio close timed out for \"" + worldName + "\".");
+            guarded.completeExceptionally(timeout);
+        });
+        return guarded;
+    }
+
+    private CompletableFuture<Void> evacuateWorldFamily(String worldName, World primaryWorld) {
+        List<World> loadedWorlds = loadedWorldFamily(worldName, primaryWorld);
+        if (loadedWorlds.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
         }
 
-        CompletableFuture<Void> future = J.sfut(() -> {
-            IrisToolbelt.evacuate(world);
+        ArrayList<CompletableFuture<Void>> evacuations = new ArrayList<>(loadedWorlds.size());
+        for (World loadedWorld : loadedWorlds) {
+            CompletableFuture<Void> evacuation = J.sfut(() -> IrisToolbelt.evacuateAsync(loadedWorld))
+                    .thenCompose(evacuationFuture -> evacuationFuture)
+                    .thenCompose(evacuated -> Boolean.TRUE.equals(evacuated)
+                            ? CompletableFuture.completedFuture(null)
+                            : CompletableFuture.failedFuture(new IllegalStateException(
+                                    "Studio player evacuation failed for \"" + loadedWorld.getName() + "\".")));
+            evacuations.add(evacuation);
+        }
+        return CompletableFuture.allOf(evacuations.toArray(CompletableFuture[]::new));
+    }
+
+    private CompletableFuture<Void> unloadWorldFamily(String worldName, World primaryWorld) {
+        List<World> loadedWorlds = loadedWorldFamily(worldName, primaryWorld);
+        ArrayList<CompletableFuture<Boolean>> unloads = new ArrayList<>(loadedWorlds.size());
+        for (World loadedWorld : loadedWorlds) {
+            CompletableFuture<Boolean> unload = J.sfut(() ->
+                            IrisServices.get(MultiverseCoreLink.class)
+                                    .removeFromConfig(loadedWorld))
+                    .thenCompose(ignored -> WorldLifecycleService.get().unloadAsync(loadedWorld, false));
+            unloads.add(unload);
+        }
+
+        return CompletableFuture.allOf(unloads.toArray(CompletableFuture[]::new)).thenApply(ignored -> {
+            for (CompletableFuture<Boolean> unload : unloads) {
+                if (!Boolean.TRUE.equals(unload.join())) {
+                    throw new CompletionException(new IllegalStateException(
+                            "Studio world family unload returned false for \"" + worldName + "\"."));
+                }
+            }
+            if (isWorldFamilyLoaded(worldName)) {
+                throw new CompletionException(new IllegalStateException(
+                        "Studio world family remained loaded after confirmed unload for \"" + worldName + "\"."));
+            }
             return null;
         });
-        if (future != null) {
-            future.get(10L, TimeUnit.SECONDS);
-        }
     }
 
-    private void requestWorldFamilyUnload(String worldName) {
+    private List<World> loadedWorldFamily(String worldName, World primaryWorld) {
+        LinkedHashSet<World> worlds = new LinkedHashSet<>();
+        if (primaryWorld != null) {
+            worlds.add(primaryWorld);
+        }
         if (worldName == null || worldName.isBlank()) {
-            return;
+            return List.copyOf(worlds);
         }
-
         for (String familyWorldName : TransientWorldCleanupSupport.worldFamilyNames(worldName)) {
-            World familyWorld = WorldIdentity.resolve(IrisWorldStorage.keyFromName(familyWorldName)).orElse(null);
-            if (familyWorld == null) {
-                continue;
-            }
-
-            IrisServices.get(art.arcane.iris.core.link.MultiverseCoreLink.class).removeFromConfig(familyWorld);
-            WorldLifecycleService.get().unload(familyWorld, false);
+            WorldIdentity.resolve(IrisWorldStorage.keyFromName(familyWorldName)).ifPresent(worlds::add);
         }
+        return List.copyOf(worlds);
     }
 
-    private WorldFamilyDeleteResult deleteWorldFamily(String worldName, boolean unloadCompletedLive) {
+    private CompletableFuture<Void> deleteWorldFamily(String worldName) {
         if (worldName == null || worldName.isBlank()) {
-            return new WorldFamilyDeleteResult(true, false);
+            return CompletableFuture.completedFuture(null);
+        }
+        if (isWorldFamilyLoaded(worldName)) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Refusing to delete a loaded studio world family for \"" + worldName + "\"."));
         }
 
-        boolean liveDeleted = true;
-        for (String familyWorldName : TransientWorldCleanupSupport.worldFamilyNames(worldName)) {
-            File folder = IrisWorldStorage.dimensionRoot(familyWorldName);
-            if (!folder.exists()) {
-                continue;
+        return CompletableFuture.runAsync(() -> {
+            for (String familyWorldName : TransientWorldCleanupSupport.worldFamilyNames(worldName)) {
+                try {
+                    if (isWorldFamilyLoaded(worldName)) {
+                        throw new IOException("Studio world family became loaded before deletion for \""
+                                + worldName + "\".");
+                    }
+                    File folder = IrisWorldStorage.requireSafeManagedDimensionRoot(
+                            IrisWorldStorage.managedKeyFromName(familyWorldName));
+                    AtomicDirectoryPublisher.deleteTree(folder.toPath());
+                } catch (IOException | IllegalArgumentException failure) {
+                    throw new CompletionException(failure);
+                }
             }
+        });
+    }
 
-            try {
-                deleteWorldFolderAsync(folder, 40).get(15L, TimeUnit.SECONDS);
-            } catch (Throwable e) {
-                liveDeleted = false;
-                IrisLogging.reportError("Studio folder deletion retries failed for \"" + folder.getAbsolutePath() + "\".", unwrapFailure(e));
-            }
-
-            if (folder.exists()) {
-                liveDeleted = false;
-            }
+    private boolean queueStartupCleanup(String worldName, Throwable failure) {
+        if (worldName == null || worldName.isBlank()) {
+            return false;
         }
-
-        if (liveDeleted) {
-            return new WorldFamilyDeleteResult(true, false);
-        }
-
         try {
-            IrisServices.get(WorldDeletionQueue.class).queueForStartupDeletion(Collections.singleton(worldName));
-            return new WorldFamilyDeleteResult(false, true);
-        } catch (IOException e) {
-            if (unloadCompletedLive) {
-                IrisLogging.reportError("Failed to queue deferred deletion for world \"" + worldName + "\".", e);
+            IrisServices.get(WorldDeletionQueue.class).queueFamilyForStartupDeletion(Collections.singleton(worldName));
+            return true;
+        } catch (Throwable queueFailure) {
+            if (failure != null) {
+                failure.addSuppressed(queueFailure);
             }
-            return new WorldFamilyDeleteResult(false, false);
+            IrisLogging.reportError("Failed to queue deferred deletion for world \"" + worldName + "\".", queueFailure);
+            return false;
         }
     }
 
     private void cleanupStaleTransientWorlds(String worldName) {
-        LinkedHashSet<String> staleWorldNames = TransientWorldCleanupSupport.collectTransientStudioWorldNames(IrisWorldStorage.levelRoot());
+        LinkedHashSet<String> staleWorldNames = collectSafeTransientWorldNames();
         String requestedBaseName = TransientWorldCleanupSupport.transientStudioBaseWorldName(worldName);
         if (requestedBaseName != null) {
             staleWorldNames.add(requestedBaseName);
         }
 
         for (String staleWorldName : staleWorldNames) {
-            if (WorldIdentity.resolve(IrisWorldStorage.keyFromName(staleWorldName)).isPresent()) {
-                continue;
+            try {
+                StudioCloseResult cleanupResult = closeWorldCoordinated(
+                        null,
+                        staleWorldName,
+                        null,
+                        true,
+                        null
+                ).get(30L, TimeUnit.SECONDS);
+                if (cleanupResult.failureCause() != null) {
+                    IrisLogging.reportError("Stale studio world cleanup failed for \"" + staleWorldName + "\".", cleanupResult.failureCause());
+                }
+            } catch (Throwable failure) {
+                IrisLogging.reportError("Stale studio world cleanup failed for \"" + staleWorldName + "\".", unwrapFailure(failure));
             }
-
-            deleteWorldFamily(staleWorldName, true);
         }
+    }
+
+    private LinkedHashSet<String> collectSafeTransientWorldNames() {
+        LinkedHashSet<String> worldNames = new LinkedHashSet<>();
+        Path irisNamespace = IrisWorldStorage.levelRoot()
+                .toPath()
+                .toAbsolutePath()
+                .normalize()
+                .resolve("dimensions")
+                .resolve("iris");
+        if (!Files.exists(irisNamespace, LinkOption.NOFOLLOW_LINKS)) {
+            return worldNames;
+        }
+        if (Files.isSymbolicLink(irisNamespace) || !Files.isDirectory(irisNamespace, LinkOption.NOFOLLOW_LINKS)) {
+            IrisLogging.warn("Skipping stale studio cleanup because Iris dimension storage is unsafe: " + irisNamespace);
+            return worldNames;
+        }
+
+        try (DirectoryStream<Path> children = Files.newDirectoryStream(irisNamespace)) {
+            for (Path child : children) {
+                if (Files.isSymbolicLink(child) || !Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) {
+                    continue;
+                }
+                String transientName = TransientWorldCleanupSupport.transientStudioBaseWorldName(
+                        child.getFileName().toString());
+                if (transientName != null) {
+                    worldNames.add(transientName);
+                }
+            }
+        } catch (IOException failure) {
+            IrisLogging.reportError("Failed to inspect stale studio worlds in \"" + irisNamespace + "\".", failure);
+        }
+        return worldNames;
     }
 
     private void updateStage(StudioOpenRequest request, String stage, double progress) {
@@ -417,37 +608,6 @@ public final class StudioOpenCoordinator {
             case "create_world", "creating world", "world created" -> "create_world";
             default -> normalized.replace(' ', '_');
         };
-    }
-
-    private CompletableFuture<Void> waitForWorldFamilyUnload(String worldName, long deadline) {
-        if (worldName == null || !isWorldFamilyLoaded(worldName) || System.currentTimeMillis() >= deadline) {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        return delayFuture(100L).thenCompose(ignored -> waitForWorldFamilyUnload(worldName, deadline));
-    }
-
-    private CompletableFuture<Void> deleteWorldFolderAsync(File folder, int attemptsRemaining) {
-        if (folder == null || !folder.exists()) {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        IO.delete(folder);
-        if (!folder.exists()) {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        if (attemptsRemaining <= 1) {
-            return CompletableFuture.failedFuture(new IllegalStateException("World folder still exists after deletion retries: " + folder.getAbsolutePath()));
-        }
-
-        return delayFuture(250L).thenCompose(ignored -> deleteWorldFolderAsync(folder, attemptsRemaining - 1));
-    }
-
-    private CompletableFuture<Void> delayFuture(long delayMillis) {
-        long safeDelay = Math.max(0L, delayMillis);
-        return CompletableFuture.runAsync(() -> {
-        }, CompletableFuture.delayedExecutor(safeDelay, TimeUnit.MILLISECONDS));
     }
 
     private Throwable unwrapFailure(Throwable throwable) {
@@ -537,8 +697,5 @@ public final class StudioOpenCoordinator {
         public boolean successful() {
             return failureCause == null;
         }
-    }
-
-    private record WorldFamilyDeleteResult(boolean liveDeleted, boolean startupCleanupQueued) {
     }
 }

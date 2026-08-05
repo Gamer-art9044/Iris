@@ -1,5 +1,6 @@
 package art.arcane.iris.core.splash;
 
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
@@ -20,12 +21,12 @@ public final class IrisSplashPackScanner {
             return List.of();
         }
 
-        File[] folders = packFolder.listFiles(File::isDirectory);
-        if (folders == null || folders.length == 0) {
+        List<File> folders = PackDirectoryResolver.listVisiblePackDirectories(packFolder);
+        if (folders.isEmpty()) {
             return List.of();
         }
 
-        List<SplashPackMetadata> packs = new ArrayList<>(folders.length);
+        List<SplashPackMetadata> packs = new ArrayList<>(folders.size());
         for (File folder : folders) {
             SplashPackMetadata metadata = read(folder, reporter);
             if (metadata != null) {

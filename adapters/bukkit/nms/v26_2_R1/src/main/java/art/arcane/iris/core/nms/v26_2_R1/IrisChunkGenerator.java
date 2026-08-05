@@ -4,7 +4,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
-import art.arcane.iris.engine.framework.NativeStructurePlacementPlanner;
+import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -14,11 +14,15 @@ import art.arcane.iris.nativegen.NativeStructureGenerationException;
 import art.arcane.iris.nativegen.NativeStructureStartInjector;
 import art.arcane.iris.nativegen.NativeStructureReferenceEnvelope;
 import art.arcane.iris.nativegen.NativeStructureLocateResults;
+import art.arcane.iris.nativegen.NativeStructureLocatePersistence;
+import art.arcane.iris.nativegen.NativeStructureOwnershipRecovery;
 import art.arcane.iris.nativegen.NativeStructurePostProcessor;
+import art.arcane.iris.nativegen.NativeStructureReferenceRepair;
 import art.arcane.iris.nativegen.NativeStructureSurfaceFitter;
 import art.arcane.iris.nativegen.NativeStructureTerrainIntegrator;
 import art.arcane.iris.nativegen.NativeStructureVegetationClearer;
 import art.arcane.iris.nativegen.NativeStructureVerticalPlacer;
+import art.arcane.iris.nativegen.NativeStructureVanillaLocator;
 import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.IrisCustomData;
@@ -87,6 +91,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -131,55 +136,99 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     public @Nullable Pair<BlockPos, Holder<Structure>> findNearestMapStructure(ServerLevel level, HolderSet<Structure> holders, BlockPos pos, int radius, boolean findUnexplored) {
         try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_structure_locate");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-            Pair<BlockPos, Holder<Structure>> irisPlaced = findNearestIrisStructure(
-                    level, holders, pos, Math.max(1, radius), findUnexplored);
             HolderSet<Structure> reachable = filterReachableStructures(level, holders);
-            Pair<BlockPos, Holder<Structure>> nativeLocated = reachable == null || reachable.size() == 0
-                    ? null
-                    : delegate.findNearestMapStructure(level, reachable, pos, radius, findUnexplored);
-            return NativeStructureLocateResults.nearest(pos, irisPlaced, nativeLocated);
+            NativeStructureVanillaLocator.Candidate nativeCandidate =
+                    reachable == null || reachable.size() == 0 ? null
+                            : NativeStructureVanillaLocator.predict(
+                                    level, reachable, pos, radius, findUnexplored);
+            return findNearestIrisStructure(
+                    level, holders, pos, Math.max(0, radius),
+                    findUnexplored, nativeCandidate);
         }
     }
 
     private Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(ServerLevel level,
                                                                        HolderSet<Structure> holders,
                                                                        BlockPos pos, int radius,
-                                                                       boolean findUnexplored) {
-        if (findUnexplored) {
-            return null;
-        }
+                                                                       boolean findUnexplored,
+                                                                       NativeStructureVanillaLocator.Candidate nativeCandidate) {
+        Pair<BlockPos, Holder<Structure>> nativeLocated =
+                nativeCandidate == null ? null : nativeCandidate.result();
+        Runnable nativeReference = () -> {
+            if (nativeCandidate != null) {
+                nativeCandidate.reference(level.structureManager());
+            }
+        };
         Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
-        BlockPos best = null;
-        Holder<Structure> bestHolder = null;
-        long bestDist = Long.MAX_VALUE;
+        List<IrisNativeLocateSearch> searches = new ArrayList<>(holders.size());
+        NativeStructureLocatePersistence.ProbeBudget budget = NativeStructureLocatePersistence.probeBudget();
         for (Holder<Structure> holder : holders) {
             Object id = registry.getKey(holder.value());
             if (id == null) {
                 throw new IllegalStateException("Native structure locate received an unregistered structure holder");
             }
             String structureId = id.toString();
-            if (!IrisStructureLocator.isPlaced(engine, structureId)) {
+            if (!IrisStructureLocator.hasNativePlacement(engine, structureId)) {
                 continue;
             }
-            IrisStructureLocator.LocateResult result = IrisStructureLocator.locate(
-                    engine, structureId, pos.getX(), pos.getZ(), radius);
-            if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
-                throw new IllegalStateException("Iris structure locate reached its safety limit for "
-                        + structureId + " within " + radius + " chunks");
-            }
-            if (!result.found()) {
-                continue;
-            }
-            long dx = (long) result.originX() - pos.getX();
-            long dz = (long) result.originZ() - pos.getZ();
-            long d = dx * dx + dz * dz;
-            if (d < bestDist) {
-                bestDist = d;
-                best = new BlockPos(result.originX(), result.baseY(), result.originZ());
-                bestHolder = holder;
-            }
+            NativeStructureLocatePersistence.Probe probe = NativeStructureLocatePersistence.probe(
+                    level, holder.value(), findUnexplored, budget);
+            searches.add(new IrisNativeLocateSearch(
+                    holder, structureId, NativeStructureLocatePersistence.search(
+                    engine, structureId, pos.getX(), pos.getZ(), radius, probe)));
         }
-        return best == null ? null : Pair.of(best, bestHolder);
+        searches.sort(Comparator.comparing(IrisNativeLocateSearch::structureId));
+        for (int attempt = 0; attempt < NativeStructureLocatePersistence.MAX_SELECTED_CANDIDATE_RETRIES; attempt++) {
+            IrisNativeLocateSearch bestSearch = null;
+            IrisStructureLocator.LocateResult bestResult = null;
+            long bestDistance = Long.MAX_VALUE;
+            for (IrisNativeLocateSearch search : searches) {
+                IrisStructureLocator.LocateResult result = search.search().predict();
+                if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
+                    throw new IllegalStateException("Iris structure locate reached its safety limit for "
+                            + search.structureId() + " within " + radius + " placement rings");
+                }
+                if (!result.found()) {
+                    continue;
+                }
+                long dx = (long) result.originX() - pos.getX();
+                long dz = (long) result.originZ() - pos.getZ();
+                long distance = dx * dx + dz * dz;
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestSearch = search;
+                    bestResult = result;
+                }
+            }
+            if (bestSearch == null) {
+                return NativeStructureLocateResults.selectAndReference(
+                        pos, null, () -> { }, nativeLocated, nativeReference);
+            }
+            Pair<BlockPos, Holder<Structure>> predicted = Pair.of(
+                    new BlockPos(bestResult.originX(), bestResult.baseY(), bestResult.originZ()),
+                    bestSearch.holder());
+            if (NativeStructureLocateResults.nearest(pos, predicted, nativeLocated) != predicted) {
+                return NativeStructureLocateResults.selectAndReference(
+                        pos, predicted, () -> { }, nativeLocated, nativeReference);
+            }
+            NativeStructureLocatePersistence.VerifiedStart verified =
+                    bestSearch.search().verify(bestResult);
+            if (verified == null) {
+                bestSearch.search().reject(bestResult);
+                continue;
+            }
+            BlockPos located = new BlockPos(
+                    bestResult.originX(), verified.ownership().locatorY(),
+                    bestResult.originZ());
+            Pair<BlockPos, Holder<Structure>> irisLocated = Pair.of(located, bestSearch.holder());
+            IrisNativeLocateSearch selectedSearch = bestSearch;
+            NativeStructureLocatePersistence.VerifiedStart selectedStart = verified;
+            return NativeStructureLocateResults.selectAndReference(
+                    pos, irisLocated, () -> selectedSearch.search().reference(selectedStart),
+                    nativeLocated, nativeReference);
+        }
+        throw new IllegalStateException("Iris structure locate rejected too many selected candidates within "
+                + radius + " placement rings");
     }
 
     private HolderSet<Structure> filterReachableStructures(ServerLevel level, HolderSet<Structure> holders) {
@@ -323,9 +372,10 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                         decision.preserveSourceY(),
                         decision.yBand(),
                         (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
-                StructureStart wrapped = NativeStructureReferenceEnvelope.wrap(
-                        start, structure, start.getReferences(), templateManager,
-                        NativeStructureTerrainIntegrator.resolveNativeTerrain(start, decision.terrain()));
+                StructureStart wrapped = NativeStructureReferenceEnvelope.wrapForPublication(
+                        start, structure, start.getReferences(),
+                        NativeStructureTerrainIntegrator.resolveNativeTerrain(start, decision.terrain()),
+                        structureId);
                 access.setStartForStructure(structure, wrapped);
             } catch (Throwable error) {
                 throw NativeStructureGenerationException.failure(
@@ -341,7 +391,11 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void createReferences(WorldGenLevel generatoraccessseed, StructureManager structuremanager, ChunkAccess ichunkaccess) {
-        delegate.createReferences(generatoraccessseed, structuremanager, ichunkaccess);
+        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_references");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            NativeStructureReferenceRepair.createReferences(
+                    engine, generatoraccessseed, structuremanager, ichunkaccess);
+        }
     }
 
     @Override
@@ -474,7 +528,6 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         int steps = GenerationStep.Decoration.values().length;
         List<NativePlacementGroup> placementGroups = new ArrayList<>();
         List<StructureStart> heightmapStarts = new ArrayList<>();
-        List<StructureStart> nativeStarts = new ArrayList<>();
         List<NativeStructureVegetationClearer.VegetationTarget> vegetationTargets = new ArrayList<>();
         List<NativeStructureTerrainIntegrator.TerrainTarget> terrainTargets = new ArrayList<>();
         for (int step = 0; step < steps; step++) {
@@ -492,10 +545,11 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                     List<StructureStart> starts = structureManager.startsForStructure(sectionPos, structure);
                     List<NativePlacement> resolvedPlacements = new ArrayList<>(starts.size());
                     for (StructureStart start : starts) {
-                        NativeStructureStartPlan plan = NativeStructurePlacementPlanner.matchingPlan(
-                                engine, structureId, start.getChunkPos().x(), start.getChunkPos().z());
-                        IrisNativeStructureDecision decision = plan == null
-                                ? sourceDecision : NativeStructurePlacementPlanner.decisionFor(plan);
+                        NativeStructureOwnershipRecord ownership =
+                                NativeStructureOwnershipRecovery.resolve(
+                                        engine, world.getLevel(), structureId, structure, start);
+                        IrisNativeStructureDecision decision =
+                                ownership == null ? sourceDecision : ownership.restoredDecision();
                         if (!decision.generate()) {
                             continue;
                         }
@@ -505,9 +559,6 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                                 structureId, start,
                                 NativeStructureTerrainIntegrator.resolveNativeTerrain(
                                         start, decision.terrain())));
-                        if (plan == null || !plan.placement().isUnderground()) {
-                            nativeStarts.add(start);
-                        }
                         boolean clearEntireFootprint = NativeStructureVegetationClearer
                                 .shouldClearEntireVegetationFootprint(
                                         structure.step(), decision.clearVegetation());
@@ -534,20 +585,20 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                     chunkPos.x(), chunkPos.z(), error);
         }
         try {
-            NativeStructureSurfaceFitter.prepareSurfaceStructures(
-                    world, area, nativeStarts,
-                    (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "terrain integration", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x(), chunkPos.z(), error);
-        }
-        try {
             NativeStructureVegetationClearer.clearIntersectingVegetation(
                     world, chunk, area, vegetationTargets);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "vegetation cleanup", nativeStructureBatchContext(placementGroups),
+                    chunkPos.x(), chunkPos.z(), error);
+        }
+        try {
+            NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                    world, area, terrainTargets,
+                    (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
+        } catch (Throwable error) {
+            throw NativeStructureGenerationException.failure(
+                    "terrain integration", nativeStructureBatchContext(placementGroups),
                     chunkPos.x(), chunkPos.z(), error);
         }
         try {
@@ -641,8 +692,8 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         ChunkPos cp = chunk.getPos();
         int i = cp.getMinBlockX();
         int j = cp.getMinBlockZ();
-        int minY = chunk.getMinY();
-        int maxY = minY + chunk.getHeight() - 1;
+        int minY = chunk.getMinY() + 1;
+        int maxY = chunk.getMinY() + chunk.getHeight() - 1;
         return new BoundingBox(i, minY, j, i + 15, maxY, j + 15);
     }
 
@@ -826,5 +877,9 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     }
 
     private record NativeLocateCandidate(Holder<Structure> holder, String key) {
+    }
+
+    private record IrisNativeLocateSearch(Holder<Structure> holder, String structureId,
+                                          NativeStructureLocatePersistence.Search search) {
     }
 }

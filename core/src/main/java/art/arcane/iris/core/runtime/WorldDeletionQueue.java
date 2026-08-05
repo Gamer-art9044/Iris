@@ -25,5 +25,7 @@ import java.util.Collection;
  * Queues world folders for deletion at next startup.
  */
 public interface WorldDeletionQueue {
-    int queueForStartupDeletion(Collection<String> worldNames) throws IOException;
+    int queueExactForStartupDeletion(Collection<String> worldNames) throws IOException;
+
+    int queueFamilyForStartupDeletion(Collection<String> worldNames) throws IOException;
 }

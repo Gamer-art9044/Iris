@@ -46,6 +46,21 @@ public final class BukkitStructureHooks implements PlatformStructureHooks {
     }
 
     @Override
+    public JigsawSourceMetadata jigsawSourceMetadata(String structureKey) {
+        return INMS.get().getJigsawSourceMetadata(structureKey);
+    }
+
+    @Override
+    public int templatePoolHorizontalSpan(String templatePoolKey) {
+        return INMS.get().getTemplatePoolHorizontalSpan(templatePoolKey);
+    }
+
+    @Override
+    public int jigsawStartPoolHorizontalSpan(String structureKey, String templatePoolKey) {
+        return INMS.get().getJigsawStartPoolHorizontalSpan(structureKey, templatePoolKey);
+    }
+
+    @Override
     public List<String> structureSetKeys() {
         return new ArrayList<>(INMS.get().getStructureSetKeys());
     }

@@ -19,6 +19,7 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.pack.BrokenPackException;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
@@ -104,9 +105,9 @@ public final class ModdedStartup {
 
     public static void validateAllPacks() {
         File packsRoot = ModdedPackCommands.packsRoot();
-        File[] packDirs = packsRoot.listFiles(File::isDirectory);
+        List<File> packDirs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
         PackValidationRegistry.clear();
-        if (packDirs == null || packDirs.length == 0) {
+        if (packDirs.isEmpty()) {
             LOGGER.info("Iris found no packs to validate under {}; install one with /iris download <pack>",
                     packsRoot.getAbsolutePath());
             return;
@@ -146,8 +147,8 @@ public final class ModdedStartup {
         if (pack == null || pack.isBlank()) {
             throw new IllegalArgumentException("Pack name is required for world creation");
         }
-        File packDir = new File(ModdedPackCommands.packsRoot(), pack);
-        if (!packDir.isDirectory()) {
+        File packDir = PackDirectoryResolver.resolveExisting(ModdedPackCommands.packsRoot(), pack);
+        if (packDir == null) {
             throw new BrokenPackException(pack, List.of(
                     "Pack folder does not exist under " + ModdedPackCommands.packsRoot().getAbsolutePath() + "."));
         }

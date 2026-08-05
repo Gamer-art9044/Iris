@@ -153,6 +153,11 @@ public class CommandStructure implements DirectorExecutor {
                 }
             }
         }
+        for (String placedKey : IrisStructureLocator.placedKeys(engine)) {
+            if (!structureKeys.contains(placedKey)) {
+                structureKeys.add(placedKey);
+            }
+        }
         VolmitSender commandSender = sender();
         Player target = senderIsPlayer ? player() : null;
         commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_STRUCTURE_VERIFYING_STRUCTURES_FROM_WITHIN_CHUNKS, MessageArgument.untrusted("value", world.getName()), MessageArgument.untrusted("value2", center.getBlockX()), MessageArgument.untrusted("value3", center.getBlockZ()), MessageArgument.untrusted("searchRadius", searchRadius)));
@@ -169,7 +174,8 @@ public class CommandStructure implements DirectorExecutor {
         for (String keyName : structureKeys) {
             IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine, keyName, false);
             decisions.put(keyName, decision);
-            requiresNativeReachability |= decision.generate();
+            requiresNativeReachability |= !IrisStructureLocator.isPlaced(engine, keyName)
+                    && decision.generate();
         }
         Set<String> reachable = Set.of();
         if (requiresNativeReachability) {
@@ -190,7 +196,7 @@ public class CommandStructure implements DirectorExecutor {
         int errors = 0;
         for (String keyName : structureKeys) {
             IrisNativeStructureDecision decision = decisions.get(keyName);
-            if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            if (IrisStructureLocator.isPlaced(engine, keyName)) {
                 try {
                     IrisStructureLocator.LocateResult result =
                             IrisStructureLocator.locate(engine, keyName, centerX, centerZ, searchRadius);
@@ -205,7 +211,7 @@ public class CommandStructure implements DirectorExecutor {
                         continue;
                     }
                     located++;
-                    messages.add(C.AQUA + "[iris] " + C.WHITE + keyName + C.GREEN + " @ "
+                    messages.add(C.AQUA + "[iris-planned] " + C.WHITE + keyName + C.GREEN + " @ "
                             + result.originX() + "," + result.baseY() + "," + result.originZ());
                 } catch (Throwable error) {
                     errors++;
@@ -230,7 +236,7 @@ public class CommandStructure implements DirectorExecutor {
             nativeEligible++;
             messages.add(C.GREEN + "[native-eligible] " + C.WHITE + keyName);
         }
-        messages.add(C.GREEN + "Structure verify: " + C.WHITE + located + C.GREEN + " Iris placements located, "
+        messages.add(C.GREEN + "Structure verify: " + C.WHITE + located + C.GREEN + " Iris placement plans found, "
                 + C.WHITE + nativeEligible + C.GREEN + " native structures eligible, "
                 + C.WHITE + disabled + C.GREEN + " disabled by policy, "
                 + C.WHITE + unreachable + C.GREEN + " biome-unreachable, "

@@ -18,24 +18,76 @@
 
 package art.arcane.iris.core.pack;
 
+import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformStructureHooks;
+import org.junit.Assume;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.mockito.Answers;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class PackDownloaderTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
+
+    private IrisPlatform previousPlatform;
+    private IrisSettings previousSettings;
+
+    @Before
+    public void bindPlatform() {
+        previousPlatform = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        previousSettings = IrisSettings.settings;
+        IrisPlatforms.unbind();
+        IrisPlatform platform = mock(IrisPlatform.class, Answers.CALLS_REAL_METHODS);
+        PlatformStructureHooks structureHooks = mock(PlatformStructureHooks.class, Answers.CALLS_REAL_METHODS);
+        when(platform.dataFolder()).thenReturn(temp.getRoot());
+        when(platform.structureHooks()).thenReturn(structureHooks);
+        when(structureHooks.structureKeys()).thenReturn(List.of("minecraft:village"));
+        when(structureHooks.jigsawStructureKeys()).thenReturn(List.of("minecraft:village"));
+        when(structureHooks.templatePoolKeys()).thenReturn(List.of("minecraft:empty"));
+        IrisPlatforms.bind(platform);
+        IrisSettings.settings = new IrisSettings();
+    }
+
+    @After
+    public void restorePlatform() {
+        IrisPlatforms.unbind();
+        if (previousPlatform != null) {
+            IrisPlatforms.bind(previousPlatform);
+        }
+        IrisSettings.settings = previousSettings;
+        PackValidationRegistry.clear();
+    }
+
     @Test
     public void resolvesDefaultOverworldBetaRelease() {
         assertEquals(
@@ -57,6 +109,14 @@ public class PackDownloaderTest {
         assertEquals(
                 "https://codeload.github.com/IrisDimensions/overworld/zip/refs/heads/feature/release",
                 PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "feature/release")
+        );
+    }
+
+    @Test
+    public void resolvesRepositoryDefaultBranchReference() {
+        assertEquals(
+                "https://github.com/IrisDimensions/example/archive/HEAD.zip",
+                PackDownloader.resolveGithubArchiveUrl("IrisDimensions/example", "HEAD")
         );
     }
 
@@ -110,6 +170,26 @@ public class PackDownloaderTest {
     }
 
     @Test
+    public void packPresenceAcceptsSafeSymbolicPackDirectories() throws IOException {
+        File packsFolder = temp.newFolder("linked-packs");
+        Path external = temp.newFolder("external-pack").toPath();
+        Files.createDirectories(external.resolve("dimensions"));
+        Files.writeString(external.resolve("dimensions/overworld.json"), "{}");
+        Path linked = packsFolder.toPath().resolve("overworld");
+        try {
+            Files.createSymbolicLink(linked, external);
+        } catch (IOException | UnsupportedOperationException exception) {
+            Assume.assumeNoException(exception);
+        }
+
+        assertTrue(PackDownloader.isPackPresent(packsFolder, "overworld"));
+
+        Path externalFile = temp.newFile("outside-pack.txt").toPath();
+        Files.createSymbolicLink(external.resolve("linked-file"), externalFile);
+        assertFalse(PackDownloader.isPackPresent(packsFolder, "overworld"));
+    }
+
+    @Test
     public void downloadSkipsWhenExpectedPackAlreadyPresent() throws IOException {
         File packsFolder = temp.newFolder("packs");
         File dimensions = new File(packsFolder, "overworld/dimensions");
@@ -119,7 +199,7 @@ public class PackDownloaderTest {
         List<String> feedback = new ArrayList<>();
         // The URL is unreachable on purpose: reaching the network would fail the download and
         // return null, so a non-null key proves the presence check ran before any fetch.
-        String key = PackDownloader.download(
+        PackDownloader.PackInstallResult result = PackDownloader.download(
                 packsFolder,
                 "IrisDimensions/overworld",
                 "http://127.0.0.1:9/unreachable.zip",
@@ -129,7 +209,8 @@ public class PackDownloaderTest {
                 feedback::add
         );
 
-        assertEquals("overworld", key);
+        assertEquals("overworld", result.key());
+        assertFalse(result.changed());
         assertFalse(feedback.isEmpty());
     }
 
@@ -140,5 +221,283 @@ public class PackDownloaderTest {
         assertThrows(IllegalArgumentException.class, () -> PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "refs/heads/../master"));
         assertThrows(IllegalArgumentException.class, () -> PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "refs/pull/123/head"));
         assertThrows(IllegalArgumentException.class, () -> PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", ""));
+    }
+
+    @Test
+    public void forceOverwritePublishesValidatedPackAndCleansTransactionState() throws Exception {
+        File packsFolder = temp.newFolder("force-packs");
+        File target = writePack(packsFolder.toPath().resolve("replaceable"), "replaceable", "old");
+        Files.writeString(target.toPath().resolve("old-only.txt"), "old", StandardCharsets.UTF_8);
+        File extracted = writePack(temp.newFolder("force-source").toPath(), "replaceable", "new");
+        List<String> feedback = new ArrayList<>();
+
+        PackDownloader.PackInstallResult result = PackDownloader.installExtractedPack(
+                packsFolder,
+                extracted,
+                true,
+                "replaceable",
+                feedback::add
+        );
+
+        assertEquals(feedback.toString(), "replaceable", result.key());
+        assertTrue(result.changed());
+        assertFalse(result.restartRequired());
+        assertEquals("new", Files.readString(target.toPath().resolve("state.txt"), StandardCharsets.UTF_8));
+        assertFalse(Files.exists(target.toPath().resolve("old-only.txt")));
+        assertTransactionStateClean(packsFolder);
+        assertEquals(0, PackDownloader.downloadLockCount());
+    }
+
+    @Test
+    public void forceOverwritePreservesSymbolicPackTargets() throws Exception {
+        File packsFolder = temp.newFolder("linked-target-packs");
+        File external = writePack(temp.newFolder("linked-target-source").toPath(), "replaceable", "old");
+        Path target = packsFolder.toPath().resolve("replaceable");
+        try {
+            Files.createSymbolicLink(target, external.toPath());
+        } catch (IOException | UnsupportedOperationException exception) {
+            Assume.assumeNoException(exception);
+        }
+        File extracted = writePack(temp.newFolder("linked-target-update").toPath(), "replaceable", "new");
+
+        PackDownloader.PackInstallResult result = PackDownloader.installExtractedPack(
+                packsFolder,
+                extracted,
+                true,
+                "replaceable",
+                ignored -> {
+                }
+        );
+
+        assertNull(result);
+        assertTrue(Files.isSymbolicLink(target));
+        assertEquals("old", Files.readString(external.toPath().resolve("state.txt"), StandardCharsets.UTF_8));
+        assertTransactionStateClean(packsFolder);
+    }
+
+    @Test
+    public void invalidStagedPackPreservesExistingTarget() throws Exception {
+        File packsFolder = temp.newFolder("invalid-packs");
+        File target = writePack(packsFolder.toPath().resolve("protected_pack"), "protected_pack", "old");
+        File extracted = writePack(temp.newFolder("invalid-source").toPath(), "protected_pack", "new");
+        Files.delete(extracted.toPath().resolve("regions/local.json"));
+
+        PackDownloader.PackInstallResult result = PackDownloader.installExtractedPack(
+                packsFolder,
+                extracted,
+                true,
+                "protected_pack",
+                ignored -> {
+                }
+        );
+
+        assertNull(result);
+        assertEquals("old", Files.readString(target.toPath().resolve("state.txt"), StandardCharsets.UTF_8));
+        assertTrue(Files.isRegularFile(target.toPath().resolve("regions/local.json")));
+        assertTransactionStateClean(packsFolder);
+        assertEquals(0, PackDownloader.downloadLockCount());
+    }
+
+    @Test
+    public void forceOverwriteRefusesLoadedPackData() throws Exception {
+        File packsFolder = temp.newFolder("loaded-packs");
+        File target = writePack(packsFolder.toPath().resolve("active_pack"), "active_pack", "old");
+        File extracted = writePack(temp.newFolder("loaded-update").toPath(), "active_pack", "new");
+        IrisData loaded = IrisData.get(target);
+        try {
+            PackDownloader.PackInstallResult result = PackDownloader.installExtractedPack(
+                    packsFolder,
+                    extracted,
+                    true,
+                    "active_pack",
+                    ignored -> {
+                    }
+            );
+
+            assertNull(result);
+            assertEquals("old", Files.readString(target.toPath().resolve("state.txt"), StandardCharsets.UTF_8));
+            assertTransactionStateClean(packsFolder);
+        } finally {
+            loaded.close();
+        }
+    }
+
+    @Test
+    public void unexpectedDownloadedKeyPreservesExistingTarget() throws Exception {
+        File packsFolder = temp.newFolder("mismatch-packs");
+        File target = writePack(packsFolder.toPath().resolve("requested"), "requested", "old");
+        File extracted = writePack(temp.newFolder("mismatch-source").toPath(), "different", "new");
+
+        IOException failure = assertThrows(IOException.class, () -> PackDownloader.installExtractedPack(
+                packsFolder,
+                extracted,
+                true,
+                "requested",
+                ignored -> {
+                }
+        ));
+
+        assertTrue(failure.getMessage().contains("different"));
+        assertTrue(failure.getMessage().contains("requested"));
+        assertEquals("old", Files.readString(target.toPath().resolve("state.txt"), StandardCharsets.UTF_8));
+        assertFalse(new File(packsFolder, "different").exists());
+        assertTransactionStateClean(packsFolder);
+        assertEquals(0, PackDownloader.downloadLockCount());
+    }
+
+    @Test
+    public void concurrentImportsForSameKeyPublishOnlyOnePack() throws Exception {
+        File packsFolder = temp.newFolder("concurrent-packs");
+        File firstSource = writePack(temp.newFolder("concurrent-first").toPath(), "shared_pack", "first");
+        File secondSource = writePack(temp.newFolder("concurrent-second").toPath(), "shared_pack", "second");
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<PackDownloader.PackInstallResult> first = executor.submit(() -> {
+                start.await();
+                return PackDownloader.installExtractedPack(
+                        packsFolder, firstSource, false, "shared_pack", ignored -> {
+                        });
+            });
+            Future<PackDownloader.PackInstallResult> second = executor.submit(() -> {
+                start.await();
+                return PackDownloader.installExtractedPack(
+                        packsFolder, secondSource, false, "shared_pack", ignored -> {
+                        });
+            });
+            start.countDown();
+
+            int successes = 0;
+            PackDownloader.PackInstallResult firstResult = first.get();
+            PackDownloader.PackInstallResult secondResult = second.get();
+            if (firstResult != null && "shared_pack".equals(firstResult.key())) {
+                successes++;
+            }
+            if (secondResult != null && "shared_pack".equals(secondResult.key())) {
+                successes++;
+            }
+
+            assertEquals(1, successes);
+            String installedState = Files.readString(
+                    packsFolder.toPath().resolve("shared_pack/state.txt"),
+                    StandardCharsets.UTF_8
+            );
+            assertTrue(installedState.equals("first") || installedState.equals("second"));
+            assertTransactionStateClean(packsFolder);
+            assertEquals(0, PackDownloader.downloadLockCount());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void rejectsUnsafeExpectedKeyBeforeDownload() throws IOException {
+        File packsFolder = temp.newFolder("unsafe-key-packs");
+
+        assertThrows(IllegalArgumentException.class, () -> PackDownloader.download(
+                packsFolder,
+                "IrisDimensions/overworld",
+                "http://127.0.0.1:9/unreachable.zip",
+                true,
+                true,
+                "../outside",
+                ignored -> {
+                }
+        ));
+        assertEquals(0, PackDownloader.downloadLockCount());
+    }
+
+    @Test
+    public void boundedExtractionRejectsEscapedArchivePaths() throws Exception {
+        Path archive = temp.newFile("escaped.zip").toPath();
+        writeArchive(archive, Map.of("../escaped.txt", "outside"));
+        Path destination = temp.newFolder("escaped-output").toPath();
+
+        assertThrows(IOException.class, () -> PackDownloader.unpackArchive(
+                archive,
+                destination,
+                new PackDownloader.ArchiveLimits(1024L, 10, 1024L, 1024L)
+        ));
+        assertFalse(Files.exists(destination.getParent().resolve("escaped.txt")));
+    }
+
+    @Test
+    public void boundedExtractionEnforcesEntryAndExpandedLimits() throws Exception {
+        Path archive = temp.newFile("bounded.zip").toPath();
+        LinkedHashMap<String, String> entries = new LinkedHashMap<>();
+        entries.put("first.txt", "1234");
+        entries.put("second.txt", "5678");
+        writeArchive(archive, entries);
+
+        assertThrows(IOException.class, () -> PackDownloader.unpackArchive(
+                archive,
+                temp.newFolder("entry-count-output").toPath(),
+                new PackDownloader.ArchiveLimits(4096L, 1, 4096L, 4096L)
+        ));
+        assertThrows(IOException.class, () -> PackDownloader.unpackArchive(
+                archive,
+                temp.newFolder("entry-size-output").toPath(),
+                new PackDownloader.ArchiveLimits(4096L, 10, 4096L, 3L)
+        ));
+        assertThrows(IOException.class, () -> PackDownloader.unpackArchive(
+                archive,
+                temp.newFolder("expanded-output").toPath(),
+                new PackDownloader.ArchiveLimits(4096L, 10, 7L, 4096L)
+        ));
+    }
+
+    @Test
+    public void boundedExtractionPublishesOnlyInsideItsDestination() throws Exception {
+        Path archive = temp.newFile("valid.zip").toPath();
+        writeArchive(archive, Map.of("pack/dimensions/overworld.json", "{}"));
+        Path destination = temp.newFolder("valid-output").toPath();
+
+        PackDownloader.unpackArchive(
+                archive,
+                destination,
+                new PackDownloader.ArchiveLimits(4096L, 10, 4096L, 4096L)
+        );
+
+        assertEquals("{}", Files.readString(destination.resolve("pack/dimensions/overworld.json")));
+    }
+
+    private static File writePack(Path root, String key, String state) throws IOException {
+        Files.createDirectories(root.resolve("dimensions"));
+        Files.createDirectories(root.resolve("regions"));
+        Files.createDirectories(root.resolve("biomes"));
+        Files.writeString(
+                root.resolve("dimensions/" + key + ".json"),
+                "{\"name\":\"" + key + "\",\"regions\":[\"local\"],\"logicalHeight\":256,"
+                        + "\"dimensionHeight\":{\"min\":-64,\"max\":320}}",
+                StandardCharsets.UTF_8
+        );
+        Files.writeString(
+                root.resolve("regions/local.json"),
+                "{\"name\":\"Local\",\"landBiomes\":[\"local\"]}",
+                StandardCharsets.UTF_8
+        );
+        Files.writeString(
+                root.resolve("biomes/local.json"),
+                "{\"name\":\"Local\",\"derivative\":\"minecraft:plains\"}",
+                StandardCharsets.UTF_8
+        );
+        Files.writeString(root.resolve("state.txt"), state, StandardCharsets.UTF_8);
+        return root.toFile();
+    }
+
+    private static void writeArchive(Path archive, Map<String, String> entries) throws IOException {
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {
+            for (Map.Entry<String, String> entry : entries.entrySet()) {
+                zip.putNextEntry(new ZipEntry(entry.getKey()));
+                zip.write(entry.getValue().getBytes(StandardCharsets.UTF_8));
+                zip.closeEntry();
+            }
+        }
+    }
+
+    private static void assertTransactionStateClean(File packsFolder) {
+        File[] transactionEntries = packsFolder.listFiles((File parent, String name) ->
+                name.startsWith(".iris-import-") || name.contains(".backup-"));
+        assertTrue(transactionEntries == null || transactionEntries.length == 0);
     }
 }

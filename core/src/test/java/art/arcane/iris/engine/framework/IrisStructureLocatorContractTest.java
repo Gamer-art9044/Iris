@@ -46,6 +46,7 @@ import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -355,6 +356,57 @@ public class IrisStructureLocatorContractTest {
     }
 
     @Test
+    public void densityLocateDoesNotReturnPartialRingWinnerAtSafetyLimit() {
+        Engine engine = densityEngine(1.0, false, -64, 384, -2032, 2032);
+
+        IrisStructureLocator.LocateResult result = IrisStructureLocator.locate(
+                engine, "test:density", 0, 0, 2048,
+                (chunkX, chunkZ) -> chunkX == 31 && chunkZ == 31
+                        || chunkX == 0 && chunkZ == 32);
+
+        assertEquals(IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED, result.status());
+        assertFalse(result.found());
+    }
+
+    @Test
+    public void zeroRadiusDoesNotSearchAdjacentDensityChunks() {
+        Engine engine = densityEngine(1.0, false, -64, 384, -2032, 2032);
+
+        IrisStructureLocator.LocateResult result = IrisStructureLocator.locate(
+                engine, "test:density", 0, 0, 0,
+                (chunkX, chunkZ) -> chunkX == 1 && chunkZ == 0);
+
+        assertEquals(IrisStructureLocator.LocateStatus.NOT_FOUND, result.status());
+    }
+
+    @Test
+    public void locateRanksEditableStartsByResolvedBlockOrigin() {
+        Engine engine = densityEngine(1.0, false, -64, 384, -2032, 2032);
+        when(engine.getHeight(anyInt(), anyInt(), eq(true))).thenReturn(128);
+        when(engine.getDimension().getFluidHeight()).thenReturn(63);
+        IrisStructurePlacement placement = engine.getDimension().getStructures().get(0);
+        NearestScenario scenario = nearestEqualChunkDistanceScenario(engine, placement);
+        assertNotNull(scenario);
+
+        IrisStructureLocator.LocateResult result = IrisStructureLocator.locate(
+                engine, "test:density", scenario.fromBlockX(), scenario.fromBlockZ(), 1,
+                (chunkX, chunkZ) -> chunkX == scenario.firstChunkX() && chunkZ == scenario.firstChunkZ()
+                        || chunkX == scenario.nearestChunkX() && chunkZ == scenario.nearestChunkZ());
+
+        assertEquals(IrisStructureLocator.LocateStatus.FOUND, result.status());
+        assertEquals(scenario.nearestOriginX(), result.originX());
+        assertEquals(scenario.nearestOriginZ(), result.originZ());
+    }
+
+    @Test
+    public void diagonalRadiusBoundaryUsesVanillaChebyshevSemantics() {
+        assertTrue(IrisStructureLocator.withinRadius(1, 1, 0, 0, 1));
+        assertTrue(IrisStructureLocator.withinRadius(-1, -1, 0, 0, 1));
+        assertFalse(IrisStructureLocator.withinRadius(2, 1, 0, 0, 1));
+        assertFalse(IrisStructureLocator.withinRadius(1, 1, 0, 0, 0));
+    }
+
+    @Test
     public void searchableDensityRequiresPositiveProbabilityAndWorldHeightOverlap() {
         Engine engine = mock(Engine.class);
         when(engine.getMinHeight()).thenReturn(-64);
@@ -566,6 +618,60 @@ public class IrisStructureLocatorContractTest {
         assertEquals(1L, IrisStructureLocator.cellRingDistanceLowerBound(1, 32, 0, 0, 0, 0));
     }
 
+    @Test
+    public void chunkBlockLowerBoundSaturatesAtExtremeCoordinates() {
+        assertEquals(Long.MAX_VALUE, IrisStructureLocator.chunkBlockDistanceSquaredLowerBound(
+                Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE));
+        assertEquals(1L, IrisStructureLocator.chunkBlockDistanceSquaredLowerBound(1, 0, 15, 8));
+        assertEquals(0L, IrisStructureLocator.chunkBlockDistanceSquaredLowerBound(0, 0, 15, 8));
+    }
+
+    private NearestScenario nearestEqualChunkDistanceScenario(
+            Engine engine, IrisStructurePlacement placement) {
+        int[][] chunks = {
+                {-1, -1}, {-1, 0}, {-1, 1}, {0, -1},
+                {0, 1}, {1, -1}, {1, 0}, {1, 1}
+        };
+        IrisStructureLocator.ResolvedPlacement[] resolved =
+                new IrisStructureLocator.ResolvedPlacement[chunks.length];
+        for (int i = 0; i < chunks.length; i++) {
+            resolved[i] = IrisStructureLocator.resolvePlacement(
+                    engine, placement, chunks[i][0], chunks[i][1]);
+            assertNotNull(resolved[i]);
+        }
+        for (int fromBlockX = 0; fromBlockX < 16; fromBlockX++) {
+            for (int fromBlockZ = 0; fromBlockZ < 16; fromBlockZ++) {
+                for (int first = 0; first < chunks.length; first++) {
+                    int firstChunkDistance = chunks[first][0] * chunks[first][0]
+                            + chunks[first][1] * chunks[first][1];
+                    long firstDistance = resolvedDistanceSquared(
+                            resolved[first], fromBlockX, fromBlockZ);
+                    for (int later = first + 1; later < chunks.length; later++) {
+                        int laterChunkDistance = chunks[later][0] * chunks[later][0]
+                                + chunks[later][1] * chunks[later][1];
+                        long laterDistance = resolvedDistanceSquared(
+                                resolved[later], fromBlockX, fromBlockZ);
+                        if (firstChunkDistance == laterChunkDistance && laterDistance < firstDistance) {
+                            return new NearestScenario(
+                                    fromBlockX, fromBlockZ,
+                                    chunks[first][0], chunks[first][1],
+                                    chunks[later][0], chunks[later][1],
+                                    resolved[later].originX(), resolved[later].originZ());
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private long resolvedDistanceSquared(
+            IrisStructureLocator.ResolvedPlacement resolved, int fromBlockX, int fromBlockZ) {
+        long dx = (long) resolved.originX() - fromBlockX;
+        long dz = (long) resolved.originZ() - fromBlockZ;
+        return dx * dx + dz * dz;
+    }
+
     private PlacedStructurePiece piece(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
         return new PlacedStructurePiece(null, null, 0, 0, 0, null, minX, minY, minZ, maxX, maxY, maxZ);
     }
@@ -638,5 +744,16 @@ public class IrisStructureLocatorContractTest {
             return;
         }
         throw new AssertionError("Expected strict native replacement failure containing '" + expectedMessage + "'");
+    }
+
+    private record NearestScenario(
+            int fromBlockX,
+            int fromBlockZ,
+            int firstChunkX,
+            int firstChunkZ,
+            int nearestChunkX,
+            int nearestChunkZ,
+            int nearestOriginX,
+            int nearestOriginZ) {
     }
 }

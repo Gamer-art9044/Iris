@@ -22,8 +22,8 @@ public class IrisStructureTerrain {
     private static final double MAX_EROSION_FREQUENCY = 1D;
     private static final double MAX_LOBE_FREQUENCY = 1D;
 
-    @Desc("Terrain operation. FORCE_CARVE is authoritative: the requested envelope is cleared before any structure piece is placed. ENCASE is its inverse: the envelope is filled with solid blocks before placement so native shells are not lost to pre-carved air.")
-    private IrisStructureTerrainMode mode = IrisStructureTerrainMode.PRESERVE;
+    @Desc("Terrain operation. SOURCE applies the registered native structure's authored terrain adaptation and is a no-op for editable Iris structures. PRESERVE disables terrain integration. FORCE_CARVE clears the requested envelope, while ENCASE fills it before placement so native shells are not lost to pre-carved air.")
+    private IrisStructureTerrainMode mode = IrisStructureTerrainMode.SOURCE;
 
     @MinNumber(0)
     @MaxNumber(128)
@@ -43,7 +43,7 @@ public class IrisStructureTerrain {
     @Desc("Shape used by FORCE_CARVE.")
     private IrisStructureCarveShape shape = IrisStructureCarveShape.BOX;
 
-    @Desc("Block palette used by ENCASE. When unset, stone is filled at Y 0 and above and deepslate below Y 0.")
+    @Desc("Block palette used by ENCASE. When unset, the Overworld uses stone or deepslate, the Nether uses netherrack, and the End uses end stone.")
     private IrisMaterialPalette encasePalette = null;
 
     @MinNumber(0)
@@ -67,7 +67,7 @@ public class IrisStructureTerrain {
     private double lobeStrength = DEFAULT_LOBE_STRENGTH;
 
     public IrisStructureTerrainMode resolvedMode() {
-        return mode == null ? IrisStructureTerrainMode.PRESERVE : mode;
+        return mode == null ? IrisStructureTerrainMode.SOURCE : mode;
     }
 
     public IrisStructureCarveShape resolvedShape() {

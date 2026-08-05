@@ -26,11 +26,13 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.IrisRuntimeSchedulerMode;
+import art.arcane.iris.core.DatapackInstallResult;
 import art.arcane.iris.core.IrisWorldStorage;
-import art.arcane.iris.core.WorldCreatorCompat;
 import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.ServerConfigurator;
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
+import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.lifecycle.WorldLifecycleCaller;
 import art.arcane.iris.core.lifecycle.WorldLifecycleRequest;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
@@ -38,6 +40,8 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.pregenerator.PregenTask;
+import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
+import art.arcane.iris.core.runtime.WorldDeletionQueue;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
@@ -49,6 +53,7 @@ import art.arcane.volmlib.util.hud.HudSlotClaim;
 import art.arcane.volmlib.util.hud.HudSlotRequest;
 import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.FoliaScheduler;
@@ -56,19 +61,24 @@ import lombok.Data;
 import lombok.experimental.Accessors;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
-import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
 import java.io.IOException;
+import java.io.File;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -84,6 +94,9 @@ import static art.arcane.iris.util.common.misc.ServerProperties.BUKKIT_YML;
 @Data
 @Accessors(fluent = true, chain = true)
 public class IrisCreator {
+    private static final long WORLD_CREATE_TIMEOUT_SECONDS = 120L;
+    private static final long ROLLBACK_PHASE_TIMEOUT_SECONDS = 120L;
+
     /**
      * Specify an area to pregenerate during creation
      */
@@ -118,39 +131,13 @@ public class IrisCreator {
     private BiConsumer<Double, String> studioProgressConsumer;
 
     public static boolean removeFromBukkitYml(String name) throws IOException {
-        YamlConfiguration yml = YamlConfiguration.loadConfiguration(BUKKIT_YML);
-        ConfigurationSection section = yml.getConfigurationSection("worlds");
-        if (section == null) {
-            return false;
-        }
-        section.set(name, null);
-        if (section.getValues(false).keySet().stream().noneMatch(k -> section.get(k) != null)) {
-            yml.set("worlds", null);
-        }
-        yml.save(BUKKIT_YML);
-        return true;
+        return BukkitWorldConfiguration.remove(BUKKIT_YML, name);
     }
 
     public static int removeTransientStudioWorldsFromBukkitYml() throws IOException {
-        YamlConfiguration yml = YamlConfiguration.loadConfiguration(BUKKIT_YML);
-        ConfigurationSection section = yml.getConfigurationSection("worlds");
-        if (section == null) {
-            return 0;
-        }
-        int removed = 0;
-        for (String name : new java.util.ArrayList<>(section.getKeys(false))) {
-            if (TransientWorldCleanupSupport.isTransientStudioWorldName(name)) {
-                section.set(name, null);
-                removed++;
-            }
-        }
-        if (removed > 0) {
-            if (section.getKeys(false).isEmpty()) {
-                yml.set("worlds", null);
-            }
-            yml.save(BUKKIT_YML);
-        }
-        return removed;
+        return BukkitWorldConfiguration.removeMatching(
+                BUKKIT_YML,
+                TransientWorldCleanupSupport::isTransientStudioWorldName);
     }
     public static boolean worldLoaded(){
         return true;
@@ -167,117 +154,182 @@ public class IrisCreator {
         if (Bukkit.isPrimaryThread()) {
             throw new IrisException("You cannot invoke create() on the main thread.");
         }
-        name = IrisWorldStorage.logicalName(IrisWorldStorage.keyFromName(name));
-
-        long createStart = System.currentTimeMillis();
-        reportStudioProgress(0.02D, "resolve_dimension");
-        reportStudioProgress(0.08D, "resolve_dimension");
-        IrisDimension d = IrisToolbelt.getDimension(dimension());
-
-        if (d == null) {
-            throw new IrisException("Dimension cannot be found null for id " + dimension());
-        }
-
-        if (sender == null)
-            sender = BukkitPlatform.console();
-
-        reportStudioProgress(0.16D, "prepare_world_pack");
-        if (!studio() || benchmark) {
-            d = IrisServices.get(StudioSVC.class).installIntoWorld(sender, d, IrisWorldStorage.dimensionRoot(name()));
-            if (d == null) {
-                throw new IrisException("Failed to install dimension pack for " + dimension());
-            }
-            dimension = d.getLoadKey();
-        }
-        if (studio()) {
-            IrisRuntimeSchedulerMode runtimeSchedulerMode = IrisRuntimeSchedulerMode.resolve(IrisSettings.get().getPregen());
-            IrisLogging.debug("Studio create scheduling: mode=" + runtimeSchedulerMode.name().toLowerCase(Locale.ROOT)
-                    + ", regionizedRuntime=" + FoliaScheduler.isRegionizedRuntime(Bukkit.getServer()));
-        }
-
-        reportStudioProgress(0.28D, "install_datapacks");
-        AtomicDouble pp = new AtomicDouble(0);
-        AtomicBoolean done = new AtomicBoolean(false);
-        WorldCreator wc = new IrisWorldCreator()
-                .dimension(d)
-                .name(name)
-                .seed(seed)
-                .studio(studio)
-                .create();
-        if (!studio()) {
-            IrisWorlds.get().put(WorldCreatorCompat.keyOf(wc).toString(), dimension());
-        }
-        ServerConfigurator.installDataPacksIfChanged(!studio());
-        IrisLogging.debug("[Studio timing]   create.packPrep + datapacks = " + (System.currentTimeMillis() - createStart) + "ms (cumulative in create)");
-        reportStudioProgress(0.40D, "install_datapacks");
-
-        PlatformChunkGenerator access = (PlatformChunkGenerator) wc.generator();
-        if (access == null) throw new IrisException("Access is null. Something bad happened.");
-        HudSlotClaim createClaim = !benchmark && studioProgressConsumer == null && sender.isPlayer()
-                ? openLoaderClaim("iris:world-create")
-                : null;
-        AtomicInteger createProgressTask = startCreateProgressReporter(access, done, createClaim);
-
-
-        World world;
-        reportStudioProgress(0.46D, "create_world");
-        long nmsStart = System.currentTimeMillis();
+        NamespacedKey worldKey;
         try {
-            WorldLifecycleCaller callerKind = benchmark ? WorldLifecycleCaller.BENCHMARK : studio() ? WorldLifecycleCaller.STUDIO : WorldLifecycleCaller.CREATE;
-            WorldLifecycleRequest request = WorldLifecycleRequest.fromCreator(wc, studio(), benchmark, callerKind);
-            world = J.sfut(() -> INMS.get().createWorldAsync(wc, request))
-                    .thenCompose(Function.identity())
-                    .get();
-            IrisLogging.debug("[Studio timing]   create.createWorldAsync (NMS bukkit world load + spawn prep) = " + (System.currentTimeMillis() - nmsStart) + "ms");
-        } catch (Throwable e) {
+            worldKey = IrisWorldStorage.managedKeyFromName(name);
+        } catch (IllegalArgumentException e) {
+            throw new IrisException(e.getMessage(), e);
+        }
+        name = IrisWorldStorage.logicalName(worldKey);
+
+        LifecycleOperationCoordinator coordinator = LifecycleOperationCoordinator.get();
+        LifecycleOperationCoordinator.Lease worldLease = null;
+        try {
+            reportStudioProgress(0.02D, "resolve_dimension");
+            IrisDimension resolvedDimension = IrisToolbelt.getDimension(dimension());
+            if (resolvedDimension == null) {
+                throw new IrisException("Dimension cannot be found for id " + dimension());
+            }
+            worldLease = coordinator.acquire(
+                    LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
+                    LifecycleOperationCoordinator.OperationKind.WORLD_CREATE,
+                    worldKey.toString());
+            return createReserved(worldKey, resolvedDimension);
+        } catch (LifecycleOperationCoordinator.BusyException e) {
+            throw new IrisException(e.getMessage(), e);
+        } finally {
+            if (worldLease != null) {
+                worldLease.close();
+            }
+        }
+    }
+
+    private World createReserved(NamespacedKey worldKey, IrisDimension resolvedDimension) throws IrisException {
+        long createStart = System.currentTimeMillis();
+        File dimensionRoot;
+        try {
+            dimensionRoot = IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
+        } catch (IllegalArgumentException e) {
+            throw new IrisException(e.getMessage(), e);
+        }
+        if (Files.exists(dimensionRoot.toPath()) || WorldIdentity.resolve(worldKey).isPresent()) {
+            throw new IrisException("World \"" + name + "\" already exists or is loaded.");
+        }
+        if (sender == null) {
+            sender = BukkitPlatform.console();
+        }
+
+        World world = null;
+        boolean bukkitRegistered = false;
+        try {
+            reportStudioProgress(0.08D, "resolve_dimension");
+            reportStudioProgress(0.16D, "prepare_world_pack");
+            DatapackInstallResult datapackResult = ServerConfigurator.installDataPacksIfChanged(true);
+            if (!datapackResult.succeeded()) {
+                throw new IrisException("Failed to compile datapacks for dimension \"" + dimension() + "\".");
+            }
+            if (datapackResult.restartRequired() || !ServerConfigurator.verifyDataPackInstalled(resolvedDimension)) {
+                ServerConfigurator.restart();
+                throw new IrisException("The dimension types for pack \"" + dimension() + "\" are not loaded yet. "
+                        + "Iris queued a restart; run the command again after the server returns.");
+            }
+
+            IrisDimension installedDimension = resolvedDimension;
+            if (!studio() || benchmark) {
+                installedDimension = IrisServices.get(StudioSVC.class)
+                        .installIntoWorld(sender, resolvedDimension, dimensionRoot);
+                if (installedDimension == null) {
+                    throw new IrisException("Failed to install dimension pack for " + dimension());
+                }
+                dimension = installedDimension.getLoadKey();
+            }
+            if (studio()) {
+                IrisRuntimeSchedulerMode runtimeSchedulerMode = IrisRuntimeSchedulerMode.resolve(IrisSettings.get().getPregen());
+                IrisLogging.debug("Studio create scheduling: mode=" + runtimeSchedulerMode.name().toLowerCase(Locale.ROOT)
+                        + ", regionizedRuntime=" + FoliaScheduler.isRegionizedRuntime(Bukkit.getServer()));
+            }
+
+            reportStudioProgress(0.28D, "install_datapacks");
+            AtomicDouble pp = new AtomicDouble(0);
+            AtomicBoolean done = new AtomicBoolean(false);
+            WorldCreator wc = new IrisWorldCreator()
+                    .dimension(installedDimension)
+                    .name(name)
+                    .seed(seed)
+                    .studio(studio)
+                    .create();
+            IrisLogging.debug("[Studio timing]   create.packPrep + datapacks = " + (System.currentTimeMillis() - createStart) + "ms (cumulative in create)");
+            reportStudioProgress(0.40D, "install_datapacks");
+
+            PlatformChunkGenerator access = (PlatformChunkGenerator) wc.generator();
+            if (access == null) {
+                throw new IrisException("Access is null. Something bad happened.");
+            }
+            HudSlotClaim createClaim = !benchmark && studioProgressConsumer == null && sender.isPlayer()
+                    ? openLoaderClaim("iris:world-create")
+                    : null;
+            AtomicInteger createProgressTask = startCreateProgressReporter(access, done, createClaim);
+
+            reportStudioProgress(0.46D, "create_world");
+            long nmsStart = System.currentTimeMillis();
+            try {
+                WorldLifecycleCaller callerKind = benchmark ? WorldLifecycleCaller.BENCHMARK : studio() ? WorldLifecycleCaller.STUDIO : WorldLifecycleCaller.CREATE;
+                WorldLifecycleRequest request = WorldLifecycleRequest.fromCreator(wc, studio(), benchmark, callerKind);
+                world = J.sfut(() -> INMS.get().createWorldAsync(wc, request))
+                        .thenCompose(Function.identity())
+                        .get(WORLD_CREATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                IrisLogging.debug("[Studio timing]   create.createWorldAsync (NMS bukkit world load + spawn prep) = " + (System.currentTimeMillis() - nmsStart) + "ms");
+            } catch (Throwable e) {
+                done.set(true);
+                cancelRepeatingTask(createProgressTask);
+                releaseLoaderClaim(createClaim, "iris:world-create");
+                if (e instanceof TimeoutException) {
+                    ServerConfigurator.restart("World creation timed out for \"" + name + "\".");
+                }
+                if (J.isFolia() && containsCreateWorldUnsupportedOperation(e)) {
+                    throw new IrisException("Runtime world creation is blocked and the selected world lifecycle backend could not create the world.", e);
+                }
+                if (containsMissingDimensionTypes(e)) {
+                    ServerConfigurator.restart();
+                    throw new IrisException("The dimension types for pack \"" + dimension() + "\" are not loaded on this server yet. "
+                            + "Iris queued a restart; run the command again after the server returns.", e);
+                }
+                throw new IrisException("Failed to create world with backend family " + WorldLifecycleService.get().capabilities().serverFamily().id() + "!", e);
+            }
+
             done.set(true);
             cancelRepeatingTask(createProgressTask);
             releaseLoaderClaim(createClaim, "iris:world-create");
-            if (J.isFolia() && containsCreateWorldUnsupportedOperation(e)) {
-                throw new IrisException("Runtime world creation is blocked and the selected world lifecycle backend could not create the world.", e);
+            reportStudioProgress(0.86D, "create_world");
+
+            if (!studio && !benchmark) {
+                BukkitWorldConfiguration.register(BUKKIT_YML, name, dimension, seed);
+                bukkitRegistered = true;
+                World createdWorld = world;
+                CompletableFuture<Void> multiverseRegistration = J.sfut(
+                        () -> IrisServices.get(MultiverseCoreLink.class).updateWorld(createdWorld, dimension)
+                );
+                if (multiverseRegistration == null) {
+                    throw new IrisException("Failed to schedule Multiverse registration for world \"" + name + "\".");
+                }
+                try {
+                    multiverseRegistration.get(30L, TimeUnit.SECONDS);
+                } catch (TimeoutException e) {
+                    ServerConfigurator.restart("Multiverse registration timed out for \"" + name + "\".");
+                    throw e;
+                }
             }
-            if (containsMissingDimensionTypes(e)) {
-                throw new IrisException("The dimension types for pack \"" + dimension() + "\" are not loaded on this server yet. "
-                        + "Iris installed its datapack files - restart the server, then run the command again.", e);
+            awaitSenderTeleport(world);
+
+            if (pregen != null) {
+                CompletableFuture<Boolean> ff = new CompletableFuture<>();
+                IrisToolbelt.pregenerate(pregen, access)
+                        .onProgress(pp::set)
+                        .whenDone(() -> ff.complete(true));
+
+                AtomicBoolean dx = new AtomicBoolean(false);
+                HudSlotClaim pregenClaim = sender.isPlayer() ? openLoaderClaim("iris:pregen") : null;
+                AtomicInteger pregenProgressTask = startPregenProgressReporter(pp, dx, pregenClaim);
+                try {
+                    ff.get();
+                    dx.set(true);
+                    cancelRepeatingTask(pregenProgressTask);
+                    releaseLoaderClaim(pregenClaim, "iris:pregen");
+                } catch (Throwable e) {
+                    dx.set(true);
+                    cancelRepeatingTask(pregenProgressTask);
+                    releaseLoaderClaim(pregenClaim, "iris:pregen");
+                    IrisLogging.reportError(e);
+                }
             }
-            throw new IrisException("Failed to create world with backend family " + WorldLifecycleService.get().capabilities().serverFamily().id() + "!", e);
-        }
-
-        done.set(true);
-        cancelRepeatingTask(createProgressTask);
-        releaseLoaderClaim(createClaim, "iris:world-create");
-        reportStudioProgress(0.86D, "create_world");
-
-        if (!studio && !benchmark) {
-            addToBukkitYml();
-            J.s(() -> IrisServices.get(MultiverseCoreLink.class).updateWorld(world, dimension));
-        }
-        scheduleSenderTeleport(world);
-
-        if (pregen != null) {
-            CompletableFuture<Boolean> ff = new CompletableFuture<>();
-
-            IrisToolbelt.pregenerate(pregen, access)
-                    .onProgress(pp::set)
-                    .whenDone(() -> ff.complete(true));
-
-            AtomicBoolean dx = new AtomicBoolean(false);
-            HudSlotClaim pregenClaim = sender.isPlayer() ? openLoaderClaim("iris:pregen") : null;
-            AtomicInteger pregenProgressTask = startPregenProgressReporter(pp, dx, pregenClaim);
-            try {
-                ff.get();
-                dx.set(true);
-                cancelRepeatingTask(pregenProgressTask);
-                releaseLoaderClaim(pregenClaim, "iris:pregen");
-            } catch (Throwable e) {
-                dx.set(true);
-                cancelRepeatingTask(pregenProgressTask);
-                releaseLoaderClaim(pregenClaim, "iris:pregen");
-                IrisLogging.reportError(e);
-                e.printStackTrace();
+            return world;
+        } catch (Throwable failure) {
+            rollbackWorldCreation(worldKey, world, dimensionRoot, bukkitRegistered, failure);
+            if (failure instanceof IrisException irisException) {
+                throw irisException;
             }
+            throw new IrisException("Failed to create world \"" + name + "\".", failure);
         }
-        return world;
     }
 
     static Player createTeleportTarget(VolmitSender sender, boolean studio, boolean benchmark) {
@@ -314,7 +366,7 @@ public class IrisCreator {
                 });
     }
 
-    private void scheduleSenderTeleport(World world) {
+    private void awaitSenderTeleport(World world) {
         Player player = createTeleportTarget(sender, studio, benchmark);
         if (player == null) {
             return;
@@ -328,16 +380,18 @@ public class IrisCreator {
             return;
         }
 
-        teleportFuture.whenComplete((success, throwable) -> {
-            if (throwable != null) {
-                reportSenderTeleportFailure(player, world, throwable);
-                return;
-            }
-            if (!Boolean.TRUE.equals(success)) {
+        try {
+            Boolean teleported = teleportFuture.get(60L, TimeUnit.SECONDS);
+            if (!Boolean.TRUE.equals(teleported)) {
                 reportSenderTeleportFailure(player, world, new IllegalStateException(
                         "The runtime teleport operation returned false for player \"" + player.getName() + "\"."));
             }
-        });
+        } catch (TimeoutException e) {
+            ServerConfigurator.restart("World entry teleport timed out for \"" + world.getName() + "\".");
+            reportSenderTeleportFailure(player, world, e);
+        } catch (Throwable e) {
+            reportSenderTeleportFailure(player, world, e);
+        }
     }
 
     private void reportSenderTeleportFailure(Player player, World world, Throwable throwable) {
@@ -562,20 +616,115 @@ public class IrisCreator {
         return false;
     }
 
-    private void addToBukkitYml() {
-        YamlConfiguration yml = YamlConfiguration.loadConfiguration(BUKKIT_YML);
-        String gen = "Iris:" + dimension;
-        ConfigurationSection section = yml.contains("worlds") ? yml.getConfigurationSection("worlds") : yml.createSection("worlds");
-        if (!section.contains(name)) {
-            section.createSection(name).set("generator", gen);
+    private void rollbackWorldCreation(
+            NamespacedKey worldKey,
+            World createdWorld,
+            File dimensionRoot,
+            boolean bukkitRegistered,
+            Throwable failure
+    ) {
+        World activeWorld = createdWorld == null ? WorldIdentity.resolve(worldKey).orElse(null) : createdWorld;
+        boolean safeToDelete = activeWorld != null || !containsTimeout(failure);
+        if (activeWorld != null) {
+            IrisToolbelt.beginWorldMaintenance(activeWorld, "world-create-rollback", true);
             try {
-                yml.save(BUKKIT_YML);
-                IrisLogging.info("Registered \"" + name + "\" in bukkit.yml");
-            } catch (IOException e) {
-                IrisLogging.error("Failed to update bukkit.yml!");
-                IrisLogging.reportError(e);
-                e.printStackTrace();
+                PlatformChunkGenerator generator = IrisToolbelt.access(activeWorld);
+                boolean evacuated = Boolean.TRUE.equals(IrisToolbelt.evacuateAsync(activeWorld)
+                        .get(ROLLBACK_PHASE_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+                if (!evacuated) {
+                    safeToDelete = false;
+                    failure.addSuppressed(new IllegalStateException(
+                            "Rollback could not evacuate world \"" + name + "\"."));
+                }
+                boolean unloaded = safeToDelete && Boolean.TRUE.equals(WorldLifecycleService.get()
+                        .unloadAsync(activeWorld, true)
+                        .get(ROLLBACK_PHASE_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+                if (!unloaded) {
+                    safeToDelete = false;
+                    failure.addSuppressed(new IllegalStateException("Rollback could not unload world \"" + name + "\"."));
+                }
+                if (safeToDelete && generator != null) {
+                    generator.closeAsync().get(ROLLBACK_PHASE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                }
+            } catch (Throwable rollbackFailure) {
+                Throwable cause = unwrapFailure(rollbackFailure);
+                failure.addSuppressed(cause);
+                safeToDelete = false;
+                if (cause instanceof TimeoutException) {
+                    ServerConfigurator.restart("World creation rollback timed out for \"" + name + "\".");
+                }
+            } finally {
+                IrisToolbelt.endWorldMaintenance(activeWorld, "world-create-rollback");
             }
         }
+
+        if (bukkitRegistered) {
+            try {
+                CompletableFuture<Boolean> multiverseRemoval = J.sfut(
+                        () -> IrisServices.get(MultiverseCoreLink.class).removeFromConfig(name)
+                );
+                if (multiverseRemoval == null) {
+                    throw new IllegalStateException("Failed to schedule Multiverse rollback for \"" + name + "\".");
+                }
+                try {
+                    multiverseRemoval.get(30L, TimeUnit.SECONDS);
+                } catch (TimeoutException e) {
+                    ServerConfigurator.restart("Multiverse rollback timed out for \"" + name + "\".");
+                    throw e;
+                }
+            } catch (Throwable rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
+            }
+            try {
+                BukkitWorldConfiguration.remove(BUKKIT_YML, name);
+            } catch (Throwable rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
+            }
+        }
+        try {
+            IrisWorlds.get().remove(worldKey.toString());
+        } catch (Throwable rollbackFailure) {
+            failure.addSuppressed(rollbackFailure);
+        }
+        if (!safeToDelete) {
+            queueRollbackDeletion(name, failure);
+            return;
+        }
+        try {
+            AtomicDirectoryPublisher.deleteTree(dimensionRoot.toPath());
+        } catch (Throwable rollbackFailure) {
+            failure.addSuppressed(rollbackFailure);
+            queueRollbackDeletion(name, failure);
+        }
+    }
+
+    private void queueRollbackDeletion(String worldName, Throwable failure) {
+        try {
+            IrisServices.get(WorldDeletionQueue.class).queueExactForStartupDeletion(List.of(worldName));
+        } catch (Throwable queueFailure) {
+            failure.addSuppressed(queueFailure);
+        }
+    }
+
+    private static boolean containsTimeout(Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor != null) {
+            if (cursor instanceof TimeoutException) {
+                return true;
+            }
+            cursor = cursor.getCause();
+        }
+        return false;
+    }
+
+    private static Throwable unwrapFailure(Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor instanceof CompletionException || cursor instanceof ExecutionException) {
+            if (cursor.getCause() == null) {
+                break;
+            }
+            cursor = cursor.getCause();
+        }
+        return cursor;
     }
 }

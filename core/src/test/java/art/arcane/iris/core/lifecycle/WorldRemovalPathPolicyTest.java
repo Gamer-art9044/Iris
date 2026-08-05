@@ -1,0 +1,97 @@
+package art.arcane.iris.core.lifecycle;
+
+import art.arcane.iris.core.WorldRemovalPathPolicy;
+import org.bukkit.NamespacedKey;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
+
+public class WorldRemovalPathPolicyTest {
+    @Rule
+    public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+    @Test
+    public void resolvesExactIrisDimensionDirectory() throws Exception {
+        Path levelRoot = temporaryFolder.newFolder("world").toPath();
+
+        WorldRemovalPathPolicy.Target target = WorldRemovalPathPolicy.resolve("Iris World", "world", levelRoot);
+
+        assertEquals("iris:iris_world", target.worldKey().toString());
+        assertEquals("iris_world", target.logicalName());
+        assertEquals(
+                levelRoot.resolve("dimensions/iris/iris_world").toAbsolutePath().normalize(),
+                target.worldDirectory()
+        );
+    }
+
+    @Test
+    public void rejectsConfiguredMainAndMinecraftNamespace() throws Exception {
+        Path levelRoot = temporaryFolder.newFolder("main-protection").toPath();
+
+        WorldRemovalPathPolicy.Rejection mainFailure = assertThrows(
+                WorldRemovalPathPolicy.Rejection.class,
+                () -> WorldRemovalPathPolicy.resolve("production", "production", levelRoot)
+        );
+        WorldRemovalPathPolicy.Rejection namespaceFailure = assertThrows(
+                WorldRemovalPathPolicy.Rejection.class,
+                () -> WorldRemovalPathPolicy.resolve("minecraft:the_nether", "production", levelRoot)
+        );
+
+        assertEquals(WorldRemovalPathPolicy.RejectionReason.CONFIGURED_MAIN_WORLD, mainFailure.reason());
+        assertEquals(WorldRemovalPathPolicy.RejectionReason.MINECRAFT_NAMESPACE, namespaceFailure.reason());
+    }
+
+    @Test
+    public void rejectsTraversalAndOutsideCandidate() throws Exception {
+        Path levelRoot = temporaryFolder.newFolder("path-protection").toPath();
+        NamespacedKey worldKey = NamespacedKey.fromString("iris:safe");
+
+        WorldRemovalPathPolicy.Rejection traversalFailure = assertThrows(
+                WorldRemovalPathPolicy.Rejection.class,
+                () -> WorldRemovalPathPolicy.resolve("../world", "production", levelRoot)
+        );
+        WorldRemovalPathPolicy.Rejection outsideFailure = assertThrows(
+                WorldRemovalPathPolicy.Rejection.class,
+                () -> WorldRemovalPathPolicy.validateStoragePath(
+                        levelRoot,
+                        worldKey,
+                        levelRoot.resolve("safe")
+                )
+        );
+
+        assertEquals(WorldRemovalPathPolicy.RejectionReason.INVALID_IDENTIFIER, traversalFailure.reason());
+        assertEquals(WorldRemovalPathPolicy.RejectionReason.OUTSIDE_STORAGE_ROOT, outsideFailure.reason());
+    }
+
+    @Test
+    public void rejectsSymbolicLinkTargetAndParent() throws Exception {
+        Path levelRoot = temporaryFolder.newFolder("symlink-protection").toPath();
+        Path dimensionsRoot = Files.createDirectories(levelRoot.resolve("dimensions"));
+        Path realNamespace = temporaryFolder.newFolder("real-namespace").toPath();
+        Path namespaceLink = dimensionsRoot.resolve("iris");
+        Files.createSymbolicLink(namespaceLink, realNamespace);
+
+        WorldRemovalPathPolicy.Rejection parentFailure = assertThrows(
+                WorldRemovalPathPolicy.Rejection.class,
+                () -> WorldRemovalPathPolicy.resolve("linked", "production", levelRoot)
+        );
+        assertEquals(WorldRemovalPathPolicy.RejectionReason.SYMBOLIC_LINK, parentFailure.reason());
+
+        Files.delete(namespaceLink);
+        Path namespace = Files.createDirectories(dimensionsRoot.resolve("iris"));
+        Path realTarget = temporaryFolder.newFolder("real-target").toPath();
+        Files.createSymbolicLink(namespace.resolve("linked"), realTarget);
+
+        WorldRemovalPathPolicy.Rejection targetFailure = assertThrows(
+                WorldRemovalPathPolicy.Rejection.class,
+                () -> WorldRemovalPathPolicy.resolve("linked", "production", levelRoot)
+        );
+        assertEquals(WorldRemovalPathPolicy.RejectionReason.SYMBOLIC_LINK, targetFailure.reason());
+    }
+}

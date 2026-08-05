@@ -19,16 +19,24 @@
 package art.arcane.iris.core.commands;
 
 import art.arcane.iris.Iris;
+import art.arcane.iris.core.BukkitWorldReconciler;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.DatapackInstallResult;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.ServerConfigurator;
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
+import art.arcane.iris.core.lifecycle.IrisWorldRemovalService;
+import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.pack.PackDownloader;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.volmlib.util.collection.KList;
@@ -41,7 +49,6 @@ import art.arcane.volmlib.util.director.annotations.Param;
 import art.arcane.volmlib.util.director.exceptions.DirectorParsingException;
 import art.arcane.iris.util.common.director.specialhandlers.NullablePlayerHandler;
 import art.arcane.iris.util.common.format.C;
-import art.arcane.volmlib.util.io.IO;
 import art.arcane.iris.util.common.misc.ServerProperties;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
@@ -49,32 +56,44 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
-import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
-import static art.arcane.iris.core.service.EditSVC.deletingWorld;
 import static art.arcane.iris.util.common.misc.ServerProperties.BUKKIT_YML;
 import static org.bukkit.Bukkit.getServer;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.IrisMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
-import art.arcane.iris.core.localization.BukkitCommandMessages;
 import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 @Director(name = "iris", aliases = {"ir", "irs"}, description = "Basic Command", descriptionKey = "iris.director.commandiris.director.basic_command")
 public class CommandIris implements DirectorExecutor {
+    private static final long WORLD_UNLOAD_TIMEOUT_SECONDS = 150L;
+
     private CommandStudio studio;
     private CommandPregen pregen;
     private CommandObject object;
@@ -85,10 +104,7 @@ public class CommandIris implements DirectorExecutor {
     private CommandPack pack;
     private CommandFind find;
     private CommandDatapack datapack;
-    public static boolean worldCreation = false;
     private static final AtomicReference<Thread> mainWorld = new AtomicReference<>();
-    String WorldEngine;
-    String worldNameToCheck = "YourWorldName";
     VolmitSender sender = Iris.getSender();
 
     @Director(description = "Create a new world", descriptionKey = "iris.director.commandiris.director.create_new_world", aliases = {"c"})
@@ -107,7 +123,15 @@ public class CommandIris implements DirectorExecutor {
             @Param(aliases = "main-world", description = "Whether or not to automatically use this world as the main world", descriptionKey = "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world", defaultValue = "false")
             boolean main
     ) {
-        String worldName = IrisWorldStorage.logicalName(IrisWorldStorage.keyFromName(name));
+        NamespacedKey worldKey;
+        try {
+            worldKey = IrisWorldStorage.managedKeyFromName(name);
+            IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
+        } catch (IllegalArgumentException e) {
+            sender().sendMessage(C.RED + e.getMessage());
+            return;
+        }
+        String worldName = IrisWorldStorage.logicalName(worldKey);
         if (worldName.equalsIgnoreCase("iris")) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_YOU_CANNOT_USE_WORLD_NAME_IRIS_CREATING_WORLDS_AS_IRIS));
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_MAY_WE_SUGGEST_NAME_IRISWORLD_INSTEAD));
@@ -145,7 +169,6 @@ public class CommandIris implements DirectorExecutor {
         }
 
         try {
-            worldCreation = true;
             IrisToolbelt.createWorld()
                     .dimension(resolvedType)
                     .name(worldName)
@@ -160,22 +183,46 @@ public class CommandIris implements DirectorExecutor {
                 }));
             }
         } catch (Throwable e) {
+            if (reportExpectedCreationInterruption(e)) {
+                return;
+            }
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_EXCEPTION_RAISED_DURING_CREATION_SEE_CONSOLE_MORE_DETAILS));
             Iris.reportError("Exception raised during world creation for \"" + worldName + "\".", e);
-            worldCreation = false;
             return;
         }
 
-        worldCreation = false;
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_SUCCESSFULLY_CREATED_YOUR_WORLD));
         if (main) sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_YOUR_WORLD_WILL_AUTOMATICALLY_BE_SET_AS_MAIN_WORLD_WHEN));
     }
 
     private boolean updateMainWorld(String newName) {
+        LifecycleOperationCoordinator.Lease lease;
+        try {
+            lease = LifecycleOperationCoordinator.get().acquire(
+                    LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
+                    LifecycleOperationCoordinator.OperationKind.WORLD_PROMOTE,
+                    newName
+            );
+        } catch (LifecycleOperationCoordinator.BusyException e) {
+            Iris.error("Could not promote Iris world \"" + newName + "\": " + e.getMessage());
+            return false;
+        }
+
+        try {
+            return updateMainWorldUnderLease(newName);
+        } finally {
+            lease.close();
+        }
+    }
+
+    private boolean updateMainWorldUnderLease(String newName) {
         try {
             File oldLevelRoot = IrisWorldStorage.levelRoot();
             File worldContainer = oldLevelRoot.getParentFile();
-            Properties data = ServerProperties.DATA;
+            if (worldContainer == null) {
+                throw new IllegalStateException("Current level folder has no world container.");
+            }
+            Properties data = new Properties();
             try (FileInputStream in = new FileInputStream(ServerProperties.SERVER_PROPERTIES)) {
                 data.load(in);
             }
@@ -186,22 +233,6 @@ public class CommandIris implements DirectorExecutor {
             }
 
             File newLevelRoot = new File(worldContainer, newName);
-            if (!newLevelRoot.exists() && !newLevelRoot.mkdirs()) {
-                throw new IllegalStateException("Could not create target level folder: " + newLevelRoot.getAbsolutePath());
-            }
-
-            for (String sub : List.of("data", "datapacks", "players")) {
-                File source = new File(oldLevelRoot, sub);
-                if (!source.exists()) {
-                    continue;
-                }
-
-                IO.copyDirectory(source.toPath(), new File(newLevelRoot, sub).toPath());
-            }
-
-            File targetDimensionRoot = IrisWorldStorage.dimensionRoot(newLevelRoot, NamespacedKey.minecraft("overworld"));
-            IO.copyDirectory(sourceDimensionRoot.toPath(), targetDimensionRoot.toPath());
-
             World sourceWorld = WorldIdentity.resolve(IrisWorldStorage.keyFromName(newName)).orElse(null);
             Long stagedSeed = IrisWorlds.readBukkitWorldSeed(newName);
             if (sourceWorld == null && stagedSeed == null) {
@@ -210,8 +241,18 @@ public class CommandIris implements DirectorExecutor {
             long promotedSeed = sourceWorld == null ? stagedSeed : sourceWorld.getSeed();
             data.setProperty("level-name", newName);
             data.setProperty("level-seed", Long.toString(promotedSeed));
-            try (FileOutputStream out = new FileOutputStream(ServerProperties.SERVER_PROPERTIES)) {
-                data.store(out, null);
+
+            try (MainWorldPublication publication = publishMainWorldFiles(
+                    oldLevelRoot.toPath(),
+                    sourceDimensionRoot.toPath(),
+                    newLevelRoot.toPath()
+            )) {
+                writeServerPropertiesAtomically(ServerProperties.SERVER_PROPERTIES.toPath(), data);
+                publication.commit();
+            }
+            synchronized (ServerProperties.DATA) {
+                ServerProperties.DATA.clear();
+                ServerProperties.DATA.putAll(data);
             }
             return true;
         } catch (Throwable e) {
@@ -221,57 +262,204 @@ public class CommandIris implements DirectorExecutor {
         }
     }
 
-    private boolean stageFoliaWorldCreation(String name, IrisDimension dimension, long seed, boolean main) {
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_RUNTIME_WORLD_CREATION_IS_DISABLED_ON_FOLIA));
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_PREPARING_WORLD_FILES_BUKKIT_YML_NEXT_STARTUP));
-
-        File worldFolder = IrisWorldStorage.dimensionRoot(name);
-        IrisDimension installed = Iris.service(StudioSVC.class).installIntoWorld(sender(), dimension, worldFolder);
-        if (installed == null) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_STAGE_WORLD_FILES_DIMENSION, MessageArgument.untrusted("value", dimension.getLoadKey())));
-            return false;
+    static MainWorldPublication publishMainWorldFiles(
+            Path currentLevelRoot,
+            Path sourceDimensionRoot,
+            Path targetLevelRoot
+    ) throws IOException {
+        Path current = Objects.requireNonNull(currentLevelRoot, "currentLevelRoot").toAbsolutePath().normalize();
+        Path sourceDimension = Objects.requireNonNull(sourceDimensionRoot, "sourceDimensionRoot").toAbsolutePath().normalize();
+        Path target = Objects.requireNonNull(targetLevelRoot, "targetLevelRoot").toAbsolutePath().normalize();
+        Path worldContainer = current.getParent();
+        Path sourceNamespace = current.resolve("dimensions/iris");
+        if (worldContainer == null || !Objects.equals(target.getParent(), worldContainer)) {
+            throw new IOException("Promoted main world must be a direct child of the world container.");
         }
-
-        if (!registerWorldInBukkitYml(name, dimension.getLoadKey(), seed)) {
-            return false;
+        if (!Objects.equals(sourceDimension.getParent(), sourceNamespace)) {
+            throw new IOException("Promoted source must be a direct Iris dimension.");
         }
+        if (Objects.equals(current, target)) {
+            throw new IOException("Promoted main world cannot replace the current main world.");
+        }
+        if (Files.isSymbolicLink(worldContainer)
+                || Files.isSymbolicLink(current)
+                || !Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Current world storage is missing or unsafe.");
+        }
+        if (Files.isSymbolicLink(sourceDimension)
+                || !Files.isDirectory(sourceDimension, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Promoted Iris dimension is missing or unsafe: " + sourceDimension);
+        }
+        requireAbsentMainWorldTarget(target);
 
-        if (main) {
-            if (updateMainWorld(name)) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_UPDATED_SERVER_PROPERTIES_LEVEL_NAME, MessageArgument.untrusted("name", name)));
-            } else {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_WORLD_WAS_STAGED_BUT_FAILED_UPDATE_SERVER_PROPERTIES_MAIN_WORLD));
-                return false;
+        Path stage = Files.createTempDirectory(worldContainer, "." + target.getFileName() + ".promoting-");
+        boolean published = false;
+        try {
+            for (String subdirectory : List.of("data", "datapacks", "players")) {
+                Path source = current.resolve(subdirectory);
+                if (!Files.exists(source, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(source)) {
+                    continue;
+                }
+                copyWorldTree(source, stage.resolve(subdirectory));
+            }
+
+            Path targetDimension = IrisWorldStorage.dimensionRoot(
+                    stage.toFile(),
+                    NamespacedKey.minecraft("overworld")
+            ).toPath();
+            copyWorldTree(sourceDimension, targetDimension);
+            requireAbsentMainWorldTarget(target);
+            Files.move(stage, target);
+            published = true;
+            return new MainWorldPublication(target);
+        } finally {
+            if (!published) {
+                AtomicDirectoryPublisher.deleteTree(stage);
             }
         }
+    }
 
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_STAGED_IRIS_WORLD_WITH_GENERATOR_IRIS_SEED, MessageArgument.untrusted("name", name), MessageArgument.untrusted("value", dimension.getLoadKey()), MessageArgument.untrusted("seed", seed)));
-        if (main) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_THIS_WORLD_IS_NOW_CONFIGURED_AS_MAIN_NEXT_RESTART));
+    private static void requireAbsentMainWorldTarget(Path target) throws IOException {
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(target)) {
+            throw new FileAlreadyExistsException("Main-world target already exists: " + target);
         }
-        return true;
+    }
+
+    private static void copyWorldTree(Path source, Path target) throws IOException {
+        if (Files.isSymbolicLink(source)) {
+            throw new IOException("World data contains a symbolic link: " + source);
+        }
+        if (Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) {
+            Files.createDirectories(target.getParent());
+            Files.copy(source, target, StandardCopyOption.COPY_ATTRIBUTES);
+            return;
+        }
+        if (!Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("World data contains an unsupported entry: " + source);
+        }
+        try (Stream<Path> entries = Files.walk(source)) {
+            for (Path entry : entries.sorted(Comparator.naturalOrder()).toList()) {
+                if (Files.isSymbolicLink(entry)) {
+                    throw new IOException("World data contains a symbolic link: " + entry);
+                }
+                Path destination = target.resolve(source.relativize(entry)).normalize();
+                if (!destination.startsWith(target)) {
+                    throw new IOException("World data escapes its promotion stage: " + entry);
+                }
+                if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
+                    Files.createDirectories(destination);
+                } else if (Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
+                    Files.createDirectories(destination.getParent());
+                    Files.copy(entry, destination, StandardCopyOption.COPY_ATTRIBUTES);
+                } else {
+                    throw new IOException("World data contains an unsupported entry: " + entry);
+                }
+            }
+        }
+    }
+
+    private static void writeServerPropertiesAtomically(Path propertiesFile, Properties data) throws IOException {
+        Path target = propertiesFile.toAbsolutePath().normalize();
+        Path parent = target.getParent();
+        if (parent == null) {
+            throw new IOException("server.properties has no parent directory.");
+        }
+        Path stage = Files.createTempFile(parent, ".server.properties.promoting-", ".tmp");
+        IOException operationFailure = null;
+        try {
+            try (FileOutputStream out = new FileOutputStream(stage.toFile())) {
+                data.store(out, null);
+                out.getFD().sync();
+            }
+            try {
+                Files.move(stage, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(stage, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            operationFailure = e;
+            throw e;
+        } finally {
+            try {
+                Files.deleteIfExists(stage);
+            } catch (IOException cleanupFailure) {
+                if (operationFailure != null) {
+                    operationFailure.addSuppressed(cleanupFailure);
+                } else {
+                    throw cleanupFailure;
+                }
+            }
+        }
+    }
+
+    private boolean stageFoliaWorldCreation(String name, IrisDimension dimension, long seed, boolean main) {
+        NamespacedKey worldKey = IrisWorldStorage.managedKeyFromName(name);
+        LifecycleOperationCoordinator.Lease worldLease = null;
+        File worldFolder = IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
+        try {
+            LifecycleOperationCoordinator coordinator = LifecycleOperationCoordinator.get();
+            worldLease = coordinator.acquire(
+                    LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
+                    LifecycleOperationCoordinator.OperationKind.WORLD_CREATE,
+                    worldKey.toString());
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_RUNTIME_WORLD_CREATION_IS_DISABLED_ON_FOLIA));
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_PREPARING_WORLD_FILES_BUKKIT_YML_NEXT_STARTUP));
+            if (worldFolder.exists()) {
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_THAT_FOLDER_ALREADY_EXISTS));
+                return false;
+            }
+
+            DatapackInstallResult datapackResult = ServerConfigurator.installDataPacksIfChanged(true);
+            if (!datapackResult.succeeded()) {
+                sender().sendMessage(C.RED + "Failed to compile the Iris datapack. No world files were staged.");
+                return false;
+            }
+            IrisDimension installed = Iris.service(StudioSVC.class).installIntoWorld(sender(), dimension, worldFolder);
+            if (installed == null) {
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_STAGE_WORLD_FILES_DIMENSION, MessageArgument.untrusted("value", dimension.getLoadKey())));
+                deleteDirectorySafely(worldFolder);
+                return false;
+            }
+
+            if (!registerWorldInBukkitYml(name, dimension.getLoadKey(), seed)) {
+                deleteDirectorySafely(worldFolder);
+                return false;
+            }
+
+            if (main) {
+                if (updateMainWorldUnderLease(name)) {
+                    sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_UPDATED_SERVER_PROPERTIES_LEVEL_NAME, MessageArgument.untrusted("name", name)));
+                } else {
+                    sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_WORLD_WAS_STAGED_BUT_FAILED_UPDATE_SERVER_PROPERTIES_MAIN_WORLD));
+                    try {
+                        BukkitWorldConfiguration.remove(BUKKIT_YML, name);
+                    } catch (IOException e) {
+                        Iris.reportError("Failed to roll back bukkit.yml after main-world staging failed.", e);
+                    }
+                    deleteDirectorySafely(worldFolder);
+                    return false;
+                }
+            }
+
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_STAGED_IRIS_WORLD_WITH_GENERATOR_IRIS_SEED, MessageArgument.untrusted("name", name), MessageArgument.untrusted("value", dimension.getLoadKey()), MessageArgument.untrusted("seed", seed)));
+            if (main) {
+                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_THIS_WORLD_IS_NOW_CONFIGURED_AS_MAIN_NEXT_RESTART));
+            }
+            return true;
+        } catch (LifecycleOperationCoordinator.BusyException e) {
+            sender().sendMessage(C.YELLOW + e.getMessage());
+            return false;
+        } finally {
+            if (worldLease != null) {
+                worldLease.close();
+            }
+        }
     }
 
     private boolean registerWorldInBukkitYml(String worldName, String dimension, Long seed) {
         String logicalWorldName = IrisWorldStorage.logicalName(IrisWorldStorage.keyFromName(worldName));
-        YamlConfiguration yml = YamlConfiguration.loadConfiguration(BUKKIT_YML);
-        ConfigurationSection worlds = yml.getConfigurationSection("worlds");
-        if (worlds == null) {
-            worlds = yml.createSection("worlds");
-        }
-        ConfigurationSection worldSection = worlds.getConfigurationSection(logicalWorldName);
-        if (worldSection == null) {
-            worldSection = worlds.createSection(logicalWorldName);
-        }
-
-        String generator = "Iris:" + dimension;
-        worldSection.set("generator", generator);
-        if (seed != null) {
-            worldSection.set("seed", seed);
-        }
-
         try {
-            yml.save(BUKKIT_YML);
+            BukkitWorldConfiguration.register(BUKKIT_YML, logicalWorldName, dimension, seed);
             Iris.info("Registered \"" + logicalWorldName + "\" in bukkit.yml");
             return true;
         } catch (IOException e) {
@@ -280,6 +468,31 @@ public class CommandIris implements DirectorExecutor {
             Iris.reportError(e);
             return false;
         }
+    }
+
+    private void deleteDirectorySafely(File directory) {
+        try {
+            AtomicDirectoryPublisher.deleteTree(directory.toPath());
+        } catch (IOException e) {
+            Iris.reportError("Failed to roll back staged world folder \"" + directory.getAbsolutePath() + "\".", e);
+        }
+    }
+
+    private boolean reportExpectedCreationInterruption(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof LifecycleOperationCoordinator.BusyException) {
+                sender().sendMessage(C.YELLOW + current.getMessage());
+                return true;
+            }
+            current = current.getCause();
+        }
+        String message = failure.getMessage();
+        if (message != null && message.contains("queued a restart")) {
+            sender().sendMessage(C.YELLOW + message);
+            return true;
+        }
+        return false;
     }
 
     @Director(description = "Teleport to another world", descriptionKey = "iris.director.commandiris.director.teleport_another_world", aliases = {"tp"}, sync = true)
@@ -368,78 +581,73 @@ public class CommandIris implements DirectorExecutor {
 
     @Director(description = "Remove an Iris world", descriptionKey = "iris.director.commandiris.director.remove_iris_world", aliases = {"rm"}, sync = true)
     public void remove(
-            @Param(description = "The world to remove", descriptionKey = "iris.director.commandiris.param.world_remove")
-            World world,
+            @Param(description = "The loaded or disk-only Iris world to remove", descriptionKey = "iris.director.commandiris.param.world_remove", customHandler = ManagedWorldNameHandler.class)
+            String world,
             @Param(description = "Whether to also remove the folder (if set to false, just does not load the world)", descriptionKey = "iris.director.commandiris.param.whether_also_remove_folder_if_set_false_just_does_not_load_world", defaultValue = "true")
             boolean delete
     ) {
-        if (!IrisToolbelt.isIrisWorld(world)) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_THIS_IS_NOT_IRIS_WORLD_IRIS_WORLDS, MessageArgument.untrusted("value", String.join(", ", getServer().getWorlds().stream().filter(IrisToolbelt::isIrisWorld).map(World::getName).toList()))));
-            return;
-        }
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_REMOVING_WORLD, MessageArgument.untrusted("value", world.getName())));
-
-        if (!IrisToolbelt.evacuate(world)) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_EVACUATE_WORLD, MessageArgument.untrusted("value", world.getName())));
-            return;
-        }
-
-        if (!WorldLifecycleService.get().unload(world, false)) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_UNLOAD_WORLD, MessageArgument.untrusted("value", world.getName())));
-            return;
-        }
-
-        try {
-            if (IrisToolbelt.removeWorld(world)) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_SUCCESSFULLY_REMOVED_FROM_BUKKIT_YML, MessageArgument.untrusted("value", world.getName())));
-            } else {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_LOOKS_LIKE_WORLD_WAS_ALREADY_REMOVED_FROM_BUKKIT_YML));
+        VolmitSender responseSender = sender();
+        responseSender.sendMessage(C.GRAY + "Removing Iris world '" + world + "'...");
+        IrisWorldRemovalService.get().remove(world, delete).whenComplete((result, throwable) -> {
+            Runnable response = () -> reportRemovalResult(responseSender, world, result, throwable);
+            if (responseSender.isPlayer() && J.runEntity(responseSender.player(), response)) {
+                return;
             }
-        } catch (IOException e) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_SAVE_BUKKIT_YML_BECAUSE, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
-            Iris.reportError("Failed to remove world \"" + world.getName() + "\" from bukkit.yml.", e);
-        }
-        IrisToolbelt.evacuate(world, "Deleting world");
-        deletingWorld = true;
-        if (!delete) {
-            deletingWorld = false;
-            return;
-        }
-        VolmitSender sender = sender();
-        J.a(() -> {
-            int retries = 12;
-
-            if (deleteDirectory(world.getWorldFolder())) {
-                sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_IRIS_SUCCESSFULLY_REMOVED_WORLD_FOLDER));
-            } else {
-                while(true){
-                    if (deleteDirectory(world.getWorldFolder())){
-                        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_IRIS_SUCCESSFULLY_REMOVED_WORLD_FOLDER_2));
-                        break;
-                    }
-                    retries--;
-                    if (retries == 0){
-                        sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_IRIS_FAILED_REMOVE_WORLD_FOLDER));
-                        break;
-                    }
-                    J.sleep(3000);
-                }
-            }
-            deletingWorld = false;
+            J.s(response);
         });
     }
 
-    public static boolean deleteDirectory(File dir) {
-        if (dir.isDirectory()) {
-            File[] children = dir.listFiles();
-            for (int i = 0; i < children.length; i++) {
-                boolean success = deleteDirectory(children[i]);
-                if (!success) {
-                    return false;
+    private void reportRemovalResult(
+            VolmitSender responseSender,
+            String requestedWorld,
+            IrisWorldRemovalService.RemovalResult result,
+            Throwable throwable
+    ) {
+        if (throwable != null || result == null) {
+            Throwable failure = throwable == null
+                    ? new IllegalStateException("World removal returned no result.")
+                    : throwable;
+            responseSender.sendMessage(C.RED + "World removal failed unexpectedly; nothing further was deleted.");
+            Iris.reportError("Unexpected world removal failure for \"" + requestedWorld + "\".", failure);
+            return;
+        }
+
+        switch (result.status()) {
+            case UNREGISTERED -> responseSender.sendMessage(C.GREEN + "Unloaded and unregistered '"
+                    + result.target().logicalName() + "'; its files were preserved.");
+            case DELETED -> responseSender.sendMessage(C.GREEN + "Removed Iris world '"
+                    + result.target().logicalName() + "' and deleted its folder.");
+            case DELETE_QUEUED -> responseSender.sendMessage(C.YELLOW + "Removed Iris world '"
+                    + result.target().logicalName() + "'; its quarantined folder will be deleted at startup.");
+            case BUSY -> responseSender.sendMessage(C.YELLOW + "World changes are busy with "
+                    + result.blockingOperation().kind().name().toLowerCase(Locale.ROOT) + " for '"
+                    + result.blockingOperation().target() + "'. Try again when it completes.");
+            case INVALID_IDENTIFIER, PROTECTED_WORLD, NOT_IRIS_WORLD, UNSAFE_PATH, NOT_FOUND ->
+                    responseSender.sendMessage(C.RED + removalFailureDetail(result));
+            default -> {
+                responseSender.sendMessage(C.RED + "World removal stopped at "
+                        + result.status().name().toLowerCase(Locale.ROOT) + ": " + removalFailureDetail(result));
+                if (result.quarantineDirectory() != null) {
+                    responseSender.sendMessage(C.YELLOW + "The recoverable world folder is "
+                            + result.quarantineDirectory().toAbsolutePath() + ".");
+                } else if (result.configurationChanged() || result.registryChanged()) {
+                    responseSender.sendMessage(C.YELLOW + "Removal changed registration state before stopping; "
+                            + "the original world folder was not deleted.");
+                }
+                if (result.failure() != null) {
+                    Iris.reportError("World removal failed for \"" + requestedWorld + "\" at "
+                            + result.status().name() + ".", result.failure());
                 }
             }
         }
-        return dir.delete();
+    }
+
+    private String removalFailureDetail(IrisWorldRemovalService.RemovalResult result) {
+        Throwable failure = result.failure();
+        if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+            return result.status().name().toLowerCase(Locale.ROOT).replace('_', ' ');
+        }
+        return failure.getMessage();
     }
 
     @Director(description = "Toggle debug", descriptionKey = "iris.director.commandiris.director.toggle_debug")
@@ -466,7 +674,6 @@ public class CommandIris implements DirectorExecutor {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_DOWNLOADING_PACK, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("branch", branch), MessageArgument.trusted("value", overwrite ? IrisLanguage.text(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX) : "")));
             Iris.service(StudioSVC.class).downloadSearch(sender(), "IrisDimensions/" + pack + "/" + branch, overwrite);
         }
-        ServerConfigurator.installDataPacksIfChanged(true);
     }
 
     @Director(description = "Get metrics for your world", descriptionKey = "iris.director.commandiris.director.get_metrics_your_world", aliases = "measure", origin = DirectorOrigin.PLAYER)
@@ -508,76 +715,187 @@ public class CommandIris implements DirectorExecutor {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_THIS_IS_NOT_IRIS_WORLD_IRIS_WORLDS_2, MessageArgument.untrusted("value", String.join(", ", getServer().getWorlds().stream().filter(IrisToolbelt::isIrisWorld).map(World::getName).toList()))));
             return;
         }
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_UNLOADING_WORLD, MessageArgument.untrusted("value", world.getName())));
+        VolmitSender responseSender = sender();
+        responseSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_UNLOADING_WORLD, MessageArgument.untrusted("value", world.getName())));
+        LifecycleOperationCoordinator.Lease lease;
         try {
-            IrisToolbelt.evacuate(world);
-            boolean unloaded = WorldLifecycleService.get().unload(world, false);
-            if (unloaded) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_WORLD_UNLOADED_SUCCESSFULLY));
-            } else {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_UNLOAD_WORLD_2));
-            }
+            lease = LifecycleOperationCoordinator.get().acquire(
+                    LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
+                    LifecycleOperationCoordinator.OperationKind.WORLD_UNLOAD,
+                    WorldIdentity.serialize(world)
+            );
+        } catch (LifecycleOperationCoordinator.BusyException e) {
+            responseSender.sendMessage(C.YELLOW + e.getMessage());
+            return;
+        }
+        PlatformChunkGenerator generator = IrisToolbelt.access(world);
+        IrisToolbelt.beginWorldMaintenance(world, "world-unload", true);
+        try {
+            AtomicBoolean terminalTimeout = new AtomicBoolean(false);
+            CompletableFuture<Boolean> sequence = IrisToolbelt.evacuateAsync(world)
+                    .thenCompose(evacuated -> {
+                        if (terminalTimeout.get()) {
+                            return CompletableFuture.failedFuture(new TimeoutException(
+                                    "World unload stopped after its terminal timeout."));
+                        }
+                        if (!Boolean.TRUE.equals(evacuated)) {
+                            return CompletableFuture.completedFuture(false);
+                        }
+                        return WorldLifecycleService.get().unloadAsync(world, true);
+                    })
+                    .thenCompose(unloaded -> {
+                        if (terminalTimeout.get()) {
+                            return CompletableFuture.failedFuture(new TimeoutException(
+                                    "World unload stopped after its terminal timeout."));
+                        }
+                        if (!Boolean.TRUE.equals(unloaded) || generator == null) {
+                            return CompletableFuture.completedFuture(Boolean.TRUE.equals(unloaded));
+                        }
+                        return generator.closeAsync().thenApply(ignored -> true);
+                    });
+            guardUnloadCompletion(sequence, terminalTimeout, world.getName())
+                    .whenComplete((unloaded, throwable) -> {
+                        IrisToolbelt.endWorldMaintenance(world, "world-unload");
+                        lease.close();
+                        Runnable response = () -> reportUnloadResult(responseSender, world, unloaded, throwable);
+                        if (responseSender.isPlayer() && J.runEntity(responseSender.player(), response)) {
+                            return;
+                        }
+                        J.s(response);
+                    });
         } catch (Exception e) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_UNLOAD_WORLD_3, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
+            IrisToolbelt.endWorldMaintenance(world, "world-unload");
+            lease.close();
+            responseSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_UNLOAD_WORLD_3, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
             Iris.reportError("Failed to unload world \"" + world.getName() + "\".", e);
+        }
+    }
+
+    private CompletableFuture<Boolean> guardUnloadCompletion(
+            CompletableFuture<Boolean> source,
+            AtomicBoolean terminalTimeout,
+            String worldName
+    ) {
+        CompletableFuture<Boolean> guarded = new CompletableFuture<>();
+        AtomicBoolean settled = new AtomicBoolean(false);
+        source.whenComplete((unloaded, throwable) -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
+            if (throwable == null) {
+                guarded.complete(Boolean.TRUE.equals(unloaded));
+            } else {
+                guarded.completeExceptionally(throwable);
+            }
+        });
+        CompletableFuture.delayedExecutor(WORLD_UNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS).execute(() -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
+            terminalTimeout.set(true);
+            TimeoutException timeout = new TimeoutException(
+                    "World unload did not settle within " + WORLD_UNLOAD_TIMEOUT_SECONDS
+                            + " seconds for \"" + worldName + "\".");
+            ServerConfigurator.restart("World unload timed out for \"" + worldName + "\".");
+            guarded.completeExceptionally(timeout);
+        });
+        return guarded;
+    }
+
+    private void reportUnloadResult(VolmitSender responseSender, World world, Boolean unloaded, Throwable throwable) {
+        if (throwable != null) {
+            responseSender.sendMessage(IrisLanguage.text(
+                    BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_UNLOAD_WORLD_3,
+                    MessageArgument.untrusted("value", String.valueOf(throwable.getMessage()))
+            ));
+            Iris.reportError("Failed to unload world \"" + world.getName() + "\".", throwable);
+            return;
+        }
+        if (Boolean.TRUE.equals(unloaded)) {
+            responseSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_WORLD_UNLOADED_SUCCESSFULLY));
+        } else {
+            responseSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_UNLOAD_WORLD_2));
         }
     }
 
     @Director(description = "Load an Iris World", descriptionKey = "iris.director.commandiris.director.load_iris_world", origin = DirectorOrigin.PLAYER, sync = true, aliases = {"import"})
     public void loadWorld(
-            @Param(description = "The name of the world to load", descriptionKey = "iris.director.commandiris.param.name_world_load")
+            @Param(
+                    description = "The name of the world to load",
+                    descriptionKey = "iris.director.commandiris.param.name_world_load",
+                    customHandler = ManagedWorldNameHandler.class)
             String world
     ) {
-        String logicalWorldName = IrisWorldStorage.logicalName(IrisWorldStorage.keyFromName(world));
-        worldNameToCheck = logicalWorldName;
-        boolean worldExists = doesWorldExist(worldNameToCheck);
-        WorldEngine = logicalWorldName;
+        NamespacedKey worldKey;
+        try {
+            worldKey = IrisWorldStorage.managedKeyFromName(world);
+            IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
+        } catch (IllegalArgumentException failure) {
+            sender().sendMessage(C.RED + failure.getMessage());
+            return;
+        }
+        String logicalWorldName = IrisWorldStorage.logicalName(worldKey);
+        boolean worldExists = doesWorldExist(logicalWorldName);
 
         if (!worldExists) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_DOESNT_EXIST_ON_SERVER, MessageArgument.untrusted("logicalWorldName", logicalWorldName)));
             return;
         }
 
-        File directory = new File(IrisWorldStorage.packRoot(IrisWorldStorage.keyFromName(logicalWorldName)), "dimensions");
-
-        String dimension = null;
-        if (directory.exists() && directory.isDirectory()) {
-            File[] files = directory.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    if (file.isFile()) {
-                        String fileName = file.getName();
-                        if (fileName.endsWith(".json")) {
-                            dimension = fileName.substring(0, fileName.length() - 5);
-                            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_GENERATOR, MessageArgument.untrusted("dimension", dimension)));
-                        }
+        VolmitSender responseSender = sender();
+        responseSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_LOADING_WORLD, MessageArgument.untrusted("logicalWorldName", logicalWorldName)));
+        Iris.instance.worldReconciler()
+                .loadWorld(BUKKIT_YML, worldKey.toString())
+                .whenComplete((result, failure) -> {
+                    Runnable response = () -> reportLoadWorldResult(
+                            responseSender,
+                            logicalWorldName,
+                            result,
+                            failure);
+                    if (responseSender.isPlayer() && J.runEntity(responseSender.player(), response)) {
+                        return;
                     }
-                }
-            }
-        } else {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_IS_NOT_IRIS_WORLD, MessageArgument.untrusted("logicalWorldName", logicalWorldName)));
-            return;
-        }
-
-        if (dimension == null) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_COULD_NOT_DETERMINE_IRIS_DIMENSION, MessageArgument.untrusted("logicalWorldName", logicalWorldName)));
-            return;
-        }
-
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_LOADING_WORLD, MessageArgument.untrusted("logicalWorldName", logicalWorldName)));
-
-        if (!registerWorldInBukkitYml(logicalWorldName, dimension, null)) {
-            return;
-        }
-
-        if (J.isFolia()) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FOLIA_CANNOT_LOAD_NEW_WORLDS_AT_RUNTIME_RESTART_SERVER_LOAD, MessageArgument.untrusted("logicalWorldName", logicalWorldName)));
-            return;
-        }
-
-        Iris.instance.worldReconciler().checkForBukkitWorlds(logicalWorldName::equals);
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_LOADED_SUCCESSFULLY, MessageArgument.untrusted("logicalWorldName", logicalWorldName)));
+                    J.s(response);
+                });
     }
+
+    private void reportLoadWorldResult(
+            VolmitSender responseSender,
+            String logicalWorldName,
+            BukkitWorldReconciler.LoadResult result,
+            Throwable failure
+    ) {
+        if (failure != null) {
+            responseSender.sendMessage(C.RED + "Failed to load Iris world \"" + logicalWorldName + "\": " + failure.getMessage());
+            Iris.reportError("Failed to load Iris world \"" + logicalWorldName + "\".", failure);
+            return;
+        }
+        if (result == null) {
+            IllegalStateException missingResult = new IllegalStateException("World load completed without a result.");
+            responseSender.sendMessage(C.RED + missingResult.getMessage());
+            Iris.reportError("Failed to load Iris world \"" + logicalWorldName + "\".", missingResult);
+            return;
+        }
+        if (result.succeeded()) {
+            responseSender.sendMessage(IrisLanguage.text(
+                    BukkitCommandMessagesExtended.COMMAND_IRIS_LOADED_SUCCESSFULLY,
+                    MessageArgument.untrusted("logicalWorldName", logicalWorldName)));
+            return;
+        }
+
+        C color = result.status() == BukkitWorldReconciler.ReconciliationStatus.BUSY
+                || result.status() == BukkitWorldReconciler.ReconciliationStatus.RESTART_REQUIRED
+                ? C.YELLOW
+                : C.RED;
+        responseSender.sendMessage(color + result.message());
+        Throwable resultFailure = result.failure();
+        if (resultFailure != null
+                && result.status() != BukkitWorldReconciler.ReconciliationStatus.BUSY
+                && result.status() != BukkitWorldReconciler.ReconciliationStatus.RESTART_REQUIRED) {
+            Iris.reportError("Failed to load Iris world \"" + logicalWorldName + "\".", resultFailure);
+        }
+    }
+
     @Director(description = "Evacuate an iris world", descriptionKey = "iris.director.commandiris.director.evacuate_iris_world", origin = DirectorOrigin.PLAYER, sync = true)
     public void evacuate(
             @Param(description = "Evacuate the world", descriptionKey = "iris.director.commandiris.param.evacuate_world")
@@ -596,6 +914,54 @@ public class CommandIris implements DirectorExecutor {
         return worldDirectory.exists() && worldDirectory.isDirectory();
     }
 
+    public static class ManagedWorldNameHandler implements DirectorParameterHandler<String> {
+        @Override
+        public KList<String> getPossibilities() {
+            Set<String> options = new LinkedHashSet<>();
+            for (World world : Bukkit.getWorlds()) {
+                if (IrisToolbelt.isIrisWorld(world)) {
+                    options.add(IrisWorldStorage.logicalName(world));
+                }
+            }
+            for (String identity : IrisWorlds.get().getWorlds().keySet()) {
+                try {
+                    options.add(IrisWorldStorage.logicalName(WorldIdentity.parse(identity)));
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+
+            File namespace = new File(IrisWorldStorage.levelRoot(), "dimensions/iris");
+            File[] diskWorlds = namespace.listFiles(File::isDirectory);
+            if (diskWorlds != null) {
+                for (File diskWorld : diskWorlds) {
+                    if (!Files.isSymbolicLink(diskWorld.toPath())
+                            && diskWorld.getName().matches("[a-z0-9_-]+")) {
+                        options.add(diskWorld.getName());
+                    }
+                }
+            }
+            return new KList<>(options);
+        }
+
+        @Override
+        public String toString(String value) {
+            return value == null ? "" : value;
+        }
+
+        @Override
+        public String parse(String in, boolean force) throws DirectorParsingException {
+            if (in == null || in.isBlank()) {
+                throw new DirectorParsingException("World identifier cannot be empty");
+            }
+            return in.trim();
+        }
+
+        @Override
+        public boolean supports(Class<?> type) {
+            return type == String.class;
+        }
+    }
+
     public static class PackDimensionTypeHandler implements DirectorParameterHandler<String> {
         @Override
         public KList<String> getPossibilities() {
@@ -603,28 +969,21 @@ public class CommandIris implements DirectorExecutor {
             options.add("default");
 
             File packsFolder = Iris.instance.getDataFolder("packs");
-            File[] packs = packsFolder.listFiles();
-            if (packs != null) {
-                for (File pack : packs) {
-                    if (pack == null || !pack.isDirectory()) {
-                        continue;
-                    }
+            for (File pack : PackDirectoryResolver.listVisiblePackDirectories(packsFolder)) {
+                options.add(pack.getName());
 
-                    options.add(pack.getName());
-
-                    try {
-                        IrisData data = IrisData.get(pack);
-                        for (String key : data.getDimensionLoader().getPossibleKeys()) {
-                            options.add(key);
-                            options.add(pack.getName() + ":" + key);
-                        }
-                    } catch (Throwable ex) {
-                        Iris.warn("Failed to read dimension keys from pack %s: %s%s",
-                                pack.getName(),
-                                ex.getClass().getSimpleName(),
-                                ex.getMessage() == null ? "" : " - " + ex.getMessage());
-                        Iris.reportError(ex);
+                try {
+                    IrisData data = IrisData.get(pack);
+                    for (String key : data.getDimensionLoader().getPossibleKeys()) {
+                        options.add(key);
+                        options.add(pack.getName() + ":" + key);
                     }
+                } catch (Throwable ex) {
+                    Iris.warn("Failed to read dimension keys from pack %s: %s%s",
+                            pack.getName(),
+                            ex.getClass().getSimpleName(),
+                            ex.getMessage() == null ? "" : " - " + ex.getMessage());
+                    Iris.reportError(ex);
                 }
             }
 
@@ -648,6 +1007,34 @@ public class CommandIris implements DirectorExecutor {
         @Override
         public boolean supports(Class<?> type) {
             return type == String.class;
+        }
+    }
+
+    static final class MainWorldPublication implements AutoCloseable {
+        private final Path target;
+        private boolean committed;
+        private boolean closed;
+
+        MainWorldPublication(Path target) {
+            this.target = target;
+        }
+
+        void commit() {
+            if (closed) {
+                throw new IllegalStateException("Main-world publication is already closed.");
+            }
+            committed = true;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            if (!committed) {
+                AtomicDirectoryPublisher.deleteTree(target);
+            }
         }
     }
 }

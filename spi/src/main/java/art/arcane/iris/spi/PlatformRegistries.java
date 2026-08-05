@@ -135,6 +135,8 @@ public interface PlatformRegistries {
      */
     List<String> potionEffectKeys();
 
+    List<String> lootTableKeys();
+
     /**
      * Block key to its declared state properties, used to generate pack schema enums and numeric ranges.
      * Keyed by material-level block key. Never null.

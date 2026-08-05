@@ -9,7 +9,7 @@ public interface WorldLifecycleBackend {
 
     CompletableFuture<World> create(WorldLifecycleRequest request);
 
-    boolean unload(World world, boolean save);
+    CompletableFuture<Boolean> unloadAsync(World world, boolean save);
 
     String backendName();
 }

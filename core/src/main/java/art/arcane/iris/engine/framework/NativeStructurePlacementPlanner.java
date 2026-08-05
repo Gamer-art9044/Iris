@@ -7,6 +7,9 @@ import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 public final class NativeStructurePlacementPlanner {
@@ -16,14 +19,18 @@ public final class NativeStructurePlacementPlanner {
     }
 
     public static KList<NativeStructureStartPlan> plansAt(Engine engine, int chunkX, int chunkZ) {
-        KList<NativeStructureStartPlan> plans = new KList<>();
+        Map<String, NativeStructureStartPlan> plansByStructure = new LinkedHashMap<>();
         for (IrisStructurePlacement placement : StructurePlacementScope.placementsAt(engine, chunkX, chunkZ)) {
             NativeStructureStartPlan plan = planAt(engine, placement, chunkX, chunkZ);
             if (plan != null) {
-                plans.add(plan);
+                String structureKey = normalize(plan.source().getStructure());
+                NativeStructureStartPlan current = plansByStructure.get(structureKey);
+                if (current == null || comparePlacementPriority(plan.placement(), current.placement()) < 0) {
+                    plansByStructure.put(structureKey, plan);
+                }
             }
         }
-        return plans;
+        return new KList<>(plansByStructure.values());
     }
 
     public static NativeStructureStartPlan planAt(Engine engine, IrisStructurePlacement placement,
@@ -55,8 +62,9 @@ public final class NativeStructurePlacementPlanner {
         if (structureKey == null || structureKey.isBlank()) {
             return null;
         }
+        String normalizedKey = normalize(structureKey);
         for (NativeStructureStartPlan plan : plansAt(engine, chunkX, chunkZ)) {
-            if (structureKey.equals(plan.source().getStructure())) {
+            if (normalizedKey.equals(normalize(plan.source().getStructure()))) {
                 return plan;
             }
         }
@@ -123,9 +131,13 @@ public final class NativeStructurePlacementPlanner {
         if (worldMin > worldMax) {
             throw new IllegalStateException("Native structure placement has invalid world height bounds");
         }
+        int blockX = (chunkX << 4) + 8;
+        int blockZ = (chunkZ << 4) + 8;
+        if (!placement.isUnderwater()
+                && isSubmerged(engine, blockX, blockZ)) {
+            return null;
+        }
         if (!placement.isUnderground()) {
-            int blockX = (chunkX << 4) + 8;
-            int blockZ = (chunkZ << 4) + 8;
             int surfaceY = engine.getHeight(blockX, blockZ, true) + engine.getMinHeight();
             if (surfaceY < placement.getMinHeight() || surfaceY > placement.getMaxHeight()) {
                 return null;
@@ -135,8 +147,23 @@ public final class NativeStructurePlacementPlanner {
         int bandMin = Math.max(worldMin, Math.min(placement.getMinHeight(), placement.getMaxHeight()));
         int bandMax = Math.min(worldMax, Math.max(placement.getMinHeight(), placement.getMaxHeight()));
         if (bandMin > bandMax) {
-            throw new IllegalStateException("Native structure underground band does not intersect world bounds");
+            return null;
         }
         return bandMin == bandMax ? bandMin : bandMin + rng.nextInt((bandMax - bandMin) + 1);
     }
+
+    static boolean isSubmerged(Engine engine, int blockX, int blockZ) {
+        return engine.getHeight(blockX, blockZ, true) < engine.getDimension().getFluidHeight();
+    }
+
+    private static int comparePlacementPriority(IrisStructurePlacement left, IrisStructurePlacement right) {
+        long leftIdentity = StructurePlacementGrid.placementIdentity(left);
+        long rightIdentity = StructurePlacementGrid.placementIdentity(right);
+        return Long.compareUnsigned(leftIdentity, rightIdentity);
+    }
+
+    private static String normalize(String structureKey) {
+        return structureKey == null ? "" : structureKey.toLowerCase(Locale.ROOT);
+    }
+
 }

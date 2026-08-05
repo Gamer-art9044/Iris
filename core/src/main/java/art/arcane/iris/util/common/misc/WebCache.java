@@ -31,7 +31,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 
@@ -82,40 +85,71 @@ public final class WebCache {
     }
 
     public static File getNonCachedFile(String name, String url) {
+        return getNonCachedFile(name, url, Long.MAX_VALUE);
+    }
+
+    public static File getNonCachedFile(String name, String url, long maxBytes) {
         String h = IO.hash(name + "*" + url);
         File f = IrisPlatforms.get().dataFile("cache", h.substring(0, 2), h.substring(3, 5), h);
         IrisLogging.debug("Download " + name + " -> " + url);
-        download(name, url, f);
-        return f;
+        return download(name, url, f, maxBytes) ? f : null;
     }
 
     private static boolean download(String name, String url, File target) {
+        return download(name, url, target, Long.MAX_VALUE);
+    }
+
+    private static boolean download(String name, String url, File target, long maxBytes) {
+        if (maxBytes < 1L) {
+            throw new IllegalArgumentException("Download size limit must be positive.");
+        }
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(REQUEST_TIMEOUT)
                 .GET()
                 .build();
+        Path staged = null;
         try {
             HttpResponse<InputStream> response = client()
                     .send(request, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() / 100 != 2) {
-                try (InputStream discard = response.body()) {
-                    discard.readAllBytes();
-                }
+                response.body().close();
                 IrisLogging.reportError(new IOException("HTTP " + response.statusCode()
                         + " downloading " + name + " from " + url));
                 return false;
             }
+            long declaredBytes = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+            if (declaredBytes > maxBytes) {
+                response.body().close();
+                throw new IOException("Download exceeds the size limit for " + name + ".");
+            }
+            Path destination = target.toPath().toAbsolutePath().normalize();
+            Path parent = destination.getParent();
+            if (parent == null) {
+                response.body().close();
+                throw new IOException("Download target has no parent: " + destination);
+            }
+            Files.createDirectories(parent);
+            staged = Files.createTempFile(parent, ".download-", ".tmp");
             try (InputStream in = response.body();
-                 OutputStream out = Files.newOutputStream(target.toPath(),
-                         StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-                         StandardOpenOption.TRUNCATE_EXISTING)) {
+                 OutputStream out = Files.newOutputStream(staged, StandardOpenOption.WRITE)) {
                 byte[] buffer = new byte[BUFFER_SIZE];
+                long downloadedBytes = 0L;
                 int read;
                 while ((read = in.read(buffer)) != -1) {
+                    if (read > maxBytes - downloadedBytes) {
+                        throw new IOException("Download exceeds the size limit for " + name + ".");
+                    }
                     out.write(buffer, 0, read);
+                    downloadedBytes += read;
                 }
                 out.flush();
             }
+            try {
+                Files.move(staged, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                Files.move(staged, destination, StandardCopyOption.REPLACE_EXISTING);
+            }
+            staged = null;
             return true;
         } catch (IOException e) {
             IrisLogging.reportError(e);
@@ -124,6 +158,14 @@ public final class WebCache {
             Thread.currentThread().interrupt();
             IrisLogging.reportError(e);
             return false;
+        } finally {
+            if (staged != null) {
+                try {
+                    Files.deleteIfExists(staged);
+                } catch (IOException cleanupFailure) {
+                    IrisLogging.reportError("Failed to clean incomplete download " + staged + ".", cleanupFailure);
+                }
+            }
         }
     }
 

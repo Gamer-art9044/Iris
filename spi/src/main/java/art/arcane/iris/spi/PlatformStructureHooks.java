@@ -51,6 +51,18 @@ public interface PlatformStructureHooks {
         return List.of();
     }
 
+    default JigsawSourceMetadata jigsawSourceMetadata(String structureKey) {
+        throw new UnsupportedOperationException("The active platform does not expose registered jigsaw metadata");
+    }
+
+    default int templatePoolHorizontalSpan(String templatePoolKey) {
+        throw new UnsupportedOperationException("The active platform does not expose registered template pool spans");
+    }
+
+    default int jigsawStartPoolHorizontalSpan(String structureKey, String templatePoolKey) {
+        return templatePoolHorizontalSpan(templatePoolKey);
+    }
+
     /**
      * Every registered structure-set key, the placement grouping that decides structure spacing. Never null.
      */
@@ -99,4 +111,23 @@ public interface PlatformStructureHooks {
      * Check before offering structure capture; adapters without the required host access return false.
      */
     boolean supportsStructurePlacement();
+
+    record JigsawSourceMetadata(int maxDistanceHorizontal, int referenceExpansion,
+                                int maxStartElementHorizontalSpan) {
+        public JigsawSourceMetadata(int maxDistanceHorizontal, int referenceExpansion) {
+            this(maxDistanceHorizontal, referenceExpansion, 0);
+        }
+
+        public JigsawSourceMetadata {
+            if (maxDistanceHorizontal < 1 || maxDistanceHorizontal > 128) {
+                throw new IllegalArgumentException("Jigsaw horizontal distance must be between 1 and 128");
+            }
+            if (referenceExpansion < 0) {
+                throw new IllegalArgumentException("Jigsaw reference expansion must not be negative");
+            }
+            if (maxStartElementHorizontalSpan < 0) {
+                throw new IllegalArgumentException("Jigsaw start element horizontal span must not be negative");
+            }
+        }
+    }
 }

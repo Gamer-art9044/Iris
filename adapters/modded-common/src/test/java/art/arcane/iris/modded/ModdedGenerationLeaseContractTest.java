@@ -48,7 +48,8 @@ public class ModdedGenerationLeaseContractTest {
         String references = method(source, "public void createReferences(");
         assertTrue(references.contains("requireGenerationLease(current, \"modded_create_references\")"));
         assertTrue(references.contains("IrisContext.open(current, lease.sessionId(), null)"));
-        assertTrue(references.contains("super.createReferences(level, structureManager, chunk);"));
+        assertTrue(references.contains("NativeStructureReferenceRepair.createReferences("));
+        assertFalse(references.contains("super.createReferences(level, structureManager, chunk);"));
     }
 
     @Test

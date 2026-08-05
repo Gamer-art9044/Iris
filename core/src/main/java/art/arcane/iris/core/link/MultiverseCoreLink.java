@@ -22,28 +22,36 @@ import lombok.SneakyThrows;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.mvplugins.multiverse.core.MultiverseCoreApi;
+import org.mvplugins.multiverse.core.utils.result.Attempt;
 import org.mvplugins.multiverse.core.world.MultiverseWorld;
 import org.mvplugins.multiverse.core.world.WorldManager;
 import org.mvplugins.multiverse.core.world.options.ImportWorldOptions;
 import org.mvplugins.multiverse.core.world.options.RemoveWorldOptions;
+import org.mvplugins.multiverse.core.world.reasons.RemoveFailureReason;
 
 import java.lang.reflect.Field;
 
 public class MultiverseCoreLink {
-    public void removeFromConfig(World world) {
-        removeFromConfig(world.getName());
+    public boolean removeFromConfig(World world) {
+        return removeFromConfig(world.getName());
     }
 
-    public void removeFromConfig(String world) {
+    public boolean removeFromConfig(String world) {
         if (!isActive()) {
-            return;
+            return false;
         }
         WorldManager manager = worldManager();
         MultiverseWorld multiverseWorld = manager.getWorld(world).getOrElse((MultiverseWorld) null);
         if (multiverseWorld == null) {
-            return;
+            return false;
         }
-        manager.removeWorld(RemoveWorldOptions.world(multiverseWorld)).onSuccess(ignored -> manager.saveWorldsConfig());
+        Attempt<String, RemoveFailureReason> removal = manager.removeWorld(RemoveWorldOptions.world(multiverseWorld));
+        if (removal.isFailure()) {
+            throw new IllegalStateException("Multiverse refused to remove world \"" + world + "\": "
+                    + removal.getFailureMessage());
+        }
+        manager.saveWorldsConfig().get();
+        return true;
     }
 
     @SneakyThrows
@@ -72,7 +80,7 @@ public class MultiverseCoreLink {
                     .invoke(config, generator);
         }
 
-        manager.saveWorldsConfig();
+        manager.saveWorldsConfig().get();
     }
 
     private WorldManager worldManager() {

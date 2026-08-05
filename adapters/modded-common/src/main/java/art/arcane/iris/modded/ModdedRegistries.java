@@ -28,6 +28,7 @@ import art.arcane.iris.spi.PlatformEntityType;
 import art.arcane.iris.spi.PlatformItem;
 import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.volmlib.util.data.UnresolvedKeyLog;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -40,6 +41,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.world.level.storage.loot.LootTable;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -209,6 +211,20 @@ public final class ModdedRegistries implements PlatformRegistries {
         for (Identifier identifier : BuiltInRegistries.MOB_EFFECT.keySet()) {
             keys.add(identifier.toString());
         }
+        return keys;
+    }
+
+    @Override
+    public List<String> lootTableKeys() {
+        List<String> keys = new ArrayList<>();
+        MinecraftServer instance = server.get();
+        if (instance == null) {
+            warnNotReady("loot table");
+            return keys;
+        }
+        HolderLookup.RegistryLookup<LootTable> registry = instance.reloadableRegistries().lookup()
+                .lookupOrThrow(Registries.LOOT_TABLE);
+        registry.listElementIds().forEach(key -> keys.add(key.identifier().toString()));
         return keys;
     }
 

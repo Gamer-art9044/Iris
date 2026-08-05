@@ -1,6 +1,8 @@
 package art.arcane.iris.core.lifecycle;
 
+import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import org.bukkit.NamespacedKey;
@@ -8,25 +10,43 @@ import org.bukkit.World;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public final class WorldLifecycleService {
+    private static final long UNLOAD_TIMEOUT_SECONDS = 120L;
     private static volatile WorldLifecycleService instance;
 
     private final CapabilitySnapshot capabilities;
-    private final WorldsProviderBackend worldsProviderBackend;
-    private final PaperLikeRuntimeBackend paperLikeRuntimeBackend;
-    private final BukkitPublicBackend bukkitPublicBackend;
+    private final WorldLifecycleBackend worldsProviderBackend;
+    private final WorldLifecycleBackend paperLikeRuntimeBackend;
+    private final WorldLifecycleBackend bukkitPublicBackend;
     private final List<WorldLifecycleBackend> backends;
     private final Map<String, String> worldBackendByKey;
 
     public WorldLifecycleService(CapabilitySnapshot capabilities) {
-        this.capabilities = capabilities;
-        this.worldsProviderBackend = new WorldsProviderBackend(capabilities);
-        this.paperLikeRuntimeBackend = new PaperLikeRuntimeBackend(capabilities);
-        this.bukkitPublicBackend = new BukkitPublicBackend(capabilities);
+        this(
+                capabilities,
+                new WorldsProviderBackend(capabilities),
+                new PaperLikeRuntimeBackend(capabilities),
+                new BukkitPublicBackend(capabilities)
+        );
+    }
+
+    WorldLifecycleService(
+            CapabilitySnapshot capabilities,
+            WorldLifecycleBackend worldsProviderBackend,
+            WorldLifecycleBackend paperLikeRuntimeBackend,
+            WorldLifecycleBackend bukkitPublicBackend
+    ) {
+        this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
+        this.worldsProviderBackend = Objects.requireNonNull(worldsProviderBackend, "worldsProviderBackend");
+        this.paperLikeRuntimeBackend = Objects.requireNonNull(paperLikeRuntimeBackend, "paperLikeRuntimeBackend");
+        this.bukkitPublicBackend = Objects.requireNonNull(bukkitPublicBackend, "bukkitPublicBackend");
         this.backends = List.of(worldsProviderBackend, paperLikeRuntimeBackend, bukkitPublicBackend);
         this.worldBackendByKey = new ConcurrentHashMap<>();
     }
@@ -89,47 +109,83 @@ public final class WorldLifecycleService {
         }
     }
 
-    public boolean unload(World world, boolean save) {
-        if (!J.isPrimaryThread()) {
-            CompletableFuture<Boolean> future = new CompletableFuture<>();
-            J.s(() -> {
-                try {
-                    future.complete(unloadDirect(world, save));
-                } catch (Throwable e) {
-                    future.completeExceptionally(e);
-                }
-            });
-            return future.join();
-        }
-
-        return unloadDirect(world, save);
-    }
-
-    private boolean unloadDirect(World world, boolean save) {
-        String worldIdentity = WorldIdentity.serialize(world);
+    public CompletableFuture<Boolean> unloadAsync(World world, boolean save) {
+        World requiredWorld = Objects.requireNonNull(world, "world");
+        String worldIdentity = WorldIdentity.serialize(requiredWorld);
+        String worldName = requiredWorld.getName();
         WorldLifecycleBackend backend = selectUnloadBackend(worldIdentity);
         IrisLogging.info("WorldLifecycle unload: world=%s, backend=%s",
-                world.getName(),
+                worldName,
                 backend.backendName());
-        boolean unloaded;
+
+        CompletableFuture<Boolean> unloadFuture;
         try {
-            unloaded = backend.unload(world, save);
+            unloadFuture = backend.unloadAsync(requiredWorld, save);
+            if (unloadFuture == null) {
+                throw new IllegalStateException("World lifecycle backend returned no unload completion future.");
+            }
         } catch (Throwable e) {
-            IrisLogging.reportError("WorldLifecycle unload failed: world=\"" + world.getName()
-                    + "\", backend=" + backend.backendName()
-                    + ", family=" + capabilities.serverFamily().id() + ".", e);
-            if (e instanceof RuntimeException runtimeException) {
+            unloadFuture = CompletableFuture.failedFuture(e);
+        }
+
+        CompletableFuture<Boolean> guardedFuture = guardUnloadCompletion(worldName, unloadFuture);
+        return guardedFuture.whenComplete((unloaded, throwable) -> {
+            if (throwable != null) {
+                Throwable cause = WorldLifecycleSupport.unwrap(throwable);
+                IrisLogging.reportError("WorldLifecycle unload failed: world=\"" + worldName
+                        + "\", backend=" + backend.backendName()
+                        + ", family=" + capabilities.serverFamily().id() + ".", cause);
+                return;
+            }
+            if (Boolean.TRUE.equals(unloaded)) {
+                worldBackendByKey.remove(worldIdentity, backend.backendName());
+            }
+        });
+    }
+
+    private CompletableFuture<Boolean> guardUnloadCompletion(
+            String worldName,
+            CompletableFuture<Boolean> unloadFuture
+    ) {
+        CompletableFuture<Boolean> guarded = new CompletableFuture<>();
+        unloadFuture.whenComplete((unloaded, throwable) -> {
+            if (throwable == null) {
+                guarded.complete(Boolean.TRUE.equals(unloaded));
+            } else {
+                guarded.completeExceptionally(WorldLifecycleSupport.unwrap(throwable));
+            }
+        });
+        if (!guarded.isDone()) {
+            CompletableFuture.delayedExecutor(UNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS).execute(() -> {
+                TimeoutException timeout = new TimeoutException(
+                        "World unload did not settle within " + UNLOAD_TIMEOUT_SECONDS + " seconds for \""
+                                + worldName + "\".");
+                if (!guarded.completeExceptionally(timeout) || IrisToolbelt.isServerStopping()) {
+                    return;
+                }
+                ServerConfigurator.restart("World unload timed out for \"" + worldName + "\".");
+            });
+        }
+        return guarded;
+    }
+
+    public boolean unload(World world, boolean save) {
+        if (J.isPrimaryThread() || (J.isFolia() && WorldLifecycleSupport.isGlobalTickThread())) {
+            throw new IllegalStateException("WorldLifecycle unload cannot block the primary/global tick thread; use unloadAsync instead.");
+        }
+
+        try {
+            return Boolean.TRUE.equals(unloadAsync(world, save).join());
+        } catch (CompletionException e) {
+            Throwable cause = WorldLifecycleSupport.unwrap(e);
+            if (cause instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
-            if (e instanceof Error error) {
+            if (cause instanceof Error error) {
                 throw error;
             }
-            throw new IllegalStateException(e);
+            throw new IllegalStateException(cause);
         }
-        if (unloaded) {
-            worldBackendByKey.remove(worldIdentity);
-        }
-        return unloaded;
     }
 
     public String backendNameForWorld(NamespacedKey worldKey) {

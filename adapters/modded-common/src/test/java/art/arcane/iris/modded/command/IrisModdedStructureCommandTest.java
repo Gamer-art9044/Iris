@@ -1,15 +1,49 @@
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.nativegen.NativeStructureLocateResults;
+import com.mojang.datafixers.util.Pair;
+import net.minecraft.core.BlockPos;
 import org.junit.Test;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 public class IrisModdedStructureCommandTest {
+    @Test
+    public void mixedUnexploredLocateReferencesOnlyTheSelectedProvider() {
+        BlockPos origin = BlockPos.ZERO;
+        Pair<BlockPos, String> irisNear = Pair.of(new BlockPos(4, 70, 0), "iris");
+        Pair<BlockPos, String> nativeFar = Pair.of(new BlockPos(8, 70, 0), "native");
+        AtomicInteger irisReferences = new AtomicInteger();
+        AtomicInteger nativeReferences = new AtomicInteger();
+
+        Pair<BlockPos, String> irisSelected = NativeStructureLocateResults.selectAndReference(
+                origin,
+                irisNear, () -> irisReferences.incrementAndGet(),
+                nativeFar, () -> nativeReferences.incrementAndGet());
+
+        assertSame(irisNear, irisSelected);
+        assertEquals(1, irisReferences.get());
+        assertEquals(0, nativeReferences.get());
+
+        Pair<BlockPos, String> nativeNear = Pair.of(new BlockPos(2, 70, 0), "native");
+        Pair<BlockPos, String> nativeSelected = NativeStructureLocateResults.selectAndReference(
+                origin,
+                irisNear, () -> irisReferences.incrementAndGet(),
+                nativeNear, () -> nativeReferences.incrementAndGet());
+
+        assertSame(nativeNear, nativeSelected);
+        assertEquals(1, irisReferences.get());
+        assertEquals(1, nativeReferences.get());
+    }
+
     @Test
     public void gotoStructureSupportsIrisAndNativeRegistryTargets() throws IOException {
         String source = source("ModdedLocateCommands.java");
@@ -40,21 +74,34 @@ public class IrisModdedStructureCommandTest {
         int methodStart = source.indexOf("Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(");
         int methodEnd = source.indexOf("HolderSet<Structure> filterReachableNativeStructures(", methodStart);
         String method = source.substring(methodStart, methodEnd);
-        int unexploredGuard = method.indexOf("if (findUnexplored)");
         int registryLookup = method.indexOf("level.registryAccess().lookupOrThrow(Registries.STRUCTURE)");
         int placedCheck = method.indexOf(
-                "if (!IrisStructureLocator.isPlaced(current, structureId))");
-        int irisLocate = method.indexOf("IrisStructureLocator.locate(", placedCheck);
+                "if (!IrisStructureLocator.hasNativePlacement(current, structureId))");
+        int irisLocate = method.indexOf("NativeStructureLocatePersistence.search(", placedCheck);
+        int nearestSelection = method.indexOf(
+                "NativeStructureLocateResults.nearest(pos, predicted, nativeLocated)", irisLocate);
+        int selectedVerification = method.indexOf("bestSearch.search().verify(bestResult)", nearestSelection);
+        int selectedReference = method.indexOf(
+                "selectedSearch.search().reference(selectedStart)", selectedVerification);
 
-        assertTrue(unexploredGuard >= 0);
-        assertTrue(registryLookup > unexploredGuard);
+        assertTrue(registryLookup >= 0);
         assertTrue(placedCheck > registryLookup);
         assertTrue(irisLocate > placedCheck);
+        assertTrue(nearestSelection > irisLocate);
+        assertTrue(selectedVerification > nearestSelection);
+        assertTrue(selectedReference > selectedVerification);
+        assertTrue(method.contains("NativeStructureLocatePersistence.probe("));
+        assertTrue(method.contains("findUnexplored"));
         assertTrue(method.contains("LocateStatus.SEARCH_LIMIT_REACHED"));
-        assertTrue(method.contains("new BlockPos(result.originX(), result.baseY(), result.originZ())"));
+        assertTrue(method.contains("verified.ownership().locatorY()"));
+        assertTrue(method.contains("selectedSearch.search().reference(selectedStart)"));
+        assertTrue(method.contains("NativeStructureLocateResults.selectAndReference("));
         assertFalse(method.contains("NativeStructureLocateCapability"));
         assertTrue(source.contains("structureBiomeSource.isStructureReachable(holder)"));
         assertFalse(source.contains("isPaperUnavailable"));
+        String generator = moddedSource("IrisModdedChunkGenerator.java");
+        assertTrue(generator.contains("NativeStructureVanillaLocator.predict("));
+        assertFalse(generator.contains("super.findNearestMapStructure(level, reachable"));
     }
 
     @Test
@@ -68,7 +115,7 @@ public class IrisModdedStructureCommandTest {
         int policyResolution = method.indexOf("NativeStructureGenerationPolicy.resolve(engine, target.key(), false)", genericIrisLookup);
         int replacementCheck = method.indexOf(
                 "decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS", policyResolution);
-        int replacementLocate = method.indexOf("locateIrisStructure(source, level, engine, player, target.key())",
+        int replacementLocate = method.indexOf("runNativeStructureLocate(source, level, player, target)",
                 replacementCheck);
 
         assertTrue(nativeResolution >= 0);
@@ -76,6 +123,8 @@ public class IrisModdedStructureCommandTest {
         assertTrue(policyResolution > genericIrisLookup);
         assertTrue(replacementCheck > policyResolution);
         assertTrue(replacementLocate > replacementCheck);
+        assertTrue(method.contains("!IrisStructureLocator.hasNativePlacement(engine, target.key())"));
+        assertTrue(method.contains("&& target.availability() != NativeStructureAvailability.AVAILABLE"));
     }
 
     @Test

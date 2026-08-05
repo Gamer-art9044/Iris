@@ -3,6 +3,8 @@ package art.arcane.iris.core;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
+import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
@@ -10,8 +12,12 @@ import art.arcane.volmlib.util.collection.KSet;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -19,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.stream.Stream;
 
@@ -49,9 +56,7 @@ public final class IrisDatapackCompiler {
             throw new IOException("No Iris datapack output roots were provided");
         }
 
-        for (File datapackRoot : datapackRoots) {
-            Files.createDirectories(datapackRoot.toPath());
-        }
+        resetOutputRoots(datapackRoots);
         IrisDimension.clearGeneratedBiomeTags(datapackRoots);
 
         DimensionHeight height = new DimensionHeight(fixer);
@@ -59,6 +64,7 @@ public final class IrisDatapackCompiler {
         int packCount = 0;
         int dimensionCount = 0;
         for (File packRoot : packRoots) {
+            PackDirectoryResolver.requireSafePackTree(packRoot);
             if (!hasDimensions(packRoot.toPath())) {
                 continue;
             }
@@ -93,42 +99,42 @@ public final class IrisDatapackCompiler {
         }
 
         IrisDimension.writeShared(datapackRoots, height, packFormat, adjustVanillaHeight);
-        validateOutputs(datapackRoots);
+        validateOutputs(datapackRoots, dimensionCount);
         return new CompilationResult(packCount, dimensionCount, countBiomes(biomes));
     }
 
     private static void collectInstalledPackRoots(Path packsRoot, Map<Path, File> roots) throws IOException {
-        if (!Files.isDirectory(packsRoot)) {
-            return;
-        }
-        try (Stream<Path> stream = Files.list(packsRoot)) {
-            List<Path> candidates = stream
-                    .filter(Files::isDirectory)
-                    .sorted(Comparator.comparing(Path::toString))
-                    .toList();
-            for (Path candidate : candidates) {
-                addPackRoot(candidate, roots);
-            }
+        List<File> candidates = PackDirectoryResolver.listVisiblePackDirectoriesOrThrow(packsRoot.toFile());
+        for (File candidate : candidates) {
+            addPackRoot(candidate.toPath(), roots);
         }
     }
 
     private static void collectWorldPackRoots(Path dimensionsRoot, Map<Path, File> roots) throws IOException {
-        if (!Files.isDirectory(dimensionsRoot)) {
+        if (Files.isSymbolicLink(dimensionsRoot)
+                || !Files.isDirectory(dimensionsRoot, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
-        try (Stream<Path> stream = Files.find(
-                dimensionsRoot,
-                WORLD_PACK_SCAN_DEPTH,
-                (path, attributes) -> attributes.isDirectory()
-                        && "pack".equals(path.getFileName().toString())
-                        && path.getParent() != null
-                        && "iris".equals(path.getParent().getFileName().toString())
-                        && hasDimensions(path)
-        )) {
-            List<Path> candidates = stream.sorted(Comparator.comparing(Path::toString)).toList();
-            for (Path candidate : candidates) {
-                addPackRoot(candidate, roots);
+        List<Path> candidates = new ArrayList<>();
+        Files.walkFileTree(dimensionsRoot, Set.of(), WORLD_PACK_SCAN_DEPTH, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
+                if (!directory.equals(dimensionsRoot)
+                        && PackDirectoryResolver.containsHiddenPathSegment(dimensionsRoot, directory)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                if ("pack".equals(directory.getFileName().toString())
+                        && directory.getParent() != null
+                        && "iris".equals(directory.getParent().getFileName().toString())
+                        && hasDimensions(directory)) {
+                    candidates.add(directory);
+                }
+                return FileVisitResult.CONTINUE;
             }
+        });
+        candidates.sort(Comparator.comparing(Path::toString));
+        for (Path candidate : candidates) {
+            addPackRoot(candidate, roots);
         }
     }
 
@@ -137,29 +143,52 @@ public final class IrisDatapackCompiler {
             return;
         }
         Path normalized = root.toAbsolutePath().normalize();
+        if (!Files.isDirectory(normalized)) {
+            return;
+        }
+        PackDirectoryResolver.requireSafePackTree(normalized.toFile());
         Path identity = normalized.toRealPath();
         roots.putIfAbsent(identity, normalized.toFile());
     }
 
     private static boolean hasDimensions(Path root) {
         Path dimensions = root.resolve("dimensions");
-        if (!Files.isDirectory(dimensions)) {
+        if (Files.isSymbolicLink(dimensions)
+                || !Files.isDirectory(dimensions, LinkOption.NOFOLLOW_LINKS)) {
             return false;
         }
         try (Stream<Path> stream = Files.list(dimensions)) {
-            return stream.anyMatch(path -> Files.isRegularFile(path) && path.getFileName().toString().endsWith(".json"));
+            return stream.anyMatch(path -> !Files.isSymbolicLink(path)
+                    && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                    && path.getFileName().toString().endsWith(".json"));
         } catch (IOException e) {
             return false;
         }
     }
 
-    private static void validateOutputs(Collection<File> datapackRoots) throws IOException {
+    private static void resetOutputRoots(Collection<File> datapackRoots) throws IOException {
+        for (File datapackRoot : datapackRoots) {
+            Path root = datapackRoot.toPath().toAbsolutePath().normalize();
+            if (Files.isSymbolicLink(root)) {
+                throw new IOException("Iris datapack output root is a symbolic link: " + root);
+            }
+            if (Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
+                if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IOException("Iris datapack output root is not a directory: " + root);
+                }
+                AtomicDirectoryPublisher.deleteTree(root);
+            }
+            Files.createDirectories(root);
+        }
+    }
+
+    private static void validateOutputs(Collection<File> datapackRoots, int dimensionCount) throws IOException {
         for (File datapackRoot : datapackRoots) {
             Path root = datapackRoot.toPath();
             if (!Files.isRegularFile(root.resolve("pack.mcmeta"))) {
                 throw new IOException("Iris datapack metadata was not generated at " + root);
             }
-            if (!Files.isDirectory(root.resolve("data/iris/dimension_type"))) {
+            if (dimensionCount > 0 && !Files.isDirectory(root.resolve("data/iris/dimension_type"))) {
                 throw new IOException("Iris dimension types were not generated at " + root);
             }
         }

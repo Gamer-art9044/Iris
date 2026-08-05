@@ -19,6 +19,7 @@
 package art.arcane.iris.platform.bukkit;
 
 import art.arcane.iris.core.nms.INMS;
+import art.arcane.iris.core.nms.MinecraftVersion;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.LogLevel;
@@ -40,6 +41,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
+import org.bukkit.Server;
 import org.bukkit.World;
 import org.bukkit.block.Biome;
 import org.bukkit.block.data.BlockData;
@@ -263,7 +265,12 @@ public final class BukkitPlatform implements IrisPlatform {
 
     @Override
     public String minecraftVersion() {
-        return Bukkit.getBukkitVersion();
+        return minecraftVersion(Bukkit.getServer());
+    }
+
+    static String minecraftVersion(Server server) {
+        MinecraftVersion detected = MinecraftVersion.detect(server);
+        return detected == null ? null : detected.value();
     }
 
     @Override

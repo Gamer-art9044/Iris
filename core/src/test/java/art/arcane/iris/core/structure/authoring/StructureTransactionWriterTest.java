@@ -314,6 +314,25 @@ public class StructureTransactionWriterTest {
     }
 
     @Test
+    public void recoveryBoundsTransactionDirectoryCount() throws IOException {
+        Path root = temporaryFolder.newFolder("bounded-transaction-count").toPath();
+        Path staging = root.resolve(".iris/structure-staging");
+        Files.createDirectories(staging);
+        for (int i = 0; i < 1_025; i++) {
+            Files.createDirectory(staging.resolve(UUID.randomUUID().toString()));
+        }
+
+        StructureRecoveryResult recovery = new StructureTransactionWriter(root)
+                .recoverIncompleteTransactions();
+
+        assertFalse(recovery.successful());
+        assertTrue(recovery.failures().getFirst().cause().getMessage().contains("transaction count"));
+        try (Stream<Path> transactions = Files.list(staging)) {
+            assertEquals(1_025L, transactions.count());
+        }
+    }
+
+    @Test
     public void writeRecoversPreparedTransactionBeforePreflight() throws IOException {
         Path root = temporaryFolder.newFolder("write-recovery").toPath();
         UUID transactionId = UUID.randomUUID();
@@ -413,6 +432,161 @@ public class StructureTransactionWriterTest {
     }
 
     @Test
+    public void ownedRemovalDeletesOnlyVerifiedBundleResources() throws IOException {
+        Path root = temporaryFolder.newFolder("owned-removal").toPath();
+        StructureTransactionWriter writer = new StructureTransactionWriter(root);
+        StructureWriteResult initial = writer.write(bundle("object-v1", "structure-v1"), StructureWriteMode.ADD_ONLY);
+        assertEquals(failureMessage(initial), StructureWriteResult.Status.ADDED, initial.status());
+
+        boolean removed = writer.removeOwned(TARGET_KEY, StructureSource.Kind.VANILLA, SOURCE_KEY);
+
+        assertTrue(removed);
+        assertFalse(Files.exists(root.resolve("objects/temple.iob")));
+        assertFalse(Files.exists(root.resolve("structures/temple.json")));
+        assertFalse(Files.exists(writer.ownershipManifestPath(TARGET_KEY)));
+        assertFalse(writer.removeOwned(TARGET_KEY, StructureSource.Kind.VANILLA, SOURCE_KEY));
+    }
+
+    @Test
+    public void ownedRemovalPreservesModifiedResourcesAndManifest() throws IOException {
+        Path root = temporaryFolder.newFolder("owned-removal-modified").toPath();
+        StructureTransactionWriter writer = new StructureTransactionWriter(root);
+        StructureWriteResult initial = writer.write(bundle("object-v1", "structure-v1"), StructureWriteMode.ADD_ONLY);
+        assertEquals(failureMessage(initial), StructureWriteResult.Status.ADDED, initial.status());
+        Path object = root.resolve("objects/temple.iob");
+        Files.writeString(object, "user-edit", StandardCharsets.UTF_8);
+
+        try {
+            writer.removeOwned(TARGET_KEY, StructureSource.Kind.VANILLA, SOURCE_KEY);
+            throw new AssertionError("Expected modified owned resource to block removal");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("modified"));
+        }
+
+        assertEquals("user-edit", Files.readString(object, StandardCharsets.UTF_8));
+        assertTrue(Files.exists(root.resolve("structures/temple.json")));
+        assertTrue(Files.exists(writer.ownershipManifestPath(TARGET_KEY)));
+    }
+
+    @Test
+    public void preparedMultiBundleRemovalRestoresEarlierMovesWhenALaterMoveFails() throws IOException {
+        Path root = temporaryFolder.newFolder("owned-removal-batch-rollback").toPath();
+        StructureKey alphaKey = StructureKey.parse("iris_test:alpha");
+        StructureKey zetaKey = StructureKey.parse("iris_test:zeta");
+        StructureKey alphaSource = StructureKey.parse("example:alpha");
+        StructureKey zetaSource = StructureKey.parse("example:zeta");
+        StructureTransactionWriter writer = new StructureTransactionWriter(root);
+        StructureWriteResult alphaWrite = writer.write(
+                bundle(alphaKey, alphaSource, "alpha-object", "alpha-structure"),
+                StructureWriteMode.ADD_ONLY
+        );
+        StructureWriteResult zetaWrite = writer.write(
+                bundle(zetaKey, zetaSource, "zeta-object", "zeta-structure"),
+                StructureWriteMode.ADD_ONLY
+        );
+        assertEquals(failureMessage(alphaWrite), StructureWriteResult.Status.ADDED, alphaWrite.status());
+        assertEquals(failureMessage(zetaWrite), StructureWriteResult.Status.ADDED, zetaWrite.status());
+        StructureTransactionWriter failingWriter = new StructureTransactionWriter(
+                root,
+                new FailOnceMoveOperations("objects/zeta.iob")
+        );
+
+        try {
+            failingWriter.prepareOwnedRemovals(List.of(
+                    new StructureTransactionWriter.OwnedRemoval(
+                            alphaKey,
+                            StructureSource.Kind.DATAPACK,
+                            alphaSource
+                    ),
+                    new StructureTransactionWriter.OwnedRemoval(
+                            zetaKey,
+                            StructureSource.Kind.DATAPACK,
+                            zetaSource
+                    )
+            ));
+            throw new AssertionError("Expected the later removal move to fail");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("Injected install failure"));
+        }
+
+        assertEquals("alpha-object", Files.readString(root.resolve("objects/alpha.iob"), StandardCharsets.UTF_8));
+        assertEquals("zeta-object", Files.readString(root.resolve("objects/zeta.iob"), StandardCharsets.UTF_8));
+        assertTrue(Files.exists(writer.ownershipManifestPath(alphaKey)));
+        assertTrue(Files.exists(writer.ownershipManifestPath(zetaKey)));
+    }
+
+    @Test
+    public void preparedRemovalCanRollbackAfterCommitMarkerBeforeCoordinatorPublish() throws IOException {
+        Path root = temporaryFolder.newFolder("owned-removal-coordinator-rollback").toPath();
+        StructureTransactionWriter writer = new StructureTransactionWriter(root);
+        StructureWriteResult initial = writer.write(bundle("object-v1", "structure-v1"), StructureWriteMode.ADD_ONLY);
+        assertEquals(failureMessage(initial), StructureWriteResult.Status.ADDED, initial.status());
+        StructureTransactionWriter.PreparedRemoval removal = writer.prepareOwnedRemovals(List.of(
+                new StructureTransactionWriter.OwnedRemoval(
+                        TARGET_KEY,
+                        StructureSource.Kind.VANILLA,
+                        SOURCE_KEY
+                )
+        ));
+        assertFalse(Files.exists(root.resolve("objects/temple.iob")));
+
+        removal.markCommitted();
+        removal.rollback();
+
+        assertEquals("object-v1", Files.readString(root.resolve("objects/temple.iob"), StandardCharsets.UTF_8));
+        assertEquals("structure-v1", Files.readString(root.resolve("structures/temple.json"), StandardCharsets.UTF_8));
+        assertTrue(Files.exists(writer.ownershipManifestPath(TARGET_KEY)));
+    }
+
+    @Test
+    public void preparedRemovalTokenCanRestoreAfterTheCoordinatorProcessDies() throws IOException {
+        Path root = temporaryFolder.newFolder("owned-removal-token-rollback").toPath();
+        StructureTransactionWriter writer = new StructureTransactionWriter(root);
+        StructureWriteResult initial = writer.write(bundle("object-v1", "structure-v1"), StructureWriteMode.ADD_ONLY);
+        assertEquals(failureMessage(initial), StructureWriteResult.Status.ADDED, initial.status());
+        StructureTransactionWriter.PreparedRemoval removal = writer.prepareOwnedRemovals(List.of(
+                new StructureTransactionWriter.OwnedRemoval(
+                        TARGET_KEY,
+                        StructureSource.Kind.VANILLA,
+                        SOURCE_KEY
+                )
+        ));
+        StructureTransactionWriter.PreparedRemovalToken token = removal.recoveryToken().orElseThrow();
+        removal.leaveForRecovery();
+
+        new StructureTransactionWriter(root).resolvePreparedRemoval(token, false);
+
+        assertEquals("object-v1", Files.readString(root.resolve("objects/temple.iob"), StandardCharsets.UTF_8));
+        assertEquals("structure-v1", Files.readString(root.resolve("structures/temple.json"), StandardCharsets.UTF_8));
+        assertTrue(Files.exists(writer.ownershipManifestPath(TARGET_KEY)));
+        assertFalse(Files.exists(transactionRoot(root, token.transactionId())));
+    }
+
+    @Test
+    public void preparedRemovalTokenCanCommitAfterTheCoordinatorProcessDies() throws IOException {
+        Path root = temporaryFolder.newFolder("owned-removal-token-commit").toPath();
+        StructureTransactionWriter writer = new StructureTransactionWriter(root);
+        StructureWriteResult initial = writer.write(bundle("object-v1", "structure-v1"), StructureWriteMode.ADD_ONLY);
+        assertEquals(failureMessage(initial), StructureWriteResult.Status.ADDED, initial.status());
+        StructureTransactionWriter.PreparedRemoval removal = writer.prepareOwnedRemovals(List.of(
+                new StructureTransactionWriter.OwnedRemoval(
+                        TARGET_KEY,
+                        StructureSource.Kind.VANILLA,
+                        SOURCE_KEY
+                )
+        ));
+        StructureTransactionWriter.PreparedRemovalToken token = removal.recoveryToken().orElseThrow();
+        removal.leaveForRecovery();
+
+        new StructureTransactionWriter(root).resolvePreparedRemoval(token, true);
+
+        assertFalse(Files.exists(root.resolve("objects/temple.iob")));
+        assertFalse(Files.exists(root.resolve("structures/temple.json")));
+        assertFalse(Files.exists(writer.ownershipManifestPath(TARGET_KEY)));
+        assertFalse(Files.exists(transactionRoot(root, token.transactionId())));
+    }
+
+    @Test
     public void symbolicLinkAncestorsCannotEscapeThePackRoot() throws IOException {
         Path root = temporaryFolder.newFolder("symlink-pack").toPath();
         Path outside = temporaryFolder.newFolder("symlink-outside").toPath();
@@ -431,8 +605,21 @@ public class StructureTransactionWriterTest {
     }
 
     private StructureResourceBundle bundle(String objectContent, String structureContent) {
-        return StructureResourceBundle.builder(TARGET_KEY)
-                .source(StructureSource.of(StructureSource.Kind.VANILLA, SOURCE_KEY))
+        return bundle(TARGET_KEY, SOURCE_KEY, objectContent, structureContent);
+    }
+
+    private StructureResourceBundle bundle(
+            StructureKey targetKey,
+            StructureKey sourceKey,
+            String objectContent,
+            String structureContent
+    ) {
+        return StructureResourceBundle.builder(targetKey)
+                .source(StructureSource.of(
+                        sourceKey.namespace().equals("minecraft")
+                                ? StructureSource.Kind.VANILLA : StructureSource.Kind.DATAPACK,
+                        sourceKey
+                ))
                 .backend(StructureBackend.IRIS_ASSEMBLY)
                 .capability(StructureCapability.BLOCKS)
                 .capability(StructureCapability.CONNECTORS)
@@ -441,8 +628,8 @@ public class StructureTransactionWriterTest {
                         "processors_omitted",
                         "The source processor list was not represented"
                 ))
-                .resource("objects/temple.iob", objectContent.getBytes(StandardCharsets.UTF_8))
-                .textResource("structures/temple.json", structureContent)
+                .resource("objects/" + targetKey.path() + ".iob", objectContent.getBytes(StandardCharsets.UTF_8))
+                .textResource("structures/" + targetKey.path() + ".json", structureContent)
                 .build();
     }
 

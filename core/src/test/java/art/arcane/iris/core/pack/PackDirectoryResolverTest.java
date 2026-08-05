@@ -9,9 +9,12 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class PackDirectoryResolverTest {
     @Rule
@@ -43,7 +46,7 @@ public class PackDirectoryResolverTest {
     }
 
     @Test
-    public void rejectsSymbolicLinkChildren() throws Exception {
+    public void acceptsSafeSymbolicLinkPackRoots() throws Exception {
         File packs = temporaryFolder.newFolder("symlink-root");
         File outside = temporaryFolder.newFolder("symlink-target");
         Path link = new File(packs, "linked").toPath();
@@ -53,6 +56,46 @@ public class PackDirectoryResolverTest {
             Assume.assumeNoException(e);
         }
 
-        assertNull(PackDirectoryResolver.resolveExisting(packs, "linked"));
+        assertEquals(link.toFile().getAbsoluteFile(), PackDirectoryResolver.resolveExisting(packs, "linked"));
+        assertTrue(PackDirectoryResolver.listVisiblePackDirectories(packs).contains(link.toFile()));
+        PackDirectoryResolver.requireSafePackTree(link.toFile());
+    }
+
+    @Test
+    public void excludesEveryHiddenTransactionDirectory() throws Exception {
+        File packs = temporaryFolder.newFolder("transaction-root");
+        File visible = new File(packs, "overworld");
+        Files.createDirectory(visible.toPath());
+        Files.createDirectory(new File(packs, ".iris-import-123").toPath());
+        Files.createDirectory(new File(packs, ".overworld.backup-123").toPath());
+        Files.createDirectory(new File(packs, ".importing-123").toPath());
+        Files.createDirectory(new File(packs, ".custom-stage").toPath());
+
+        List<File> listed = PackDirectoryResolver.listVisiblePackDirectories(packs);
+
+        assertEquals(List.of(visible), listed);
+        assertTrue(PackDirectoryResolver.isVisiblePackDirectory(visible));
+        assertNull(PackDirectoryResolver.resolveExisting(packs, ".custom-stage"));
+    }
+
+    @Test
+    public void rejectsSymbolicLinksInsidePackTrees() throws Exception {
+        File packs = temporaryFolder.newFolder("nested-link-root");
+        File pack = new File(packs, "overworld");
+        Files.createDirectories(pack.toPath().resolve("dimensions"));
+        Path outside = temporaryFolder.newFile("outside-dimension.json").toPath();
+        Path link = pack.toPath().resolve("dimensions/overworld.json");
+        try {
+            Files.createSymbolicLink(link, outside);
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            Assume.assumeNoException(exception);
+        }
+
+        try {
+            PackDirectoryResolver.requireSafePackTree(pack);
+            fail("Pack trees containing symbolic links must be rejected");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("symbolic link"));
+        }
     }
 }

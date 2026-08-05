@@ -20,6 +20,7 @@ package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.datapack.DataVersion;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
@@ -42,8 +43,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.function.Predicate;
 
 import art.arcane.iris.core.localization.IrisLanguage;
@@ -74,11 +79,11 @@ public final class ModdedDatapackCommands {
         root.then(Commands.literal("ls")
                 .executes((CommandContext<CommandSourceStack> context) -> list(context.getSource())));
 
-        root.then(message("ingest", "Modrinth datapack ingest requires the Bukkit plugin because its editable-resource import and manifest workflow use Bukkit tooling. Iris modded dimensions do run native vanilla and datapack structure placement; install the datapack in world/datapacks and restart to generate its registered structures."));
-        root.then(message("pull", "Modrinth datapack ingest requires the Bukkit plugin because its editable-resource import and manifest workflow use Bukkit tooling. Iris modded dimensions do run native vanilla and datapack structure placement; install the datapack in world/datapacks and restart to generate its registered structures."));
+        root.then(message("ingest", "Managed Modrinth datapack ingest is Bukkit-only. On modded servers install the datapack folder or zip in world/datapacks, enable it, restart, then use /iris datapack list to confirm it is enabled. Registered structures generate natively in Iris dimensions."));
+        root.then(message("pull", "Managed Modrinth datapack ingest is Bukkit-only. On modded servers install the datapack folder or zip in world/datapacks, enable it, restart, then use /iris datapack list to confirm it is enabled. Registered structures generate natively in Iris dimensions."));
 
-        root.then(message("remove", "Datapack removal manages the Bukkit ingest manifest. On modded servers delete the datapack folder from world/datapacks and restart."));
-        root.then(message("rm", "Datapack removal manages the Bukkit ingest manifest. On modded servers delete the datapack folder from world/datapacks and restart."));
+        root.then(message("remove", "Managed datapack removal is Bukkit-only. On modded servers disable the pack, delete its folder or zip from world/datapacks, and restart."));
+        root.then(message("rm", "Managed datapack removal is Bukkit-only. On modded servers disable the pack, delete its folder or zip from world/datapacks, and restart."));
 
         return root;
     }
@@ -215,27 +220,24 @@ public final class ModdedDatapackCommands {
         MinecraftServer server = source.getServer();
         LinkedHashSet<String> configured = new LinkedHashSet<>();
         File packsRoot = ModdedPackCommands.packsRoot();
-        File[] packs = packsRoot.isDirectory() ? packsRoot.listFiles(File::isDirectory) : null;
-        if (packs != null) {
-            for (File pack : packs) {
-                if (!new File(pack, "dimensions").isDirectory()) {
-                    continue;
-                }
-                try {
-                    IrisData data = IrisData.get(pack);
-                    for (IrisDimension dimension : data.getDimensionLoader().loadAll(data.getDimensionLoader().getPossibleKeys())) {
-                        if (dimension == null || dimension.getDatapackImports() == null) {
-                            continue;
-                        }
-                        for (String url : dimension.getDatapackImports()) {
-                            if (url != null && !url.isBlank()) {
-                                configured.add(url.trim());
-                            }
+        for (File pack : PackDirectoryResolver.listVisiblePackDirectories(packsRoot)) {
+            if (!new File(pack, "dimensions").isDirectory()) {
+                continue;
+            }
+            try {
+                IrisData data = IrisData.get(pack);
+                for (IrisDimension dimension : data.getDimensionLoader().loadAll(data.getDimensionLoader().getPossibleKeys())) {
+                    if (dimension == null || dimension.getDatapackImports() == null) {
+                        continue;
+                    }
+                    for (String url : dimension.getDatapackImports()) {
+                        if (url != null && !url.isBlank()) {
+                            configured.add(url.trim());
                         }
                     }
-                } catch (Throwable e) {
-                    LOGGER.error("Iris datapack import scan failed for pack {}", pack.getName(), e);
                 }
+            } catch (Throwable e) {
+                LOGGER.error("Iris datapack import scan failed for pack {}", pack.getName(), e);
             }
         }
 
@@ -248,19 +250,45 @@ public final class ModdedDatapackCommands {
         }
 
         File datapacks = worldDatapacksFolder(server);
-        File[] installed = datapacks.isDirectory() ? datapacks.listFiles(File::isDirectory) : null;
+        File[] installed = datapacks.isDirectory()
+                ? datapacks.listFiles(file -> file.isDirectory() || file.isFile() && file.getName().toLowerCase(Locale.ROOT).endsWith(".zip"))
+                : null;
+        Set<String> availableIds = new HashSet<>(server.getPackRepository().getAvailableIds());
+        Set<String> selectedIds = new HashSet<>(server.getPackRepository().getSelectedIds());
         KList<String> names = new KList<>();
         if (installed != null) {
-            for (File folder : installed) {
-                if (new File(folder, "pack.mcmeta").isFile()) {
-                    names.add(folder.getName());
+            for (File installedPack : installed) {
+                String name = installedPack.getName();
+                String repositoryId = resolveRepositoryId(name, availableIds);
+                String state;
+                if (repositoryId == null) {
+                    state = "unavailable";
+                } else if (selectedIds.contains(repositoryId)) {
+                    state = "enabled";
+                } else {
+                    state = "disabled";
                 }
+                names.add(name + " [" + state + "]");
             }
         }
+        Collections.sort(names);
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_INSTALLED_WORLD_DATAPACKS, MessageArgument.untrusted("value", names.size())));
         for (String name : names) {
             IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_MESSAGE_2, MessageArgument.untrusted("name", name)));
         }
         return 1;
+    }
+
+    private static String resolveRepositoryId(String filename, Set<String> availableIds) {
+        String direct = "file/" + filename;
+        if (availableIds.contains(direct)) {
+            return direct;
+        }
+        for (String availableId : availableIds) {
+            if (availableId.equals(filename) || availableId.endsWith("/" + filename)) {
+                return availableId;
+            }
+        }
+        return null;
     }
 }

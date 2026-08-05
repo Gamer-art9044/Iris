@@ -6,7 +6,7 @@ import java.lang.reflect.Method;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-final class MinecraftVersion {
+public final class MinecraftVersion {
     private static final Pattern DECORATED_VERSION_PATTERN = Pattern.compile("\\(MC: ([0-9]+(?:\\.[0-9]+){0,2})\\)");
 
     private final String value;

@@ -11,6 +11,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -50,6 +51,10 @@ public final class IrisWorldStorage {
         return cached;
     }
 
+    public static String configuredLevelName() {
+        return levelNameFromProperties(new File("server.properties"));
+    }
+
     static String levelNameFromProperties(File serverProperties) {
         Properties properties = new Properties();
         if (Objects.requireNonNull(serverProperties, "serverProperties").isFile()) {
@@ -87,6 +92,39 @@ public final class IrisWorldStorage {
         return keyFromName(worldName, levelRoot().getName());
     }
 
+    public static NamespacedKey managedKeyFromName(String worldName) {
+        String requestedName = Objects.requireNonNull(worldName, "worldName").trim();
+        if (requestedName.contains(":")) {
+            return managedKeyFromName(requestedName, DEFAULT_LEVEL_NAME);
+        }
+        return managedKeyFromName(requestedName, levelRoot().getName());
+    }
+
+    public static NamespacedKey managedKeyFromName(String worldName, String levelName) {
+        String requestedName = Objects.requireNonNull(worldName, "worldName").trim();
+        if (requestedName.isEmpty()) {
+            throw new IllegalArgumentException("World name cannot be empty.");
+        }
+        if (requestedName.contains("/") || requestedName.contains("\\") || requestedName.contains("..")) {
+            throw new IllegalArgumentException("World name must be a safe single path segment.");
+        }
+
+        NamespacedKey key;
+        if (requestedName.contains(":")) {
+            key = NamespacedKey.fromString(requestedName.toLowerCase(Locale.ENGLISH));
+            if (key == null) {
+                throw new IllegalArgumentException("World identifier is invalid: " + requestedName);
+            }
+        } else {
+            key = keyFromName(requestedName, levelName);
+        }
+
+        if (!IRIS_NAMESPACE.equals(key.getNamespace()) || !key.getKey().matches("[a-z0-9_-]+")) {
+            throw new IllegalArgumentException("Only Iris-managed dimension worlds can be changed.");
+        }
+        return key;
+    }
+
     static NamespacedKey keyFromName(String worldName, String levelName) {
         String name = Objects.requireNonNull(worldName, "worldName").trim();
         String mainLevelName = Objects.requireNonNull(levelName, "levelName").trim();
@@ -112,7 +150,11 @@ public final class IrisWorldStorage {
     }
 
     public static String logicalName(NamespacedKey key) {
-        return logicalName(key, levelRoot().getName());
+        NamespacedKey worldKey = Objects.requireNonNull(key, "key");
+        if (IRIS_NAMESPACE.equals(worldKey.getNamespace())) {
+            return worldKey.getKey();
+        }
+        return logicalName(worldKey, levelRoot().getName());
     }
 
     static String logicalName(NamespacedKey key, String levelName) {
@@ -145,6 +187,31 @@ public final class IrisWorldStorage {
 
     public static File dimensionRoot(NamespacedKey key) {
         return dimensionRoot(levelRoot(), key);
+    }
+
+    public static File requireSafeManagedDimensionRoot(NamespacedKey key) {
+        return requireSafeManagedDimensionRoot(levelRoot(), key);
+    }
+
+    public static File requireSafeManagedDimensionRoot(File levelRoot, NamespacedKey key) {
+        NamespacedKey worldKey = Objects.requireNonNull(key, "key");
+        if (!IRIS_NAMESPACE.equals(worldKey.getNamespace()) || !worldKey.getKey().matches("[a-z0-9_-]+")) {
+            throw new IllegalArgumentException("Only safe Iris-managed dimension worlds can be changed.");
+        }
+
+        Path root = Objects.requireNonNull(levelRoot, "levelRoot").toPath().toAbsolutePath().normalize();
+        Path dimensions = root.resolve("dimensions");
+        Path namespace = dimensions.resolve(IRIS_NAMESPACE);
+        Path target = namespace.resolve(worldKey.getKey()).normalize();
+        if (!Objects.equals(target.getParent(), namespace)) {
+            throw new IllegalArgumentException("World target escapes the Iris namespace root.");
+        }
+        for (Path path : new Path[]{dimensions, namespace, target}) {
+            if (Files.isSymbolicLink(path)) {
+                throw new IllegalArgumentException("World storage path contains a symbolic link: " + path);
+            }
+        }
+        return target.toFile();
     }
 
     public static File dimensionRoot(File levelRoot, NamespacedKey key) {

@@ -23,6 +23,7 @@ import art.arcane.iris.core.lifecycle.WorldLifecycleStaging;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.pack.PackDownloader;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
@@ -33,7 +34,6 @@ import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.util.common.plugin.VolmitPlugin;
 import art.arcane.iris.util.common.plugin.VolmitSender;
-import art.arcane.volmlib.util.io.IO;
 import lombok.NonNull;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
@@ -42,6 +42,7 @@ import org.bukkit.generator.ChunkGenerator;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.util.List;
 import java.util.function.Supplier;
 
 /**
@@ -57,15 +58,12 @@ public final class IrisWorldGeneratorResolver {
 
     public void validateAllPacks() {
         File packsRoot = plugin.getDataFolder("packs");
-        File[] packDirs = packsRoot.listFiles(File::isDirectory);
-        if (packDirs == null || packDirs.length == 0) {
+        List<File> packDirs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
+        PackValidationRegistry.clear();
+        if (packDirs.isEmpty()) {
             return;
         }
-        PackValidationRegistry.clear();
         for (File packDir : packDirs) {
-            if (packDir.getName().contains(".importing-")) {
-                continue;
-            }
             try {
                 PackValidationResult result = PackValidator.validate(packDir);
                 PackValidationRegistry.publish(result);
@@ -167,16 +165,16 @@ public final class IrisWorldGeneratorResolver {
         Iris.debug("Generator Config: " + w.toString());
 
         File ff = new File(w.worldFolder(), "iris/pack");
-        File[] files = ff.listFiles();
-        if (files == null || files.length == 0)
-            IO.delete(ff);
-
-        if (!ff.exists()) {
-            ff.mkdirs();
-            dim = Iris.service(StudioSVC.class).installIntoWorld(Iris.getSender(), dim, w.worldFolder());
+        IrisDimension installedDimension = ff.isDirectory()
+                ? IrisData.get(ff).getDimensionLoader().load(dim.getLoadKey(), false)
+                : null;
+        if (installedDimension == null) {
+            dim = Iris.service(StudioSVC.class).replaceIntoWorld(Iris.getSender(), dim, w.worldFolder());
             if (dim == null) {
                 throw new IllegalStateException("Failed to install dimension pack for " + id);
             }
+        } else {
+            dim = installedDimension;
         }
 
         return new BukkitChunkGenerator(w, false, ff, dim.getLoadKey());

@@ -37,6 +37,19 @@ public final class NativeStructureLocateResults {
                 <= horizontalDistanceSquared(origin, replacement.getFirst()) ? nativeResult : replacement;
     }
 
+    public static <T> Pair<BlockPos, T> selectAndReference(
+            BlockPos origin,
+            Pair<BlockPos, T> replacement, Runnable replacementReference,
+            Pair<BlockPos, T> nativeResult, Runnable nativeReference) {
+        Pair<BlockPos, T> selected = nearest(origin, replacement, nativeResult);
+        if (selected == replacement && replacement != null) {
+            replacementReference.run();
+        } else if (selected == nativeResult && nativeResult != null) {
+            nativeReference.run();
+        }
+        return selected;
+    }
+
     private static long horizontalDistanceSquared(BlockPos origin, BlockPos target) {
         long dx = (long) target.getX() - origin.getX();
         long dz = (long) target.getZ() - origin.getZ();

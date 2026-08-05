@@ -173,10 +173,16 @@ final class ModdedLocateCommands {
             return 0;
         }
         if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
-            locateIrisStructure(source, level, engine, player, target.key());
+            if (!IrisStructureLocator.hasNativePlacement(engine, target.key())) {
+                locateIrisStructure(source, level, engine, player, target.key());
+                return 1;
+            }
+            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_SEARCHING_NATIVE_STRUCTURE_WITHIN_CHUNKS, MessageArgument.untrusted("value", target.key()), MessageArgument.untrusted("NATIVESTRUCTURELOCATERADIUS", NATIVE_STRUCTURE_LOCATE_RADIUS)));
+            runNativeStructureLocate(source, level, player, target);
             return 1;
         }
-        if (target.availability() != NativeStructureAvailability.AVAILABLE) {
+        if (!IrisStructureLocator.hasNativePlacement(engine, target.key())
+                && target.availability() != NativeStructureAvailability.AVAILABLE) {
             IrisModdedCommands.fail(source, nativeUnavailableMessage(target.key(), target.availability()));
             return 0;
         }

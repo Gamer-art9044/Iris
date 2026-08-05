@@ -41,9 +41,11 @@ import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -61,7 +63,7 @@ import java.util.regex.Pattern;
  * placements enumerate their finite configured starts directly.
  */
 public final class IrisStructureLocator {
-    private static final int DENSITY_CANDIDATE_BUDGET = 4_096;
+    private static final int CANDIDATE_BUDGET = 4_096;
     private static final int MAX_BURIAL_COLUMNS = 2_000_000;
     private static final int UNDERGROUND_SURFACE_CLEARANCE = 1;
     private static final Pattern NAMESPACED_RESOURCE_KEY = Pattern.compile("[a-z0-9_.-]+:[a-z0-9/._-]+");
@@ -69,7 +71,7 @@ public final class IrisStructureLocator {
     private static final Cache<Engine, PlacementIndex> INDEX_CACHE = Caffeine.newBuilder().weakKeys().build();
     private static final PlacementIndex EMPTY_INDEX = new PlacementIndex(
             Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), Collections.emptySet(),
-            Collections.emptyList());
+            Collections.emptySet(), Collections.emptyList());
     private static final LocateResult NOT_FOUND_RESULT = new LocateResult(LocateStatus.NOT_FOUND, 0, 0, 0);
     private static final LocateResult SEARCH_LIMIT_RESULT =
             new LocateResult(LocateStatus.SEARCH_LIMIT_REACHED, 0, 0, 0);
@@ -95,6 +97,25 @@ public final class IrisStructureLocator {
                 || placementIndex.vanillaAliases.contains(normalizedKey);
     }
 
+    public static boolean hasNativePlacement(Engine engine, String key) {
+        if (engine == null || key == null || key.isBlank()) {
+            return false;
+        }
+        return index(engine).nativeKeys.contains(normalize(key));
+    }
+
+    public static boolean hasEditablePlacement(Engine engine, String key) {
+        if (engine == null || key == null || key.isBlank()) {
+            return false;
+        }
+        for (IrisStructurePlacement placement : index(engine).placements) {
+            if (placement.hasIrisStructures() && matches(placement, key, engine.getData())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static boolean suppressesVanilla(Engine engine, String vanillaKey) {
         if (engine == null || vanillaKey == null || vanillaKey.isEmpty()) {
             return false;
@@ -116,13 +137,180 @@ public final class IrisStructureLocator {
     }
 
     public static LocateResult locate(Engine engine, String key, int fromBlockX, int fromBlockZ, int maxRadiusChunks) {
+        return locate(engine, key, fromBlockX, fromBlockZ, maxRadiusChunks, (chunkX, chunkZ) -> true);
+    }
+
+    public static LocateResult locate(Engine engine, String key, int fromBlockX, int fromBlockZ,
+                                      int maxRadiusChunks, CandidateFilter candidateFilter) {
+        try {
+            return locateFiltered(engine, key, fromBlockX, fromBlockZ, maxRadiusChunks, candidateFilter);
+        } catch (CandidateSearchLimitException ignored) {
+            return SEARCH_LIMIT_RESULT;
+        }
+    }
+
+    public static LocateResult locateInPlacementRings(
+            Engine engine, String key, int fromBlockX, int fromBlockZ,
+            int maxSearchRadius, CandidateFilter candidateFilter) {
+        try {
+            return locateInPlacementRingsFiltered(
+                    engine, key, fromBlockX, fromBlockZ, maxSearchRadius, candidateFilter);
+        } catch (CandidateSearchLimitException ignored) {
+            return SEARCH_LIMIT_RESULT;
+        }
+    }
+
+    private static LocateResult locateInPlacementRingsFiltered(
+            Engine engine, String key, int fromBlockX, int fromBlockZ,
+            int maxSearchRadius, CandidateFilter candidateFilter) {
         if (!isPlaced(engine, key)) {
             return NOT_FOUND_RESULT;
         }
-        int max = Math.max(1, Math.min(maxRadiusChunks, 2048));
+        CandidateFilter activeFilter = Objects.requireNonNull(
+                candidateFilter, "Structure locate filter must not be null");
+        int maximumRing = Math.max(0, Math.min(maxSearchRadius, 2048));
+        int centerChunkX = fromBlockX >> 4;
+        int centerChunkZ = fromBlockZ >> 4;
+        PlacementCatalog catalog = collectPlacementCatalog(engine, key);
+        if (catalog.randomSpread().isEmpty()
+                && catalog.concentricRings().isEmpty() && !catalog.hasDensity()) {
+            return NOT_FOUND_RESULT;
+        }
+        SeedManager seedManager = engine.getSeedManager();
+        if (seedManager == null) {
+            throw new IllegalStateException(
+                    "Iris structure locate requires a bound seed manager for '" + key + "'");
+        }
+        long seed = seedManager.getMantle();
+        CandidateBudget candidateBudget = new CandidateBudget();
+        LocatedCandidate best = nearestConcentricCandidate(
+                engine, key, fromBlockX, fromBlockZ, seed, catalog, activeFilter, candidateBudget);
+
+        for (int ring = 0; ring <= maximumRing; ring++) {
+            boolean foundInRing = false;
+            for (RandomSpreadParameters parameters : catalog.randomSpread()) {
+                LocatedCandidate candidate = firstRandomSpreadCandidateInRing(
+                        engine, key, fromBlockX, fromBlockZ,
+                        centerChunkX, centerChunkZ, ring, seed,
+                        parameters, activeFilter, candidateBudget);
+                if (candidate == null) {
+                    continue;
+                }
+                foundInRing = true;
+                if (best == null || candidate.distanceSquared() < best.distanceSquared()) {
+                    best = candidate;
+                }
+            }
+            if (catalog.hasDensity()) {
+                LocatedCandidate candidate = firstDensityCandidateInRing(
+                        engine, key, fromBlockX, fromBlockZ,
+                        centerChunkX, centerChunkZ, ring,
+                        activeFilter, candidateBudget);
+                if (candidate != null) {
+                    foundInRing = true;
+                    if (best == null || candidate.distanceSquared() < best.distanceSquared()) {
+                        best = candidate;
+                    }
+                }
+            }
+            if (foundInRing) {
+                return found(best);
+            }
+        }
+        return best == null ? NOT_FOUND_RESULT : found(best);
+    }
+
+    private static LocatedCandidate nearestConcentricCandidate(
+            Engine engine, String key, int fromBlockX, int fromBlockZ,
+            long seed, PlacementCatalog catalog, CandidateFilter candidateFilter,
+            CandidateBudget candidateBudget) {
+        LocatedCandidate best = null;
+        Set<Long> checkedChunks = new LinkedHashSet<>();
+        for (IrisStructurePlacement placement : catalog.concentricRings()) {
+            int count = Math.max(1, placement.getRingCount());
+            for (int placementIndex = 0; placementIndex < count; placementIndex++) {
+                candidateBudget.claim();
+                int[] candidate = StructurePlacementGrid.concentricRingChunk(
+                        placement, placementIndex, seed);
+                if (candidate == null || !checkedChunks.add(chunkKey(candidate[0], candidate[1]))) {
+                    continue;
+                }
+                ResolvedStart resolved = resolveInChunk(engine, key, candidate[0], candidate[1]);
+                if (resolved == null || !candidateFilter.accept(candidate[0], candidate[1])) {
+                    continue;
+                }
+                long distanceSquared = blockDistanceSquared(
+                        resolved, fromBlockX, fromBlockZ);
+                if (best == null || distanceSquared < best.distanceSquared()) {
+                    best = new LocatedCandidate(resolved, distanceSquared);
+                }
+            }
+        }
+        return best;
+    }
+
+    private static LocatedCandidate firstRandomSpreadCandidateInRing(
+            Engine engine, String key, int fromBlockX, int fromBlockZ,
+            int centerChunkX, int centerChunkZ, int ring, long seed,
+            RandomSpreadParameters parameters, CandidateFilter candidateFilter,
+            CandidateBudget candidateBudget) {
+        int spacing = Math.max(1, parameters.spacing());
+        int centerCellX = Math.floorDiv(centerChunkX, spacing);
+        int centerCellZ = Math.floorDiv(centerChunkZ, spacing);
+        for (int offsetX = -ring; offsetX <= ring; offsetX++) {
+            boolean edgeX = offsetX == -ring || offsetX == ring;
+            for (int offsetZ = -ring; offsetZ <= ring; offsetZ++) {
+                boolean edgeZ = offsetZ == -ring || offsetZ == ring;
+                if (!edgeX && !edgeZ) {
+                    continue;
+                }
+                candidateBudget.claim();
+                int[] candidate = StructurePlacementGrid.randomSpreadCellChunk(
+                        centerCellX + offsetX, centerCellZ + offsetZ,
+                        spacing, parameters.separation(), parameters.salt(), seed);
+                ResolvedStart resolved = resolveInChunk(engine, key, candidate[0], candidate[1]);
+                if (resolved != null && candidateFilter.accept(candidate[0], candidate[1])) {
+                    return new LocatedCandidate(
+                            resolved, blockDistanceSquared(resolved, fromBlockX, fromBlockZ));
+                }
+            }
+        }
+        return null;
+    }
+
+    private static LocatedCandidate firstDensityCandidateInRing(
+            Engine engine, String key, int fromBlockX, int fromBlockZ,
+            int centerChunkX, int centerChunkZ, int ring,
+            CandidateFilter candidateFilter, CandidateBudget candidateBudget) {
+        for (int offsetX = -ring; offsetX <= ring; offsetX++) {
+            boolean edgeX = offsetX == -ring || offsetX == ring;
+            for (int offsetZ = -ring; offsetZ <= ring; offsetZ++) {
+                boolean edgeZ = offsetZ == -ring || offsetZ == ring;
+                if (!edgeX && !edgeZ) {
+                    continue;
+                }
+                int chunkX = centerChunkX + offsetX;
+                int chunkZ = centerChunkZ + offsetZ;
+                candidateBudget.claim();
+                ResolvedStart resolved = resolveInChunk(engine, key, chunkX, chunkZ);
+                if (resolved != null && candidateFilter.accept(chunkX, chunkZ)) {
+                    return new LocatedCandidate(
+                            resolved, blockDistanceSquared(resolved, fromBlockX, fromBlockZ));
+                }
+            }
+        }
+        return null;
+    }
+
+    private static LocateResult locateFiltered(Engine engine, String key, int fromBlockX, int fromBlockZ,
+                                               int maxRadiusChunks, CandidateFilter candidateFilter) {
+        if (!isPlaced(engine, key)) {
+            return NOT_FOUND_RESULT;
+        }
+        CandidateFilter activeFilter = Objects.requireNonNull(candidateFilter, "Structure locate filter must not be null");
+        int max = Math.max(0, Math.min(maxRadiusChunks, 2048));
         int pcx = fromBlockX >> 4;
         int pcz = fromBlockZ >> 4;
-        long maxDistSq = (long) max * (long) max;
         LocatedCandidate best = null;
         PlacementCatalog catalog = collectPlacementCatalog(engine, key);
         if (catalog.randomSpread().isEmpty() && catalog.concentricRings().isEmpty() && !catalog.hasDensity()) {
@@ -133,6 +321,7 @@ public final class IrisStructureLocator {
             throw new IllegalStateException("Iris structure locate requires a bound seed manager for '" + key + "'");
         }
         long seed = seedManager.getMantle();
+        CandidateBudget candidateBudget = new CandidateBudget();
 
         for (RandomSpreadParameters parameters : catalog.randomSpread) {
             int spacing = Math.max(1, parameters.spacing());
@@ -141,8 +330,10 @@ public final class IrisStructureLocator {
             int cellRadius = (max / spacing) + 2;
 
             for (int r = 0; r <= cellRadius; r++) {
-                long lowerBound = cellRingDistanceLowerBound(r, spacing, pcx, pcz, centerCellX, centerCellZ);
-                if (best != null && lowerBound * lowerBound >= best.distanceSquared()) {
+                long chunkLowerBound = cellRingDistanceLowerBound(
+                        r, spacing, pcx, pcz, centerCellX, centerCellZ);
+                long blockLowerBound = chunkDeltaBlockDistanceLowerBound(chunkLowerBound);
+                if (best != null && squareSaturated(blockLowerBound) >= best.distanceSquared()) {
                     break;
                 }
                 for (int dx = -r; dx <= r; dx++) {
@@ -150,17 +341,23 @@ public final class IrisStructureLocator {
                         if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
                             continue;
                         }
+                        candidateBudget.claim();
                         int[] candidate = StructurePlacementGrid.randomSpreadCellChunk(
                                 centerCellX + dx, centerCellZ + dz, spacing, parameters.separation(), parameters.salt(), seed);
                         int cx = candidate[0];
                         int cz = candidate[1];
-                        long distSq = distanceSquared(cx, cz, pcx, pcz);
-                        if (distSq > maxDistSq || best != null && distSq >= best.distanceSquared()) {
+                        if (!withinRadius(cx, cz, pcx, pcz, max)
+                                || best != null && chunkBlockDistanceSquaredLowerBound(
+                                cx, cz, fromBlockX, fromBlockZ) >= best.distanceSquared()) {
                             continue;
                         }
                         ResolvedStart resolved = resolveInChunk(engine, key, cx, cz);
-                        if (resolved != null) {
-                            best = new LocatedCandidate(resolved, distSq);
+                        if (resolved != null && activeFilter.accept(cx, cz)) {
+                            long distanceSquared = blockDistanceSquared(
+                                    resolved, fromBlockX, fromBlockZ);
+                            if (best == null || distanceSquared < best.distanceSquared()) {
+                                best = new LocatedCandidate(resolved, distanceSquared);
+                            }
                         }
                     }
                 }
@@ -171,25 +368,31 @@ public final class IrisStructureLocator {
         for (IrisStructurePlacement placement : catalog.concentricRings) {
             int count = Math.max(1, placement.getRingCount());
             for (int placementIndex = 0; placementIndex < count; placementIndex++) {
+                candidateBudget.claim();
                 int[] candidate = StructurePlacementGrid.concentricRingChunk(placement, placementIndex, seed);
                 if (candidate == null || !checkedRingChunks.add(chunkKey(candidate[0], candidate[1]))) {
                     continue;
                 }
-                long distSq = distanceSquared(candidate[0], candidate[1], pcx, pcz);
-                if (distSq > maxDistSq || best != null && distSq >= best.distanceSquared()) {
+                if (!withinRadius(candidate[0], candidate[1], pcx, pcz, max)
+                        || best != null && chunkBlockDistanceSquaredLowerBound(
+                        candidate[0], candidate[1], fromBlockX, fromBlockZ) >= best.distanceSquared()) {
                     continue;
                 }
                 ResolvedStart resolved = resolveInChunk(engine, key, candidate[0], candidate[1]);
-                if (resolved != null) {
-                    best = new LocatedCandidate(resolved, distSq);
+                if (resolved != null && activeFilter.accept(candidate[0], candidate[1])) {
+                    long distanceSquared = blockDistanceSquared(
+                            resolved, fromBlockX, fromBlockZ);
+                    if (best == null || distanceSquared < best.distanceSquared()) {
+                        best = new LocatedCandidate(resolved, distanceSquared);
+                    }
                 }
             }
         }
 
         if (catalog.hasDensity) {
-            int checkedDensityCandidates = 0;
             for (int r = 0; r <= max; r++) {
-                if (best != null && (long) r * r > best.distanceSquared()) {
+                long ringBlockLowerBound = chunkDeltaBlockDistanceLowerBound(r);
+                if (best != null && squareSaturated(ringBlockLowerBound) >= best.distanceSquared()) {
                     break;
                 }
                 for (int dx = -r; dx <= r; dx++) {
@@ -199,17 +402,18 @@ public final class IrisStructureLocator {
                         }
                         int cx = pcx + dx;
                         int cz = pcz + dz;
-                        long distSq = distanceSquared(cx, cz, pcx, pcz);
-                        if (distSq > maxDistSq || best != null && distSq >= best.distanceSquared()) {
+                        if (best != null && chunkBlockDistanceSquaredLowerBound(
+                                cx, cz, fromBlockX, fromBlockZ) >= best.distanceSquared()) {
                             continue;
                         }
-                        if (checkedDensityCandidates >= DENSITY_CANDIDATE_BUDGET) {
-                            return SEARCH_LIMIT_RESULT;
-                        }
-                        checkedDensityCandidates++;
+                        candidateBudget.claim();
                         ResolvedStart resolved = resolveInChunk(engine, key, cx, cz);
-                        if (resolved != null) {
-                            best = new LocatedCandidate(resolved, distSq);
+                        if (resolved != null && activeFilter.accept(cx, cz)) {
+                            long distanceSquared = blockDistanceSquared(
+                                    resolved, fromBlockX, fromBlockZ);
+                            if (best == null || distanceSquared < best.distanceSquared()) {
+                                best = new LocatedCandidate(resolved, distanceSquared);
+                            }
                         }
                     }
                 }
@@ -219,8 +423,13 @@ public final class IrisStructureLocator {
         if (best == null) {
             return NOT_FOUND_RESULT;
         }
-        ResolvedStart resolved = best.resolved();
-        return new LocateResult(LocateStatus.FOUND, resolved.originX(), resolved.baseY(), resolved.originZ());
+        return found(best);
+    }
+
+    static boolean withinRadius(int chunkX, int chunkZ,
+                                int centerChunkX, int centerChunkZ, int radius) {
+        return Math.abs((long) chunkX - centerChunkX) <= radius
+                && Math.abs((long) chunkZ - centerChunkZ) <= radius;
     }
 
     public static ResolvedPlacement resolvePlacement(Engine engine, IrisStructurePlacement placement, int cx, int cz) {
@@ -341,18 +550,20 @@ public final class IrisStructureLocator {
 
     private static ResolvedStart resolveInChunk(Engine engine, String key, int cx, int cz) {
         IrisData data = engine.getData();
+        String normalizedKey = normalize(key);
+        if (hasNativePlacement(engine, key)) {
+            for (NativeStructureStartPlan plan : NativeStructurePlacementPlanner.plansAt(engine, cx, cz)) {
+                if (normalize(plan.source().getStructure()).equals(normalizedKey)) {
+                    return new ResolvedStart(cx << 4, plan.baseY(), cz << 4);
+                }
+            }
+        }
         KList<IrisStructurePlacement> placements = StructurePlacementScope.placementsAt(engine, cx, cz);
         for (IrisStructurePlacement placement : placements) {
             if (!matches(placement, key, data)) {
                 continue;
             }
             if (placement.hasNativeStructures()) {
-                NativeStructureStartPlan plan = NativeStructurePlacementPlanner.planAt(
-                        engine, placement, cx, cz);
-                if (plan != null && normalize(plan.source().getStructure()).equals(normalize(key))) {
-                    return new ResolvedStart(
-                            cx << 4, plan.baseY(), cz << 4);
-                }
                 continue;
             }
             ResolvedPlacement resolved = resolvePlacement(engine, placement, cx, cz);
@@ -368,6 +579,10 @@ public final class IrisStructureLocator {
         int worldMin = engine.getMinHeight() + 1;
         int worldMax = engine.getMinHeight() + engine.getHeight() - 1;
         if (worldMin > worldMax) {
+            return null;
+        }
+        if (!placement.isUnderwater()
+                && NativeStructurePlacementPlanner.isSubmerged(engine, originX, originZ)) {
             return null;
         }
         if (!placement.isUnderground()) {
@@ -613,10 +828,56 @@ public final class IrisStructureLocator {
         return configuredMin <= configuredMax && configuredMin <= worldMax && configuredMax >= worldMin;
     }
 
-    private static long distanceSquared(int cx, int cz, int pcx, int pcz) {
-        long dx = (long) cx - pcx;
-        long dz = (long) cz - pcz;
-        return dx * dx + dz * dz;
+    private static long blockDistanceSquared(
+            ResolvedStart resolved, int fromBlockX, int fromBlockZ) {
+        long dx = (long) resolved.originX() - fromBlockX;
+        long dz = (long) resolved.originZ() - fromBlockZ;
+        return distanceSquaredSaturated(dx, dz);
+    }
+
+    static long chunkBlockDistanceSquaredLowerBound(
+            int chunkX, int chunkZ, int fromBlockX, int fromBlockZ) {
+        long minimumX = (long) chunkX << 4;
+        long minimumZ = (long) chunkZ << 4;
+        long dx = axisDistance(fromBlockX, minimumX, minimumX + 15L);
+        long dz = axisDistance(fromBlockZ, minimumZ, minimumZ + 15L);
+        return distanceSquaredSaturated(dx, dz);
+    }
+
+    private static long axisDistance(long point, long minimum, long maximum) {
+        if (point < minimum) {
+            return minimum - point;
+        }
+        if (point > maximum) {
+            return point - maximum;
+        }
+        return 0L;
+    }
+
+    private static long chunkDeltaBlockDistanceLowerBound(long chunkDelta) {
+        return chunkDelta <= 0L ? 0L : chunkDelta * 16L - 15L;
+    }
+
+    private static long distanceSquaredSaturated(long dx, long dz) {
+        long xSquared = squareSaturated(dx);
+        long zSquared = squareSaturated(dz);
+        if (Long.MAX_VALUE - xSquared < zSquared) {
+            return Long.MAX_VALUE;
+        }
+        return xSquared + zSquared;
+    }
+
+    private static long squareSaturated(long value) {
+        long absolute = Math.abs(value);
+        if (absolute > 3_037_000_499L) {
+            return Long.MAX_VALUE;
+        }
+        return absolute * absolute;
+    }
+
+    private static LocateResult found(LocatedCandidate candidate) {
+        ResolvedStart resolved = candidate.resolved();
+        return new LocateResult(LocateStatus.FOUND, resolved.originX(), resolved.baseY(), resolved.originZ());
     }
 
     static long cellRingDistanceLowerBound(int ring, int spacing, int pcx, int pcz,
@@ -700,20 +961,44 @@ public final class IrisStructureLocator {
         List<IrisStructurePlacement> placements = new ArrayList<>();
         collect(engine.getDimension().getStructures(), data, loadKeys, normalizedLoadKeys, vanillaAliases,
                 suppressedVanillaSources, placements, true);
-        for (IrisRegion region : engine.getDimension().getAllRegions(engine)) {
-            collect(region.getStructures(), data, loadKeys, normalizedLoadKeys, vanillaAliases,
-                    suppressedVanillaSources, placements, false);
+        KList<IrisRegion> regions = engine.getDimension().getAllRegions(engine);
+        if (regions != null) {
+            for (IrisRegion region : regions) {
+                collect(region == null ? null : region.getStructures(), data,
+                        loadKeys, normalizedLoadKeys, vanillaAliases,
+                        suppressedVanillaSources, placements, false);
+            }
         }
-        for (IrisBiome biome : engine.getDimension().getReachableBiomes(engine)) {
-            collect(biome.getStructures(), data, loadKeys, normalizedLoadKeys, vanillaAliases,
-                    suppressedVanillaSources, placements, false);
+        KList<IrisBiome> biomes = engine.getDimension().getReachableBiomes(engine);
+        if (biomes != null) {
+            for (IrisBiome biome : biomes) {
+                collect(biome == null ? null : biome.getStructures(), data,
+                        loadKeys, normalizedLoadKeys, vanillaAliases,
+                        suppressedVanillaSources, placements, false);
+            }
         }
         return new PlacementIndex(
                 Collections.unmodifiableSet(loadKeys),
                 Collections.unmodifiableSet(normalizedLoadKeys),
                 Collections.unmodifiableSet(vanillaAliases),
                 Collections.unmodifiableSet(suppressedVanillaSources),
+                nativeKeys(placements),
                 List.copyOf(placements));
+    }
+
+    private static Set<String> nativeKeys(List<IrisStructurePlacement> placements) {
+        Set<String> nativeKeys = new LinkedHashSet<>();
+        for (IrisStructurePlacement placement : placements) {
+            if (!placement.hasNativeStructures()) {
+                continue;
+            }
+            for (IrisNativeStructure source : placement.getNativeStructures()) {
+                if (source != null) {
+                    nativeKeys.add(normalize(source.getStructure()));
+                }
+            }
+        }
+        return Collections.unmodifiableSet(nativeKeys);
     }
 
     private static void collect(KList<IrisStructurePlacement> source, IrisData data, Set<String> loadKeys,
@@ -809,6 +1094,17 @@ public final class IrisStructureLocator {
         }
     }
 
+    @FunctionalInterface
+    public interface CandidateFilter {
+        boolean accept(int chunkX, int chunkZ);
+    }
+
+    public static final class CandidateSearchLimitException extends RuntimeException {
+        public CandidateSearchLimitException() {
+            super(null, null, false, false);
+        }
+    }
+
     private record RandomSpreadParameters(int spacing, int separation, int salt) {
     }
 
@@ -822,20 +1118,34 @@ public final class IrisStructureLocator {
     private record LocatedCandidate(ResolvedStart resolved, long distanceSquared) {
     }
 
+    private static final class CandidateBudget {
+        private int checked;
+
+        private void claim() {
+            if (checked >= CANDIDATE_BUDGET) {
+                throw new CandidateSearchLimitException();
+            }
+            checked++;
+        }
+    }
+
     private static final class PlacementIndex {
         private final Set<String> loadKeys;
         private final Set<String> normalizedLoadKeys;
         private final Set<String> vanillaAliases;
         private final Set<String> suppressedVanillaSources;
+        private final Set<String> nativeKeys;
         private final List<IrisStructurePlacement> placements;
 
         private PlacementIndex(Set<String> loadKeys, Set<String> normalizedLoadKeys,
                                Set<String> vanillaAliases, Set<String> suppressedVanillaSources,
+                               Set<String> nativeKeys,
                                List<IrisStructurePlacement> placements) {
             this.loadKeys = loadKeys;
             this.normalizedLoadKeys = normalizedLoadKeys;
             this.vanillaAliases = vanillaAliases;
             this.suppressedVanillaSources = suppressedVanillaSources;
+            this.nativeKeys = nativeKeys;
             this.placements = placements;
         }
     }

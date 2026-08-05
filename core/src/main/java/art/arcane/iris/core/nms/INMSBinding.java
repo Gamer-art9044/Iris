@@ -28,6 +28,7 @@ import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.PlatformStructureHooks.JigsawSourceMetadata;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
@@ -104,6 +105,18 @@ public interface INMSBinding {
 
     default KList<String> getTemplatePoolKeys() {
         return new KList<>();
+    }
+
+    default JigsawSourceMetadata getJigsawSourceMetadata(String structureKey) {
+        throw new UnsupportedOperationException("The active NMS binding does not expose registered jigsaw metadata");
+    }
+
+    default int getTemplatePoolHorizontalSpan(String templatePoolKey) {
+        throw new UnsupportedOperationException("The active NMS binding does not expose registered template pool spans");
+    }
+
+    default int getJigsawStartPoolHorizontalSpan(String structureKey, String templatePoolKey) {
+        return getTemplatePoolHorizontalSpan(templatePoolKey);
     }
 
     KList<String> getStructureSetKeys();

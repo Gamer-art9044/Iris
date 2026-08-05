@@ -36,6 +36,7 @@ import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.lifecycle.PaperLibBootstrap;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.runtime.BukkitEnginePlatformHooks;
+import art.arcane.iris.core.runtime.WorldDeletionQueue;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.api.terrain.IrisTerrainService;
 import art.arcane.iris.core.link.IrisPapiInstaller;
@@ -571,7 +572,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisServices.register(EnginePlatformHooks.class, new BukkitEnginePlatformHooks());
         IrisServices.register(EngineWorldManagerProvider.class,
                 (EngineWorldManagerProvider) IrisWorldManager::new);
-        IrisServices.register(art.arcane.iris.core.runtime.WorldDeletionQueue.class, (art.arcane.iris.core.runtime.WorldDeletionQueue) pendingWorldDeletes::queueWorldDeletionOnStartup);
+        IrisServices.register(WorldDeletionQueue.class, pendingWorldDeletes);
         SettingsHotloadWatch watch = new SettingsHotloadWatch(getDataFile("settings.json"));
         settingsHotloadWatch = watch;
         configHotloadEngine = new ConfigHotloadEngine(

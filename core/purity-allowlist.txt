@@ -2,14 +2,18 @@ art/arcane/iris/core/IrisRuntimeSchedulerMode.java
 art/arcane/iris/core/IrisWorldStorage.java
 art/arcane/iris/core/IrisWorlds.java
 art/arcane/iris/core/ServerConfigurator.java
+art/arcane/iris/core/WorldCreatorCompat.java
+art/arcane/iris/core/WorldRemovalPathPolicy.java
 art/arcane/iris/core/datapack/DatapackIngestService.java
 art/arcane/iris/core/edit/BlockSignal.java
 art/arcane/iris/core/edit/DustRevealer.java
 art/arcane/iris/core/events/IrisEngineEvent.java
 art/arcane/iris/core/events/IrisEngineHotloadEvent.java
 art/arcane/iris/core/events/IrisLootEvent.java
+art/arcane/iris/core/lifecycle/BukkitWorldConfiguration.java
 art/arcane/iris/core/lifecycle/BukkitPublicBackend.java
 art/arcane/iris/core/lifecycle/CapabilitySnapshot.java
+art/arcane/iris/core/lifecycle/IrisWorldRemovalService.java
 art/arcane/iris/core/lifecycle/PaperLibBootstrap.java
 art/arcane/iris/core/lifecycle/PaperLikeRuntimeBackend.java
 art/arcane/iris/core/lifecycle/WorldLifecycleBackend.java
@@ -115,7 +119,6 @@ art/arcane/iris/engine/object/IrisVanillaLootTable.java
 art/arcane/iris/engine/object/LegacyTileData.java
 art/arcane/iris/engine/object/PotionEffectTypes.java
 art/arcane/iris/engine/object/TileData.java
-art/arcane/iris/engine/object/annotations/functions/LootTableKeyFunction.java
 art/arcane/iris/engine/platform/BukkitChunkGenerator.java
 art/arcane/iris/engine/platform/DummyBiomeProvider.java
 art/arcane/iris/engine/platform/DummyChunkGenerator.java

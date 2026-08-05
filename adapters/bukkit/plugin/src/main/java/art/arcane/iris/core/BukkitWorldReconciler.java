@@ -19,77 +19,381 @@
 package art.arcane.iris.core;
 
 import art.arcane.iris.Iris;
-import art.arcane.iris.core.lifecycle.WorldLifecycleService;
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
+import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.nms.INMS;
+import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.platform.bukkit.BukkitEnvironment;
 import art.arcane.iris.util.common.format.C;
-import art.arcane.iris.util.common.scheduling.J;
+import art.arcane.iris.util.common.misc.ServerProperties;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
-import art.arcane.volmlib.util.collection.KList;
 import org.bukkit.NamespacedKey;
+import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.generator.ChunkGenerator;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
+import java.util.stream.Stream;
 
-/**
- * Loads Iris worlds that are staged in bukkit.yml but not yet present on the server.
- */
 public final class BukkitWorldReconciler {
-    private final Iris plugin;
+    private static final long WORLD_CREATE_TIMEOUT_SECONDS = 120L;
+
+    private final Backend backend;
+    private final LifecycleOperationCoordinator coordinator;
 
     public BukkitWorldReconciler(Iris plugin) {
-        this.plugin = plugin;
+        this(new BukkitBackend(plugin), LifecycleOperationCoordinator.get());
     }
 
-    public void checkForBukkitWorlds(Predicate<String> filter) {
+    BukkitWorldReconciler(Backend backend, LifecycleOperationCoordinator coordinator) {
+        this.backend = Objects.requireNonNull(backend, "backend");
+        this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
+    }
+
+    public CompletableFuture<LoadResult> loadWorld(
+            File configurationFile,
+            String worldName
+    ) {
+        NamespacedKey worldKey;
         try {
-            KList<String> deferredStartupWorlds = new KList<>();
-            IrisWorlds.readBukkitWorlds().forEach((s, generator) -> {
-                try {
-                    NamespacedKey worldKey = IrisWorldStorage.keyFromName(s);
-                    if (WorldIdentity.resolve(worldKey).isPresent() || !filter.test(s)) return;
-
-                    Iris.info("Loading World: %s | Generator: %s", s, generator);
-                    ChunkGenerator gen = plugin.getDefaultWorldGenerator(s, generator);
-                    IrisDimension dim = IrisWorldGeneratorResolver.loadDimension(s, generator);
-                    assert dim != null && gen != null;
-
-                    Iris.info(C.LIGHT_PURPLE + "Preparing Spawn for " + s + "' using Iris:" + generator + "...");
-                    WorldCreator c = WorldCreatorCompat.ofKey(worldKey)
-                            .generator(gen)
-                            .environment(BukkitEnvironment.from(dim.getEnvironment()));
-                    Long stagedSeed = IrisWorlds.readBukkitWorldSeed(s);
-                    if (stagedSeed != null) {
-                        c.seed(stagedSeed);
-                    }
-                    INMS.get().createWorld(c);
-                    Iris.info(C.LIGHT_PURPLE + "Loaded " + s + "!");
-                } catch (Throwable e) {
-                    if (containsCreateWorldUnsupportedOperation(e)) {
-                        if (J.isFolia()) {
-                            if (!deferredStartupWorlds.contains(s)) {
-                                deferredStartupWorlds.add(s);
-                            }
-                            return;
-                        }
-                        Iris.error("Failed to load world " + s + "!");
-                        Iris.error("This server denied Bukkit.createWorld for \"" + s + "\" at the current startup phase.");
-                        Iris.error("Ensure Iris is loaded at STARTUP and restart after staging worlds in bukkit.yml.");
-                        Iris.reportError("Failed to load staged startup world \"" + s + "\".", e);
-                        return;
-                    }
-                    Iris.reportError("Failed to load startup world \"" + s + "\".", e);
-                }
-            });
-            if (!deferredStartupWorlds.isEmpty()) {
-                Iris.warn("Staged Iris worlds could not load on Folia: %s", String.join(", ", deferredStartupWorlds));
-                Iris.warn("Bukkit.createWorld is unsupported on this server and the Iris runtime world backend is unavailable (%s).", WorldLifecycleService.get().capabilities().paperLikeResolution());
-            }
-        } catch (Throwable e) {
-            Iris.reportError("Failed while loading startup Iris worlds.", e);
+            worldKey = IrisWorldStorage.managedKeyFromName(worldName);
+        } catch (Throwable failure) {
+            return CompletableFuture.completedFuture(LoadResult.validationFailure(worldName, failure));
         }
+
+        LifecycleOperationCoordinator.Lease lease;
+        try {
+            lease = acquireWorldLoad(worldKey);
+        } catch (LifecycleOperationCoordinator.BusyException failure) {
+            return CompletableFuture.completedFuture(LoadResult.busy(worldKey, failure));
+        }
+
+        DimensionResolution dimensionResolution;
+        Long configuredSeed;
+        try {
+            dimensionResolution = backend.resolveDimension(worldKey);
+            configuredSeed = dimensionResolution.succeeded()
+                    ? backend.configuredSeed(IrisWorldStorage.logicalName(worldKey))
+                    : null;
+        } catch (Throwable failure) {
+            dimensionResolution = DimensionResolution.failed(failure);
+            configuredSeed = null;
+        }
+        if (!dimensionResolution.succeeded()) {
+            lease.close();
+            return CompletableFuture.completedFuture(LoadResult.dimensionFailure(
+                    worldKey,
+                    dimensionResolution.failure()));
+        }
+        return loadWithLease(
+                configurationFile,
+                worldKey,
+                dimensionResolution.dimension(),
+                configuredSeed,
+                lease);
+    }
+
+    public CompletableFuture<BatchResult> checkForBukkitWorlds(Predicate<String> filter) {
+        Predicate<String> requiredFilter = Objects.requireNonNull(filter, "filter");
+        Map<String, String> configuredWorlds;
+        try {
+            configuredWorlds = backend.configuredWorlds();
+        } catch (Throwable failure) {
+            Iris.reportError("Failed while reading staged Bukkit worlds.", failure);
+            return CompletableFuture.completedFuture(new BatchResult(List.of(), failure));
+        }
+
+        CompletableFuture<List<LoadResult>> chain = CompletableFuture.completedFuture(new ArrayList<>());
+        for (Map.Entry<String, String> entry : configuredWorlds.entrySet()) {
+            String worldName = entry.getKey();
+            boolean selected;
+            try {
+                selected = requiredFilter.test(worldName);
+            } catch (Throwable failure) {
+                Iris.reportError("Failed while filtering staged Bukkit world \"" + worldName + "\".", failure);
+                return CompletableFuture.completedFuture(new BatchResult(List.of(), failure));
+            }
+            if (!selected) {
+                continue;
+            }
+            NamespacedKey worldKey;
+            try {
+                worldKey = IrisWorldStorage.keyFromName(worldName);
+            } catch (Throwable failure) {
+                chain = chain.thenApply(results -> {
+                    results.add(LoadResult.validationFailure(worldName, failure));
+                    return results;
+                });
+                continue;
+            }
+            String dimension = entry.getValue();
+            Long seed;
+            try {
+                seed = backend.configuredSeed(worldName);
+            } catch (Throwable failure) {
+                chain = chain.thenApply(results -> {
+                    results.add(LoadResult.configurationFailure(worldKey, failure));
+                    return results;
+                });
+                continue;
+            }
+            chain = chain.thenCompose(results -> loadConfiguredWorld(
+                            ServerProperties.BUKKIT_YML,
+                            worldKey,
+                            dimension,
+                            seed)
+                    .thenApply(result -> {
+                        results.add(result);
+                        return results;
+                    }));
+        }
+
+        return chain.thenApply(results -> {
+            BatchResult batchResult = new BatchResult(results, null);
+            reportBatch(batchResult);
+            return batchResult;
+        });
+    }
+
+    private CompletableFuture<LoadResult> loadConfiguredWorld(
+            File configurationFile,
+            NamespacedKey worldKey,
+            String dimension,
+            Long seed
+    ) {
+        LifecycleOperationCoordinator.Lease lease;
+        try {
+            lease = acquireWorldLoad(worldKey);
+        } catch (LifecycleOperationCoordinator.BusyException failure) {
+            return CompletableFuture.completedFuture(LoadResult.busy(worldKey, failure));
+        }
+
+        return loadWithLease(configurationFile, worldKey, dimension, seed, lease);
+    }
+
+    private LifecycleOperationCoordinator.Lease acquireWorldLoad(NamespacedKey worldKey) {
+        return coordinator.acquire(
+                LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
+                LifecycleOperationCoordinator.OperationKind.WORLD_LOAD,
+                worldKey.toString());
+    }
+
+    private CompletableFuture<LoadResult> loadWithLease(
+            File configurationFile,
+            NamespacedKey worldKey,
+            String dimension,
+            Long seed,
+            LifecycleOperationCoordinator.Lease lease
+    ) {
+
+        BukkitWorldConfiguration.Registration registration;
+        String worldName = IrisWorldStorage.logicalName(worldKey);
+        try {
+            registration = BukkitWorldConfiguration.register(
+                    configurationFile,
+                    worldName,
+                    dimension,
+                    seed);
+        } catch (Throwable failure) {
+            lease.close();
+            return CompletableFuture.completedFuture(LoadResult.configurationFailure(worldKey, failure));
+        }
+
+        CompletableFuture<ReconciliationResult> reconciliation;
+        try {
+            reconciliation = reconcile(worldKey, dimension, seed);
+        } catch (Throwable failure) {
+            reconciliation = CompletableFuture.completedFuture(ReconciliationResult.createFailure(worldKey, failure));
+        }
+
+        return reconciliation.handle((result, failure) -> {
+                    ReconciliationResult settled = failure == null
+                            ? result
+                            : ReconciliationResult.createFailure(worldKey, unwrap(failure));
+                    if (settled == null) {
+                        settled = ReconciliationResult.createFailure(
+                                worldKey,
+                                new IllegalStateException("World reconciliation completed without a result."));
+                    }
+                    if (settled.succeeded()
+                            || settled.status() == ReconciliationStatus.RESTART_REQUIRED
+                            || registration != BukkitWorldConfiguration.Registration.CREATED) {
+                        return new LoadResult(settled, registration, false, true, null);
+                    }
+                    try {
+                        boolean rolledBack = BukkitWorldConfiguration.removeIfMatching(
+                                configurationFile,
+                                worldName,
+                                dimension,
+                                seed);
+                        return new LoadResult(settled, registration, true, rolledBack, null);
+                    } catch (Throwable rollbackFailure) {
+                        return new LoadResult(settled, registration, true, false, rollbackFailure);
+                    }
+                })
+                .whenComplete((result, failure) -> lease.close());
+    }
+
+    private CompletableFuture<ReconciliationResult> reconcile(
+            NamespacedKey worldKey,
+            String dimension,
+            Long seed
+    ) {
+        Optional<World> loaded = backend.loadedWorld(worldKey);
+        if (loaded.isPresent()) {
+            return CompletableFuture.completedFuture(verifyLoadedWorld(worldKey, loaded.get(), true));
+        }
+
+        CompletableFuture<World> created;
+        try {
+            created = Objects.requireNonNull(
+                    backend.createWorld(worldKey, dimension, seed),
+                    "World backend returned no creation future.");
+        } catch (Throwable failure) {
+            return CompletableFuture.completedFuture(classifyCreationFailure(worldKey, failure));
+        }
+
+        CompletableFuture<World> guardedCreation = guardCreateCompletion(
+                created,
+                worldKey,
+                TimeUnit.SECONDS.toMillis(WORLD_CREATE_TIMEOUT_SECONDS),
+                () -> ServerConfigurator.restart("World load timed out for \"" + worldKey + "\"."));
+        return guardedCreation.handle((createdWorld, failure) -> {
+            if (failure != null) {
+                return classifyCreationFailure(worldKey, unwrap(failure));
+            }
+            if (createdWorld == null) {
+                return ReconciliationResult.notLoaded(worldKey);
+            }
+
+            NamespacedKey createdKey;
+            try {
+                createdKey = WorldIdentity.key(createdWorld);
+            } catch (Throwable identityFailure) {
+                return ReconciliationResult.createFailure(worldKey, identityFailure);
+            }
+            if (!worldKey.equals(createdKey)) {
+                return ReconciliationResult.identityMismatch(worldKey, createdWorld, createdKey);
+            }
+
+            Optional<World> resolved = backend.loadedWorld(worldKey);
+            if (resolved.isEmpty()) {
+                return ReconciliationResult.notLoaded(worldKey);
+            }
+            return verifyLoadedWorld(worldKey, resolved.get(), false);
+        });
+    }
+
+    private ReconciliationResult verifyLoadedWorld(NamespacedKey worldKey, World loadedWorld, boolean alreadyLoaded) {
+        NamespacedKey loadedKey;
+        try {
+            loadedKey = WorldIdentity.key(loadedWorld);
+        } catch (Throwable identityFailure) {
+            return ReconciliationResult.createFailure(worldKey, identityFailure);
+        }
+        if (!worldKey.equals(loadedKey)) {
+            return ReconciliationResult.identityMismatch(worldKey, loadedWorld, loadedKey);
+        }
+        if (!backend.isIrisWorld(loadedWorld)) {
+            return ReconciliationResult.identityConflict(worldKey, loadedWorld);
+        }
+        return alreadyLoaded
+                ? ReconciliationResult.alreadyLoaded(worldKey, loadedWorld)
+                : ReconciliationResult.loaded(worldKey, loadedWorld);
+    }
+
+    private static ReconciliationResult classifyCreationFailure(NamespacedKey worldKey, Throwable failure) {
+        Throwable cause = unwrap(failure);
+        if (cause instanceof TimeoutException || containsCreateWorldUnsupportedOperation(cause)) {
+            return ReconciliationResult.restartRequired(worldKey, cause);
+        }
+        return ReconciliationResult.createFailure(worldKey, cause);
+    }
+
+    static CompletableFuture<World> guardCreateCompletion(
+            CompletableFuture<World> source,
+            NamespacedKey worldKey,
+            long timeoutMillis,
+            Runnable timeoutAction
+    ) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(worldKey, "worldKey");
+        Objects.requireNonNull(timeoutAction, "timeoutAction");
+        if (timeoutMillis < 1L) {
+            throw new IllegalArgumentException("timeoutMillis must be positive");
+        }
+
+        CompletableFuture<World> guarded = new CompletableFuture<>();
+        AtomicBoolean settled = new AtomicBoolean(false);
+        source.whenComplete((world, throwable) -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
+            if (throwable == null) {
+                guarded.complete(world);
+            } else {
+                guarded.completeExceptionally(unwrap(throwable));
+            }
+        });
+        CompletableFuture.delayedExecutor(timeoutMillis, TimeUnit.MILLISECONDS).execute(() -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
+            TimeoutException timeout = new TimeoutException(
+                    "World load did not settle within " + timeoutMillis + " milliseconds for \""
+                            + worldKey + "\".");
+            try {
+                timeoutAction.run();
+            } catch (Throwable failure) {
+                timeout.addSuppressed(failure);
+            }
+            guarded.completeExceptionally(timeout);
+        });
+        return guarded;
+    }
+
+    private static void reportBatch(BatchResult batchResult) {
+        for (LoadResult result : batchResult.results()) {
+            if (result.succeeded()) {
+                Iris.info(C.LIGHT_PURPLE + result.message());
+                continue;
+            }
+            if (result.status() == ReconciliationStatus.BUSY) {
+                Iris.warn(result.message());
+                continue;
+            }
+            Iris.error(result.message());
+            Throwable failure = result.failure();
+            if (failure != null) {
+                Iris.reportError("Failed to reconcile staged world \"" + result.worldKey() + "\".", failure);
+            }
+        }
+    }
+
+    private static Throwable unwrap(Throwable failure) {
+        Throwable current = failure;
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private static boolean containsCreateWorldUnsupportedOperation(Throwable throwable) {
@@ -106,5 +410,322 @@ public final class BukkitWorldReconciler {
             cursor = cursor.getCause();
         }
         return false;
+    }
+
+    interface Backend {
+        Map<String, String> configuredWorlds();
+
+        Long configuredSeed(String worldName);
+
+        Optional<World> loadedWorld(NamespacedKey worldKey);
+
+        CompletableFuture<World> createWorld(NamespacedKey worldKey, String dimension, Long seed);
+
+        boolean isIrisWorld(World world);
+
+        DimensionResolution resolveDimension(NamespacedKey worldKey);
+    }
+
+    public enum ReconciliationStatus {
+        LOADED,
+        ALREADY_LOADED,
+        BUSY,
+        INVALID_WORLD,
+        DIMENSION_UNRESOLVED,
+        CONFIGURATION_FAILED,
+        CREATE_FAILED,
+        RESTART_REQUIRED,
+        IDENTITY_MISMATCH,
+        IDENTITY_CONFLICT,
+        NOT_LOADED
+    }
+
+    public record ReconciliationResult(
+            ReconciliationStatus status,
+            NamespacedKey worldKey,
+            World world,
+            Throwable failure,
+            String message
+    ) {
+        public ReconciliationResult {
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(message, "message");
+        }
+
+        public boolean succeeded() {
+            return status == ReconciliationStatus.LOADED || status == ReconciliationStatus.ALREADY_LOADED;
+        }
+
+        private static ReconciliationResult loaded(NamespacedKey worldKey, World world) {
+            return new ReconciliationResult(
+                    ReconciliationStatus.LOADED,
+                    worldKey,
+                    world,
+                    null,
+                    "Loaded Iris world \"" + worldKey + "\".");
+        }
+
+        private static ReconciliationResult alreadyLoaded(NamespacedKey worldKey, World world) {
+            return new ReconciliationResult(
+                    ReconciliationStatus.ALREADY_LOADED,
+                    worldKey,
+                    world,
+                    null,
+                    "Iris world \"" + worldKey + "\" is already loaded.");
+        }
+
+        private static ReconciliationResult createFailure(NamespacedKey worldKey, Throwable failure) {
+            return new ReconciliationResult(
+                    ReconciliationStatus.CREATE_FAILED,
+                    worldKey,
+                    null,
+                    failure,
+                    "Failed to create Iris world \"" + worldKey + "\": " + failure.getMessage());
+        }
+
+        private static ReconciliationResult restartRequired(NamespacedKey worldKey, Throwable failure) {
+            return new ReconciliationResult(
+                    ReconciliationStatus.RESTART_REQUIRED,
+                    worldKey,
+                    null,
+                    failure,
+                    "The server cannot load exact Iris world \"" + worldKey + "\" at this runtime phase.");
+        }
+
+        private static ReconciliationResult identityMismatch(
+                NamespacedKey worldKey,
+                World world,
+                NamespacedKey actualKey
+        ) {
+            return new ReconciliationResult(
+                    ReconciliationStatus.IDENTITY_MISMATCH,
+                    worldKey,
+                    world,
+                    null,
+                    "World creation returned \"" + actualKey + "\" instead of \"" + worldKey + "\".");
+        }
+
+        private static ReconciliationResult identityConflict(NamespacedKey worldKey, World world) {
+            return new ReconciliationResult(
+                    ReconciliationStatus.IDENTITY_CONFLICT,
+                    worldKey,
+                    world,
+                    null,
+                    "World \"" + worldKey + "\" is loaded, but it is not an Iris world.");
+        }
+
+        private static ReconciliationResult notLoaded(NamespacedKey worldKey) {
+            return new ReconciliationResult(
+                    ReconciliationStatus.NOT_LOADED,
+                    worldKey,
+                    null,
+                    null,
+                    "World creation completed without loading exact Iris world \"" + worldKey + "\".");
+        }
+    }
+
+    public record LoadResult(
+            ReconciliationResult reconciliation,
+            BukkitWorldConfiguration.Registration registration,
+            boolean rollbackAttempted,
+            boolean rollbackSucceeded,
+            Throwable rollbackFailure
+    ) {
+        public LoadResult {
+            Objects.requireNonNull(reconciliation, "reconciliation");
+        }
+
+        public boolean succeeded() {
+            return reconciliation.succeeded() && rollbackFailure == null;
+        }
+
+        public ReconciliationStatus status() {
+            return reconciliation.status();
+        }
+
+        public NamespacedKey worldKey() {
+            return reconciliation.worldKey();
+        }
+
+        public World world() {
+            return reconciliation.world();
+        }
+
+        public Throwable failure() {
+            return rollbackFailure == null ? reconciliation.failure() : rollbackFailure;
+        }
+
+        public String message() {
+            if (rollbackFailure != null) {
+                return reconciliation.message() + " Failed to roll back bukkit.yml: " + rollbackFailure.getMessage();
+            }
+            if (rollbackAttempted && rollbackSucceeded) {
+                return reconciliation.message() + " The new bukkit.yml entry was rolled back.";
+            }
+            if (rollbackAttempted && !rollbackSucceeded) {
+                return reconciliation.message() + " The new bukkit.yml entry was no longer an exact match and was not modified.";
+            }
+            return reconciliation.message();
+        }
+
+        private static LoadResult validationFailure(String worldName, Throwable failure) {
+            ReconciliationResult reconciliation = new ReconciliationResult(
+                    ReconciliationStatus.INVALID_WORLD,
+                    null,
+                    null,
+                    failure,
+                    "Invalid Iris world identifier \"" + worldName + "\": " + failure.getMessage());
+            return new LoadResult(reconciliation, null, false, true, null);
+        }
+
+        private static LoadResult busy(NamespacedKey worldKey, LifecycleOperationCoordinator.BusyException failure) {
+            ReconciliationResult reconciliation = new ReconciliationResult(
+                    ReconciliationStatus.BUSY,
+                    worldKey,
+                    null,
+                    failure,
+                    failure.getMessage());
+            return new LoadResult(reconciliation, null, false, true, null);
+        }
+
+        private static LoadResult configurationFailure(NamespacedKey worldKey, Throwable failure) {
+            ReconciliationResult reconciliation = new ReconciliationResult(
+                    ReconciliationStatus.CONFIGURATION_FAILED,
+                    worldKey,
+                    null,
+                    failure,
+                    "Failed to register Iris world \"" + worldKey + "\" in bukkit.yml: " + failure.getMessage());
+            return new LoadResult(reconciliation, null, false, true, null);
+        }
+
+        private static LoadResult dimensionFailure(NamespacedKey worldKey, Throwable failure) {
+            ReconciliationResult reconciliation = new ReconciliationResult(
+                    ReconciliationStatus.DIMENSION_UNRESOLVED,
+                    worldKey,
+                    null,
+                    failure,
+                    "Could not determine one Iris dimension for world \"" + worldKey + "\": " + failure.getMessage());
+            return new LoadResult(reconciliation, null, false, true, null);
+        }
+    }
+
+    record DimensionResolution(String dimension, Throwable failure) {
+        DimensionResolution {
+            if ((dimension == null) == (failure == null)) {
+                throw new IllegalArgumentException("Dimension resolution must contain exactly one outcome.");
+            }
+        }
+
+        static DimensionResolution resolved(String dimension) {
+            return new DimensionResolution(Objects.requireNonNull(dimension, "dimension"), null);
+        }
+
+        static DimensionResolution failed(Throwable failure) {
+            return new DimensionResolution(null, Objects.requireNonNull(failure, "failure"));
+        }
+
+        boolean succeeded() {
+            return dimension != null;
+        }
+    }
+
+    public record BatchResult(List<LoadResult> results, Throwable failure) {
+        public BatchResult {
+            results = List.copyOf(Objects.requireNonNull(results, "results"));
+        }
+
+        public boolean succeeded() {
+            return failure == null && results.stream().allMatch(LoadResult::succeeded);
+        }
+    }
+
+    private static final class BukkitBackend implements Backend {
+        private final Iris plugin;
+
+        private BukkitBackend(Iris plugin) {
+            this.plugin = Objects.requireNonNull(plugin, "plugin");
+        }
+
+        @Override
+        public Map<String, String> configuredWorlds() {
+            return new LinkedHashMap<>(IrisWorlds.readBukkitWorlds());
+        }
+
+        @Override
+        public Long configuredSeed(String worldName) {
+            return IrisWorlds.readBukkitWorldSeed(worldName);
+        }
+
+        @Override
+        public Optional<World> loadedWorld(NamespacedKey worldKey) {
+            return WorldIdentity.resolve(worldKey);
+        }
+
+        @Override
+        public CompletableFuture<World> createWorld(NamespacedKey worldKey, String dimension, Long seed) {
+            try {
+                String worldName = IrisWorldStorage.logicalName(worldKey);
+                Iris.info("Loading World: %s | Generator: %s", worldName, dimension);
+                ChunkGenerator generator = plugin.getDefaultWorldGenerator(worldName, dimension);
+                IrisDimension irisDimension = IrisWorldGeneratorResolver.loadDimension(worldName, dimension);
+                if (generator == null || irisDimension == null) {
+                    throw new IllegalStateException("Could not resolve the Iris generator or dimension \"" + dimension + "\".");
+                }
+
+                Iris.info(C.LIGHT_PURPLE + "Preparing Spawn for " + worldName + " using Iris:" + dimension + "...");
+                WorldCreator creator = WorldCreatorCompat.ofKey(worldKey)
+                        .generator(generator)
+                        .environment(BukkitEnvironment.from(irisDimension.getEnvironment()));
+                if (seed != null) {
+                    creator.seed(seed);
+                }
+                return INMS.get().createWorldAsync(creator);
+            } catch (Throwable failure) {
+                return CompletableFuture.failedFuture(failure);
+            }
+        }
+
+        @Override
+        public boolean isIrisWorld(World world) {
+            return IrisToolbelt.isIrisWorld(world);
+        }
+
+        @Override
+        public DimensionResolution resolveDimension(NamespacedKey worldKey) {
+            File dimensionsDirectory = new File(IrisWorldStorage.packRoot(worldKey), "dimensions");
+            if (!dimensionsDirectory.isDirectory()) {
+                return DimensionResolution.failed(new IllegalStateException("The world has no Iris dimensions directory."));
+            }
+
+            List<String> dimensions = new ArrayList<>();
+            Path dimensionsRoot = dimensionsDirectory.toPath().toAbsolutePath().normalize();
+            try (Stream<Path> paths = Files.walk(dimensionsRoot)) {
+                paths.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                        .filter(path -> path.getFileName().toString().endsWith(".json"))
+                        .forEach(path -> {
+                            String relative = dimensionsRoot.relativize(path).toString().replace(File.separatorChar, '/');
+                            dimensions.add(relative.substring(0, relative.length() - 5));
+                        });
+            } catch (IOException failure) {
+                return DimensionResolution.failed(new IllegalStateException(
+                        "The Iris dimensions directory could not be read.",
+                        failure));
+            }
+            Collections.sort(dimensions);
+
+            String registeredDimension = IrisWorlds.get().getWorlds().get(worldKey.toString());
+            if (registeredDimension != null && dimensions.contains(registeredDimension)) {
+                return DimensionResolution.resolved(registeredDimension);
+            }
+            if (dimensions.size() == 1) {
+                return DimensionResolution.resolved(dimensions.getFirst());
+            }
+            if (dimensions.isEmpty()) {
+                return DimensionResolution.failed(new IllegalStateException("No dimension definitions were found."));
+            }
+            return DimensionResolution.failed(new IllegalStateException(
+                    "Multiple dimension definitions were found without an exact registered dimension: "
+                            + String.join(", ", dimensions)));
+        }
     }
 }

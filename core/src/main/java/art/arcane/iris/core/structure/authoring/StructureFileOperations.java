@@ -64,6 +64,11 @@ interface StructureFileOperations {
         }
     }
 
+    default List<Path> list(Path root, int maxEntries) throws IOException {
+        List<Path> entries = list(root);
+        return entries.size() <= maxEntries ? entries : entries.subList(0, maxEntries + 1);
+    }
+
     default void forceFile(Path path) throws IOException {
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.WRITE)) {
             channel.force(true);
@@ -143,6 +148,13 @@ final class NioStructureFileOperations implements StructureFileOperations {
         }
         for (Path path : paths) {
             Files.deleteIfExists(path);
+        }
+    }
+
+    @Override
+    public List<Path> list(Path root, int maxEntries) throws IOException {
+        try (Stream<Path> stream = Files.list(root)) {
+            return stream.limit(maxEntries + 1L).sorted().toList();
         }
     }
 }

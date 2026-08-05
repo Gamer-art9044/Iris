@@ -8,6 +8,7 @@ import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
@@ -24,6 +25,7 @@ import java.io.IOException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.concurrent.CompletableFuture;
 
 
 public class IrisPackBenchmarking {
@@ -106,11 +108,28 @@ public class IrisPackBenchmarking {
                 e.printStackTrace();
             }
 
-            J.s(() -> {
+            J.sfut(() -> {
                 World world = benchmarkWorld();
-                if (world == null) return;
+                if (world == null) {
+                    return null;
+                }
                 IrisToolbelt.evacuate(world);
-                WorldLifecycleService.get().unload(world, true);
+                return world;
+            }).thenCompose(world -> {
+                if (world == null) {
+                    return CompletableFuture.completedFuture(false);
+                }
+                PlatformChunkGenerator generator = IrisToolbelt.access(world);
+                CompletableFuture<Void> closeFuture = generator == null
+                        ? CompletableFuture.completedFuture(null)
+                        : generator.closeAsync();
+                return closeFuture.thenCompose(unused -> WorldLifecycleService.get().unloadAsync(world, true));
+            }).whenComplete((unloaded, throwable) -> {
+                if (throwable != null) {
+                    IrisLogging.reportError("Failed to close the benchmark world.", throwable);
+                } else if (!Boolean.TRUE.equals(unloaded)) {
+                    IrisLogging.error("Failed to unload the benchmark world.");
+                }
             });
 
             stopwatch.end();

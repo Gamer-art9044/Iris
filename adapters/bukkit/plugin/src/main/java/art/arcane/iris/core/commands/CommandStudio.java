@@ -229,29 +229,21 @@ public class CommandStudio implements DirectorExecutor {
         }
     }
 
-    @Director(description = "Create a new studio project", descriptionKey = "iris.director.commandstudio.director.create_new_studio_project", aliases = "+", sync = true)
+    @Director(description = "Create a new studio project", descriptionKey = "iris.director.commandstudio.director.create_new_studio_project", aliases = "+")
     public void create(
             @Param(description = "The name of this new Iris Project.", descriptionKey = "iris.director.commandstudio.param.name_this_new_iris_project", defaultValue = "studio")
             String name,
             @Param(
                     description = "Copy the contents of an existing project in your packs folder and use it as a template in this new project.", descriptionKey = "iris.director.commandstudio.param.copy_contents_existing_project_your_packs_folder_use_it_as_template_this",
+                    defaultValue = "null",
                     contextual = true,
                     customHandler = NullableDimensionHandler.class
             )
             IrisDimension template) {
-        String projectName = name;
-        if (name.equals("studio")) {
-            File workspace = Iris.service(StudioSVC.class).getWorkspaceFolder();
-            int suffix = 2;
-            while (new File(workspace, projectName).exists()) {
-                projectName = "studio" + suffix++;
-            }
-        }
-
         if (template != null) {
-            Iris.service(StudioSVC.class).create(sender(), projectName, template.getLoadKey());
+            Iris.service(StudioSVC.class).create(sender(), name, template);
         } else {
-            Iris.service(StudioSVC.class).create(sender(), projectName);
+            Iris.service(StudioSVC.class).create(sender(), name);
         }
     }
 

@@ -289,6 +289,11 @@ public class ContentKeyValidatorTest {
         }
 
         @Override
+        public List<String> lootTableKeys() {
+            return List.of();
+        }
+
+        @Override
         public Map<String, List<PlatformBlockProperty>> blockStateProperties() {
             return properties;
         }

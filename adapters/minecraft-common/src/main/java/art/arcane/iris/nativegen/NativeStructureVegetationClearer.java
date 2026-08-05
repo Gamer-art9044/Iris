@@ -43,11 +43,15 @@ public final class NativeStructureVegetationClearer {
         }
         boolean[] clearColumns = new boolean[area.getXSpan() * area.getZSpan()];
         for (VegetationTarget target : targets) {
-            if (target != null && target.force() && target.start() != null && target.start().isValid()) {
+            if (shouldProcessTarget(target)) {
                 markVegetationColumns(area, snapshot, target, clearColumns);
             }
         }
         clearVegetationColumns(world, area, snapshot, clearColumns);
+    }
+
+    static boolean shouldProcessTarget(VegetationTarget target) {
+        return target != null && target.start() != null && target.start().isValid();
     }
 
     private static VegetationSnapshot captureVegetation(ChunkAccess chunk, BoundingBox area) {
@@ -100,9 +104,6 @@ public final class NativeStructureVegetationClearer {
         int[] pieceTops = new int[clearColumns.length];
         Arrays.fill(pieceTops, Integer.MIN_VALUE);
         for (StructurePiece piece : target.start().getPieces()) {
-            if (NativeStructureReferenceEnvelope.isMarker(piece)) {
-                continue;
-            }
             BoundingBox bounds = piece.getBoundingBox();
             int minX = Math.max(area.minX(), bounds.minX());
             int maxX = Math.min(area.maxX(), bounds.maxX());

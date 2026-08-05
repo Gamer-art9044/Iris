@@ -21,17 +21,21 @@ package art.arcane.iris.modded;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
-import art.arcane.iris.engine.framework.NativeStructurePlacementPlanner;
+import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.nativegen.NativeStructureGenerationException;
+import art.arcane.iris.nativegen.NativeStructureLocatePersistence;
+import art.arcane.iris.nativegen.NativeStructureLocateResults;
+import art.arcane.iris.nativegen.NativeStructureOwnershipRecovery;
 import art.arcane.iris.nativegen.NativeStructurePostProcessor;
 import art.arcane.iris.nativegen.NativeStructureReferenceEnvelope;
 import art.arcane.iris.nativegen.NativeStructureSurfaceFitter;
 import art.arcane.iris.nativegen.NativeStructureTerrainIntegrator;
 import art.arcane.iris.nativegen.NativeStructureVegetationClearer;
 import art.arcane.iris.nativegen.NativeStructureVerticalPlacer;
+import art.arcane.iris.nativegen.NativeStructureVanillaLocator;
 import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.math.RNG;
@@ -60,6 +64,7 @@ import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -85,42 +90,85 @@ final class ModdedNativeStructureStage {
     Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(ServerLevel level,
                                                               HolderSet<Structure> holders,
                                                               BlockPos pos, int radius, boolean findUnexplored,
-                                                              Engine current) {
-        if (findUnexplored) {
-            return null;
-        }
+                                                              Engine current,
+                                                              NativeStructureVanillaLocator.Candidate nativeCandidate) {
+        Pair<BlockPos, Holder<Structure>> nativeLocated =
+                nativeCandidate == null ? null : nativeCandidate.result();
+        Runnable nativeReference = () -> {
+            if (nativeCandidate != null) {
+                nativeCandidate.reference(level.structureManager());
+            }
+        };
         Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
-        BlockPos best = null;
-        Holder<Structure> bestHolder = null;
-        long bestDistance = Long.MAX_VALUE;
+        List<IrisNativeLocateSearch> searches = new ArrayList<>(holders.size());
+        NativeStructureLocatePersistence.ProbeBudget budget = NativeStructureLocatePersistence.probeBudget();
         for (Holder<Structure> holder : holders) {
             Identifier id = registry.getKey(holder.value());
             if (id == null) {
                 throw new IllegalStateException("Native structure locate received an unregistered structure holder");
             }
             String structureId = id.toString();
-            if (!IrisStructureLocator.isPlaced(current, structureId)) {
+            if (!IrisStructureLocator.hasNativePlacement(current, structureId)) {
                 continue;
             }
-            IrisStructureLocator.LocateResult result = IrisStructureLocator.locate(
-                    current, structureId, pos.getX(), pos.getZ(), radius);
-            if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
-                throw new IllegalStateException("Iris structure locate reached its safety limit for "
-                        + structureId + " within " + radius + " chunks");
-            }
-            if (!result.found()) {
-                continue;
-            }
-            long dx = (long) result.originX() - pos.getX();
-            long dz = (long) result.originZ() - pos.getZ();
-            long distance = dx * dx + dz * dz;
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                best = new BlockPos(result.originX(), result.baseY(), result.originZ());
-                bestHolder = holder;
-            }
+            NativeStructureLocatePersistence.Probe probe = NativeStructureLocatePersistence.probe(
+                    level, holder.value(), findUnexplored, budget);
+            searches.add(new IrisNativeLocateSearch(
+                    holder, structureId, NativeStructureLocatePersistence.search(
+                    current, structureId, pos.getX(), pos.getZ(), radius, probe)));
         }
-        return best == null ? null : Pair.of(best, bestHolder);
+        searches.sort(Comparator.comparing(IrisNativeLocateSearch::structureId));
+        for (int attempt = 0; attempt < NativeStructureLocatePersistence.MAX_SELECTED_CANDIDATE_RETRIES; attempt++) {
+            IrisNativeLocateSearch bestSearch = null;
+            IrisStructureLocator.LocateResult bestResult = null;
+            long bestDistance = Long.MAX_VALUE;
+            for (IrisNativeLocateSearch search : searches) {
+                IrisStructureLocator.LocateResult result = search.search().predict();
+                if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
+                    throw new IllegalStateException("Iris structure locate reached its safety limit for "
+                            + search.structureId() + " within " + radius + " placement rings");
+                }
+                if (!result.found()) {
+                    continue;
+                }
+                long dx = (long) result.originX() - pos.getX();
+                long dz = (long) result.originZ() - pos.getZ();
+                long distance = dx * dx + dz * dz;
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestSearch = search;
+                    bestResult = result;
+                }
+            }
+            if (bestSearch == null) {
+                return NativeStructureLocateResults.selectAndReference(
+                        pos, null, () -> { }, nativeLocated, nativeReference);
+            }
+            Pair<BlockPos, Holder<Structure>> predicted = Pair.of(
+                    new BlockPos(bestResult.originX(), bestResult.baseY(), bestResult.originZ()),
+                    bestSearch.holder());
+            if (NativeStructureLocateResults.nearest(pos, predicted, nativeLocated) != predicted) {
+                return NativeStructureLocateResults.selectAndReference(
+                        pos, predicted, () -> { }, nativeLocated, nativeReference);
+            }
+            NativeStructureLocatePersistence.VerifiedStart verified =
+                    bestSearch.search().verify(bestResult);
+            if (verified == null) {
+                bestSearch.search().reject(bestResult);
+                continue;
+            }
+            BlockPos located = new BlockPos(
+                    bestResult.originX(), verified.ownership().locatorY(),
+                    bestResult.originZ());
+            Pair<BlockPos, Holder<Structure>> irisLocated = Pair.of(located, bestSearch.holder());
+            IrisNativeLocateSearch selectedSearch = bestSearch;
+            NativeStructureLocatePersistence.VerifiedStart selectedStart = verified;
+            return NativeStructureLocateResults.selectAndReference(
+                    pos, irisLocated, () -> selectedSearch.search().reference(selectedStart),
+                    nativeLocated, nativeReference);
+        }
+        throw new IllegalStateException("Iris structure locate rejected too many selected candidates within "
+                + radius + " placement rings");
     }
 
     HolderSet<Structure> filterReachableNativeStructures(ServerLevel level, HolderSet<Structure> holders,
@@ -193,10 +241,14 @@ final class ModdedNativeStructureStage {
                         decision.preserveSourceY(),
                         decision.yBand(),
                         (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
-                StructureStart wrapped = NativeStructureReferenceEnvelope.wrap(
-                        start, structure, start.getReferences(), templateManager,
-                        NativeStructureTerrainIntegrator.resolveNativeTerrain(start, decision.terrain()));
+                StructureStart wrapped = NativeStructureReferenceEnvelope.wrapForPublication(
+                        start, structure, start.getReferences(),
+                        NativeStructureTerrainIntegrator.resolveNativeTerrain(start, decision.terrain()),
+                        structureId);
                 chunk.setStartForStructure(structure, wrapped);
+                if (!wrapped.isValid()) {
+                    continue;
+                }
             } catch (Throwable error) {
                 throw NativeStructureGenerationException.failure(
                         "vertical adjustment", structureId, chunkPos.x(), chunkPos.z(), error);
@@ -227,7 +279,6 @@ final class ModdedNativeStructureStage {
         Engine current = generator.engine();
         List<NativePlacementGroup> placementGroups = new ArrayList<>();
         List<StructureStart> heightmapStarts = new ArrayList<>();
-        List<StructureStart> nativeStarts = new ArrayList<>();
         List<NativeStructureVegetationClearer.VegetationTarget> vegetationTargets = new ArrayList<>();
         List<NativeStructureTerrainIntegrator.TerrainTarget> terrainTargets = new ArrayList<>();
         for (int step = 0; step < steps; step++) {
@@ -245,10 +296,11 @@ final class ModdedNativeStructureStage {
                     List<StructureStart> starts = structureManager.startsForStructure(sectionPos, structure);
                     List<NativePlacement> resolvedPlacements = new ArrayList<>(starts.size());
                     for (StructureStart start : starts) {
-                        NativeStructureStartPlan plan = NativeStructurePlacementPlanner.matchingPlan(
-                                current, structureId, start.getChunkPos().x(), start.getChunkPos().z());
-                        IrisNativeStructureDecision decision = plan == null
-                                ? sourceDecision : NativeStructurePlacementPlanner.decisionFor(plan);
+                        NativeStructureOwnershipRecord ownership =
+                                NativeStructureOwnershipRecovery.resolve(
+                                        current, world.getLevel(), structureId, structure, start);
+                        IrisNativeStructureDecision decision =
+                                ownership == null ? sourceDecision : ownership.restoredDecision();
                         if (!decision.generate()) {
                             continue;
                         }
@@ -258,9 +310,6 @@ final class ModdedNativeStructureStage {
                                 structureId, start,
                                 NativeStructureTerrainIntegrator.resolveNativeTerrain(
                                         start, decision.terrain())));
-                        if (plan == null || !plan.placement().isUnderground()) {
-                            nativeStarts.add(start);
-                        }
                         boolean clearEntireFootprint = NativeStructureVegetationClearer
                                 .shouldClearEntireVegetationFootprint(
                                         structure.step(), decision.clearVegetation());
@@ -290,20 +339,20 @@ final class ModdedNativeStructureStage {
                     chunkPos.x(), chunkPos.z(), error);
         }
         try {
-            NativeStructureSurfaceFitter.prepareSurfaceStructures(
-                    world, area, nativeStarts,
-                    (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "terrain integration", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x(), chunkPos.z(), error);
-        }
-        try {
             NativeStructureVegetationClearer.clearIntersectingVegetation(
                     world, chunk, area, vegetationTargets);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "vegetation cleanup", nativeStructureBatchContext(placementGroups),
+                    chunkPos.x(), chunkPos.z(), error);
+        }
+        try {
+            NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                    world, area, terrainTargets,
+                    (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
+        } catch (Throwable error) {
+            throw NativeStructureGenerationException.failure(
+                    "terrain integration", nativeStructureBatchContext(placementGroups),
                     chunkPos.x(), chunkPos.z(), error);
         }
         try {
@@ -413,8 +462,8 @@ final class ModdedNativeStructureStage {
         ChunkPos chunkPos = chunk.getPos();
         int minX = chunkPos.getMinBlockX();
         int minZ = chunkPos.getMinBlockZ();
-        int minY = chunk.getMinY();
-        int maxY = minY + chunk.getHeight() - 1;
+        int minY = chunk.getMinY() + 1;
+        int maxY = chunk.getMinY() + chunk.getHeight() - 1;
         return new BoundingBox(minX, minY, minZ, minX + 15, maxY, minZ + 15);
     }
 
@@ -434,6 +483,10 @@ final class ModdedNativeStructureStage {
 
     private record NativePlacementGroup(String structureId, int featureIndex, int step,
                                         List<NativePlacement> placements) {
+    }
+
+    private record IrisNativeLocateSearch(Holder<Structure> holder, String structureId,
+                                          NativeStructureLocatePersistence.Search search) {
     }
 
     private record StructureStepCache(Registry<Structure> registry, List<List<Structure>> structures) {

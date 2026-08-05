@@ -80,6 +80,11 @@ public class ModdedStructureHooksTest {
                 IllegalStateException.class, hooks::jigsawStructureKeys);
         IllegalStateException templatePoolKeys = assertThrows(
                 IllegalStateException.class, hooks::templatePoolKeys);
+        IllegalStateException jigsawMetadata = assertThrows(
+                IllegalStateException.class, () -> hooks.jigsawSourceMetadata("minecraft:village"));
+        IllegalStateException templatePoolSpan = assertThrows(
+                IllegalStateException.class,
+                () -> hooks.templatePoolHorizontalSpan("minecraft:village/plains/town_centers"));
         IllegalStateException structureSetKeys = assertThrows(
                 IllegalStateException.class, hooks::structureSetKeys);
         IllegalStateException structureBiomeKeys = assertThrows(
@@ -88,6 +93,8 @@ public class ModdedStructureHooksTest {
         assertTrue(structureKeys.getMessage().contains("before the Minecraft server is available"));
         assertTrue(jigsawStructureKeys.getMessage().contains("before the Minecraft server is available"));
         assertTrue(templatePoolKeys.getMessage().contains("before the Minecraft server is available"));
+        assertTrue(jigsawMetadata.getMessage().contains("before the Minecraft server is available"));
+        assertTrue(templatePoolSpan.getMessage().contains("before the Minecraft server is available"));
         assertTrue(structureSetKeys.getMessage().contains("before the Minecraft server is available"));
         assertTrue(structureBiomeKeys.getMessage().contains("before the Minecraft server is available"));
     }

@@ -536,7 +536,7 @@ public class SchemaBuilder {
                 } else if (SchemaKeyedTypes.isKeyed(k.getType())) {
                     fancyType = addEnum(k.getType(), prop, description, SchemaKeyedTypes.values(k.getType()), Function.identity());
                 } else if (k.getType().isEnum()) {
-                    fancyType = addEnum(k.getType(), prop, description, k.getType().getEnumConstants(), o -> ((Enum<?>) o).name());
+                    fancyType = addEnum(k.getType(), prop, description, enumNames(k.getType()), Function.identity());
                 }
             }
             case "object" -> {
@@ -738,7 +738,7 @@ public class SchemaBuilder {
                             } else if (SchemaKeyedTypes.isKeyed(t.type())) {
                                 fancyType = addEnumList(prop, description, t, SchemaKeyedTypes.values(t.type()), Function.identity());
                             } else if (t.type().isEnum()) {
-                                fancyType = addEnumList(prop, description, t, t.type().getEnumConstants(), o -> ((Enum<?>) o).name());
+                                fancyType = addEnumList(prop, description, t, enumNames(t.type()), Function.identity());
                             }
                         }
                     }
@@ -849,6 +849,22 @@ public class SchemaBuilder {
         prop.put("items", items);
 
         return "List of " + s + "s";
+    }
+
+    private static String[] enumNames(Class<?> enumType) {
+        try {
+            Object[] constants = enumType.getEnumConstants();
+            String[] names = new String[constants.length];
+            for (int index = 0; index < constants.length; index++) {
+                names[index] = ((Enum<?>) constants[index]).name();
+            }
+            return names;
+        } catch (LinkageError error) {
+            return Arrays.stream(enumType.getDeclaredFields())
+                    .filter(Field::isEnumConstant)
+                    .map(Field::getName)
+                    .toArray(String[]::new);
+        }
     }
 
     @NotNull

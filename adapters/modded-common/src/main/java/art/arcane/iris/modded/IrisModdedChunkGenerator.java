@@ -27,7 +27,8 @@ import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.nativegen.NativeStructureStartInjector;
-import art.arcane.iris.nativegen.NativeStructureLocateResults;
+import art.arcane.iris.nativegen.NativeStructureReferenceRepair;
+import art.arcane.iris.nativegen.NativeStructureVanillaLocator;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -294,14 +295,14 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         Engine current = engine();
         try (GenerationSessionLease lease = requireGenerationLease(current, "modded_structure_locate");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
-            Pair<BlockPos, Holder<Structure>> irisPlaced = nativeStructures.findNearestIrisStructure(
-                    level, holders, pos, Math.max(1, radius), findUnexplored, current);
             HolderSet<Structure> reachable = nativeStructures.filterReachableNativeStructures(
                     level, holders, current);
-            Pair<BlockPos, Holder<Structure>> nativeLocated = reachable.size() == 0
-                    ? null
-                    : super.findNearestMapStructure(level, reachable, pos, radius, findUnexplored);
-            return NativeStructureLocateResults.nearest(pos, irisPlaced, nativeLocated);
+            NativeStructureVanillaLocator.Candidate nativeCandidate =
+                    reachable.size() == 0 ? null
+                            : NativeStructureVanillaLocator.predict(
+                                    level, reachable, pos, radius, findUnexplored);
+            return nativeStructures.findNearestIrisStructure(
+                    level, holders, pos, Math.max(0, radius), findUnexplored, current, nativeCandidate);
         }
     }
 
@@ -879,7 +880,8 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         Engine current = engine();
         try (GenerationSessionLease lease = requireGenerationLease(current, "modded_create_references");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
-            super.createReferences(level, structureManager, chunk);
+            NativeStructureReferenceRepair.createReferences(
+                    current, level, structureManager, chunk);
         }
     }
 

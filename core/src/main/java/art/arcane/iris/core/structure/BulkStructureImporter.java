@@ -30,7 +30,10 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Predicate;
 
@@ -38,7 +41,14 @@ import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class BulkStructureImporter {
-    public record Report(int total, int imported, int skipped, int failed) {
+    public record Report(int total, int imported, int skipped, int failed, Map<String, String> successfulBundles) {
+        public Report(int total, int imported, int skipped, int failed) {
+            this(total, imported, skipped, failed, Map.of());
+        }
+
+        public Report {
+            successfulBundles = Collections.unmodifiableMap(new TreeMap<>(successfulBundles));
+        }
     }
 
     private BulkStructureImporter() {
@@ -161,7 +171,7 @@ public final class BulkStructureImporter {
             templateKeys = enumerateTemplateKeys();
         } catch (Throwable e) {
             sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAILED_ENUMERATE_STRUCTURE_TEMPLATES_VIA_SERVER_RESOURCEMANAGER, MessageArgument.untrusted("e", String.valueOf(e))));
-            return new Report(0, 0, 0, 0);
+            return enumerationFailureReport();
         }
 
         List<String> all = new ArrayList<>();
@@ -221,24 +231,34 @@ public final class BulkStructureImporter {
     }
 
     public static Report importDatapackStructures(IrisData data, StructureImporter.Mode mode, VolmitSender sender) {
-        KList<String> keys = INMS.get().getStructureKeys();
-        List<String> datapack = new ArrayList<>();
-        for (String k : keys) {
-            if (k != null && !k.isBlank() && !k.startsWith("minecraft:")) {
-                datapack.add(k);
-            }
-        }
-        Collections.sort(datapack);
+        return importDatapackStructures(data, mode, sender, null, null);
+    }
 
-        int total = datapack.size();
+    public static Report importDatapackStructures(
+            IrisData data,
+            StructureImporter.Mode mode,
+            VolmitSender sender,
+            Set<String> allowedStructureKeys,
+            Set<String> allowedTemplateKeys
+    ) {
+        KList<String> keys = INMS.get().getStructureKeys();
+        KeySelection structureSelection = selectDatapackKeys(keys, allowedStructureKeys);
+        List<String> datapack = structureSelection.present();
+
+        int structureAttempts = structureSelection.total();
+        int templateAttempts = 0;
         int imported = 0;
         int skipped = 0;
-        int failed = 0;
+        int failed = structureSelection.missing().size();
+        Map<String, String> successfulBundles = new TreeMap<>();
 
-        if (total == 0) {
+        if (structureAttempts == 0) {
             sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_NO_DATAPACK_NON_MINECRAFT_STRUCTURES_ARE_REGISTERED_INGEST_DATAPACK_RESTART_FIRST_THEN));
         } else {
-            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_IMPORTING_DATAPACK_STRUCTURES_MODE, MessageArgument.untrusted("total", String.valueOf(total)), MessageArgument.untrusted("mode", String.valueOf(mode))));
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_IMPORTING_DATAPACK_STRUCTURES_MODE, MessageArgument.untrusted("total", String.valueOf(structureAttempts)), MessageArgument.untrusted("mode", String.valueOf(mode))));
+            for (String missingKey : structureSelection.missing()) {
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_8, MessageArgument.untrusted("keyString", missingKey), MessageArgument.untrusted("message", "allowed structure key is absent from the live registry")));
+            }
             for (String keyString : datapack) {
                 NamespacedKey nk = NamespacedKey.fromString(keyString.toLowerCase());
                 if (nk == null) {
@@ -252,6 +272,7 @@ public final class BulkStructureImporter {
                     VillageImporter.Result jigsaw = VillageImporter.importVillage(data, nk, name, mode);
                     if (jigsaw.success()) {
                         imported++;
+                        successfulBundles.put(bundleKey(name), keyString);
                         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_JIGSAW_2, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("name", String.valueOf(name))));
                         continue;
                     }
@@ -261,6 +282,7 @@ public final class BulkStructureImporter {
                         StructureImporter.Result single = StructureImporter.importStructure(data, nk, name, mode);
                         if (single.success()) {
                             imported++;
+                            successfulBundles.put(bundleKey(name), keyString);
                             sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_SINGLE_2, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("name", String.valueOf(name))));
                         } else if (single.message() != null && single.message().startsWith("Skipped")) {
                             skipped++;
@@ -287,50 +309,103 @@ public final class BulkStructureImporter {
             }
         }
 
-        try {
-            List<String> templateKeys = enumerateTemplateKeys();
-            List<String> datapackTemplates = new ArrayList<>();
-            for (String key : templateKeys) {
-                if (key != null && !key.startsWith("minecraft:")) {
-                    datapackTemplates.add(key);
-                }
+        if (allowedTemplateKeys == null || !allowedTemplateKeys.isEmpty()) {
+            List<String> templateKeys = List.of();
+            boolean enumerationSucceeded = false;
+            try {
+                templateKeys = enumerateTemplateKeys();
+                enumerationSucceeded = true;
+            } catch (Throwable e) {
+                templateAttempts++;
+                failed++;
+                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_COULD_NOT_ENUMERATE_DATAPACK_TEMPLATES_VIA_SERVER_RESOURCEMANAGER, MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
             }
-            Collections.sort(datapackTemplates);
-            if (!datapackTemplates.isEmpty()) {
-                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_IMPORTING_DATAPACK_STRUCTURE_TEMPLATES, MessageArgument.untrusted("size", String.valueOf(datapackTemplates.size()))));
-                for (String keyString : datapackTemplates) {
-                    NamespacedKey nk = NamespacedKey.fromString(keyString.toLowerCase());
-                    if (nk == null) {
-                        failed++;
-                        continue;
-                    }
-                    String name = templateNameFor(keyString);
-                    try {
-                        StructureImporter.Result result = StructureImporter.importStructure(data, nk, name, mode, true);
-                        if (result.success()) {
-                            imported++;
-                        } else if (result.message() != null && result.message().startsWith("Skipped")) {
-                            skipped++;
-                        } else {
+            if (enumerationSucceeded) {
+                KeySelection templateSelection = selectDatapackKeys(templateKeys, allowedTemplateKeys);
+                List<String> datapackTemplates = templateSelection.present();
+                templateAttempts += templateSelection.total();
+                failed += templateSelection.missing().size();
+                for (String missingKey : templateSelection.missing()) {
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_10, MessageArgument.untrusted("keyString", missingKey), MessageArgument.untrusted("message", "allowed template key is absent from the live server resources")));
+                }
+                if (!datapackTemplates.isEmpty()) {
+                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_IMPORTING_DATAPACK_STRUCTURE_TEMPLATES, MessageArgument.untrusted("size", String.valueOf(datapackTemplates.size()))));
+                    for (String keyString : datapackTemplates) {
+                        NamespacedKey nk = NamespacedKey.fromString(keyString.toLowerCase());
+                        if (nk == null) {
                             failed++;
-                            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_10, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("message", String.valueOf(result.message()))));
+                            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_INVALID_KEY_2, MessageArgument.untrusted("keyString", String.valueOf(keyString))));
+                            continue;
                         }
-                    } catch (Throwable e) {
-                        failed++;
-                        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_11, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
+                        String name = templateNameFor(keyString);
+                        try {
+                            StructureImporter.Result result = StructureImporter.importStructure(data, nk, name, mode, true);
+                            if (result.success()) {
+                                imported++;
+                                successfulBundles.put(bundleKey(name), keyString);
+                            } else if (result.message() != null && result.message().startsWith("Skipped")) {
+                                skipped++;
+                            } else {
+                                failed++;
+                                sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_10, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("message", String.valueOf(result.message()))));
+                            }
+                        } catch (Throwable e) {
+                            failed++;
+                            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_FAIL_11, MessageArgument.untrusted("keyString", String.valueOf(keyString)), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
+                        }
                     }
                 }
             }
-        } catch (Throwable e) {
-            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_COULD_NOT_ENUMERATE_DATAPACK_TEMPLATES_VIA_SERVER_RESOURCEMANAGER, MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
         }
 
         StructureIndexService.write(data);
         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.BULK_STRUCTURE_IMPORTER_DATAPACK_STRUCTURE_IMPORT_COMPLETE_IMPORTED_SKIPPED_FAILED, MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed))));
-        return new Report(total, imported, skipped, failed);
+        return datapackReport(structureAttempts, templateAttempts, imported, skipped, failed, successfulBundles);
     }
 
-    static String templateNameFor(String key) {
+    static boolean isAllowedDatapackKey(String key, Set<String> allowedKeys) {
+        return allowedKeys == null ? !key.startsWith("minecraft:") : allowedKeys.contains(key);
+    }
+
+    static KeySelection selectDatapackKeys(Iterable<String> discoveredKeys, Set<String> allowedKeys) {
+        TreeSet<String> discovered = normalizeKeys(discoveredKeys);
+        TreeSet<String> present = new TreeSet<>();
+        TreeSet<String> missing = new TreeSet<>();
+        if (allowedKeys == null) {
+            for (String key : discovered) {
+                if (isAllowedDatapackKey(key, null)) {
+                    present.add(key);
+                }
+            }
+        } else {
+            TreeSet<String> allowed = normalizeKeys(allowedKeys);
+            for (String key : allowed) {
+                if (discovered.contains(key)) {
+                    present.add(key);
+                } else {
+                    missing.add(key);
+                }
+            }
+        }
+        return new KeySelection(new ArrayList<>(present), new ArrayList<>(missing));
+    }
+
+    static Report datapackReport(
+            int structureAttempts,
+            int templateAttempts,
+            int imported,
+            int skipped,
+            int failed,
+            Map<String, String> successfulBundles
+    ) {
+        return new Report(structureAttempts + templateAttempts, imported, skipped, failed, successfulBundles);
+    }
+
+    static Report enumerationFailureReport() {
+        return new Report(1, 0, 0, 1);
+    }
+
+    public static String templateNameFor(String key) {
         int colon = key.indexOf(':');
         String namespace = colon >= 0 ? key.substring(0, colon) : "minecraft";
         String path = colon >= 0 ? key.substring(colon + 1) : key;
@@ -427,6 +502,21 @@ public final class BulkStructureImporter {
         }
     }
 
+    private static TreeSet<String> normalizeKeys(Iterable<String> keys) {
+        TreeSet<String> normalized = new TreeSet<>();
+        for (String key : keys) {
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            normalized.add(key.trim().toLowerCase(Locale.ROOT));
+        }
+        return normalized;
+    }
+
+    private static String bundleKey(String name) {
+        return "iris:" + name;
+    }
+
     private static String identifierNamespace(Object location) {
         try {
             Method m = location.getClass().getMethod("getNamespace");
@@ -467,5 +557,16 @@ public final class BulkStructureImporter {
             }
         }
         throw new NoSuchMethodException(method + " on " + target.getClass().getName());
+    }
+
+    record KeySelection(List<String> present, List<String> missing) {
+        KeySelection {
+            present = List.copyOf(present);
+            missing = List.copyOf(missing);
+        }
+
+        int total() {
+            return present.size() + missing.size();
+        }
     }
 }

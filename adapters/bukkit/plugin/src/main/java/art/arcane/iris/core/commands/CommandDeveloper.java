@@ -21,6 +21,7 @@ package art.arcane.iris.core.commands;
 import com.google.gson.JsonObject;
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.ServerConfigurator;
+import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.runtime.ChunkClearer;
 import art.arcane.iris.core.runtime.GoldenHashScanner;
@@ -216,7 +217,15 @@ public class CommandDeveloper implements DirectorExecutor {
             Iris.service(StudioSVC.class).downloadSearch(sender(), pack.getLoadKey(), true);
         }
 
-        Iris.service(StudioSVC.class).installIntoWorld(sender(), pack, folder);
+        try (LifecycleOperationCoordinator.Lease lease = LifecycleOperationCoordinator.get().acquire(
+                LifecycleOperationCoordinator.Domain.PACK_MUTATION,
+                LifecycleOperationCoordinator.OperationKind.PACK_PUBLISH,
+                pack.getLoadKey()
+        )) {
+            Iris.service(StudioSVC.class).replaceIntoWorld(sender(), pack, folder);
+        } catch (LifecycleOperationCoordinator.BusyException e) {
+            sender().sendMessage(C.YELLOW + e.getMessage());
+        }
     }
 
     @Director(description = "Test", descriptionKey = "iris.director.commanddeveloper.director.test")

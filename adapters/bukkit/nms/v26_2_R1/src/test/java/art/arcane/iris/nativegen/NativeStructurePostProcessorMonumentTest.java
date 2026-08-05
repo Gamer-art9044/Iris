@@ -1,5 +1,7 @@
 package art.arcane.iris.nativegen;
 
+import art.arcane.iris.engine.object.IrisStructureTerrain;
+import art.arcane.iris.engine.object.IrisStructureTerrainMode;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderSet;
@@ -16,7 +18,12 @@ import net.minecraft.world.level.levelgen.structure.structures.OceanMonumentStru
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
@@ -81,6 +88,25 @@ public class NativeStructurePostProcessorMonumentTest {
     }
 
     @Test
+    public void referenceEnvelopeDoesNotAddMonumentPieces() {
+        StructureStart start = monumentStart(1337L);
+        StructureStart wrapped = NativeStructureReferenceEnvelope.wrap(
+                start,
+                start.getStructure(),
+                0,
+                new IrisStructureTerrain()
+                        .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                        .setHorizontalPadding(4));
+
+        int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
+                wrapped, "minecraft:monument", 0, 63, -64, 320,
+                false, false, null, (x, z) -> 0);
+
+        assertEquals(0, offset);
+        assertEquals(1, wrapped.getPieces().size());
+    }
+
+    @Test
     public void vanillaReloadRegenerationIsRealignedBeforePlacement() {
         long seed = 1337L;
         ChunkPos chunkPos = new ChunkPos(0, 0);
@@ -97,6 +123,42 @@ public class NativeStructurePostProcessorMonumentTest {
         int offset = NativeStructureVerticalPlacer.applyVerticalPlacement(
                 reloaded, "minecraft:monument", 0, 50, -256, 512, false, false, null, (x, z) -> 0);
         assertEquals(-13, offset);
+        assertEquals(26, reloaded.getBoundingBox().minY());
+        assertEquals(48, reloaded.getBoundingBox().maxY());
+    }
+
+    @Test
+    public void neighboringChunkPlacementRealignsReloadedMonumentOnce() throws Exception {
+        long seed = 1337L;
+        ChunkPos chunkPos = new ChunkPos(0, 0);
+        StructureStart initial = monumentStart(seed);
+        NativeStructureVerticalPlacer.applyVerticalPlacement(
+                initial, "minecraft:monument", 0, 50, -256, 512,
+                false, false, null, (x, z) -> 0);
+        PiecesContainer regenerated = OceanMonumentStructure.regeneratePiecesAfterLoad(
+                chunkPos, seed, new PiecesContainer(initial.getPieces()));
+        StructureStart reloaded = new StructureStart(
+                monumentStructure(), chunkPos, 0, regenerated);
+        ExecutorService executor = Executors.newFixedThreadPool(8);
+        CountDownLatch release = new CountDownLatch(1);
+        List<Future<?>> futures = new ArrayList<>();
+        try {
+            for (int task = 0; task < 16; task++) {
+                futures.add(executor.submit(() -> {
+                    release.await();
+                    NativeStructureVerticalPlacer.ensureMonumentSeaLevelAlignment(
+                            reloaded, "minecraft:monument", 0, 50, -256, 512);
+                    return null;
+                }));
+            }
+            release.countDown();
+            for (Future<?> future : futures) {
+                future.get();
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+
         assertEquals(26, reloaded.getBoundingBox().minY());
         assertEquals(48, reloaded.getBoundingBox().maxY());
     }

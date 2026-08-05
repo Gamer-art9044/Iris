@@ -125,6 +125,7 @@ public class CommandFind implements DirectorExecutor {
 
         String structureKey = structure == null ? "" : structure.trim();
         Structure nativeStructure = resolveNativeStructure(structureKey);
+        boolean irisReplacement = false;
         if (nativeStructure != null) {
             IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(
                     e, structureKey, false);
@@ -134,7 +135,8 @@ public class CommandFind implements DirectorExecutor {
                         structureKey, decision.status()));
                 return;
             }
-            if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            irisReplacement = decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS;
+            if (irisReplacement && !IrisStructureLocator.hasNativePlacement(e, structureKey)) {
                 locateIrisStructure(e, structureKey, commandSender);
                 return;
             }
@@ -149,6 +151,9 @@ public class CommandFind implements DirectorExecutor {
             commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_UNKNOWN_STRUCTURE, MessageArgument.untrusted("structureKey", structureKey)));
             return;
         }
+        final boolean replacementLocate = irisReplacement;
+        final boolean explicitNativePlacement = IrisStructureLocator.hasNativePlacement(
+                e, structureKey);
 
         Player target = player();
         if (target == null) {
@@ -161,7 +166,8 @@ public class CommandFind implements DirectorExecutor {
         commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_LOCATING, MessageArgument.untrusted("structureKey", structureKey)));
         J.s(() -> {
             try {
-                if (!StructureReachability.isReachable(e, structureKey)) {
+                if (!replacementLocate && !explicitNativePlacement
+                        && !StructureReachability.isReachable(e, structureKey)) {
                     KList<String> miss = StructureReachability.missingBiomeKeys(e, structureKey);
                     sendStructureMessage(target, commandSender,
                             C.YELLOW + structureKey + " cannot generate in this world (its required biomes are not produced by this pack"

@@ -22,10 +22,14 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
+import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.pack.DefaultPackBootstrapProvisioner;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
@@ -47,16 +51,27 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.FileChannel;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
+import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -64,6 +79,8 @@ import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public class ServerConfigurator {
+    private static final Object DATAPACK_INSTALL_LOCK = new Object();
+
     public static void configure() {
         IrisSettings.IrisSettingsAutoconfiguration s = IrisSettings.get().getAutoConfiguration();
         if (s.isConfigureSpigotTimeoutTime()) {
@@ -77,7 +94,10 @@ public class ServerConfigurator {
         if (DefaultPackBootstrapProvisioner.wasProvisionedThisStartup()) {
             IrisLogging.info("Paper loaded the Iris datapack during bootstrap; skipping the legacy startup install.");
         } else {
-            installDataPacks(true);
+            DatapackInstallResult result = installDataPacks(true);
+            if (result.restartRequired() && IrisSettings.get().getAutoConfiguration().isAutoRestartOnCustomBiomeInstall()) {
+                restart();
+            }
         }
     }
 
@@ -124,20 +144,20 @@ public class ServerConfigurator {
         return roots;
     }
 
-    public static boolean installDataPacks(boolean fullInstall) {
-        IDataFixer fixer = DataVersion.getDefault();
-        if (fixer == null) {
-            DataVersion fallback = DataVersion.getLatest();
-            IrisLogging.warn("Primary datapack fixer was null, forcing latest fixer: " + fallback.getVersion());
-            fixer = fallback.get();
-        }
-        return installDataPacks(fixer, fullInstall);
+    public static DatapackInstallResult installDataPacks(boolean fullInstall) {
+        return installDataPacks(resolveDataFixer(), fullInstall);
     }
 
-    public static boolean installDataPacks(IDataFixer fixer, boolean fullInstall) {
+    public static DatapackInstallResult installDataPacks(IDataFixer fixer, boolean fullInstall) {
+        synchronized (DATAPACK_INSTALL_LOCK) {
+            return installDataPacksLocked(fixer, fullInstall);
+        }
+    }
+
+    private static DatapackInstallResult installDataPacksLocked(IDataFixer fixer, boolean fullInstall) {
         if (fixer == null) {
             IrisLogging.error("Unable to install datapacks, fixer is null!");
-            return false;
+            return DatapackInstallResult.failedResult();
         }
         if (fullInstall) {
             IrisLogging.info("Checking Data Packs...");
@@ -145,7 +165,10 @@ public class ServerConfigurator {
             IrisLogging.debug("Checking Data Packs...");
         }
         KList<File> datapacksFolders = getDatapacksFolder();
-        DatapackIngestService.reapplyFromStaging(datapacksFolders);
+        if (!DatapackIngestService.reapplyFromStaging(datapacksFolders)) {
+            IrisLogging.error("Unable to compile Iris datapacks while external datapack recovery is incomplete.");
+            return DatapackInstallResult.failedResult();
+        }
         List<File> packRoots;
         try (Stream<IrisData> stream = allPacks()) {
             packRoots = stream
@@ -155,17 +178,58 @@ public class ServerConfigurator {
                     .toList();
         }
 
+        KList<File> liveRoots = getIrisDatapackRoots();
+        KList<File> stagedRoots = new KList<>();
+        List<Path> stagedPaths = new ArrayList<>(liveRoots.size());
+        List<AtomicDirectoryPublisher.Publication> publications = new ArrayList<>(liveRoots.size());
         try {
+            for (File liveRoot : liveRoots) {
+                Path target = liveRoot.toPath().toAbsolutePath().normalize();
+                Path parent = target.getParent();
+                if (parent == null) {
+                    throw new IOException("Iris datapack root has no parent: " + target);
+                }
+                Files.createDirectories(parent);
+                Path staged = parent.resolve(".iris-compile-" + UUID.randomUUID());
+                Files.createDirectories(staged);
+                stagedPaths.add(staged);
+                stagedRoots.add(staged.toFile());
+            }
             IrisDatapackCompiler.compile(
                     packRoots,
-                    getIrisDatapackRoots(),
+                    stagedRoots,
                     fixer,
                     BukkitPlatform.dataPackFormat(),
                     IrisSettings.get().getGeneral().adjustVanillaHeight
             );
-        } catch (IOException e) {
+            for (int i = 0; i < liveRoots.size(); i++) {
+                publications.add(AtomicDirectoryPublisher.publish(
+                        stagedRoots.get(i).toPath(),
+                        liveRoots.get(i).toPath()
+                ));
+            }
+            for (AtomicDirectoryPublisher.Publication publication : publications) {
+                publication.commit();
+                try {
+                    publication.cleanupBackup();
+                } catch (IOException cleanupFailure) {
+                    IrisLogging.warn("Iris datapack was committed but its backup could not be removed: "
+                            + cleanupFailure.getMessage());
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            closePublications(publications, e);
             IrisLogging.reportError("Unable to compile Iris datapacks", e);
-            return false;
+            return DatapackInstallResult.failedResult();
+        } finally {
+            for (Path stagedPath : stagedPaths) {
+                try {
+                    AtomicDirectoryPublisher.deleteTree(stagedPath);
+                } catch (IOException cleanupFailure) {
+                    IrisLogging.warn("Failed to clean Iris datapack compilation stage " + stagedPath + ": "
+                            + cleanupFailure.getMessage());
+                }
+            }
         }
         if (fullInstall) {
             IrisLogging.info("Data Packs Setup!");
@@ -173,73 +237,204 @@ public class ServerConfigurator {
             IrisLogging.debug("Data Packs Setup!");
         }
 
-        return fullInstall && verifyDataPacksPost(IrisSettings.get().getAutoConfiguration().isAutoRestartOnCustomBiomeInstall());
+        boolean restartRequired = fullInstall && verifyDataPacksPost();
+        return restartRequired
+                ? DatapackInstallResult.restartRequiredResult()
+                : DatapackInstallResult.readyResult();
     }
 
-    public static boolean installDataPacksIfChanged(boolean fullInstall) {
-        File packsDir = IrisPlatforms.get().dataFolder("packs");
-        String current = computePackFingerprint(packsDir);
-        File cacheFile = new File(IrisPlatforms.get().dataFolder("cache"), "datapack-fingerprint");
-        String cached = "";
-        if (cacheFile.exists()) {
+    private static IDataFixer resolveDataFixer() {
+        IDataFixer fixer = DataVersion.getDefault();
+        if (fixer != null) {
+            return fixer;
+        }
+        DataVersion fallback = DataVersion.getLatest();
+        IrisLogging.warn("Primary datapack fixer was null, forcing latest fixer: " + fallback.getVersion());
+        return fallback.get();
+    }
+
+    private static void closePublications(List<AtomicDirectoryPublisher.Publication> publications, Throwable failure) {
+        for (int i = publications.size() - 1; i >= 0; i--) {
             try {
-                cached = Files.readString(cacheFile.toPath(), StandardCharsets.UTF_8).trim();
-            } catch (IOException e) {
-                cached = "";
+                publications.get(i).close();
+            } catch (IOException rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
             }
         }
-        if (!current.isEmpty() && current.equals(cached)) {
-            IrisLogging.debug("Data packs unchanged, skipping install.");
-            return false;
+    }
+
+    public static DatapackInstallResult installDataPacksIfChanged(boolean fullInstall) {
+        synchronized (DATAPACK_INSTALL_LOCK) {
+            File packsDir = IrisPlatforms.get().dataFolder("packs");
+            String current;
+            try {
+                current = computePackFingerprint(packsDir);
+            } catch (RuntimeException exception) {
+                IrisLogging.reportError("Unable to fingerprint Iris packs safely", exception);
+                return DatapackInstallResult.failedResult();
+            }
+            File cacheFile = new File(IrisPlatforms.get().dataFolder("cache"), "datapack-fingerprint");
+            String cached = "";
+            if (cacheFile.exists()) {
+                try {
+                    cached = Files.readString(cacheFile.toPath(), StandardCharsets.UTF_8).trim();
+                } catch (IOException e) {
+                    cached = "";
+                }
+            }
+            if (!current.isEmpty() && current.equals(cached)) {
+                IrisLogging.debug("Data packs unchanged, skipping install.");
+                return DatapackInstallResult.unchangedResult();
+            }
+            DatapackInstallResult result = installDataPacksLocked(resolveDataFixer(), fullInstall);
+            if (result.succeeded()) {
+                try {
+                    writeFingerprintAtomic(cacheFile.toPath(), current);
+                } catch (IOException e) {
+                    IrisLogging.warn("Failed to write datapack fingerprint cache: " + e.getMessage());
+                }
+            }
+            return result;
         }
-        boolean result = installDataPacks(fullInstall);
-        try {
-            cacheFile.getParentFile().mkdirs();
-            Files.writeString(cacheFile.toPath(), current, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            IrisLogging.warn("Failed to write datapack fingerprint cache: " + e.getMessage());
-        }
-        return result;
     }
 
     public static String computePackFingerprint(File packsDir) {
-        if (packsDir == null || !packsDir.isDirectory()) {
+        if (packsDir == null) {
+            return "";
+        }
+        Path root = packsDir.toPath().toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(root)) {
+            throw new IllegalArgumentException("Iris packs root is a symbolic link: " + root);
+        }
+        if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
             return "";
         }
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            List<String> entries = new ArrayList<>();
-            collectFingerprintEntries(packsDir, packsDir.getAbsolutePath(), entries);
-            Collections.sort(entries);
-            for (String entry : entries) {
-                digest.update(entry.getBytes(StandardCharsets.UTF_8));
+            List<FingerprintEntry> entries = collectFingerprintEntries(root);
+            entries.sort(Comparator.comparing(FingerprintEntry::relativePath));
+            byte[] buffer = new byte[8192];
+            for (FingerprintEntry entry : entries) {
+                byte[] relativePath = entry.relativePath().getBytes(StandardCharsets.UTF_8);
+                updateDigestInt(digest, relativePath.length);
+                digest.update(relativePath);
+                updateDigestLong(digest, Files.size(entry.source()));
+                try (InputStream input = Files.newInputStream(entry.source())) {
+                    int read;
+                    while ((read = input.read(buffer)) >= 0) {
+                        if (read > 0) {
+                            digest.update(buffer, 0, read);
+                        }
+                    }
+                }
             }
-            byte[] hash = digest.digest();
-            StringBuilder sb = new StringBuilder(hash.length * 2);
-            for (byte b : hash) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (IOException exception) {
+            throw new UncheckedIOException("Unable to fingerprint Iris packs at " + root, exception);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 not available", e);
         }
     }
 
-    private static void collectFingerprintEntries(File dir, String rootPath, List<String> entries) {
-        File[] files = dir.listFiles();
-        if (files == null) {
-            return;
+    private static void writeFingerprintAtomic(Path target, String fingerprint) throws IOException {
+        Path absoluteTarget = target.toAbsolutePath().normalize();
+        Path parent = absoluteTarget.getParent();
+        if (parent == null) {
+            throw new IOException("Datapack fingerprint target has no parent: " + absoluteTarget);
         }
-        for (File file : files) {
-            if (file.isDirectory()) {
-                if (file.getName().startsWith(".")) {
+        Files.createDirectories(parent);
+        Path staged = Files.createTempFile(parent, ".datapack-fingerprint-", ".tmp");
+        try {
+            Files.writeString(staged, fingerprint, StandardCharsets.UTF_8);
+            try (FileChannel channel = FileChannel.open(staged, StandardOpenOption.WRITE)) {
+                channel.force(true);
+            }
+            try {
+                Files.move(staged, absoluteTarget, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(staged, absoluteTarget, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(staged);
+        }
+    }
+
+    private static List<FingerprintEntry> collectFingerprintEntries(Path root) throws IOException {
+        List<FingerprintEntry> entries = new ArrayList<>();
+        try (Stream<Path> children = Files.list(root)) {
+            for (Path child : children.toList()) {
+                String childName = child.getFileName().toString();
+                if (PackDirectoryResolver.isHiddenName(childName)) {
                     continue;
                 }
-                collectFingerprintEntries(file, rootPath, entries);
-            } else {
-                String relative = file.getAbsolutePath().substring(rootPath.length());
-                entries.add(relative + "|" + file.length() + "|" + file.lastModified());
+                if (Files.isSymbolicLink(child)) {
+                    if (!Files.isDirectory(child)) {
+                        throw new IOException("Iris pack fingerprint rejected symbolic link: " + child);
+                    }
+                    PackDirectoryResolver.requireSafePackTree(child.toFile());
+                    collectFingerprintTree(child.toRealPath(), childName, entries);
+                } else if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) {
+                    collectFingerprintTree(child, childName, entries);
+                } else if (Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)) {
+                    entries.add(new FingerprintEntry(child, childName));
+                } else {
+                    throw new IOException("Iris pack fingerprint rejected unsupported entry: " + child);
+                }
             }
+        }
+        return entries;
+    }
+
+    private static void collectFingerprintTree(
+            Path treeRoot,
+            String logicalRoot,
+            List<FingerprintEntry> entries
+    ) throws IOException {
+        Files.walkFileTree(treeRoot, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
+                if (!directory.equals(treeRoot)
+                        && PackDirectoryResolver.isHiddenName(directory.getFileName().toString())) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                if (PackDirectoryResolver.isHiddenName(file.getFileName().toString())) {
+                    return FileVisitResult.CONTINUE;
+                }
+                if (attributes.isSymbolicLink() || Files.isSymbolicLink(file)) {
+                    throw new IOException("Iris pack fingerprint rejected symbolic link: " + file);
+                }
+                if (!attributes.isRegularFile()) {
+                    throw new IOException("Iris pack fingerprint rejected unsupported entry: " + file);
+                }
+                String relative = treeRoot.relativize(file).toString().replace(File.separatorChar, '/');
+                entries.add(new FingerprintEntry(file, logicalRoot + "/" + relative));
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException failure) throws IOException {
+                throw new IOException("Unable to inspect Iris pack entry: " + file, failure);
+            }
+        });
+    }
+
+    private record FingerprintEntry(Path source, String relativePath) {
+    }
+
+    private static void updateDigestInt(MessageDigest digest, int value) {
+        for (int shift = Integer.SIZE - Byte.SIZE; shift >= 0; shift -= Byte.SIZE) {
+            digest.update((byte) (value >>> shift));
+        }
+    }
+
+    private static void updateDigestLong(MessageDigest digest, long value) {
+        for (int shift = Long.SIZE - Byte.SIZE; shift >= 0; shift -= Byte.SIZE) {
+            digest.update((byte) (value >>> shift));
         }
     }
 
@@ -255,12 +450,12 @@ public class ServerConfigurator {
         return IrisWorldStorage.levelRoot(worldFolder);
     }
 
-    private static boolean verifyDataPacksPost(boolean allowRestarting) {
+    private static boolean verifyDataPacksPost() {
         try (Stream<IrisData> stream = allPacks()) {
             boolean bad = stream
                     .map(data -> {
                         IrisLogging.debug("Checking Pack: " + data.getDataFolder().getPath());
-                        var loader = data.getDimensionLoader();
+                        ResourceLoader<IrisDimension> loader = data.getDimensionLoader();
                         return loader.loadAll(loader.getPossibleKeys())
                                 .stream()
                                 .filter(Objects::nonNull)
@@ -270,13 +465,13 @@ public class ServerConfigurator {
                     })
                     .toList()
                     .contains(true);
-            if (!bad) return false;
+            if (!bad) {
+                return false;
+            }
         }
 
 
-        if (allowRestarting) {
-            restart();
-        } else if (INMS.get().supportsDataPacks()) {
+        if (INMS.get().supportsDataPacks()) {
             IrisLogging.error("============================================================================");
             IrisLogging.error(C.ITALIC + "You need to restart your server to properly generate custom biomes.");
             IrisLogging.error(C.ITALIC + "By continuing, Iris will use backup biomes in place of the custom biomes.");
@@ -292,22 +487,23 @@ public class ServerConfigurator {
                 }
             }
 
-            J.sleep(3000);
         }
         return true;
     }
 
     public static void restart() {
-        J.s(() -> {
-            IrisLogging.warn("New data pack entries have been installed in Iris! Restarting server!");
-            IrisLogging.warn("This will only happen when your pack changes (updates/first time setup)");
-            IrisLogging.warn("(You can disable this auto restart in iris settings)");
+        restart("New data pack entries have been installed in Iris.");
+    }
+
+    public static void restart(String reason) {
+        LifecycleOperationCoordinator.get().quiesceForRestart(() -> J.s(() -> {
+            IrisLogging.warn(reason + " Restarting server to restore a safe lifecycle boundary.");
             J.s(() -> {
                 IrisLogging.warn("Looks like the restart command didn't work. Stopping the server instead!");
                 Bukkit.shutdown();
             }, 100);
             Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "restart");
-        });
+        }));
     }
 
     public static boolean verifyDataPackInstalled(IrisDimension dimension) {
@@ -360,12 +556,12 @@ public class ServerConfigurator {
     }
 
     public static Stream<IrisData> allPacks() {
-        File[] packs = IrisPlatforms.get().dataFolder("packs").listFiles(File::isDirectory);
-        Stream<File> locals = packs == null ? Stream.empty() : Arrays.stream(packs);
+        Stream<File> locals = PackDirectoryResolver.listVisiblePackDirectories(
+                IrisPlatforms.get().dataFolder("packs")
+        ).stream();
         return Stream.concat(locals
-                .filter(base -> !base.getName().contains(".importing-"))
-                .filter( base -> {
-                    var content = new File(base, "dimensions").listFiles();
+                .filter(base -> {
+                    File[] content = new File(base, "dimensions").listFiles();
                     return content != null && content.length > 0;
                 })
                 .map(IrisData::get), IrisWorlds.get().getPacks());

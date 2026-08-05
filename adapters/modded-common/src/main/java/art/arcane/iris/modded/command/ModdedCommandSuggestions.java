@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
@@ -153,24 +154,18 @@ final class ModdedCommandSuggestions {
         names.add("overworld");
         try {
             File packs = ModdedEngineBootstrap.loader().configDir().resolve("irisworldgen").resolve("packs").toFile();
-            File[] children = packs.listFiles();
-            if (children != null) {
-                for (File child : children) {
-                    if (!child.isDirectory()) {
-                        continue;
-                    }
-                    String packName = child.getName();
-                    names.add(packName);
-                    File dimensions = new File(child, "dimensions");
-                    File[] dimensionFiles = dimensions.listFiles(
-                            (File directory, String name) -> name.endsWith(".json"));
-                    if (dimensionFiles == null) {
-                        continue;
-                    }
-                    for (File dimensionFile : dimensionFiles) {
-                        String fileName = dimensionFile.getName();
-                        names.add(packName + ":" + fileName.substring(0, fileName.length() - 5));
-                    }
+            for (File child : PackDirectoryResolver.listVisiblePackDirectories(packs)) {
+                String packName = child.getName();
+                names.add(packName);
+                File dimensions = new File(child, "dimensions");
+                File[] dimensionFiles = dimensions.listFiles(
+                        (File directory, String name) -> name.endsWith(".json"));
+                if (dimensionFiles == null) {
+                    continue;
+                }
+                for (File dimensionFile : dimensionFiles) {
+                    String fileName = dimensionFile.getName();
+                    names.add(packName + ":" + fileName.substring(0, fileName.length() - 5));
                 }
             }
         } catch (Throwable e) {

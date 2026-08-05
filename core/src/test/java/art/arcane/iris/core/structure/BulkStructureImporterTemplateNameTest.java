@@ -20,7 +20,15 @@ package art.arcane.iris.core.structure;
 
 import org.junit.Test;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 public class BulkStructureImporterTemplateNameTest {
     @Test
@@ -50,5 +58,78 @@ public class BulkStructureImporterTemplateNameTest {
     public void duplicateSlashesAreCollapsedAndLeadingSlashStripped() {
         assertEquals("nova/a/b", BulkStructureImporter.templateNameFor("nova:a//b"));
         assertEquals("nova/leading", BulkStructureImporter.templateNameFor("nova:/leading"));
+    }
+
+    @Test
+    public void explicitSourceScopeIncludesOnlyOwnedRegistryKeys() {
+        Set<String> allowed = Set.of("nova:tavern", "minecraft:village_plains");
+
+        assertTrue(BulkStructureImporter.isAllowedDatapackKey("nova:tavern", allowed));
+        assertTrue(BulkStructureImporter.isAllowedDatapackKey("minecraft:village_plains", allowed));
+        assertFalse(BulkStructureImporter.isAllowedDatapackKey("other:castle", allowed));
+    }
+
+    @Test
+    public void explicitSourceSelectionReportsEveryMissingAllowedKey() {
+        BulkStructureImporter.KeySelection selection = BulkStructureImporter.selectDatapackKeys(
+                List.of("NOVA:TAVERN", "other:castle", "nova:tavern"),
+                Set.of("nova:tavern", "nova:missing", "minecraft:village_plains")
+        );
+
+        assertEquals(List.of("nova:tavern"), selection.present());
+        assertEquals(List.of("minecraft:village_plains", "nova:missing"), selection.missing());
+        assertEquals(3, selection.total());
+    }
+
+    @Test
+    public void defaultSourceSelectionExcludesMinecraftAndDeduplicatesKeys() {
+        BulkStructureImporter.KeySelection selection = BulkStructureImporter.selectDatapackKeys(
+                List.of("minecraft:village", "Nova:Tavern", "nova:tavern", "other:castle"),
+                null
+        );
+
+        assertEquals(List.of("nova:tavern", "other:castle"), selection.present());
+        assertTrue(selection.missing().isEmpty());
+        assertEquals(2, selection.total());
+    }
+
+    @Test
+    public void datapackReportIncludesStructureAndTemplateAttempts() {
+        BulkStructureImporter.Report report = BulkStructureImporter.datapackReport(
+                2,
+                3,
+                3,
+                1,
+                1,
+                Map.of("iris:nova_tavern", "nova:tavern")
+        );
+
+        assertEquals(5, report.total());
+        assertEquals(3, report.imported());
+        assertEquals(1, report.skipped());
+        assertEquals(1, report.failed());
+    }
+
+    @Test
+    public void enumerationFailureIsOneFailedAttempt() {
+        BulkStructureImporter.Report report = BulkStructureImporter.enumerationFailureReport();
+
+        assertEquals(1, report.total());
+        assertEquals(0, report.imported());
+        assertEquals(0, report.skipped());
+        assertEquals(1, report.failed());
+    }
+
+    @Test
+    public void successfulBundleEvidenceIsDefensiveAndImmutable() {
+        Map<String, String> successfulBundles = new HashMap<>();
+        successfulBundles.put("iris:nova_tavern", "nova:tavern");
+        BulkStructureImporter.Report report = new BulkStructureImporter.Report(1, 1, 0, 0, successfulBundles);
+
+        successfulBundles.put("iris:other_castle", "other:castle");
+
+        assertEquals(Map.of("iris:nova_tavern", "nova:tavern"), report.successfulBundles());
+        assertThrows(UnsupportedOperationException.class,
+                () -> report.successfulBundles().put("iris:third", "third:structure"));
     }
 }

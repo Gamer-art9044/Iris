@@ -56,8 +56,8 @@ public final class ModdedPackInstaller {
         synchronized (installLock) {
             File packs = configDir.resolve("irisworldgen").resolve("packs").toFile();
             try {
-                boolean installed = PackDownloader.isDefaultOverworld(pack)
-                        ? PackDownloader.downloadDefaultOverworld(packs, forceOverwrite, feedback) != null
+                PackDownloader.PackInstallResult result = PackDownloader.isDefaultOverworld(pack)
+                        ? PackDownloader.downloadDefaultOverworld(packs, forceOverwrite, feedback)
                         : PackDownloader.download(
                                 packs,
                                 "IrisDimensions/" + pack,
@@ -65,8 +65,9 @@ public final class ModdedPackInstaller {
                                 forceOverwrite,
                                 false,
                                 pack,
-                                feedback) != null;
-                if (installed) {
+                                feedback);
+                boolean installed = result != null;
+                if (result != null && result.changed()) {
                     // Pack-install completion is one of the four forced-datapack regeneration triggers; every
                     // install call site already runs off the server thread, so regenerate inline here. A
                     // regeneration failure must never turn a successful install into a failed one.
@@ -75,6 +76,9 @@ public final class ModdedPackInstaller {
                     } catch (Throwable regenerationFailure) {
                         LOGGER.error("Iris installed pack '{}' but could not regenerate the forced datapack", pack, regenerationFailure);
                     }
+                }
+                if (result != null && result.restartRequired()) {
+                    feedback.accept("Pack '" + pack + "' is installed on disk and requires a server restart before its active data changes.");
                 }
                 return installed;
             } catch (IOException error) {

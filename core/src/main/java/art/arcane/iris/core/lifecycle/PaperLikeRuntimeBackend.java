@@ -81,8 +81,8 @@ final class PaperLikeRuntimeBackend implements WorldLifecycleBackend {
     }
 
     @Override
-    public boolean unload(World world, boolean save) {
-        return WorldLifecycleSupport.unloadWorld(capabilities, world, save);
+    public CompletableFuture<Boolean> unloadAsync(World world, boolean save) {
+        return WorldLifecycleSupport.unloadWorldAsync(capabilities, world, save);
     }
 
     @Override

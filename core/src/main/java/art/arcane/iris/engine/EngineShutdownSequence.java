@@ -22,6 +22,7 @@ import art.arcane.iris.engine.EngineBackgroundTasks.BackgroundTaskDrain;
 import art.arcane.iris.engine.EngineRuntimeBuilder.RuntimeAssembly;
 import art.arcane.iris.engine.IrisEngine.LifecycleState;
 import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.framework.NativeStructureOwnershipStore;
 import art.arcane.iris.engine.framework.PreservationRegistry;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
@@ -67,26 +68,31 @@ final class EngineShutdownSequence {
             }
 
             if (backgroundDrain.allowsResourceRelease()) {
-                Throwable prefetchFailure = runCleanup(null, engine::savePrefetchOnce);
-                Throwable engineDataFailure = runCleanup(null, engine::saveEngineData);
-                failure = appendFailure(failure, prefetchFailure);
-                failure = appendFailure(failure, engineDataFailure);
-                failure = releaseRuntime(failure);
-                if (runtimeReleased) {
-                    failure = releaseTarget(failure);
-                }
-                if (targetReleased) {
-                    failure = releaseMantle(failure);
-                }
-                if (prefetchFailure == null
-                        && engineDataFailure == null
-                        && runtimeReleased
-                        && targetReleased
-                        && mantleReleased) {
-                    failure = releaseEngineDataForShutdown(failure);
-                }
-                if (engineDataReleased) {
-                    failure = releasePreservation(failure);
+                Throwable ownershipFailure = runCleanup(null,
+                        () -> NativeStructureOwnershipStore.close(engine));
+                failure = appendFailure(failure, ownershipFailure);
+                if (ownershipFailure == null) {
+                    Throwable prefetchFailure = runCleanup(null, engine::savePrefetchOnce);
+                    Throwable engineDataFailure = runCleanup(null, engine::saveEngineData);
+                    failure = appendFailure(failure, prefetchFailure);
+                    failure = appendFailure(failure, engineDataFailure);
+                    failure = releaseRuntime(failure);
+                    if (runtimeReleased) {
+                        failure = releaseTarget(failure);
+                    }
+                    if (targetReleased) {
+                        failure = releaseMantle(failure);
+                    }
+                    if (prefetchFailure == null
+                            && engineDataFailure == null
+                            && runtimeReleased
+                            && targetReleased
+                            && mantleReleased) {
+                        failure = releaseEngineDataForShutdown(failure);
+                    }
+                    if (engineDataReleased) {
+                        failure = releasePreservation(failure);
+                    }
                 }
             }
             if (failure == null
@@ -130,18 +136,23 @@ final class EngineShutdownSequence {
             }
             return;
         }
-        cleanupFailure = closeRuntime(engine.runtime, cleanupFailure);
-        engine.runtime = null;
-        cleanupFailure = runCleanup(cleanupFailure, engine.getTarget()::close);
-        cleanupFailure = runCleanup(cleanupFailure, engine.getMantle()::close);
-        cleanupFailure = runCleanup(cleanupFailure, engine.engineDataStore::releaseEngineData);
-        engine.closed = true;
-        cleanupFailure = runCleanup(cleanupFailure, () -> {
-            PreservationRegistry registry = IrisServices.getOrNull(PreservationRegistry.class);
-            if (registry != null) {
-                registry.dereference();
-            }
-        });
+        Throwable ownershipFailure = runCleanup(null,
+                () -> NativeStructureOwnershipStore.close(engine));
+        cleanupFailure = appendFailure(cleanupFailure, ownershipFailure);
+        if (ownershipFailure == null) {
+            cleanupFailure = closeRuntime(engine.runtime, cleanupFailure);
+            engine.runtime = null;
+            cleanupFailure = runCleanup(cleanupFailure, engine.getTarget()::close);
+            cleanupFailure = runCleanup(cleanupFailure, engine.getMantle()::close);
+            cleanupFailure = runCleanup(cleanupFailure, engine.engineDataStore::releaseEngineData);
+            engine.closed = true;
+            cleanupFailure = runCleanup(cleanupFailure, () -> {
+                PreservationRegistry registry = IrisServices.getOrNull(PreservationRegistry.class);
+                if (registry != null) {
+                    registry.dereference();
+                }
+            });
+        }
         if (cleanupFailure != null && cleanupFailure != original) {
             original.addSuppressed(cleanupFailure);
         }

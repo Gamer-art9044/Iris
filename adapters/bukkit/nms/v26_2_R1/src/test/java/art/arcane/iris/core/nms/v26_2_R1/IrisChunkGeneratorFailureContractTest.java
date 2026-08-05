@@ -49,9 +49,9 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(placement.contains("because structure generation is disabled outside the pack"));
         assertTrue(placement.contains("prepareSurfaceStructures"));
         assertTrue(placement.contains("clearIntersectingVegetation"));
-        assertTrue(placement.indexOf("prepareSurfaceStructures")
-                < placement.indexOf("clearIntersectingVegetation"));
         assertTrue(placement.indexOf("clearIntersectingVegetation")
+                < placement.indexOf("prepareSurfaceStructures"));
+        assertTrue(placement.indexOf("prepareSurfaceStructures")
                 < placement.indexOf("for (NativePlacementGroup group"));
         assertFalse(placement.contains("IrisLogging.reportError"));
     }
@@ -64,6 +64,20 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_base_height\")"));
         assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_base_column\")"));
         assertTrue(source.contains("catch (GenerationSessionException e)"));
+    }
+
+    @Test
+    public void structureReferenceRepairIsGenerationLeased() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int referencesStart = source.indexOf("public void createReferences");
+        int referencesEnd = source.indexOf("public CompletableFuture<ChunkAccess> createBiomes", referencesStart);
+        String references = source.substring(referencesStart, referencesEnd);
+
+        assertTrue(references.contains("requireGenerationLease(\"bukkit_nms_create_references\")"));
+        assertTrue(references.contains("IrisContext.open(engine, lease.sessionId(), null)"));
+        assertTrue(references.contains("NativeStructureReferenceRepair.createReferences("));
+        assertFalse(references.contains("delegate.createReferences("));
+        assertFalse(references.contains("catch ("));
     }
 
     @Test
@@ -89,6 +103,7 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(placement.indexOf("WorldgenTerrainHeightmaps.primeStructurePlacement(")
                 < placement.indexOf("prepareSurfaceStructures"));
         assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_worldgen_heightmaps\")"));
+        assertTrue(source.contains("int minY = chunk.getMinY() + 1;"));
     }
 
     @Test
@@ -110,6 +125,38 @@ public class IrisChunkGeneratorFailureContractTest {
         String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
 
         assertTrue(source.contains("import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;"));
+    }
+
+    @Test
+    public void onlySidecarOwnedInjectedStartsUsePersistedPlacementPolicy() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int placementStart = source.indexOf("private void placeVanillaStructures");
+        int placementEnd = source.indexOf("private static String nativeStructureBatchContext", placementStart);
+        String placement = source.substring(placementStart, placementEnd);
+        int ownershipResolution = placement.indexOf(
+                "NativeStructureOwnershipRecovery.resolve(");
+        int persistedDecision = placement.indexOf("ownership.restoredDecision()", ownershipResolution);
+        int adjustmentStart = source.indexOf("private void adjustGeneratedStructures");
+        int adjustmentEnd = source.indexOf("public ChunkGeneratorStructureState createState", adjustmentStart);
+        String adjustment = source.substring(adjustmentStart, adjustmentEnd);
+        Path nativegen = Path.of(System.getProperty("iris.nativeStructurePostProcessorSource")).getParent();
+        String factory = Files.readString(nativegen.resolve("NativeStructureFactory.java"));
+        String injector = Files.readString(nativegen.resolve("NativeStructureStartInjector.java"));
+        String recovery = Files.readString(nativegen.resolve("NativeStructureOwnershipRecovery.java"));
+        int ownershipRecord = injector.indexOf("NativeStructureOwnershipStore.record(");
+        int startPublication = injector.indexOf(
+                "context.structureManager().setStartForStructure(", ownershipRecord);
+
+        assertTrue(ownershipResolution >= 0);
+        assertTrue(persistedDecision > ownershipResolution);
+        assertTrue(recovery.contains("NativeStructureOwnershipStore.findPersisted("));
+        assertTrue(recovery.contains("NativeStructureOwnershipStore.record("));
+        assertTrue(ownershipRecord >= 0);
+        assertTrue(startPublication > ownershipRecord);
+        assertTrue(factory.contains("NativeStructureReferenceEnvelope.wrapForPublication("));
+        assertTrue(adjustment.contains("NativeStructureReferenceEnvelope.wrapForPublication("));
+        assertFalse(source.contains("wrapManaged("));
+        assertFalse(source.contains("isIrisManagedStart("));
     }
 
     private static int occurrences(String source, String needle) {

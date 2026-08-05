@@ -2,11 +2,14 @@ package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.engine.object.IrisNativeStructure;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.IrisStructureTerrain;
 import art.arcane.iris.engine.object.IrisStructureTerrainMode;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.engine.object.StructureDistribution;
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.math.RNG;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -36,6 +39,17 @@ public class NativeStructurePlacementPlannerTest {
         assertEquals(12, first.chunkX());
         assertEquals(-7, first.chunkZ());
         assertTrue(first.baseY() >= -45 && first.baseY() <= -20);
+    }
+
+    @Test
+    public void undergroundBandOutsideWorldBoundsSkipsTheCandidate() {
+        Engine engine = engine(982374L, -64, 384, 90);
+        IrisStructurePlacement placement = nativePlacement()
+                .setUnderground(true)
+                .setMinHeight(500)
+                .setMaxHeight(600);
+
+        assertNull(NativeStructurePlacementPlanner.planAt(engine, placement, 12, -7));
     }
 
     @Test
@@ -73,6 +87,69 @@ public class NativeStructurePlacementPlannerTest {
     }
 
     @Test
+    public void underwaterFlagRejectsSubmergedColumnsForSurfaceAndUndergroundPlans() {
+        Engine engine = engine(77L, -64, 384, 63);
+        IrisStructurePlacement placement = nativePlacement();
+
+        assertNull(NativeStructurePlacementPlanner.planAt(engine, placement, 0, 0));
+
+        placement.setUnderground(true).setMinHeight(-40).setMaxHeight(-20);
+        assertNull(NativeStructurePlacementPlanner.planAt(engine, placement, 0, 0));
+
+        placement.setUnderwater(true);
+        assertNotNull(NativeStructurePlacementPlanner.planAt(engine, placement, 0, 0));
+    }
+
+    @Test
+    public void fluidHeightBoundaryIsShoreForPlannerAndLocator() {
+        Engine engine = engine(77L, -64, 384, 64);
+        IrisStructurePlacement placement = nativePlacement();
+
+        assertTrue(!NativeStructurePlacementPlanner.isSubmerged(engine, 8, 8));
+        assertNotNull(NativeStructurePlacementPlanner.planAt(engine, placement, 0, 0));
+
+        placement.setUnderground(true).setMinHeight(-40).setMaxHeight(-20);
+        assertNotNull(NativeStructurePlacementPlanner.planAt(engine, placement, 0, 0));
+    }
+
+    @Test
+    public void duplicateSelectedStructureUsesOneDeterministicPlan() {
+        Engine engine = engine(77L, -64, 384, 150);
+        IrisStructurePlacement first = nativePlacement().setPlacementId("first");
+        IrisStructurePlacement second = nativePlacement().setPlacementId("second");
+        bindPlacements(engine, first, second);
+
+        KList<NativeStructureStartPlan> plans = NativeStructurePlacementPlanner.plansAt(engine, 0, 0);
+
+        IrisStructurePlacement expected = Long.compareUnsigned(
+                StructurePlacementGrid.placementIdentity(first),
+                StructurePlacementGrid.placementIdentity(second)) <= 0 ? first : second;
+        assertEquals(1, plans.size());
+        assertSame(expected, plans.getFirst().placement());
+    }
+
+    @Test
+    public void weightedNativeSelectionPreservesAuthoredSourceOrder() {
+        KList<IrisNativeStructure> first = new KList<>();
+        first.add(new IrisNativeStructure().setStructure("test:a").setWeight(1));
+        first.add(new IrisNativeStructure().setStructure("test:b").setWeight(3));
+        KList<IrisNativeStructure> reordered = new KList<>();
+        reordered.add(first.get(1));
+        reordered.add(first.get(0));
+
+        RNG selectsFirstWeightSlot = new RNG(0L) {
+            @Override
+            public int nextInt(int bound) {
+                return 0;
+            }
+        };
+        assertEquals("test:a", NativeStructurePlacementPlanner
+                .selectSource(first, selectsFirstWeightSlot).getStructure());
+        assertEquals("test:b", NativeStructurePlacementPlanner
+                .selectSource(reordered, selectsFirstWeightSlot).getStructure());
+    }
+
+    @Test
     public void placementMustChooseExactlyOneBackend() {
         assertInvalid(new IrisStructurePlacement());
         IrisStructurePlacement mixed = nativePlacement();
@@ -98,7 +175,21 @@ public class NativeStructurePlacementPlannerTest {
         when(engine.getHeight(org.mockito.ArgumentMatchers.anyInt(),
                 org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.eq(true)))
                 .thenReturn(terrainHeight);
+        IrisDimension dimension = mock(IrisDimension.class);
+        when(dimension.getFluidHeight()).thenReturn(64);
+        when(engine.getDimension()).thenReturn(dimension);
         return engine;
+    }
+
+    private void bindPlacements(Engine engine, IrisStructurePlacement... placements) {
+        IrisDimension dimension = engine.getDimension();
+        KList<IrisStructurePlacement> configured = new KList<>();
+        for (IrisStructurePlacement placement : placements) {
+            configured.add(placement);
+        }
+        when(dimension.getStructures()).thenReturn(configured);
+        when(dimension.getAllRegions(engine)).thenReturn(new KList<>());
+        when(dimension.getReachableBiomes(engine)).thenReturn(new KList<>());
     }
 
     private void assertInvalid(IrisStructurePlacement placement) {

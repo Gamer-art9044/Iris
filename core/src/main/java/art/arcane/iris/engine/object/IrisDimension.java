@@ -274,7 +274,7 @@ public class IrisDimension extends IrisRegistrant {
     @Desc("Controls native vanilla, mod, and ingested datapack PLACED FEATURE generation (ores, trees, plants, springs, geodes) for this dimension. Disabled by default: leaving this out generates exactly the terrain Iris always has. Set 'enabled' true to run the vanilla decoration feature pass over Iris terrain. Carvers are never imported.")
     private IrisImportedFeatureControl importedFeatures = new IrisImportedFeatureControl();
     @ArrayType(type = String.class, min = 1)
-    @Desc("External datapack sources for this dimension. List Modrinth datapack page URLs or direct zip URLs. Any registered datapack structure can be placed directly through nativeStructures without conversion. Replacing native generation requires a dimension-level structure placement with nativeSuppression set to REPLACE_SOURCE; provenance alone never disables native structures.")
+    @Desc("External datapack sources requested by this dimension. Bukkit installs them into Minecraft's server-wide datapack registry, so native registry contents and conflicts cannot be isolated per dimension. Editable auto-import is limited to resources supplied by the URLs declared by each Iris pack. Any registered datapack structure can be placed directly through nativeStructures without conversion. Replacing native generation requires a dimension-level structure placement with nativeSuppression set to REPLACE_SOURCE; provenance alone never disables native structures.")
     private KList<String> datapackImports = new KList<>();
     @MinNumber(0)
     @MaxNumber(318)

@@ -18,7 +18,15 @@
 
 package art.arcane.iris.core.structure.authoring;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
@@ -39,11 +47,19 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Stream;
 
 public final class StructureTransactionWriter {
     private static final String STAGING_RELATIVE_PATH = ".iris/structure-staging";
     private static final String PROCESS_LOCK_RELATIVE_PATH = ".iris/structure-authoring.lock";
+    private static final String RECOVERY_CLAIM_FILE = "external-coordinator.json";
+    private static final int RECOVERY_CLAIM_SCHEMA = 1;
+    private static final int MAX_RECOVERY_CLAIM_BYTES = 64 * 1024;
+    private static final int MAX_COORDINATOR_JOURNAL_BYTES = 4 * 1024 * 1024;
+    private static final int MAX_STRUCTURE_STATE_BYTES = 64 * 1024 * 1024;
+    private static final int MAX_RECOVERY_TRANSACTIONS = 1_024;
     private static final ConcurrentMap<Path, ReentrantLock> ROOT_LOCKS = new ConcurrentHashMap<>();
+    private static final Gson GSON = new Gson();
 
     private final Path packRoot;
     private final StructureFileOperations files;
@@ -86,6 +102,389 @@ public final class StructureTransactionWriter {
 
     public StructureWriteResult write(StructureResourceBundle bundle, StructureWriteMode mode) {
         return write(bundle, new StructureWriteOptions(mode, false));
+    }
+
+    public Optional<StructureSource> ownedSource(StructureKey key) throws IOException {
+        Objects.requireNonNull(key, "key");
+        rootLock.lock();
+        try (ProcessLock ignored = acquireProcessLock()) {
+            StructureRecoveryResult recovery = recoverIncompleteTransactionsLocked();
+            if (!recovery.successful()) {
+                throw recoveryFailure(recovery);
+            }
+            Path manifestPath = ownershipManifestPath(key);
+            if (!files.exists(manifestPath)) {
+                return Optional.empty();
+            }
+            if (!files.isRegularFile(manifestPath)) {
+                throw new IOException("Structure ownership manifest is not a regular file: " + manifestPath);
+            }
+            StructureOwnershipManifest manifest;
+            try {
+                manifest = StructureOwnershipManifest.fromJson(readBoundedBytes(
+                        manifestPath,
+                        MAX_STRUCTURE_STATE_BYTES,
+                        "Structure ownership manifest"
+                ));
+            } catch (RuntimeException e) {
+                throw new IOException("Invalid structure ownership manifest at " + manifestPath, e);
+            }
+            if (!manifest.structure().equals(key)) {
+                throw new IOException("Structure ownership manifest belongs to " + manifest.structure());
+            }
+            return Optional.of(manifest.source());
+        } finally {
+            rootLock.unlock();
+        }
+    }
+
+    public boolean removeOwned(StructureKey key, StructureSource.Kind sourceKind, StructureKey sourceKey) throws IOException {
+        OwnedRemoval request = new OwnedRemoval(key, sourceKind, sourceKey);
+        try (PreparedRemoval removal = prepareOwnedRemovals(List.of(request))) {
+            boolean changed = removal.changed();
+            removal.markCommitted();
+            removal.finishCommit();
+            return changed;
+        }
+    }
+
+    public PreparedRemoval prepareOwnedRemovals(List<OwnedRemoval> removals) throws IOException {
+        return prepareOwnedRemovals(removals, false);
+    }
+
+    public PreparedRemoval prepareMatchingOwnedRemovals(List<OwnedRemoval> removals) throws IOException {
+        return prepareOwnedRemovals(removals, true);
+    }
+
+    private PreparedRemoval prepareOwnedRemovals(
+            List<OwnedRemoval> removals,
+            boolean skipOwnershipMismatches
+    ) throws IOException {
+        Objects.requireNonNull(removals, "removals");
+        List<OwnedRemoval> requests = List.copyOf(removals);
+        rootLock.lock();
+        ProcessLock processLock = null;
+        Path transactionRoot = null;
+        LinkedHashMap<Path, Path> backups = new LinkedHashMap<>();
+        try {
+            processLock = acquireProcessLock();
+            StructureRecoveryResult recovery = recoverIncompleteTransactionsLocked();
+            if (!recovery.successful()) {
+                throw recoveryFailure(recovery);
+            }
+            RemovalPlan plan = buildRemovalPlan(requests, skipOwnershipMismatches);
+            if (plan.targets().isEmpty()) {
+                return new PreparedRemoval(null, null, backups, processLock, false);
+            }
+
+            UUID transactionId = UUID.randomUUID();
+            transactionRoot = stagingRoot().resolve(transactionId.toString()).normalize();
+            Path backupRoot = transactionRoot.resolve("backup");
+            StructureTransactionJournal journal = StructureTransactionJournal.prepared(
+                    transactionId,
+                    plan.targets()
+            );
+            files.createDirectories(backupRoot);
+            writeJournal(transactionRoot, journal);
+            files.forceDirectory(transactionRoot);
+            files.forceDirectory(stagingRoot());
+            verifyTargetSnapshot(journal);
+            backupTargets(journal, backupRoot, backups);
+            return new PreparedRemoval(transactionRoot, journal, backups, processLock, true);
+        } catch (IOException | RuntimeException preparationFailure) {
+            Optional<Throwable> rollbackFailure = rollback(backups, List.of());
+            if (rollbackFailure.isPresent()) {
+                preparationFailure.addSuppressed(rollbackFailure.get());
+            } else if (transactionRoot != null) {
+                cleanupAfterFailure(transactionRoot, preparationFailure);
+            }
+            if (processLock != null) {
+                try {
+                    processLock.close();
+                } catch (IOException closeFailure) {
+                    preparationFailure.addSuppressed(closeFailure);
+                }
+            }
+            rootLock.unlock();
+            if (preparationFailure instanceof IOException ioFailure) {
+                throw ioFailure;
+            }
+            throw new IOException("Failed preparing owned structure removal", preparationFailure);
+        }
+    }
+
+    public record OwnedRemoval(
+            StructureKey key,
+            StructureSource.Kind sourceKind,
+            StructureKey sourceKey
+    ) {
+        public OwnedRemoval {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(sourceKind, "sourceKind");
+            Objects.requireNonNull(sourceKey, "sourceKey");
+        }
+    }
+
+    public record PreparedRemovalToken(Path packRoot, UUID transactionId) {
+        public PreparedRemovalToken {
+            packRoot = canonicalPackRoot(Objects.requireNonNull(packRoot, "packRoot"));
+            Objects.requireNonNull(transactionId, "transactionId");
+        }
+    }
+
+    public record RecoveryOwner(Path transactionRoot, UUID transactionId, UUID claimId) {
+        public RecoveryOwner {
+            transactionRoot = validateRecoveryOwnerRoot(Objects.requireNonNull(transactionRoot, "transactionRoot"));
+            Objects.requireNonNull(transactionId, "transactionId");
+            Objects.requireNonNull(claimId, "claimId");
+            if (!transactionId.toString().equals(transactionRoot.getFileName().toString())) {
+                throw new IllegalArgumentException("Recovery owner transaction id does not match its directory");
+            }
+        }
+    }
+
+    public boolean verifyRecoveryOwner(
+            PreparedRemovalToken token,
+            RecoveryOwner owner,
+            boolean verifyPreparedState
+    ) throws IOException {
+        Objects.requireNonNull(token, "token");
+        Objects.requireNonNull(owner, "owner");
+        if (!packRoot.equals(token.packRoot())) {
+            throw new IOException("Prepared removal token belongs to a different pack root");
+        }
+        Path transactionRoot = stagingRoot().resolve(token.transactionId().toString()).normalize();
+        if (!files.exists(transactionRoot)) {
+            return false;
+        }
+        verifyRecoveryClaim(transactionRoot, token.transactionId(), owner);
+        if (verifyPreparedState) {
+            verifyPreparedRemovalAuthority(transactionRoot, token.transactionId());
+        }
+        return true;
+    }
+
+    public void resolvePreparedRemoval(PreparedRemovalToken token, boolean commit) throws IOException {
+        resolvePreparedRemoval(token, null, commit);
+    }
+
+    public void resolvePreparedRemoval(
+            PreparedRemovalToken token,
+            RecoveryOwner owner,
+            boolean commit
+    ) throws IOException {
+        Objects.requireNonNull(token, "token");
+        if (!packRoot.equals(token.packRoot())) {
+            throw new IOException("Prepared removal token belongs to a different pack root");
+        }
+        rootLock.lock();
+        try (ProcessLock ignored = acquireProcessLock()) {
+            Path transactionRoot = stagingRoot().resolve(token.transactionId().toString()).normalize();
+            if (!files.exists(transactionRoot)) {
+                return;
+            }
+            if (owner != null) {
+                verifyRecoveryClaim(transactionRoot, token.transactionId(), owner);
+            }
+            Path journalPath = recoveryJournalPath(transactionRoot);
+            if (journalPath == null || !files.isRegularFile(journalPath)) {
+                throw new IOException("Missing prepared removal journal at " + transactionRoot);
+            }
+            StructureTransactionJournal journal;
+            try {
+                journal = StructureTransactionJournal.fromJson(readBoundedBytes(
+                        journalPath,
+                        MAX_STRUCTURE_STATE_BYTES,
+                        "Prepared removal journal"
+                ));
+            } catch (RuntimeException e) {
+                throw new IOException("Invalid prepared removal journal at " + journalPath, e);
+            }
+            if (!journal.transactionId().equals(token.transactionId())) {
+                throw new IOException("Prepared removal journal id does not match " + token.transactionId());
+            }
+            if (commit) {
+                verifyCommittedTransaction(journal);
+            } else {
+                restorePreparedTransaction(transactionRoot, journal);
+            }
+            cleanupTransaction(transactionRoot);
+        } finally {
+            rootLock.unlock();
+        }
+    }
+
+    public final class PreparedRemoval implements AutoCloseable {
+        private final Path transactionRoot;
+        private final StructureTransactionJournal journal;
+        private final LinkedHashMap<Path, Path> backups;
+        private final ProcessLock processLock;
+        private final boolean changed;
+        private boolean committed;
+        private boolean closed;
+
+        private PreparedRemoval(
+                Path transactionRoot,
+                StructureTransactionJournal journal,
+                LinkedHashMap<Path, Path> backups,
+                ProcessLock processLock,
+                boolean changed
+        ) {
+            this.transactionRoot = transactionRoot;
+            this.journal = journal;
+            this.backups = backups;
+            this.processLock = processLock;
+            this.changed = changed;
+        }
+
+        public boolean changed() {
+            return changed;
+        }
+
+        public Optional<PreparedRemovalToken> recoveryToken() {
+            if (transactionRoot == null) {
+                return Optional.empty();
+            }
+            UUID transactionId = UUID.fromString(Objects.requireNonNull(
+                    transactionRoot.getFileName(),
+                    "prepared removal transaction directory"
+            ).toString());
+            return Optional.of(new PreparedRemovalToken(packRoot, transactionId));
+        }
+
+        public void claimRecoveryOwner(RecoveryOwner owner) throws IOException {
+            requireOpen();
+            Objects.requireNonNull(owner, "owner");
+            if (transactionRoot == null) {
+                return;
+            }
+            RecoveryClaim claim = new RecoveryClaim(
+                    RECOVERY_CLAIM_SCHEMA,
+                    owner.transactionRoot().toString(),
+                    owner.transactionId(),
+                    owner.claimId()
+            );
+            byte[] claimContent = GSON.toJson(claim).getBytes(StandardCharsets.UTF_8);
+            if (claimContent.length > MAX_RECOVERY_CLAIM_BYTES) {
+                throw new IOException("External recovery claim exceeds " + MAX_RECOVERY_CLAIM_BYTES + " bytes");
+            }
+            Path claimPath = transactionRoot.resolve(RECOVERY_CLAIM_FILE);
+            files.writeNew(claimPath, claimContent);
+            files.forceFile(claimPath);
+            files.forceDirectory(transactionRoot);
+        }
+
+        public void markCommitted() throws IOException {
+            requireOpen();
+            if (transactionRoot == null) {
+                committed = true;
+                return;
+            }
+            boolean committedJournalWritten = false;
+            try {
+                writeJournal(transactionRoot, journal.committed());
+                committedJournalWritten = true;
+                files.forceDirectory(transactionRoot);
+                committed = true;
+            } catch (IOException | RuntimeException commitFailure) {
+                if (committedJournalWritten || isCommittedJournal(transactionRoot, commitFailure)) {
+                    committed = true;
+                }
+                if (commitFailure instanceof IOException ioFailure) {
+                    throw ioFailure;
+                }
+                throw new IOException("Failed marking owned structure removal committed", commitFailure);
+            }
+        }
+
+        public void finishCommit() throws IOException {
+            requireOpen();
+            if (!committed) {
+                throw new IllegalStateException("Owned structure removal has not been marked committed");
+            }
+            IOException failure = null;
+            if (transactionRoot != null) {
+                try {
+                    cleanupTransaction(transactionRoot);
+                } catch (IOException | RuntimeException cleanupFailure) {
+                    failure = new IOException("Owned structure removal committed but cleanup remains at "
+                            + transactionRoot, cleanupFailure);
+                }
+            }
+            IOException releaseFailure = release();
+            if (failure == null) {
+                failure = releaseFailure;
+            } else if (releaseFailure != null) {
+                failure.addSuppressed(releaseFailure);
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        public void rollback() throws IOException {
+            if (closed) {
+                return;
+            }
+            IOException failure = null;
+            if (transactionRoot != null) {
+                Optional<Throwable> rollbackFailure = StructureTransactionWriter.this.rollback(backups, List.of());
+                if (rollbackFailure.isPresent()) {
+                    failure = new IOException("Failed restoring prepared owned structure removal at "
+                            + transactionRoot, rollbackFailure.get());
+                } else {
+                    try {
+                        cleanupTransaction(transactionRoot);
+                    } catch (IOException | RuntimeException cleanupFailure) {
+                        failure = new IOException("Restored owned structure removal but cleanup remains at "
+                                + transactionRoot, cleanupFailure);
+                    }
+                }
+            }
+            IOException releaseFailure = release();
+            if (failure == null) {
+                failure = releaseFailure;
+            } else if (releaseFailure != null) {
+                failure.addSuppressed(releaseFailure);
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        public void leaveForRecovery() throws IOException {
+            if (closed) {
+                return;
+            }
+            IOException releaseFailure = release();
+            if (releaseFailure != null) {
+                throw releaseFailure;
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            rollback();
+        }
+
+        private void requireOpen() {
+            if (closed) {
+                throw new IllegalStateException("Owned structure removal transaction is closed");
+            }
+        }
+
+        private IOException release() {
+            IOException failure = null;
+            try {
+                processLock.close();
+            } catch (IOException e) {
+                failure = e;
+            } finally {
+                closed = true;
+                rootLock.unlock();
+            }
+            return failure;
+        }
     }
 
     public StructureWriteResult preview(StructureResourceBundle bundle, StructureWriteMode mode) {
@@ -134,6 +533,81 @@ public final class StructureTransactionWriter {
         return commit(plan);
     }
 
+    private RemovalPlan buildRemovalPlan(
+            List<OwnedRemoval> removals,
+            boolean skipOwnershipMismatches
+    ) throws IOException {
+        TreeMap<String, StructureTransactionJournal.Target> targets = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (OwnedRemoval removal : removals) {
+            Path manifestPath = ownershipManifestPath(removal.key());
+            if (!files.exists(manifestPath)) {
+                continue;
+            }
+            if (!files.isRegularFile(manifestPath)) {
+                throw new IOException("Structure ownership manifest is not a regular file: " + manifestPath);
+            }
+            byte[] manifestContent = readBoundedBytes(
+                    manifestPath,
+                    MAX_STRUCTURE_STATE_BYTES,
+                    "Structure ownership manifest"
+            );
+            StructureOwnershipManifest manifest;
+            try {
+                manifest = StructureOwnershipManifest.fromJson(manifestContent);
+            } catch (RuntimeException e) {
+                throw new IOException("Invalid structure ownership manifest at " + manifestPath, e);
+            }
+            if (!manifest.structure().equals(removal.key())) {
+                throw new IOException("Structure ownership manifest belongs to " + manifest.structure());
+            }
+            if (manifest.source().kind() != removal.sourceKind()
+                    || !manifest.source().key().equals(removal.sourceKey())) {
+                if (skipOwnershipMismatches) {
+                    continue;
+                }
+                throw new IOException("Structure '" + removal.key() + "' is owned by source "
+                        + manifest.source().key() + " (" + manifest.source().kind() + "), not "
+                        + removal.sourceKey() + " (" + removal.sourceKind() + ")");
+            }
+
+            for (Map.Entry<String, String> resource : manifest.resourceHashes().entrySet()) {
+                Path target = resolveTarget(resource.getKey());
+                verifyRemovalTarget(target, resource.getKey(), resource.getValue());
+                addRemovalTarget(targets, resource.getKey(), resource.getValue());
+            }
+            addRemovalTarget(targets, manifest.relativePath(), StructureHash.sha256(manifestContent));
+        }
+        return new RemovalPlan(List.copyOf(targets.values()));
+    }
+
+    private void addRemovalTarget(
+            Map<String, StructureTransactionJournal.Target> targets,
+            String relativePath,
+            String contentHash
+    ) throws IOException {
+        StructureTransactionJournal.Target target = new StructureTransactionJournal.Target(
+                relativePath,
+                true,
+                contentHash,
+                ""
+        );
+        StructureTransactionJournal.Target existing = targets.putIfAbsent(relativePath, target);
+        if (existing != null && (!existing.relativePath().equals(relativePath)
+                || !existing.originalHash().equals(contentHash))) {
+            throw new IOException("Owned structure removals overlap at incompatible resource path " + relativePath);
+        }
+    }
+
+    private void verifyRemovalTarget(Path target, String relativePath, String expectedHash) throws IOException {
+        if (!files.isRegularFile(target)) {
+            throw new IOException("Owned structure resource is missing or not a regular file: " + relativePath);
+        }
+        String actualHash = files.sha256(target);
+        if (!expectedHash.equals(actualHash)) {
+            throw new IOException("Owned structure resource was modified and will not be removed: " + relativePath);
+        }
+    }
+
     private StructureRecoveryResult recoverIncompleteTransactionsLocked() {
         Path stagingRoot = stagingRoot();
         ArrayList<StructureRecoveryResult.Failure> failures = new ArrayList<>();
@@ -155,13 +629,23 @@ public final class StructureTransactionWriter {
 
         List<Path> transactionRoots;
         try {
-            transactionRoots = files.list(stagingRoot);
+            transactionRoots = files.list(stagingRoot, MAX_RECOVERY_TRANSACTIONS);
         } catch (IOException | RuntimeException e) {
             return new StructureRecoveryResult(
                     0,
                     0,
                     0,
                     List.of(new StructureRecoveryResult.Failure(stagingRoot, e))
+            );
+        }
+        if (transactionRoots.size() > MAX_RECOVERY_TRANSACTIONS) {
+            IOException failure = new IOException("Structure recovery transaction count exceeds "
+                    + MAX_RECOVERY_TRANSACTIONS);
+            return new StructureRecoveryResult(
+                    0,
+                    0,
+                    0,
+                    List.of(new StructureRecoveryResult.Failure(stagingRoot, failure))
             );
         }
 
@@ -213,7 +697,11 @@ public final class StructureTransactionWriter {
 
         StructureTransactionJournal journal;
         try {
-            journal = StructureTransactionJournal.fromJson(files.readAllBytes(journalPath));
+            journal = StructureTransactionJournal.fromJson(readBoundedBytes(
+                    journalPath,
+                    MAX_STRUCTURE_STATE_BYTES,
+                    "Structure transaction journal"
+            ));
         } catch (RuntimeException e) {
             throw new IOException("Invalid structure transaction journal at " + journalPath, e);
         }
@@ -222,6 +710,10 @@ public final class StructureTransactionWriter {
         if (!journal.transactionId().toString().equals(directoryName)) {
             throw new IOException("Structure transaction journal id " + journal.transactionId()
                     + " does not match directory " + directoryName);
+        }
+        if (hasActiveRecoveryOwner(normalizedRoot, journal.transactionId())) {
+            throw new IOException("Structure transaction recovery is owned by an active datapack coordinator: "
+                    + normalizedRoot);
         }
 
         return switch (journal.phase()) {
@@ -252,6 +744,193 @@ public final class StructureTransactionWriter {
                     + nextJournalPath);
         }
         return nextJournalPath;
+    }
+
+    private boolean hasActiveRecoveryOwner(Path transactionRoot, UUID transactionId) throws IOException {
+        Path claimPath = transactionRoot.resolve(RECOVERY_CLAIM_FILE);
+        if (!files.exists(claimPath)) {
+            return false;
+        }
+        RecoveryClaim claim = readRecoveryClaim(claimPath);
+        RecoveryOwner owner;
+        try {
+            owner = new RecoveryOwner(
+                    Path.of(claim.coordinatorTransactionRoot()),
+                    claim.coordinatorTransactionId(),
+                    claim.claimId()
+            );
+        } catch (RuntimeException e) {
+            throw new IOException("Invalid external recovery claim at " + claimPath, e);
+        }
+        return coordinatorReferencesClaim(
+                new PreparedRemovalToken(packRoot, transactionId),
+                owner
+        );
+    }
+
+    private void verifyRecoveryClaim(
+            Path transactionRoot,
+            UUID transactionId,
+            RecoveryOwner owner
+    ) throws IOException {
+        Path claimPath = transactionRoot.resolve(RECOVERY_CLAIM_FILE);
+        RecoveryClaim claim = readRecoveryClaim(claimPath);
+        if (!Objects.equals(claim.coordinatorTransactionRoot(), owner.transactionRoot().toString())
+                || !Objects.equals(claim.coordinatorTransactionId(), owner.transactionId())
+                || !Objects.equals(claim.claimId(), owner.claimId())) {
+            throw new IOException("Prepared removal recovery claim does not match its datapack coordinator");
+        }
+        if (!coordinatorReferencesClaim(new PreparedRemovalToken(packRoot, transactionId), owner)) {
+            throw new IOException("Prepared removal recovery coordinator was not durably published");
+        }
+    }
+
+    private void verifyPreparedRemovalAuthority(Path transactionRoot, UUID transactionId) throws IOException {
+        Path journalPath = recoveryJournalPath(transactionRoot);
+        if (journalPath == null || !files.isRegularFile(journalPath)) {
+            throw new IOException("Missing prepared removal journal at " + transactionRoot);
+        }
+        StructureTransactionJournal journal;
+        try {
+            journal = StructureTransactionJournal.fromJson(readBoundedBytes(
+                    journalPath,
+                    MAX_STRUCTURE_STATE_BYTES,
+                    "Prepared removal journal"
+            ));
+        } catch (RuntimeException e) {
+            throw new IOException("Invalid prepared removal journal at " + journalPath, e);
+        }
+        if (!journal.transactionId().equals(transactionId)
+                || journal.phase() != StructureTransactionJournal.Phase.PREPARED) {
+            throw new IOException("Prepared removal journal does not match its datapack coordinator");
+        }
+        boolean ownershipManifestPresent = false;
+        Path backupRoot = transactionRoot.resolve("backup").normalize();
+        for (StructureTransactionJournal.Target state : journal.targets()) {
+            if (!state.hadOriginal() || !state.replacementHash().isEmpty()) {
+                throw new IOException("External coordinator claimed a non-removal structure transaction");
+            }
+            ownershipManifestPresent |= state.relativePath().startsWith(".iris/structure-manifests/");
+            Path target = resolveTarget(state.relativePath());
+            if (files.exists(target)) {
+                throw new IOException("Prepared removal target reappeared before coordinator recovery: "
+                        + state.relativePath());
+            }
+            Path backup = resolveTransactionPath(backupRoot, state.relativePath());
+            if (!files.isRegularFile(backup)) {
+                throw new IOException("Prepared removal backup is missing or not a regular file: "
+                        + state.relativePath());
+            }
+            verifyOriginalContent(backup, state);
+        }
+        if (!ownershipManifestPresent) {
+            throw new IOException("External coordinator removal has no structure ownership manifest");
+        }
+    }
+
+    private RecoveryClaim readRecoveryClaim(Path claimPath) throws IOException {
+        if (!files.isRegularFile(claimPath)) {
+            throw new IOException("Invalid external recovery claim " + claimPath);
+        }
+        byte[] content = readBoundedBytes(
+                claimPath,
+                MAX_RECOVERY_CLAIM_BYTES,
+                "External recovery claim"
+        );
+        try {
+            RecoveryClaim claim = GSON.fromJson(
+                    new String(content, StandardCharsets.UTF_8),
+                    RecoveryClaim.class
+            );
+            if (claim == null || claim.schemaVersion() != RECOVERY_CLAIM_SCHEMA
+                    || claim.coordinatorTransactionRoot() == null
+                    || claim.coordinatorTransactionId() == null || claim.claimId() == null) {
+                throw new IOException("Incomplete external recovery claim " + claimPath);
+            }
+            return claim;
+        } catch (RuntimeException e) {
+            throw new IOException("Invalid external recovery claim " + claimPath, e);
+        }
+    }
+
+    private boolean coordinatorReferencesClaim(
+            PreparedRemovalToken token,
+            RecoveryOwner owner
+    ) throws IOException {
+        Path ownerRoot = owner.transactionRoot();
+        Path ownerParent = Objects.requireNonNull(ownerRoot.getParent(), "recovery owner parent");
+        if (Files.isSymbolicLink(ownerParent) || Files.isSymbolicLink(ownerRoot)) {
+            throw new IOException("External recovery owner path contains a symbolic link: " + ownerRoot);
+        }
+        if (!Files.exists(ownerRoot, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        if (!Files.isDirectory(ownerRoot, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("External recovery owner is not a directory: " + ownerRoot);
+        }
+        Path committed = ownerRoot.resolve("journal.json");
+        Path next = ownerRoot.resolve("journal.next.json");
+        Path journalPath;
+        if (Files.exists(committed, LinkOption.NOFOLLOW_LINKS)) {
+            journalPath = committed;
+        } else if (Files.exists(next, LinkOption.NOFOLLOW_LINKS)) {
+            journalPath = next;
+        } else {
+            try (Stream<Path> contents = Files.list(ownerRoot)) {
+                if (contents.findAny().isEmpty()) {
+                    return false;
+                }
+            }
+            throw new IOException("External recovery owner has no transaction journal: " + ownerRoot);
+        }
+        if (Files.isSymbolicLink(journalPath)
+                || !Files.isRegularFile(journalPath, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Invalid external recovery owner journal " + journalPath);
+        }
+        JsonObject journal;
+        try {
+            journal = JsonParser.parseString(new String(
+                    readBoundedBytes(
+                            journalPath,
+                            MAX_COORDINATOR_JOURNAL_BYTES,
+                            "External recovery owner journal"
+                    ),
+                    StandardCharsets.UTF_8
+            )).getAsJsonObject();
+        } catch (RuntimeException e) {
+            if (journalPath.equals(next) && isOnlyOwnerArtifact(ownerRoot, next)) {
+                return false;
+            }
+            throw new IOException("Invalid external recovery owner journal " + journalPath, e);
+        }
+        if (!journal.has("schemaVersion") || journal.get("schemaVersion").getAsInt() != 2
+                || !journal.has("transactionId")
+                || !owner.transactionId().toString().equals(journal.get("transactionId").getAsString())
+                || !journal.has("operation") || !"REMOVE".equals(journal.get("operation").getAsString())
+                || !journal.has("editables") || !journal.get("editables").isJsonArray()) {
+            throw new IOException("External recovery owner journal does not match its claim");
+        }
+        JsonArray editables = journal.getAsJsonArray("editables");
+        for (JsonElement element : editables) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
+            JsonObject editable = element.getAsJsonObject();
+            if (editable.has("packRoot") && editable.has("transactionId") && editable.has("claimId")
+                    && packRoot.toString().equals(editable.get("packRoot").getAsString())
+                    && token.transactionId().toString().equals(editable.get("transactionId").getAsString())
+                    && owner.claimId().toString().equals(editable.get("claimId").getAsString())) {
+                return true;
+            }
+        }
+        throw new IOException("External recovery owner journal does not contain its claimed structure transaction");
+    }
+
+    private boolean isOnlyOwnerArtifact(Path ownerRoot, Path artifact) throws IOException {
+        try (Stream<Path> contents = Files.list(ownerRoot)) {
+            List<Path> entries = contents.limit(2).toList();
+            return entries.size() == 1 && Objects.equals(entries.getFirst(), artifact);
+        }
     }
 
     private void verifyCommittedTransaction(StructureTransactionJournal journal) throws IOException {
@@ -408,7 +1087,11 @@ public final class StructureTransactionWriter {
 
         StructureOwnershipManifest previousManifest;
         try {
-            previousManifest = StructureOwnershipManifest.fromJson(files.readAllBytes(manifestPath));
+            previousManifest = StructureOwnershipManifest.fromJson(readBoundedBytes(
+                    manifestPath,
+                    MAX_STRUCTURE_STATE_BYTES,
+                    "Structure ownership manifest"
+            ));
         } catch (RuntimeException e) {
             conflicts.add(StructureWriteResult.Conflict.invalidManifest(manifestRelativePath, e.toString()));
             return createPlan(
@@ -610,10 +1293,15 @@ public final class StructureTransactionWriter {
             Path transactionRoot,
             StructureTransactionJournal journal
     ) throws IOException {
+        byte[] content = journal.toJson();
+        if (content.length > MAX_STRUCTURE_STATE_BYTES) {
+            throw new IOException("Structure transaction journal exceeds "
+                    + MAX_STRUCTURE_STATE_BYTES + " bytes");
+        }
         Path journalPath = transactionRoot.resolve(StructureTransactionJournal.FILE_NAME);
         Path nextJournalPath = transactionRoot.resolve(StructureTransactionJournal.NEXT_FILE_NAME);
         files.deleteIfExists(nextJournalPath);
-        files.writeNew(nextJournalPath, journal.toJson());
+        files.writeNew(nextJournalPath, content);
         files.forceFile(nextJournalPath);
         files.move(nextJournalPath, journalPath);
     }
@@ -624,7 +1312,11 @@ public final class StructureTransactionWriter {
             return false;
         }
         try {
-            return StructureTransactionJournal.fromJson(files.readAllBytes(journalPath)).phase()
+            return StructureTransactionJournal.fromJson(readBoundedBytes(
+                    journalPath,
+                    MAX_STRUCTURE_STATE_BYTES,
+                    "Structure transaction journal"
+            )).phase()
                     == StructureTransactionJournal.Phase.COMMITTED;
         } catch (IOException | RuntimeException e) {
             commitPhaseFailure.addSuppressed(e);
@@ -909,6 +1601,21 @@ public final class StructureTransactionWriter {
         }
     }
 
+    private byte[] readBoundedBytes(Path path, int maxBytes, String purpose) throws IOException {
+        byte[] content;
+        try (InputStream input = Files.newInputStream(
+                path,
+                StandardOpenOption.READ,
+                LinkOption.NOFOLLOW_LINKS
+        )) {
+            content = input.readNBytes(maxBytes + 1);
+        }
+        if (content.length > maxBytes) {
+            throw new IOException(purpose + " exceeds " + maxBytes + " bytes");
+        }
+        return content;
+    }
+
     private Path resolveWithin(Path root, String relativePath, String errorPrefix) {
         Path target = root.resolve(relativePath).normalize();
         if (!target.startsWith(root) || target.equals(root)) {
@@ -941,6 +1648,37 @@ public final class StructureTransactionWriter {
         }
     }
 
+    private static Path validateRecoveryOwnerRoot(Path root) {
+        Path normalized = root.toAbsolutePath().normalize();
+        Path parent = Objects.requireNonNull(normalized.getParent(), "recovery owner parent");
+        Path parentName = Objects.requireNonNull(parent.getFileName(), "recovery owner directory");
+        Path transactionName = Objects.requireNonNull(normalized.getFileName(), "recovery owner transaction");
+        if (!".iris-datapack-transactions".equals(parentName.toString())) {
+            throw new IllegalArgumentException("Recovery owner is outside the datapack transaction directory");
+        }
+        try {
+            UUID.fromString(transactionName.toString());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Recovery owner has an invalid transaction directory", e);
+        }
+        try {
+            if (Files.isSymbolicLink(parent) || !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalArgumentException("Recovery owner transaction parent is unsafe");
+            }
+            return parent.toRealPath().resolve(transactionName.toString());
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Unable to resolve recovery owner transaction parent", e);
+        }
+    }
+
+    private record RecoveryClaim(
+            int schemaVersion,
+            String coordinatorTransactionRoot,
+            UUID coordinatorTransactionId,
+            UUID claimId
+    ) {
+    }
+
     private enum RecoveryOutcome {
         RESTORED_PREPARED,
         CLEANED_COMMITTED,
@@ -954,6 +1692,9 @@ public final class StructureTransactionWriter {
                 throw new IllegalArgumentException("Installed target content hash is invalid");
             }
         }
+    }
+
+    private record RemovalPlan(List<StructureTransactionJournal.Target> targets) {
     }
 
     private record ProcessLock(FileChannel channel, FileLock lock) implements AutoCloseable {

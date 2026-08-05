@@ -41,6 +41,7 @@ record StructureTransactionJournal(
     static final int CURRENT_SCHEMA_VERSION = 1;
     static final String FILE_NAME = "transaction.json";
     static final String NEXT_FILE_NAME = "transaction.json.next";
+    private static final int MAX_TARGETS = 100_000;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Pattern MANIFEST_PATH = Pattern.compile(
@@ -56,6 +57,9 @@ record StructureTransactionJournal(
         Objects.requireNonNull(targets, "targets");
         if (targets.isEmpty()) {
             throw new IllegalArgumentException("Structure transaction must contain at least one target");
+        }
+        if (targets.size() > MAX_TARGETS) {
+            throw new IllegalArgumentException("Structure transaction contains too many targets");
         }
         ArrayList<Target> orderedTargets = new ArrayList<>(targets);
         orderedTargets.sort(Comparator.comparing(Target::relativePath));

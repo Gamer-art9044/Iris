@@ -203,6 +203,35 @@ public class IrisImportedStructureControlTest {
     }
 
     @Test
+    public void namespaceVacuumCanPreserveSpecificStructuresLater() {
+        IrisVanillaStructureAdjustment namespace = new IrisVanillaStructureAdjustment()
+                .setMatch(keys("towns_and_towers:"))
+                .setTerrain(new IrisStructureTerrain().setMode(IrisStructureTerrainMode.VACUUM));
+        IrisVanillaStructureAdjustment preserveShips = new IrisVanillaStructureAdjustment()
+                .setMatch(keys(
+                        "towns_and_towers:mimic_desert",
+                        "towns_and_towers:pillager_outpost_ocean",
+                        "towns_and_towers:village_ocean",
+                        "towns_and_towers:wreckage_ocean"))
+                .setTerrain(new IrisStructureTerrain().setMode(IrisStructureTerrainMode.PRESERVE));
+        KList<IrisVanillaStructureAdjustment> adjustments = new KList<>();
+        adjustments.add(namespace);
+        adjustments.add(preserveShips);
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setAdjustments(adjustments);
+
+        assertEquals(IrisStructureTerrainMode.VACUUM,
+                control.resolve("towns_and_towers:village_forest", false)
+                        .terrain().resolvedMode());
+        assertEquals(IrisStructureTerrainMode.PRESERVE,
+                control.resolve("towns_and_towers:village_ocean", false)
+                        .terrain().resolvedMode());
+        assertEquals(IrisStructureTerrainMode.PRESERVE,
+                control.resolve("towns_and_towers:mimic_desert", true)
+                        .terrain().resolvedMode());
+    }
+
+    @Test
     public void preserveSourceYMatchesTheStructureFamilyAndKeepsExplicitShifts() {
         IrisVanillaStructureAdjustment adjustment = new IrisVanillaStructureAdjustment()
                 .setMatch(keys("minecraft:mineshaft"))

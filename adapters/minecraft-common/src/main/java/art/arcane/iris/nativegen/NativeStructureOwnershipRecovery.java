@@ -7,6 +7,8 @@ import art.arcane.iris.engine.framework.NativeStructureOwnershipStore;
 import art.arcane.iris.engine.framework.NativeStructurePlacementPlanner;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.framework.StructurePlacementGrid;
+import art.arcane.iris.engine.object.IrisStructureTerrain;
+import art.arcane.iris.engine.object.IrisStructureTerrainMode;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.engine.object.NativeStructureSuppression;
 import net.minecraft.core.Holder;
@@ -44,8 +46,13 @@ public final class NativeStructureOwnershipRecovery {
         NativeStructureOwnershipRecord persisted = NativeStructureOwnershipStore.findPersisted(
                 engine, structureKey, origin.x(), origin.z());
         if (persisted != null) {
-            if (NativeStructureOwnershipFingerprint.matches(persisted, start)) {
-                return persisted;
+            NativeStructureOwnershipRecord refreshed = refreshReferenceEnvelope(
+                    structureKey, activeStructure, start, persisted);
+            if (refreshed != null) {
+                if (refreshed != persisted) {
+                    NativeStructureOwnershipStore.record(engine, refreshed);
+                }
+                return refreshed;
             }
             NativeStructureOwnershipStore.discard(
                     engine, structureKey, origin.x(), origin.z());
@@ -70,6 +77,37 @@ public final class NativeStructureOwnershipRecovery {
         }
         NativeStructureOwnershipStore.record(engine, recovered);
         return recovered;
+    }
+
+    static NativeStructureOwnershipRecord refreshReferenceEnvelope(
+            String structureKey, Structure structure, StructureStart start,
+            NativeStructureOwnershipRecord ownership) {
+        if (structure == null || start == null || !start.isValid()
+                || start.getStructure() != structure || ownership == null
+                || !ownership.structureKey().equals(normalize(structureKey))
+                || !NativeStructureOwnershipFingerprint.matches(ownership, start)) {
+            return null;
+        }
+        IrisStructureTerrain terrain = NativeStructureTerrainIntegrator.resolveNativeTerrain(
+                start, ownership.restoredDecision().terrain());
+        if (terrain.resolvedMode() != IrisStructureTerrainMode.VACUUM) {
+            return ownership;
+        }
+        BoundingBox expected = NativeStructureReferenceEnvelope.referenceBounds(
+                start, structure, terrain, structureKey);
+        int referenceMinChunkX = expected.minX() >> 4;
+        int referenceMaxChunkX = expected.maxX() >> 4;
+        int referenceMinChunkZ = expected.minZ() >> 4;
+        int referenceMaxChunkZ = expected.maxZ() >> 4;
+        if (ownership.referenceMinChunkX() == referenceMinChunkX
+                && ownership.referenceMaxChunkX() == referenceMaxChunkX
+                && ownership.referenceMinChunkZ() == referenceMinChunkZ
+                && ownership.referenceMaxChunkZ() == referenceMaxChunkZ) {
+            return ownership;
+        }
+        return ownership.withReferenceEnvelope(
+                referenceMinChunkX, referenceMaxChunkX,
+                referenceMinChunkZ, referenceMaxChunkZ);
     }
 
     static NativeStructureOwnershipRecord proveCandidate(

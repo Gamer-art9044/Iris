@@ -1715,6 +1715,41 @@ public class DatapackIngestServiceTest {
     }
 
     @Test
+    public void recoveryRemovesFinderMetadataFromInstallScratch() throws Exception {
+        File root = temporaryFolder.newFolder("orphan-install-finder-metadata-root");
+        File scratch = new File(root, ".iris-datapack-install");
+        assertTrue(scratch.mkdirs());
+        File pending = new File(scratch, "managed-" + UUID.randomUUID());
+        assertTrue(pending.mkdirs());
+        Files.writeString(new File(pending, "partial.dat").toPath(), "partial", StandardCharsets.UTF_8);
+        File metadata = new File(scratch, ".DS_Store");
+        Files.writeString(metadata.toPath(), "finder", StandardCharsets.UTF_8);
+
+        DatapackIngestService.recoverTransactions(root, List.of());
+
+        assertFalse(metadata.exists());
+        assertFalse(pending.exists());
+        assertFalse(scratch.exists());
+    }
+
+    @Test
+    public void recoveryRejectsFinderMetadataDirectoryInInstallScratch() throws Exception {
+        File root = temporaryFolder.newFolder("orphan-install-finder-directory-root");
+        File scratch = new File(root, ".iris-datapack-install");
+        assertTrue(scratch.mkdirs());
+        File metadata = new File(scratch, ".DS_Store");
+        assertTrue(metadata.mkdirs());
+
+        try {
+            DatapackIngestService.recoverTransactions(root, List.of());
+            fail("Expected suspicious Finder metadata to block recovery");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("Suspicious datapack recovery artifact"));
+        }
+        assertTrue(metadata.isDirectory());
+    }
+
+    @Test
     public void recoveryPreservesAndBlocksOnAnUnjournaledInstallBackup() throws Exception {
         File root = temporaryFolder.newFolder("orphan-install-backup-root");
         File scratch = new File(root, ".iris-datapack-install");

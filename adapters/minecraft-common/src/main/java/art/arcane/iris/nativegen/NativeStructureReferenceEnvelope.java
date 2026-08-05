@@ -64,7 +64,9 @@ public final class NativeStructureReferenceEnvelope {
                 || mode == IrisStructureTerrainMode.FORCE_CARVE
                 || mode == IrisStructureTerrainMode.VACUUM
                 || mode == IrisStructureTerrainMode.ENCASE;
-        int horizontalPadding = usesEnvelope ? Math.max(0, terrain.getHorizontalPadding()) : 0;
+        int horizontalPadding = mode == IrisStructureTerrainMode.VACUUM
+                ? NativeStructureSurfaceFitter.surfaceTerrainRadius()
+                : usesEnvelope ? Math.max(0, terrain.getHorizontalPadding()) : 0;
         BoundingBox content = contentBounds(start);
         if (!fitsReferenceRange(start.getChunkPos(), content)) {
             throw new UnrepresentableContentException("Native structure content at "

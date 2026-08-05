@@ -3205,7 +3205,7 @@ public final class DatapackIngestService {
         }
         int transactionCount = 0;
         for (Path transactionRoot : transactionRoots) {
-            if (isHarmlessTransactionArtifact(transactionRoot)) {
+            if (isHarmlessRecoveryArtifact(transactionRoot)) {
                 continue;
             }
             transactionCount++;
@@ -3214,7 +3214,7 @@ public final class DatapackIngestService {
             }
         }
         for (Path transactionRoot : transactionRoots) {
-            if (isHarmlessTransactionArtifact(transactionRoot)) {
+            if (isHarmlessRecoveryArtifact(transactionRoot)) {
                 Files.deleteIfExists(transactionRoot);
                 continue;
             }
@@ -3242,15 +3242,25 @@ public final class DatapackIngestService {
         verifyDirectoryContainerIfPresent(scratchRoot.toFile(), "datapack install scratch");
         List<Path> children;
         try (Stream<Path> paths = Files.list(scratchRoot)) {
-            children = paths.limit(MAX_MANAGED_PATHS + 1L).sorted().toList();
+            children = paths.limit(MAX_MANAGED_PATHS + 2L).sorted().toList();
         }
-        if (children.size() > MAX_MANAGED_PATHS) {
-            throw new IOException("Datapack install scratch contains too many entries");
+        int managedEntries = 0;
+        for (Path child : children) {
+            if (!isHarmlessRecoveryArtifact(child)) {
+                managedEntries++;
+            }
+            if (managedEntries > MAX_MANAGED_PATHS) {
+                throw new IOException("Datapack install scratch contains too many entries");
+            }
         }
 
         List<StagingScratch> pending = new ArrayList<>();
         List<StagingScratch> backups = new ArrayList<>();
         for (Path child : children) {
+            if (isHarmlessRecoveryArtifact(child)) {
+                Files.deleteIfExists(child);
+                continue;
+            }
             StagingScratch scratch = parseInstallScratch(scratchRoot, child);
             if (scratch == null) {
                 throw new IOException("Unexpected datapack install scratch artifact " + child);
@@ -3429,12 +3439,12 @@ public final class DatapackIngestService {
         return ownership;
     }
 
-    private static boolean isHarmlessTransactionArtifact(Path path) throws IOException {
+    private static boolean isHarmlessRecoveryArtifact(Path path) throws IOException {
         if (!".DS_Store".equals(path.getFileName().toString())) {
             return false;
         }
         if (Files.isSymbolicLink(path) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("Suspicious datapack transaction artifact " + path);
+            throw new IOException("Suspicious datapack recovery artifact " + path);
         }
         return true;
     }

@@ -606,7 +606,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                     world, area, terrainTargets, this::resolvePaletteBlock);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
-                    "terrain carving", nativeStructureBatchContext(placementGroups),
+                    "terrain preparation", nativeStructureBatchContext(placementGroups),
                     chunkPos.x(), chunkPos.z(), error);
         }
         for (NativePlacementGroup group : placementGroups) {

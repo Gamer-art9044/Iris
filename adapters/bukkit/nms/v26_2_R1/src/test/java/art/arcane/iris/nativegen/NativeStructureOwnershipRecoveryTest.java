@@ -16,6 +16,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
 import net.minecraft.world.level.levelgen.RandomSupport;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.pieces.PiecesContainer;
@@ -31,6 +32,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 public class NativeStructureOwnershipRecoveryTest {
@@ -138,6 +140,110 @@ public class NativeStructureOwnershipRecoveryTest {
         assertFalse(NativeStructureOwnershipFingerprint.matches(recovered, moved));
     }
 
+    @Test
+    public void staleVacuumEnvelopeRefreshesWithoutReplacingOwnershipIdentity() {
+        String structureKey = "minecraft:monument";
+        long seed = 648231L;
+        ChunkPos origin = new ChunkPos(5, -6);
+        OceanMonumentStructure structure = structure();
+        StructureStart start = monumentStart(structure, origin, seed);
+        NativeStructureStartPlan plan = plan(
+                origin, "vacuum-envelope-refresh", IrisStructureTerrainMode.VACUUM, 0);
+        BoundingBox content = NativeStructureReferenceEnvelope.contentBounds(start);
+        NativeStructureOwnershipRecord stale = NativeStructureOwnershipFingerprint.capture(
+                structureKey, start, plan, content);
+
+        NativeStructureOwnershipRecord refreshed =
+                NativeStructureOwnershipRecovery.refreshReferenceEnvelope(
+                        structureKey, structure, start, stale);
+
+        assertNotNull(refreshed);
+        assertNotEquals(stale, refreshed);
+        assertEquals(stale.schema(), refreshed.schema());
+        assertEquals(stale.ownershipKey(), refreshed.ownershipKey());
+        assertEquals(stale.placementIdentity(), refreshed.placementIdentity());
+        assertEquals(stale.baseY(), refreshed.baseY());
+        assertEquals(stale.locatorY(), refreshed.locatorY());
+        assertEquals(stale.contentFingerprint(), refreshed.contentFingerprint());
+        assertEquals(stale.decision(), refreshed.decision());
+        assertEquals(IrisStructureTerrainMode.VACUUM,
+                refreshed.restoredDecision().terrain().resolvedMode());
+        BoundingBox expected = NativeStructureReferenceEnvelope.referenceBounds(
+                start, structure, plan.placement().resolvedTerrain(), structureKey);
+        assertEquals(expected.minX() >> 4, refreshed.referenceMinChunkX());
+        assertEquals(expected.maxX() >> 4, refreshed.referenceMaxChunkX());
+        assertEquals(expected.minZ() >> 4, refreshed.referenceMinChunkZ());
+        assertEquals(expected.maxZ() >> 4, refreshed.referenceMaxChunkZ());
+        assertTrue(hasExpandedCoverage(stale, refreshed));
+        assertSame(refreshed, NativeStructureOwnershipRecovery.refreshReferenceEnvelope(
+                structureKey, structure, start, refreshed));
+    }
+
+    @Test
+    public void staleEnvelopeCannotRefreshAgainstDifferentContent() {
+        String structureKey = "minecraft:monument";
+        long seed = 412987L;
+        ChunkPos origin = new ChunkPos(-2, 7);
+        OceanMonumentStructure structure = structure();
+        StructureStart expected = monumentStart(structure, origin, seed);
+        NativeStructureStartPlan plan = plan(
+                origin, "vacuum-content-check", IrisStructureTerrainMode.VACUUM, 0);
+        NativeStructureOwnershipRecord stale = NativeStructureOwnershipFingerprint.capture(
+                structureKey, expected, plan,
+                NativeStructureReferenceEnvelope.contentBounds(expected));
+        StructureStart moved = monumentStart(structure, origin, seed);
+        for (StructurePiece piece : moved.getPieces()) {
+            piece.move(1, 0, 0);
+        }
+
+        assertNull(NativeStructureOwnershipRecovery.refreshReferenceEnvelope(
+                structureKey, structure, moved, stale));
+    }
+
+    @Test
+    public void currentNonVacuumEnvelopeRemainsThePersistedAuthority() {
+        String structureKey = "minecraft:monument";
+        long seed = 927451L;
+        ChunkPos origin = new ChunkPos(3, 8);
+        OceanMonumentStructure structure = structure();
+        StructureStart start = monumentStart(structure, origin, seed);
+        NativeStructureStartPlan plan = plan(origin, "current-force-carve", 24);
+        BoundingBox envelope = NativeStructureReferenceEnvelope.referenceBounds(
+                start, structure, plan.placement().resolvedTerrain(), structureKey);
+        NativeStructureOwnershipRecord ownership = NativeStructureOwnershipFingerprint.capture(
+                structureKey, start, plan, envelope);
+
+        assertSame(ownership, NativeStructureOwnershipRecovery.refreshReferenceEnvelope(
+                structureKey, structure, start, ownership));
+    }
+
+    @Test
+    public void clippedVacuumEnvelopeRemainsStableAtTheReferenceLimit() {
+        String structureKey = "minecraft:monument";
+        long seed = 381729L;
+        ChunkPos origin = new ChunkPos(0, 0);
+        OceanMonumentStructure structure = structure();
+        StructureStart start = monumentStart(structure, origin, seed);
+        BoundingBox initial = NativeStructureReferenceEnvelope.contentBounds(start);
+        int maximumReferenceBlockX = ((origin.x()
+                + NativeStructureOwnershipRecord.MAX_REFERENCE_DISTANCE_CHUNKS) << 4) + 15;
+        int shiftX = maximumReferenceBlockX - initial.maxX();
+        for (StructurePiece piece : start.getPieces()) {
+            piece.move(shiftX, 0, 0);
+        }
+        NativeStructureStartPlan plan = plan(
+                origin, "clipped-vacuum", IrisStructureTerrainMode.VACUUM, 0);
+        BoundingBox envelope = NativeStructureReferenceEnvelope.referenceBounds(
+                start, structure, plan.placement().resolvedTerrain(), structureKey);
+        NativeStructureOwnershipRecord ownership = NativeStructureOwnershipFingerprint.capture(
+                structureKey, start, plan, envelope);
+
+        assertEquals(origin.x() + NativeStructureOwnershipRecord.MAX_REFERENCE_DISTANCE_CHUNKS,
+                ownership.referenceMaxChunkX());
+        assertSame(ownership, NativeStructureOwnershipRecovery.refreshReferenceEnvelope(
+                structureKey, structure, start, ownership));
+    }
+
     private static OceanMonumentStructure structure() {
         return new OceanMonumentStructure(
                 new OceanMonumentStructure.StructureSettings(HolderSet.empty()));
@@ -163,11 +269,19 @@ public class NativeStructureOwnershipRecoveryTest {
     private static NativeStructureStartPlan plan(ChunkPos origin,
                                                   String placementId,
                                                   int horizontalPadding) {
+        return plan(origin, placementId,
+                IrisStructureTerrainMode.FORCE_CARVE, horizontalPadding);
+    }
+
+    private static NativeStructureStartPlan plan(ChunkPos origin,
+                                                  String placementId,
+                                                  IrisStructureTerrainMode terrainMode,
+                                                  int horizontalPadding) {
         IrisNativeStructure source = new IrisNativeStructure()
                 .setStructure("minecraft:monument")
                 .setWeight(1);
         IrisStructureTerrain terrain = new IrisStructureTerrain()
-                .setMode(IrisStructureTerrainMode.FORCE_CARVE)
+                .setMode(terrainMode)
                 .setHorizontalPadding(horizontalPadding);
         IrisStructurePlacement placement = new IrisStructurePlacement()
                 .setPlacementId(placementId)
@@ -181,5 +295,20 @@ public class NativeStructureOwnershipRecoveryTest {
                 NativeStructureReferenceEnvelope.contentBounds(
                         monumentStart(structure(), origin, 1L)).minY()
         );
+    }
+
+    private static boolean hasExpandedCoverage(
+            NativeStructureOwnershipRecord stale,
+            NativeStructureOwnershipRecord refreshed) {
+        for (int chunkX = refreshed.referenceMinChunkX();
+             chunkX <= refreshed.referenceMaxChunkX(); chunkX++) {
+            for (int chunkZ = refreshed.referenceMinChunkZ();
+                 chunkZ <= refreshed.referenceMaxChunkZ(); chunkZ++) {
+                if (!stale.covers(chunkX, chunkZ)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

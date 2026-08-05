@@ -55,6 +55,8 @@ public final class NativeStructurePostProcessor {
                         world, area, target.start(), () -> world.getLevel().getStructureManager());
             }
         }
+        NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world, area, targets, () -> world.getLevel().getStructureManager());
     }
 
     @FunctionalInterface

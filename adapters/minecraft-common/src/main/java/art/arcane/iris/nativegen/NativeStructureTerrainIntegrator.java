@@ -114,7 +114,6 @@ public final class NativeStructureTerrainIntegrator {
             return;
         }
         if (mode == IrisStructureTerrainMode.VACUUM) {
-            carvePieceBoxes(world, area, start, terrain);
             return;
         }
         if (mode == IrisStructureTerrainMode.ENCASE) {
@@ -267,6 +266,7 @@ public final class NativeStructureTerrainIntegrator {
         }
         IrisStructureTerrainMode mode = terrain.resolvedMode();
         return mode == IrisStructureTerrainMode.ENCASE
+                || mode == IrisStructureTerrainMode.VACUUM
                 || mode == IrisStructureTerrainMode.SOURCE
                 && start.getStructure().terrainAdaptation() != TerrainAdjustment.NONE;
     }

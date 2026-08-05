@@ -63,6 +63,8 @@ public class NativeStructureFailureContractTest {
         String placement = source.substring(placementStart, placementEnd);
 
         assertTrue(placement.contains("\"terrain integration\""));
+        assertTrue(placement.contains("\"terrain preparation\""));
+        assertFalse(placement.contains("\"terrain carving\""));
         assertTrue(placement.contains("prepareSurfaceStructures"));
         assertTrue(placement.contains("clearIntersectingVegetation"));
         assertTrue(placement.indexOf("clearIntersectingVegetation")

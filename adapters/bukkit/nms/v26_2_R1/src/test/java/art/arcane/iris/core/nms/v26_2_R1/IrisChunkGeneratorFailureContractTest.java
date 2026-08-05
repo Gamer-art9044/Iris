@@ -44,6 +44,8 @@ public class IrisChunkGeneratorFailureContractTest {
         assertFalse(adjustment.contains("IrisLogging.reportError"));
         assertTrue(placement.contains("\"resolution\""));
         assertTrue(placement.contains("\"terrain integration\""));
+        assertTrue(placement.contains("\"terrain preparation\""));
+        assertFalse(placement.contains("\"terrain carving\""));
         assertTrue(placement.contains("\"vegetation cleanup\""));
         assertTrue(placement.contains("\"placement\""));
         assertTrue(placement.contains("because structure generation is disabled outside the pack"));

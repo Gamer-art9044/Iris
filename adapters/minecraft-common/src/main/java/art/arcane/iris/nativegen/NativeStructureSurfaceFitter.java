@@ -48,6 +48,10 @@ public final class NativeStructureSurfaceFitter {
                 || adjustment == TerrainAdjustment.BEARD_BOX;
     }
 
+    static int surfaceTerrainRadius() {
+        return SURFACE_TERRAIN_RADIUS;
+    }
+
     static int resolveSurfaceTarget(List<SurfaceAnchor> anchors, int worldX, int worldZ,
                                     int originalY) {
         return resolveSurface(anchors, worldX, worldZ, originalY).targetY();
@@ -160,7 +164,7 @@ public final class NativeStructureSurfaceFitter {
                 continue;
             }
             StructureStart start = target.start();
-            TerrainAdjustment adjustment = start.getStructure().terrainAdaptation();
+            TerrainAdjustment adjustment = effectiveSurfaceAdjustment(target);
             for (StructurePiece piece : start.getPieces()) {
                 if (piece instanceof PoolElementStructurePiece poolPiece) {
                     if (poolPiece.getElement().getProjection() == StructureTemplatePool.Projection.RIGID) {
@@ -203,15 +207,26 @@ public final class NativeStructureSurfaceFitter {
     }
 
     static boolean requiresSurfaceTerrain(NativeStructureTerrainIntegrator.TerrainTarget target) {
-        if (target == null || target.terrain() == null
-                || target.terrain().resolvedMode() != IrisStructureTerrainMode.SOURCE) {
+        if (target == null || target.terrain() == null) {
             return false;
         }
         StructureStart start = target.start();
-        return start != null
-                && start.isValid()
+        if (start == null || !start.isValid()) {
+            return false;
+        }
+        IrisStructureTerrainMode mode = target.terrain().resolvedMode();
+        return mode == IrisStructureTerrainMode.VACUUM
+                || mode == IrisStructureTerrainMode.SOURCE
                 && shouldPrepareSurfaceTerrain(
                         start.getStructure().terrainAdaptation(), start.getStructure().step());
+    }
+
+    static TerrainAdjustment effectiveSurfaceAdjustment(
+            NativeStructureTerrainIntegrator.TerrainTarget target) {
+        if (target.terrain().resolvedMode() == IrisStructureTerrainMode.VACUUM) {
+            return TerrainAdjustment.BEARD_THIN;
+        }
+        return target.start().getStructure().terrainAdaptation();
     }
 
     private static void fitSurfaceTerrain(WorldGenLevel world, BoundingBox area,
@@ -382,6 +397,7 @@ public final class NativeStructureSurfaceFitter {
         int verticalDistance(int y) {
             return IrisObjectVacuum.outset(y, minInfluenceY, maxInfluenceY);
         }
+
     }
 
     private record SurfaceMaterials(BlockState surface, BlockState subsurface) {

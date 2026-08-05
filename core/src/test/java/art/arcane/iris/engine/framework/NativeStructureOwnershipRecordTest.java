@@ -101,6 +101,33 @@ public class NativeStructureOwnershipRecordTest {
     }
 
     @Test
+    public void referenceEnvelopeRefreshPreservesPersistedAuthority() {
+        NativeStructureOwnershipRecord original = record(
+                "nova_structures:tavern_oak", -3, 9, 83L);
+
+        NativeStructureOwnershipRecord refreshed = original.withReferenceEnvelope(
+                -6, 0, 6, 12);
+
+        assertEquals(original.schema(), refreshed.schema());
+        assertEquals(original.ownershipKey(), refreshed.ownershipKey());
+        assertEquals(original.placementIdentity(), refreshed.placementIdentity());
+        assertEquals(original.baseY(), refreshed.baseY());
+        assertEquals(original.contentMinX(), refreshed.contentMinX());
+        assertEquals(original.contentMinY(), refreshed.contentMinY());
+        assertEquals(original.contentMinZ(), refreshed.contentMinZ());
+        assertEquals(original.contentMaxX(), refreshed.contentMaxX());
+        assertEquals(original.contentMaxY(), refreshed.contentMaxY());
+        assertEquals(original.contentMaxZ(), refreshed.contentMaxZ());
+        assertEquals(original.locatorY(), refreshed.locatorY());
+        assertEquals(original.contentFingerprint(), refreshed.contentFingerprint());
+        assertEquals(original.decision(), refreshed.decision());
+        assertEquals(-6, refreshed.referenceMinChunkX());
+        assertEquals(0, refreshed.referenceMaxChunkX());
+        assertEquals(6, refreshed.referenceMinChunkZ());
+        assertEquals(12, refreshed.referenceMaxChunkZ());
+    }
+
+    @Test
     public void ownershipRoundTripPreservesExactBoundsAndPriority() throws Exception {
         NativeStructureOwnershipRecord ownership = record(
                 "nova_structures:tavern_oak", -3, 9, 83L);

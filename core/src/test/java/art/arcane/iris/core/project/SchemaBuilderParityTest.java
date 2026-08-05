@@ -156,6 +156,7 @@ public class SchemaBuilderParityTest {
         JSONObject terrainDefinition = schema.getJSONObject("definitions")
                 .getJSONObject(terrain.getString("$ref").substring("#/definitions/".length()));
         JSONObject terrainProperties = terrainDefinition.getJSONObject("properties");
+        JSONObject terrainMode = terrainProperties.getJSONObject("mode");
         JSONObject carveShape = terrainProperties.getJSONObject("shape");
         JSONObject erosionStrength = terrainProperties.getJSONObject("erosionStrength");
         JSONObject erosionFrequency = terrainProperties.getJSONObject("erosionFrequency");
@@ -163,10 +164,17 @@ public class SchemaBuilderParityTest {
         JSONObject lobeStrength = terrainProperties.getJSONObject("lobeStrength");
         String carveShapeDefinition = carveShape.getString("$ref")
                 .substring("#/definitions/".length());
+        String terrainModeDefinition = terrainMode.getString("$ref")
+                .substring("#/definitions/".length());
 
         assertTrue(properties.has("structures"));
         assertTrue(properties.has("nativeStructures"));
         assertTrue(properties.has("distribution"));
+        assertTrue(terrain.getString("description").contains(
+                "The editable structures backend supports SOURCE, PRESERVE, BORE, and FORCE_CARVE. "
+                        + "The nativeStructures backend supports every terrain mode."));
+        assertEquals(List.of("SOURCE", "PRESERVE", "BORE", "FORCE_CARVE", "VACUUM", "ENCASE"),
+                oneOfValues(schema.getJSONObject("definitions"), terrainModeDefinition));
         assertEquals(List.of("BOX", "ROUNDED", "ERODED"), oneOfValues(
                 schema.getJSONObject("definitions"), carveShapeDefinition));
         assertEquals(0D, erosionStrength.getDouble("minimum"), 0D);

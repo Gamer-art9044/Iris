@@ -117,6 +117,7 @@ final class PackStructurePlacementValidator {
                                 registries.hooks(), blockingErrors);
                         continue;
                     }
+                    validateEditableStructureTerrain(placementPath, placement, blockingErrors);
                     Set<String> editableStructureKeys = new HashSet<>();
                     for (int referenceIndex = 0; referenceIndex < references.length(); referenceIndex++) {
                         Object rawReference = references.opt(referenceIndex);
@@ -647,6 +648,20 @@ final class PackStructurePlacementValidator {
         if (terrain.has("encasePalette") && terrain.opt("encasePalette") != JSONObject.NULL
                 && terrain.optJSONObject("encasePalette") == null) {
             blockingErrors.add(path + ".terrain.encasePalette must be an object.");
+        }
+    }
+
+    private static void validateEditableStructureTerrain(
+            String path, JSONObject placement, List<String> blockingErrors) {
+        JSONObject terrain = placement.optJSONObject("terrain");
+        if (terrain == null) {
+            return;
+        }
+        String mode = terrain.optString("mode", "SOURCE");
+        if ("VACUUM".equals(mode) || "ENCASE".equals(mode)) {
+            blockingErrors.add(path + ".terrain.mode " + mode
+                    + " cannot target editable Iris structures; use nativeStructures or "
+                    + "importedStructures.adjustments for native terrain preparation.");
         }
     }
 

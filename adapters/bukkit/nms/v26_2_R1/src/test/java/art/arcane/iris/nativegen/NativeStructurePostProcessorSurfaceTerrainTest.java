@@ -6,14 +6,18 @@ import art.arcane.iris.engine.object.IrisStructureTerrain;
 import art.arcane.iris.engine.object.IrisStructureTerrainMode;
 import com.mojang.datafixers.util.Either;
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
 import net.minecraft.core.IdMapper;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.biome.Biome;
@@ -36,13 +40,18 @@ import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.TerrainAdjustment;
 import net.minecraft.world.level.levelgen.structure.pieces.PiecesContainer;
+import net.minecraft.world.level.levelgen.structure.pools.LegacySinglePoolElement;
+import net.minecraft.world.level.levelgen.structure.pools.ListPoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.StructurePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.StructureTemplatePool;
 import net.minecraft.world.level.levelgen.structure.templatesystem.LiquidSettings;
+import net.minecraft.world.level.levelgen.structure.templatesystem.BlockIgnoreProcessor;
 import net.minecraft.world.level.levelgen.structure.structures.DesertPyramidPiece;
 import net.minecraft.world.level.levelgen.structure.structures.DesertPyramidStructure;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureProcessorList;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureProcessor;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 import org.junit.BeforeClass;
@@ -55,8 +64,11 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -116,6 +128,34 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 new NativeStructureTerrainIntegrator.TerrainTarget(
                         "test:beard_box", start,
                         new IrisStructureTerrain().setMode(IrisStructureTerrainMode.PRESERVE))));
+    }
+
+    @Test
+    public void explicitVacuumForcesThinSurfaceFittingWithoutAuthoredAdaptation() {
+        StructureStart none = desertStart(TerrainAdjustment.NONE);
+        StructureStart box = desertStart(TerrainAdjustment.BEARD_BOX);
+        NativeStructureTerrainIntegrator.TerrainTarget sourceNone =
+                new NativeStructureTerrainIntegrator.TerrainTarget(
+                        "test:none", none,
+                        new IrisStructureTerrain().setMode(IrisStructureTerrainMode.SOURCE));
+        NativeStructureTerrainIntegrator.TerrainTarget vacuumNone =
+                new NativeStructureTerrainIntegrator.TerrainTarget(
+                        "test:none", none,
+                        new IrisStructureTerrain().setMode(IrisStructureTerrainMode.VACUUM));
+        NativeStructureTerrainIntegrator.TerrainTarget vacuumBox =
+                new NativeStructureTerrainIntegrator.TerrainTarget(
+                        "test:box", box,
+                        new IrisStructureTerrain().setMode(IrisStructureTerrainMode.VACUUM));
+
+        assertFalse(NativeStructureSurfaceFitter.requiresSurfaceTerrain(sourceNone));
+        assertTrue(NativeStructureSurfaceFitter.requiresSurfaceTerrain(vacuumNone));
+        assertTrue(NativeStructureSurfaceFitter.requiresSurfaceTerrain(vacuumBox));
+        assertEquals(TerrainAdjustment.BEARD_THIN,
+                NativeStructureSurfaceFitter.effectiveSurfaceAdjustment(vacuumNone));
+        assertEquals(TerrainAdjustment.BEARD_THIN,
+                NativeStructureSurfaceFitter.effectiveSurfaceAdjustment(vacuumBox));
+        assertTrue(NativeStructureTerrainIntegrator.clearsLegacyTemplateAir(
+                none, vacuumNone.terrain()));
     }
 
     @Test
@@ -210,11 +250,12 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
             }
         }
 
-        NativeStructureSurfaceFitter.prepareSurfaceStructures(
-                world(blocks), area,
-                List.of(new NativeStructureTerrainIntegrator.TerrainTarget(
+        List<NativeStructureTerrainIntegrator.TerrainTarget> targets = List.of(
+                new NativeStructureTerrainIntegrator.TerrainTarget(
                         "nova_structures:tavern_oak", start,
-                        new IrisStructureTerrain().setMode(IrisStructureTerrainMode.SOURCE))),
+                        new IrisStructureTerrain().setMode(IrisStructureTerrainMode.SOURCE)));
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area, targets,
                 (x, z) -> 64);
 
         assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 1, 71, 1));
@@ -264,6 +305,392 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
+    public void postClearSupportUsesUpperOccupancyOverLowerLegacyAir() throws Exception {
+        StructureTemplate lowerTemplate = template(List.of(
+                block(0, 0, 0, Blocks.AIR.defaultBlockState()),
+                block(1, 0, 0, Blocks.AIR.defaultBlockState())));
+        StructureTemplate upperTemplate = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
+                block(1, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(lowerTemplate),
+                new BoundingBox(0, 62, 0, 1, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineLegacyPoolElement(upperTemplate),
+                new BoundingBox(0, 64, 0, 1, 70, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(lower, upper));
+        BoundingBox area = new BoundingBox(0, 58, 0, 1, 72, 0);
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x = 0; x <= 1; x++) {
+            put(blocks, x, 61, 0, Blocks.DIRT.defaultBlockState());
+            put(blocks, x, 62, 0, Blocks.GRASS_BLOCK.defaultBlockState());
+        }
+        put(blocks, 1, 63, 0, Blocks.DIRT.defaultBlockState());
+
+        Set<Long> written = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertEquals(Set.of(BlockPos.asLong(0, 63, 0)), written);
+        assertEquals(Blocks.DIRT.defaultBlockState(), state(blocks, 0, 63, 0));
+        assertEquals(Blocks.DIRT.defaultBlockState(), state(blocks, 1, 63, 0));
+    }
+
+    @Test
+    public void rotatedLowestAuthoredVoidFluidAirAndJigsawColumnsRemainOpen() throws Exception {
+        List<StructureTemplate.StructureBlockInfo> upperBlocks = new ArrayList<>();
+        upperBlocks.add(block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()));
+        upperBlocks.add(block(1, 0, 0, Blocks.AIR.defaultBlockState()));
+        upperBlocks.add(block(2, 0, 0, Blocks.STRUCTURE_VOID.defaultBlockState()));
+        upperBlocks.add(block(3, 0, 0, Blocks.WATER.defaultBlockState()));
+        upperBlocks.add(block(4, 0, 0, Blocks.JIGSAW.defaultBlockState()));
+        for (int x = 1; x <= 4; x++) {
+            upperBlocks.add(block(x, 1, 0, Blocks.STONE.defaultBlockState()));
+        }
+        StructureTemplate upperTemplate = template(upperBlocks);
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(10, 62, 10, 10, 65, 14), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineSinglePoolElement(upperTemplate),
+                new BoundingBox(10, 64, 10, 10, 70, 14), 1,
+                Rotation.CLOCKWISE_90);
+        StructureStart start = rigidSurfaceStart(List.of(lower, upper));
+        BoundingBox area = new BoundingBox(10, 58, 10, 10, 72, 14);
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int z = 10; z <= 14; z++) {
+            put(blocks, 10, 61, z, Blocks.DIRT.defaultBlockState());
+            put(blocks, 10, 62, z, Blocks.GRASS_BLOCK.defaultBlockState());
+        }
+
+        Set<Long> written = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        StructurePlaceSettings settings = new StructurePlaceSettings()
+                .setRotation(Rotation.CLOCKWISE_90);
+        BlockPos origin = upper.getPosition();
+        BlockPos supportedBase = origin.offset(
+                StructureTemplate.calculateRelativePosition(settings, BlockPos.ZERO));
+        assertEquals(Set.of(supportedBase.below().asLong()), written);
+        assertEquals(Blocks.DIRT.defaultBlockState(), state(
+                blocks, supportedBase.getX(), supportedBase.getY() - 1, supportedBase.getZ()));
+        for (int localX = 1; localX <= 4; localX++) {
+            BlockPos vetoedBase = origin.offset(StructureTemplate.calculateRelativePosition(
+                    settings, new BlockPos(localX, 0, 0)));
+            assertEquals(Blocks.AIR.defaultBlockState(), state(
+                    blocks, vetoedBase.getX(), vetoedBase.getY() - 1, vetoedBase.getZ()));
+        }
+    }
+
+    @Test
+    public void listElementsUseDeclaredOverlayOrderForLowestAuthoredCells() throws Exception {
+        InlineLegacyPoolElement legacy = new InlineLegacyPoolElement(template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
+                block(1, 0, 0, Blocks.COBBLESTONE.defaultBlockState()))));
+        InlineSinglePoolElement single = new InlineSinglePoolElement(template(List.of(
+                block(0, 0, 0, Blocks.AIR.defaultBlockState()),
+                block(1, 0, 0, Blocks.STONE.defaultBlockState()))));
+        ListPoolElement list = new ListPoolElement(
+                List.of(legacy, single), StructureTemplatePool.Projection.RIGID);
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 1, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                list, new BoundingBox(0, 64, 0, 1, 70, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(lower, upper));
+        BoundingBox area = new BoundingBox(0, 58, 0, 1, 72, 0);
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x = 0; x <= 1; x++) {
+            put(blocks, x, 61, 0, Blocks.DIRT.defaultBlockState());
+            put(blocks, x, 62, 0, Blocks.GRASS_BLOCK.defaultBlockState());
+        }
+
+        Set<Long> written = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertEquals(Set.of(BlockPos.asLong(1, 63, 0)), written);
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 63, 0));
+        assertEquals(Blocks.DIRT.defaultBlockState(), state(blocks, 1, 63, 0));
+    }
+
+    @Test
+    public void surfaceSupportIsChunkClippedAndStableAcrossSplitAreas() throws Exception {
+        StructureTemplate upperTemplate = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
+                block(1, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(15, 62, 0, 16, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineSinglePoolElement(upperTemplate),
+                new BoundingBox(15, 64, 0, 16, 70, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(lower, upper));
+        BoundingBox wideArea = new BoundingBox(0, 58, 0, 31, 72, 15);
+        BoundingBox westArea = new BoundingBox(0, 58, 0, 15, 72, 15);
+        BoundingBox eastArea = new BoundingBox(16, 58, 0, 31, 72, 15);
+        Map<BlockPos, BlockState> wideBlocks = supportTerrain(15, 16);
+        Map<BlockPos, BlockState> splitBlocks = supportTerrain(15, 16);
+
+        Set<Long> wide = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(wideBlocks), wideArea, List.of(surfaceTarget(start)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+        Set<Long> split = new HashSet<>(
+                NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                        world(splitBlocks), westArea, List.of(surfaceTarget(start)),
+                        NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(splitBlocks, 16, 63, 0));
+        split.addAll(NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(splitBlocks), eastArea, List.of(surfaceTarget(start)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager));
+
+        assertEquals(Set.of(
+                BlockPos.asLong(15, 63, 0), BlockPos.asLong(16, 63, 0)), wide);
+        assertEquals(wide, split);
+        assertEquals(wideBlocks, splitBlocks);
+    }
+
+    @Test
+    public void supportNeverPairsRigidAnchorsAcrossStarts() throws Exception {
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 0, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 64, 0, 0, 70, 0), 1, Rotation.NONE);
+        StructureStart lowerStart = rigidSurfaceStart(List.of(lower));
+        StructureStart upperStart = rigidSurfaceStart(List.of(upper));
+        BoundingBox area = new BoundingBox(0, 58, 0, 0, 72, 0);
+        Map<BlockPos, BlockState> blocks = supportTerrain(0, 0);
+
+        assertTrue(NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(surfaceTarget(lowerStart)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager).isEmpty());
+        assertTrue(NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(surfaceTarget(upperStart)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager).isEmpty());
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 63, 0));
+    }
+
+    @Test
+    public void vacuumSupportsUnauthoredTerrainModesButLongMeetGapsRemainOpen() throws Exception {
+        StructureTemplate upperTemplate = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 0, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineSinglePoolElement(upperTemplate),
+                new BoundingBox(0, 64, 0, 0, 70, 0), 1, Rotation.NONE);
+        StructureStart vacuumStart = rigidSurfaceStart(
+                List.of(lower, upper), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 58, 0, 0, 72, 0);
+        Map<BlockPos, BlockState> vacuumBlocks = supportTerrain(0, 0);
+
+        Set<Long> vacuumWritten = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(vacuumBlocks), area,
+                List.of(surfaceTarget(vacuumStart, IrisStructureTerrainMode.VACUUM)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertEquals(Set.of(BlockPos.asLong(0, 63, 0)), vacuumWritten);
+        assertTrue(NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(supportTerrain(0, 0)), area,
+                List.of(surfaceTarget(vacuumStart, IrisStructureTerrainMode.SOURCE)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager).isEmpty());
+
+        PoolElementStructurePiece distantUpper = rigidTemplatePiece(
+                new InlineSinglePoolElement(upperTemplate),
+                new BoundingBox(0, 65, 0, 0, 71, 0), 1, Rotation.NONE);
+        StructureStart distantStart = rigidSurfaceStart(
+                List.of(lower, distantUpper), TerrainAdjustment.NONE);
+        assertTrue(NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(supportTerrain(0, 0)), area,
+                List.of(surfaceTarget(distantStart, IrisStructureTerrainMode.VACUUM)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager).isEmpty());
+    }
+
+    @Test
+    public void threeRigidPlanesCannotBuildAnUpwardSupportChain() throws Exception {
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 0, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece middle = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 64, 0, 0, 69, 0), 0, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.STONE.defaultBlockState())))),
+                new BoundingBox(0, 65, 0, 0, 70, 0), 0, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(lower, middle, upper));
+        BoundingBox area = new BoundingBox(0, 58, 0, 0, 72, 0);
+        Map<BlockPos, BlockState> blocks = supportTerrain(0, 0);
+
+        Set<Long> written = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertEquals(Set.of(BlockPos.asLong(0, 63, 0)), written);
+        assertEquals(Blocks.DIRT.defaultBlockState(), state(blocks, 0, 63, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 64, 0));
+    }
+
+    @Test
+    public void reversingTargetsCannotCreateCrossStartSupportChains() throws Exception {
+        PoolElementStructurePiece ground = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 0, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece middle = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 64, 0, 0, 69, 0), 0, Rotation.NONE);
+        PoolElementStructurePiece raisedGround = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 64, 0, 0, 69, 0), 0, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.STONE.defaultBlockState())))),
+                new BoundingBox(0, 65, 0, 0, 70, 0), 0, Rotation.NONE);
+        StructureStart lowerStart = rigidSurfaceStart(List.of(ground, middle));
+        StructureStart upperStart = rigidSurfaceStart(List.of(raisedGround, upper));
+        BoundingBox area = new BoundingBox(0, 58, 0, 0, 72, 0);
+        Map<BlockPos, BlockState> forwardBlocks = supportTerrain(0, 0);
+        Map<BlockPos, BlockState> reverseBlocks = supportTerrain(0, 0);
+        NativeStructureTerrainIntegrator.TerrainTarget lowerTarget = surfaceTarget(lowerStart);
+        NativeStructureTerrainIntegrator.TerrainTarget upperTarget = surfaceTarget(upperStart);
+
+        Set<Long> forward = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(forwardBlocks), area, List.of(lowerTarget, upperTarget),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+        Set<Long> reverse = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(reverseBlocks), area, List.of(upperTarget, lowerTarget),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertEquals(Set.of(BlockPos.asLong(0, 63, 0)), forward);
+        assertEquals(forward, reverse);
+        assertEquals(forwardBlocks, reverseBlocks);
+        assertEquals(Blocks.AIR.defaultBlockState(), state(forwardBlocks, 0, 64, 0));
+    }
+
+    @Test
+    public void preserveDuplicateCannotSuppressVacuumSupport() throws Exception {
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 0, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 64, 0, 0, 70, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(
+                List.of(lower, upper), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 58, 0, 0, 72, 0);
+        Map<BlockPos, BlockState> blocks = supportTerrain(0, 0);
+
+        Set<Long> written = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(
+                        surfaceTarget(start, IrisStructureTerrainMode.PRESERVE),
+                        surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertEquals(Set.of(BlockPos.asLong(0, 63, 0)), written);
+    }
+
+    @Test
+    public void processorCreatedAirAndFluidVetoSurfaceSupport() throws Exception {
+        StructureTemplate upperTemplate = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
+                block(1, 0, 0, Blocks.STONE.defaultBlockState())));
+        InlineSinglePoolElement upperElement = new InlineSinglePoolElement(
+                upperTemplate, List.of(
+                new ReplaceBlockProcessor(
+                        Blocks.COBBLESTONE.defaultBlockState(),
+                        Blocks.AIR.defaultBlockState()),
+                new ReplaceBlockProcessor(
+                        Blocks.STONE.defaultBlockState(),
+                        Blocks.WATER.defaultBlockState())));
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 1, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                upperElement, new BoundingBox(0, 64, 0, 1, 70, 0),
+                1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(lower, upper));
+        BoundingBox area = new BoundingBox(0, 58, 0, 1, 72, 0);
+        Map<BlockPos, BlockState> blocks = supportTerrain(0, 1);
+
+        Set<Long> written = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertTrue(written.isEmpty());
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 63, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 1, 63, 0));
+    }
+
+    @Test
+    public void solidJigsawFinalStateCreatesSurfaceSupport() throws Exception {
+        CompoundTag jigsawData = new CompoundTag();
+        jigsawData.putString("final_state", "minecraft:cobblestone");
+        StructureTemplate upperTemplate = template(List.of(
+                new StructureTemplate.StructureBlockInfo(
+                        BlockPos.ZERO, Blocks.JIGSAW.defaultBlockState(), jigsawData)));
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 0, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineSinglePoolElement(upperTemplate),
+                new BoundingBox(0, 64, 0, 0, 70, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(lower, upper));
+        BoundingBox area = new BoundingBox(0, 58, 0, 0, 72, 0);
+        Map<BlockPos, BlockState> blocks = supportTerrain(0, 0);
+
+        Set<Long> written = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertEquals(Set.of(BlockPos.asLong(0, 63, 0)), written);
+        assertEquals(Blocks.DIRT.defaultBlockState(), state(blocks, 0, 63, 0));
+    }
+
+    @Test
+    public void laterLegacyAirDoesNotOverlayEarlierListSolid() throws Exception {
+        InlineSinglePoolElement solid = new InlineSinglePoolElement(template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()))));
+        InlineLegacyPoolElement legacyAir = new InlineLegacyPoolElement(template(List.of(
+                block(0, 0, 0, Blocks.AIR.defaultBlockState()))));
+        ListPoolElement list = new ListPoolElement(
+                List.of(solid, legacyAir), StructureTemplatePool.Projection.RIGID);
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 0, 65, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                list, new BoundingBox(0, 64, 0, 0, 70, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(lower, upper));
+        BoundingBox area = new BoundingBox(0, 58, 0, 0, 72, 0);
+        Map<BlockPos, BlockState> blocks = supportTerrain(0, 0);
+
+        Set<Long> written = NativeStructureSurfaceSupportBuilder.bridgeRigidPieceSupport(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                NativeStructurePostProcessorSurfaceTerrainTest::forbiddenTemplateManager);
+
+        assertEquals(Set.of(BlockPos.asLong(0, 63, 0)), written);
+    }
+
+    @Test
     public void stackedRigidPiecesPreserveTheLowerAuthoredSurface() {
         Structure structure = new DesertPyramidStructure(
                 new Structure.StructureSettings(
@@ -286,12 +713,11 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
             }
         }
 
+        WorldGenLevel world = world(blocks);
+        List<NativeStructureTerrainIntegrator.TerrainTarget> targets =
+                List.of(surfaceTarget(start));
         NativeStructureSurfaceFitter.prepareSurfaceStructures(
-                world(blocks), area,
-                List.of(new NativeStructureTerrainIntegrator.TerrainTarget(
-                        "nova_structures:tavern_oak", start,
-                        new IrisStructureTerrain().setMode(IrisStructureTerrainMode.SOURCE))),
-                (x, z) -> 60);
+                world, area, targets, (x, z) -> 60);
 
         assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 2, 62, 2));
         assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 2, 65, 2));
@@ -519,7 +945,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
-    public void nativeVacuumClearsEveryPieceEnvelopeBeforePlacement() {
+    public void nativeVacuumLeavesPieceBlocksForSurfaceFitting() {
         StructureStart start = desertStart();
         BoundingBox bounds = start.getPieces().getFirst().getBoundingBox();
         Map<BlockPos, BlockState> blocks = new HashMap<>();
@@ -529,7 +955,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 world(blocks), bounds, "minecraft:desert_pyramid", start,
                 new IrisStructureTerrain().setMode(IrisStructureTerrainMode.VACUUM), null);
 
-        assertEquals(Blocks.AIR.defaultBlockState(),
+        assertEquals(Blocks.STONE.defaultBlockState(),
                 state(blocks, bounds.minX(), bounds.minY(), bounds.minZ()));
     }
 
@@ -893,6 +1319,27 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
+    public void nativeVacuumReservesItsFixedSurfaceFalloff() {
+        StructureStart generated = desertStart(TerrainAdjustment.NONE);
+        BoundingBox content = NativeStructureReferenceEnvelope.contentBounds(generated);
+        IrisStructureTerrain terrain = new IrisStructureTerrain()
+                .setMode(IrisStructureTerrainMode.VACUUM)
+                .setHorizontalPadding(64);
+
+        BoundingBox references = NativeStructureReferenceEnvelope.referenceBounds(
+                generated, generated.getStructure(), terrain);
+
+        assertEquals(content.minX() - NativeStructureSurfaceFitter.surfaceTerrainRadius(),
+                references.minX());
+        assertEquals(content.maxX() + NativeStructureSurfaceFitter.surfaceTerrainRadius(),
+                references.maxX());
+        assertEquals(content.minZ() - NativeStructureSurfaceFitter.surfaceTerrainRadius(),
+                references.minZ());
+        assertEquals(content.maxZ() + NativeStructureSurfaceFitter.surfaceTerrainRadius(),
+                references.maxZ());
+    }
+
+    @Test
     public void nativeTerrainEnvelopeClipsOptionalCoverageWithoutDroppingContent() {
         StructureStart generated = desertStart();
         ChunkPos origin = generated.getChunkPos();
@@ -999,7 +1446,8 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         BlockState log = Blocks.OAK_LOG.defaultBlockState();
         blocks.put(origin, log);
 
-        NativeStructureTerrainIntegrator.clearTemplateAir(world(blocks), template, origin, 80, settings);
+        NativeStructureTerrainIntegrator.clearTemplateAir(
+                world(blocks), template, origin, 80, settings);
 
         assertEquals(log, blocks.get(origin));
     }
@@ -1016,6 +1464,71 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 new BlockPos(bounds.minX(), bounds.minY(), bounds.minZ()),
                 groundLevelDelta, Rotation.NONE, bounds,
                 LiquidSettings.APPLY_WATERLOGGING);
+    }
+
+    private static PoolElementStructurePiece rigidTemplatePiece(
+            StructurePoolElement element, BoundingBox bounds,
+            int groundLevelDelta, Rotation rotation) {
+        return new PoolElementStructurePiece(
+                null, element,
+                new BlockPos(bounds.minX(), bounds.minY(), bounds.minZ()),
+                groundLevelDelta, rotation, bounds,
+                LiquidSettings.APPLY_WATERLOGGING);
+    }
+
+    private static StructureStart rigidSurfaceStart(List<PoolElementStructurePiece> pieces) {
+        return rigidSurfaceStart(pieces, TerrainAdjustment.BEARD_BOX);
+    }
+
+    private static StructureStart rigidSurfaceStart(
+            List<PoolElementStructurePiece> pieces, TerrainAdjustment adjustment) {
+        Structure structure = new DesertPyramidStructure(
+                new Structure.StructureSettings(
+                        HolderSet.empty(), Map.of(),
+                        GenerationStep.Decoration.SURFACE_STRUCTURES,
+                        adjustment));
+        List<StructurePiece> structurePieces = new ArrayList<>(pieces);
+        return new StructureStart(
+                structure, new ChunkPos(0, 0), 0,
+                new PiecesContainer(structurePieces));
+    }
+
+    private static NativeStructureTerrainIntegrator.TerrainTarget surfaceTarget(
+            StructureStart start) {
+        return surfaceTarget(start, IrisStructureTerrainMode.SOURCE);
+    }
+
+    private static NativeStructureTerrainIntegrator.TerrainTarget surfaceTarget(
+            StructureStart start, IrisStructureTerrainMode mode) {
+        return new NativeStructureTerrainIntegrator.TerrainTarget(
+                "nova_structures:tavern_oak", start,
+                new IrisStructureTerrain().setMode(mode));
+    }
+
+    private static StructureTemplate.StructureBlockInfo block(
+            int x, int y, int z, BlockState state) {
+        return new StructureTemplate.StructureBlockInfo(
+                new BlockPos(x, y, z), state, null);
+    }
+
+    private static Map<BlockPos, BlockState> supportTerrain(int minimumX, int maximumX) {
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x = minimumX; x <= maximumX; x++) {
+            put(blocks, x, 61, 0, Blocks.DIRT.defaultBlockState());
+            put(blocks, x, 62, 0, Blocks.GRASS_BLOCK.defaultBlockState());
+        }
+        return blocks;
+    }
+
+    private static Map<BlockPos, BlockState> flatTerrain(BoundingBox area, int surfaceY) {
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x = area.minX(); x <= area.maxX(); x++) {
+            for (int z = area.minZ(); z <= area.maxZ(); z++) {
+                put(blocks, x, surfaceY - 1, z, Blocks.DIRT.defaultBlockState());
+                put(blocks, x, surfaceY, z, Blocks.GRASS_BLOCK.defaultBlockState());
+            }
+        }
+        return blocks;
     }
 
     private static NativeStructureTerrainIntegrator.OrganicCarve organicCarve(
@@ -1122,6 +1635,57 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         return template;
     }
 
+    private static final class InlineSinglePoolElement extends SinglePoolElement {
+        private InlineSinglePoolElement(StructureTemplate template) {
+            this(template, List.of());
+        }
+
+        private InlineSinglePoolElement(
+                StructureTemplate template, List<StructureProcessor> processors) {
+            super(Either.right(template),
+                    Holder.direct(new StructureProcessorList(processors)),
+                    StructureTemplatePool.Projection.RIGID,
+                    Optional.<LiquidSettings>empty());
+        }
+    }
+
+    private static final class InlineLegacyPoolElement extends LegacySinglePoolElement {
+        private InlineLegacyPoolElement(StructureTemplate template) {
+            super(Either.right(template),
+                    Holder.direct(new StructureProcessorList(List.of())),
+                    StructureTemplatePool.Projection.RIGID,
+                    Optional.<LiquidSettings>empty());
+        }
+    }
+
+    private static final class ReplaceBlockProcessor implements StructureProcessor {
+        private final BlockState source;
+        private final BlockState replacement;
+
+        private ReplaceBlockProcessor(BlockState source, BlockState replacement) {
+            this.source = source;
+            this.replacement = replacement;
+        }
+
+        @Override
+        public StructureTemplate.StructureBlockInfo processBlock(
+                LevelReader level, BlockPos targetPosition, BlockPos referencePos,
+                BlockPos templateRelativePos,
+                StructureTemplate.StructureBlockInfo processedBlockInfo,
+                StructurePlaceSettings settings) {
+            if (!processedBlockInfo.state().equals(source)) {
+                return processedBlockInfo;
+            }
+            return new StructureTemplate.StructureBlockInfo(
+                    processedBlockInfo.pos(), replacement, processedBlockInfo.nbt());
+        }
+
+        @Override
+        public MapCodec<? extends StructureProcessor> codec() {
+            return BlockIgnoreProcessor.STRUCTURE_BLOCK.codec();
+        }
+    }
+
     private static StructureStart desertStart() {
         return desertStart(TerrainAdjustment.NONE);
     }
@@ -1155,6 +1719,9 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
             if (methodName.equals("getLevel")) {
                 return null;
             }
+            if (methodName.equals("holderLookup")) {
+                return BuiltInRegistries.BLOCK;
+            }
             if (methodName.equals("hashCode")) {
                 return System.identityHashCode(proxy);
             }
@@ -1186,6 +1753,9 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
             }
             if (methodName.equals("getLevel")) {
                 return null;
+            }
+            if (methodName.equals("holderLookup")) {
+                return BuiltInRegistries.BLOCK;
             }
             if (methodName.equals("hashCode")) {
                 return System.identityHashCode(proxy);

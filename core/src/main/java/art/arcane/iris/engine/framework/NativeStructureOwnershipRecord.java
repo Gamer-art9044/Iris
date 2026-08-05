@@ -118,6 +118,32 @@ public record NativeStructureOwnershipRecord(
                 && chunkZ >= referenceMinChunkZ && chunkZ <= referenceMaxChunkZ;
     }
 
+    public NativeStructureOwnershipRecord withReferenceEnvelope(
+            int referenceMinChunkX, int referenceMaxChunkX,
+            int referenceMinChunkZ, int referenceMaxChunkZ) {
+        return new NativeStructureOwnershipRecord(
+                schema,
+                structureKey,
+                originChunkX,
+                originChunkZ,
+                placementIdentity,
+                baseY,
+                contentMinX,
+                contentMinY,
+                contentMinZ,
+                contentMaxX,
+                contentMaxY,
+                contentMaxZ,
+                locatorY,
+                referenceMinChunkX,
+                referenceMaxChunkX,
+                referenceMinChunkZ,
+                referenceMaxChunkZ,
+                contentFingerprint,
+                decision
+        );
+    }
+
     public OwnershipKey ownershipKey() {
         return new OwnershipKey(structureKey, originChunkX, originChunkZ);
     }

@@ -91,7 +91,7 @@ public class IrisStructurePlacement {
     @Desc("If true, the structure starts at a deterministic random world Y inside [minHeight, maxHeight]. Terrain integration is then controlled independently by terrain.")
     private boolean underground = false;
 
-    @Desc("Terrain integration shared by editable Iris assemblies and live registered structures.")
+    @Desc("Terrain integration for this placement. The editable structures backend supports SOURCE, PRESERVE, BORE, and FORCE_CARVE. The nativeStructures backend supports every terrain mode.")
     private IrisStructureTerrain terrain = new IrisStructureTerrain();
 
     @Desc("Optional foundation columns placed beneath the assembled structure's occupied bottom cells. Columns pass through air and fluids until they reach solid ground, up to maxDepth.")

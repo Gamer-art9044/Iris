@@ -975,8 +975,7 @@ public class CommandIris implements DirectorExecutor {
                 try {
                     IrisData data = IrisData.get(pack);
                     for (String key : data.getDimensionLoader().getPossibleKeys()) {
-                        options.add(key);
-                        options.add(pack.getName() + ":" + key);
+                        options.add(packDimensionOption(pack.getName(), key));
                     }
                 } catch (Throwable ex) {
                     Iris.warn("Failed to read dimension keys from pack %s: %s%s",
@@ -988,6 +987,12 @@ public class CommandIris implements DirectorExecutor {
             }
 
             return new KList<>(options);
+        }
+
+        static String packDimensionOption(String packName, String dimensionKey) {
+            return packName.equalsIgnoreCase(dimensionKey)
+                    ? packName
+                    : packName + ":" + dimensionKey;
         }
 
         @Override

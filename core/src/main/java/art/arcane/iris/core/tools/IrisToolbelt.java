@@ -168,7 +168,9 @@ public class IrisToolbelt {
         }
         String pack = requested.substring(0, separator).trim();
         String dimension = requested.substring(separator + 1).trim();
-        if (!isSafePackDescriptor(pack) || !isSafeDimensionKey(dimension)) {
+        if (!isSafePackDescriptor(pack)
+                || !isSafeDimensionKey(dimension)
+                || pack.equalsIgnoreCase(dimension)) {
             return null;
         }
         return new PackReference(pack, dimension, true);

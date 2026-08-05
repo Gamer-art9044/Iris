@@ -38,6 +38,12 @@ public class IrisToolbeltPackReferenceTest {
     }
 
     @Test
+    public void redundantExplicitDimensionIsRejected() {
+        assertNull(IrisToolbelt.parsePackReference("overworld:overworld"));
+        assertNull(IrisToolbelt.parsePackReference("OverWorld:overworld"));
+    }
+
+    @Test
     public void repositoryShorthandUsesRepositoryAsDefaultDimension() {
         IrisToolbelt.PackReference reference = IrisToolbelt.parsePackReference("IrisDimensions/overworld/stable");
 

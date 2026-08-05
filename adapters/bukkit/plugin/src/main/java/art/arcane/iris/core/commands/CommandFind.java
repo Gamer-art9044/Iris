@@ -19,17 +19,23 @@
 package art.arcane.iris.core.commands;
 
 import art.arcane.iris.Iris;
-import art.arcane.iris.platform.bukkit.BukkitPlatform;
+import art.arcane.iris.core.localization.BukkitCommandMessages;
+import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.service.ObjectStudioSaveService;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
-import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.engine.framework.StructureReachability;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
+import art.arcane.iris.engine.platform.EngineBukkitOps;
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformStructureHooks;
 import art.arcane.iris.util.common.director.DirectorExecutor;
 import art.arcane.iris.util.common.director.specialhandlers.ObjectHandler;
 import art.arcane.iris.util.common.director.specialhandlers.StructureHandler;
@@ -40,6 +46,7 @@ import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.director.DirectorOrigin;
 import art.arcane.volmlib.util.director.annotations.Director;
 import art.arcane.volmlib.util.director.annotations.Param;
+import art.arcane.volmlib.util.localization.MessageArgument;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
@@ -49,10 +56,14 @@ import org.bukkit.entity.Player;
 import org.bukkit.generator.structure.Structure;
 import org.bukkit.util.StructureSearchResult;
 
-import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.BukkitCommandMessages;
-import art.arcane.volmlib.util.localization.MessageArgument;
-import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
 @Director(name = "find", origin = DirectorOrigin.PLAYER, description = "Iris Find commands", descriptionKey = "iris.director.commandfind.director.iris_find_commands", aliases = "goto")
 public class CommandFind implements DirectorExecutor {
     @Director(description = "Find a biome", descriptionKey = "iris.director.commandfind.director.find_biome")
@@ -123,57 +134,66 @@ public class CommandFind implements DirectorExecutor {
             return;
         }
 
-        String structureKey = structure == null ? "" : structure.trim();
-        Structure nativeStructure = resolveNativeStructure(structureKey);
-        boolean irisReplacement = false;
-        if (nativeStructure != null) {
-            IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(
-                    e, structureKey, false);
-            if (!decision.generate()
-                    && decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
-                commandSender.sendMessage(C.RED + NativeStructureGenerationPolicy.generationStatusMessage(
-                        structureKey, decision.status()));
-                return;
-            }
-            irisReplacement = decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS;
-            if (irisReplacement && !IrisStructureLocator.hasNativePlacement(e, structureKey)) {
-                locateIrisStructure(e, structureKey, commandSender);
-                return;
-            }
-        }
-
-        if (nativeStructure == null && IrisStructureLocator.isPlaced(e, structureKey)) {
-            locateIrisStructure(e, structureKey, commandSender);
-            return;
-        }
-
-        if (nativeStructure == null) {
-            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_UNKNOWN_STRUCTURE, MessageArgument.untrusted("structureKey", structureKey)));
-            return;
-        }
-        final boolean replacementLocate = irisReplacement;
-        final boolean explicitNativePlacement = IrisStructureLocator.hasNativePlacement(
-                e, structureKey);
-
         Player target = player();
         if (target == null) {
             commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_RUN_THIS_GAME_TELEPORT_STRUCTURE));
             return;
         }
 
+        String structureKey = structure == null ? "" : structure.trim();
+        Structure nativeStructure = resolveNativeStructure(structureKey);
+        boolean registered = nativeStructure != null;
+        IrisNativeStructureDecision decision = registered
+                ? NativeStructureGenerationPolicy.resolve(e, structureKey, false)
+                : null;
+        boolean nativePlacement = IrisStructureLocator.hasNativePlacement(e, structureKey);
+        boolean locatableNativePlacement = IrisStructureLocator.hasLocatableNativePlacement(e, structureKey);
+        boolean locatableEditablePlacement = IrisStructureLocator.hasLocatableEditablePlacement(e, structureKey);
         World targetWorld = target.getWorld();
+        boolean nativeGenerationEnabled = targetWorld.canGenerateStructures();
+        boolean requiresReachability = registered && decision.generate()
+                && decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS
+                && nativeGenerationEnabled;
+        boolean reachable = !requiresReachability || StructureReachability.isReachable(e, structureKey);
+        StructureLookupRoute route = selectStructureLookupRoute(
+                registered, decision, nativePlacement, locatableNativePlacement,
+                locatableEditablePlacement, nativeGenerationEnabled, reachable);
+
+        if (route == StructureLookupRoute.UNKNOWN) {
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_UNKNOWN_STRUCTURE, MessageArgument.untrusted("structureKey", structureKey)));
+            return;
+        }
+        if (route == StructureLookupRoute.POLICY_DISABLED) {
+            commandSender.sendMessage(C.RED + NativeStructureGenerationPolicy.generationStatusMessage(
+                    structureKey, decision.status()));
+            return;
+        }
+        if (route == StructureLookupRoute.NO_ACTIVE_PLACEMENT) {
+            commandSender.sendMessage(C.YELLOW + structureKey
+                    + " has no active placement in this world.");
+            return;
+        }
+        if (route == StructureLookupRoute.WORLD_DISABLED) {
+            commandSender.sendMessage(C.YELLOW + structureKey
+                    + " cannot generate because native structure generation is disabled for this world.");
+            return;
+        }
+        if (route == StructureLookupRoute.UNREACHABLE) {
+            KList<String> miss = StructureReachability.missingBiomeKeys(e, structureKey);
+            commandSender.sendMessage(C.YELLOW + structureKey
+                    + " cannot generate in this world (its required biomes are not produced by this pack"
+                    + (miss.isEmpty() ? "" : ": needs " + String.join("/", miss)) + ").");
+            return;
+        }
+        if (route == StructureLookupRoute.IRIS) {
+            locateIrisStructure(e, structureKey, commandSender);
+            return;
+        }
+
         Location origin = target.getLocation();
         commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_LOCATING, MessageArgument.untrusted("structureKey", structureKey)));
         J.s(() -> {
             try {
-                if (!replacementLocate && !explicitNativePlacement
-                        && !StructureReachability.isReachable(e, structureKey)) {
-                    KList<String> miss = StructureReachability.missingBiomeKeys(e, structureKey);
-                    sendStructureMessage(target, commandSender,
-                            C.YELLOW + structureKey + " cannot generate in this world (its required biomes are not produced by this pack"
-                                    + (miss.isEmpty() ? "" : ": needs " + String.join("/", miss)) + ").");
-                    return;
-                }
                 StructureSearchResult result = targetWorld.locateNearestStructure(
                         origin, nativeStructure, 100, false);
                 if (result == null || result.getLocation() == null) {
@@ -189,6 +209,365 @@ public class CommandFind implements DirectorExecutor {
                 Iris.reportError("Could not locate structure '" + structureKey + "'.", t);
             }
         });
+    }
+
+    @Director(description = "Print every structure excluded from /iris goto and its rejection reason to the server console", sync = true)
+    public void unregistered() {
+        VolmitSender commandSender = sender();
+        if (commandSender == null) {
+            Iris.reportError("Structure exclusion report started without a command sender context.",
+                    new IllegalStateException("Missing command sender context"));
+            return;
+        }
+        Engine activeEngine = engine();
+        if (activeEngine == null) {
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_NOT_IRIS_WORLD));
+            return;
+        }
+        Player target = player();
+        if (target == null) {
+            commandSender.sendMessage(C.RED + "Run this command from the Iris world to inspect its structures.");
+            return;
+        }
+
+        StructureExclusionReport snapshot;
+        try {
+            snapshot = collectStructureExclusions(
+                    activeEngine, target.getWorld().canGenerateStructures());
+        } catch (Throwable error) {
+            commandSender.sendMessage(C.RED + "Could not build the structure exclusion report; see the server console.");
+            Iris.reportError("Could not snapshot /iris goto unregistered report for world '"
+                    + target.getWorld().getName() + "'.", error);
+            return;
+        }
+
+        String worldName = target.getWorld().getName();
+        J.a(() -> {
+            try {
+                StructureExclusionReport report = includeManagedDatapackStructures(
+                        snapshot, DatapackIngestService.installed());
+                printStructureExclusionReport(worldName, report);
+                sendStructureMessage(target, commandSender, C.GREEN + "Printed " + report.entries().size()
+                        + " non-generating structure candidate(s) and their reasons to the server console. "
+                        + "This was an eligibility check; no chunks were searched.");
+            } catch (Throwable error) {
+                sendStructureMessage(target, commandSender,
+                        C.RED + "Could not finish the structure exclusion report; see the server console.");
+                Iris.reportError("Could not finish /iris goto unregistered report for world '"
+                        + worldName + "'.", error);
+            }
+        });
+    }
+
+    private static StructureExclusionReport collectStructureExclusions(
+            Engine engine, boolean nativeGenerationEnabled) {
+        PlatformStructureHooks structureHooks = IrisPlatforms.get().structureHooks();
+        Map<String, String> registeredKeys = distinctStructureKeys(structureHooks.structureKeys());
+        Set<String> reachableKeys = StructureReachability.reachableKeys(engine);
+        Set<String> possibleBiomeKeys = normalizedStructureKeys(
+                structureHooks.possibleBiomeKeys(engine.getWorld().platformWorld()));
+        List<StructureExclusion> exclusions = new ArrayList<>();
+        int registeredExcluded = 0;
+
+        for (Map.Entry<String, String> entry : registeredKeys.entrySet()) {
+            String normalizedKey = entry.getKey();
+            String key = entry.getValue();
+            IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine, key, false);
+            boolean nativePlacement = IrisStructureLocator.hasNativePlacement(engine, key);
+            boolean locatableNativePlacement = IrisStructureLocator.hasLocatableNativePlacement(engine, key);
+            boolean locatableEditablePlacement = IrisStructureLocator.hasLocatableEditablePlacement(engine, key);
+            StructureLookupRoute route = selectStructureLookupRoute(
+                    true, decision, nativePlacement, locatableNativePlacement,
+                    locatableEditablePlacement, nativeGenerationEnabled,
+                    reachableKeys.contains(normalizedKey));
+            if (route == StructureLookupRoute.IRIS || route == StructureLookupRoute.NATIVE) {
+                continue;
+            }
+            List<String> requiredBiomes = needsNativeReachabilityReason(route, decision)
+                    ? structureHooks.structureBiomeKeys(key)
+                    : List.of();
+            exclusions.add(new StructureExclusion(
+                    StructureExclusionKind.EXCLUDED, key, null,
+                    describeStructureExclusion(
+                            route, key, decision.status(), nativePlacement,
+                            requiredBiomes, possibleBiomeKeys)));
+            registeredExcluded++;
+        }
+
+        int configuredUnregistered = 0;
+        Set<String> configuredUnregisteredKeys = new LinkedHashSet<>();
+        for (String configuredKey : IrisStructureLocator.placedKeys(engine)) {
+            String normalizedKey = normalizeStructureKey(configuredKey);
+            if (normalizedKey.isEmpty()
+                    || registeredKeys.containsKey(normalizedKey)
+                    || !IrisStructureLocator.hasNativePlacement(engine, configuredKey)
+                    || !configuredUnregisteredKeys.add(normalizedKey)) {
+                continue;
+            }
+            exclusions.add(new StructureExclusion(
+                    StructureExclusionKind.UNREGISTERED, configuredKey, null,
+                    describeConfiguredUnregisteredNative(
+                            IrisStructureLocator.hasLocatableNativePlacement(engine, configuredKey))));
+            configuredUnregistered++;
+        }
+
+        int editableUnplaced = 0;
+        Set<String> unplacedEditableKeys = new LinkedHashSet<>();
+        Set<String> locatableEditableKeys = normalizedStructureKeys(
+                IrisStructureLocator.locatableEditableKeys(engine));
+        for (String editableKey : engine.getData().getStructureLoader().getPossibleKeys()) {
+            String normalizedKey = normalizeStructureKey(editableKey);
+            if (!isUnplacedEditableCandidate(
+                    normalizedKey, registeredKeys.keySet(), locatableEditableKeys,
+                    IrisStructureLocator.hasNativePlacement(engine, editableKey))
+                    || !unplacedEditableKeys.add(normalizedKey)) {
+                continue;
+            }
+            boolean configuredPlacement = IrisStructureLocator.hasEditablePlacement(engine, editableKey);
+            String reason = configuredPlacement
+                    ? "editable Iris structure has a configured placement, but no matching placement is active "
+                    + "because its density is not positive or its Y band does not intersect this world"
+                    : "editable Iris structure exists in this pack, but no structure placement references it";
+            exclusions.add(new StructureExclusion(
+                    StructureExclusionKind.UNPLACED, editableKey, null, reason));
+            editableUnplaced++;
+        }
+
+        Set<String> configuredImportUrls = normalizedImportUrls(
+                engine.getDimension().getDatapackImports());
+        return new StructureExclusionReport(
+                List.copyOf(exclusions), Set.copyOf(registeredKeys.keySet()),
+                configuredImportUrls, registeredExcluded, configuredUnregistered,
+                editableUnplaced, 0);
+    }
+
+    static boolean isUnplacedEditableCandidate(
+            String normalizedKey, Set<String> registeredKeys,
+            Set<String> locatableEditableKeys, boolean nativePlacement) {
+        return normalizedKey != null
+                && !normalizedKey.isEmpty()
+                && !registeredKeys.contains(normalizedKey)
+                && !locatableEditableKeys.contains(normalizedKey)
+                && !nativePlacement;
+    }
+
+    private static StructureExclusionReport includeManagedDatapackStructures(
+            StructureExclusionReport snapshot, List<DatapackIngestService.Entry> installedEntries) {
+        Map<String, ManagedDatapackStructure> unregisteredStructures = new LinkedHashMap<>();
+        for (DatapackIngestService.Entry entry : installedEntries) {
+            String importUrl = normalizeImportUrl(entry.url);
+            if (importUrl.isEmpty() || !snapshot.configuredImportUrls().contains(importUrl)) {
+                continue;
+            }
+            String sourceId = entry.id == null || entry.id.isBlank() ? "unknown" : entry.id.trim();
+            List<String> structureKeys = entry.structureKeys == null ? List.of() : entry.structureKeys;
+            for (String key : structureKeys) {
+                String normalizedKey = normalizeStructureKey(key);
+                if (normalizedKey.isEmpty() || snapshot.registeredKeys().contains(normalizedKey)) {
+                    continue;
+                }
+                ManagedDatapackStructure managed = unregisteredStructures.computeIfAbsent(
+                        normalizedKey, ignored -> new ManagedDatapackStructure(key.trim()));
+                managed.sourceIds().add(sourceId);
+            }
+        }
+
+        List<StructureExclusion> entries = new ArrayList<>();
+        int configuredUnregistered = snapshot.configuredUnregistered();
+        for (StructureExclusion exclusion : snapshot.entries()) {
+            boolean replacedByManagedSource = exclusion.kind() == StructureExclusionKind.UNREGISTERED
+                    && unregisteredStructures.containsKey(normalizeStructureKey(exclusion.key()));
+            if (replacedByManagedSource) {
+                configuredUnregistered--;
+                continue;
+            }
+            entries.add(exclusion);
+        }
+        for (ManagedDatapackStructure managed : unregisteredStructures.values()) {
+            entries.add(new StructureExclusion(
+                    StructureExclusionKind.UNREGISTERED, managed.key(),
+                    String.join(",", managed.sourceIds()),
+                    "declared by an Iris-managed datapack but absent from the live registry; "
+                            + "restart, enablement, or datapack validation may be required"));
+        }
+        sortStructureExclusions(entries);
+        return new StructureExclusionReport(
+                List.copyOf(entries), snapshot.registeredKeys(), snapshot.configuredImportUrls(),
+                snapshot.registeredExcluded(), Math.max(0, configuredUnregistered),
+                snapshot.editableUnplaced(), unregisteredStructures.size());
+    }
+
+    private static void printStructureExclusionReport(
+            String worldName, StructureExclusionReport report) {
+        Iris.info("Iris goto unregistered report for world '%s': %d non-generating structure candidate(s).",
+                worldName, report.entries().size());
+        for (StructureExclusion exclusion : report.entries()) {
+            String source = exclusion.source() == null
+                    ? ""
+                    : " (source " + exclusion.source() + ")";
+            Iris.info("[%s] %s%s: %s",
+                    exclusion.kind().label(), exclusion.key(), source, exclusion.reason());
+        }
+        Iris.info("Iris goto unregistered summary: %d registered key(s) excluded, "
+                        + "%d managed datapack key(s) unregistered, %d configured native key(s) unregistered, "
+                        + "%d editable Iris structure(s) unplaced.",
+                report.registeredExcluded(), report.managedUnregistered(),
+                report.configuredUnregistered(), report.editableUnplaced());
+        Iris.info("Eligibility report only; no chunks were searched and existing generated starts were not scanned.");
+    }
+
+    private static boolean needsNativeReachabilityReason(
+            StructureLookupRoute route, IrisNativeStructureDecision decision) {
+        return route == StructureLookupRoute.UNREACHABLE
+                || route == StructureLookupRoute.NO_ACTIVE_PLACEMENT && decision.generate();
+    }
+
+    static String describeStructureExclusion(
+            StructureLookupRoute route, String key, NativeStructureGenerationStatus status,
+            boolean nativePlacement, List<String> requiredBiomes, Set<String> possibleBiomeKeys) {
+        return switch (route) {
+            case UNKNOWN -> "the key is not registered by the active server/datapack";
+            case POLICY_DISABLED -> NativeStructureGenerationPolicy.generationStatusMessage(key, status);
+            case WORLD_DISABLED -> "native structure generation is disabled for this world";
+            case UNREACHABLE -> nativeReachabilityReason(requiredBiomes, possibleBiomeKeys);
+            case NO_ACTIVE_PLACEMENT -> {
+                String placementType = nativePlacement
+                        ? "configured nativeStructures placement"
+                        : "configured Iris replacement";
+                String reason = placementType + " is inactive: no matching placement has positive density "
+                        + "when density-based and a Y band intersecting this world";
+                if (status == NativeStructureGenerationStatus.GENERATE_NATIVE) {
+                    reason += "; the native route is also inactive because "
+                            + nativeReachabilityReason(requiredBiomes, possibleBiomeKeys);
+                }
+                yield reason;
+            }
+            case IRIS, NATIVE -> throw new IllegalArgumentException(
+                    "Active structure route cannot be described as excluded: " + route);
+        };
+    }
+
+    static String nativeReachabilityReason(
+            List<String> requiredBiomes, Set<String> possibleBiomeKeys) {
+        if (requiredBiomes == null || requiredBiomes.isEmpty()) {
+            return "its resolved biome filter is empty";
+        }
+        Set<String> possible = possibleBiomeKeys == null ? Set.of() : possibleBiomeKeys;
+        for (String requiredBiome : requiredBiomes) {
+            if (possible.contains(normalizeStructureKey(requiredBiome))) {
+                return "no active positive-weight, positive-frequency structure-set entry includes it in this world";
+            }
+        }
+        return "this pack does not produce any of its required biome(s): "
+                + String.join("/", requiredBiomes);
+    }
+
+    static String describeConfiguredUnregisteredNative(boolean locatablePlacement) {
+        String reason = "configured in nativeStructures, but the key is not registered by the active "
+                + "server/datapack, so Minecraft cannot create its native structure start";
+        return locatablePlacement
+                ? reason
+                : reason + "; its Iris placement is also inactive because no matching placement has positive "
+                + "density when density-based and a Y band intersecting this world";
+    }
+
+    private static Map<String, String> distinctStructureKeys(List<String> keys) {
+        Map<String, String> distinctKeys = new LinkedHashMap<>();
+        for (String key : keys) {
+            String normalizedKey = normalizeStructureKey(key);
+            if (!normalizedKey.isEmpty()) {
+                distinctKeys.putIfAbsent(normalizedKey, key.trim());
+            }
+        }
+        return distinctKeys;
+    }
+
+    private static Set<String> normalizedStructureKeys(Iterable<String> keys) {
+        Set<String> normalizedKeys = new LinkedHashSet<>();
+        if (keys == null) {
+            return normalizedKeys;
+        }
+        for (String key : keys) {
+            String normalizedKey = normalizeStructureKey(key);
+            if (!normalizedKey.isEmpty()) {
+                normalizedKeys.add(normalizedKey);
+            }
+        }
+        return normalizedKeys;
+    }
+
+    private static Set<String> normalizedImportUrls(Iterable<String> urls) {
+        Set<String> normalizedUrls = new LinkedHashSet<>();
+        if (urls == null) {
+            return normalizedUrls;
+        }
+        for (String url : urls) {
+            String normalizedUrl = normalizeImportUrl(url);
+            if (!normalizedUrl.isEmpty()) {
+                normalizedUrls.add(normalizedUrl);
+            }
+        }
+        return Set.copyOf(normalizedUrls);
+    }
+
+    private static String normalizeImportUrl(String url) {
+        return url == null ? "" : url.trim();
+    }
+
+    private static void sortStructureExclusions(List<StructureExclusion> exclusions) {
+        exclusions.sort((left, right) -> {
+            int kindComparison = left.kind().compareTo(right.kind());
+            return kindComparison == 0
+                    ? left.key().compareToIgnoreCase(right.key())
+                    : kindComparison;
+        });
+    }
+
+    private static String normalizeStructureKey(String key) {
+        return key == null ? "" : key.trim().toLowerCase(Locale.ROOT);
+    }
+
+    static StructureLookupRoute selectStructureLookupRoute(
+            boolean registered, IrisNativeStructureDecision decision, boolean nativePlacement,
+            boolean locatableNativePlacement, boolean locatableEditablePlacement,
+            boolean nativeGenerationEnabled, boolean reachable) {
+        if (!registered) {
+            return !nativePlacement && locatableEditablePlacement
+                    ? StructureLookupRoute.IRIS
+                    : StructureLookupRoute.UNKNOWN;
+        }
+        if (decision == null) {
+            throw new IllegalArgumentException("Registered structure lookup requires a generation decision");
+        }
+        if (!decision.generate()
+                && decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            return StructureLookupRoute.POLICY_DISABLED;
+        }
+        if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            if (!nativePlacement) {
+                return locatableEditablePlacement
+                        ? StructureLookupRoute.IRIS
+                        : StructureLookupRoute.NO_ACTIVE_PLACEMENT;
+            }
+            if (!nativeGenerationEnabled) {
+                return StructureLookupRoute.WORLD_DISABLED;
+            }
+            return locatableNativePlacement
+                    ? StructureLookupRoute.NATIVE
+                    : StructureLookupRoute.NO_ACTIVE_PLACEMENT;
+        }
+        if (!nativeGenerationEnabled) {
+            return StructureLookupRoute.WORLD_DISABLED;
+        }
+        if (nativePlacement && locatableNativePlacement) {
+            return StructureLookupRoute.NATIVE;
+        }
+        if (reachable) {
+            return StructureLookupRoute.NATIVE;
+        }
+        return nativePlacement
+                ? StructureLookupRoute.NO_ACTIVE_PLACEMENT
+                : StructureLookupRoute.UNREACHABLE;
     }
 
     private static Structure resolveNativeStructure(String structureKey) {
@@ -313,5 +692,47 @@ public class CommandFind implements DirectorExecutor {
 
     private void sendStructureMessage(Player target, VolmitSender commandSender, String message) {
         J.runEntity(target, () -> commandSender.sendMessage(message));
+    }
+
+    enum StructureLookupRoute {
+        UNKNOWN,
+        POLICY_DISABLED,
+        NO_ACTIVE_PLACEMENT,
+        WORLD_DISABLED,
+        UNREACHABLE,
+        IRIS,
+        NATIVE
+    }
+
+    private enum StructureExclusionKind {
+        UNREGISTERED("unregistered"),
+        EXCLUDED("excluded"),
+        UNPLACED("unplaced");
+
+        private final String label;
+
+        StructureExclusionKind(String label) {
+            this.label = label;
+        }
+
+        private String label() {
+            return label;
+        }
+    }
+
+    private record StructureExclusion(
+            StructureExclusionKind kind, String key, String source, String reason) {
+    }
+
+    private record StructureExclusionReport(
+            List<StructureExclusion> entries, Set<String> registeredKeys,
+            Set<String> configuredImportUrls, int registeredExcluded,
+            int configuredUnregistered, int editableUnplaced, int managedUnregistered) {
+    }
+
+    private record ManagedDatapackStructure(String key, Set<String> sourceIds) {
+        private ManagedDatapackStructure(String key) {
+            this(key, new LinkedHashSet<>());
+        }
     }
 }

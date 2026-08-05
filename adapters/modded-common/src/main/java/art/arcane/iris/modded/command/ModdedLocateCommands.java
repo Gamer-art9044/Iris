@@ -26,6 +26,7 @@ import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.Locator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
+import art.arcane.iris.engine.framework.StructureReachability;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
@@ -157,7 +158,8 @@ final class ModdedLocateCommands {
         }
         Optional<NativeStructureTarget> resolved = resolveNativeStructure(source, level, engine, key);
         if (resolved.isEmpty()) {
-            if (IrisStructureLocator.isPlaced(engine, key)) {
+            if (!IrisStructureLocator.hasNativePlacement(engine, key)
+                    && IrisStructureLocator.hasLocatableEditablePlacement(engine, key)) {
                 locateIrisStructure(source, level, engine, player, key);
                 return 1;
             }
@@ -166,29 +168,72 @@ final class ModdedLocateCommands {
         }
         NativeStructureTarget target = resolved.get();
         IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine, target.key(), false);
-        if (!decision.generate()
-                && decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
-            IrisModdedCommands.fail(source, NativeStructureGenerationPolicy.generationStatusMessage(
-                    target.key(), decision.status()));
+        boolean nativeGenerationEnabled =
+                source.getServer().getWorldGenSettings().options().generateStructures();
+        boolean nativePlacement = IrisStructureLocator.hasNativePlacement(engine, target.key());
+        boolean locatableNativePlacement = nativePlacement
+                && IrisStructureLocator.hasLocatableNativePlacement(engine, target.key());
+        boolean locatableEditableReplacement = !nativePlacement
+                && decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS
+                && IrisStructureLocator.hasLocatableEditablePlacement(engine, target.key());
+        boolean reachable = StructureReachability.isReachable(engine, target.key());
+        if (!ModdedCommandSuggestions.isEligibleRegisteredStructure(
+                decision, nativePlacement, locatableNativePlacement, locatableEditableReplacement,
+                reachable, nativeGenerationEnabled)) {
+            IrisModdedCommands.fail(source, registeredStructureUnavailableMessage(
+                    target.key(), target.availability(), decision,
+                    nativePlacement, locatableNativePlacement,
+                    nativeGenerationEnabled, reachable));
             return 0;
         }
-        if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
-            if (!IrisStructureLocator.hasNativePlacement(engine, target.key())) {
-                locateIrisStructure(source, level, engine, player, target.key());
-                return 1;
-            }
-            IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_SEARCHING_NATIVE_STRUCTURE_WITHIN_CHUNKS, MessageArgument.untrusted("value", target.key()), MessageArgument.untrusted("NATIVESTRUCTURELOCATERADIUS", NATIVE_STRUCTURE_LOCATE_RADIUS)));
-            runNativeStructureLocate(source, level, player, target);
+        if (locatableEditableReplacement) {
+            locateIrisStructure(source, level, engine, player, target.key());
             return 1;
-        }
-        if (!IrisStructureLocator.hasNativePlacement(engine, target.key())
-                && target.availability() != NativeStructureAvailability.AVAILABLE) {
-            IrisModdedCommands.fail(source, nativeUnavailableMessage(target.key(), target.availability()));
-            return 0;
         }
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_SEARCHING_NATIVE_STRUCTURE_WITHIN_CHUNKS, MessageArgument.untrusted("value", target.key()), MessageArgument.untrusted("NATIVESTRUCTURELOCATERADIUS", NATIVE_STRUCTURE_LOCATE_RADIUS)));
         runNativeStructureLocate(source, level, player, target);
         return 1;
+    }
+
+    static String registeredStructureUnavailableMessage(
+            String key, NativeStructureAvailability nativeAvailability,
+            IrisNativeStructureDecision decision,
+            boolean nativePlacement, boolean locatableNativePlacement,
+            boolean nativeGenerationEnabled, boolean reachable) {
+        if (!decision.generate()
+                && decision.status() != NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            return NativeStructureGenerationPolicy.generationStatusMessage(key, decision.status());
+        }
+        if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            if (nativePlacement && !nativeGenerationEnabled) {
+                return withInactiveNativePlacement(
+                        nativeUnavailableMessage(key, NativeStructureAvailability.WORLD_DISABLED),
+                        nativePlacement, locatableNativePlacement);
+            }
+            return "Iris replacement " + key
+                    + " is configured, but every matching placement has non-positive density or a Y band "
+                    + "outside this world's height range.";
+        }
+        if (!nativeGenerationEnabled) {
+            return withInactiveNativePlacement(
+                    nativeUnavailableMessage(key, NativeStructureAvailability.WORLD_DISABLED),
+                    nativePlacement, locatableNativePlacement);
+        }
+        NativeStructureAvailability availability = nativeAvailability;
+        if (availability == NativeStructureAvailability.AVAILABLE && !reachable) {
+            availability = NativeStructureAvailability.NO_PLACEMENT;
+        }
+        return withInactiveNativePlacement(
+                nativeUnavailableMessage(key, availability), nativePlacement, locatableNativePlacement);
+    }
+
+    private static String withInactiveNativePlacement(
+            String reason, boolean nativePlacement, boolean locatableNativePlacement) {
+        if (!nativePlacement || locatableNativePlacement) {
+            return reason;
+        }
+        return reason + " A matching Iris nativeStructures placement is also configured, but has non-positive "
+                + "density or a Y band outside this world's height range.";
     }
 
     private static void locateIrisStructure(CommandSourceStack source, ServerLevel level, Engine engine,
@@ -311,7 +356,7 @@ final class ModdedLocateCommands {
                 case AVAILABLE -> available++;
                 case WORLD_DISABLED, FILTERED -> disabled++;
                 case IRIS_SUPPRESSED -> suppressed++;
-                case BIOME_UNREACHABLE -> unreachableBiomes++;
+                case EMPTY_BIOME_FILTER, BIOME_UNREACHABLE -> unreachableBiomes++;
                 case NO_PLACEMENT -> unsupported++;
             }
         }
@@ -361,25 +406,28 @@ final class ModdedLocateCommands {
         return Optional.of(new NativeStructureTarget(key, holder.get(), availability));
     }
 
-    private static NativeStructureAvailability nativeAvailability(CommandSourceStack source, ServerLevel level,
-                                                                   Engine engine, String key,
-                                                                   Holder.Reference<Structure> holder) {
+    static NativeStructureAvailability nativeAvailability(CommandSourceStack source, ServerLevel level,
+                                                           Engine engine, String key,
+                                                           Holder.Reference<Structure> holder) {
         boolean worldEnabled = source.getServer().getWorldGenSettings().options().generateStructures();
         IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine, key, false);
         boolean selected = decision.status() != NativeStructureGenerationStatus.DISABLED_BY_PACK;
         boolean suppressed = decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS;
+        boolean biomeFilterEmpty = holder.value().biomes().stream().findAny().isEmpty();
         ChunkGenerator chunkGenerator = level.getChunkSource().getGenerator();
         boolean biomeReachable = chunkGenerator instanceof IrisModdedChunkGenerator irisGenerator
                 && irisGenerator.isNativeStructureReachable(holder);
         boolean hasPlacement = false;
-        if (worldEnabled && selected && !suppressed && biomeReachable) {
+        if (worldEnabled && selected && !suppressed && !biomeFilterEmpty && biomeReachable) {
             hasPlacement = !level.getChunkSource().getGeneratorState().getPlacementsForStructure(holder).isEmpty();
         }
-        return classifyNativeAvailability(worldEnabled, selected, suppressed, biomeReachable, hasPlacement);
+        return classifyNativeAvailability(
+                worldEnabled, selected, suppressed, biomeFilterEmpty, biomeReachable, hasPlacement);
     }
 
     static NativeStructureAvailability classifyNativeAvailability(boolean worldEnabled, boolean selected,
-                                                                   boolean suppressed, boolean biomeReachable,
+                                                                   boolean suppressed, boolean biomeFilterEmpty,
+                                                                   boolean biomeReachable,
                                                                    boolean hasPlacement) {
         if (!worldEnabled) {
             return NativeStructureAvailability.WORLD_DISABLED;
@@ -390,6 +438,9 @@ final class ModdedLocateCommands {
         if (suppressed) {
             return NativeStructureAvailability.IRIS_SUPPRESSED;
         }
+        if (biomeFilterEmpty) {
+            return NativeStructureAvailability.EMPTY_BIOME_FILTER;
+        }
         if (!biomeReachable) {
             return NativeStructureAvailability.BIOME_UNREACHABLE;
         }
@@ -399,15 +450,19 @@ final class ModdedLocateCommands {
         return NativeStructureAvailability.AVAILABLE;
     }
 
-    private static String nativeUnavailableMessage(String key, NativeStructureAvailability availability) {
+    static String nativeUnavailableMessage(String key, NativeStructureAvailability availability) {
         return switch (availability) {
             case WORLD_DISABLED -> "Native structure generation is disabled for this world, so " + key + " cannot generate or be located.";
             case FILTERED -> NativeStructureGenerationPolicy.generationStatusMessage(
                     key, NativeStructureGenerationStatus.DISABLED_BY_PACK);
             case IRIS_SUPPRESSED -> NativeStructureGenerationPolicy.generationStatusMessage(
                     key, NativeStructureGenerationStatus.REPLACED_BY_IRIS);
+            case EMPTY_BIOME_FILTER -> "Native structure " + key
+                    + " has a biome tag or filter that resolves to zero registered biomes.";
             case BIOME_UNREACHABLE -> "Native structure " + key + " cannot generate because none of its required biomes are produced by this Iris pack.";
-            case NO_PLACEMENT -> "Native structure " + key + " is registered, but its structure set has no placement supported by this dimension's generator state.";
+            case NO_PLACEMENT -> "Native structure " + key
+                    + " is registered and biome-compatible, but has no active positive-weight, "
+                    + "positive-frequency structure-set placement in this dimension's generator state.";
             case AVAILABLE -> "Native structure " + key + " is available.";
         };
     }
@@ -531,6 +586,7 @@ final class ModdedLocateCommands {
         WORLD_DISABLED,
         FILTERED,
         IRIS_SUPPRESSED,
+        EMPTY_BIOME_FILTER,
         BIOME_UNREACHABLE,
         NO_PLACEMENT
     }

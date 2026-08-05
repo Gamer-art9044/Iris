@@ -21,6 +21,10 @@ package art.arcane.iris.modded.command;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
+import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
+import art.arcane.iris.engine.framework.StructureReachability;
+import art.arcane.iris.engine.object.IrisNativeStructureDecision;
+import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
 import art.arcane.iris.modded.ModdedServerLevels;
@@ -41,11 +45,16 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 final class ModdedCommandSuggestions {
     static final SuggestionProvider<CommandSourceStack> BIOME_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestBiomeKeys(context, builder);
@@ -103,20 +112,60 @@ final class ModdedCommandSuggestions {
     }
 
     static CompletableFuture<Suggestions> suggestStructureKeys(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
-        ModdedCommandFeedback.tab(context.getSource());
+        CommandSourceStack source = context.getSource();
+        ModdedCommandFeedback.tab(source);
         try {
-            Engine engine = IrisModdedCommands.engineFor(context.getSource().getLevel());
-            Collection<String> irisKeys = engine == null ? List.of() : IrisStructureLocator.placedKeys(engine);
-            Registry<Structure> registry = context.getSource().getServer().registryAccess().lookupOrThrow(Registries.STRUCTURE);
-            List<String> nativeKeys = new ArrayList<>(registry.keySet().size());
-            for (Identifier identifier : registry.keySet()) {
-                nativeKeys.add(identifier.toString());
+            ServerLevel level = source.getLevel();
+            Engine engine = IrisModdedCommands.engineFor(level);
+            if (engine == null) {
+                return builder.buildFuture();
             }
-            return SharedSuggestionProvider.suggest(combineStructureKeys(irisKeys, nativeKeys), builder);
+            boolean nativeGenerationEnabled =
+                    source.getServer().getWorldGenSettings().options().generateStructures();
+            Collection<String> irisKeys = IrisStructureLocator.locatableEditableKeys(engine);
+            Set<String> reachableNativeKeys = StructureReachability.reachableKeys(engine);
+            Registry<Structure> registry = source.getServer().registryAccess().lookupOrThrow(Registries.STRUCTURE);
+            List<String> nativeKeys = new ArrayList<>(registry.keySet().size());
+            Set<String> registeredKeys = new HashSet<>(registry.keySet().size());
+            for (Identifier identifier : registry.keySet()) {
+                String key = identifier.toString();
+                registeredKeys.add(normalizeKey(key));
+                IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine, key, false);
+                boolean nativePlacement = IrisStructureLocator.hasNativePlacement(engine, key);
+                boolean locatableNativePlacement = nativePlacement
+                        && IrisStructureLocator.hasLocatableNativePlacement(engine, key);
+                boolean locatableEditableReplacement = !nativePlacement
+                        && decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS
+                        && IrisStructureLocator.hasLocatableEditablePlacement(engine, key);
+                if (isEligibleRegisteredStructure(decision, nativePlacement,
+                        locatableNativePlacement, locatableEditableReplacement,
+                        reachableNativeKeys.contains(normalizeKey(key)), nativeGenerationEnabled)) {
+                    nativeKeys.add(key);
+                }
+            }
+            Collection<String> unregisteredIrisKeys = eligibleUnregisteredEditableKeys(
+                    irisKeys, registeredKeys,
+                    (String candidate) -> IrisStructureLocator.hasNativePlacement(engine, candidate));
+            return SharedSuggestionProvider.suggest(
+                    combineStructureKeys(unregisteredIrisKeys, nativeKeys), builder);
         } catch (Throwable e) {
-            warnTabFailure("structure keys", context.getSource(), e);
+            warnTabFailure("structure keys", source, e);
         }
         return builder.buildFuture();
+    }
+
+    static boolean isEligibleRegisteredStructure(IrisNativeStructureDecision decision,
+                                                 boolean nativePlacement,
+                                                 boolean locatableNativePlacement,
+                                                 boolean locatableEditableReplacement,
+                                                 boolean reachable,
+                                                 boolean nativeGenerationEnabled) {
+        if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            return locatableEditableReplacement
+                    || nativeGenerationEnabled && nativePlacement && locatableNativePlacement;
+        }
+        return nativeGenerationEnabled && decision.generate()
+                && (reachable || nativePlacement && locatableNativePlacement);
     }
 
     static void warnTabFailure(String suggestion, CommandSourceStack source, Throwable error) {
@@ -142,10 +191,38 @@ final class ModdedCommandSuggestions {
     }
 
     static List<String> combineStructureKeys(Collection<String> irisKeys, Collection<String> nativeKeys) {
-        Set<String> combined = new TreeSet<>();
-        combined.addAll(irisKeys);
-        combined.addAll(nativeKeys);
-        return List.copyOf(combined);
+        Map<String, String> combined = new TreeMap<>();
+        addStructureKeys(combined, irisKeys);
+        addStructureKeys(combined, nativeKeys);
+        return List.copyOf(combined.values());
+    }
+
+    static List<String> eligibleUnregisteredEditableKeys(
+            Collection<String> irisKeys, Set<String> normalizedRegisteredKeys,
+            Predicate<String> nativePlacement) {
+        List<String> filtered = new ArrayList<>(irisKeys.size());
+        for (String key : irisKeys) {
+            String normalizedKey = normalizeKey(key);
+            if (!normalizedKey.isEmpty()
+                    && !normalizedRegisteredKeys.contains(normalizedKey)
+                    && !nativePlacement.test(key)) {
+                filtered.add(key.trim());
+            }
+        }
+        return List.copyOf(filtered);
+    }
+
+    private static void addStructureKeys(Map<String, String> combined, Collection<String> keys) {
+        for (String key : keys) {
+            String normalizedKey = normalizeKey(key);
+            if (!normalizedKey.isEmpty()) {
+                combined.putIfAbsent(normalizedKey, key.trim());
+            }
+        }
+    }
+
+    static String normalizeKey(String key) {
+        return key == null ? "" : key.trim().toLowerCase(Locale.ROOT);
     }
 
     private static CompletableFuture<Suggestions> suggestPackNames(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {

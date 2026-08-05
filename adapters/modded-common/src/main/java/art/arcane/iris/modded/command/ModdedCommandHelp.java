@@ -54,6 +54,9 @@ import static art.arcane.iris.modded.command.ModdedCommandFeedback.USAGE_ICON;
 final class ModdedCommandHelp {
     private static final int PAGE_SIZE = 17;
     private static final int PAGE_BUTTON_WIDTH = 10;
+    private static final TextKey COMMAND_UNREGISTERED = TextKey.of(
+            "iris.modded.help.entry.command.unregistered",
+            "Print every structure excluded from goto completion and its exact reason to the server console");
     private static final Map<String, List<Entry>> SECTIONS = new LinkedHashMap<>();
 
     static {
@@ -98,6 +101,7 @@ final class ModdedCommandHelp {
                 Entry.command("biome", "<key>", ModdedHelpMessages.COMMAND_BIOME_FIND_AN_IRIS_BIOME),
                 Entry.command("region", "<key>", ModdedHelpMessages.COMMAND_REGION_FIND_AN_IRIS_REGION),
                 Entry.command("object", "<key>", ModdedHelpMessages.COMMAND_OBJECT_FIND_AN_OBJECT_PLACEMENT),
+                Entry.command("unregistered", "", COMMAND_UNREGISTERED),
                 Entry.command("structure", "<key>", ModdedHelpMessages.COMMAND_STRUCTURE_FIND_AN_IRIS_PLACED_OR_NATIVE_DATAPACK_STRUCTURE),
                 Entry.command("poi", "<type>", ModdedHelpMessages.COMMAND_POI_FIND_A_SUPPORTED_POINT_OF_INTEREST)
         ));

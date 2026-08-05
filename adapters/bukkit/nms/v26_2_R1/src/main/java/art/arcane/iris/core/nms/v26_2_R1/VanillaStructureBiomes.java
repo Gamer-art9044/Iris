@@ -1,5 +1,6 @@
 package art.arcane.iris.core.nms.v26_2_R1;
 
+import art.arcane.iris.nativegen.NativeStructureGenerationKeys;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistryAccess;
@@ -12,7 +13,6 @@ import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.levelgen.structure.Structure;
 
 import java.util.LinkedHashSet;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -74,18 +74,7 @@ final class VanillaStructureBiomes {
         if (level == null) {
             throw new IllegalStateException("Minecraft server level is unavailable");
         }
-        Set<String> reachable = new LinkedHashSet<>();
         Set<String> possible = possibleBiomeKeys(source);
-        Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
-        for (Map.Entry<ResourceKey<Structure>, Structure> entry : registry.entrySet()) {
-            for (Holder<Biome> holder : entry.getValue().biomes()) {
-                Optional<ResourceKey<Biome>> key = holder.unwrapKey();
-                if (key.isPresent() && possible.contains(key.get().identifier().toString())) {
-                    reachable.add(entry.getKey().identifier().toString());
-                    break;
-                }
-            }
-        }
-        return reachable;
+        return NativeStructureGenerationKeys.reachable(level, possible);
     }
 }

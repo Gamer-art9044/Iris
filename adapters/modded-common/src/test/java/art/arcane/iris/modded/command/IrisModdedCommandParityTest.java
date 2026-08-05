@@ -39,6 +39,7 @@ public class IrisModdedCommandParityTest {
         child(iris, "height");
         child(iris, "worlds");
         child(iris, "accesslist");
+        child(child(iris, "goto"), "unregistered");
 
         CommandNode<CommandSourceStack> edit = child(iris, "edit");
         child(edit, "b");
@@ -75,6 +76,7 @@ public class IrisModdedCommandParityTest {
         assertTrue(ModdedCommandHelp.documents("studio", "pkg"));
         assertTrue(ModdedCommandHelp.documents("object", "we"));
         assertTrue(ModdedCommandHelp.documents("world", "mainworld"));
+        assertTrue(ModdedCommandHelp.documents("goto", "unregistered"));
     }
 
     @Test

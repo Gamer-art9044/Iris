@@ -19,6 +19,7 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.nativegen.NativeStructureGenerationException;
+import art.arcane.iris.nativegen.NativeStructureGenerationKeys;
 import art.arcane.iris.nativegen.NativeStructureFactory;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformStructureHooks;
@@ -225,22 +226,15 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
 
     @Override
     public List<String> reachableStructureKeys(PlatformWorld world) {
-        List<String> keys = new ArrayList<>();
         ServerLevel level = requireLevel(world, "resolve reachable structures");
         try {
             BiomeSource source = level.getChunkSource().getGenerator().getBiomeSource();
             Set<String> possibleBiomes = possibleBiomeKeys(source);
-            Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
-            for (Map.Entry<ResourceKey<Structure>, Structure> entry : registry.entrySet()) {
-                if (hasPossibleBiome(entry.getValue(), possibleBiomes)) {
-                    keys.add(entry.getKey().identifier().toString());
-                }
-            }
+            return new ArrayList<>(NativeStructureGenerationKeys.reachable(level, possibleBiomes));
         } catch (RuntimeException error) {
             throw new IllegalStateException("Iris failed to resolve reachable structures for modded level '"
                     + level.dimension().identifier() + "'", error);
         }
-        return keys;
     }
 
     @Override
@@ -399,16 +393,6 @@ public final class ModdedStructureHooks implements PlatformStructureHooks {
             throw new IllegalStateException("Minecraft biome source exposes no registered possible biomes");
         }
         return keys;
-    }
-
-    private static boolean hasPossibleBiome(Structure structure, Set<String> possibleBiomeKeys) {
-        for (Holder<Biome> holder : structure.biomes()) {
-            Optional<ResourceKey<Biome>> key = holder.unwrapKey();
-            if (key.isPresent() && possibleBiomeKeys.contains(key.get().identifier().toString())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static ServerLevel level(PlatformWorld world) {

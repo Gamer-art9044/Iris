@@ -69,9 +69,14 @@ public final class IrisStructureLocator {
     private static final Pattern NAMESPACED_RESOURCE_KEY = Pattern.compile("[a-z0-9_.-]+:[a-z0-9/._-]+");
 
     private static final Cache<Engine, PlacementIndex> INDEX_CACHE = Caffeine.newBuilder().weakKeys().build();
+    private static final Cache<Engine, LocatableIndex> LOCATABLE_INDEX_CACHE =
+            Caffeine.newBuilder().weakKeys().build();
     private static final PlacementIndex EMPTY_INDEX = new PlacementIndex(
             Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), Collections.emptySet(),
             Collections.emptySet(), Collections.emptyList());
+    private static final LocatableIndex EMPTY_LOCATABLE_INDEX = new LocatableIndex(
+            Collections.emptySet(), Collections.emptySet(), Collections.emptySet(),
+            Collections.emptySet(), Collections.emptySet(), Collections.emptySet());
     private static final LocateResult NOT_FOUND_RESULT = new LocateResult(LocateStatus.NOT_FOUND, 0, 0, 0);
     private static final LocateResult SEARCH_LIMIT_RESULT =
             new LocateResult(LocateStatus.SEARCH_LIMIT_REACHED, 0, 0, 0);
@@ -95,6 +100,39 @@ public final class IrisStructureLocator {
         String normalizedKey = normalize(key);
         return placementIndex.normalizedLoadKeys.contains(normalizedKey)
                 || placementIndex.vanillaAliases.contains(normalizedKey);
+    }
+
+    public static boolean hasLocatablePlacement(Engine engine, String key) {
+        if (engine == null || key == null || key.isBlank()) {
+            return false;
+        }
+        return locatableIndex(engine).normalizedKeys().contains(normalize(key));
+    }
+
+    public static boolean hasLocatableEditablePlacement(Engine engine, String key) {
+        if (engine == null || key == null || key.isBlank()) {
+            return false;
+        }
+        return locatableIndex(engine).normalizedEditableKeys().contains(normalize(key));
+    }
+
+    public static boolean hasLocatableNativePlacement(Engine engine, String key) {
+        if (engine == null || key == null || key.isBlank()) {
+            return false;
+        }
+        return locatableIndex(engine).normalizedNativeKeys().contains(normalize(key));
+    }
+
+    public static Set<String> locatableKeys(Engine engine) {
+        return locatableIndex(engine).keys();
+    }
+
+    public static Set<String> locatableEditableKeys(Engine engine) {
+        return locatableIndex(engine).editableKeys();
+    }
+
+    public static Set<String> locatableNativeKeys(Engine engine) {
+        return locatableIndex(engine).nativeKeys();
     }
 
     public static boolean hasNativePlacement(Engine engine, String key) {
@@ -126,6 +164,7 @@ public final class IrisStructureLocator {
     public static void invalidate(Engine engine) {
         if (engine != null) {
             INDEX_CACHE.invalidate(engine);
+            LOCATABLE_INDEX_CACHE.invalidate(engine);
         }
     }
 
@@ -796,7 +835,8 @@ public final class IrisStructureLocator {
         List<IrisStructurePlacement> concentricRings = new ArrayList<>();
         boolean hasDensity = false;
         for (IrisStructurePlacement placement : index(engine).placements) {
-            if (!matches(placement, key, engine.getData())) {
+            if (!isSearchablePlacement(engine, placement)
+                    || !matches(placement, key, engine.getData())) {
                 continue;
             }
             if (placement.getDistribution() == StructureDistribution.RANDOM_SPREAD) {
@@ -805,7 +845,7 @@ public final class IrisStructureLocator {
                         StructurePlacementGrid.placementSalt(placement)));
             } else if (placement.getDistribution() == StructureDistribution.CONCENTRIC_RINGS) {
                 concentricRings.add(placement);
-            } else if (isSearchableDensityPlacement(engine, placement)) {
+            } else if (placement.getDistribution() == StructureDistribution.DENSITY) {
                 hasDensity = true;
             }
         }
@@ -813,8 +853,18 @@ public final class IrisStructureLocator {
     }
 
     static boolean isSearchableDensityPlacement(Engine engine, IrisStructurePlacement placement) {
-        if (engine == null || placement == null || placement.getDistribution() != StructureDistribution.DENSITY
-                || !(placement.getDensity() > 0.0) || engine.getHeight() <= 0) {
+        return placement != null
+                && placement.getDistribution() == StructureDistribution.DENSITY
+                && isSearchablePlacement(engine, placement);
+    }
+
+    static boolean isSearchablePlacement(Engine engine, IrisStructurePlacement placement) {
+        if (engine == null || placement == null || placement.getDistribution() == null
+                || engine.getHeight() <= 0) {
+            return false;
+        }
+        if (placement.getDistribution() == StructureDistribution.DENSITY
+                && !(placement.getDensity() > 0.0)) {
             return false;
         }
         long worldMin = (long) engine.getMinHeight() + (placement.isUnderground() ? 1L : 0L);
@@ -950,6 +1000,64 @@ public final class IrisStructureLocator {
             throw new IllegalStateException("Iris structure index requires a fully bound engine and dimension");
         }
         return INDEX_CACHE.get(engine, ignored -> build(engine));
+    }
+
+    private static LocatableIndex locatableIndex(Engine engine) {
+        if (engine == null) {
+            return EMPTY_LOCATABLE_INDEX;
+        }
+        return LOCATABLE_INDEX_CACHE.get(engine, ignored -> buildLocatableIndex(engine));
+    }
+
+    private static LocatableIndex buildLocatableIndex(Engine engine) {
+        IrisData data = engine.getData();
+        Set<String> keys = new LinkedHashSet<>();
+        Set<String> normalizedKeys = new LinkedHashSet<>();
+        Set<String> editableKeys = new LinkedHashSet<>();
+        Set<String> normalizedEditableKeys = new LinkedHashSet<>();
+        Set<String> nativeKeys = new LinkedHashSet<>();
+        Set<String> normalizedNativeKeys = new LinkedHashSet<>();
+        for (IrisStructurePlacement placement : index(engine).placements) {
+            if (!isSearchablePlacement(engine, placement)) {
+                continue;
+            }
+            if (placement.hasNativeStructures()) {
+                for (IrisNativeStructure source : placement.getNativeStructures()) {
+                    addLocatableKey(source.getStructure(), keys, normalizedKeys);
+                    addLocatableKey(source.getStructure(), nativeKeys, normalizedNativeKeys);
+                }
+                continue;
+            }
+            for (String structureKey : placement.getStructures()) {
+                IrisStructure structure = data.load(IrisStructure.class, structureKey, false);
+                if (structure == null) {
+                    throw new IllegalStateException(
+                            "Iris structure placement references missing structure '" + structureKey + "'");
+                }
+                addLocatableKey(structureKey, keys, normalizedKeys);
+                addLocatableKey(structureKey, editableKeys, normalizedEditableKeys);
+                addLocatableKey(structure.getLoadKey(), keys, normalizedKeys);
+                addLocatableKey(structure.getLoadKey(), editableKeys, normalizedEditableKeys);
+                addLocatableKey(structure.getVanillaSource(), keys, normalizedKeys);
+                addLocatableKey(structure.getVanillaSource(), editableKeys, normalizedEditableKeys);
+            }
+        }
+        return new LocatableIndex(
+                Collections.unmodifiableSet(keys),
+                Collections.unmodifiableSet(normalizedKeys),
+                Collections.unmodifiableSet(editableKeys),
+                Collections.unmodifiableSet(normalizedEditableKeys),
+                Collections.unmodifiableSet(nativeKeys),
+                Collections.unmodifiableSet(normalizedNativeKeys));
+    }
+
+    private static void addLocatableKey(String key, Set<String> keys, Set<String> normalizedKeys) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+        String trimmedKey = key.trim();
+        keys.add(trimmedKey);
+        normalizedKeys.add(normalize(trimmedKey));
     }
 
     private static PlacementIndex build(Engine engine) {
@@ -1110,6 +1218,11 @@ public final class IrisStructureLocator {
 
     private record PlacementCatalog(List<RandomSpreadParameters> randomSpread,
                                     List<IrisStructurePlacement> concentricRings, boolean hasDensity) {
+    }
+
+    private record LocatableIndex(Set<String> keys, Set<String> normalizedKeys,
+                                  Set<String> editableKeys, Set<String> normalizedEditableKeys,
+                                  Set<String> nativeKeys, Set<String> normalizedNativeKeys) {
     }
 
     private record ResolvedStart(int originX, int baseY, int originZ) {

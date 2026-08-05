@@ -18,42 +18,57 @@
 
 package art.arcane.iris.util.common.director.specialhandlers;
 
-import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
-import art.arcane.volmlib.util.collection.KList;
+import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
+import art.arcane.iris.engine.framework.StructureReachability;
+import art.arcane.iris.engine.object.IrisNativeStructureDecision;
+import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformStructureHooks;
 import art.arcane.iris.util.common.director.DirectorParameterHandler;
+import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.director.exceptions.DirectorParsingException;
+import org.bukkit.entity.Player;
 
-import java.util.stream.Collectors;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 public class StructureHandler implements DirectorParameterHandler<String> {
     @Override
     public KList<String> getPossibilities() {
-        KList<String> keys = new KList<>();
-
-        try {
-            for (String k : INMS.get().getStructureKeys()) {
-                if (k != null && !k.isEmpty()) {
-                    keys.addIfMissing(k);
-                }
-            }
-        } catch (Throwable ignored) {
+        Engine activeEngine = engine();
+        if (activeEngine == null) {
+            return new KList<>();
         }
 
-        try {
-            Engine e = engine();
-            if (e != null) {
-                for (String k : IrisStructureLocator.placedKeys(e)) {
-                    if (k != null && !k.isEmpty()) {
-                        keys.addIfMissing(k);
-                    }
-                }
+        boolean nativeGenerationEnabled = nativeStructureGenerationEnabled();
+        PlatformStructureHooks structureHooks = IrisPlatforms.get().structureHooks();
+        Map<String, String> registeredKeys = distinctKeys(structureHooks.structureKeys());
+        Set<String> reachableKeys = StructureReachability.reachableKeys(activeEngine);
+        Map<String, String> suggestions = new LinkedHashMap<>();
+
+        for (Map.Entry<String, String> entry : registeredKeys.entrySet()) {
+            if (isEligibleRegisteredKey(activeEngine, entry.getValue(), entry.getKey(), reachableKeys,
+                    nativeGenerationEnabled)) {
+                suggestions.put(entry.getKey(), entry.getValue());
             }
-        } catch (Throwable ignored) {
         }
 
-        return keys;
+        Set<String> locatableKeys = IrisStructureLocator.locatableEditableKeys(activeEngine);
+        for (String key : locatableKeys) {
+            String normalizedKey = normalizeKey(key);
+            if (!normalizedKey.isEmpty()
+                    && !registeredKeys.containsKey(normalizedKey)
+                    && !IrisStructureLocator.hasNativePlacement(activeEngine, key)) {
+                suggestions.putIfAbsent(normalizedKey, key.trim());
+            }
+        }
+
+        return new KList<>(suggestions.values());
     }
 
     @Override
@@ -64,15 +79,12 @@ public class StructureHandler implements DirectorParameterHandler<String> {
     @Override
     public String parse(String in, boolean force) throws DirectorParsingException {
         KList<String> options = getPossibilities(in);
-
-        if (options.isEmpty()) {
-            return in;
+        for (String option : options) {
+            if (option.equalsIgnoreCase(in)) {
+                return option;
+            }
         }
-        try {
-            return options.stream().filter((i) -> toString(i).equalsIgnoreCase(in)).collect(Collectors.toList()).get(0);
-        } catch (Throwable e) {
-            return in;
-        }
+        return in;
     }
 
     @Override
@@ -85,5 +97,51 @@ public class StructureHandler implements DirectorParameterHandler<String> {
         String f = getPossibilities().getRandom();
 
         return f == null ? "minecraft_ancient_city" : f;
+    }
+
+    protected boolean nativeStructureGenerationEnabled() {
+        Player activePlayer = player();
+        return activePlayer != null && activePlayer.getWorld().canGenerateStructures();
+    }
+
+    private static Map<String, String> distinctKeys(List<String> keys) {
+        Map<String, String> distinct = new LinkedHashMap<>();
+        for (String key : keys) {
+            String normalizedKey = normalizeKey(key);
+            if (!normalizedKey.isEmpty()) {
+                distinct.putIfAbsent(normalizedKey, key.trim());
+            }
+        }
+        return distinct;
+    }
+
+    private static boolean isEligibleRegisteredKey(Engine engine, String key, String normalizedKey,
+                                                   Set<String> reachableKeys, boolean nativeGenerationEnabled) {
+        IrisNativeStructureDecision decision = NativeStructureGenerationPolicy.resolve(engine, key, false);
+        boolean nativePlacement = IrisStructureLocator.hasNativePlacement(engine, key);
+        boolean locatableNativePlacement = nativePlacement
+                && IrisStructureLocator.hasLocatableNativePlacement(engine, key);
+        boolean locatableEditableReplacement = !nativePlacement
+                && decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS
+                && IrisStructureLocator.hasLocatableEditablePlacement(engine, key);
+        return isEligibleRegisteredKey(
+                decision, nativePlacement, locatableNativePlacement, locatableEditableReplacement,
+                reachableKeys.contains(normalizedKey), nativeGenerationEnabled);
+    }
+
+    static boolean isEligibleRegisteredKey(IrisNativeStructureDecision decision, boolean nativePlacement,
+                                           boolean locatableNativePlacement,
+                                           boolean locatableEditableReplacement,
+                                           boolean reachable, boolean nativeGenerationEnabled) {
+        if (decision.status() == NativeStructureGenerationStatus.REPLACED_BY_IRIS) {
+            return locatableEditableReplacement
+                    || nativeGenerationEnabled && nativePlacement && locatableNativePlacement;
+        }
+        return nativeGenerationEnabled && decision.generate()
+                && (reachable || (nativePlacement && locatableNativePlacement));
+    }
+
+    private static String normalizeKey(String key) {
+        return key == null ? "" : key.trim().toLowerCase(Locale.ROOT);
     }
 }

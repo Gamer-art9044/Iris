@@ -78,6 +78,70 @@ public class IrisStructureLocatorContractTest {
     }
 
     @Test
+    public void locatablePlacementsExcludeDisabledDensityConfigurations() {
+        Engine disabled = densityEngine(0.0, false, -64, 384, -2032, 2032);
+        Engine active = densityEngine(0.01, false, -64, 384, -2032, 2032);
+
+        assertTrue(IrisStructureLocator.isPlaced(disabled, "test:density"));
+        assertFalse(IrisStructureLocator.hasLocatablePlacement(disabled, "test:density"));
+        assertTrue(IrisStructureLocator.locatableKeys(disabled).isEmpty());
+        assertTrue(IrisStructureLocator.hasLocatablePlacement(active, "test:density"));
+        assertTrue(IrisStructureLocator.locatableKeys(active).contains("test:density"));
+        assertFalse(IrisStructureLocator.hasLocatablePlacement(null, "test:density"));
+        assertTrue(IrisStructureLocator.locatableKeys(null).isEmpty());
+    }
+
+    @Test
+    public void locatablePlacementsExcludeEveryDistributionOutsideWorldHeight() {
+        Engine randomSpread = densityEngine(1.0, false, -64, 384, 400, 500);
+        randomSpread.getDimension().getStructures().get(0)
+                .setDistribution(StructureDistribution.RANDOM_SPREAD);
+        Engine concentricRings = densityEngine(1.0, false, -64, 384, 400, 500);
+        concentricRings.getDimension().getStructures().get(0)
+                .setDistribution(StructureDistribution.CONCENTRIC_RINGS);
+
+        assertFalse(IrisStructureLocator.hasLocatablePlacement(randomSpread, "test:density"));
+        assertFalse(IrisStructureLocator.hasLocatablePlacement(concentricRings, "test:density"));
+    }
+
+    @Test
+    public void locatableIndexIncludesAliasesAndSeparatesEditableFromNativePlacements() {
+        IrisData data = mock(IrisData.class);
+        IrisStructure structure = new IrisStructure();
+        structure.setLoadKey("test:city");
+        structure.setVanillaSource("source:city");
+        when(data.load(IrisStructure.class, "test:city_definition", false)).thenReturn(structure);
+
+        IrisStructurePlacement editable = new IrisStructurePlacement();
+        editable.getStructures().add("test:city_definition");
+        IrisStructurePlacement nativePlacement = new IrisStructurePlacement();
+        nativePlacement.getNativeStructures().add(new IrisNativeStructure()
+                .setStructure("source:native_city"));
+        IrisDimension dimension = mock(IrisDimension.class);
+        KList<IrisStructurePlacement> placements = new KList<>();
+        placements.add(editable);
+        placements.add(nativePlacement);
+        Engine engine = mock(Engine.class);
+        when(engine.getData()).thenReturn(data);
+        when(engine.getDimension()).thenReturn(dimension);
+        when(engine.getMinHeight()).thenReturn(-64);
+        when(engine.getHeight()).thenReturn(384);
+        when(dimension.getStructures()).thenReturn(placements);
+        when(dimension.getAllRegions(engine)).thenReturn(new KList<>());
+        when(dimension.getReachableBiomes(engine)).thenReturn(new KList<>());
+
+        assertEquals(Set.of("test:city_definition", "test:city", "source:city", "source:native_city"),
+                IrisStructureLocator.locatableKeys(engine));
+        assertEquals(Set.of("test:city_definition", "test:city", "source:city"),
+                IrisStructureLocator.locatableEditableKeys(engine));
+        assertEquals(Set.of("source:native_city"), IrisStructureLocator.locatableNativeKeys(engine));
+        assertTrue(IrisStructureLocator.hasLocatableEditablePlacement(engine, "SOURCE:CITY"));
+        assertFalse(IrisStructureLocator.hasLocatableEditablePlacement(engine, "source:native_city"));
+        assertTrue(IrisStructureLocator.hasLocatableNativePlacement(engine, "SOURCE:NATIVE_CITY"));
+        assertFalse(IrisStructureLocator.hasLocatableNativePlacement(engine, "source:city"));
+    }
+
+    @Test
     public void suppressesVanillaIsFalseForNullEngine() {
         assertFalse(IrisStructureLocator.suppressesVanilla(null, "minecraft:ancient_city"));
     }

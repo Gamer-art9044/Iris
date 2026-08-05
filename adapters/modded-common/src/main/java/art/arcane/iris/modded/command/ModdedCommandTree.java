@@ -242,6 +242,9 @@ final class ModdedCommandTree {
                 .then(Commands.literal("object")
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.OBJECT_KEYS)
                                 .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoObject(context.getSource(), StringArgumentType.getString(context, "key")))))
+                .then(Commands.literal("unregistered")
+                        .executes((CommandContext<CommandSourceStack> context) ->
+                                ModdedUnregisteredStructures.print(context.getSource())))
                 .then(Commands.literal("structure")
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.STRUCTURE_KEYS)
                                 .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoStructure(context.getSource(), StringArgumentType.getString(context, "key")))))

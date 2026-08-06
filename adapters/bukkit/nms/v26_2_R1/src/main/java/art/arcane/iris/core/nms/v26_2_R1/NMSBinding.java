@@ -13,6 +13,8 @@ import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.NativeStructureVolume;
+import art.arcane.iris.nativegen.NativeStructureVolumeIndex;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.nativegen.NativeStructureFactory;
@@ -792,6 +794,11 @@ public class NMSBinding implements INMSBinding {
     @Override
     public boolean supportsStructureCapture() {
         return true;
+    }
+
+    @Override
+    public KList<NativeStructureVolume> nativeStructureVolumes(Engine engine, int minX, int minZ, int maxX, int maxZ) {
+        return NativeStructureVolumeIndex.volumes(engine, minX, minZ, maxX, maxZ);
     }
 
     @Override

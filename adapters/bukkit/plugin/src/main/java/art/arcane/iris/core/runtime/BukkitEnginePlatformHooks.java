@@ -23,6 +23,7 @@ import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.events.IrisEngineHotloadEvent;
 import art.arcane.iris.core.gui.PregeneratorJob;
+import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.project.IrisProject;
 import art.arcane.iris.core.project.IrisCodeWorkspace;
 import art.arcane.iris.core.service.IrisApiEventSVC;
@@ -31,15 +32,22 @@ import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineMode;
 import art.arcane.iris.engine.framework.EnginePlatformHooks;
+import art.arcane.iris.engine.framework.NativeStructureVolume;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.common.scheduling.J;
+import art.arcane.volmlib.util.collection.KList;
 import org.bukkit.World;
 
 public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
+    @Override
+    public KList<NativeStructureVolume> nativeStructureVolumes(Engine engine, int minX, int minZ, int maxX, int maxZ) {
+        return INMS.get().nativeStructureVolumes(engine, minX, minZ, maxX, maxZ);
+    }
+
     @Override
     public void refreshWorkspace(Engine engine) {
         new IrisCodeWorkspace(new IrisProject(engine.getData().getDataFolder())).updateWorkspace();

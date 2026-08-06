@@ -23,6 +23,7 @@ import art.arcane.iris.nativegen.NativeStructureTerrainIntegrator;
 import art.arcane.iris.nativegen.NativeStructureVegetationClearer;
 import art.arcane.iris.nativegen.NativeStructureVerticalPlacer;
 import art.arcane.iris.nativegen.NativeStructureVanillaLocator;
+import art.arcane.iris.nativegen.NativeStructureVolumeIndex;
 import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.IrisCustomData;
@@ -87,6 +88,7 @@ import org.bukkit.block.data.BlockData;
 import org.spigotmc.SpigotWorldConfig;
 
 import javax.annotation.Nullable;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -130,6 +132,24 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         this.runtimeMinY = level.getMinY();
         this.runtimeHeight = level.getHeight();
         this.runtimeSeaLevel = runtimeMinY + engine.getDimension().getFluidHeight();
+        installNativeStructureVolumeIndex(level);
+    }
+
+    private void installNativeStructureVolumeIndex(ServerLevel level) {
+        WeakReference<ServerLevel> levelReference = new WeakReference<>(level);
+        WeakReference<ChunkGenerator> generatorReference = new WeakReference<>(this);
+        WeakReference<BiomeSource> biomeSourceReference = new WeakReference<>(customBiomeSource);
+        NativeStructureVolumeIndex.install(engine, new NativeStructureVolumeIndex.Context(
+                level.registryAccess(),
+                level.getServer().getStructureManager(),
+                level.dimension(),
+                LevelHeightAccessor.create(runtimeMinY, runtimeHeight),
+                generatorReference::get,
+                biomeSourceReference::get,
+                () -> {
+                    ServerLevel active = levelReference.get();
+                    return active == null ? null : active.getChunkSource().getGeneratorState();
+                }));
     }
 
     @Override

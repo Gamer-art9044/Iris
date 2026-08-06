@@ -31,6 +31,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -2555,6 +2556,111 @@ public class DatapackIngestServiceTest {
         assertTrue(first.isDirectory());
         assertTrue(second.isDirectory());
         assertFalse(new File(staging, entry.id).exists());
+    }
+
+    @Test
+    public void reapplyRecordsStagingAndInstallMetadataForTheNextPass() throws Exception {
+        ReapplyFixture fixture = reapplyFixture("reapply-record");
+
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+
+        assertTrue(new File(fixture.target(), ".iris-managed.json").isFile());
+        JsonObject recorded = manifestEntry(fixture.root());
+        assertFalse(recorded.get("stagingMetadata").getAsString().isBlank());
+        assertTrue(recorded.getAsJsonObject("installMetadata")
+                .has(fixture.target().toPath().toAbsolutePath().normalize().toString()));
+    }
+
+    @Test
+    public void unchangedStagingAndTargetSkipContentHashingOnReapply() throws Exception {
+        ReapplyFixture fixture = reapplyFixture("reapply-shortcircuit");
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+
+        Path staged = fixture.staging().toPath().resolve("value.txt");
+        FileTime stamp = Files.getLastModifiedTime(staged);
+        Files.writeString(staged, "wxyz", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(staged, stamp);
+
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+
+        assertEquals("abcd", Files.readString(
+                new File(fixture.target(), "value.txt").toPath(), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void changedStagingMetadataForcesFullReapplyVerification() throws Exception {
+        ReapplyFixture fixture = reapplyFixture("reapply-staging-change");
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+
+        Path staged = fixture.staging().toPath().resolve("value.txt");
+        FileTime stamp = Files.getLastModifiedTime(staged);
+        Files.writeString(staged, "wxyz", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(staged, FileTime.fromMillis(stamp.toMillis() + 5000L));
+
+        assertFalse(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+    }
+
+    @Test
+    public void changedInstallTargetIsRepairedDespiteRecordedMetadata() throws Exception {
+        ReapplyFixture fixture = reapplyFixture("reapply-target-change");
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+
+        Path installed = fixture.target().toPath().resolve("value.txt");
+        Files.writeString(installed, "zzzz", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(installed, FileTime.fromMillis(
+                Files.getLastModifiedTime(installed).toMillis() + 5000L));
+
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+
+        assertEquals("abcd", Files.readString(installed, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void flippedOverrideStrippingForcesFullReapplyVerification() throws Exception {
+        ReapplyFixture fixture = reapplyFixture("reapply-strip-change");
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+        assertFalse(new File(fixture.target(), ".iris-overrides-stripped").exists());
+
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), true));
+
+        assertTrue(new File(fixture.target(), ".iris-overrides-stripped").isFile());
+    }
+
+    private ReapplyFixture reapplyFixture(String name) throws Exception {
+        File root = temporaryFolder.newFolder(name + "-root");
+        DatapackIngestService.Entry entry = entry("managed", "v1", "1", "sha");
+        File stagingRoot = new File(root, "staging");
+        File staging = new File(stagingRoot, entry.id);
+        writeManagedDatapack(staging, entry, "abcd");
+        writeManifest(root, entry);
+        File world = temporaryFolder.newFolder(name + "-world");
+        KList<File> worlds = new KList<>();
+        worlds.add(world);
+        return new ReapplyFixture(root, stagingRoot, staging, worlds, new File(world, entry.id));
+    }
+
+    private JsonObject manifestEntry(File root) throws Exception {
+        JsonObject manifest = JsonParser.parseString(Files.readString(
+                new File(root, "manifest.json").toPath(), StandardCharsets.UTF_8)).getAsJsonObject();
+        return manifest.getAsJsonArray("entries").get(0).getAsJsonObject();
+    }
+
+    private record ReapplyFixture(
+            File root,
+            File stagingRoot,
+            File staging,
+            KList<File> worlds,
+            File target
+    ) {
     }
 
     private LegacyStagingFixture legacyStagingFixture(

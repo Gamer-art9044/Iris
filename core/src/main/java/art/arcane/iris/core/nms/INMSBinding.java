@@ -26,6 +26,7 @@ import art.arcane.iris.core.nms.container.BlockProperty;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.NativeStructureVolume;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformStructureHooks.JigsawSourceMetadata;
@@ -141,6 +142,14 @@ public interface INMSBinding {
 
     default boolean supportsStructureCapture() {
         return false;
+    }
+
+    /**
+     * World-space piece bounds of every native structure that will generate inside the given XZ rect. Bindings
+     * without native structure support answer with no volumes, which leaves the object veto inert.
+     */
+    default KList<NativeStructureVolume> nativeStructureVolumes(Engine engine, int minX, int minZ, int maxX, int maxZ) {
+        return NativeStructureVolume.NONE;
     }
 
     int getBiomeId(Biome biome);

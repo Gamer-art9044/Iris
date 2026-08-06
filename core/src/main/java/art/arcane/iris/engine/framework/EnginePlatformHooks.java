@@ -19,8 +19,17 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.volmlib.util.collection.KList;
 
 public interface EnginePlatformHooks {
+    /**
+     * World-space piece bounds of every native structure that will generate inside the given XZ rect. Platforms
+     * without native structures return no volumes, which keeps the object veto free on those platforms.
+     */
+    default KList<NativeStructureVolume> nativeStructureVolumes(Engine engine, int minX, int minZ, int maxX, int maxZ) {
+        return NativeStructureVolume.NONE;
+    }
+
     default void refreshWorkspace(Engine engine) {
     }
 

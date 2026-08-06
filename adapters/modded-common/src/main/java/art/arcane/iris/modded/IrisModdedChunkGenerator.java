@@ -350,6 +350,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         requireCompletedShutdown(engine);
         unloading = false;
         Engine bound = bindEngine(level);
+        nativeStructures.installVolumeIndex(level, bound);
         // Bind time: a feature-order cycle is reported here, once, and degrades to features-off. Non-waiting for
         // the same reason as repointAndBind: this method owns the generator monitor.
         importedFeatures.prepareWithoutWaiting(bound);

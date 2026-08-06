@@ -35,7 +35,6 @@ import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.localization.MessageArgument;
-import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 import org.dom4j.Document;
 import org.dom4j.Element;
 
@@ -43,7 +42,11 @@ import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @SuppressWarnings("ALL")
@@ -129,10 +132,7 @@ public class IrisCodeWorkspace {
         File ws = getCodeWorkspaceFile();
 
         try {
-            PrecisionStopwatch p = PrecisionStopwatch.start();
-            JSONObject j = createCodeWorkspaceConfig();
-            IO.writeAll(ws, j.toString(4));
-            p.end();
+            writeIfChanged(ws, createCodeWorkspaceConfig().toString(4));
             return true;
         } catch (Throwable e) {
             IrisLogging.reportError(e);
@@ -151,6 +151,13 @@ public class IrisCodeWorkspace {
 
     public JSONObject createCodeWorkspaceConfig() {
         return createCodeWorkspaceConfig(true);
+    }
+
+    private static void writeIfChanged(File target, String rendered) throws IOException {
+        if (target.isFile() && (rendered + "\n").equals(IO.readAll(target))) {
+            return;
+        }
+        IO.writeAll(target, rendered);
     }
 
     private JSONObject createCodeWorkspaceConfig(boolean includeSchemas) {
@@ -184,16 +191,17 @@ public class IrisCodeWorkspace {
         settings.put("[json]", jc);
         settings.put("json.maxItemsComputed", 30000);
         JSONArray schemas = new JSONArray();
+        List<JSONObject> schemaEntries = new ArrayList<>();
         IrisData dm = null;
         if (includeSchemas) {
             dm = IrisData.get(project.getPath());
             for (ResourceLoader<?> r : dm.getLoaders().v()) {
                 if (r.supportsSchemas()) {
-                    schemas.put(r.buildSchema());
+                    schemaEntries.add(r.buildSchema());
                 }
             }
 
-            for (Class<?> i : dm.resolveSnippets()) {
+            for (Class<?> i : sortedSnippets(dm.resolveSnippets())) {
                 try {
                     String snipType = i.getDeclaredAnnotation(Snippet.class).value();
                     JSONObject o = new JSONObject();
@@ -205,7 +213,7 @@ public class IrisCodeWorkspace {
 
                     o.put("fileMatch", new JSONArray(fm.toArray()));
                     o.put("url", "./.iris/schema/snippet/" + snipType + "-schema.json");
-                    schemas.put(o);
+                    schemaEntries.add(o);
                     IrisData snippetData = dm;
                     File a = new File(snippetData.getDataFolder(), ".iris/schema/snippet/" + snipType + "-schema.json");
                     J.attemptAsync(() -> {
@@ -218,6 +226,11 @@ public class IrisCodeWorkspace {
                 } catch (Throwable e) {
                     e.printStackTrace();
                 }
+            }
+
+            schemaEntries.sort(Comparator.comparing(entry -> entry.getString("url")));
+            for (JSONObject entry : schemaEntries) {
+                schemas.put(entry);
             }
         }
 
@@ -294,5 +307,11 @@ public class IrisCodeWorkspace {
             IO.write(schemasFile, doc);
         }
         return ws;
+    }
+
+    private static List<Class<?>> sortedSnippets(Set<Class<?>> snippets) {
+        List<Class<?>> sorted = new ArrayList<>(snippets);
+        sorted.sort(Comparator.comparing(Class::getName));
+        return sorted;
     }
 }

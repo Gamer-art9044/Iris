@@ -92,6 +92,15 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     EnginePlatformHooks getPlatformHooks();
 
+    /**
+     * World-space native structure piece bounds overlapping the given XZ rect. The answer is a pure function of the
+     * seed, the registries and this pack's structure policy, so it never depends on generation order.
+     */
+    default KList<NativeStructureVolume> getNativeStructureVolumes(int minX, int minZ, int maxX, int maxZ) {
+        EnginePlatformHooks hooks = getPlatformHooks();
+        return hooks == null ? NativeStructureVolume.NONE : hooks.nativeStructureVolumes(this, minX, minZ, maxX, maxZ);
+    }
+
     int getBlockUpdatesPerSecond();
 
     void printMetrics(VolmitSender sender);

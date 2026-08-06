@@ -32,7 +32,10 @@ public class WorldRuntimeControlServiceTimeLockTest {
         PluginManager pluginManager = mock(PluginManager.class);
         doReturn(pluginManager).when(server).getPluginManager();
         doReturn(Logger.getLogger("WorldRuntimeControlServiceTimeLockTest")).when(server).getLogger();
-        Bukkit.setServer(server);
+        try {
+            Bukkit.setServer(server);
+        } catch (Throwable ignored) {
+        }
     }
 
     @Test

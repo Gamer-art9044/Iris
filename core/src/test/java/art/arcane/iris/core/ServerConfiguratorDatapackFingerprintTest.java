@@ -108,6 +108,69 @@ public class ServerConfiguratorDatapackFingerprintTest {
     }
 
     @Test
+    public void computePackFingerprintIgnoresGeneratedCodeWorkspaceFiles() throws Exception {
+        File packsDir = tmp.newFolder("workspace-packs");
+        Path dimension = packsDir.toPath().resolve("overworld/dimensions/overworld.json");
+        Files.createDirectories(dimension.getParent());
+        Files.writeString(dimension, "authored", StandardCharsets.UTF_8);
+        String before = ServerConfigurator.computePackFingerprint(packsDir);
+
+        Path workspace = packsDir.toPath().resolve("overworld/overworld.code-workspace");
+        Files.writeString(workspace, "{\"folders\":[]}", StandardCharsets.UTF_8);
+
+        assertEquals("Iris-generated workspace files must not alter the fingerprint",
+                before, ServerConfigurator.computePackFingerprint(packsDir));
+
+        Files.writeString(workspace, "{\"folders\":[{\"path\":\".\"}]}", StandardCharsets.UTF_8);
+
+        assertEquals("Reordered workspace bytes must not alter the fingerprint",
+                before, ServerConfigurator.computePackFingerprint(packsDir));
+    }
+
+    @Test
+    public void resolvePackFingerprintReusesCachedContentWhileMetadataIsUnchanged() throws Exception {
+        File packsDir = tmp.newFolder("two-tier-packs");
+        Path dimension = packsDir.toPath().resolve("testpack/dimensions/overworld.json");
+        Files.createDirectories(dimension.getParent());
+        Files.writeString(dimension, "aaaa", StandardCharsets.UTF_8);
+        ServerConfigurator.PackFingerprint first =
+                ServerConfigurator.resolvePackFingerprint(packsDir, "", "");
+        assertEquals(ServerConfigurator.computePackFingerprint(packsDir), first.content());
+        assertNotEquals("", first.metadata());
+
+        FileTime originalMtime = Files.getLastModifiedTime(dimension);
+        Files.writeString(dimension, "bbbb", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(dimension, originalMtime);
+        ServerConfigurator.PackFingerprint reused =
+                ServerConfigurator.resolvePackFingerprint(packsDir, first.metadata(), first.content());
+
+        assertEquals("Unchanged metadata must reuse the cached content fingerprint",
+                first.content(), reused.content());
+
+        Files.setLastModifiedTime(dimension, FileTime.fromMillis(originalMtime.toMillis() + 5000L));
+        ServerConfigurator.PackFingerprint rehashed =
+                ServerConfigurator.resolvePackFingerprint(packsDir, first.metadata(), first.content());
+
+        assertNotEquals("Changed metadata must re-hash pack contents",
+                first.content(), rehashed.content());
+        assertEquals(ServerConfigurator.computePackFingerprint(packsDir), rehashed.content());
+    }
+
+    @Test
+    public void computePackMetadataDigestIgnoresGeneratedCodeWorkspaceFiles() throws Exception {
+        File packsDir = tmp.newFolder("metadata-workspace-packs");
+        Path dimension = packsDir.toPath().resolve("overworld/dimensions/overworld.json");
+        Files.createDirectories(dimension.getParent());
+        Files.writeString(dimension, "authored", StandardCharsets.UTF_8);
+        String before = ServerConfigurator.computePackMetadataDigest(packsDir);
+
+        Files.writeString(packsDir.toPath().resolve("overworld/overworld.code-workspace"),
+                "{\"folders\":[]}", StandardCharsets.UTF_8);
+
+        assertEquals(before, ServerConfigurator.computePackMetadataDigest(packsDir));
+    }
+
+    @Test
     public void computePackFingerprintRejectsSymbolicLinks() throws Exception {
         File packsDir = tmp.newFolder("unsafe-packs");
         Path pack = packsDir.toPath().resolve("testpack");

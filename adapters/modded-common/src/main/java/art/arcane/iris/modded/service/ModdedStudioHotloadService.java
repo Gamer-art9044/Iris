@@ -23,6 +23,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EnginePlatformHooks;
+import art.arcane.iris.engine.framework.NativeStructureVolume;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.object.IrisWorld;
@@ -30,6 +31,7 @@ import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedForcedDatapack;
 import art.arcane.iris.modded.ModdedWorkspaceGenerator;
+import art.arcane.iris.nativegen.NativeStructureVolumeIndex;
 import art.arcane.iris.modded.command.ModdedPregenJob;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.io.ReactiveFolder;
@@ -86,6 +88,11 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
     @Override
     public void refreshWorkspace(Engine engine) {
         writeWorkspace(engine, "workspace refresh");
+    }
+
+    @Override
+    public KList<NativeStructureVolume> nativeStructureVolumes(Engine engine, int minX, int minZ, int maxX, int maxZ) {
+        return NativeStructureVolumeIndex.volumes(engine, minX, minZ, maxX, maxZ);
     }
 
     @Override

@@ -352,9 +352,13 @@ public final class DatapackIngestService {
         boolean successful = true;
         for (Entry entry : manifest.entries) {
             File stagedDir = new File(stagingDir, entry.id);
+            if (isRecordedUnchangedInstall(stagedDir, worldFolders, entry, stripOverrides)) {
+                continue;
+            }
             if (!isUsableStaging(stagedDir, entry)) {
                 IrisLogging.error("Managed datapack staging is unusable for '" + entry.id
                         + "' at " + stagedDir.getPath());
+                forgetInstallMetadata(entry);
                 successful = false;
                 continue;
             }
@@ -364,13 +368,136 @@ public final class DatapackIngestService {
                     IrisLogging.warn("Repaired installed datapack '" + entry.id
                             + "' from Iris staging before datapack compilation.");
                 }
+                recordInstallMetadata(stagedDir, worldFolders, entry);
             } catch (IOException e) {
                 IrisLogging.reportError(e);
+                forgetInstallMetadata(entry);
                 successful = false;
             }
         }
         writeManifest(root, manifest);
         return successful;
+    }
+
+    private static boolean isRecordedUnchangedInstall(
+            File stagedDir,
+            KList<File> worldFolders,
+            Entry entry,
+            boolean stripOverrides
+    ) {
+        if (entry.stagingMetadata == null || entry.stagingMetadata.isBlank()
+                || entry.installMetadata == null || entry.installMetadata.size() != worldFolders.size()) {
+            return false;
+        }
+        try {
+            if (!isRecordedManagedDirectory(stagedDir, entry)
+                    || !entry.stagingMetadata.equals(metadataDigest(stagedDir))) {
+                return false;
+            }
+            for (File worldFolder : worldFolders) {
+                File target = new File(worldFolder, entry.id);
+                if (!isRecordedManagedDirectory(target, entry)
+                        || new File(target, OVERRIDES_STRIPPED_MARKER).isFile() != stripOverrides) {
+                    return false;
+                }
+                String recorded = entry.installMetadata.get(installMetadataKey(target));
+                if (recorded == null || !recorded.equals(metadataDigest(target))) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (IOException e) {
+            IrisLogging.debug("Managed datapack '" + entry.id
+                    + "' requires full verification: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean isRecordedManagedDirectory(File directory, Entry entry) throws IOException {
+        Path path = directory.toPath();
+        if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path)) {
+            return false;
+        }
+        if (!new File(directory, "pack.mcmeta").isFile()) {
+            return false;
+        }
+        Ownership ownership = readOwnershipOrNull(directory);
+        return ownership != null
+                && ownershipSourceMatches(ownership, entry)
+                && Objects.equals(ownership.versionId, entry.versionId)
+                && Objects.equals(ownership.versionNumber, entry.versionNumber)
+                && Objects.equals(ownership.sha1, entry.sha1);
+    }
+
+    private static void recordInstallMetadata(File stagedDir, KList<File> worldFolders, Entry entry) {
+        try {
+            Map<String, String> recorded = new HashMap<>();
+            for (File worldFolder : worldFolders) {
+                File target = new File(worldFolder, entry.id);
+                recorded.put(installMetadataKey(target), metadataDigest(target));
+            }
+            entry.stagingMetadata = metadataDigest(stagedDir);
+            entry.installMetadata = recorded;
+        } catch (IOException e) {
+            IrisLogging.debug("Unable to record managed datapack metadata for '" + entry.id
+                    + "': " + e.getMessage());
+            forgetInstallMetadata(entry);
+        }
+    }
+
+    private static void forgetInstallMetadata(Entry entry) {
+        entry.stagingMetadata = "";
+        entry.installMetadata = new HashMap<>();
+    }
+
+    private static String installMetadataKey(File target) {
+        return target.toPath().toAbsolutePath().normalize().toString();
+    }
+
+    private static String metadataDigest(File root) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            Path rootPath = root.toPath().toAbsolutePath().normalize();
+            List<Path> entries = new ArrayList<>();
+            try (Stream<Path> paths = Files.walk(rootPath)) {
+                Iterator<Path> iterator = paths.iterator();
+                int pathCount = 0;
+                while (iterator.hasNext()) {
+                    Path path = iterator.next();
+                    if (path.equals(rootPath) || isFinderMetadata(path)) {
+                        continue;
+                    }
+                    pathCount++;
+                    if (pathCount > MAX_MANAGED_PATHS) {
+                        throw new IOException("Datapack contains more than " + MAX_MANAGED_PATHS + " paths");
+                    }
+                    if (Files.isSymbolicLink(path)) {
+                        throw new IOException("Datapack contains a symbolic link: " + path);
+                    }
+                    entries.add(path);
+                }
+            }
+            entries.sort(Comparator.comparing(path -> rootPath.relativize(path).toString()));
+            for (Path entry : entries) {
+                String relative = rootPath.relativize(entry).toString().replace(File.separatorChar, '/');
+                byte[] relativeBytes = relative.getBytes(StandardCharsets.UTF_8);
+                BasicFileAttributes attributes = Files.readAttributes(
+                        entry, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (!attributes.isDirectory() && !attributes.isRegularFile()) {
+                    throw new IOException("Datapack contains an unsupported filesystem entry: " + entry);
+                }
+                digest.update((byte) (attributes.isDirectory() ? 1 : 2));
+                updateDigestInt(digest, relativeBytes.length);
+                digest.update(relativeBytes);
+                if (!attributes.isDirectory()) {
+                    updateDigestLong(digest, attributes.size());
+                    updateDigestLong(digest, attributes.lastModifiedTime().toMillis());
+                }
+            }
+            return hex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException("SHA-256 algorithm unavailable", e);
+        }
     }
 
     static boolean recoverBeforeReapply(File root, List<File> worldFolders) {
@@ -1166,6 +1293,7 @@ public final class DatapackIngestService {
     }
 
     private static void recordInstallResult(VolmitSender sender, Report report, Entry entry, InstallResult result, String versionNumber) {
+        forgetInstallMetadata(entry);
         if (result.changed()) {
             report.updated.add(entry.id + " (" + safe(versionNumber) + ")");
             report.requiresRestart = true;
@@ -2805,8 +2933,11 @@ public final class DatapackIngestService {
         copy.lastModified = resolved.lastModified;
         copy.installedEpoch = resolved.installedEpoch;
         copy.structuresImported = resolved.structuresImported;
+        copy.stagingMetadata = resolved.stagingMetadata;
         copy.structureKeys = new ArrayList<>(copyList(resolved.structureKeys));
         copy.templateKeys = new ArrayList<>(copyList(resolved.templateKeys));
+        copy.installMetadata = new HashMap<>(Objects.requireNonNullElseGet(
+                resolved.installMetadata, Map::of));
         copy.importedTargets = new HashMap<>(Objects.requireNonNullElseGet(
                 resolved.importedTargets, Map::of));
         copy.importedBundles = new HashMap<>();
@@ -2915,6 +3046,8 @@ public final class DatapackIngestService {
             }
             entry.structureKeys = normalizeKeys(entry.structureKeys);
             entry.templateKeys = normalizeKeys(entry.templateKeys);
+            entry.stagingMetadata = entry.stagingMetadata == null ? "" : entry.stagingMetadata.trim();
+            entry.installMetadata = normalizeImportedTargets(entry.installMetadata);
             entry.importedTargets = normalizeImportedTargets(entry.importedTargets);
             entry.importedBundles = normalizeImportedBundles(entry.importedBundles);
             if (!urls.add(entry.url) || !ids.add(entry.id)) {
@@ -4472,8 +4605,10 @@ public final class DatapackIngestService {
         public String lastModified;
         public long installedEpoch;
         public boolean structuresImported;
+        public String stagingMetadata = "";
         public List<String> structureKeys = new ArrayList<>();
         public List<String> templateKeys = new ArrayList<>();
+        public Map<String, String> installMetadata = new HashMap<>();
         public Map<String, String> importedTargets = new HashMap<>();
         public Map<String, Map<String, String>> importedBundles = new HashMap<>();
     }

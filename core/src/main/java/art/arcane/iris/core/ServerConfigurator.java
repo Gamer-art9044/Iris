@@ -80,6 +80,7 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public class ServerConfigurator {
     private static final Object DATAPACK_INSTALL_LOCK = new Object();
+    private static final String CODE_WORKSPACE_SUFFIX = ".code-workspace";
 
     public static void configure() {
         IrisSettings.IrisSettingsAutoconfiguration s = IrisSettings.get().getAutoConfiguration();
@@ -266,50 +267,71 @@ public class ServerConfigurator {
     public static DatapackInstallResult installDataPacksIfChanged(boolean fullInstall) {
         synchronized (DATAPACK_INSTALL_LOCK) {
             File packsDir = IrisPlatforms.get().dataFolder("packs");
-            String current;
+            File cacheFile = new File(IrisPlatforms.get().dataFolder("cache"), "datapack-fingerprint");
+            FingerprintCache cached = readFingerprintCache(cacheFile.toPath());
+            PackFingerprint fingerprint;
             try {
-                current = computePackFingerprint(packsDir);
+                fingerprint = resolvePackFingerprint(packsDir, cached.metadata(), cached.content());
             } catch (RuntimeException exception) {
                 IrisLogging.reportError("Unable to fingerprint Iris packs safely", exception);
                 return DatapackInstallResult.failedResult();
             }
-            File cacheFile = new File(IrisPlatforms.get().dataFolder("cache"), "datapack-fingerprint");
-            String cached = "";
-            if (cacheFile.exists()) {
-                try {
-                    cached = Files.readString(cacheFile.toPath(), StandardCharsets.UTF_8).trim();
-                } catch (IOException e) {
-                    cached = "";
+            String current = fingerprint.content();
+            if (!current.isEmpty() && current.equals(cached.content())) {
+                if (!fingerprint.metadata().equals(cached.metadata())) {
+                    writeFingerprintCache(cacheFile.toPath(), fingerprint);
                 }
-            }
-            if (!current.isEmpty() && current.equals(cached)) {
                 IrisLogging.debug("Data packs unchanged, skipping install.");
                 return DatapackInstallResult.unchangedResult();
             }
             DatapackInstallResult result = installDataPacksLocked(resolveDataFixer(), fullInstall);
             if (result.succeeded()) {
-                try {
-                    writeFingerprintAtomic(cacheFile.toPath(), current);
-                } catch (IOException e) {
-                    IrisLogging.warn("Failed to write datapack fingerprint cache: " + e.getMessage());
-                }
+                writeFingerprintCache(cacheFile.toPath(), fingerprint);
             }
             return result;
         }
     }
 
-    public static String computePackFingerprint(File packsDir) {
-        if (packsDir == null) {
+    static PackFingerprint resolvePackFingerprint(File packsDir, String cachedMetadata, String cachedContent) {
+        String metadata = computePackMetadataDigest(packsDir);
+        if (!metadata.isEmpty()
+                && metadata.equals(cachedMetadata)
+                && cachedContent != null
+                && !cachedContent.isEmpty()) {
+            return new PackFingerprint(metadata, cachedContent);
+        }
+        return new PackFingerprint(metadata, computePackFingerprint(packsDir));
+    }
+
+    public static String computePackMetadataDigest(File packsDir) {
+        Path root = resolveFingerprintRoot(packsDir);
+        if (root == null) {
             return "";
         }
-        Path root = packsDir.toPath().toAbsolutePath().normalize();
-        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
-            return "";
-        }
-        if (!Files.isDirectory(root)) {
-            if (Files.isSymbolicLink(root)) {
-                throw new IllegalArgumentException("Iris packs root target is missing or unsafe: " + root);
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            List<FingerprintEntry> entries = collectFingerprintEntries(root.toRealPath());
+            entries.sort(Comparator.comparing(FingerprintEntry::relativePath));
+            for (FingerprintEntry entry : entries) {
+                BasicFileAttributes attributes = Files.readAttributes(
+                        entry.source(), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                byte[] relativePath = entry.relativePath().getBytes(StandardCharsets.UTF_8);
+                updateDigestInt(digest, relativePath.length);
+                digest.update(relativePath);
+                updateDigestLong(digest, attributes.size());
+                updateDigestLong(digest, attributes.lastModifiedTime().toMillis());
             }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (IOException exception) {
+            throw new UncheckedIOException("Unable to fingerprint Iris packs at " + root, exception);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
+    }
+
+    public static String computePackFingerprint(File packsDir) {
+        Path root = resolveFingerprintRoot(packsDir);
+        if (root == null) {
             return "";
         }
         try {
@@ -337,6 +359,45 @@ public class ServerConfigurator {
             throw new UncheckedIOException("Unable to fingerprint Iris packs at " + root, exception);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 not available", e);
+        }
+    }
+
+    private static Path resolveFingerprintRoot(File packsDir) {
+        if (packsDir == null) {
+            return null;
+        }
+        Path root = packsDir.toPath().toAbsolutePath().normalize();
+        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
+            return null;
+        }
+        if (!Files.isDirectory(root)) {
+            if (Files.isSymbolicLink(root)) {
+                throw new IllegalArgumentException("Iris packs root target is missing or unsafe: " + root);
+            }
+            return null;
+        }
+        return root;
+    }
+
+    private static FingerprintCache readFingerprintCache(Path cacheFile) {
+        if (!Files.isRegularFile(cacheFile)) {
+            return new FingerprintCache("", "");
+        }
+        try {
+            List<String> lines = Files.readAllLines(cacheFile, StandardCharsets.UTF_8);
+            String content = lines.isEmpty() ? "" : lines.getFirst().trim();
+            String metadata = lines.size() > 1 ? lines.get(1).trim() : "";
+            return new FingerprintCache(content, metadata);
+        } catch (IOException e) {
+            return new FingerprintCache("", "");
+        }
+    }
+
+    private static void writeFingerprintCache(Path cacheFile, PackFingerprint fingerprint) {
+        try {
+            writeFingerprintAtomic(cacheFile, fingerprint.content() + "\n" + fingerprint.metadata());
+        } catch (IOException e) {
+            IrisLogging.warn("Failed to write datapack fingerprint cache: " + e.getMessage());
         }
     }
 
@@ -368,7 +429,7 @@ public class ServerConfigurator {
         try (Stream<Path> children = Files.list(root)) {
             for (Path child : children.toList()) {
                 String childName = child.getFileName().toString();
-                if (PackDirectoryResolver.isHiddenName(childName)) {
+                if (PackDirectoryResolver.isHiddenName(childName) || isGeneratedPackFile(childName)) {
                     continue;
                 }
                 if (Files.isSymbolicLink(child)) {
@@ -406,7 +467,8 @@ public class ServerConfigurator {
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
-                if (PackDirectoryResolver.isHiddenName(file.getFileName().toString())) {
+                String fileName = file.getFileName().toString();
+                if (PackDirectoryResolver.isHiddenName(fileName) || isGeneratedPackFile(fileName)) {
                     return FileVisitResult.CONTINUE;
                 }
                 if (attributes.isSymbolicLink() || Files.isSymbolicLink(file)) {
@@ -427,7 +489,17 @@ public class ServerConfigurator {
         });
     }
 
+    private static boolean isGeneratedPackFile(String name) {
+        return name != null && name.endsWith(CODE_WORKSPACE_SUFFIX);
+    }
+
     private record FingerprintEntry(Path source, String relativePath) {
+    }
+
+    record PackFingerprint(String metadata, String content) {
+    }
+
+    private record FingerprintCache(String content, String metadata) {
     }
 
     private static void updateDigestInt(MessageDigest digest, int value) {

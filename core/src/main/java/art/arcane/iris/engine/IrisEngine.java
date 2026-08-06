@@ -25,6 +25,9 @@ import art.arcane.iris.engine.framework.EngineEffects;
 import art.arcane.iris.engine.framework.EngineMetrics;
 import art.arcane.iris.engine.framework.EngineMode;
 import art.arcane.iris.engine.framework.EnginePlatformHooks;
+import art.arcane.iris.engine.framework.NativeStructureVolume;
+import art.arcane.iris.engine.framework.NativeStructureVolumeMemo;
+import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.EngineWorldManager;
 import art.arcane.iris.engine.framework.GenerationSessionException;
@@ -116,6 +119,9 @@ public class IrisEngine implements Engine {
     private final SeedManager seedManager;
     private final GenerationSessionManager generationSessions;
     private final EnginePlatformHooks platformHooks;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final NativeStructureVolumeMemo nativeStructureVolumeMemo = new NativeStructureVolumeMemo();
     private final AtomicBoolean closing;
     @Setter(AccessLevel.NONE)
     volatile IrisEngineData engineData;
@@ -316,7 +322,13 @@ public class IrisEngine implements Engine {
     }
 
     public void hotloadSilently() {
+        nativeStructureVolumeMemo.clear();
         hotloader.hotloadSilently();
+    }
+
+    @Override
+    public KList<NativeStructureVolume> getNativeStructureVolumes(int minX, int minZ, int maxX, int maxZ) {
+        return nativeStructureVolumeMemo.volumes(this, platformHooks, minX, minZ, maxX, maxZ);
     }
 
     @Override

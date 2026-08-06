@@ -21,6 +21,7 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.NativeStructureVolume;
 import art.arcane.iris.engine.framework.PlacedObject;
 import art.arcane.iris.engine.framework.placer.HeightmapObjectPlacer;
 import art.arcane.iris.spi.IrisLogging;
@@ -340,6 +341,12 @@ final class IrisObjectPlacementRunner {
         }
 
         if (!config.isForcePlace() && !rawStructurePiece && !config.getClamp().canPlace(y + rty + ty, y - rty + ty)) {
+            return -1;
+        }
+
+        int warpMargin = warped ? (int) Math.ceil(Math.abs(config.getWarp().getMultiplier()) / 2D) : 0;
+        if (!rawStructurePiece && nativeStructureVetoes(placer, config, spin, translating, translateOffset, ceilingHang,
+                yv < 0 && config.getMode() == ObjectPlaceMode.PAINT, warpMargin, x, y + yrand, z)) {
             return -1;
         }
 
@@ -839,6 +846,87 @@ final class IrisObjectPlacementRunner {
 
     static boolean shouldPlaceObjectBlock(boolean rawStructurePiece, boolean air, boolean wouldReplace) {
         return !wouldReplace && (rawStructurePiece || !air);
+    }
+
+    /**
+     * Objects may never intersect a native structure piece. The rect query is the fast path: no native structures
+     * near this placement means no per block work at all. Only when the placement envelope meets a piece does the
+     * precise pass run, and the first solid block inside a piece rejects the whole object before any write.
+     */
+    private boolean nativeStructureVetoes(IObjectPlacer placer, IrisObjectPlacement config, SpinKernel spin,
+                                          boolean translating, IrisBlockVector translateOffset, boolean ceilingHang,
+                                          boolean paint, int warpMargin, int x, int y, int z) {
+        Engine engine = placer.getEngine();
+        if (engine == null) {
+            return false;
+        }
+
+        int margin = (Math.max(self.getW(), Math.max(self.getH(), self.getD())) / 2) + 1 + warpMargin;
+        if (translating) {
+            margin += Math.max(Math.abs(translateOffset.getBlockX()),
+                    Math.max(Math.abs(translateOffset.getBlockY()), Math.abs(translateOffset.getBlockZ())));
+        }
+
+        KList<NativeStructureVolume> volumes = engine.getNativeStructureVolumes(x - margin, z - margin, x + margin, z + margin);
+        if (volumes == null || volumes.isEmpty()) {
+            return false;
+        }
+
+        int envelopeMinY = paint ? Integer.MIN_VALUE : y - margin;
+        int envelopeMaxY = paint ? Integer.MAX_VALUE : y + margin;
+        boolean envelopeMeetsPiece = false;
+        for (NativeStructureVolume volume : volumes) {
+            if (volume.intersects(x - margin, envelopeMinY, z - margin, x + margin, envelopeMaxY, z + margin)) {
+                envelopeMeetsPiece = true;
+                break;
+            }
+        }
+
+        if (!envelopeMeetsPiece) {
+            return false;
+        }
+
+        self.readLock.lock();
+        try {
+            VectorMap<PlatformBlockState>.Cursor cursor = self.blocks.cursor();
+            while (cursor.next()) {
+                PlatformBlockState state = cursor.value();
+                if (state == null || isAirBlock(state)) {
+                    continue;
+                }
+
+                IrisBlockVector i = cursor.key().clone();
+                spin.rotate(i);
+                if (ceilingHang) {
+                    i.setY(-i.getBlockY());
+                }
+                if (translating) {
+                    i.add(translateOffset);
+                }
+
+                int xx = x + (int) Math.round(i.getX());
+                int zz = z + (int) Math.round(i.getZ());
+                int yy = paint
+                        ? (int) Math.round(i.getY()) + Math.floorDiv(self.h, 2)
+                                + placer.getHighest(xx, zz, self.getLoader(), config.isUnderwater())
+                        : y + (int) Math.round(i.getY());
+
+                for (NativeStructureVolume volume : volumes) {
+                    if (volume.containsWithin(xx, yy, zz, warpMargin)) {
+                        return true;
+                    }
+                }
+            }
+        } finally {
+            self.readLock.unlock();
+        }
+
+        return false;
+    }
+
+    private static boolean isAirBlock(PlatformBlockState state) {
+        String material = IrisObjectShaping.materialKey(state);
+        return material.equals("minecraft:air") || material.equals("minecraft:cave_air");
     }
 
     private void warnImplausibleBedrockPlacement(IObjectPlacer placer, IrisObjectPlacement config, int x, int y, int z) {

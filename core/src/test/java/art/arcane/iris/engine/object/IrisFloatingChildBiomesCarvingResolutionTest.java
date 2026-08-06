@@ -38,7 +38,10 @@ public class IrisFloatingChildBiomesCarvingResolutionTest {
         doReturn("1.0").when(server).getBukkitVersion();
         doAnswer((InvocationOnMock invocation) -> namedBlockData(invocation.getArgument(0, Material.class).name().toLowerCase(Locale.ROOT))).when(server).createBlockData(any(Material.class));
         doAnswer((InvocationOnMock invocation) -> namedBlockData(invocation.getArgument(0, String.class))).when(server).createBlockData(anyString());
-        Bukkit.setServer(server);
+        try {
+            Bukkit.setServer(server);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static BlockData namedBlockData(String key) {

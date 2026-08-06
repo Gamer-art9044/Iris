@@ -36,6 +36,7 @@ import art.arcane.iris.nativegen.NativeStructureTerrainIntegrator;
 import art.arcane.iris.nativegen.NativeStructureVegetationClearer;
 import art.arcane.iris.nativegen.NativeStructureVerticalPlacer;
 import art.arcane.iris.nativegen.NativeStructureVanillaLocator;
+import art.arcane.iris.nativegen.NativeStructureVolumeIndex;
 import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.math.RNG;
@@ -50,10 +51,13 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.GenerationStep;
 import net.minecraft.world.level.levelgen.RandomSupport;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
@@ -63,6 +67,7 @@ import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -85,6 +90,23 @@ final class ModdedNativeStructureStage {
 
     ModdedNativeStructureStage(IrisModdedChunkGenerator generator) {
         this.generator = generator;
+    }
+
+    void installVolumeIndex(ServerLevel level, Engine engine) {
+        WeakReference<ServerLevel> levelReference = new WeakReference<>(level);
+        WeakReference<ChunkGenerator> generatorReference = new WeakReference<>(generator);
+        WeakReference<BiomeSource> biomeSourceReference = new WeakReference<>(generator.structureBiomeSource);
+        NativeStructureVolumeIndex.install(engine, new NativeStructureVolumeIndex.Context(
+                level.registryAccess(),
+                level.getServer().getStructureManager(),
+                level.dimension(),
+                LevelHeightAccessor.create(level.getMinY(), level.getHeight()),
+                generatorReference::get,
+                biomeSourceReference::get,
+                () -> {
+                    ServerLevel active = levelReference.get();
+                    return active == null ? null : active.getChunkSource().getGeneratorState();
+                }));
     }
 
     Pair<BlockPos, Holder<Structure>> findNearestIrisStructure(ServerLevel level,

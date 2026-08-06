@@ -22,7 +22,7 @@ public class IrisStructureTerrain {
     private static final double MAX_EROSION_FREQUENCY = 1D;
     private static final double MAX_LOBE_FREQUENCY = 1D;
 
-    @Desc("Terrain operation. SOURCE applies the registered native structure's authored terrain adaptation and is a no-op for editable Iris structures. PRESERVE disables terrain integration. VACUUM forces a 12-block surface bend to every rigid native piece base. BORE and FORCE_CARVE clear the requested envelope, while ENCASE fills it before placement so native shells are not lost to pre-carved air.")
+    @Desc("Terrain operation. SOURCE applies the registered native structure's authored terrain adaptation and is a no-op for editable Iris structures. PRESERVE disables terrain integration. VACUUM raises terrain from processed rigid-template foundations at or below each authored ground plane with a 12-block falloff without lowering existing ground. BORE and FORCE_CARVE clear the requested envelope, while ENCASE fills it before placement so native shells are not lost to pre-carved air.")
     private IrisStructureTerrainMode mode = IrisStructureTerrainMode.SOURCE;
 
     @MinNumber(0)

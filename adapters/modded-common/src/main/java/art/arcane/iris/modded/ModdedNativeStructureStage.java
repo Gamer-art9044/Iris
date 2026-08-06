@@ -279,7 +279,7 @@ final class ModdedNativeStructureStage {
         Engine current = generator.engine();
         List<NativePlacementGroup> placementGroups = new ArrayList<>();
         List<StructureStart> heightmapStarts = new ArrayList<>();
-        List<NativeStructureVegetationClearer.VegetationTarget> vegetationTargets = new ArrayList<>();
+        List<StructureStart> vegetationTargets = new ArrayList<>();
         List<NativeStructureTerrainIntegrator.TerrainTarget> terrainTargets = new ArrayList<>();
         for (int step = 0; step < steps; step++) {
             int index = 0;
@@ -310,11 +310,7 @@ final class ModdedNativeStructureStage {
                                 structureId, start,
                                 NativeStructureTerrainIntegrator.resolveNativeTerrain(
                                         start, decision.terrain())));
-                        boolean clearEntireFootprint = NativeStructureVegetationClearer
-                                .shouldClearEntireVegetationFootprint(
-                                        structure.step(), decision.clearVegetation());
-                        vegetationTargets.add(new NativeStructureVegetationClearer.VegetationTarget(
-                                start, clearEntireFootprint));
+                        vegetationTargets.add(start);
                     }
                     if (!resolvedPlacements.isEmpty()) {
                         placementGroups.add(new NativePlacementGroup(
@@ -346,8 +342,9 @@ final class ModdedNativeStructureStage {
                     "vegetation cleanup", nativeStructureBatchContext(placementGroups),
                     chunkPos.x(), chunkPos.z(), error);
         }
+        NativeStructureSurfaceFitter.VacuumFoundationPlan vacuumFoundationPlan;
         try {
-            NativeStructureSurfaceFitter.prepareSurfaceStructures(
+            vacuumFoundationPlan = NativeStructureSurfaceFitter.prepareSurfaceStructures(
                     world, area, terrainTargets,
                     (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
         } catch (Throwable error) {
@@ -374,6 +371,14 @@ final class ModdedNativeStructureStage {
                 throw NativeStructureGenerationException.failure(
                         "placement", group.structureId(), chunkPos.x(), chunkPos.z(), error);
             }
+        }
+        try {
+            NativeStructureSurfaceFitter.repairVacuumFoundations(
+                    world, area, vacuumFoundationPlan);
+        } catch (Throwable error) {
+            throw NativeStructureGenerationException.failure(
+                    "foundation repair", nativeStructureBatchContext(placementGroups),
+                    chunkPos.x(), chunkPos.z(), error);
         }
     }
 

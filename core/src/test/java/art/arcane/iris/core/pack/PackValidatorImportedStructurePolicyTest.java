@@ -110,19 +110,38 @@ public class PackValidatorImportedStructurePolicyTest {
     @Test
     public void explicitNullPolicyIsRejectedWhileOmissionUsesDefaults() {
         List<String> missingErrors = new ArrayList<>();
-        PackDimensionValidator.validateImportedStructurePolicy("overworld", new JSONObject(), missingErrors);
+        PackDimensionValidator.validateImportedStructurePolicy("overworld", new JSONObject(),
+                missingErrors, new ArrayList<>());
         assertTrue(missingErrors.isEmpty());
 
         List<String> nullErrors = new ArrayList<>();
         PackDimensionValidator.validateImportedStructurePolicy("overworld",
-                new JSONObject().put("importedStructures", JSONObject.NULL), nullErrors);
+                new JSONObject().put("importedStructures", JSONObject.NULL), nullErrors, new ArrayList<>());
         assertEquals(List.of("Dimension 'overworld' importedStructures must be an object."), nullErrors);
+    }
+
+    @Test
+    public void removedClearVegetationAdjustmentWarnsWithoutBlockingThePack() {
+        JSONObject policy = new JSONObject()
+                .put("adjustments", new JSONArray().put(new JSONObject()
+                        .put("match", new JSONArray().put("minecraft:village"))
+                        .put("clearVegetation", true)));
+        List<String> errors = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+
+        PackDimensionValidator.validateImportedStructurePolicy("overworld",
+                new JSONObject().put("importedStructures", policy), errors, warnings);
+
+        assertTrue(errors.toString(), errors.isEmpty());
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0), warnings.get(0)
+                .contains("adjustments[0].clearVegetation was removed and is ignored"));
     }
 
     private List<String> validate(JSONObject policy) {
         List<String> errors = new ArrayList<>();
         PackDimensionValidator.validateImportedStructurePolicy("overworld",
-                new JSONObject().put("importedStructures", policy), errors);
+                new JSONObject().put("importedStructures", policy), errors, new ArrayList<>());
         return errors;
     }
 }

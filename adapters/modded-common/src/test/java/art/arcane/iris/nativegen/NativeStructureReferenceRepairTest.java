@@ -102,13 +102,13 @@ public class NativeStructureReferenceRepairTest {
     public void deniedNaturalStartsCannotEnterCollisionArbitration() {
         IrisNativeStructureDecision enabled = new IrisNativeStructureDecision(
                 NativeStructureGenerationStatus.GENERATE_NATIVE,
-                0, null, false, false, null, new IrisStructureTerrain());
+                0, null, false, null, new IrisStructureTerrain());
         IrisNativeStructureDecision disabled = new IrisNativeStructureDecision(
                 NativeStructureGenerationStatus.DISABLED_BY_PACK,
-                0, null, false, false, null, new IrisStructureTerrain());
+                0, null, false, null, new IrisStructureTerrain());
         IrisNativeStructureDecision replaced = new IrisNativeStructureDecision(
                 NativeStructureGenerationStatus.REPLACED_BY_IRIS,
-                0, null, false, false, null, new IrisStructureTerrain());
+                0, null, false, null, new IrisStructureTerrain());
 
         assertTrue(NativeStructureReferenceRepair.naturalDecisionAllows(enabled));
         assertFalse(NativeStructureReferenceRepair.naturalDecisionAllows(disabled));

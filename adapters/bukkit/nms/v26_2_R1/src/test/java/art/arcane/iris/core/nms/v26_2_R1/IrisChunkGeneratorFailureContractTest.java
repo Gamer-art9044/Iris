@@ -45,6 +45,7 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(placement.contains("\"resolution\""));
         assertTrue(placement.contains("\"terrain integration\""));
         assertTrue(placement.contains("\"terrain preparation\""));
+        assertTrue(placement.contains("\"foundation repair\""));
         assertFalse(placement.contains("\"terrain carving\""));
         assertTrue(placement.contains("\"vegetation cleanup\""));
         assertTrue(placement.contains("\"placement\""));
@@ -55,6 +56,8 @@ public class IrisChunkGeneratorFailureContractTest {
                 < placement.indexOf("prepareSurfaceStructures"));
         assertTrue(placement.indexOf("prepareSurfaceStructures")
                 < placement.indexOf("for (NativePlacementGroup group"));
+        assertTrue(placement.indexOf("repairVacuumFoundations")
+                > placement.indexOf("for (NativePlacementGroup group"));
         assertFalse(placement.contains("IrisLogging.reportError"));
     }
 

@@ -303,15 +303,19 @@ public class ServerConfigurator {
             return "";
         }
         Path root = packsDir.toPath().toAbsolutePath().normalize();
-        if (Files.isSymbolicLink(root)) {
-            throw new IllegalArgumentException("Iris packs root is a symbolic link: " + root);
+        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
+            return "";
         }
-        if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+        if (!Files.isDirectory(root)) {
+            if (Files.isSymbolicLink(root)) {
+                throw new IllegalArgumentException("Iris packs root target is missing or unsafe: " + root);
+            }
             return "";
         }
         try {
+            Path resolvedRoot = root.toRealPath();
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            List<FingerprintEntry> entries = collectFingerprintEntries(root);
+            List<FingerprintEntry> entries = collectFingerprintEntries(resolvedRoot);
             entries.sort(Comparator.comparing(FingerprintEntry::relativePath));
             byte[] buffer = new byte[8192];
             for (FingerprintEntry entry : entries) {

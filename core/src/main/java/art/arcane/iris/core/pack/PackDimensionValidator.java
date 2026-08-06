@@ -44,7 +44,7 @@ final class PackDimensionValidator {
                 continue;
             }
 
-            validateImportedStructurePolicy(dimensionKey, dimJson, blockingErrors);
+            validateImportedStructurePolicy(dimensionKey, dimJson, blockingErrors, warnings);
 
             JSONArray regionsArray = dimJson.optJSONArray("regions");
             if (regionsArray == null || regionsArray.length() == 0) {
@@ -90,7 +90,7 @@ final class PackDimensionValidator {
     }
 
     static void validateImportedStructurePolicy(String dimensionKey, JSONObject dimension,
-                                                List<String> blockingErrors) {
+                                                List<String> blockingErrors, List<String> warnings) {
         if (!dimension.has("importedStructures")) {
             return;
         }
@@ -126,6 +126,10 @@ final class PackDimensionValidator {
                 blockingErrors.add("Dimension '" + dimensionKey
                         + "' importedStructures.adjustments has a non-object entry at index " + index + ".");
                 continue;
+            }
+            if (adjustment.has("clearVegetation")) {
+                warnings.add("Dimension '" + dimensionKey + "' importedStructures.adjustments[" + index
+                        + "].clearVegetation was removed and is ignored. Vegetation is always cleared inside structure piece envelopes.");
             }
             validateStructureKeyList(dimensionKey, adjustment, "match", blockingErrors);
             validateAdjustmentYBand(dimensionKey, adjustment, index, blockingErrors);

@@ -159,9 +159,7 @@ public class IrisImportedStructureControlTest {
     @Test
     public void postprocessingDefaultsAreDisabled() {
         IrisImportedStructureControl control = new IrisImportedStructureControl();
-        assertFalse(control.resolve("minecraft:woodland_mansion", false).clearVegetation());
         assertNull(control.resolve("minecraft:village_plains", false).stilt());
-        assertFalse(control.resolve(null, false).clearVegetation());
         assertNull(control.resolve(null, false).stilt());
         assertFalse(control.resolve("minecraft:mineshaft_mesa", true).preserveSourceY());
     }
@@ -253,24 +251,21 @@ public class IrisImportedStructureControlTest {
         IrisStructureStiltSettings stilt = new IrisStructureStiltSettings();
         IrisVanillaStructureAdjustment adjustment = new IrisVanillaStructureAdjustment()
                 .setMatch(keys("minecraft:village"))
-                .setClearVegetation(true)
                 .setStilt(stilt);
         IrisImportedStructureControl control = new IrisImportedStructureControl()
                 .setAdjustments(new KList<IrisVanillaStructureAdjustment>().qadd(adjustment));
 
-        assertTrue(control.resolve("minecraft:village_plains", false).clearVegetation());
         assertSame(stilt, control.resolve("minecraft:village_taiga", false).stilt());
-        assertFalse(control.resolve("minecraft:woodland_mansion", false).clearVegetation());
+        assertNull(control.resolve("minecraft:woodland_mansion", false).stilt());
         assertNull(control.resolve("minecraft:stronghold", true).stilt());
     }
 
     @Test
-    public void multipleMatchesMergeVegetationAndUseLastConfiguredStilt() {
+    public void multipleMatchesUseTheLastConfiguredStilt() {
         IrisStructureStiltSettings broadStilt = new IrisStructureStiltSettings().setMaxDepth(32);
         IrisStructureStiltSettings specificStilt = new IrisStructureStiltSettings().setMaxDepth(96);
         IrisVanillaStructureAdjustment broad = new IrisVanillaStructureAdjustment()
                 .setMatch(keys("minecraft:village"))
-                .setClearVegetation(true)
                 .setStilt(broadStilt);
         IrisVanillaStructureAdjustment exactWithoutStilt = new IrisVanillaStructureAdjustment()
                 .setMatch(keys("minecraft:village_plains"));
@@ -284,7 +279,6 @@ public class IrisImportedStructureControlTest {
         IrisImportedStructureControl control = new IrisImportedStructureControl().setAdjustments(adjustments);
 
         IrisNativeStructureDecision plains = control.resolve("minecraft:village_plains", false);
-        assertTrue(plains.clearVegetation());
         assertSame(specificStilt, plains.stilt());
         assertEquals(96, plains.stilt().getMaxDepth());
         assertSame(broadStilt, control.resolve("minecraft:village_desert", false).stilt());

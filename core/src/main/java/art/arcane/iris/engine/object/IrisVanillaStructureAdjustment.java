@@ -32,7 +32,7 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Desc("A per-structure adjustment applied to vanilla, mod, and datapack structures that still generate natively (those NOT suppressed by an Iris 'structures' placement). Vertical shifts move the structure start, pieces, bounds, and jigsaw metadata together before references and placement. Surface structures clear intersecting trees automatically; optional postprocessing can force vegetation clearing or build palette-driven foundation columns.")
+@Desc("A per-structure adjustment applied to vanilla, mod, and datapack structures that still generate natively (those NOT suppressed by an Iris 'structures' placement). Vertical shifts move the structure start, pieces, bounds, and jigsaw metadata together before references and placement. Intersecting trees are cleared automatically inside structure piece envelopes; optional postprocessing can build palette-driven foundation columns.")
 @Data
 public class IrisVanillaStructureAdjustment {
     @ArrayType(type = String.class, min = 1)
@@ -51,13 +51,10 @@ public class IrisVanillaStructureAdjustment {
     @Desc("When true, skip Iris burial repositioning so the structure keeps the Y its own vanilla placement chose. Underground structures are otherwise pushed below the lowest solid column across their whole footprint, which hides terrain-aware structures such as mineshafts that intentionally breach cliffs and surfaces. Vertical shifts still apply on top of the preserved Y: this dimension's undergroundYShift plus every matching adjustment's yShift.")
     private boolean preserveSourceY = false;
 
-    @Desc("When true, force logs and leaves out of the structure footprint even when the structure does not reach the detected tree base. Normal surface-intersecting structures are protected automatically.")
-    private boolean clearVegetation = false;
-
     @Desc("Optional foundation columns placed beneath the native structure piece bases after placement.")
     private IrisStructureStiltSettings stilt = null;
 
-    @Desc("Optional terrain integration override. VACUUM forces surface terrain to bend to every rigid native piece base even when the structure did not author terrain adaptation. BORE and FORCE_CARVE clear every intersecting chunk before native pieces are placed, while ENCASE fills it with solid blocks instead. Left unset, SOURCE replays the registered structure's authored terrain adaptation, including surface fitting, burial, and encapsulation.")
+    @Desc("Optional terrain integration override. VACUUM raises surface terrain from processed solid rigid-template foundations at or below each authored ground plane with a 12-block falloff without lowering existing ground. BORE and FORCE_CARVE clear every intersecting chunk before native pieces are placed, while ENCASE fills it with solid blocks instead. Left unset, SOURCE replays the registered structure's authored terrain adaptation, including surface fitting, burial, and encapsulation.")
     private IrisStructureTerrain terrain = null;
 
     public boolean matches(String key) {

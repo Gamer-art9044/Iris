@@ -673,8 +673,6 @@ public class IrisCaveCarver3DNearParityTest {
         profile.setDensityThreshold(new IrisStyledRange(1D, 1D, new IrisGeneratorStyle(NoiseStyle.FLAT)));
         profile.setThresholdBias(0D);
         profile.setSampleStep(1);
-        profile.setMinCarveCells(0);
-        profile.setRecoveryThresholdBoost(0D);
         profile.setSurfaceClearance(5);
         profile.setAllowSurfaceBreak(true);
         profile.setSurfaceBreakNoiseThreshold(0.16D);

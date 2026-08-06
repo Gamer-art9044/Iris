@@ -40,6 +40,7 @@ import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.TerrainAdjustment;
 import net.minecraft.world.level.levelgen.structure.pieces.PiecesContainer;
+import net.minecraft.world.level.levelgen.structure.pools.JigsawJunction;
 import net.minecraft.world.level.levelgen.structure.pools.LegacySinglePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.ListPoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement;
@@ -54,6 +55,7 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureProc
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureProcessor;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
+import net.minecraft.world.level.levelgen.placement.PlacedFeature;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -131,7 +133,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
-    public void explicitVacuumForcesThinSurfaceFittingWithoutAuthoredAdaptation() {
+    public void explicitVacuumUsesIndependentTerrainFittingWithoutAuthoredAdaptation() {
         StructureStart none = desertStart(TerrainAdjustment.NONE);
         StructureStart box = desertStart(TerrainAdjustment.BEARD_BOX);
         NativeStructureTerrainIntegrator.TerrainTarget sourceNone =
@@ -150,11 +152,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         assertFalse(NativeStructureSurfaceFitter.requiresSurfaceTerrain(sourceNone));
         assertTrue(NativeStructureSurfaceFitter.requiresSurfaceTerrain(vacuumNone));
         assertTrue(NativeStructureSurfaceFitter.requiresSurfaceTerrain(vacuumBox));
-        assertEquals(TerrainAdjustment.BEARD_THIN,
-                NativeStructureSurfaceFitter.effectiveSurfaceAdjustment(vacuumNone));
-        assertEquals(TerrainAdjustment.BEARD_THIN,
-                NativeStructureSurfaceFitter.effectiveSurfaceAdjustment(vacuumBox));
-        assertTrue(NativeStructureTerrainIntegrator.clearsLegacyTemplateAir(
+        assertFalse(NativeStructureTerrainIntegrator.clearsLegacyTemplateAir(
                 none, vacuumNone.terrain()));
     }
 
@@ -261,6 +259,476 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 1, 71, 1));
         assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 11, 71, 1));
         assertEquals(Blocks.DIRT.defaultBlockState(), state(blocks, 11, 70, 1));
+    }
+
+    @Test
+    public void vacuumFitsOnlyProcessedSolidTemplateColumns() throws Exception {
+        StructureTemplate sparseTemplate = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
+                block(15, 0, 0, Blocks.STONE.defaultBlockState())));
+        InlineSinglePoolElement element = new InlineSinglePoolElement(
+                sparseTemplate, List.of(new ReplaceBlockProcessor(
+                        Blocks.STONE.defaultBlockState(), Blocks.AIR.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                element, new BoundingBox(0, 64, 0, 15, 70, 3), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 56, 0, 15, 72, 3);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 64, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 63, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 15, 60, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 15, 61, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 15, 64, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 15, 60, 3));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 15, 64, 3));
+    }
+
+    @Test
+    public void vacuumSupportsGroundDeltaZeroFoundations() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(template),
+                new BoundingBox(0, 66, 0, 0, 70, 0), 0, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 3, 72, 3);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 65, 0));
+        assertEquals(Blocks.DIRT.defaultBlockState(), state(blocks, 0, 64, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 66, 0));
+    }
+
+    @Test
+    public void vacuumFindsActualTerrainBelowNominalOpenAirSurface() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(template),
+                new BoundingBox(0, 75, 0, 0, 81, 0), 2, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 3, 84, 3);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 80);
+
+        for (int y = 61; y <= 74; y++) {
+            assertFalse(state(blocks, 0, y, 0).isAir());
+        }
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 74, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 75, 0));
+    }
+
+    @Test
+    public void vacuumSupportsFoundationBelowHigherNaturalSurface() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template),
+                new BoundingBox(0, 75, 0, 0, 81, 0), 2, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 15, 84, 3);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+        put(blocks, 0, 78, 0, Blocks.DIRT.defaultBlockState());
+        put(blocks, 0, 79, 0, Blocks.GRASS_BLOCK.defaultBlockState());
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 79);
+
+        for (int y = 61; y <= 74; y++) {
+            assertFalse(state(blocks, 0, y, 0).isAir());
+        }
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 75, 0));
+        assertEquals(Blocks.DIRT.defaultBlockState(), state(blocks, 0, 78, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 79, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 15, 60, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 15, 61, 0));
+    }
+
+    @Test
+    public void vacuumRepairUsesOnlyProcessedSolidFoundationColumns() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
+                block(1, 0, 0, Blocks.STONE.defaultBlockState()),
+                block(2, 0, 0, Blocks.AIR.defaultBlockState()),
+                block(2, 2, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        InlineSinglePoolElement element = new InlineSinglePoolElement(
+                template, List.of(new ReplaceBlockProcessor(
+                        Blocks.STONE.defaultBlockState(), Blocks.AIR.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                element, new BoundingBox(0, 65, 0, 2, 72, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 3, 74, 3);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+
+        NativeStructureSurfaceFitter.VacuumFoundationPlan plan =
+                NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                        world(blocks), area,
+                        List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                        (x, z) -> 60);
+        for (int y = 61; y <= 64; y++) {
+            put(blocks, 0, y, 0, Blocks.CAVE_AIR.defaultBlockState());
+        }
+        put(blocks, 0, 65, 0, Blocks.COBBLESTONE.defaultBlockState());
+        put(blocks, 1, 65, 0, Blocks.COBBLESTONE.defaultBlockState());
+        put(blocks, 2, 67, 0, Blocks.COBBLESTONE.defaultBlockState());
+        BlockState processorAirSupport = state(blocks, 1, 64, 0);
+        BlockState authoredAirSupport = state(blocks, 2, 66, 0);
+
+        NativeStructureSurfaceFitter.repairVacuumFoundations(
+                world(blocks), area, plan);
+
+        for (int y = 61; y <= 64; y++) {
+            assertFalse(state(blocks, 0, y, 0).isAir());
+        }
+        assertEquals(processorAirSupport, state(blocks, 1, 64, 0));
+        assertEquals(authoredAirSupport, state(blocks, 2, 66, 0));
+    }
+
+    @Test
+    public void vacuumRepairPreservesOverlappingAuthoredInterior() throws Exception {
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState()),
+                        block(0, 1, 0, Blocks.AIR.defaultBlockState())))),
+                new BoundingBox(0, 61, 0, 0, 62, 0), 0, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 65, 0, 0, 70, 0), 0, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(
+                List.of(lower, upper), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 3, 72, 3);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+
+        NativeStructureSurfaceFitter.VacuumFoundationPlan plan =
+                NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                        world(blocks), area,
+                        List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                        (x, z) -> 60);
+        put(blocks, 0, 65, 0, Blocks.COBBLESTONE.defaultBlockState());
+
+        NativeStructureSurfaceFitter.repairVacuumFoundations(
+                world(blocks), area, plan);
+
+        for (int y = 61; y <= 64; y++) {
+            assertTrue(state(blocks, 0, y, 0).isAir());
+        }
+    }
+
+    @Test
+    public void vacuumRepairIsStableAcrossSplitChunkAreas() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
+                block(1, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template),
+                new BoundingBox(15, 65, 0, 16, 70, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        NativeStructureTerrainIntegrator.TerrainTarget target =
+                surfaceTarget(start, IrisStructureTerrainMode.VACUUM);
+        BoundingBox wideArea = new BoundingBox(0, 54, 0, 31, 72, 15);
+        BoundingBox westArea = new BoundingBox(0, 54, 0, 15, 72, 15);
+        BoundingBox eastArea = new BoundingBox(16, 54, 0, 31, 72, 15);
+        Map<BlockPos, BlockState> wideBlocks = flatTerrain(wideArea, 60);
+        Map<BlockPos, BlockState> splitBlocks = flatTerrain(wideArea, 60);
+
+        NativeStructureSurfaceFitter.VacuumFoundationPlan widePlan =
+                NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                        world(wideBlocks), wideArea, List.of(target), (x, z) -> 60);
+        NativeStructureSurfaceFitter.VacuumFoundationPlan westPlan =
+                NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                        world(splitBlocks), westArea, List.of(target), (x, z) -> 60);
+        NativeStructureSurfaceFitter.VacuumFoundationPlan eastPlan =
+                NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                        world(splitBlocks), eastArea, List.of(target), (x, z) -> 60);
+        for (int x = 15; x <= 16; x++) {
+            for (int y = 61; y <= 64; y++) {
+                put(wideBlocks, x, y, 0, Blocks.CAVE_AIR.defaultBlockState());
+                put(splitBlocks, x, y, 0, Blocks.CAVE_AIR.defaultBlockState());
+            }
+            put(wideBlocks, x, 65, 0, Blocks.COBBLESTONE.defaultBlockState());
+            put(splitBlocks, x, 65, 0, Blocks.COBBLESTONE.defaultBlockState());
+        }
+
+        NativeStructureSurfaceFitter.repairVacuumFoundations(
+                world(wideBlocks), wideArea, widePlan);
+        NativeStructureSurfaceFitter.repairVacuumFoundations(
+                world(splitBlocks), eastArea, eastPlan);
+        NativeStructureSurfaceFitter.repairVacuumFoundations(
+                world(splitBlocks), westArea, westPlan);
+
+        assertEquals(wideBlocks, splitBlocks);
+    }
+
+    @Test
+    public void vacuumNeverLowersExistingTerrainAroundSparsePieces() throws Exception {
+        StructureTemplate sparseTemplate = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(sparseTemplate),
+                new BoundingBox(0, 56, 0, 7, 62, 7), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 48, 0, 7, 70, 7);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+        Map<BlockPos, BlockState> originalBlocks = new HashMap<>(blocks);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        assertEquals(originalBlocks, blocks);
+    }
+
+    @Test
+    public void vacuumDoesNotRaiseTerrainToRoofsAboveLegacyAir() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.AIR.defaultBlockState()),
+                block(0, 2, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineLegacyPoolElement(template),
+                new BoundingBox(0, 66, 0, 7, 72, 7), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 15, 74, 15);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+        Map<BlockPos, BlockState> originalBlocks = new HashMap<>(blocks);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        assertEquals(originalBlocks, blocks);
+    }
+
+    @Test
+    public void vacuumCapsNeighborTaperAtAuthoredAirGroundPlanes() throws Exception {
+        PoolElementStructurePiece roof = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.AIR.defaultBlockState()),
+                        block(0, 2, 0, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(1, 66, 0, 1, 72, 0), 1, Rotation.NONE);
+        PoolElementStructurePiece highChild = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 90, 0, 0, 94, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(
+                List.of(roof, highChild), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 15, 96, 15);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 1, 66, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 1, 67, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 89, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 90, 0));
+    }
+
+    @Test
+    public void vacuumDoesNotAnchorRoofsAboveProcessorCreatedAir() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.STONE.defaultBlockState()),
+                block(0, 2, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(template, List.of(new ReplaceBlockProcessor(
+                        Blocks.STONE.defaultBlockState(), Blocks.AIR.defaultBlockState()))),
+                new BoundingBox(0, 66, 0, 7, 72, 7), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 15, 74, 15);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+        Map<BlockPos, BlockState> originalBlocks = new HashMap<>(blocks);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        assertEquals(originalBlocks, blocks);
+    }
+
+    @Test
+    public void vacuumDoesNotTreatSparseRoofCellsAsFoundations() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.SANDSTONE.defaultBlockState()),
+                block(1, 20, 0, Blocks.SANDSTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(template),
+                new BoundingBox(0, 66, 0, 20, 100, 20), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 20, 102, 20);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 65, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 66, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 1, 67, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 1, 86, 0));
+    }
+
+    @Test
+    public void vacuumDoesNotFlattenTerrainMatchingPoolPieces() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(
+                        template, List.of(),
+                        StructureTemplatePool.Projection.TERRAIN_MATCHING),
+                new BoundingBox(0, 68, 0, 15, 72, 15), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 15, 74, 15);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+        Map<BlockPos, BlockState> originalBlocks = new HashMap<>(blocks);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        assertEquals(originalBlocks, blocks);
+    }
+
+    @Test
+    public void vacuumRetainsJunctionSmoothingForRigidFeaturePieces() {
+        StructurePoolElement feature = StructurePoolElement.feature(
+                Holder.<PlacedFeature>direct(null))
+                .apply(StructureTemplatePool.Projection.RIGID);
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                feature, new BoundingBox(4, 66, 4, 4, 70, 4), 1, Rotation.NONE);
+        piece.addJunction(new JigsawJunction(
+                4, 66, 4, 0, StructureTemplatePool.Projection.RIGID));
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 15, 72, 15);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 4, 61, 4));
+    }
+
+    @Test
+    public void vacuumDoesNotInventNonPoolBoundingBoxFootprints() {
+        StructureStart start = desertStart(TerrainAdjustment.NONE);
+        BoundingBox bounds = start.getBoundingBox();
+        BoundingBox area = new BoundingBox(
+                bounds.minX() - 12, 40, bounds.minZ() - 12,
+                bounds.maxX() + 12, bounds.maxY() + 12, bounds.maxZ() + 12);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 50);
+        Map<BlockPos, BlockState> originalBlocks = new HashMap<>(blocks);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 50);
+
+        assertEquals(originalBlocks, blocks);
+    }
+
+    @Test
+    public void vacuumBudgetExhaustionSkipsFittingWithoutFailing() throws Exception {
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 66, 0, 0, 70, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 15, 72, 15);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+        Map<BlockPos, BlockState> originalBlocks = new HashMap<>(blocks);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60, 1);
+
+        assertEquals(originalBlocks, blocks);
+    }
+
+    @Test
+    public void vacuumContinuouslySupportsProcessedChildBases() throws Exception {
+        PoolElementStructurePiece center = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 60, 0, 0, 64, 0), 1, Rotation.NONE);
+        StructureTemplate childTemplate = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece child = rigidTemplatePiece(
+                new InlineSinglePoolElement(childTemplate),
+                new BoundingBox(10, 66, 0, 10, 72, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(
+                List.of(center, child), TerrainAdjustment.NONE);
+        BoundingBox area = new BoundingBox(0, 54, 0, 15, 74, 3);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 60);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area,
+                List.of(surfaceTarget(start, IrisStructureTerrainMode.VACUUM)),
+                (x, z) -> 60);
+
+        for (int y = 61; y <= 65; y++) {
+            assertFalse(state(blocks, 10, y, 0).isAir());
+        }
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 10, 65, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 10, 66, 0));
+    }
+
+    @Test
+    public void vacuumSurfaceFittingIsStableAcrossSplitChunkAreas() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
+                block(1, 0, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(template),
+                new BoundingBox(15, 66, 0, 16, 72, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
+        NativeStructureTerrainIntegrator.TerrainTarget target =
+                surfaceTarget(start, IrisStructureTerrainMode.VACUUM);
+        BoundingBox wideArea = new BoundingBox(0, 54, 0, 31, 74, 15);
+        BoundingBox westArea = new BoundingBox(0, 54, 0, 15, 74, 15);
+        BoundingBox eastArea = new BoundingBox(16, 54, 0, 31, 74, 15);
+        Map<BlockPos, BlockState> wideBlocks = flatTerrain(wideArea, 60);
+        Map<BlockPos, BlockState> splitBlocks = flatTerrain(wideArea, 60);
+        Map<BlockPos, BlockState> reverseSplitBlocks = flatTerrain(wideArea, 60);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(wideBlocks), wideArea, List.of(target), (x, z) -> 60);
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(splitBlocks), westArea, List.of(target), (x, z) -> 60);
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(splitBlocks), eastArea, List.of(target), (x, z) -> 60);
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(reverseSplitBlocks), eastArea, List.of(target), (x, z) -> 60);
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(reverseSplitBlocks), westArea, List.of(target), (x, z) -> 60);
+
+        assertEquals(wideBlocks, splitBlocks);
+        assertEquals(wideBlocks, reverseSplitBlocks);
     }
 
     @Test
@@ -863,8 +1331,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         BoundingBox area = new BoundingBox(0, 63, 0, 0, 68, 0);
 
         NativeStructureVegetationClearer.clearIntersectingVegetation(
-                world, chunk, area, List.of(
-                        new NativeStructureVegetationClearer.VegetationTarget(desertStart(), false)));
+                world, chunk, area, List.of(desertStart()));
         NativeStructureSurfaceFitter.applySurfaceColumn(
                 world, new BlockPos.MutableBlockPos(),
                 0, 0, 64, 68, -64, 319);
@@ -1642,9 +2109,15 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
 
         private InlineSinglePoolElement(
                 StructureTemplate template, List<StructureProcessor> processors) {
+            this(template, processors, StructureTemplatePool.Projection.RIGID);
+        }
+
+        private InlineSinglePoolElement(
+                StructureTemplate template, List<StructureProcessor> processors,
+                StructureTemplatePool.Projection projection) {
             super(Either.right(template),
                     Holder.direct(new StructureProcessorList(processors)),
-                    StructureTemplatePool.Projection.RIGID,
+                    projection,
                     Optional.<LiquidSettings>empty());
         }
     }

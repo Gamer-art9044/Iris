@@ -82,16 +82,6 @@ public class IrisCaveProfile {
     private double adaptiveThresholdMargin = 0.04;
 
     @MinNumber(0)
-    @MaxNumber(4096)
-    @Desc("Minimum carved cells expected from this profile before recovery boost applies.")
-    private int minCarveCells = 0;
-
-    @MinNumber(0)
-    @MaxNumber(1)
-    @Desc("Additional threshold boost used when profile carve output is too sparse.")
-    private double recoveryThresholdBoost = 0.08;
-
-    @MinNumber(0)
     @MaxNumber(64)
     @Desc("Minimum solid clearance below terrain surface where carving may occur.")
     private int surfaceClearance = 4;

@@ -258,6 +258,6 @@ public class IrisStructureLocateCommandContractTest {
 
     private static IrisNativeStructureDecision decision(NativeStructureGenerationStatus status) {
         return new IrisNativeStructureDecision(
-                status, 0, null, false, false, null, null);
+                status, 0, null, false, null, null);
     }
 }

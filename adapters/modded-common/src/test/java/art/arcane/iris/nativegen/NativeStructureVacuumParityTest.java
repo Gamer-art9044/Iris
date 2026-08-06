@@ -20,7 +20,7 @@ import org.junit.Test;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class NativeStructureVacuumParityTest {
@@ -31,7 +31,7 @@ public class NativeStructureVacuumParityTest {
     }
 
     @Test
-    public void explicitVacuumUsesSharedThinSurfaceFittingOnModdedLoaders() {
+    public void explicitVacuumUsesNonCarvingSurfaceFittingOnModdedLoaders() {
         Structure structure = new DesertPyramidStructure(
                 new Structure.StructureSettings(
                         HolderSet.empty(), Map.of(),
@@ -45,7 +45,7 @@ public class NativeStructureVacuumParityTest {
                         new IrisStructureTerrain().setMode(IrisStructureTerrainMode.VACUUM));
 
         assertTrue(NativeStructureSurfaceFitter.requiresSurfaceTerrain(target));
-        assertEquals(TerrainAdjustment.BEARD_THIN,
-                NativeStructureSurfaceFitter.effectiveSurfaceAdjustment(target));
+        assertFalse(NativeStructureTerrainIntegrator.clearsLegacyTemplateAir(
+                start, target.terrain()));
     }
 }

@@ -450,6 +450,39 @@ public class DatapackIngestServiceTest {
     }
 
     @Test
+    public void finderMetadataDoesNotInvalidateManagedStaging() throws Exception {
+        File staging = datapackDirectory("finder-metadata-staging");
+        File nested = new File(staging, "data/example");
+        assertTrue(nested.mkdirs());
+        DatapackIngestService.Entry entry = entry("finder-metadata-staging", "v1", "1", "sha");
+        DatapackIngestService.writeOwnership(staging, entry);
+        File rootMetadata = new File(staging, ".DS_Store");
+        File nestedMetadata = new File(nested, ".DS_Store");
+        Files.writeString(rootMetadata.toPath(), "finder", StandardCharsets.UTF_8);
+        Files.writeString(nestedMetadata.toPath(), "finder", StandardCharsets.UTF_8);
+
+        assertTrue(DatapackIngestService.isUsableStaging(staging, entry));
+        assertFalse(rootMetadata.exists());
+        assertFalse(nestedMetadata.exists());
+    }
+
+    @Test
+    public void finderMetadataDirectoryCannotBypassManagedHashing() throws Exception {
+        File staging = datapackDirectory("finder-metadata-directory");
+        assertTrue(new File(staging, ".DS_Store").mkdir());
+        DatapackIngestService.Entry entry = entry("finder-metadata-directory", "v1", "1", "sha");
+
+        try {
+            DatapackIngestService.writeOwnership(staging, entry);
+            fail("Expected suspicious Finder metadata to be rejected");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("Suspicious Finder metadata"));
+        }
+
+        assertFalse(new File(staging, ".iris-managed.json").exists());
+    }
+
+    @Test
     public void nestedOwnershipNamedResourceRemainsInsideTheManagedHash() throws Exception {
         File staging = datapackDirectory("nested-ownership-resource");
         File nestedMarker = new File(
@@ -743,7 +776,7 @@ public class DatapackIngestServiceTest {
         DatapackIngestService.InstallPlan plan = prepareLegacyStagingPlan(fixture);
         DatapackIngestService.publishInstallPlan(plan);
 
-        assertTrue(plan.contentChanged());
+        assertFalse(plan.contentChanged());
         assertTrue(DatapackIngestService.freshInstallRequiresRestart(plan.contentChanged(), true));
         assertEquals("same", Files.readString(
                 new File(fixture.target(), "value.txt").toPath(), StandardCharsets.UTF_8));
@@ -1564,6 +1597,80 @@ public class DatapackIngestServiceTest {
         assertEquals("new", Files.readString(new File(target, "value.txt").toPath(), StandardCharsets.UTF_8));
         assertFalse(backup.exists());
         assertFalse(transaction.exists());
+    }
+
+    @Test
+    public void publishingInstallCrashRemovesFinderMetadataBeforeRollback() throws Exception {
+        File root = temporaryFolder.newFolder("finder-install-crash-rollback-root");
+        File world = temporaryFolder.newFolder("finder-install-crash-rollback-world");
+        DatapackIngestService.Entry entry = entry("managed", "v1", "1", "sha");
+        writeManifest(root, entry);
+
+        File target = new File(world, entry.id);
+        writeManagedDatapack(target, entry, "old");
+        String originalHash = ownershipHash(target);
+        File scratch = new File(world.getParentFile(), ".iris-datapack-install");
+        assertTrue(scratch.mkdirs());
+        File pending = new File(scratch, "managed-pending-finder");
+        File backup = new File(scratch, "managed-backup-finder");
+        writeManagedDatapack(pending, entry, "new");
+        assertTrue(new File(pending, "data/nova_structures").mkdirs());
+        DatapackIngestService.writeOwnership(pending, entry);
+        String desiredHash = ownershipHash(pending);
+        Files.move(target.toPath(), backup.toPath());
+        Files.move(pending.toPath(), target.toPath());
+        Map<String, Object> directory = installDirectory(
+                target, pending, backup, true, originalHash, desiredHash);
+        File transaction = writeCoordinator(root, "INSTALL", "PUBLISHING", entry, true,
+                List.of(directory), List.of());
+        Files.writeString(new File(target, ".DS_Store").toPath(), "finder", StandardCharsets.UTF_8);
+        Files.writeString(new File(target, "data/.DS_Store").toPath(), "finder", StandardCharsets.UTF_8);
+        Files.writeString(new File(target, "data/nova_structures/.DS_Store").toPath(),
+                "finder", StandardCharsets.UTF_8);
+
+        DatapackIngestService.recoverTransactions(root, List.of(world));
+
+        assertEquals("old", Files.readString(new File(target, "value.txt").toPath(), StandardCharsets.UTF_8));
+        assertFalse(new File(target, ".DS_Store").exists());
+        assertFalse(backup.exists());
+        assertFalse(transaction.exists());
+    }
+
+    @Test
+    public void publishingInstallCrashStillRejectsAuthoredContentMutation() throws Exception {
+        File root = temporaryFolder.newFolder("changed-install-crash-rollback-root");
+        File world = temporaryFolder.newFolder("changed-install-crash-rollback-world");
+        DatapackIngestService.Entry entry = entry("managed", "v1", "1", "sha");
+        writeManifest(root, entry);
+
+        File target = new File(world, entry.id);
+        writeManagedDatapack(target, entry, "old");
+        String originalHash = ownershipHash(target);
+        File scratch = new File(world.getParentFile(), ".iris-datapack-install");
+        assertTrue(scratch.mkdirs());
+        File pending = new File(scratch, "managed-pending-changed");
+        File backup = new File(scratch, "managed-backup-changed");
+        writeManagedDatapack(pending, entry, "new");
+        String desiredHash = ownershipHash(pending);
+        Files.move(target.toPath(), backup.toPath());
+        Files.move(pending.toPath(), target.toPath());
+        Map<String, Object> directory = installDirectory(
+                target, pending, backup, true, originalHash, desiredHash);
+        File transaction = writeCoordinator(root, "INSTALL", "PUBLISHING", entry, true,
+                List.of(directory), List.of());
+        Files.writeString(new File(target, "value.txt").toPath(), "changed", StandardCharsets.UTF_8);
+
+        try {
+            DatapackIngestService.recoverTransactions(root, List.of(world));
+            fail("Expected authored datapack mutation to block recovery");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("content changed"));
+        }
+
+        assertEquals("changed", Files.readString(
+                new File(target, "value.txt").toPath(), StandardCharsets.UTF_8));
+        assertTrue(backup.exists());
+        assertTrue(transaction.exists());
     }
 
     @Test

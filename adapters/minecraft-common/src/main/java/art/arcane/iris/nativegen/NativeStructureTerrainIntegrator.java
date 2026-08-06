@@ -266,7 +266,6 @@ public final class NativeStructureTerrainIntegrator {
         }
         IrisStructureTerrainMode mode = terrain.resolvedMode();
         return mode == IrisStructureTerrainMode.ENCASE
-                || mode == IrisStructureTerrainMode.VACUUM
                 || mode == IrisStructureTerrainMode.SOURCE
                 && start.getStructure().terrainAdaptation() != TerrainAdjustment.NONE;
     }

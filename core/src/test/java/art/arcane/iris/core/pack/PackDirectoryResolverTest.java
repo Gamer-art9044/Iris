@@ -13,6 +13,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -76,6 +77,42 @@ public class PackDirectoryResolverTest {
         assertEquals(List.of(visible), listed);
         assertTrue(PackDirectoryResolver.isVisiblePackDirectory(visible));
         assertNull(PackDirectoryResolver.resolveExisting(packs, ".custom-stage"));
+    }
+
+    @Test
+    public void listsPacksThroughSymbolicLinkWorkspace() throws Exception {
+        File sharedPacks = temporaryFolder.newFolder("shared-packs");
+        File overworld = new File(sharedPacks, "overworld");
+        Files.createDirectory(overworld.toPath());
+        Path workspace = temporaryFolder.getRoot().toPath().resolve("packs");
+        try {
+            Files.createSymbolicLink(workspace, sharedPacks.toPath());
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            Assume.assumeNoException(exception);
+        }
+
+        assertEquals(List.of(workspace.resolve("overworld").toFile()),
+                PackDirectoryResolver.listVisiblePackDirectoriesOrThrow(workspace.toFile()));
+    }
+
+    @Test
+    public void missingWorkspaceListsNoPacks() throws Exception {
+        File missing = new File(temporaryFolder.getRoot(), "missing-packs");
+
+        assertEquals(List.of(), PackDirectoryResolver.listVisiblePackDirectoriesOrThrow(missing));
+    }
+
+    @Test
+    public void rejectsDanglingSymbolicLinkWorkspace() throws Exception {
+        Path workspace = temporaryFolder.getRoot().toPath().resolve("dangling-packs");
+        try {
+            Files.createSymbolicLink(workspace, temporaryFolder.getRoot().toPath().resolve("missing-target"));
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            Assume.assumeNoException(exception);
+        }
+
+        assertThrows(IOException.class,
+                () -> PackDirectoryResolver.listVisiblePackDirectoriesOrThrow(workspace.toFile()));
     }
 
     @Test

@@ -98,6 +98,7 @@ public final class IrisLogging {
         }
 
         reportError(cause);
+        cause.printStackTrace(System.err);
     }
 
     /**

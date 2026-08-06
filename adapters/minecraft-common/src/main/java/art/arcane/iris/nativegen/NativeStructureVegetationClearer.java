@@ -27,39 +27,36 @@ public final class NativeStructureVegetationClearer {
                 || step == GenerationStep.Decoration.STRONGHOLDS;
     }
 
-    public static boolean shouldClearEntireVegetationFootprint(GenerationStep.Decoration step,
-                                                                boolean configured) {
-        return configured;
-    }
-
     public static void clearIntersectingVegetation(WorldGenLevel world, ChunkAccess chunk, BoundingBox area,
-                                                   List<VegetationTarget> targets) {
-        if (targets == null || targets.isEmpty()) {
+                                                   List<StructureStart> starts) {
+        if (starts == null || starts.isEmpty()) {
             return;
         }
         VegetationSnapshot snapshot = captureVegetation(chunk, area);
         if (snapshot.treeBlockCount() == 0) {
             return;
         }
-        boolean[] clearColumns = new boolean[area.getXSpan() * area.getZSpan()];
-        for (VegetationTarget target : targets) {
-            if (shouldProcessTarget(target)) {
-                markVegetationColumns(area, snapshot, target, clearColumns);
+        int columns = area.getXSpan() * area.getZSpan();
+        int[] clearMinY = new int[columns];
+        int[] clearMaxY = new int[columns];
+        Arrays.fill(clearMinY, Integer.MAX_VALUE);
+        Arrays.fill(clearMaxY, Integer.MIN_VALUE);
+        for (StructureStart start : starts) {
+            if (shouldProcessStart(start)) {
+                markVegetationColumns(area, snapshot, start, clearMinY, clearMaxY);
             }
         }
-        clearVegetationColumns(world, area, snapshot, clearColumns);
+        clearVegetationColumns(world, area, snapshot, clearMinY, clearMaxY);
     }
 
-    static boolean shouldProcessTarget(VegetationTarget target) {
-        return target != null && target.start() != null && target.start().isValid();
+    static boolean shouldProcessStart(StructureStart start) {
+        return start != null && start.isValid();
     }
 
     private static VegetationSnapshot captureVegetation(ChunkAccess chunk, BoundingBox area) {
         int width = area.getXSpan();
         int depth = area.getZSpan();
         BitSet[] columns = new BitSet[width * depth];
-        int[] lowestY = new int[columns.length];
-        Arrays.fill(lowestY, Integer.MAX_VALUE);
         int treeBlockCount = 0;
         LevelChunkSection[] sections = chunk.getSections();
         int chunkMinX = chunk.getPos().getMinBlockX();
@@ -89,21 +86,22 @@ public final class NativeStructureVegetationClearer {
                             columns[column] = treeBlocks;
                         }
                         treeBlocks.set(y - area.minY());
-                        lowestY[column] = Math.min(lowestY[column], y);
                         treeBlockCount++;
                     }
                 }
             }
         }
-        return new VegetationSnapshot(columns, lowestY, treeBlockCount);
+        return new VegetationSnapshot(columns, treeBlockCount);
     }
 
     private static void markVegetationColumns(BoundingBox area, VegetationSnapshot snapshot,
-                                              VegetationTarget target, boolean[] clearColumns) {
+                                              StructureStart start, int[] clearMinY, int[] clearMaxY) {
         int width = area.getXSpan();
-        int[] pieceTops = new int[clearColumns.length];
+        int[] pieceTops = new int[clearMinY.length];
+        int[] pieceBottoms = new int[clearMinY.length];
         Arrays.fill(pieceTops, Integer.MIN_VALUE);
-        for (StructurePiece piece : target.start().getPieces()) {
+        Arrays.fill(pieceBottoms, Integer.MAX_VALUE);
+        for (StructurePiece piece : start.getPieces()) {
             BoundingBox bounds = piece.getBoundingBox();
             int minX = Math.max(area.minX(), bounds.minX());
             int maxX = Math.min(area.maxX(), bounds.maxX());
@@ -116,6 +114,7 @@ public final class NativeStructureVegetationClearer {
                 for (int x = minX; x <= maxX; x++) {
                     int column = (z - area.minZ()) * width + x - area.minX();
                     pieceTops[column] = Math.max(pieceTops[column], bounds.maxY());
+                    pieceBottoms[column] = Math.min(pieceBottoms[column], bounds.minY());
                 }
             }
         }
@@ -123,18 +122,13 @@ public final class NativeStructureVegetationClearer {
             if (snapshot.columns()[column] == null || pieceTops[column] == Integer.MIN_VALUE) {
                 continue;
             }
-            if (shouldClearVegetationColumn(pieceTops[column], snapshot.lowestY()[column], target.force())) {
-                clearColumns[column] = true;
-            }
+            clearMinY[column] = Math.min(clearMinY[column], pieceBottoms[column] - 1);
+            clearMaxY[column] = Math.max(clearMaxY[column], pieceTops[column]);
         }
     }
 
-    static boolean shouldClearVegetationColumn(int pieceTopY, int lowestTreeY, boolean force) {
-        return force || pieceTopY >= lowestTreeY;
-    }
-
     private static void clearVegetationColumns(WorldGenLevel world, BoundingBox area,
-                                               VegetationSnapshot snapshot, boolean[] clearColumns) {
+                                               VegetationSnapshot snapshot, int[] clearMinY, int[] clearMaxY) {
         int width = area.getXSpan();
         BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
         BlockState air = Blocks.AIR.defaultBlockState();
@@ -142,10 +136,16 @@ public final class NativeStructureVegetationClearer {
             for (int x = area.minX(); x <= area.maxX(); x++) {
                 int column = (z - area.minZ()) * width + x - area.minX();
                 BitSet treeBlocks = snapshot.columns()[column];
-                if (!clearColumns[column] || treeBlocks == null) {
+                if (treeBlocks == null || clearMaxY[column] < clearMinY[column]) {
                     continue;
                 }
-                for (int bit = treeBlocks.nextSetBit(0); bit >= 0; bit = treeBlocks.nextSetBit(bit + 1)) {
+                int firstBit = Math.max(0, clearMinY[column] - area.minY());
+                int lastBit = Math.min(area.getYSpan() - 1, clearMaxY[column] - area.minY());
+                if (firstBit > lastBit) {
+                    continue;
+                }
+                for (int bit = treeBlocks.nextSetBit(firstBit); bit >= 0 && bit <= lastBit;
+                     bit = treeBlocks.nextSetBit(bit + 1)) {
                     int y = area.minY() + bit;
                     position.set(x, y, z);
                     BlockState state = world.getBlockState(position);
@@ -167,9 +167,6 @@ public final class NativeStructureVegetationClearer {
                 || path.endsWith("_leaves");
     }
 
-    public record VegetationTarget(StructureStart start, boolean force) {
-    }
-
-    private record VegetationSnapshot(BitSet[] columns, int[] lowestY, int treeBlockCount) {
+    private record VegetationSnapshot(BitSet[] columns, int treeBlockCount) {
     }
 }

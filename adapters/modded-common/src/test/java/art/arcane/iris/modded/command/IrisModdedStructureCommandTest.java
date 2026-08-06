@@ -332,6 +332,6 @@ public class IrisModdedStructureCommandTest {
     }
 
     private IrisNativeStructureDecision decision(NativeStructureGenerationStatus status) {
-        return new IrisNativeStructureDecision(status, 0, null, false, false, null, null);
+        return new IrisNativeStructureDecision(status, 0, null, false, null, null);
     }
 }

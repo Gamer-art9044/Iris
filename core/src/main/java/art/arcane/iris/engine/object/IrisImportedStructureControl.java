@@ -52,7 +52,7 @@ public class IrisImportedStructureControl {
     private boolean datapackOverrides = true;
 
     @ArrayType(type = IrisVanillaStructureAdjustment.class, min = 1)
-    @Desc("Per-structure adjustments applied to vanilla, mod, and datapack structures that still generate natively. Vertical shifts from every matching entry stack. A matching vegetation option explicitly clears logs and leaves inside structure piece bounds. A matching preserveSourceY option disables Iris burial repositioning for that structure. The last matching entry with stilt settings controls foundation columns, and likewise for terrain and yBand settings. A structure suppressed by an Iris placement is unaffected.")
+    @Desc("Per-structure adjustments applied to vanilla, mod, and datapack structures that still generate natively. Vertical shifts from every matching entry stack. A matching preserveSourceY option disables Iris burial repositioning for that structure. The last matching entry with stilt settings controls foundation columns, and likewise for terrain and yBand settings. A structure suppressed by an Iris placement is unaffected.")
     private KList<IrisVanillaStructureAdjustment> adjustments = new KList<>();
 
     public boolean shouldGenerate(String key) {
@@ -64,7 +64,6 @@ public class IrisImportedStructureControl {
                 adjustments, "importedStructures.adjustments must not be null");
         int y = undergroundStep ? undergroundYShift : 0;
         boolean preserveSourceY = false;
-        boolean clearVegetation = false;
         IrisStructureStiltSettings stilt = null;
         IrisStructureTerrain terrain = null;
         IrisStructureYBand yBand = null;
@@ -72,7 +71,6 @@ public class IrisImportedStructureControl {
             if (adjustment != null && adjustment.matches(key)) {
                 y += adjustment.getYShift();
                 preserveSourceY |= adjustment.isPreserveSourceY();
-                clearVegetation |= adjustment.isClearVegetation();
                 if (adjustment.getStilt() != null) {
                     stilt = adjustment.getStilt();
                 }
@@ -85,7 +83,7 @@ public class IrisImportedStructureControl {
             }
         }
         return new IrisNativeStructureDecision(
-                generationStatus(key), y, yBand, preserveSourceY, clearVegetation, stilt, terrain);
+                generationStatus(key), y, yBand, preserveSourceY, stilt, terrain);
     }
 
     private NativeStructureGenerationStatus generationStatus(String key) {

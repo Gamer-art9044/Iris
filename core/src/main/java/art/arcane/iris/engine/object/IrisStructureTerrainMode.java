@@ -9,7 +9,7 @@ public enum IrisStructureTerrainMode {
     BORE,
     FORCE_CARVE,
 
-    @Desc("Bends surface terrain to every rigid piece base with a 12-block falloff, even when the registered structure has no authored terrain adaptation. Terrain is raised or lowered rather than carved away.")
+    @Desc("Raises surface terrain from processed solid rigid-template foundations at or below each authored ground plane with a 12-block falloff, even when the registered structure has no terrain adaptation. Existing higher terrain and authored air remain untouched.")
     VACUUM,
 
     @Desc("Fills the padded piece volume with solid blocks before any piece is placed so shells, walls, and floors land in solid ground instead of pre-carved air. Only air and liquid cells are filled; existing terrain and structures are never overwritten. Native pieces then carve their own interiors.")

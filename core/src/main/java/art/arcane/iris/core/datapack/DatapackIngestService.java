@@ -91,6 +91,7 @@ import java.util.stream.Stream;
 
 public final class DatapackIngestService {
     private static final String USER_AGENT = "VolmitSoftware/Iris (datapack-ingest)";
+    private static final String FINDER_METADATA = ".DS_Store";
     private static final String OVERRIDES_STRIPPED_MARKER = ".iris-overrides-stripped";
     private static final String OWNERSHIP_MARKER = ".iris-managed.json";
     private static final String TRANSACTION_DIRECTORY = ".iris-datapack-transactions";
@@ -803,6 +804,7 @@ public final class DatapackIngestService {
         if (!ownershipSourceMatches(ownership, entry)) {
             throw new IOException("Ownership marker at " + directory.getPath() + " belongs to '" + ownership.id + "'");
         }
+        removeFinderMetadata(directory);
         if (!Objects.equals(ownership.contentHash, directoryHash(directory))) {
             throw new IOException("Refusing to remove modified or corrupt Iris-managed datapack " + directory.getPath());
         }
@@ -1479,6 +1481,9 @@ public final class DatapackIngestService {
                 }
                 validateInstallTree(target, worldFolder, "Existing datapack install");
                 Ownership ownership = readOwnershipOrNull(target);
+                if (ownership != null) {
+                    removeFinderMetadata(target);
+                }
                 String currentHash = directoryHash(target);
                 originalHash = currentHash;
                 originalMarkerHash = ownershipMarkerFingerprint(target);
@@ -1705,6 +1710,9 @@ public final class DatapackIngestService {
             throw new IOException("Missing or unsafe " + purpose + " at " + directory.getPath());
         }
         validateInstallTree(directory, storeAnchor, purpose);
+        if (Files.exists(new File(directory, OWNERSHIP_MARKER).toPath(), LinkOption.NOFOLLOW_LINKS)) {
+            removeFinderMetadata(directory);
+        }
         if (!expectedIdentity.isEmpty()
                 && !Objects.equals(directoryIdentity(directory), expectedIdentity)) {
             throw new IOException("Datapack directory identity changed in " + purpose + " at " + directory.getPath());
@@ -1991,6 +1999,7 @@ public final class DatapackIngestService {
         if (!id.equals(ownership.id)) {
             throw new IOException("Datapack ownership mismatch at " + directory.getPath());
         }
+        removeFinderMetadata(directory);
     }
 
     private static void rejectSymbolicLinks(File root) throws IOException {
@@ -2017,6 +2026,13 @@ public final class DatapackIngestService {
                         continue;
                     }
                     if (path.equals(rootMarker)) {
+                        continue;
+                    }
+                    if (isFinderMetadata(path)) {
+                        if (Files.isSymbolicLink(path)
+                                || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                            throw new IOException("Suspicious Finder metadata in datapack: " + path);
+                        }
                         continue;
                     }
                     pathCount++;
@@ -2087,6 +2103,31 @@ public final class DatapackIngestService {
         }
     }
 
+    private static void removeFinderMetadata(File root) throws IOException {
+        List<Path> entries;
+        try (Stream<Path> paths = Files.walk(root.toPath())) {
+            entries = paths.limit(MAX_MANAGED_PATHS + 1L).toList();
+        }
+        if (entries.size() > MAX_MANAGED_PATHS) {
+            throw new IOException("Datapack contains more than " + MAX_MANAGED_PATHS + " paths");
+        }
+        for (Path path : entries) {
+            if (!isFinderMetadata(path)) {
+                continue;
+            }
+            if (Files.isSymbolicLink(path)
+                    || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Suspicious Finder metadata in datapack: " + path);
+            }
+            Files.delete(path);
+        }
+    }
+
+    private static boolean isFinderMetadata(Path path) {
+        Path fileName = path.getFileName();
+        return fileName != null && FINDER_METADATA.equals(fileName.toString());
+    }
+
     private static PackResources scanPackResources(File root) throws IOException {
         TreeSet<String> structureKeys = new TreeSet<>();
         TreeSet<String> templateKeys = new TreeSet<>();
@@ -2133,6 +2174,7 @@ public final class DatapackIngestService {
         if (!id.equals(ownership.id)) {
             throw new IOException("Ownership marker belongs to '" + ownership.id + "'");
         }
+        removeFinderMetadata(directory);
         if (!Objects.equals(ownership.contentHash, directoryHash(directory))) {
             throw new IOException("Refusing to delete modified or corrupt Iris-managed datapack " + directory.getPath());
         }
@@ -3440,7 +3482,7 @@ public final class DatapackIngestService {
     }
 
     private static boolean isHarmlessRecoveryArtifact(Path path) throws IOException {
-        if (!".DS_Store".equals(path.getFileName().toString())) {
+        if (!isFinderMetadata(path)) {
             return false;
         }
         if (Files.isSymbolicLink(path) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {

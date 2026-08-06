@@ -100,10 +100,8 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
                 sGenMatter,
                 sTerrain
         ));
-        registerStage(burst(
-                sCave,
-                sPost
-        ));
+        registerStage(sCave);
+        registerStage(sPost);
         registerStage(sFloatingTerrainSolid);
         registerStage(burst(
                 sDeposit,

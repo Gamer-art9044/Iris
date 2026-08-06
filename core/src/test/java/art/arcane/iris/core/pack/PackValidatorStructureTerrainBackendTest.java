@@ -87,7 +87,8 @@ public class PackValidatorStructureTerrainBackendTest {
             List<String> errors = new ArrayList<>();
 
             PackDimensionValidator.validateImportedStructurePolicy(
-                    "overworld", new JSONObject().put("importedStructures", policy), errors);
+                    "overworld", new JSONObject().put("importedStructures", policy),
+                    errors, new ArrayList<>());
 
             assertTrue(mode + ": " + errors, errors.isEmpty());
         }

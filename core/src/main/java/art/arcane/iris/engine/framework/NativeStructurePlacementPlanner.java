@@ -79,7 +79,6 @@ public final class NativeStructurePlacementPlanner {
                 0,
                 null,
                 false,
-                !placement.isUnderground(),
                 placement.getStilt(),
                 placement.resolvedTerrain()
         );

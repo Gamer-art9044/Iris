@@ -23,7 +23,6 @@ public record IrisNativeStructureDecision(
         int yShift,
         IrisStructureYBand yBand,
         boolean preserveSourceY,
-        boolean clearVegetation,
         IrisStructureStiltSettings stilt,
         IrisStructureTerrain terrain
 ) {
@@ -33,6 +32,6 @@ public record IrisNativeStructureDecision(
 
     public IrisNativeStructureDecision withStatus(NativeStructureGenerationStatus replacement) {
         return new IrisNativeStructureDecision(
-                replacement, yShift, yBand, preserveSourceY, clearVegetation, stilt, terrain);
+                replacement, yShift, yBand, preserveSourceY, stilt, terrain);
     }
 }

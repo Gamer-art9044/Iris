@@ -64,6 +64,7 @@ public class NativeStructureFailureContractTest {
 
         assertTrue(placement.contains("\"terrain integration\""));
         assertTrue(placement.contains("\"terrain preparation\""));
+        assertTrue(placement.contains("\"foundation repair\""));
         assertFalse(placement.contains("\"terrain carving\""));
         assertTrue(placement.contains("prepareSurfaceStructures"));
         assertTrue(placement.contains("clearIntersectingVegetation"));
@@ -71,6 +72,8 @@ public class NativeStructureFailureContractTest {
                 < placement.indexOf("prepareSurfaceStructures"));
         assertTrue(placement.indexOf("prepareSurfaceStructures")
                 < placement.indexOf("for (NativePlacementGroup group"));
+        assertTrue(placement.indexOf("repairVacuumFoundations")
+                > placement.indexOf("for (NativePlacementGroup group"));
     }
 
     @Test

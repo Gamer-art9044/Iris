@@ -34,7 +34,7 @@ public record NativeStructureOwnershipRecord(
         String contentFingerprint,
         DecisionSnapshot decision
 ) {
-    public static final int CURRENT_SCHEMA = 1;
+    public static final int CURRENT_SCHEMA = 2;
     public static final int MAX_REFERENCE_DISTANCE_CHUNKS = 8;
     private static final int MAX_KEY_BYTES = 512;
     private static final int MAX_FINGERPRINT_BYTES = 128;
@@ -251,7 +251,7 @@ public record NativeStructureOwnershipRecord(
         }
     }
 
-    public record DecisionSnapshot(boolean clearVegetation, String stiltJson, String terrainJson) {
+    public record DecisionSnapshot(String stiltJson, String terrainJson) {
         private static final Gson GSON = new Gson();
         private static final int MAX_JSON_BYTES = 65_536;
 
@@ -269,7 +269,6 @@ public record NativeStructureOwnershipRecord(
                 throw new IllegalArgumentException("Only generated native structure decisions can be persisted");
             }
             return new DecisionSnapshot(
-                    resolved.clearVegetation(),
                     GSON.toJson(resolved.stilt()),
                     GSON.toJson(Objects.requireNonNullElseGet(
                             resolved.terrain(), IrisStructureTerrain::new))
@@ -288,21 +287,18 @@ public record NativeStructureOwnershipRecord(
                     0,
                     null,
                     false,
-                    clearVegetation,
                     stilt,
                     terrain
             );
         }
 
         void write(DataOutputStream output) throws IOException {
-            output.writeBoolean(clearVegetation);
             writeString(output, stiltJson, MAX_JSON_BYTES, "stilt snapshot");
             writeString(output, terrainJson, MAX_JSON_BYTES, "terrain snapshot");
         }
 
         static DecisionSnapshot read(DataInputStream input) throws IOException {
             return new DecisionSnapshot(
-                    input.readBoolean(),
                     readString(input, MAX_JSON_BYTES, "stilt snapshot"),
                     readString(input, MAX_JSON_BYTES, "terrain snapshot")
             );

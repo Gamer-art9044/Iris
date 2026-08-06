@@ -2,19 +2,12 @@ package art.arcane.iris.nativegen;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.WorldGenLevel;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.PoolElementStructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
-import net.minecraft.world.level.levelgen.structure.pools.EmptyPoolElement;
-import net.minecraft.world.level.levelgen.structure.pools.ListPoolElement;
-import net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement;
-import net.minecraft.world.level.levelgen.structure.pools.StructurePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.StructureTemplatePool;
-import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
-import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 
 import java.util.ArrayList;
@@ -31,7 +24,6 @@ import java.util.function.Supplier;
 final class NativeStructureSurfaceSupportBuilder {
     private static final int MAX_BATCH_CELLS = 524_288;
     private static final int MAX_BRIDGE_SPAN = 2;
-    private static final OccupancyCell BLOCKER = new OccupancyCell(null, true);
 
     private NativeStructureSurfaceSupportBuilder() {
     }
@@ -100,15 +92,22 @@ final class NativeStructureSurfaceSupportBuilder {
             if (lowerMeets.isEmpty()) {
                 continue;
             }
-            Map<Long, OccupancyCell> occupancy = effectiveOccupancy(
-                    world, area, upper.piece(), lowerMeets,
-                    referencePos, templates, budget);
-            Map<Long, LowestCell> lowest = lowestCells(occupancy);
-            for (Map.Entry<Long, LowestCell> entry : lowest.entrySet()) {
-                LowestCell cell = entry.getValue();
+            NativeStructureTemplateOccupancy.OccupancyResult occupancy =
+                    NativeStructureTemplateOccupancy.resolve(
+                            world, upper.piece(), referencePos, area, templates,
+                            position -> retain(position, area, lowerMeets), budget::consume);
+            if (!occupancy.resolved()) {
+                continue;
+            }
+            Map<Long, NativeStructureTemplateOccupancy.LowestCell> lowest =
+                    NativeStructureTemplateOccupancy.lowestCells(occupancy.cells());
+            for (Map.Entry<Long, NativeStructureTemplateOccupancy.LowestCell> entry
+                    : lowest.entrySet()) {
+                NativeStructureTemplateOccupancy.LowestCell cell = entry.getValue();
                 Integer lowerMeet = lowerMeets.get(entry.getKey());
                 if (lowerMeet == null || cell.occupancy().blocker()
-                        || !isSolidBase(cell.occupancy().state())
+                        || !NativeStructureTemplateOccupancy.isSolidBase(
+                                cell.occupancy().state())
                         || cell.y() - lowerMeet < 2
                         || cell.y() - lowerMeet > MAX_BRIDGE_SPAN) {
                     continue;
@@ -168,75 +167,6 @@ final class NativeStructureSurfaceSupportBuilder {
         return lowerMeets;
     }
 
-    private static Map<Long, OccupancyCell> effectiveOccupancy(
-            WorldGenLevel world, BoundingBox area,
-            PoolElementStructurePiece piece, Map<Long, Integer> lowerMeets,
-            BlockPos referencePos, Supplier<StructureTemplateManager> templates,
-            BatchCellBudget budget) {
-        List<SinglePoolElement> leaves = new ArrayList<>();
-        if (!flattenSingles(piece.getElement(), leaves)) {
-            return Map.of();
-        }
-        List<LeafPlacement> placements = new ArrayList<>(leaves.size());
-        Map<Long, OccupancyCell> occupancy = new HashMap<>();
-        for (SinglePoolElement leaf : leaves) {
-            StructurePlaceSettings settings =
-                    NativeStructureReflection.resolvePlacementSettings(leaf, piece, area);
-            StructureTemplate template = NativeStructureReflection.resolveTemplate(leaf, templates);
-            List<StructureTemplate.StructureBlockInfo> rawBlocks =
-                    NativeStructureReflection.resolveTemplateBlocks(
-                            template, settings, piece.getPosition());
-            budget.consume(rawBlocks.size());
-            placements.add(new LeafPlacement(settings, rawBlocks, template));
-            for (StructureTemplate.StructureBlockInfo raw : rawBlocks) {
-                BlockPos position = piece.getPosition().offset(
-                        StructureTemplate.calculateRelativePosition(settings, raw.pos()));
-                if (retain(position, area, lowerMeets)) {
-                    occupancy.put(position.asLong(), BLOCKER);
-                }
-            }
-        }
-        for (LeafPlacement placement : placements) {
-            List<StructureTemplate.StructureBlockInfo> processed =
-                    NativeStructureReflection.processTemplateBlocks(
-                            world, piece.getPosition(), referencePos,
-                            placement.settings(), placement.rawBlocks(),
-                            placement.template());
-            budget.consume(processed.size());
-            for (StructureTemplate.StructureBlockInfo block : processed) {
-                BlockPos position = block.pos();
-                if (!retain(position, area, lowerMeets)) {
-                    continue;
-                }
-                BlockState state = block.state()
-                        .mirror(placement.settings().getMirror())
-                        .rotate(placement.settings().getRotation());
-                occupancy.put(position.asLong(), new OccupancyCell(state, false));
-            }
-        }
-        return occupancy;
-    }
-
-    private static boolean flattenSingles(
-            StructurePoolElement element, List<SinglePoolElement> leaves) {
-        if (element instanceof ListPoolElement listElement) {
-            for (StructurePoolElement child : listElement.getElements()) {
-                if (!flattenSingles(child, leaves)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        if (element == EmptyPoolElement.INSTANCE) {
-            return true;
-        }
-        if (element instanceof SinglePoolElement singleElement) {
-            leaves.add(singleElement);
-            return true;
-        }
-        return false;
-    }
-
     private static boolean retain(
             BlockPos position, BoundingBox area, Map<Long, Integer> lowerMeets) {
         if (!area.isInside(position)) {
@@ -244,22 +174,6 @@ final class NativeStructureSurfaceSupportBuilder {
         }
         Integer lowerMeet = lowerMeets.get(columnKey(position.getX(), position.getZ()));
         return lowerMeet != null && position.getY() <= lowerMeet + MAX_BRIDGE_SPAN;
-    }
-
-    private static Map<Long, LowestCell> lowestCells(
-            Map<Long, OccupancyCell> occupancy) {
-        Map<Long, LowestCell> lowest = new HashMap<>();
-        for (Map.Entry<Long, OccupancyCell> entry : occupancy.entrySet()) {
-            BlockPos position = BlockPos.of(entry.getKey());
-            long column = columnKey(position.getX(), position.getZ());
-            LowestCell current = lowest.get(column);
-            if (current == null || position.getY() < current.y()) {
-                lowest.put(column, new LowestCell(
-                        position.getX(), position.getY(), position.getZ(),
-                        entry.getValue()));
-            }
-        }
-        return lowest;
     }
 
     private static Map<Long, BlockState> planWrites(
@@ -338,13 +252,6 @@ final class NativeStructureSurfaceSupportBuilder {
         return world.getBlockState(position.set(x, lowerMeetY, z));
     }
 
-    private static boolean isSolidBase(BlockState state) {
-        return state != null && state.isSolid()
-                && !state.is(Blocks.STRUCTURE_VOID)
-                && !state.is(Blocks.JIGSAW)
-                && state.getFluidState().isEmpty();
-    }
-
     private static boolean isTerrainSupport(BlockState state) {
         return state.isSolid()
                 && !NativeStructureVegetationClearer.isTreeBlock(state)
@@ -363,19 +270,6 @@ final class NativeStructureSurfaceSupportBuilder {
 
     private record RigidAnchor(
             PoolElementStructurePiece piece, BoundingBox bounds, int meetY) {
-    }
-
-    private record LeafPlacement(
-            StructurePlaceSettings settings,
-            List<StructureTemplate.StructureBlockInfo> rawBlocks,
-            StructureTemplate template) {
-    }
-
-    private record OccupancyCell(BlockState state, boolean blocker) {
-    }
-
-    private record LowestCell(
-            int x, int y, int z, OccupancyCell occupancy) {
     }
 
     private record SupportRequest(int x, int z, int lowerMeetY, int baseY) {

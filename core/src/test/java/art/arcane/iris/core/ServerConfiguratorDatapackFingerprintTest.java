@@ -149,6 +149,46 @@ public class ServerConfiguratorDatapackFingerprintTest {
     }
 
     @Test
+    public void computePackFingerprintReadsSafeSymbolicWorkspaceRoots() throws Exception {
+        Path workspace = tmp.newFolder("pack-workspace").toPath();
+        Path externalPack = tmp.newFolder("workspace-linked-pack").toPath();
+        Path dimension = externalPack.resolve("dimensions/overworld.json");
+        Files.createDirectories(dimension.getParent());
+        Files.writeString(dimension, "first", StandardCharsets.UTF_8);
+        Path packLink = workspace.resolve("overworld");
+        Path workspaceLink = tmp.getRoot().toPath().resolve("packs-link");
+        try {
+            Files.createSymbolicLink(packLink, externalPack);
+            Files.createSymbolicLink(workspaceLink, workspace);
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            Assume.assumeNoException(exception);
+        }
+        String before = ServerConfigurator.computePackFingerprint(workspaceLink.toFile());
+        assertEquals(ServerConfigurator.computePackFingerprint(workspace.toFile()), before);
+
+        Files.writeString(dimension, "other", StandardCharsets.UTF_8);
+
+        assertNotEquals(before, ServerConfigurator.computePackFingerprint(workspaceLink.toFile()));
+    }
+
+    @Test
+    public void computePackFingerprintRejectsDanglingSymbolicWorkspaceRoots() throws Exception {
+        Path workspaceLink = tmp.getRoot().toPath().resolve("dangling-packs-link");
+        try {
+            Files.createSymbolicLink(workspaceLink, tmp.getRoot().toPath().resolve("missing-workspace"));
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            Assume.assumeNoException(exception);
+        }
+
+        try {
+            ServerConfigurator.computePackFingerprint(workspaceLink.toFile());
+            fail("Dangling symbolic workspace roots must be rejected");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("missing or unsafe"));
+        }
+    }
+
+    @Test
     public void incompleteExternalDatapackRecoveryBlocksCompilation() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/ServerConfigurator.java"));

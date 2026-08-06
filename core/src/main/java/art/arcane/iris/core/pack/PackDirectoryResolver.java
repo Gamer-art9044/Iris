@@ -47,7 +47,7 @@ public final class PackDirectoryResolver {
         if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
             return List.of();
         }
-        if (Files.isSymbolicLink(root) || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+        if (!Files.isDirectory(root)) {
             throw new IOException("Pack workspace is missing or unsafe: " + root);
         }
         try (Stream<Path> stream = Files.list(root)) {

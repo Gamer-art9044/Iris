@@ -8,6 +8,7 @@ import org.junit.Assume;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -79,6 +80,23 @@ public class IrisDatapackCompilerTest {
         assertTrue(result.dimensionCount() > 0);
         assertTrue(result.biomeCount() > 0);
         assertTrue(Files.isRegularFile(datapackRoot.resolve("pack.mcmeta")));
+    }
+
+    @Test
+    public void collectsInstalledPacksThroughSymbolicLinkWorkspace() throws Exception {
+        Path dataDirectory = temporaryFolder.newFolder("linked-data").toPath();
+        Path serverRoot = temporaryFolder.newFolder("linked-server").toPath();
+        Path sharedPacks = temporaryFolder.newFolder("linked-shared-packs").toPath();
+        Path overworld = sharedPacks.resolve("overworld");
+        createPack(overworld, "overworld", "linked_custom");
+        try {
+            Files.createSymbolicLink(dataDirectory.resolve("packs"), sharedPacks);
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            Assume.assumeNoException(exception);
+        }
+
+        assertEquals(List.of(dataDirectory.resolve("packs/overworld").toFile()),
+                IrisDatapackCompiler.collectPackRoots(dataDirectory, serverRoot));
     }
 
     @Test

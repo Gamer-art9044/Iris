@@ -73,11 +73,14 @@ String forgeArtifactName = irisArtifactName('Forge', "${minecraftVersion}+${load
 String neoForgeArtifactName = irisArtifactName('NeoForge', "${minecraftVersion}+${loaderDisplayVersion(neoForgeVersion)}")
 apply plugin: ApiGenerator
 
-// Where `buildAll` drops the per-platform jars for a local test server. Defaults to a repo-local
-// directory so the task works on a fresh clone; point it at a real server tree with
-// `-Plocation=/path/to/consumers`.
+// Where `buildAll` drops the per-platform jars for a local test server. Use the approved sibling
+// Multiplexor workspace when it exists, with a repo-local fallback for fresh clones.
+File multiplexorConsumerLocation = new File(rootDir, '../../[Minecraft Server]/consumers').canonicalFile
+String defaultConsumerLocation = multiplexorConsumerLocation.isDirectory()
+    ? multiplexorConsumerLocation.absolutePath
+    : layout.buildDirectory.dir('consumers').get().asFile.absolutePath
 String consumerLocation = providers.gradleProperty('location')
-    .getOrElse(layout.buildDirectory.dir('consumers').get().asFile.absolutePath)
+    .getOrElse(defaultConsumerLocation)
 String bukkitConsumerPath = "${consumerLocation}/plugin-consumers/dropins/plugins"
 String fabricConsumerPath = "${consumerLocation}/fabric-mod-consumers/dropins/mods"
 String forgeConsumerPath = "${consumerLocation}/forge-mod-consumers/dropins/mods"
@@ -180,11 +183,9 @@ tasks.register('buildBukkit', Copy) {
     }
 }
 
-// The three loader jars come out of nested standalone Gradle builds driven through Exec, so Gradle
-// cannot see through to their real inputs and re-runs all three on every buildAll. The declarations
-// below give each Exec a truthful input set. Anything that feeds a loader jar has to be listed here,
-// including the VolmLib checkout when source substitution is active - an unlisted source tree means
-// an edit there is silently ignored and a stale jar is treated as up to date.
+// The three loader jars come out of nested standalone Gradle builds driven through Exec. Their own
+// Gradle builds own the complete incremental model, so always launch them instead of allowing an
+// incomplete outer input inventory to publish stale jars.
 Closure<File> resolveLocalVolmLibDirectory = { ->
     String configured = localVolmLibDirectory != null && !localVolmLibDirectory.isBlank()
         ? localVolmLibDirectory
@@ -242,7 +243,7 @@ Closure<Void> declareModdedJarIo = { Exec task, String adapter, String artifactN
     task.inputs.property('volmLibCoordinate', volmLibCoordinate)
     task.inputs.property('localVolmLibCheckout', localVolmLibCheckout == null ? '' : localVolmLibCheckout.absolutePath)
     task.outputs.file(layout.projectDirectory.file("adapters/${adapter}/build/libs/${artifactName}"))
-    // The nested build owns its own caching; a remote cache entry here would be a lie.
+    task.outputs.upToDateWhen { false }
     task.outputs.cacheIf { false }
     return null
 }

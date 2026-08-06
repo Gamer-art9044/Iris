@@ -250,7 +250,7 @@ public class StructureHandlerTest {
     }
 
     private static IrisNativeStructureDecision decision(NativeStructureGenerationStatus status) {
-        return new IrisNativeStructureDecision(status, 0, null, false, false, null, null);
+        return new IrisNativeStructureDecision(status, 0, null, false, null, null);
     }
 
     private static IrisStructurePlacement nativePlacement(String key, StructureDistribution distribution,

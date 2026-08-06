@@ -101,6 +101,23 @@ public class MantleCarvingComponent extends IrisMantleComponent {
             carveUpperTerrain(upperCtx, weightedProfiles, writer, x, z, chunkSurfaceHeights, waterSupportPlan);
         }
         waterSupportPlan.resolve(writer.acquireChunk(x, z));
+
+        if (!weightedProfiles.isEmpty()) {
+            CarveOrphanSweep.sweepChunk(
+                    writer.acquireChunk(x, z),
+                    chunkSurfaceHeights,
+                    maxSurfaceBreakDepth(weightedProfiles),
+                    writer.getMantle().getWorldHeight() - 1
+            );
+        }
+    }
+
+    private static int maxSurfaceBreakDepth(List<WeightedProfile> weightedProfiles) {
+        int maxDepth = 0;
+        for (WeightedProfile weightedProfile : weightedProfiles) {
+            maxDepth = Math.max(maxDepth, Math.max(0, weightedProfile.profile.getSurfaceBreakDepth()));
+        }
+        return maxDepth;
     }
 
     @ChunkCoordinates

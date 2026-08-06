@@ -46,7 +46,6 @@ public class IrisCaveCarver3D {
     private static final byte LIQUID_FORCED_AIR = 3;
     private static final int ADAPTIVE_MIN_PLANE_COLUMNS = 16;
     private static final int ADAPTIVE_DEEP_SAMPLE_STEP = 8;
-    private static final int ADAPTIVE_DEEP_SURFACE_MARGIN = 12;
     private static final double ADAPTIVE_LOCAL_RANGE_SCALE = 0.125D;
     private static final double ADAPTIVE_DEEP_MARGIN_BOOST = 0.015D;
 
@@ -586,6 +585,12 @@ public class IrisCaveCarver3D {
         boolean[] planeCarve = scratch.planeCarve;
         int minSection = PowerOfTwoCoordinates.floorDivPow2(minY, 4);
         int maxSection = PowerOfTwoCoordinates.floorDivPow2(maxY, 4);
+        int effectiveAdaptiveSampleStep = Math.max(adaptiveSampleStep, ADAPTIVE_DEEP_SAMPLE_STEP);
+        double effectiveAdaptiveThresholdMargin = resolveAdaptivePlaneThresholdMargin(
+                adaptiveThresholdMargin,
+                adaptiveSampleStep,
+                effectiveAdaptiveSampleStep
+        );
 
         for (int sectionIndex = minSection; sectionIndex <= maxSection; sectionIndex++) {
             int sectionMinY = Math.max(minY, PowerOfTwoCoordinates.chunkToBlock(sectionIndex));
@@ -614,12 +619,6 @@ public class IrisCaveCarver3D {
                     continue;
                 }
 
-                int effectiveAdaptiveSampleStep = resolveAdaptivePlaneSampleStep(y, adaptiveSampleStep);
-                double effectiveAdaptiveThresholdMargin = resolveAdaptivePlaneThresholdMargin(
-                        adaptiveThresholdMargin,
-                        adaptiveSampleStep,
-                        effectiveAdaptiveSampleStep
-                );
                 classifyDensityPlaneAdaptive(
                         scratch,
                         x0,
@@ -676,16 +675,6 @@ public class IrisCaveCarver3D {
         }
 
         return carved;
-    }
-
-    private int resolveAdaptivePlaneSampleStep(int y, int adaptiveSampleStep) {
-        if (adaptiveSampleStep >= ADAPTIVE_DEEP_SAMPLE_STEP) {
-            return adaptiveSampleStep;
-        }
-
-        int profileMaxY = (int) Math.ceil(profile.getVerticalRange().getMax());
-        int fineBandFloorY = profileMaxY - profile.getSurfaceBreakDepth() - ADAPTIVE_DEEP_SURFACE_MARGIN;
-        return y >= fineBandFloorY ? adaptiveSampleStep : ADAPTIVE_DEEP_SAMPLE_STEP;
     }
 
     private double resolveAdaptivePlaneThresholdMargin(

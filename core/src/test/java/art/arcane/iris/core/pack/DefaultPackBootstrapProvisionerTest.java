@@ -2,6 +2,7 @@ package art.arcane.iris.core.pack;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -107,6 +108,42 @@ public class DefaultPackBootstrapProvisionerTest {
             if (!serverStopped) {
                 server.stop(0);
             }
+            delete(root);
+        }
+    }
+
+    @Test
+    public void coldInstallPreservesSymbolicLinkPackWorkspace() throws Exception {
+        byte[] archive = packArchive("overworld", "bootstrap_biome");
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(archive, requests);
+        Path root = Files.createTempDirectory("iris-bootstrap-linked-workspace");
+        try {
+            Path dataDirectory = root.resolve("plugins/Iris");
+            Path sharedPacks = root.resolve("shared-plugin-data/iris/packs");
+            Files.createDirectories(dataDirectory);
+            Files.createDirectories(sharedPacks);
+            try {
+                Files.createSymbolicLink(dataDirectory.resolve("packs"), sharedPacks);
+            } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+                Assume.assumeNoException(exception);
+            }
+            DefaultPackBootstrapProvisioner.ProvisionOptions options = options(server, root, Duration.ofHours(1));
+
+            DefaultPackBootstrapProvisioner.ProvisionResult installed = DefaultPackBootstrapProvisioner.provision(
+                    dataDirectory,
+                    ignored -> {
+                    },
+                    options
+            );
+
+            assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.INSTALLED, installed.status());
+            assertEquals(1, requests.get());
+            assertTrue(Files.isSymbolicLink(dataDirectory.resolve("packs")));
+            assertTrue(Files.isRegularFile(sharedPacks.resolve("overworld/dimensions/overworld.json")));
+            assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("pack.mcmeta")));
+        } finally {
+            server.stop(0);
             delete(root);
         }
     }

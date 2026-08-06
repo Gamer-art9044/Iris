@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -25,6 +26,7 @@ import static org.junit.Assert.assertTrue;
 
 public class NativeStructureOwnershipRecordTest {
     private static final String FINGERPRINT = "12".repeat(32);
+    private static final int SCHEMA_OFFSET = 8;
 
     @Test
     public void binaryRoundTripPreservesMultipleVersionedOwnershipRecords() throws Exception {
@@ -44,7 +46,7 @@ public class NativeStructureOwnershipRecordTest {
     }
 
     @Test
-    public void decisionSnapshotFreezesTerrainVegetationAndStiltSettings() {
+    public void decisionSnapshotFreezesTerrainAndStiltSettings() {
         IrisStructureTerrain terrain = new IrisStructureTerrain()
                 .setMode(IrisStructureTerrainMode.FORCE_CARVE)
                 .setHorizontalPadding(9)
@@ -64,7 +66,6 @@ public class NativeStructureOwnershipRecordTest {
                 0,
                 null,
                 false,
-                true,
                 stilt,
                 terrain
         );
@@ -76,7 +77,6 @@ public class NativeStructureOwnershipRecordTest {
         IrisNativeStructureDecision restored = snapshot.restore();
 
         assertTrue(restored.generate());
-        assertTrue(restored.clearVegetation());
         assertEquals(IrisStructureTerrainMode.FORCE_CARVE, restored.terrain().resolvedMode());
         assertEquals(IrisStructureCarveShape.ERODED, restored.terrain().resolvedShape());
         assertEquals(9, restored.terrain().getHorizontalPadding());
@@ -186,7 +186,6 @@ public class NativeStructureOwnershipRecordTest {
                 new LinkedHashMap<>();
         NativeStructureOwnershipRecord.DecisionSnapshot largeDecision =
                 new NativeStructureOwnershipRecord.DecisionSnapshot(
-                        false,
                         "null",
                         "{\"unused\":\"" + "x".repeat(65_000) + "\"}"
                 );
@@ -303,6 +302,21 @@ public class NativeStructureOwnershipRecordTest {
     }
 
     @Test
+    public void bundlesWrittenUnderAnOlderSchemaRevisionFailClosed() throws Exception {
+        NativeStructureOwnershipRecord record = record("nova_structures:tavern_oak", 4, -7, 71L);
+        NativeStructureOwnershipBundle bundle = NativeStructureOwnershipBundle.empty().with(record);
+        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+        bundle.write(new DataOutputStream(encoded));
+        byte[] payload = encoded.toByteArray();
+        ByteBuffer.wrap(payload).putInt(SCHEMA_OFFSET, NativeStructureOwnershipRecord.CURRENT_SCHEMA - 1);
+
+        IOException failure = assertThrows(IOException.class, () -> NativeStructureOwnershipBundle.read(
+                new DataInputStream(new ByteArrayInputStream(payload))));
+
+        assertTrue(failure.getMessage(), failure.getMessage().contains("schema"));
+    }
+
+    @Test
     public void malformedButSizedBinaryRecordsFailAsIoErrors() throws Exception {
         ByteArrayOutputStream encoded = new ByteArrayOutputStream();
         DataOutputStream output = new DataOutputStream(encoded);
@@ -362,7 +376,6 @@ public class NativeStructureOwnershipRecordTest {
                         0,
                         null,
                         false,
-                        true,
                         null,
                         new IrisStructureTerrain()
                 ));

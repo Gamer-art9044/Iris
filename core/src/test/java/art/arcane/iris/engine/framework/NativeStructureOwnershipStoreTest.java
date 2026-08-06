@@ -31,7 +31,7 @@ public class NativeStructureOwnershipStoreTest {
         TestStorage storage = new TestStorage();
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
-        NativeStructureOwnershipRecord record = record("test:origin_only", 4, -7, 91L, false);
+        NativeStructureOwnershipRecord record = record("test:origin_only", 4, -7, 91L);
 
         state.record(record);
 
@@ -48,8 +48,10 @@ public class NativeStructureOwnershipStoreTest {
     public void originAuthorityIgnoresAStaleTargetReplicaWhenOnlyPolicyChanged() {
         Engine engine = engine();
         TestStorage storage = new TestStorage();
-        NativeStructureOwnershipRecord stale = record("test:replacement", 2, 3, 11L, false);
-        NativeStructureOwnershipRecord current = record("test:replacement", 2, 3, 11L, true);
+        NativeStructureOwnershipRecord stale = record("test:replacement", 2, 3, 11L,
+                new IrisStructureTerrain().setHorizontalPadding(2), 8);
+        NativeStructureOwnershipRecord current = record("test:replacement", 2, 3, 11L,
+                new IrisStructureTerrain().setHorizontalPadding(9), 8);
         long origin = NativeStructureOwnershipStore.pack(2, 3);
         long target = NativeStructureOwnershipStore.pack(3, 4);
         storage.write(origin, current);
@@ -61,7 +63,7 @@ public class NativeStructureOwnershipStoreTest {
                 3, 4, current.structureKey(), 2, 3);
 
         assertEquals(current, resolved);
-        assertTrue(resolved.restoredDecision().clearVegetation());
+        assertEquals(9, resolved.restoredDecision().terrain().getHorizontalPadding());
         assertEquals(stale.contentFingerprint(), resolved.contentFingerprint());
         assertEquals(stale, storage.find(target, stale));
     }
@@ -73,7 +75,7 @@ public class NativeStructureOwnershipStoreTest {
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
         NativeStructureOwnershipRecord record = record(
-                "test:narrow_authority", 8, -3, 19L, false, 1);
+                "test:narrow_authority", 8, -3, 19L, 1);
         state.record(record);
 
         assertNull(state.find(
@@ -86,7 +88,7 @@ public class NativeStructureOwnershipStoreTest {
     public void staleTargetReplicaCannotReplaceAMissingOriginAuthority() {
         Engine engine = engine();
         TestStorage storage = new TestStorage();
-        NativeStructureOwnershipRecord stale = record("test:deleted", -2, 5, 17L, false);
+        NativeStructureOwnershipRecord stale = record("test:deleted", -2, 5, 17L);
         storage.write(NativeStructureOwnershipStore.pack(-1, 5), stale);
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
@@ -105,7 +107,7 @@ public class NativeStructureOwnershipStoreTest {
             for (int chunkZ = -8; chunkZ <= 8; chunkZ++) {
                 NativeStructureOwnershipRecord record = record(
                         "test:dense_" + chunkX + "_" + chunkZ,
-                        chunkX, chunkZ, records, false);
+                        chunkX, chunkZ, records);
                 state.record(record);
                 assertEquals(record, state.find(
                         0, 0, record.structureKey(), chunkX, chunkZ));
@@ -126,7 +128,7 @@ public class NativeStructureOwnershipStoreTest {
         BlockingStorage storage = new BlockingStorage();
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
-        NativeStructureOwnershipRecord record = record("test:flush_race", -4, 8, 42L, false);
+        NativeStructureOwnershipRecord record = record("test:flush_race", -4, 8, 42L);
         storage.blockedTarget = NativeStructureOwnershipStore.pack(-4, 8);
         ExecutorService callers = Executors.newFixedThreadPool(2);
         try {
@@ -152,7 +154,7 @@ public class NativeStructureOwnershipStoreTest {
         BlockingStorage storage = new BlockingStorage();
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
-        NativeStructureOwnershipRecord record = record("test:close_race", 6, -9, 73L, false);
+        NativeStructureOwnershipRecord record = record("test:close_race", 6, -9, 73L);
         storage.blockedTarget = NativeStructureOwnershipStore.pack(6, -9);
         ExecutorService callers = Executors.newFixedThreadPool(2);
         try {
@@ -178,7 +180,7 @@ public class NativeStructureOwnershipStoreTest {
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
         NativeStructureOwnershipRecord record = record(
-                "test:closing_session", -7, 12, 74L, false);
+                "test:closing_session", -7, 12, 74L);
 
         state.record(record);
 
@@ -207,8 +209,8 @@ public class NativeStructureOwnershipStoreTest {
         PostWriteBlockingStorage storage = new PostWriteBlockingStorage();
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
-        NativeStructureOwnershipRecord first = record("test:same_origin", 3, -6, 1L, false);
-        NativeStructureOwnershipRecord second = record("test:same_origin", 3, -6, 2L, true);
+        NativeStructureOwnershipRecord first = record("test:same_origin", 3, -6, 1L);
+        NativeStructureOwnershipRecord second = record("test:same_origin", 3, -6, 2L);
         ExecutorService callers = Executors.newFixedThreadPool(2);
         try {
             Future<?> firstWrite = callers.submit(() -> state.record(first));
@@ -238,7 +240,7 @@ public class NativeStructureOwnershipStoreTest {
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
         NativeStructureOwnershipRecord record = record(
-                "test:autosave_durable", -11, 14, 101L, true);
+                "test:autosave_durable", -11, 14, 101L);
 
         state.record(record);
         state.flush();
@@ -258,7 +260,7 @@ public class NativeStructureOwnershipStoreTest {
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
         NativeStructureOwnershipRecord record = record(
-                "test:flush_retry", 12, -15, 102L, false);
+                "test:flush_retry", 12, -15, 102L);
 
         state.record(record);
         assertThrows(IllegalStateException.class, state::flush);
@@ -279,7 +281,7 @@ public class NativeStructureOwnershipStoreTest {
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
         NativeStructureOwnershipRecord record = record(
-                "test:clean_flush", 16, 17, 103L, false);
+                "test:clean_flush", 16, 17, 103L);
 
         state.flush();
         state.record(record);
@@ -294,7 +296,7 @@ public class NativeStructureOwnershipStoreTest {
         Engine engine = engine();
         CrashableStorage storage = new CrashableStorage();
         NativeStructureOwnershipRecord record = record(
-                "test:discard_durable", -18, 19, 104L, false);
+                "test:discard_durable", -18, 19, 104L);
         storage.write(NativeStructureOwnershipStore.pack(-18, 19), record);
         storage.flush();
         NativeStructureOwnershipStore.State state =
@@ -318,7 +320,7 @@ public class NativeStructureOwnershipStoreTest {
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
         NativeStructureOwnershipRecord record = record(
-                "test:close_durable", 20, -21, 105L, true);
+                "test:close_durable", 20, -21, 105L);
 
         state.record(record);
         state.close();
@@ -338,7 +340,7 @@ public class NativeStructureOwnershipStoreTest {
         NativeStructureOwnershipStore.State state =
                 new NativeStructureOwnershipStore.State(engine, storage);
         NativeStructureOwnershipRecord record = record(
-                "test:close_retry", -22, 23, 106L, false);
+                "test:close_retry", -22, 23, 106L);
 
         state.record(record);
         assertThrows(IllegalStateException.class, state::close);
@@ -362,14 +364,19 @@ public class NativeStructureOwnershipStoreTest {
     }
 
     private static NativeStructureOwnershipRecord record(String key, int originX, int originZ,
-                                                          long placementIdentity,
-                                                          boolean clearVegetation) {
-        return record(key, originX, originZ, placementIdentity, clearVegetation, 8);
+                                                          long placementIdentity) {
+        return record(key, originX, originZ, placementIdentity, new IrisStructureTerrain(), 8);
     }
 
     private static NativeStructureOwnershipRecord record(String key, int originX, int originZ,
                                                           long placementIdentity,
-                                                          boolean clearVegetation,
+                                                          int referenceRadius) {
+        return record(key, originX, originZ, placementIdentity, new IrisStructureTerrain(), referenceRadius);
+    }
+
+    private static NativeStructureOwnershipRecord record(String key, int originX, int originZ,
+                                                          long placementIdentity,
+                                                          IrisStructureTerrain terrain,
                                                           int referenceRadius) {
         return new NativeStructureOwnershipRecord(
                 NativeStructureOwnershipRecord.CURRENT_SCHEMA,
@@ -396,9 +403,8 @@ public class NativeStructureOwnershipStoreTest {
                                 0,
                                 null,
                                 false,
-                                clearVegetation,
                                 null,
-                                new IrisStructureTerrain()
+                                terrain
                         ))
         );
     }

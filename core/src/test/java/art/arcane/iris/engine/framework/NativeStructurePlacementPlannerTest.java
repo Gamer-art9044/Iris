@@ -82,7 +82,6 @@ public class NativeStructurePlacementPlannerTest {
         IrisNativeStructureDecision decision = NativeStructurePlacementPlanner.decisionFor(plan);
 
         assertEquals(NativeStructureGenerationStatus.GENERATE_NATIVE, decision.status());
-        assertEquals(false, decision.clearVegetation());
         assertSame(terrain, decision.terrain());
     }
 

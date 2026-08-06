@@ -86,8 +86,8 @@ public class Bindings {
     }
 
 
-    // bstats.org plugin id; 0 disables submission until the id is assigned
-    private static final int BSTATS_PLUGIN_ID = 0;
+    // bstats.org plugin id
+    private static final int BSTATS_PLUGIN_ID = 24220;
 
     public static void setupBstats(VolmitPlugin plugin) {
         if (BSTATS_PLUGIN_ID <= 0) {

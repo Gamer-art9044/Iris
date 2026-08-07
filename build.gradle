@@ -48,6 +48,8 @@ project(':core') {
     version = rootProject.version
 }
 String minecraftVersion = providers.gradleProperty('minecraftVersion').getOrElse('26.2')
+// The Bukkit jar runs Paper 26.1.2 through 26.2 (compile-low pins); the loader jars stay 26.2-only.
+String bukkitMinecraftRange = providers.gradleProperty('bukkitMinecraftRange').getOrElse('26.1.2-26.2')
 String fabricLoaderVersion = providers.gradleProperty('fabricLoaderVersion').getOrElse('0.19.3')
 String forgeVersion = providers.gradleProperty('forgeVersion').getOrElse('26.2-65.0.4')
 String neoForgeVersion = providers.gradleProperty('neoForgeVersion').getOrElse('26.2.0.12-beta')
@@ -67,7 +69,7 @@ Closure<String> loaderDisplayVersion = { String loaderVersion ->
 Closure<String> irisArtifactName = { String platform, String targetVersion ->
     return "Iris v${project.version} [${platform}] ${targetVersion}.jar"
 }
-String bukkitArtifactName = irisArtifactName('CraftBukkit', minecraftVersion)
+String bukkitArtifactName = irisArtifactName('CraftBukkit', bukkitMinecraftRange)
 String fabricArtifactName = irisArtifactName('Fabric', "${minecraftVersion}+${loaderDisplayVersion(fabricLoaderVersion)}")
 String forgeArtifactName = irisArtifactName('Forge', "${minecraftVersion}+${loaderDisplayVersion(forgeVersion)}")
 String neoForgeArtifactName = irisArtifactName('NeoForge', "${minecraftVersion}+${loaderDisplayVersion(neoForgeVersion)}")
@@ -475,6 +477,53 @@ tasks.register('verifyNeoforgeArtifact') {
 tasks.register('verifyModdedArtifacts') {
     group = 'verification'
     dependsOn('verifyFabricArtifact', 'verifyForgeArtifact', 'verifyNeoforgeArtifact')
+}
+
+// Entries the Bukkit artifact only ever reaches by name - NMS binding lookup, the SIMD kernels, the
+// instrumentation agent, the JarScanner-driven command and service discovery, the Matter codec - plus
+// the two plugin descriptors and the slimjar manifests. Nothing in the reference graph points at
+// them, so a shadowJar exclude that drops one is silent until a server hits that path.
+List<String> requiredBukkitArtifactEntries = [
+    'plugin.yml',
+    'paper-plugin.yml',
+    'slimjar.dat',
+    'slimjar-resolutions.dat',
+    'agent.jar',
+    'art/arcane/iris/Iris.class',
+    'art/arcane/iris/IrisBootstrap.class',
+    'art/arcane/iris/core/nms/INMS.class',
+    'art/arcane/iris/core/nms/v26_2_R1/NMSBinding.class',
+    'art/arcane/iris/core/nms/v1X/NMSBinding1X.class',
+    'art/arcane/iris/engine/platform/PlatformChunkGenerator.class',
+    'art/arcane/iris/core/lifecycle/WorldLifecycleStaging.class',
+    'art/arcane/iris/util/simd/VectorSimdKernels.class',
+    'art/arcane/iris/util/simd/VectorNoiseKernels2D.class',
+    'art/arcane/iris/util/project/agent/Agent.class',
+    'art/arcane/iris/util/common/misc/getHardware.class',
+    'art/arcane/iris/util/caffeine/cache/Caffeine.class',
+    'art/arcane/volmlib/util/io/JarScanner.class',
+    'art/arcane/volmlib/util/director/runtime/DirectorRuntimeEngine.class',
+    'art/arcane/volmlib/util/mantle/io/Lz4IOWorkerCodecSupport.class',
+    'art/arcane/volmlib/util/matter/Matter.class'
+]
+
+tasks.register('verifyBukkitArtifact') {
+    group = 'verification'
+    dependsOn('jar')
+    File artifact = layout.buildDirectory.file("libs/${bukkitArtifactName}").get().asFile
+    inputs.file(artifact)
+    doLast {
+        BukkitArtifactVerifier.verify(artifact, requiredBukkitArtifactEntries, 17, 400, 16)
+        logger.lifecycle("Verified ${artifact.name} packaging and class reference graph")
+    }
+}
+
+tasks.named('buildBukkit').configure {
+    dependsOn('verifyBukkitArtifact')
+}
+
+tasks.named('iris').configure {
+    dependsOn('verifyBukkitArtifact')
 }
 
 tasks.named('buildFabric').configure {

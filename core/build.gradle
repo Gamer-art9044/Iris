@@ -255,12 +255,59 @@ if (runningTestTasks) {
     }
 }
 
+// VolmLib packages that Iris forked into art.arcane.iris.util.project.* or replaced outright. Every
+// class in each of these packages is unreachable from every other class shipped in the Bukkit jar,
+// and none of them is a reflective target: Matter.read() resolves only matter/slices, JarScanner
+// only walks Iris' own packages, and the remaining VolmLib Class.forName calls name Bukkit/NMS or
+// runtime-downloaded types. Package granularity is deliberate - a partially used package stays whole.
+// verifyBukkitArtifact re-derives the reference graph over the shipped jar and fails on any dangling
+// reference, so an exclude that stops being dead is a build failure rather than a runtime crash.
+List<String> supersededVolmLibPackages = [
+    'art/arcane/volmlib/util/noise/**',
+    'art/arcane/volmlib/util/stream/ProceduralStream.class',
+    'art/arcane/volmlib/util/stream/BasicStream.class',
+    'art/arcane/volmlib/util/stream/arithmetic/**',
+    'art/arcane/volmlib/util/stream/convert/**',
+    'art/arcane/volmlib/util/stream/interpolation/**',
+    'art/arcane/volmlib/util/stream/sources/**',
+    'art/arcane/volmlib/util/stream/utility/**',
+    'art/arcane/volmlib/util/uniques/**',
+    'art/arcane/volmlib/util/bukkit/json/**',
+    'art/arcane/volmlib/util/bukkit/registry/**',
+    'art/arcane/volmlib/util/director/visual/**',
+    'art/arcane/volmlib/util/value/**',
+    'art/arcane/volmlib/util/api/**',
+    'art/arcane/volmlib/util/entity/**'
+]
+
+// Annotation-only artifacts pulled in transitively by Gson and Caffeine. Their types appear solely
+// in annotation attributes, which the JVM skips silently when the type is absent, so nothing loads
+// or links against them at runtime.
+List<String> annotationOnlyArtifacts = [
+    'com/google/errorprone/**',
+    'org/jspecify/**'
+]
+
+// Publisher metadata for the shaded dependencies. Nothing reads these at runtime.
+List<String> dependencyBuildMetadata = [
+    'META-INF/maven/**',
+    'META-INF/proguard/**',
+    'META-INF/versions/*/OSGI-INF/**'
+]
+
 tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar).configure {
     dependsOn(embeddedAgentJar)
     mergeServiceFiles()
-    //minimize()
+    // minimize() stays off. Caffeine reaches its 520 generated cache and node classes through
+    // MethodHandles.Lookup.findClass on a computed name, and the VolmLib command, GUI and hotload
+    // surfaces are only referenced from :adapters:bukkit:plugin, which is merged into the artifact
+    // after this task runs. Both would be stripped as unreachable. Excluding them from minimization
+    // leaves it reaching ~25KB of Gson internals, which is not worth a mode that fails silently.
     relocate('io.github.slimjar', "${lib}.slimjar")
     exclude('modules/loader-agent.isolated-jar')
+    exclude(supersededVolmLibPackages)
+    exclude(annotationOnlyArtifacts)
+    exclude(dependencyBuildMetadata)
     from(embeddedAgentJar.map { it.archiveFile }) {
         rename { String ignored -> 'agent.jar' }
     }

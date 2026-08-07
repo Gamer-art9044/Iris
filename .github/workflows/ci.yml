@@ -33,7 +33,9 @@ jobs:
         run: ./gradlew -p adapters/forge test -PuseLocalVolmLib=false --console=plain --stacktrace
       - name: Run modded shared tests (NeoForge)
         run: ./gradlew -p adapters/neoforge test -PuseLocalVolmLib=false --console=plain --stacktrace
-      - name: Test modded artifact verifier
+      - name: Test artifact verifiers
         run: ./gradlew -p buildSrc test --console=plain --stacktrace
+      - name: Verify Bukkit artifact
+        run: ./gradlew verifyBukkitArtifact --no-parallel -PuseLocalVolmLib=false --console=plain --stacktrace
       - name: Verify modded artifacts
         run: ./gradlew verifyModdedArtifacts --no-parallel -PuseLocalVolmLib=false --console=plain --stacktrace

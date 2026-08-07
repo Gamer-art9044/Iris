@@ -1,4 +1,4 @@
-String apiVersion = providers.gradleProperty('minecraftVersion').get()
+String apiVersion = providers.gradleProperty('apiVersion').get()
 def mainClass = 'art.arcane.iris.Iris'
 def bootstrapperClass = 'art.arcane.iris.IrisBootstrap'
 

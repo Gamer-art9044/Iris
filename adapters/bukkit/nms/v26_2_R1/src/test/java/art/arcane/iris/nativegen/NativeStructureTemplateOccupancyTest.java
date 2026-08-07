@@ -1,15 +1,16 @@
 package art.arcane.iris.nativegen;
 
 import com.mojang.datafixers.util.Either;
-import com.mojang.serialization.MapCodec;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.tags.TagKey;
 import net.minecraft.util.valueproviders.ConstantInt;
-import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
@@ -34,11 +35,13 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureProc
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureProcessorList;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,38 +65,33 @@ public class NativeStructureTemplateOccupancyTest {
     }
 
     @Test
-    public void straddlingGravityPieceReadsHeightsOnlyInsideTheProcessingArea() throws Exception {
+    public void straddlingGravityPieceHeightReadsHonorTheVanillaClipContract() throws Exception {
         ColumnRecorder recorder = new ColumnRecorder();
 
         resolve(straddlingPiece(
                 List.of(new GravityProcessor(Heightmap.Types.WORLD_SURFACE_WG, 0))), recorder);
 
-        assertEquals(columns(0, 15), recorder.heightColumns);
-    }
-
-    @Test
-    public void straddlingPieceRunsProcessorsOnlyInsideTheProcessingArea() throws Exception {
-        CountingProcessor counter = new CountingProcessor();
-
-        resolve(straddlingPiece(List.of(counter)), new ColumnRecorder());
-
-        assertEquals(columns(0, 15), counter.columns);
-        assertTrue(counter.columns.size() < TEMPLATE_WIDTH);
+        // 26.2 vanilla clips processor evaluation to the placement bounding box; 26.1.2 vanilla
+        // runs processors across the whole piece. Iris mirrors the pinned version's semantics.
+        assertEquals(expectedClippedColumns(), recorder.heightColumns);
     }
 
     @Test
     public void cappedStraddlingPieceRunsProcessorsAcrossTheWholePiece() throws Exception {
-        CountingProcessor counter = new CountingProcessor();
+        ColumnRecorder recorder = new ColumnRecorder();
 
-        resolve(straddlingPiece(List.of(counter,
-                new CappedProcessor(NopProcessor.INSTANCE, ConstantInt.of(0)))),
-                new ColumnRecorder());
+        resolve(straddlingPiece(List.of(
+                new GravityProcessor(Heightmap.Types.WORLD_SURFACE_WG, 0),
+                new CappedProcessor(NopProcessor.INSTANCE, ConstantInt.of(0)))), recorder);
 
-        assertEquals(columns(0, TEMPLATE_WIDTH - 1), counter.columns);
+        assertEquals(columns(0, TEMPLATE_WIDTH - 1), recorder.heightColumns);
     }
 
     @Test
-    public void cappedProcessorIsTheOnlyProcessorThatDisablesTheProcessingAreaClip() {
+    public void cappedProcessorIsTheOnlyProcessorThatDisablesTheProcessingAreaClip() throws Exception {
+        Method contract = clipContractMethod();
+        Assume.assumeTrue("evaluatesEntirePieceState only exists on 26.2+", contract != null);
+
         for (StructureProcessor processor : List.of(
                 BlockIgnoreProcessor.STRUCTURE_BLOCK,
                 JigsawReplacementProcessor.INSTANCE,
@@ -103,12 +101,12 @@ public class NativeStructureTemplateOccupancyTest {
                 new GravityProcessor(Heightmap.Types.WORLD_SURFACE_WG, 0),
                 new RuleProcessor(List.of()),
                 new BlockAgeProcessor(0.5F),
-                new ProtectedBlockProcessor(HolderSet.empty()))) {
+                protectedBlockProcessor())) {
             assertFalse(processor.getClass().getName(),
-                    processor.evaluatesEntirePieceState());
+                    (Boolean) contract.invoke(processor));
         }
-        assertTrue(new CappedProcessor(NopProcessor.INSTANCE, ConstantInt.of(4))
-                .evaluatesEntirePieceState());
+        assertTrue((Boolean) contract.invoke(
+                new CappedProcessor(NopProcessor.INSTANCE, ConstantInt.of(4))));
     }
 
     @Test
@@ -144,6 +142,30 @@ public class NativeStructureTemplateOccupancyTest {
             columns.add(x);
         }
         return columns;
+    }
+
+    private static Method clipContractMethod() {
+        try {
+            return StructureProcessor.class.getMethod("evaluatesEntirePieceState");
+        } catch (NoSuchMethodException absent) {
+            return null;
+        }
+    }
+
+    private static Set<Integer> expectedClippedColumns() {
+        return clipContractMethod() != null
+                ? columns(PROCESSING_AREA.minX(), PROCESSING_AREA.maxX())
+                : columns(0, TEMPLATE_WIDTH - 1);
+    }
+
+    private static StructureProcessor protectedBlockProcessor() throws Exception {
+        // Constructed reflectively: the constructor takes HolderSet on 26.2 and TagKey on 26.1.2.
+        Constructor<?> constructor = ProtectedBlockProcessor.class.getConstructors()[0];
+        Class<?> parameter = constructor.getParameterTypes()[0];
+        Object argument = parameter == HolderSet.class
+                ? HolderSet.empty()
+                : TagKey.create(Registries.BLOCK, Identifier.fromNamespaceAndPath("minecraft", "air"));
+        return (StructureProcessor) constructor.newInstance(argument);
     }
 
     private static StructureTemplateManager forbiddenTemplateManager() {
@@ -200,25 +222,6 @@ public class NativeStructureTemplateOccupancyTest {
     private static final class ColumnRecorder {
         private final Set<Integer> heightColumns = new TreeSet<>();
         private final Set<Integer> stateColumns = new TreeSet<>();
-    }
-
-    private static final class CountingProcessor implements StructureProcessor {
-        private final Set<Integer> columns = new TreeSet<>();
-
-        @Override
-        public StructureTemplate.StructureBlockInfo processBlock(
-                LevelReader level, BlockPos targetPosition, BlockPos referencePos,
-                BlockPos templateRelativePos,
-                StructureTemplate.StructureBlockInfo processedBlockInfo,
-                StructurePlaceSettings settings) {
-            columns.add(processedBlockInfo.pos().getX());
-            return processedBlockInfo;
-        }
-
-        @Override
-        public MapCodec<? extends StructureProcessor> codec() {
-            return BlockIgnoreProcessor.STRUCTURE_BLOCK.codec();
-        }
     }
 
     private static final class InlineSinglePoolElement extends SinglePoolElement {

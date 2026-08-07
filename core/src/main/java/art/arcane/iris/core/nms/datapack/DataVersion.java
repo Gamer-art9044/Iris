@@ -13,6 +13,7 @@ import java.util.function.Supplier;
 @Getter
 public enum DataVersion {
     UNSUPPORTED("0.0.0", 0, () -> null),
+    V26_1_2("26.1.2", 101, DataFixerV1217::new),
     V26_2("26.2", 107, DataFixerV1217::new);
     private static final KMap<DataVersion, IDataFixer> cache = new KMap<>();
     @Getter(AccessLevel.NONE)
@@ -50,5 +51,16 @@ public enum DataVersion {
 
     public static DataVersion getLatest() {
         return values()[values().length - 1];
+    }
+
+    public static int minSupportedPackFormat() {
+        int minimum = Integer.MAX_VALUE;
+        for (DataVersion version : values()) {
+            if (version == UNSUPPORTED) {
+                continue;
+            }
+            minimum = Math.min(minimum, version.packFormat);
+        }
+        return minimum;
     }
 }

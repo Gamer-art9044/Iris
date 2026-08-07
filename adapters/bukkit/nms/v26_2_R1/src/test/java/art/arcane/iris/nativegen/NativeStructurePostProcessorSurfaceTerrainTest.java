@@ -6,7 +6,6 @@ import art.arcane.iris.engine.object.IrisStructureTerrain;
 import art.arcane.iris.engine.object.IrisStructureTerrainMode;
 import com.mojang.datafixers.util.Either;
 import com.mojang.serialization.Codec;
-import com.mojang.serialization.MapCodec;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -17,7 +16,6 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.biome.Biome;
@@ -46,8 +44,11 @@ import net.minecraft.world.level.levelgen.structure.pools.ListPoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.StructurePoolElement;
 import net.minecraft.world.level.levelgen.structure.pools.StructureTemplatePool;
+import net.minecraft.world.level.levelgen.structure.templatesystem.AlwaysTrueTest;
+import net.minecraft.world.level.levelgen.structure.templatesystem.BlockStateMatchTest;
 import net.minecraft.world.level.levelgen.structure.templatesystem.LiquidSettings;
-import net.minecraft.world.level.levelgen.structure.templatesystem.BlockIgnoreProcessor;
+import net.minecraft.world.level.levelgen.structure.templatesystem.ProcessorRule;
+import net.minecraft.world.level.levelgen.structure.templatesystem.RuleProcessor;
 import net.minecraft.world.level.levelgen.structure.structures.DesertPyramidPiece;
 import net.minecraft.world.level.levelgen.structure.structures.DesertPyramidStructure;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
@@ -267,7 +268,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
                 block(15, 0, 0, Blocks.STONE.defaultBlockState())));
         InlineSinglePoolElement element = new InlineSinglePoolElement(
-                sparseTemplate, List.of(new ReplaceBlockProcessor(
+                sparseTemplate, List.of(replaceBlockProcessor(
                         Blocks.STONE.defaultBlockState(), Blocks.AIR.defaultBlockState())));
         PoolElementStructurePiece piece = rigidTemplatePiece(
                 element, new BoundingBox(0, 64, 0, 15, 70, 3), 1, Rotation.NONE);
@@ -369,7 +370,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 block(2, 0, 0, Blocks.AIR.defaultBlockState()),
                 block(2, 2, 0, Blocks.COBBLESTONE.defaultBlockState())));
         InlineSinglePoolElement element = new InlineSinglePoolElement(
-                template, List.of(new ReplaceBlockProcessor(
+                template, List.of(replaceBlockProcessor(
                         Blocks.STONE.defaultBlockState(), Blocks.AIR.defaultBlockState())));
         PoolElementStructurePiece piece = rigidTemplatePiece(
                 element, new BoundingBox(0, 65, 0, 2, 72, 0), 1, Rotation.NONE);
@@ -551,7 +552,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 block(0, 0, 0, Blocks.STONE.defaultBlockState()),
                 block(0, 2, 0, Blocks.COBBLESTONE.defaultBlockState())));
         PoolElementStructurePiece piece = rigidTemplatePiece(
-                new InlineSinglePoolElement(template, List.of(new ReplaceBlockProcessor(
+                new InlineSinglePoolElement(template, List.of(replaceBlockProcessor(
                         Blocks.STONE.defaultBlockState(), Blocks.AIR.defaultBlockState()))),
                 new BoundingBox(0, 66, 0, 7, 72, 7), 1, Rotation.NONE);
         StructureStart start = rigidSurfaceStart(List.of(piece), TerrainAdjustment.NONE);
@@ -1081,10 +1082,10 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 block(1, 0, 0, Blocks.STONE.defaultBlockState())));
         InlineSinglePoolElement upperElement = new InlineSinglePoolElement(
                 upperTemplate, List.of(
-                new ReplaceBlockProcessor(
+                replaceBlockProcessor(
                         Blocks.COBBLESTONE.defaultBlockState(),
                         Blocks.AIR.defaultBlockState()),
-                new ReplaceBlockProcessor(
+                replaceBlockProcessor(
                         Blocks.STONE.defaultBlockState(),
                         Blocks.WATER.defaultBlockState())));
         PoolElementStructurePiece lower = rigidTemplatePiece(
@@ -2131,32 +2132,13 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         }
     }
 
-    private static final class ReplaceBlockProcessor implements StructureProcessor {
-        private final BlockState source;
-        private final BlockState replacement;
-
-        private ReplaceBlockProcessor(BlockState source, BlockState replacement) {
-            this.source = source;
-            this.replacement = replacement;
-        }
-
-        @Override
-        public StructureTemplate.StructureBlockInfo processBlock(
-                LevelReader level, BlockPos targetPosition, BlockPos referencePos,
-                BlockPos templateRelativePos,
-                StructureTemplate.StructureBlockInfo processedBlockInfo,
-                StructurePlaceSettings settings) {
-            if (!processedBlockInfo.state().equals(source)) {
-                return processedBlockInfo;
-            }
-            return new StructureTemplate.StructureBlockInfo(
-                    processedBlockInfo.pos(), replacement, processedBlockInfo.nbt());
-        }
-
-        @Override
-        public MapCodec<? extends StructureProcessor> codec() {
-            return BlockIgnoreProcessor.STRUCTURE_BLOCK.codec();
-        }
+    private static StructureProcessor replaceBlockProcessor(BlockState source, BlockState replacement) {
+        // Vanilla RuleProcessor instead of a custom StructureProcessor subtype: StructureProcessor
+        // is an abstract class on 26.1.2 and an interface on 26.2, so a direct subtype cannot
+        // compile against both dev bundles. BlockStateMatchTest matches the exact source state,
+        // matching the previous custom processor's identity-equality semantics.
+        return new RuleProcessor(List.of(new ProcessorRule(
+                new BlockStateMatchTest(source), AlwaysTrueTest.INSTANCE, replacement)));
     }
 
     private static StructureStart desertStart() {

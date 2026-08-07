@@ -8,9 +8,13 @@ to a new Minecraft version, in order.
 
 `gradle.properties`:
 
-- `minecraftVersion` — target MC version (e.g. `26.2`). Drives the Bukkit plugin `api-version`,
+- `minecraftVersion` — target MC version (e.g. `26.2`). Drives
   `BuildConstants.MINECRAFT_VERSION`, the `com.mojang:minecraft` coordinate, all mod-metadata
   minecraft ranges, and every dist/jar artifact name.
+- `apiVersion` — Bukkit plugin `api-version` (e.g. `26.1`). Deliberately decoupled from
+  `minecraftVersion`: it is the lowest Minecraft release line the single plugin artifact loads on
+  (currently `26.1` so one jar serves 26.1.2 and 26.2). Bump it only when dropping support for the
+  older line.
 - `fabricLoaderVersion` — Fabric Loader version.
 - `forgeVersion` — Forge version (`<mc>-<forge>`).
 - `neoForgeVersion` — NeoForge version.
@@ -19,7 +23,8 @@ to a new Minecraft version, in order.
 ## Ordered steps
 
 1. Edit `gradle.properties`: update `minecraftVersion`, `fabricLoaderVersion`, `forgeVersion`,
-   `neoForgeVersion`, and the `irisVersion` suffix.
+   `neoForgeVersion`, and the `irisVersion` suffix. Revisit `apiVersion` only if the bump drops
+   support for the oldest Minecraft line the plugin artifact still loads on.
 
 2. Edit `gradle/libs.versions.toml`:
    - `spigot` — the Spigot/Paper API pin used to compile against (`<mc>-R0.1-SNAPSHOT`).
@@ -148,7 +153,7 @@ to a new Minecraft version, in order.
 
 ## Derived automatically (do not hand-edit on a version bump)
 
-- Bukkit plugin `api-version` — `adapters/bukkit/plugin/build.gradle` reads `minecraftVersion`.
+- Bukkit plugin `api-version` — `adapters/bukkit/plugin/build.gradle` reads `apiVersion`.
 - `BuildConstants.MINECRAFT_VERSION` — stamped by the `generateTemplates` task in
   `core/build.gradle` from `minecraftVersion`; consumed by `Tasks.supportedVersions`.
 - Mod-metadata `minecraft` version ranges — templated from `minecraftVersion` at `processResources`.

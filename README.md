@@ -18,9 +18,9 @@ Canonical English is defined in the typed Java catalogs under `core/src/main/jav
 
 | Platform | Artifact | Minecraft | Notes |
 |---|---|---|---|
-| Paper / Purpur / Leaf / Canvas | plugin jar | 26.2 | Full feature set |
-| Folia | plugin jar | 26.2 | Region-safe scheduling throughout |
-| Spigot / CraftBukkit | plugin jar | 26.2 | Full feature set |
+| Paper / Purpur / Leaf / Canvas | plugin jar | 26.1.2 - 26.2 | Full feature set |
+| Folia | plugin jar | 26.1.2 - 26.2 | Region-safe scheduling throughout |
+| Spigot / CraftBukkit | plugin jar | 26.1.2 - 26.2 | Full feature set |
 | Fabric | mod jar | 26.2 | Server worldgen + client HUD; requires Fabric Loader 0.19.3+ |
 | Forge | mod jar | 26.2 | Server worldgen + client HUD; requires Forge 65.0.4+ |
 | NeoForge | mod jar | 26.2 | Server worldgen + client HUD; requires NeoForge 26.2.0.12-beta+ |

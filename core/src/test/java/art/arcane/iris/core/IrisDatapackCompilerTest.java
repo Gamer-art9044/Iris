@@ -1,7 +1,9 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.v1217.DataFixerV1217;
 import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.json.JSONObject;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.Assume;
@@ -41,7 +43,6 @@ public class IrisDatapackCompilerTest {
                 packRoots,
                 new KList<File>().qadd(datapackRoot.toFile()),
                 new DataFixerV1217(),
-                107,
                 false
         );
 
@@ -72,7 +73,6 @@ public class IrisDatapackCompilerTest {
                 List.of(packRoot.toFile()),
                 new KList<File>().qadd(datapackRoot.toFile()),
                 new DataFixerV1217(),
-                107,
                 false
         );
 
@@ -100,6 +100,33 @@ public class IrisDatapackCompilerTest {
     }
 
     @Test
+    public void packMcmetaSpansEverySupportedRuntimeFormat() throws Exception {
+        Path datapackRoot = temporaryFolder.newFolder("mcmeta-datapack").toPath();
+
+        IrisDatapackCompiler.compile(
+                List.of(),
+                new KList<File>().qadd(datapackRoot.toFile()),
+                new DataFixerV1217(),
+                false
+        );
+
+        JSONObject pack = new JSONObject(Files.readString(datapackRoot.resolve("pack.mcmeta"), StandardCharsets.UTF_8))
+                .getJSONObject("pack");
+        int minFormat = pack.getInt("min_format");
+        int maxFormat = pack.getInt("max_format");
+
+        assertEquals(101, minFormat);
+        assertEquals(107, maxFormat);
+        assertEquals(maxFormat, pack.getInt("pack_format"));
+
+        // One artifact serves both runtimes: each supported DataVersion's format must be in range.
+        assertTrue(minFormat <= DataVersion.V26_1_2.getPackFormat()
+                && DataVersion.V26_1_2.getPackFormat() <= maxFormat);
+        assertTrue(minFormat <= DataVersion.V26_2.getPackFormat()
+                && DataVersion.V26_2.getPackFormat() <= maxFormat);
+    }
+
+    @Test
     public void compilingNoPacksPublishesCleanEmptyDatapack() throws Exception {
         Path datapackRoot = temporaryFolder.newFolder("empty-datapack").toPath();
         Path stale = datapackRoot.resolve("data/iris/dimension_type/removed.json");
@@ -110,7 +137,6 @@ public class IrisDatapackCompilerTest {
                 List.of(),
                 new KList<File>().qadd(datapackRoot.toFile()),
                 new DataFixerV1217(),
-                107,
                 false
         );
 

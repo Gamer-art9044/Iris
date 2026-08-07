@@ -6,6 +6,7 @@ import ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.nms.INMSBinding;
+import art.arcane.iris.core.nms.MinecraftVersion;
 import art.arcane.iris.core.nms.container.BiomeColor;
 import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.core.nms.container.BlockProperty;
@@ -161,6 +162,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class NMSBinding implements INMSBinding {
     private final KMap<Biome, Object> baseBiomeCache = new KMap<>();
+    private volatile DataVersion dataVersion;
     private final BlockData AIR = Material.AIR.createBlockData();
     private final AtomicCache<MCAIdMap<net.minecraft.world.level.biome.Biome>> biomeMapCache = new AtomicCache<>();
     private final AtomicBoolean injected = new AtomicBoolean();
@@ -1238,23 +1240,19 @@ public class NMSBinding implements INMSBinding {
         }
 
         try {
-            String descriptionId = "entity.minecraft." + entity.name().toLowerCase(Locale.ROOT);
-            Field[] fields = EntityType.class.getDeclaredFields();
-            for (Field field : fields) {
-                if (!Modifier.isStatic(field.getModifiers()) || !field.getType().equals(EntityType.class)) {
-                    continue;
-                }
-
-                EntityType entityType = (EntityType) field.get(null);
-                if (entityType == null) {
-                    continue;
-                }
-
-                if (descriptionId.equals(entityType.getDescriptionId())) {
-                    return new Vector3d(entityType.getWidth(), entityType.getHeight(), entityType.getWidth());
-                }
+            // Registry lookup instead of an EntityType static-field scan: 26.2 moved the constants
+            // to a separate EntityTypes holder class that 26.1.2 does not have, while the registry
+            // resolves identically on both. ENTITY_TYPE is a DefaultedRegistry, so guard containsKey
+            // to avoid silently resolving unknown keys to the default entry.
+            Identifier key = Identifier.fromNamespaceAndPath(entity.getKey().getNamespace(), entity.getKey().getKey());
+            if (!BuiltInRegistries.ENTITY_TYPE.containsKey(key)) {
+                return null;
             }
-            return null;
+            EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.getValue(key);
+            if (entityType == null) {
+                return null;
+            }
+            return new Vector3d(entityType.getWidth(), entityType.getHeight(), entityType.getWidth());
         } catch (Throwable e) {
             IrisLogging.error("Unable to get entity dimensions for " + entity + "!");
             IrisLogging.reportError(e);
@@ -1362,7 +1360,13 @@ public class NMSBinding implements INMSBinding {
 
     @Override
     public DataVersion getDataVersion() {
-        return DataVersion.V26_2;
+        DataVersion cached = dataVersion;
+        if (cached == null) {
+            MinecraftVersion detected = MinecraftVersion.detect(Bukkit.getServer());
+            cached = detected != null && detected.isSameRelease(26, 1, 2) ? DataVersion.V26_1_2 : DataVersion.V26_2;
+            dataVersion = cached;
+        }
+        return cached;
     }
 
     @Override

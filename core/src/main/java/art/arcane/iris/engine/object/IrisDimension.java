@@ -23,6 +23,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.core.loader.IrisRegistrant;
+import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.iris.core.nms.datapack.IDataFixer.Dimension;
 import art.arcane.iris.engine.data.cache.AtomicCache;
@@ -763,7 +764,6 @@ public class IrisDimension extends IrisRegistrant {
     public static void writeShared(
             KList<File> datapackRoots,
             DimensionHeight height,
-            int packFormat,
             boolean adjustVanillaHeight
     ) throws IOException {
         IrisLogging.debug("    Installing Data Pack Vanilla Dimension Types");
@@ -774,16 +774,22 @@ public class IrisDimension extends IrisRegistrant {
             write(datapackRoot, "the_end", jsonStrings[2], adjustVanillaHeight);
         }
 
+        // Ranged formats spanning every supported runtime (26.1.2 = 101, 26.2 = 107). The bootstrap
+        // provisioner stages this datapack before the server (and INMS) exists, so the runtime
+        // version cannot be resolved there; a range keeps the emitted bytes identical on both
+        // install paths and both Paper versions parse ranged min_format/max_format.
+        int minFormat = DataVersion.minSupportedPackFormat();
+        int maxFormat = DataVersion.getLatest().getPackFormat();
         String raw = """
                         {
                             "pack": {
                                 "description": "Iris Data Pack. This pack contains all installed Iris Packs' resources.",
-                                "pack_format": {},
-                                "min_format": {},
-                                "max_format": {}
+                                "pack_format": %d,
+                                "min_format": %d,
+                                "max_format": %d
                             }
                         }
-                        """.replace("{}", Integer.toString(packFormat));
+                        """.formatted(maxFormat, minFormat, maxFormat);
 
         for (File datapackRoot : datapackRoots) {
             File mcm = new File(datapackRoot, "pack.mcmeta");

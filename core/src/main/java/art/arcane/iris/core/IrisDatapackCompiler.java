@@ -46,7 +46,6 @@ public final class IrisDatapackCompiler {
             List<File> packRoots,
             KList<File> datapackRoots,
             IDataFixer fixer,
-            int packFormat,
             boolean adjustVanillaHeight
     ) throws IOException {
         Objects.requireNonNull(packRoots, "packRoots");
@@ -98,7 +97,7 @@ public final class IrisDatapackCompiler {
             }
         }
 
-        IrisDimension.writeShared(datapackRoots, height, packFormat, adjustVanillaHeight);
+        IrisDimension.writeShared(datapackRoots, height, adjustVanillaHeight);
         validateOutputs(datapackRoots, dimensionCount);
         return new CompilationResult(packCount, dimensionCount, countBiomes(biomes));
     }

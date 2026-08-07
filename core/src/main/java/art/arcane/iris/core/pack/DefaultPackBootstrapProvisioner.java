@@ -41,7 +41,6 @@ import java.util.zip.ZipInputStream;
 public final class DefaultPackBootstrapProvisioner {
     private static final URI DEFAULT_SOURCE = URI.create("https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip");
     private static final String WORLD_DATAPACK_DIRECTORY = "iris";
-    private static final int PACK_FORMAT = 107;
     private static final int MARKER_SCHEMA = 2;
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_ARCHIVE_BYTES = 512L * 1024L * 1024L;
@@ -189,7 +188,7 @@ public final class DefaultPackBootstrapProvisioner {
                 if (fixer == null) {
                     throw new IOException("Latest Iris datapack fixer is unavailable during bootstrap");
                 }
-                IrisDatapackCompiler.compile(packRoots, outputFolders, fixer, PACK_FORMAT, false);
+                IrisDatapackCompiler.compile(packRoots, outputFolders, fixer, false);
                 if (!isDatapackRoot(compileContainer)) {
                     throw new IOException("Canonical Iris datapack compiler produced incomplete output at " + compileContainer);
                 }

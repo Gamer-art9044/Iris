@@ -58,6 +58,30 @@ public class MinecraftVersionTest {
     }
 
     @Test
+    public void parsesThreePartNewSchemeVersion() {
+        MinecraftVersion version = MinecraftVersion.fromBukkitVersion("26.1.2-R0.1-SNAPSHOT");
+        assertEquals("26.1.2", version.value());
+        assertEquals(26, version.major());
+        assertEquals(1, version.minor());
+        assertEquals(2, version.patch());
+        assertTrue(version.isSameRelease(26, 1, 2));
+        assertFalse(version.isSameRelease(26, 2, 0));
+    }
+
+    @Test
+    public void detectsThreePartVersionFromDecoratedVersion() {
+        Server server = mock(Server.class);
+        doReturn("git-Paper-74 (MC: 26.1.2)").when(server).getVersion();
+        doReturn("26.1.2-R0.1-SNAPSHOT").when(server).getBukkitVersion();
+
+        MinecraftVersion version = MinecraftVersion.detect(server);
+        assertEquals("26.1.2", version.value());
+        assertEquals(26, version.major());
+        assertEquals(1, version.minor());
+        assertEquals(2, version.patch());
+    }
+
+    @Test
     public void comparesMajorBeforeMinor() {
         MinecraftVersion version = MinecraftVersion.fromBukkitVersion("26.2-R0.1-SNAPSHOT");
         assertFalse(version.isAtLeast(26, 2, 1));

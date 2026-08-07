@@ -29,7 +29,6 @@ import art.arcane.iris.spi.PlatformStructureHooks;
 import art.arcane.iris.util.common.director.DirectorParameterHandler;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.director.exceptions.DirectorParsingException;
-import org.bukkit.entity.Player;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -100,8 +99,7 @@ public class StructureHandler implements DirectorParameterHandler<String> {
     }
 
     protected boolean nativeStructureGenerationEnabled() {
-        Player activePlayer = player();
-        return activePlayer != null && activePlayer.getWorld().canGenerateStructures();
+        return playerWorldGeneratesStructures();
     }
 
     private static Map<String, String> distinctKeys(List<String> keys) {

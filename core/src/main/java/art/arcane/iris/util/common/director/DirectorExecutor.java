@@ -36,6 +36,11 @@ public interface DirectorExecutor extends DirectorExecutorBase {
         return sender == null ? null : sender.player();
     }
 
+    default boolean playerWorldGeneratesStructures() {
+        Player activePlayer = player();
+        return activePlayer != null && activePlayer.getWorld().canGenerateStructures();
+    }
+
     default IrisData data() {
         var access = access();
         if (access != null) {

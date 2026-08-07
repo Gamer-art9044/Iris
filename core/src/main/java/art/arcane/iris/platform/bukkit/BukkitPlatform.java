@@ -242,10 +242,6 @@ public final class BukkitPlatform implements IrisPlatform {
         return INMS.get().applyCustomNbt(itemStack, customNbt);
     }
 
-    public static int dataPackFormat() {
-        return INMS.get().getDataVersion().getPackFormat();
-    }
-
     public static java.util.concurrent.CompletableFuture<Boolean> teleportAsync(Entity entity, Location destination) {
         return io.papermc.lib.PaperLib.teleportAsync(entity, destination);
     }

@@ -200,7 +200,6 @@ public class ServerConfigurator {
                     packRoots,
                     stagedRoots,
                     fixer,
-                    BukkitPlatform.dataPackFormat(),
                     IrisSettings.get().getGeneral().adjustVanillaHeight
             );
             for (int i = 0; i < liveRoots.size(); i++) {

@@ -87,7 +87,7 @@ String forgeConsumerPath = "${consumerLocation}/forge-mod-consumers/dropins/mods
 String neoForgeConsumerPath = "${consumerLocation}/neoforge-mod-consumers/dropins/mods"
 
 def nmsBindings = [
-    v26_2_R1: '26.2.build.60-beta',
+    v26_2_R1: '26.1.2.build.74-stable',
 ]
 Class nmsTypeClass = Class.forName('NMSBinding$Type')
 nmsBindings.each { key, value ->

@@ -18,9 +18,7 @@
 
 package art.arcane.iris.engine.object;
 
-import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
-import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import lombok.AllArgsConstructor;
@@ -37,7 +35,6 @@ import lombok.experimental.Accessors;
 public class IrisModNoiseStyleReplacer {
     @Required
     @Desc("A noise style to find")
-    @ArrayType(type = String.class, min = 1)
     private NoiseStyle find = NoiseStyle.IRIS;
 
     @Required
@@ -46,6 +43,5 @@ public class IrisModNoiseStyleReplacer {
 
     @Required
     @Desc("A noise style to replace it with")
-    @RegistryListResource(IrisBiome.class)
     private IrisGeneratorStyle replace = new IrisGeneratorStyle();
 }

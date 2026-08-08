@@ -38,7 +38,10 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ModdedProtocolHandler {
-    private static final long SERVER_CAPABILITIES = IrisProtocol.CAPABILITY_PREGEN | IrisProtocol.CAPABILITY_VISION | IrisProtocol.CAPABILITY_CURSOR;
+    private static final long SERVER_CAPABILITIES = IrisProtocol.CAPABILITY_PREGEN
+            | IrisProtocol.CAPABILITY_VISION
+            | IrisProtocol.CAPABILITY_CURSOR
+            | IrisProtocol.CAPABILITY_STUDIO;
     private static final int DIMENSION_SYNC_INTERVAL_TICKS = 5;
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
 

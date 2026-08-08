@@ -3,10 +3,12 @@
 Iris is a world generation engine for Minecraft servers and mod loaders. It generates terrain,
 biomes, caves, structures, objects, and entities from editable JSON packs, with a full in-game
 studio authoring workflow. The same engine runs as a Bukkit-family plugin and as a Fabric, Forge,
-or NeoForge server mod, and produces bit-identical terrain on every platform for the same pack and
-seed. The master branch targets the current Minecraft version (26.2).
+or NeoForge server mod. Cross-platform generation targets deterministic parity for identical
+artifacts, pack bytes, seeds, and test areas. The master branch targets Minecraft 26.2.
 
-# [Support](https://discord.gg/3xxPTpT) **|** [Documentation](https://docs.volmit.com/iris/) **|** [Git](https://github.com/IrisDimensions)
+# [Support](https://discord.gg/3xxPTpT) **|** [Documentation](docs/00%20-%20Overview.md) **|** [Git](https://github.com/IrisDimensions)
+
+Authoritative docs live in [`docs/`](docs/00%20-%20Overview.md) (flat numbered files). Hosted external docs are not authority.
 
 Consider supporting development by buying Iris on Spigot.
 
@@ -48,7 +50,8 @@ is identical on every platform.
 | Mob spawning, including mod mobs | Yes | Biome spawn tables are merged with the vanilla derivative's |
 
 With `importedFeatures` off - the default - chunk output is byte-for-byte what Iris has always
-produced. See [docs/api/modded.md](docs/api/modded.md) for the full control reference, including
+produced. See [`docs/94 - API - Modded.md`](docs/94%20-%20API%20-%20Modded.md) and
+[`docs/01 - Installation & Platforms.md`](docs/01%20-%20Installation%20%26%20Platforms.md) for the full control reference, including
 which `pointed_dripstone` keys the 26.2 `speleothem` rename does and does not affect.
 
 Independently of that flag, Iris custom biomes now inherit the biome tags of their vanilla
@@ -91,13 +94,14 @@ Plugin (optional arguments are keyed):
 
 ```
 /iris create myworld type=overworld seed=1337
-/iris load myworld
+/iris tp myworld
 ```
 
 Mod (positional arguments):
 
 ```
 /iris create myworld overworld 1337
+/iris tp irisworldgen:myworld
 ```
 
 Pregeneration requires a radius in blocks. On the plugin, optional arguments are keyed; on modded
@@ -116,16 +120,25 @@ console/status output. `/iris pregen status` reports progress on the plugin.
 The studio is the pack authoring environment, available on all platforms. Studio worlds are
 transient - they are deleted on close and purged at startup.
 
+Plugin:
+
 ```
-/iris studio create <name> [template]   scaffold a new pack (default template: example)
-/iris studio open <pack> [seed]         open a temporary studio world for live editing
-/iris studio vscode [pack]              write a .code-workspace with JSON schemas
-/iris studio update [pack]              regenerate the workspace schemas
-/iris studio close                      close and discard the studio world
+/iris studio create name=<name> [template=<pack>]
+/iris studio open <pack> [seed=1337]
+/iris studio vscode [dimension=<pack>]
+/iris studio update [dimension=<pack>]
+/iris studio close
 ```
 
-As in the quickstart, optional arguments are keyed on the plugin (`seed=1234`) and positional on
-the mod.
+Mod:
+
+```
+/iris studio create [name] [template]
+/iris studio open <pack> [seed]
+/iris studio vscode [pack]
+/iris studio update [pack]
+/iris studio close
+```
 
 The generated VSCode workspace wires per-type JSON schemas (dimensions, biomes, regions, objects,
 loot, entities, snippets) for full autocomplete. Schemas are generated from the server's live
@@ -212,15 +225,14 @@ Iris v<version> [NeoForge] <mc>+<loader>.jar
 ```
 
 Per-platform tasks: `./gradlew buildBukkit`, `buildFabric`, `buildForge`, `buildNeoforge`. The
-developer SPI jar (the pure-JVM platform API contract) is built to `spi/build/libs/` by
+SPI jar (the pure-JVM adapter/platform contract, not the stable plugin API) is built to `spi/build/libs/` by
 `./gradlew :spi:jar`.
 
 `./gradlew buildAll` is a different task: it builds every platform and copies the jars into a
 consumer dropin tree for a local test server. It defaults to `build/consumers/` inside the repo;
 override with `-Plocation=/path/to/consumers`.
 
-If you need help compiling as a developer or contributor, ask in the Discord. Do not come to the
-Discord asking for free copies or a compile tutorial.
+If you need help compiling as a developer or contributor, ask in the Discord.
 
 ## Adapters / modded development
 
@@ -256,8 +268,14 @@ For IDE import you can surface the three adapter builds in the root composite wi
 substitute `art.arcane:core` and `art.arcane:spi`, so including them from the root closes a
 composite cycle. The build and release paths do not need it.
 
-## Maintainer docs
+## Documentation
 
-- [Minecraft version bump checklist](docs/mc-version-bump.md)
-- [Release checklist](docs/release-checklist.md)
-- [Release readiness checklist](docs/release-readiness-checklist.md)
+Full product docs are under [`docs/`](docs/00%20-%20Overview.md). Start with:
+
+- [Overview and index](docs/00%20-%20Overview.md)
+- [Installation and platforms](docs/01%20-%20Installation%20%26%20Platforms.md)
+- [Getting started](docs/02%20-%20Getting%20Started.md)
+- [Structures overview](docs/18%20-%20Structures%20Overview.md)
+- [API — Getting Started](docs/90%20-%20API%20-%20Getting%20Started.md)
+- [Maintainer — MC version bump](docs/85%20-%20Maintainer%20-%20MC%20Version%20Bump.md)
+- [Maintainer — release checklist](docs/86%20-%20Maintainer%20-%20Release%20Checklist.md)

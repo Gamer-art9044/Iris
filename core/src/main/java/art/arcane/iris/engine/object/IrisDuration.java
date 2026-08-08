@@ -32,7 +32,7 @@ public class IrisDuration {
     @Desc("Milliseconds (1000ms = 1 second)")
     private int milliseconds = 0;
 
-    @Desc("Minecraft Ticks (20 minecraft ticks = 1 second")
+    @Desc("Minecraft Ticks (20 minecraft ticks = 1 second)")
     private int minecraftTicks = 0;
 
     @Desc("Seconds (60 seconds = 1 minute)")
@@ -50,10 +50,10 @@ public class IrisDuration {
     @Desc("Minecraft Days (1 minecraft day = 20 real minutes)")
     private int minecraftDays = 0;
 
-    @Desc("Minecraft Weeks (1 minecraft week = 2 real hours and 18 real minutes)")
+    @Desc("Minecraft Weeks (7 minecraft days = 2 real hours and 20 real minutes)")
     private int minecraftWeeks = 0;
 
-    @Desc("Minecraft Lunar Cycles (1 minecraft lunar cycle = 2 real hours and 36 real minutes)")
+    @Desc("Minecraft Lunar Cycles (8 minecraft days = 2 real hours and 40 real minutes)")
     private int minecraftLunarCycles = 0;
 
     @Desc("REAL (not minecraft) Days")
@@ -71,9 +71,8 @@ public class IrisDuration {
                 + TimeUnit.DAYS.toMillis(getDays())
                 + (getMinecraftTicks() * 50L)
                 + (getMinecraftHours() * 50000L)
-                + (getMinecraftWeeks() * 50000L)
-                + (getMinecraftDays() * 24000L)
-                + (getMinecraftWeeks() * 168000L)
-                + (getMinecraftLunarCycles() * 192000L);
+                + (getMinecraftDays() * 1_200_000L)
+                + (getMinecraftWeeks() * 8_400_000L)
+                + (getMinecraftLunarCycles() * 9_600_000L);
     }
 }

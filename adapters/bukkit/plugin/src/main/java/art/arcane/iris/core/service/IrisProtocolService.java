@@ -46,7 +46,10 @@ import org.bukkit.plugin.messaging.PluginMessageListener;
 import java.util.UUID;
 
 public class IrisProtocolService implements IrisService, PluginMessageListener, IrisServerTransport {
-    private static final long SERVER_CAPABILITIES = IrisProtocol.CAPABILITY_PREGEN | IrisProtocol.CAPABILITY_VISION | IrisProtocol.CAPABILITY_CURSOR;
+    private static final long SERVER_CAPABILITIES = IrisProtocol.CAPABILITY_PREGEN
+            | IrisProtocol.CAPABILITY_VISION
+            | IrisProtocol.CAPABILITY_CURSOR
+            | IrisProtocol.CAPABILITY_STUDIO;
     private static final int DIMENSION_SYNC_RETRY_TICKS = 20;
     private static final int DIMENSION_SYNC_MAX_ATTEMPTS = 15;
 

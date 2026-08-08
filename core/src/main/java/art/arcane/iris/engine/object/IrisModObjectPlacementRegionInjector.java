@@ -37,12 +37,12 @@ import lombok.experimental.Accessors;
 @Data
 public class IrisModObjectPlacementRegionInjector {
     @Required
-    @Desc("The biome to find")
+    @Desc("The region to find")
     @RegistryListResource(IrisRegion.class)
     private String biome = "";
 
     @Required
-    @Desc("A biome to inject into the region")
+    @Desc("Object placements to inject into the region")
     @ArrayType(type = IrisObjectPlacement.class, min = 1)
     private KList<IrisObjectPlacement> place = new KList<>();
 }

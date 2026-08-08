@@ -42,7 +42,7 @@ public class IrisModObjectPlacementBiomeInjector {
     private String biome = "";
 
     @Required
-    @Desc("A biome to inject into the region")
+    @Desc("Object placements to inject into the biome")
     @ArrayType(type = IrisObjectPlacement.class, min = 1)
     private KList<IrisObjectPlacement> place = new KList<>();
 }

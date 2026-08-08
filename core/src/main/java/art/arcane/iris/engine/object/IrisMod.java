@@ -35,16 +35,16 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 @AllArgsConstructor
 @NoArgsConstructor
-@Desc("Represents a dimension")
+@Desc("Represents a pack modification schema")
 @Data
 @EqualsAndHashCode(callSuper = false)
 public class IrisMod extends IrisRegistrant {
     @MinNumber(2)
     @Required
-    @Desc("The human readable name of this dimension")
-    private String name = "A Dimension Mod";
+    @Desc("The human-readable name of this pack modification")
+    private String name = "A Pack Modification";
 
-    @Desc("If this mod only works with a specific dimension, define it's load key here. Such as overworld, or flat. Otherwise iris will assume this mod works with anything.")
+    @Desc("The optional dimension load key this modification targets. An empty value does not restrict the target.")
     private String forDimension = "";
 
     @MinNumber(-1)
@@ -93,7 +93,7 @@ public class IrisMod extends IrisRegistrant {
     private KList<IrisModObjectPlacementRegionInjector> regionObjectPlacementInjectors = new KList<>();
 
     @ArrayType(min = 1, type = IrisModRegionReplacer.class)
-    @Desc("Replace biomes with other biomes")
+    @Desc("Replace regions with other regions")
     private KList<IrisModRegionReplacer> regionReplacers = new KList<>();
 
     @ArrayType(min = 1, type = IrisObjectReplace.class)

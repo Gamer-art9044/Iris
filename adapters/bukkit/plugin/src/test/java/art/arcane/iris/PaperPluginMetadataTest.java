@@ -56,7 +56,10 @@ public class PaperPluginMetadataTest {
         assertTrue(metadata.contains("folia-supported: true"));
         assertTrue(metadata.contains("load: STARTUP"));
         assertFalse(metadata.contains("commands:"));
-        assertTrue(metadata.contains("permissions:\n  iris.treefeller:\n"
+        assertTrue(metadata.contains("permissions:\n  iris.all:\n"
+                + "    description: Allows use of the full /iris command tree (worlds, studio, pregen, packs, developer tools).\n"
+                + "    default: op\n"
+                + "  iris.treefeller:\n"
                 + "    description: Allows survival players to fell Iris-managed trees with an axe.\n"
                 + "    default: op"));
         for (String pluginId : JOINED_PLUGIN_IDS) {
@@ -81,6 +84,15 @@ public class PaperPluginMetadataTest {
         assertEquals(List.of("ir", "irs"), commands.get("iris").get("aliases"));
         assertEquals(BUKKIT_SOFT_DEPEND_IDS, metadata.getSoftDepend());
         assertEquals(List.of("Multiverse-Core"), metadata.getLoadBeforePlugins());
+        Permission all = metadata.getPermissions().stream()
+                .filter(permission -> "iris.all".equals(permission.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(all);
+        assertEquals(
+                "Allows use of the full /iris command tree (worlds, studio, pregen, packs, developer tools).",
+                all.getDescription());
+        assertEquals(PermissionDefault.OP, all.getDefault());
         Permission treeFeller = metadata.getPermissions().stream()
                 .filter(permission -> "iris.treefeller".equals(permission.getName()))
                 .findFirst()

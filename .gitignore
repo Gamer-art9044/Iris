@@ -48,7 +48,7 @@ local.properties
 credentials.json
 service-account*.json
 
-# docs/ is hand-written and tracked (maintainer checklists + docs/api/). Nothing under it is
+# docs/ is hand-written and tracked (flat numbered product docs). Nothing under it is
 # generated, so there is nothing to ignore here.
 
 .qa/
@@ -59,3 +59,6 @@ service-account*.json
 .papiwt/
 
 __pycache__/
+
+# Doc authoring scratch
+.docs-wip/

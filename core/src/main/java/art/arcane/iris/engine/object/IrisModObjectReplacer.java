@@ -33,7 +33,7 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Desc("A biome replacer")
+@Desc("An object replacer")
 @Data
 public class IrisModObjectReplacer {
     @Required
@@ -44,6 +44,6 @@ public class IrisModObjectReplacer {
 
     @Required
     @Desc("An object to replace it with")
-    @RegistryListResource(IrisBiome.class)
+    @RegistryListResource(IrisObject.class)
     private String replace = "";
 }

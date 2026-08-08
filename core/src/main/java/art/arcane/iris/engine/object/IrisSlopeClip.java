@@ -31,7 +31,7 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Desc("Translate objects")
+@Desc("Limits placement to a minimum and maximum terrain slope")
 @Data
 public class IrisSlopeClip {
     @MinNumber(0)

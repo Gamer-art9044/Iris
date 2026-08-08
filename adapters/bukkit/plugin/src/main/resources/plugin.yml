@@ -26,6 +26,9 @@ commands:
   iris:
     aliases: [ ir, irs ]
 permissions:
+  iris.all:
+    description: Allows use of the full /iris command tree (worlds, studio, pregen, packs, developer tools).
+    default: op
   iris.treefeller:
     description: Allows survival players to fell Iris-managed trees with an axe.
     default: op

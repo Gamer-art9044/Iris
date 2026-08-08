@@ -31,16 +31,16 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Desc("Translate objects")
+@Desc("Limits object placement by minimum and maximum world height")
 @Data
 public class IrisObjectLimit {
-    @MinNumber(0)
-    @MaxNumber(1024)
+    @MinNumber(-2048)
+    @MaxNumber(2048)
     @Desc("The minimum height for placement (bottom of object)")
     private int minimumHeight = -2048;
 
-    @MinNumber(0)
-    @MaxNumber(1024)
+    @MinNumber(-2048)
+    @MaxNumber(2048)
     @Desc("The maximum height for placement (top of object)")
     private int maximumHeight = 2048;
 

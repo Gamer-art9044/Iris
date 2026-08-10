@@ -27,9 +27,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -111,6 +113,55 @@ public class JigsawStudioLifecycleTest {
                 service.tryBeginClose(request.requestId(), OWNER, true));
         assertNull(service.closeProtectionFailure(request.requestId()));
         assertEquals(JigsawStudioService.SaveStart.CLOSING, service.tryBeginSave(request.requestId()));
+    }
+
+    @Test
+    public void ownerReplacementWaitsForAutosaveThenClaimsClose() {
+        assertTrue(JigsawStudioActivation.tryBeginOpen(OWNER));
+        JigsawStudioActivation.Request request = activateOwnedStudio();
+        JigsawStudioActivation.finishOpen(OWNER);
+        JigsawStudioSession session = JigsawStudioActivation.getSession(request.requestId());
+        JigsawStudioService service = new JigsawStudioService();
+        assertEquals(
+                JigsawStudioSession.DirtyStatus.MARKED,
+                session.markWorkcellDirty(JigsawStudioLayout.SPATIAL_WORKCELL_ID).status());
+        AtomicReference<Runnable> retry = new AtomicReference<>();
+
+        try (MockedStatic<J> scheduling = mockStatic(J.class)) {
+            scheduling.when(() -> J.s(any(Runnable.class), eq(5))).thenAnswer(invocation -> {
+                retry.set(invocation.getArgument(0));
+                return null;
+            });
+            CompletableFuture<Void> readiness = service.awaitCloseForReplacement(
+                    request.requestId(), OWNER);
+
+            assertFalse(readiness.isDone());
+            assertTrue(retry.get() != null);
+            JigsawStudioSession.SaveStart save = session.beginSave(
+                    JigsawStudioLayout.SPATIAL_WORKCELL_ID);
+            assertEquals(JigsawStudioSession.SaveStatus.STARTED, save.status());
+            assertTrue(session.markWorkcellSaved(save.identity().orElseThrow()));
+            retry.get().run();
+
+            readiness.join();
+            assertNull(service.closeProtectionFailure(request.requestId()));
+        }
+    }
+
+    @Test
+    public void nonOwnerReplacementFailsWithoutWaiting() {
+        assertTrue(JigsawStudioActivation.tryBeginOpen(OWNER));
+        JigsawStudioActivation.Request request = activateOwnedStudio();
+        JigsawStudioActivation.finishOpen(OWNER);
+        JigsawStudioService service = new JigsawStudioService();
+
+        try (MockedStatic<J> scheduling = mockStatic(J.class)) {
+            CompletableFuture<Void> readiness = service.awaitCloseForReplacement(
+                    request.requestId(), OTHER_OWNER);
+
+            assertTrue(readiness.isCompletedExceptionally());
+            scheduling.verifyNoInteractions();
+        }
     }
 
     @Test

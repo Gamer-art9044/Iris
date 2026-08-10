@@ -18,7 +18,7 @@ public class IrisJigsawModelMetadataTest {
         assertEquals(IrisJigsawCompatibility.IRIS_EXTENDED, structure.resolvedCompatibility());
         assertEquals(IrisJigsawBranchFailurePolicy.FAIL_ASSEMBLY,
                 structure.resolvedBranchFailurePolicy());
-        assertEquals(new IrisPosition(16, 16, 16), structure.getCellSize());
+        assertEquals(new IrisPosition(15, 15, 15), structure.getCellSize());
         assertEquals("", connector.getChannel());
         assertEquals("minecraft:air", connector.getFinalState());
         assertEquals(0, connector.getSelectionPriority());
@@ -50,7 +50,7 @@ public class IrisJigsawModelMetadataTest {
         assertEquals(IrisJigsawCompatibility.IRIS_EXTENDED, structure.resolvedCompatibility());
         assertEquals(IrisJigsawBranchFailurePolicy.FAIL_ASSEMBLY,
                 structure.resolvedBranchFailurePolicy());
-        assertEquals(new IrisPosition(16, 16, 16), structure.getCellSize());
+        assertEquals(new IrisPosition(15, 15, 15), structure.getCellSize());
         assertEquals("", connector.getChannel());
         assertEquals("minecraft:air", connector.getFinalState());
         assertEquals(0, connector.getSelectionPriority());

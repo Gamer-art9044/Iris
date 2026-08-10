@@ -83,6 +83,16 @@ public final class JigsawStudioSession {
         return state.snapshot(workcellId);
     }
 
+    public synchronized boolean setConnectorsVisible(String workcellId, boolean visible) {
+        MutableWorkcellState state = requireWorkcellState(workcellId);
+        if (state.connectorsVisible == visible) {
+            return false;
+        }
+        state.connectorsVisible = visible;
+        revision++;
+        return true;
+    }
+
     public synchronized boolean replaceLayout(JigsawStudioLayout replacement) {
         JigsawStudioLayout nextLayout = Objects.requireNonNull(replacement, "Replacement Jigsaw Studio layout");
         if (layout.mode() != nextLayout.mode()) {
@@ -107,7 +117,8 @@ public final class JigsawStudioSession {
                     activeVariantKey,
                     nextLoadGeneration(),
                     nextMutationGeneration(),
-                    false));
+                    false,
+                    previous != null && previous.connectorsVisible));
         }
         layout = nextLayout;
         workcells.clear();
@@ -161,7 +172,8 @@ public final class JigsawStudioSession {
                     targetVariantKey,
                     nextLoadGeneration(),
                     nextMutationGeneration(),
-                    false));
+                    false,
+                    previous != null && previous.connectorsVisible));
         }
         layout = nextLayout;
         workcells.clear();
@@ -419,6 +431,7 @@ public final class JigsawStudioSession {
                     variantKey,
                     nextLoadGeneration(),
                     nextMutationGeneration(),
+                    false,
                     false));
         }
     }
@@ -520,7 +533,8 @@ public final class JigsawStudioSession {
             long mutationGeneration,
             boolean dirty,
             boolean saveInProgress,
-            boolean switchInProgress
+            boolean switchInProgress,
+            boolean connectorsVisible
     ) {
     }
 
@@ -635,21 +649,29 @@ public final class JigsawStudioSession {
         private long saveGeneration;
         private boolean switchInProgress;
         private long switchGeneration;
+        private boolean connectorsVisible;
 
         private MutableWorkcellState(
                 String activeVariantKey,
                 long loadGeneration,
                 long mutationGeneration,
-                boolean dirty
+                boolean dirty,
+                boolean connectorsVisible
         ) {
             this.activeVariantKey = activeVariantKey;
             this.loadGeneration = loadGeneration;
             this.mutationGeneration = mutationGeneration;
             this.dirty = dirty;
+            this.connectorsVisible = connectorsVisible;
         }
 
         private MutableWorkcellState copy() {
-            return new MutableWorkcellState(activeVariantKey, loadGeneration, mutationGeneration, dirty);
+            return new MutableWorkcellState(
+                    activeVariantKey,
+                    loadGeneration,
+                    mutationGeneration,
+                    dirty,
+                    connectorsVisible);
         }
 
         private WorkcellSnapshot snapshot(String workcellId) {
@@ -660,7 +682,8 @@ public final class JigsawStudioSession {
                     mutationGeneration,
                     dirty,
                     saveInProgress,
-                    switchInProgress);
+                    switchInProgress,
+                    connectorsVisible);
         }
     }
 }

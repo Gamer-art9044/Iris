@@ -12,7 +12,7 @@ import java.util.Optional;
 public final class JigsawStudioLayout {
     public static final int FLOOR_Y = 64;
     public static final int PLANAR_COLUMNS = 3;
-    public static final int PLANAR_GAP = 2;
+    public static final int PLANAR_GAP = 1;
     public static final int MAX_VARIANTS = 512;
     public static final String SPATIAL_WORKCELL_ID = "workcell/spatial";
 

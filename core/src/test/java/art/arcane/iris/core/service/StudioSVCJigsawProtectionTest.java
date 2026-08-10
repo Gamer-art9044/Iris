@@ -11,10 +11,12 @@ import art.arcane.iris.core.runtime.jigsaw.JigsawStudioMode;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioVariantCatalog;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.util.common.plugin.VolmitPlugin;
+import art.arcane.iris.util.common.plugin.VolmitSender;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.MockedStatic;
+import org.bukkit.entity.Player;
 
 import java.lang.reflect.Field;
 import java.util.UUID;
@@ -88,6 +90,26 @@ public class StudioSVCJigsawProtectionTest {
         setActiveProject(studio, project);
 
         assertEquals(closeResult, studio.close().join());
+        assertNull(studio.getActiveProject());
+        verify(project).close();
+    }
+
+    @Test
+    public void ownerCanReplaceJigsawStudioThroughOrdinaryStudioOpen() throws ReflectiveOperationException {
+        activateOwnedStudio();
+        IrisProject project = mock(IrisProject.class);
+        when(project.getName()).thenReturn("overworld");
+        StudioOpenCoordinator.StudioCloseResult closeResult = successfulClose();
+        when(project.close()).thenReturn(CompletableFuture.completedFuture(closeResult));
+        Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(OWNER);
+        VolmitSender sender = mock(VolmitSender.class);
+        when(sender.isPlayer()).thenReturn(true);
+        when(sender.player()).thenReturn(player);
+        StudioSVC studio = new StudioSVC();
+        setActiveProject(studio, project);
+
+        assertEquals(closeResult, studio.closeActiveProjectForReplacement(sender).join());
         assertNull(studio.getActiveProject());
         verify(project).close();
     }

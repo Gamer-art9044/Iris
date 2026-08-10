@@ -621,7 +621,14 @@ public final class BukkitCommandMessagesExtended {
     );
     public static final TextKey COMMAND_STRUCTURE_PLACED_PIECES_AT_YOUR_LOCATION = TextKey.of(
             "iris.bukkit.commandstructure.placed_pieces_at_your_location",
-            C.GREEN + "Placed '" + "{structure}" + "' (" + "{value}" + " pieces) at your location."
+            C.GREEN + "Placed '" + "{structure}" + "' (" + "{value}" + " pieces, "
+                    + "{value2}" + " block changes) at your location."
+    );
+    public static final TextKey COMMAND_STRUCTURE_PLACEMENT_CHANGED_NO_BLOCKS = TextKey.of(
+            "iris.bukkit.commandstructure.placement_changed_no_blocks",
+            C.RED + "Structure '" + "{structure}" + "' assembled " + "{value}"
+                    + " pieces but changed 0 blocks at your location. Check that the selected variants contain "
+                    + "non-air blocks and that the placement is above the world's minimum height."
     );
     public static final TextKey COMMAND_STUDIO_OPENING_STUDIO_PACK_SEED = TextKey.of(
             "iris.bukkit.commandstudio.opening_studio_pack_seed",
@@ -991,6 +998,7 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_STRUCTURE_NO_IRIS_STRUCTURE_THIS_PACK_2,
             COMMAND_STRUCTURE_STRUCTURE_ASSEMBLED_0_PIECES,
             COMMAND_STRUCTURE_PLACED_PIECES_AT_YOUR_LOCATION,
+            COMMAND_STRUCTURE_PLACEMENT_CHANGED_NO_BLOCKS,
             COMMAND_STUDIO_OPENING_STUDIO_PACK_SEED,
             COMMAND_STUDIO_PROVIDE_DIMENSION_PACK_IRIS_STD_IMPORTVANILLA_PACK_DIMENSION,
             COMMAND_STUDIO_COULD_NOT_RESOLVE_PACK_DIMENSION,

@@ -44,7 +44,7 @@ public class JigsawStudioLayoutTest {
     }
 
     @Test
-    public void planarWorkcellsUseDirectTwoBlockSpacing() {
+    public void planarWorkcellsUseDirectOneBlockSpacing() {
         JigsawStudioLayout layout = JigsawStudioLayout.create(
                 JigsawStudioMode.PLANAR_JIGSAW,
                 new JigsawStudioCellDimensions(16, 8, 16),
@@ -53,12 +53,12 @@ public class JigsawStudioLayoutTest {
         JigsawStudioBay end = layout.get("workcell/end");
         JigsawStudioBay corner = layout.get("workcell/corner");
 
-        assertEquals(18, end.bounds().originX() - blank.bounds().originX());
-        assertEquals(18, corner.bounds().originZ() - blank.bounds().originZ());
-        assertEquals(2, end.bounds().originX() - blank.bounds().maxX() - 1);
-        assertEquals(2, corner.bounds().originZ() - blank.bounds().maxZ() - 1);
+        assertEquals(17, end.bounds().originX() - blank.bounds().originX());
+        assertEquals(17, corner.bounds().originZ() - blank.bounds().originZ());
+        assertEquals(1, end.bounds().originX() - blank.bounds().maxX() - 1);
+        assertEquals(1, corner.bounds().originZ() - blank.bounds().maxZ() - 1);
         assertEquals(3, layout.columns());
-        assertEquals(2, layout.gap());
+        assertEquals(1, layout.gap());
     }
 
     @Test
@@ -87,9 +87,9 @@ public class JigsawStudioLayoutTest {
         JigsawStudioBay corner = layout.get("workcell/corner");
         JigsawStudioBay tee = layout.get("workcell/tee");
 
-        assertEquals(14, end.bounds().originX() - blank.bounds().originX());
-        assertEquals(36, straight.bounds().originX() - blank.bounds().originX());
-        assertEquals(13, corner.bounds().originZ() - blank.bounds().originZ());
+        assertEquals(13, end.bounds().originX() - blank.bounds().originX());
+        assertEquals(34, straight.bounds().originX() - blank.bounds().originX());
+        assertEquals(12, corner.bounds().originZ() - blank.bounds().originZ());
         assertEquals(new JigsawStudioCellDimensions(7, 8, 15), tee.bounds().dimensions());
         assertFalse(tee.enabled());
         assertTrue(blank.enabled());

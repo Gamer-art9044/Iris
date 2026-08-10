@@ -75,6 +75,7 @@ public class JigsawStudioMenuControllerTest {
                 false,
                 false,
                 false,
+                false,
                 List.of(active));
 
         assertEquals(ChatColor.GREEN + "Autosaved", JigsawStudioMenuController.workcellStatus(fresh));
@@ -123,6 +124,7 @@ public class JigsawStudioMenuControllerTest {
                 true,
                 false,
                 false,
+                true,
                 List.of(active));
         JigsawStudioMenuState state = state(evaluation, corner);
         themes.add("late-theme");
@@ -158,6 +160,7 @@ public class JigsawStudioMenuControllerTest {
                 new JigsawStudioCellDimensions(16, 16, 16),
                 true,
                 "pieces/different",
+                false,
                 false,
                 false,
                 false,
@@ -517,6 +520,7 @@ public class JigsawStudioMenuControllerTest {
                 true,
                 active.pieceKey(),
                 true,
+                false,
                 false,
                 false,
                 variants);

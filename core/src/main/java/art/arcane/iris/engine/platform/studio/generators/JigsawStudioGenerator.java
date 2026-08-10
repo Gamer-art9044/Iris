@@ -35,9 +35,11 @@ import art.arcane.volmlib.util.collection.KList;
 import org.bukkit.World;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -184,7 +186,7 @@ public final class JigsawStudioGenerator extends EnginedStudioGenerator {
         }
     }
 
-    void paintChunk(TerrainChunk terrainChunk, int chunkX, int chunkZ) {
+    public void paintChunk(TerrainChunk terrainChunk, int chunkX, int chunkZ) {
         Objects.requireNonNull(terrainChunk, "Jigsaw Studio terrain chunk");
         int floorY = Math.max(terrainChunk.getMinHeight(), JigsawStudioLayout.FLOOR_Y);
         if (floorY >= terrainChunk.getMaxHeight()) {
@@ -217,7 +219,16 @@ public final class JigsawStudioGenerator extends EnginedStudioGenerator {
                 continue;
             }
             paintObject(terrainChunk, workcell, renderedBay, chunkWorldX, chunkWorldZ);
-            paintConnectors(terrainChunk, workcell, renderedBay, chunkWorldX, chunkWorldZ);
+            if (session.workcellSnapshot(workcell.stableId()).connectorsVisible()) {
+                paintConnectors(terrainChunk, workcell, renderedBay, chunkWorldX, chunkWorldZ);
+            } else {
+                paintHiddenConnectorFinalStates(
+                        terrainChunk,
+                        workcell,
+                        renderedBay,
+                        chunkWorldX,
+                        chunkWorldZ);
+            }
         }
     }
 
@@ -632,6 +643,34 @@ public final class JigsawStudioGenerator extends EnginedStudioGenerator {
         }
     }
 
+    private void paintHiddenConnectorFinalStates(
+            TerrainChunk terrainChunk,
+            JigsawStudioBay workcell,
+            RenderedBay renderedBay,
+            int chunkWorldX,
+            int chunkWorldZ
+    ) {
+        Set<RenderedPosition> occupied = new HashSet<>(renderedBay.blocks().size());
+        for (RenderedBlock block : renderedBay.blocks()) {
+            occupied.add(new RenderedPosition(block.x(), block.y(), block.z()));
+        }
+        JigsawStudioBounds bounds = workcell.bounds();
+        for (RenderedConnector connector : renderedBay.connectors()) {
+            if (occupied.contains(new RenderedPosition(connector.x(), connector.y(), connector.z()))) {
+                continue;
+            }
+            PlatformBlockState finalState = B.getStateOrNull(connector.connector().getFinalState(), false);
+            setWorldBlock(
+                    terrainChunk,
+                    bounds.originX() + connector.x(),
+                    bounds.originY() + connector.y(),
+                    bounds.originZ() + connector.z(),
+                    finalState == null ? invalidMarker : finalState,
+                    chunkWorldX,
+                    chunkWorldZ);
+        }
+    }
+
     private void paintInvalidBay(
             TerrainChunk terrainChunk,
             JigsawStudioBay workcell,
@@ -870,5 +909,8 @@ public final class JigsawStudioGenerator extends EnginedStudioGenerator {
     }
 
     record RotatedPosition(int x, int y, int z) {
+    }
+
+    private record RenderedPosition(int x, int y, int z) {
     }
 }

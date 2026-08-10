@@ -71,6 +71,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -579,7 +580,7 @@ public class StudioSVC implements IrisService {
             String dimension,
             Consumer<World> onDone
     ) {
-        return closeActiveProject().handle((closeResult, closeThrowable) -> {
+        return closeActiveProjectForReplacement(sender).handle((closeResult, closeThrowable) -> {
             if (closeThrowable != null) {
                 IrisLogging.reportError("Failed while closing an existing studio project before opening \"" + dimension + "\".", closeThrowable);
                 J.s(() -> sender.sendMessage(IrisLanguage.text(
@@ -660,6 +661,29 @@ public class StudioSVC implements IrisService {
 
     public CompletableFuture<StudioOpenCoordinator.StudioCloseResult> close() {
         return studioTransitions.submit(this::closeActiveProject);
+    }
+
+    CompletableFuture<StudioOpenCoordinator.StudioCloseResult> closeActiveProjectForReplacement(
+            VolmitSender sender
+    ) {
+        IrisProject project = activeProject;
+        if (project == null) {
+            return closeActiveProject();
+        }
+        JigsawStudioActivation.Request request = JigsawStudioActivation.getRequest(project.getName());
+        if (request == null || !sender.isPlayer()) {
+            return closeActiveProject();
+        }
+        UUID ownerId = sender.player().getUniqueId();
+        return JigsawStudioService.get()
+                .awaitCloseForReplacement(request.requestId(), ownerId)
+                .thenCompose(ignored -> {
+                    if (activeProject != project) {
+                        return CompletableFuture.failedFuture(new IllegalStateException(
+                                "The active Studio project changed while replacement was waiting to close."));
+                    }
+                    return closeActiveProject();
+                });
     }
 
     private CompletableFuture<StudioOpenCoordinator.StudioCloseResult> closeActiveProject() {

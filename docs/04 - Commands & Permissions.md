@@ -11,7 +11,7 @@ Use these as entry points; follow the linked guide before running destructive or
 | Create and enter a disposable world | `/iris create tutorial type=overworld seed=1337`, then `/iris tp tutorial` | `/iris create tutorial overworld 1337`, then `/iris tp irisworldgen:tutorial` | World/dimension appears in `/iris worlds` or `/iris world status`; ordinary chunks generate | `02 - Getting Started.md` |
 | Validate a pack before world creation | `/iris pack validate pack=overworld` | `/iris pack validate overworld` | No blocking validation errors | `25 - Pack Management.md` |
 | Open the live authoring pack | `/iris studio open overworld seed=1337` | `/iris studio open overworld 1337` | Transient Studio world opens and a valid save hotloads | `10 - Studio & VSCode Schemas.md` |
-| Create an in-game jigsaw project | `/iris jigsaw create overworld village/demo` | Not available; author on Bukkit and copy the saved pack | Owned planar, Iris-native graph is created atomically with six 16×16×16 workcells, one variant per archetype, and seed `1337`; edits then autosave | `21 - Jigsaw Structures.md` |
+| Create an in-game jigsaw project | `/iris jigsaw create overworld village/demo` | Not available; author on Bukkit and copy the saved pack | Owned planar, Iris-native graph is created atomically with six 15×15×15 workcells, one variant per archetype, and seed `1337`; edits then autosave | `21 - Jigsaw Structures.md` |
 | Inspect an Iris jigsaw graph | `/iris structure info overworld <structure>` | `/iris structure info <structure>` while in its Iris dimension | Resolved graph reports pieces and bounds | `21 - Jigsaw Structures.md` |
 | Pregenerate a small test area | `/iris pregen start 352 world=<world> center=0,0 gui=false` | `/iris pregen start 352 <dimension> at 0 0` | `/iris pregen status` advances with no accumulating failures | `07 - Pregeneration.md` |
 | Remove a disposable Iris world | Evacuate players, unload, then `/iris remove <world>` | `/iris world delete <dimension>` | Target is absent from world status and its managed data is removed | `06 - Worlds & Lifecycle.md` |
@@ -189,7 +189,7 @@ See `07 - Pregeneration.md`.
 
 | Command | Aliases | Platforms | Params | Description |
 |---------|---------|-----------|--------|-------------|
-| `open` | `o` | Both | **Bukkit:** `<dimension> [seed=1337]`. **Modded:** `<pack> [seed]` | Open temporary studio dimension; Bukkit refuses to replace an active Jigsaw Studio outside its owner-authorized Jigsaw lifecycle |
+| `open` | `o` | Both | **Bukkit:** `<dimension> [seed=1337]`. **Modded:** `<pack> [seed]` | Open temporary studio dimension; the owning player may replace an active Jigsaw Studio, and Iris waits for its autosave and active operation barriers before closing it |
 | `close` | `x` | Both | — | Close studio and discard world; Bukkit requires `/iris jigsaw close` for an active Jigsaw Studio |
 | `tpstudio` | `stp` | Both | — | Teleport into open studio |
 | `status` | | **Modded** (Bukkit uses other paths) | — | Show open studio and pack |
@@ -218,11 +218,11 @@ See `10 - Studio & VSCode Schemas.md`.
 
 | Command | Params | Description |
 |---|---|---|
-| `create` | `<dimension> <key> [mode=planar] [compatibility=iris] [width=16] [height=16] [depth=16] [seed=1337]` | Add-only atomic graph creation followed by open; named `structure=` and `name=` alias `key=`; `mode` completes `planar`/`spatial`, compatibility completes `iris`/`vanilla`; planar X/Z `3..128`, spatial X/Z `1..128`, Y `1..192`, volume `<=2,097,152` |
+| `create` | `<dimension> <key> [mode=planar] [compatibility=iris] [width=15] [height=15] [depth=15] [seed=1337]` | Add-only atomic graph creation followed by open; named `structure=` and `name=` alias `key=`; `mode` completes `planar`/`spatial`, compatibility completes `iris`/`vanilla`; planar X/Z `3..128`, spatial X/Z `1..128`, Y `1..192`, volume `<=2,097,152` |
 | `convert` | `<dimension> <source> [target=auto] [seed=1337]` | Add-only conversion of one live registered vanilla/datapack jigsaw into an owned Iris graph, then open it; aliases `import`, `import-vanilla` |
 | `adopt inspect` | `<dimension> <source> [target=auto] [strategy=auto]` | Asynchronously inspect an existing Iris closure and issue a hash-pinned `IN_PLACE`, `CLONE_REQUIRED`, or `BLOCKED` plan; strategy completes `auto`, `in-place`, `clone` |
 | `adopt apply` | `<planId>` | Revalidate and atomically apply that player's unexpired plan, then open the target at seed `1337`; active/opening Jigsaw Studio is rejected |
-| `open` | `<dimension> <key> [seed=1337]` | Open an existing graph in compact workcells; aliases `edit`, `reopen`; owner, autosave, and operation barriers protect replacement |
+| `open` | `<dimension> <key> [seed=1337]` | Open an existing graph in compact workcells; aliases `edit`, `reopen`; existing Iris structure keys tab-complete; owner, autosave, and operation barriers protect replacement |
 | `close` | `[discard=false]` | Close Studio; refuse active autosave/load/graph work or a pending dirty capture unless deliberately discarded |
 | `status` | — | Show project/workcell state and the current automatic seed-`1337` evaluation, theme, piece count, and diagnostic |
 | `menu` | — | Open the six-row controls also opened by the generated chest or three sneaks within 1.5 seconds |
@@ -231,7 +231,7 @@ See `10 - Studio & VSCode Schemas.md`.
 | `particles` | `<visible>` | Toggle player-local bounds and connector particles |
 | `save` | `[bay=selected]` | Flush the selected dirty workcell's automatic capture now; normal block and container updates already autosave |
 | `connector channel` | `<channel\|none>` | Look at a saved marker in the active owned workcell within 8 blocks and set/clear its Iris-only channel at the inverse-mapped source position |
-| `bounds` | `<width> <height> <depth>` | Set the selected workcell capacity without resizing any variant object; every existing variant must fit, and the compact Studio layout requires close/reopen; aliases `cell`, `resize` |
+| `bounds` | `<width> <height> <depth>` | Set the selected workcell capacity without resizing any variant object; every existing variant must fit, and the compact Studio layout regenerates in place; aliases `cell`, `resize` |
 | `workcell capacity` | `<width> <height> <depth>` | Explicit nested form of `bounds`; planar capacities are per canonical archetype and spatial capacity is the single project envelope |
 | `workcell label` | `<displayName>` | Set the selected planar or spatial workcell's author label; quote spaces; solver identity remains canonical |
 | `workcell label-reset` | — | Reset the selected workcell to its canonical solver label; alias `reset-label` |
@@ -254,7 +254,7 @@ See `10 - Studio & VSCode Schemas.md`.
 | `export` | `[namespace=iris] [output=jigsaw-export] [format=zip] [replace=false]` | Start a background strict Minecraft 26.2 vanilla datapack export as one direct artifact under the Studio packs `exports/` folder |
 | `delete` | `[confirm=false]` | With `confirm=true`, scan reverse references, close Studio, and hash-pinned-delete the complete owned project; alias `remove` |
 
-There are no Jigsaw Studio undo, adoption rollback, or mod-loader authoring commands. Planar Studio always has six independently capacitated/enabled canonical workcells, spatial Studio one, and every variant retains its own exact dimensions and optional display label. Workcell and variant rename tools are renamed in an anvil, right-clicked to apply, and sneak-right-clicked to reset. A catalog may contain at most 512 variants. The seed-`1337` assembly is evaluated automatically and rendered as a permanent protected block preview; `preview assemble` is the separate temporary arbitrary-seed particle diagnostic. See `21 - Jigsaw Structures.md` for GUI/toolbox controls, themes/chance/rules/caps, markers, ownership, placement, export, and recovery.
+There is no Jigsaw Studio undo command, adoption rollback command, or mod-loader authoring command. **Undo Last Autosave** in Workcell Settings restores the newest of five previous saved graph iterations retained in one `.iris/jigsaw-history/key-<sha256>.json` file. **Reset Connector Blocks** restores the selected workcell's saved connector blocks without replacing its other edited blocks. Planar Studio always has six independently capacitated/enabled canonical workcells, spatial Studio one, and every variant retains its own exact dimensions and optional display label. Workcell and variant rename tools are renamed in an anvil, right-clicked to apply, and sneak-right-clicked to reset. A catalog may contain at most 512 variants. The seed-`1337` assembly is evaluated automatically and rendered as a permanent protected block preview; `preview assemble` is the separate temporary arbitrary-seed particle diagnostic. See `21 - Jigsaw Structures.md` for GUI/toolbox controls, themes/chance/rules/caps, markers, ownership, placement, export, and recovery.
 
 Bukkit has one global Studio project/world and the Jigsaw session belongs to one owning player. Only that owner can control, load, or mutate it; entering a workcell makes that physical cell the owner's next menu selection. Non-owner edits are cancelled and non-owner commands use a strict informational/communication allowlist. Block and inventory changes in loaded owned workcells autosave after a 40-tick quiet period. Duplicate-one and duplicate-family actions queue once behind pending autosave, expedite it, and continue automatically against the same request and source variants. The chest and live preview are protected; schema-1 or otherwise stale toolbox sticks are rejected. A later mutation after capture starts remains dirty for another capture. Plugins that bypass covered events must call `JigsawStudioService.markDirty(...)` or `markAllDirty(...)`.
 
@@ -279,7 +279,7 @@ See `25 - Pack Management.md`.
 |---------|---------|-----------|--------|-------------|
 | `list` | `ls` | Both | **Bukkit:** `<dimension>`. **Modded:** current engine pack | Write `structure-index.json` |
 | `info` | | Both | **Bukkit:** `<dimension> <structure>`. **Modded:** `<key>` | Resolve jigsaw graph bounds |
-| `place` | `p` | Both | **Bukkit:** `<dimension> <structure>` (player). **Modded:** `<key>` | Assemble and place structure at player |
+| `place` | `p` | Both | **Bukkit:** `<dimension> <structure>` (player). **Modded:** `<key>` | Assemble and place at the player; Bukkit reports the exact changed-block count and rejects air-only or already-identical no-op results |
 | `import` | `import-all`, `reimport`, `imp`, `all` | **Bukkit**; modded message | `<dimension>` | Import all vanilla/datapack structures as editable Iris resources (overwrites) |
 | `capture` | `cap` | **Bukkit**; modded message | `<dimension>` | Capture code-only structures via scratch world |
 | `verify` | `locateall` | Both | **Bukkit:** `<dimension> [radius=48]`. **Modded:** `[key]` | Native/Iris structure reachability report |

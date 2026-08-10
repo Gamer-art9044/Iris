@@ -52,6 +52,7 @@ import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.util.common.director.DirectorExecutor;
+import art.arcane.iris.util.common.director.specialhandlers.IrisStructureHandler;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
@@ -118,9 +119,9 @@ public class CommandJigsaw implements DirectorExecutor {
                     customHandler = JigsawModeHandler.class) String mode,
             @Param(description = "iris or vanilla", defaultValue = "iris",
                     customHandler = JigsawCompatibilityHandler.class) String compatibility,
-            @Param(description = "Cell width", defaultValue = "16") int width,
-            @Param(description = "Cell height", defaultValue = "16") int height,
-            @Param(description = "Cell depth", defaultValue = "16") int depth,
+            @Param(description = "Cell width", defaultValue = "15") int width,
+            @Param(description = "Cell height", defaultValue = "15") int height,
+            @Param(description = "Cell depth", defaultValue = "15") int depth,
             @Param(description = "Studio world seed", defaultValue = "1337") long seed
     ) {
         IrisData data = requireData(dimension);
@@ -155,6 +156,16 @@ public class CommandJigsaw implements DirectorExecutor {
                 sendError(result.conflicts().getFirst().relativePath() + ": "
                         + result.conflicts().getFirst().reason());
             }
+            return;
+        }
+        try {
+            JigsawStudioService.clearAutosaveHistory(
+                    data.getDataFolder().toPath(),
+                    structure);
+        } catch (IOException exception) {
+            Iris.reportError("Failed to clear stale Jigsaw Studio history for '" + structure + "'.", exception);
+            sendError("Jigsaw project was created, but stale autosave history could not be cleared: "
+                    + exception.getMessage());
             return;
         }
         data.invalidateStructureResources();
@@ -208,7 +219,8 @@ public class CommandJigsaw implements DirectorExecutor {
     public void open(
             @Param(description = "Pack dimension") IrisDimension dimension,
             @Param(name = "key", aliases = {"structure", "name"},
-                    description = "Existing key loaded from structures/<key>.json") String structure,
+                    description = "Existing key loaded from structures/<key>.json",
+                    customHandler = IrisStructureHandler.class) String structure,
             @Param(description = "Studio world seed", defaultValue = "1337") long seed
     ) {
         openProject(player(), sender(), dimension, structure, seed);

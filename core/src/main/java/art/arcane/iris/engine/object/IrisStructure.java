@@ -64,7 +64,7 @@ public class IrisStructure extends IrisRegistrant {
     private IrisJigsawBranchFailurePolicy branchFailurePolicy = IrisJigsawBranchFailurePolicy.FAIL_ASSEMBLY;
 
     @Desc("Default Studio cell dimensions. Legacy planar structures use this value for every workcell when planarWorkcells is empty.")
-    private IrisPosition cellSize = new IrisPosition(16, 16, 16);
+    private IrisPosition cellSize = new IrisPosition(15, 15, 15);
 
     @Desc("Optional author-facing name for the single spatial Jigsaw Studio workcell. Spatial is shown when this is blank.")
     private String spatialWorkcellDisplayName = "";

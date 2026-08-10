@@ -369,7 +369,24 @@ public class CommandStructure implements DirectorExecutor {
             }
             p.getObject().place(p.getX(), p.getY(), p.getZ(), placer, config, rng, null, null, data);
         }
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_PLACED_PIECES_AT_YOUR_LOCATION, MessageArgument.untrusted("structure", structure), MessageArgument.untrusted("value", pieces.size())));
+        int blockChanges = 0;
+        for (Map.Entry<Block, BlockData> entry : future.entrySet()) {
+            if (!entry.getKey().getBlockData().equals(entry.getValue())) {
+                blockChanges++;
+            }
+        }
+        if (blockChanges == 0) {
+            sender().sendMessage(IrisLanguage.text(
+                    BukkitCommandMessagesExtended.COMMAND_STRUCTURE_PLACEMENT_CHANGED_NO_BLOCKS,
+                    MessageArgument.untrusted("structure", structure),
+                    MessageArgument.untrusted("value", pieces.size())));
+            return;
+        }
+        sender().sendMessage(IrisLanguage.text(
+                BukkitCommandMessagesExtended.COMMAND_STRUCTURE_PLACED_PIECES_AT_YOUR_LOCATION,
+                MessageArgument.untrusted("structure", structure),
+                MessageArgument.untrusted("value", pieces.size()),
+                MessageArgument.untrusted("value2", blockChanges)));
     }
 
 }

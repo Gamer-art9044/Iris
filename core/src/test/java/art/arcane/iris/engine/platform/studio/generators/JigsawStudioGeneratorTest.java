@@ -28,11 +28,13 @@ import art.arcane.iris.engine.object.JigsawJoint;
 import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.data.B;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.generator.ChunkGenerator.ChunkData;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 
 import java.util.HashMap;
 import java.util.List;
@@ -52,9 +54,70 @@ import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
 public class JigsawStudioGeneratorTest {
+    @Test
+    @SuppressWarnings("unchecked")
+    public void connectorBlocksAreHiddenByDefaultAndCanBeShownPerWorkcell() {
+        IrisData source = mock(IrisData.class);
+        ResourceLoader<IrisJigsawPiece> pieceLoader = mock(ResourceLoader.class);
+        ResourceLoader<IrisObject> objectLoader = mock(ResourceLoader.class);
+        when(source.getJigsawPieceLoader()).thenReturn(pieceLoader);
+        when(source.getObjectLoader()).thenReturn(objectLoader);
+        IrisJigsawConnector connector = new IrisJigsawConnector()
+                .setPosition(new IrisPosition(1, 1, 1))
+                .setDirection(IrisDirection.NORTH_NEGATIVE_Z)
+                .setTop(IrisDirection.UP_POSITIVE_Y)
+                .setPool("test/start")
+                .setName("door")
+                .setTargetName("door")
+                .setJoint(JigsawJoint.ALIGNED)
+                .setFinalState("minecraft:stone");
+        IrisJigsawPiece piece = new IrisJigsawPiece()
+                .setObject("test/room")
+                .setConnectors(new KList<>());
+        piece.getConnectors().add(connector);
+        PlatformBlockState stone = mock(PlatformBlockState.class);
+        IrisObject object = new IrisObject(3, 3, 3);
+        object.setUnsigned(1, 1, 1, stone);
+        when(pieceLoader.load("test/room", false)).thenReturn(piece);
+        when(objectLoader.load("test/room", false)).thenReturn(object);
+        JigsawStudioVariant variant = new JigsawStudioVariant(
+                "test/room",
+                "test/room",
+                "",
+                Optional.of(new JigsawStudioCellDimensions(3, 3, 3)),
+                JigsawStudioMode.SPATIAL_JIGSAW,
+                Optional.empty(),
+                true,
+                true,
+                List.of(),
+                new JigsawStudioPieceRules(0, 30, 0, 0, false),
+                List.of());
+        GeneratorFixture fixture = fixture(
+                source,
+                JigsawStudioMode.SPATIAL_JIGSAW,
+                new JigsawStudioCellDimensions(3, 3, 3),
+                new JigsawStudioVariantCatalog(List.of(variant)));
+        JigsawStudioBay workcell = fixture.layout().bays().getFirst();
+        int worldX = workcell.bounds().originX() + 1;
+        int worldY = workcell.bounds().originY() + 1;
+        int worldZ = workcell.bounds().originZ() + 1;
+
+        assertFalse(fixture.generator().getSession().workcellSnapshot(
+                workcell.stableId()).connectorsVisible());
+        assertSame(stone, stateAt(fixture.generator(), worldX, worldY, worldZ));
+
+        PlatformBlockState marker = mock(PlatformBlockState.class);
+        fixture.generator().getSession().setConnectorsVisible(workcell.stableId(), true);
+        try (MockedStatic<B> blocks = mockStatic(B.class)) {
+            blocks.when(() -> B.getState("minecraft:jigsaw[orientation=north_up]")).thenReturn(marker);
+            assertSame(marker, stateAt(fixture.generator(), worldX, worldY, worldZ));
+        }
+    }
+
     @Test
     public void serviceRegistrationIsPublishedAfterTheRegistrationFinishes() throws Exception {
         GeneratorFixture fixture = fixture(

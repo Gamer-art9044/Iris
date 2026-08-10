@@ -5,6 +5,7 @@ import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioBounds;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioActivation;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioBay;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioBayKind;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioCellDimensions;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioCompatibilityTarget;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioLayout;
@@ -15,6 +16,8 @@ import art.arcane.iris.core.runtime.jigsaw.JigsawStudioSession;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioVariant;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioVariantCatalog;
 import art.arcane.iris.core.runtime.jigsaw.JigsawPlanarTopology;
+import art.arcane.iris.core.runtime.jigsaw.JigsawPlanarArchetype;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioWorkcellSpec;
 import art.arcane.iris.core.structure.authoring.StructureWriteResult;
 import art.arcane.iris.engine.object.IrisDirection;
 import art.arcane.iris.engine.object.IrisJigsawConnector;
@@ -40,6 +43,7 @@ import art.arcane.volmlib.util.collection.KMap;
 import org.bukkit.Chunk;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.Directional;
@@ -103,9 +107,79 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class JigsawStudioServiceCaptureTest {
+
+    @Test
+    public void hiddenConnectorResetRestoresOnlyItsSavedOrdinaryBlock() throws Exception {
+        World world = mock(World.class);
+        Block target = mock(Block.class);
+        BlockData blockData = mock(BlockData.class);
+        PlatformBlockState state = mock(PlatformBlockState.class);
+        JigsawStudioCellDimensions dimensions = new JigsawStudioCellDimensions(15, 15, 15);
+        JigsawStudioBay workcell = new JigsawStudioBay(
+                "spatial",
+                JigsawStudioBayKind.SPATIAL_WORKCELL,
+                Optional.empty(),
+                "",
+                new JigsawStudioBounds(10, 20, 30, dimensions));
+        IrisJigsawConnector connector = connectorAt(1, 2, 3)
+                .setFinalState("minecraft:stone");
+        JigsawStudioGenerator.RenderedConnector renderedConnector =
+                new JigsawStudioGenerator.RenderedConnector(
+                        1,
+                        2,
+                        3,
+                        connector,
+                        "north_up");
+        JigsawStudioGenerator.RenderedBlock renderedBlock =
+                new JigsawStudioGenerator.RenderedBlock(1, 2, 3, state, null);
+
+        when(world.getBlockAt(11, 22, 33)).thenReturn(target);
+        when(state.isCustom()).thenReturn(false);
+        when(state.nativeHandle()).thenReturn(blockData);
+
+        JigsawStudioService.restoreConnectorChunk(
+                world,
+                workcell,
+                List.of(renderedConnector),
+                Map.of(new JigsawStudioService.LocalPosition(1, 2, 3), renderedBlock),
+                false);
+
+        verify(world).getBlockAt(11, 22, 33);
+        verify(target).setBlockData(blockData, false);
+    }
+    @Test
+    public void liveRelayoutDetectsMovedBoundsAndIncludesCageChunks() {
+        JigsawStudioCellDimensions originalDimensions = new JigsawStudioCellDimensions(16, 8, 16);
+        JigsawStudioLayout original = JigsawStudioLayout.create(
+                JigsawStudioMode.PLANAR_JIGSAW,
+                originalDimensions,
+                JigsawStudioVariantCatalog.empty());
+        List<JigsawStudioWorkcellSpec> expandedSpecs = new ArrayList<>();
+        for (JigsawPlanarArchetype archetype : JigsawPlanarArchetype.values()) {
+            expandedSpecs.add(new JigsawStudioWorkcellSpec(
+                    archetype,
+                    "",
+                    archetype == JigsawPlanarArchetype.BLANK
+                            ? new JigsawStudioCellDimensions(33, 12, 17)
+                            : originalDimensions,
+                    true));
+        }
+        JigsawStudioLayout expanded = JigsawStudioLayout.createPlanar(
+                originalDimensions,
+                expandedSpecs,
+                JigsawStudioVariantCatalog.empty());
+
+        assertFalse(JigsawStudioService.layoutGeometryChanged(original, original));
+        assertTrue(JigsawStudioService.layoutGeometryChanged(original, expanded));
+        Set<Long> chunks = JigsawStudioService.relayoutChunks(original, expanded);
+        assertTrue(chunks.contains(0L));
+        assertTrue(chunks.contains(((long) 4 << 32)));
+    }
+
     @Test
     public void mappedGraphOwnershipControlsNewVariantsEvenWhenTheCatalogIsEmpty() {
         JigsawStudioCellDimensions dimensions = new JigsawStudioCellDimensions(16, 16, 16);
@@ -718,6 +792,60 @@ public class JigsawStudioServiceCaptureTest {
                 assertEquals(7, capture.connectors().getFirst().getPlacementPriority());
             }
         }
+    }
+
+    @Test
+    public void hiddenConnectorCapturesExactBlockStateTilePayloadAndMetadata() throws Throwable {
+        JigsawStudioBounds bounds = new JigsawStudioBounds(
+                0,
+                64,
+                0,
+                new JigsawStudioCellDimensions(1, 1, 1));
+        IrisJigsawConnector connector = connector()
+                .setChannel("gate/owned")
+                .setSelectionPriority(-7)
+                .setPlacementPriority(11);
+        IrisJigsawPiece piece = new IrisJigsawPiece().setConnectors(new KList<>());
+        piece.getConnectors().add(connector);
+        BlockData chestData = directionalBlockData(Material.CHEST, BlockFace.EAST);
+        PlatformBlockState chestState = BukkitBlockState.of(chestData);
+        IrisObject sourceObject = new IrisObject(1, 1, 1);
+        sourceObject.setUnsigned(0, 0, 0, chestState);
+        KMap<String, Object> properties = new KMap<>();
+        properties.put("CustomName", "Hidden Connector Chest");
+        properties.put("Lock", "iris:hidden");
+        TileData tileData = new TileData("minecraft:chest", properties);
+        Block block = mock(Block.class);
+        when(block.getBlockData()).thenReturn(chestData);
+        World world = mock(World.class);
+        when(world.getBlockAt(0, 64, 0)).thenReturn(block);
+        JigsawStudioService.ChunkCaptureArea area = JigsawStudioService.chunkIntersections(bounds).getFirst();
+
+        JigsawStudioService.ChunkSnapshot snapshot;
+        try (MockedStatic<TileData> tiles = mockStatic(TileData.class)) {
+            tiles.when(() -> TileData.getTileState(block, false)).thenReturn(tileData);
+            snapshot = JigsawStudioService.captureChunkIntersection(
+                    world,
+                    bounds,
+                    piece,
+                    sourceObject,
+                    area,
+                    0,
+                    false);
+        }
+        JigsawStudioService.Capture capture = JigsawStudioService.aggregateSnapshots(
+                bounds,
+                List.of(area),
+                List.of(snapshot));
+        IrisObject restored = readCapturedObject(capture.objectContent(), chestState);
+        IrisJigsawConnector captured = capture.connectors().getFirst();
+
+        assertEquals(chestData.getAsString(), captured.getFinalState());
+        assertEquals("gate/owned", captured.getChannel());
+        assertEquals(-7, captured.getSelectionPriority());
+        assertEquals(11, captured.getPlacementPriority());
+        assertEquals(tileData, restored.getStates().get(restored.getSigned(0, 0, 0)));
+        assertTrue(capture.hasBlockEntities());
     }
 
     @Test

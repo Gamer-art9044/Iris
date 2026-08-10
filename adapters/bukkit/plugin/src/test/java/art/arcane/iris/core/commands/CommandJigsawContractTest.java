@@ -24,6 +24,7 @@ import art.arcane.iris.engine.object.IrisJigsawConnector;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisPosition;
+import art.arcane.iris.util.common.director.specialhandlers.IrisStructureHandler;
 import art.arcane.volmlib.util.director.DirectorOrigin;
 import art.arcane.volmlib.util.director.annotations.Director;
 import art.arcane.volmlib.util.director.annotations.Param;
@@ -219,9 +220,9 @@ public class CommandJigsawContractTest {
 
         assertParameter(parameters[2], "planar", CommandJigsaw.JigsawModeHandler.class);
         assertParameter(parameters[3], "iris", CommandJigsaw.JigsawCompatibilityHandler.class);
-        assertParameter(parameters[4], "16", null);
-        assertParameter(parameters[5], "16", null);
-        assertParameter(parameters[6], "16", null);
+        assertParameter(parameters[4], "15", null);
+        assertParameter(parameters[5], "15", null);
+        assertParameter(parameters[6], "15", null);
         assertParameter(parameters[7], "1337", null);
     }
 
@@ -249,6 +250,7 @@ public class CommandJigsawContractTest {
         assertEquals("key", openKey.name());
         assertEquals(List.of("structure", "name"), List.of(openKey.aliases()));
         assertEquals("Existing key loaded from structures/<key>.json", openKey.description());
+        assertEquals(IrisStructureHandler.class, openKey.customHandler());
         assertEquals(List.of("edit", "reopen"), List.of(openCommand.aliases()));
     }
 

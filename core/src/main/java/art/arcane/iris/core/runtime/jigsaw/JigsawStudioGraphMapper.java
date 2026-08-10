@@ -46,7 +46,7 @@ public final class JigsawStudioGraphMapper {
         JigsawStudioVariantCatalog catalog = catalog(data, structure, mode);
         IrisPosition configuredCell = structure.getCellSize();
         JigsawStudioCellDimensions dimensions = configuredCell == null
-                ? new JigsawStudioCellDimensions(16, 16, 16)
+                ? new JigsawStudioCellDimensions(15, 15, 15)
                 : new JigsawStudioCellDimensions(
                         Math.max(1, configuredCell.getX()),
                         Math.max(1, configuredCell.getY()),

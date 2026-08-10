@@ -202,7 +202,7 @@ public class CommandObject implements DirectorExecutor {
                 //Prevent blocks being set in or bellow bedrock
                 if (y <= world.getMinHeight() || block.getType() == Material.BEDROCK) return;
 
-                futureBlockChanges.put(block, block.getBlockData());
+                futureBlockChanges.putIfAbsent(block, block.getBlockData());
 
                 if (d instanceof IrisCustomData data) {
                     block.setBlockData(data.getBase(), false);

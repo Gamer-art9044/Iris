@@ -156,6 +156,7 @@ public record JigsawStudioMenuState(
             boolean dirty,
             boolean saving,
             boolean loading,
+            boolean connectorsVisible,
             List<Variant> variants
     ) {
         public Workcell {

@@ -345,7 +345,9 @@ public final class JigsawStudioMenuController {
             element.addLore(ChatColor.GRAY + "Loaded: "
                     + (active == null ? "None" : safe(active.displayName())));
             element.addLore(workcellStatus(workcell));
-            element.addLore(ChatColor.YELLOW + "Left-click to select");
+            element.addLore(ChatColor.GRAY + "Connector blocks: "
+                    + (workcell.connectorsVisible() ? "Visible" : "Hidden"));
+            element.addLore(ChatColor.YELLOW + "Left-click to select and teleport");
             element.addLore(ChatColor.YELLOW + "Right-click for workcell settings");
             if (workcell.dirty() && !workcell.saving()) {
                 element.addLore(ChatColor.GOLD + "Shift-left: Flush Autosave Now");
@@ -564,6 +566,34 @@ public final class JigsawStudioMenuController {
                 window.setElement(0, 1, spatial);
             }
 
+            UIElement connectors = element(
+                    "settings-connectors",
+                    workcell.connectorsVisible() ? Material.JIGSAW : Material.STRUCTURE_VOID,
+                    workcell.connectorsVisible()
+                            ? ChatColor.GREEN + "Connector Blocks Visible"
+                            : ChatColor.YELLOW + "Connector Blocks Hidden");
+            connectors.addLore(ChatColor.GRAY + "Hidden connectors retain their metadata and final block state.");
+            connectors.addLore(ChatColor.YELLOW + "Left-click to "
+                    + (workcell.connectorsVisible() ? "hide" : "show") + " connector blocks");
+            connectors.onLeftClick(clicked -> toggleConnectorBlocks(
+                    window.getViewer(),
+                    state.requestId(),
+                    workcell.stableId(),
+                    !workcell.connectorsVisible()));
+            window.setElement(2, 1, connectors);
+
+            UIElement resetConnectors = element(
+                    "settings-reset-connectors",
+                    Material.RECOVERY_COMPASS,
+                    ChatColor.AQUA + "Reset Connector Blocks");
+            resetConnectors.addLore(ChatColor.GRAY + "Restore every connector in this workcell from disk.");
+            resetConnectors.addLore(ChatColor.GRAY + "Other edited blocks are left unchanged.");
+            resetConnectors.onLeftClick(clicked -> resetConnectorBlocks(
+                    window.getViewer(),
+                    state.requestId(),
+                    workcell.stableId()));
+            window.setElement(4, 1, resetConnectors);
+
             window.setElement(-2, 2, axisElement(
                     window,
                     state,
@@ -587,6 +617,17 @@ public final class JigsawStudioMenuController {
             footerBack.onLeftClick(clicked -> refreshMain(
                     window.getViewer(), state.requestId(), workcell.stableId(), 0));
             window.setElement(-4, 5, footerBack);
+
+            UIElement undo = element(
+                    "settings-undo",
+                    Material.CLOCK,
+                    ChatColor.LIGHT_PURPLE + "Undo Last Autosave");
+            undo.addLore(ChatColor.GRAY + "Restore the previous owned graph iteration.");
+            undo.addLore(ChatColor.GRAY + "Up to five autosave iterations are retained on disk.");
+            undo.onLeftClick(clicked -> undoAutosave(
+                    window.getViewer(),
+                    state.requestId()));
+            window.setElement(0, 5, undo);
 
             if (workcell.dirty() && !workcell.saving()) {
                 UIElement saveNow = element(
@@ -1432,9 +1473,43 @@ public final class JigsawStudioMenuController {
         if (matchingState(player, requestId, true).isEmpty()) {
             return;
         }
-        if (actions.selectWorkcell(player, workcellId)) {
+        if (actions.teleportToWorkcell(player, workcellId)) {
             clearConfirmations(player.getUniqueId());
-            refreshMain(player, requestId, workcellId, 0);
+            closeAfterAction(player);
+        }
+    }
+
+    private void toggleConnectorBlocks(
+            Player player,
+            UUID requestId,
+            String workcellId,
+            boolean visible
+    ) {
+        Optional<JigsawStudioMenuState> current = matchingState(player, requestId, true);
+        if (current.isEmpty() || current.get().workcell(workcellId) == null) {
+            return;
+        }
+        if (actions.setConnectorBlocksVisible(player, workcellId, visible)) {
+            closeAfterAction(player);
+        }
+    }
+
+    private void resetConnectorBlocks(Player player, UUID requestId, String workcellId) {
+        Optional<JigsawStudioMenuState> current = matchingState(player, requestId, true);
+        if (current.isEmpty() || current.get().workcell(workcellId) == null) {
+            return;
+        }
+        if (actions.resetConnectorBlocks(player, workcellId)) {
+            closeAfterAction(player);
+        }
+    }
+
+    private void undoAutosave(Player player, UUID requestId) {
+        if (matchingState(player, requestId, true).isEmpty()) {
+            return;
+        }
+        if (actions.undoAutosave(player)) {
+            closeAfterAction(player);
         }
     }
 
@@ -2842,6 +2917,14 @@ public final class JigsawStudioMenuController {
         Optional<JigsawStudioMenuState> menuState(Player player);
 
         boolean selectWorkcell(Player player, String workcellId);
+
+        boolean teleportToWorkcell(Player player, String workcellId);
+
+        boolean setConnectorBlocksVisible(Player player, String workcellId, boolean visible);
+
+        boolean resetConnectorBlocks(Player player, String workcellId);
+
+        boolean undoAutosave(Player player);
 
         boolean switchVariant(Player player, String workcellId, String pieceKey, boolean discardDirty);
 

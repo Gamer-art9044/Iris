@@ -267,6 +267,11 @@ public class IrisStructureLocateCommandContractTest {
         assertTrue(method.contains("IrisData data = dimension.getLoader()"));
         assertTrue(method.contains("PlatformChunkGenerator targetGenerator = IrisToolbelt.access(targetWorld)"));
         assertTrue(method.contains("CommandObject.createPlacer(targetWorld, future, targetEngine)"));
+        assertTrue(method.contains("if (blockChanges == 0)"));
+        assertTrue(method.contains("COMMAND_STRUCTURE_PLACEMENT_CHANGED_NO_BLOCKS"));
+        Path structureSource = Path.of(System.getProperty("iris.commandStructureSource"));
+        String objectSource = Files.readString(structureSource.resolveSibling("CommandObject.java"));
+        assertTrue(objectSource.contains("futureBlockChanges.putIfAbsent(block, block.getBlockData())"));
         assertFalse(method.contains("data.getEngine()"));
     }
 

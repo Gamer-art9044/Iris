@@ -182,7 +182,27 @@ public final class InPlaceChunkRegenerator {
         world.refreshChunk(chunkX, chunkZ);
     }
 
-    static void applyBlockDiffs(Chunk chunk, ChunkSnapshot snapshot, ChunkData generated, int minHeight, int maxHeight) {
+    public static void applyBlockDiffs(
+            Chunk chunk,
+            ChunkData generated,
+            int minHeight,
+            int maxHeight
+    ) {
+        applyBlockDiffs(
+                chunk,
+                chunk.getChunkSnapshot(false, false, false),
+                generated,
+                minHeight,
+                maxHeight);
+    }
+
+    public static void applyBlockDiffs(
+            Chunk chunk,
+            ChunkSnapshot snapshot,
+            ChunkData generated,
+            int minHeight,
+            int maxHeight
+    ) {
         for (int x = 0; x < 16; x++) {
             for (int z = 0; z < 16; z++) {
                 for (int y = minHeight; y < maxHeight; y++) {

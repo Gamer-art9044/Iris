@@ -181,14 +181,19 @@ public class JigsawStudioSessionTest {
                 "workcell/end", east.pieceKey(), false).token().orElseThrow();
         assertTrue(session.completeVariantSwitch(switchToken));
         long selectedLoad = session.workcellSnapshot("workcell/end").loadGeneration();
+        assertFalse(session.workcellSnapshot("workcell/end").connectorsVisible());
+        assertTrue(session.setConnectorsVisible("workcell/end", true));
+        assertFalse(session.setConnectorsVisible("workcell/end", true));
 
         assertTrue(session.replaceLayout(planarLayout(north, east)));
         assertSame(east, session.activeVariant("workcell/end").orElseThrow());
         assertEquals(selectedLoad, session.workcellSnapshot("workcell/end").loadGeneration());
+        assertTrue(session.workcellSnapshot("workcell/end").connectorsVisible());
 
         assertTrue(session.replaceLayout(planarLayout(north)));
         assertSame(north, session.activeVariant("workcell/end").orElseThrow());
         assertTrue(session.workcellSnapshot("workcell/end").loadGeneration() > selectedLoad);
+        assertTrue(session.workcellSnapshot("workcell/end").connectorsVisible());
     }
 
     @Test

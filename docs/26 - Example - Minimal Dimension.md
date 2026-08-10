@@ -4,34 +4,49 @@ This walkthrough builds a loadable pack with one dimension, one region, one biom
 
 Related: `05 - Concepts & Pack Layout.md`, `02 - Getting Started.md`, `10 - Studio & VSCode Schemas.md`, `11 - Dimensions.md`, `12 - Regions.md`, `13 - Biomes.md`, `14 - Generators & Noise.md`, `25 - Pack Management.md`, `04 - Commands & Permissions.md`.
 
-## Goal pack layout
+## Tutorial result
+
+You will create four files under `packs/minimal/`, validate them, open them in Studio on seed `1337`, and create a disposable production world. Do not add objects, caves, structures, custom biomes, or datapacks until this exact baseline generates and reloads.
+
+Prerequisites:
+
+- Iris is running and its default data folders exist.
+- You have operator access on Bukkit or gamemaster access on a mod loader.
+- No pack or world already uses the keys `minimal` or `minimal-test`.
+- You can inspect the server console while validation, Studio open, world create, and restart run.
+
+## 1. Create the pack root
+
+Create this tree relative to the platform packs root:
 
 ```
-packs/minimal/
+minimal/
   dimensions/minimal.json
   regions/starter.json
   biomes/starter.json
   generators/flat.json
 ```
 
-Pack folder name is the pack key. Dimension file name without `.json` is the dimension load key (`minimal`).
+The pack folder name is the pack key. The dimension file name without `.json` is the dimension load key (`minimal`).
 
-## Create options
+### Creation methods
 
-| Method | Command / action |
-|--------|------------------|
-| Studio create (code template) | `/iris studio create name=minimal` — writes starter files under `packs/` |
-| Studio create from template | `/iris studio create name=minimal template=overworld` — copies existing pack |
-| Manual | Create folders and JSON under the platform packs directory |
+| Platform / method | Command or action |
+|-------------------|-------------------|
+| Bukkit Studio starter | `/iris studio create name=minimal` |
+| Modded default-template copy | `/iris studio create minimal` — copies the `example` template |
+| Bukkit template copy | `/iris studio create name=minimal template=overworld` |
+| Modded template copy | `/iris studio create minimal overworld` |
+| Manual | Create the four folders and JSON files under the platform packs root |
 
-Studio create without a template writes the starter project shown below (dimension/region/biome/generator only). After create, open studio: `/iris studio open minimal`.
+On Bukkit, Studio create without a template writes a starter project with the same four resource types. Modded Studio create defaults to the installed or downloadable `example` template. Create the tree manually when you need the exact four-file baseline on every platform; use the create commands when extra template content is acceptable.
 
 Platform packs roots (same layout):
 
 - Bukkit-family: `plugins/Iris/packs/`
 - Fabric / Forge / NeoForge: `config/irisworldgen/packs/`
 
-## File contents
+## 2. Write the four resources
 
 ### `dimensions/minimal.json`
 
@@ -139,16 +154,27 @@ This matches shipping overworld `generators/flat.json` and the studio starter.
 
 `StudioSVC.createStarterProject` writes the same four files with pack name substituted for the dimension file/name. It omits explicit `mode` and `fluidHeight` (code defaults: mode `OVERWORLD`, fluid height `63`). The JSON above adds those fields so authors see the required contract.
 
-## Run the pack
+## 3. Validate and open Studio
 
-1. Ensure the pack sits under `packs/minimal/` with `dimensions/minimal.json`.
-2. Validate: `/iris pack validate pack=minimal` (Bukkit).
-3. Create a world: `/iris create myworld type=minimal` (Bukkit) or `/iris create myworld minimal` (modded).
-4. Or open studio: `/iris studio open minimal` for hotload editing.
+1. Ensure the pack sits under `minimal/` in the platform packs root with `dimensions/minimal.json`.
+2. Validate with Bukkit `/iris pack validate pack=minimal` or modded `/iris pack validate minimal`. Do not open the pack while validation reports a blocking error.
+3. Open Studio with Bukkit `/iris studio open minimal seed=1337` or modded `/iris studio open minimal 1337`.
+4. Generate fresh chunks and run `/iris what region` and `/iris what biome`. The expected result is the `starter` region and biome over a uniform grass surface, with no missing-resource or parse errors in the console.
+5. Close Studio, reopen it with the same seed, and generate another new area. The terrain height and surface must reproduce.
 
 World create copies the pack into the world folder at `iris/pack/` (see `06 - Worlds & Lifecycle.md`). Studio worlds hotload the live pack under `packs/` — prefer studio for authoring.
 
-## Extend without breaking the minimal set
+## 4. Create and restart-test a disposable world
+
+1. Create the world with Bukkit `/iris create minimal-test type=minimal seed=1337` or modded `/iris create minimal-test minimal 1337`. On Folia, creation stages the world and requires the instructed server restart before it can be entered.
+2. Teleport with Bukkit `/iris tp minimal-test` or modded `/iris tp irisworldgen:minimal-test`.
+3. Generate ordinary new chunks and confirm the same flat grass result seen in Studio.
+4. Stop the server cleanly, start it again, teleport back, and generate another new area.
+5. Confirm `<world>/iris/pack/` contains the four-file snapshot. Production generation reads this copy, so later authoring changes under `packs/minimal/` do not change the existing world automatically.
+
+The tutorial passes only when validation, Studio reopen, production create, teleport, and server restart all succeed. Keep this four-file version as a rollback checkpoint before extending the pack.
+
+## 5. Extend without breaking the minimal set
 
 | Add | Where |
 |-----|-------|
@@ -159,7 +185,19 @@ World create copies the pack into the world folder at `iris/pack/` (see `06 - Wo
 | Objects | Biome/region `objects` placements + `objects/*.iob` (`19 - Objects.md`, `20 - Object Placement.md`) |
 | Entity spawn | `entities/`, `spawners/`, then `entitySpawners` on dim/region/biome |
 
-## Validation notes
+## Troubleshooting and recovery
+
+| Symptom | Check / recovery |
+|---------|------------------|
+| Pack is not listed | Confirm the platform packs root, `minimal/` folder, and `dimensions/minimal.json` |
+| Validation reports a missing region | `dimensions/minimal.json` must reference `starter`, and `regions/starter.json` must exist |
+| Validation reports a missing biome | Every region list entry must match a file under `biomes/` without `.json` |
+| Terrain is empty or at the wrong height | Confirm the biome generator key is `flat`, the generator parses, and biome `min` / `max` remain `96` |
+| Studio shows old terrain | Generate untouched chunks; close and reopen Studio after contract changes |
+| Production world ignores edits | It uses `<world>/iris/pack/`; create a new world or follow the backed-up update procedure in `25 - Pack Management.md` |
+| Baseline no longer works | Restore the four exact files in this guide and validate before reintroducing extensions |
+
+Validation invariants:
 
 - Dimension load key must match a file under `dimensions/`.
 - Every region key in `regions` must load.

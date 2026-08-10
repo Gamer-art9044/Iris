@@ -2,6 +2,39 @@
 
 Iris stores shared runtime settings in `settings.json` under the platform data folder. On first boot Iris writes a full defaults file if missing; every successful load rewrites the file so new keys appear with defaults. See `01 - Installation & Platforms.md` for data paths and `33 - Performance Tuning.md` for tuning guidance.
 
+## Tutorial: change one setting safely
+
+1. Start Iris once so it writes the current schema and defaults.
+2. Copy `settings.json` outside the server directory as a rollback file.
+3. Change one key only. Keep its JSON type unchanged; quoted numbers and strings such as `"false"` are not booleans.
+4. Save the file and use `/iris reload`, or wait for the platform hotload interval described below.
+5. Confirm the console reports the settings reload without a parse exception.
+6. Exercise the affected feature. For performance or thread-pool settings, restart before judging the result because some values are read when services are constructed.
+
+If parsing fails, restore the saved file and restart. Do not delete `settings.json` unless resetting every setting to defaults is intentional.
+
+For example, to change only the server locale, edit the existing `general` object in place:
+
+```json
+{
+  "general": {
+    "language": "de_DE"
+  }
+}
+```
+
+This fragment shows the field location; do not replace a populated settings file with the fragment. After `/iris reload`, run `/iris help` and confirm the selected locale is active. Iris rewrites the complete settings file after a successful load, including defaults for fields that were absent.
+
+### Validation and rollback
+
+| Result | Meaning | Action |
+|---|---|---|
+| Reload succeeds and the affected feature changes | File parsed and the setting reached a live reload path | Keep the backup until the next clean restart |
+| Reload succeeds but behavior is unchanged | Setting is read only when a service or engine is constructed | Restart, then retest the same workload |
+| Parse exception or requested locale rejected | JSON shape, type, or locale is invalid | Restore the backup, reload, and make one smaller edit |
+| File is rewritten with defaults | Missing fields were normalized by `IrisSettings` | Reapply only intentional overrides; do not restore an obsolete full file over new defaults |
+| Modded and Bukkit paths differ | The wrong data root was edited | Use the path table below and confirm the changed file timestamp before reloading |
+
 ## File locations
 
 | Platform | Shared settings | Packs root | Modded-only config |
@@ -60,7 +93,7 @@ Static helper `IrisSettings.getThreadCount(int c)`: for `c` in `{-1,-2,-4}` retu
 | `useConsoleCustomColors` | boolean | `true` | Custom colors for console senders |
 | `useCustomColorsIngame` | boolean | `true` | Custom colors for player senders |
 | `adjustVanillaHeight` | boolean | `false` | Adjust vanilla height handling |
-| `autoIngestDatapacks` | boolean | `true` | Auto-ingest configured datapack imports (Bukkit datapack pipeline) |
+| `autoIngestDatapacks` | boolean | `true` | Auto-ingest configured external datapacks; managed structures remain scoped to declaring Iris dimensions |
 | `autoImportDatapackStructures` | boolean | `false` | Opt-in bulk write of every registered datapack structure as editable Iris resources; prefer `/iris structure import <dimension>` |
 | `strictContentKeys` | boolean | `false` | Unresolved pack content keys and bad block-state properties become blocking pack errors; system property `-Diris.strictContent` overrides when set |
 | `spinh` | int | `-20` | Splash / spin color H |

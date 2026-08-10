@@ -4,6 +4,46 @@ Procedural objects are baked from JSON settings into deterministic block blobs a
 
 Related: `13 - Biomes.md`, `12 - Regions.md`, `15 - Caves & Carving.md`, `16 - Surfaces, Decorators & Deposits.md`, `18 - Structures Overview.md`, `19 - Objects.md`, `20 - Object Placement.md`.
 
+## Tutorial: generate a procedural tree from biome JSON
+
+Use a validating `OVERWORLD` pack with mantle and decoration enabled. Save this complete test biome as `biomes/tutorial/tree-test.json`, list `tutorial/tree-test` as a region land biome, and temporarily focus the dimension on it:
+
+```json
+{
+  "name": "Procedural Tree Test",
+  "derivative": "minecraft:plains",
+  "vanillaDerivative": "minecraft:plains",
+  "layers": [
+    { "palette": [{ "block": "minecraft:grass_block" }] }
+  ],
+  "generators": [
+    { "generator": "flat", "min": 16, "max": 16 }
+  ],
+  "proceduralObjects": {
+    "trees": [
+      {
+        "name": "tutorial-oak",
+        "chance": 1,
+        "density": 2,
+        "variants": 4,
+        "seed": 9001,
+        "trunk": "minecraft:oak_log",
+        "leaves": "minecraft:oak_leaves",
+        "profile": "OAK",
+        "heightMin": 7,
+        "heightMax": 11,
+        "plausible": true
+      }
+    ]
+  }
+}
+```
+
+1. Reuse `generators/flat.json` from the minimal dimension walkthrough, validate the pack, and open Studio on seed `1337`.
+2. Generate several new chunks. Success is a repeatable set of oak variants anchored to the grass surface, with leaves that use normal decay-distance data because `plausible` is true.
+3. If no trees appear, confirm the biome is focused, new chunks were generated, dimension `decorate` and `useMantle` are true, and the console did not reject every baked variant. Keep `chance: 1` until placement is proven.
+4. Tune height, profile, trunk shape, and canopy before lowering chance or increasing density. Remove focus and reduce chance only after the same seed reproduces the shapes across a Studio reopen.
+
 ## Container (`IrisProceduralObjects`)
 
 | Field | Type | Contents |
@@ -298,15 +338,17 @@ Natural landmarks. Extra field `surfaceSupportBuffer` (default 3) for foundation
 | `chance` | `0.4` | Per candidate |
 | `scatterRadius` | `2` | BASE_SCATTER extent |
 
-## Authoring workflow
+## Extend to other procedural families
 
 1. Choose system: trees for forests, fungi for mushroom biomes, coral for warm oceans, crystals for cave biomes, formations for deserts/coasts, ruins for sparse land.
-2. Set `chance`/`density` low first; raise after silhouette looks correct.
-3. Keep `variants` 4–12; each variant is baked at first use/cache warm.
-4. Use palettes for material mix; single `block` strings for simple packs.
-5. Match `carvingSupport` to environment; crystals and cave props use `CARVING_ONLY`.
-6. For cave props, prefer stilt place modes and profile `defaultObjectPlaceMode`.
-7. Prefer procedural systems for infinite variety; use `.iob` objects when you need hand-authored geometry (overworld trees mostly use objects today).
+2. Add one entry using the minimal tree example above or the smallest equivalent for that family. Use one material, low `chance`, low `density`, and a fixed seed.
+3. Focus the target biome, validate, and generate enough new chunks to observe both placements and empty space.
+4. Tune dimensions and silhouette before raising density. Keep `variants` at 4–12; variants are baked during first use/cache warmup.
+5. Add palettes and decorators after shape is stable. Match `carvingSupport` to the environment; crystals and cave props use `CARVING_ONLY`.
+6. For cave props, prefer stilt place modes and the cave profile's `defaultObjectPlaceMode`.
+7. Remove biome focus and verify the family remains limited to its intended biome/region scope.
+
+The tutorial passes when the same seed reproduces the family, placement density leaves the intended negative space, and no invalid variant is skipped in the log. Prefer `.iob` objects instead when exact hand-authored geometry matters more than variation.
 
 ## Practical notes
 

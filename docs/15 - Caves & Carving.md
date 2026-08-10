@@ -4,6 +4,29 @@ Iris carves caves itself during mantle generation via `MantleCarvingComponent` a
 
 Related: `11 - Dimensions.md`, `12 - Regions.md`, `13 - Biomes.md`, `14 - Generators & Noise.md`, `16 - Surfaces, Decorators & Deposits.md`, `17 - Trees, Fungi, Coral, Crystals, Formations, Ruins.md`, `20 - Object Placement.md`, `22 - Native Structures & Datapacks.md`.
 
+## Tutorial: carve a controlled test volume
+
+Start with a validating `OVERWORLD` pack whose surface and fluid height are already correct. Add this complete field set to the root object in `dimensions/<key>.json`; it uses the production defaults for density but confines the first test and prevents surface or liquid openings:
+
+```json
+{
+  "carvingEnabled": true,
+  "caveProfile": {
+    "enabled": true,
+    "verticalRange": { "min": 0, "max": 64 },
+    "allowSurfaceBreak": false,
+    "allowWater": false,
+    "allowLava": false
+  }
+}
+```
+
+1. Record seed `1337` and surface coordinates in a Studio world before enabling the profile.
+2. Add the fields above to the existing dimension JSON, validate the pack, and reopen Studio if the change is not accepted by the running engine.
+3. Generate new chunks and inspect below the surface. Success is carved air within the configured vertical range, an intact surface, and no water or lava placed by the cave profile.
+4. If no caves appear, confirm dimension `mode.type` is `OVERWORLD`, `useMantle` and `carvingEnabled` are true, and the effective biome or region profile is not overriding this dimension profile. Test only fresh chunks.
+5. Once the void shape is proven, add one biome key to a region's `caveBiomes`, then add cave layers and decorators. Enable water, lava, or surface breaks one setting at a time so each change remains observable.
+
 ## Architecture (author-relevant)
 
 1. Dimension `carvingEnabled` must be true (default).
@@ -122,6 +145,64 @@ Cave biomes are normal biome JSON used only underground:
 
 Surface biomes still provide height generators; cave biomes typically omit height generators or use fillers—the carve step removes solid first.
 
+## Cave-anchored jigsaw structures
+
+Editable Iris jigsaws can resolve starts against the carved-space mantle instead of the surface or a blind Y band. Put the placement in `structures[]` on a dimension, region, surface biome, or cave biome and use one of the explicit cave anchors; cave-biome `structures[]` ignores non-cave placements.
+
+```json
+{
+  "structures": [
+    {
+      "structures": ["stronghold/demo"],
+      "placementId": "stronghold-demo-cave-floor",
+      "distribution": "RANDOM_SPREAD",
+      "spacing": 24,
+      "separation": 8,
+      "salt": 984211,
+      "anchor": "CAVE_FLOOR",
+      "minHeight": -48,
+      "maxHeight": 80,
+      "caveBiomes": ["carving/deep"],
+      "caveAnchorAttempts": 12,
+      "caveAnchorScanStep": 1,
+      "caveMinimumClearance": 5,
+      "terrain": {"mode": "PRESERVE"}
+    }
+  ]
+}
+```
+
+| Field | Default | Runtime behavior |
+|---|---|---|
+| `anchor` | `LEGACY` | Use `CAVE_FLOOR`, `CAVE_CEILING`, `CAVE_CENTER`, or `CAVE_ANY` to search carved cells |
+| `minHeight` / `maxHeight` | `-2032` / `2032` | Inclusive world-Y scan band, clipped inside the dimension's usable height |
+| `caveBiomes` | empty | Optional allowlist checked against the cave/mantle biome at the candidate anchor; keys are trimmed, case-normalized, and may include or omit the namespace |
+| `caveAnchorAttempts` | `8` | Deterministic unique X/Z columns tested inside the selected start chunk; runtime clamps to `1..64` |
+| `caveAnchorScanStep` | `1` | Vertical scan increment; runtime clamps to `1..16`; values above one can skip valid one-block anchors |
+| `caveMinimumClearance` | `3` | Required contiguous vertical carved run; runtime clamps to `1..64` |
+| `underwater` | `false` | For cave anchors, require a dry cavern cell: ordinary cavern air must be above `caveLavaHeight`, explicit water/lava is rejected, and forced-air cavern matter remains dry below that threshold; `true` permits fluid cavern cells |
+
+Geometry and alignment are exact:
+
+| Anchor | Candidate test | Alignment after assembly |
+|---|---|---|
+| `CAVE_FLOOR` | Candidate is carved, cell below is not carved, and clearance continues upward | Lowest structure bound is shifted to anchor Y |
+| `CAVE_CEILING` | Candidate is carved, cell above is not carved, and clearance continues downward | Highest structure bound is shifted to anchor Y |
+| `CAVE_CENTER` | Candidate is the actual midpoint of its contiguous carved cavern run, and that run meets the clearance requirement | Bounding-box midpoint is shifted to anchor Y |
+| `CAVE_ANY` | A clearance-sized carved run is centered around the candidate | Bounding-box midpoint is shifted to anchor Y |
+
+Selection is deterministic for the world seed, placement identity, and start chunk. Iris visits at most 64 unique columns from the chunk's 256 columns, stops at the first column with matches, and chooses deterministically among every valid anchor found in that column. When no candidate passes, the placement is skipped; Iris does not fall back to a surface or height-band start.
+
+The cave-anchor `underwater` gate reads `MatterCavern` at the actual anchor, not ocean height at the surface. A null or non-cavern cell is never an anchor. With `underwater: false`, explicit cave water/lava and ordinary cavern air at or below the dimension's `caveLavaHeight` are rejected, while forced-air cavern matter is accepted even below that threshold. With `underwater: true`, fluid cavern cells are allowed but the cell must still be carved cavern matter.
+
+The test reads one vertical `MatterCavern` column. It proves local clearance only, not that the complete assembled footprint fits the cave. `SOURCE` and `PRESERVE` can therefore leave pieces intersecting surrounding walls. Use `BORE` or `FORCE_CARVE` when the structure must make room, or inspect the complete volume in gameplay when preserving the cavern.
+
+Scope is decided at chunk center: the surface-biome, cave-biome, region, and dimension lists available there contribute candidate placements, but a cave-biome list contributes cave anchors only. A non-empty placement `caveBiomes` allowlist is then rechecked at each actual X/Y/Z anchor candidate. Cave lookup requires already materialized Iris mantle data; a locator cannot resolve an ungenerated distant cave anchor until terrain generation has produced that mantle.
+
+Cave anchors are treated as underground placement. Iris does not perform the separate surface-burial shift or clear intersecting surface trees. Piece placement normally resolves to `STRUCTURE_PIECE` underground, except authored `ORGANIC_STILT` and `CEILING_HANG` modes retain their special behavior. Use `terrain.mode: PRESERVE` to keep the cave, `BORE` for a rectangular clearance envelope, or `FORCE_CARVE` for the configured box/rounded/eroded envelope.
+
+The anchor field is rejected for `nativeStructures`; it applies to editable Iris `structures` only. Complete jigsaw placement and authoring behavior is in `21 - Jigsaw Structures.md`.
+
 ## Overworld examples
 
 Dimension switch and deepdark band (`dimensions/overworld.json`):
@@ -198,15 +279,16 @@ Region cave pool (`regions/temperate.json`):
 
 Cave biome content (`biomes/carving/amethyst.json` excerpt): floor/wall amethyst, floor buds, ceiling-facing clusters via `"partOf": "CEILING"`, `caveCeilingLayers` for roof materials.
 
-## Authoring workflow
+## Extend the controlled cave test
 
-1. Enable dimension `caveProfile` with a vertical range covering playable Y.
-2. Add `modules` for tunnels/rooms instead of raising `detailWeight` alone.
-3. List themed biomes under each region's `caveBiomes` (and optional dimension `carving` bands).
-4. Paint cave biomes with `layers`, `caveCeilingLayers`, `wall`, ceiling/floor decorators, and cave-only objects.
-5. For surface sinkholes, keep `allowSurfaceBreak` true and tune `surfaceBreak*` noise; for sealed caves raise `surfaceClearance` and disable surface break.
-6. Place cave objects with `carvingSupport: CARVING_ONLY` and stilt place modes (`FAST_MIN_STILT` / `ORGANIC_STILT`) to avoid floating props.
-7. Verify: studio regen, check openings, waterfalls (`waterRequiresFloor`), and lava depth.
+1. Record a fixed seed and coordinates where the surface, fluid level, and bedrock are already correct.
+2. Enable the dimension `caveProfile` with a narrow vertical range inside playable Y and no cave-biome decoration yet.
+3. Add one tunnel or room module. Generate new chunks and verify void shape, surface clearance, water handling, and lava depth.
+4. Add modules for other shapes instead of raising `detailWeight` alone. Change one density or threshold value per comparison.
+5. List one themed biome under one region's `caveBiomes`; paint its floor, ceiling, and walls before adding objects.
+6. Add cave-only objects with `carvingSupport: CARVING_ONLY` and an appropriate stilt mode so props do not float.
+7. Decide explicitly whether caves may break the surface. Tune `surfaceBreak*` for openings or disable surface break and raise clearance for sealed caves.
+8. Revisit the recorded surface coordinates and generate fresh cave areas. The tutorial passes when surface terrain is unchanged outside intentional openings and cave content remains inside carved space.
 
 ## Tuning knobs (quick)
 

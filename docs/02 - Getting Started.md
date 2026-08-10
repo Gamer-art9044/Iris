@@ -4,6 +4,12 @@ This page walks through creating an Iris world, teleporting into it, running a s
 
 Full command trees and permissions: `04 - Commands & Permissions.md`. World lifecycle detail: `06 - Worlds & Lifecycle.md`. Studio detail: `10 - Studio & VSCode Schemas.md`.
 
+## Outcome
+
+At the end you will have one disposable Iris world created from the `overworld` pack, you will have entered it, generated a small known area, and opened a separate Studio authoring session. Use the fixed seed `1337` until the workflow is proven; changing seeds while diagnosing a pack makes comparisons ambiguous.
+
+Treat each numbered section as a gate. Confirm the world is loaded before teleporting, confirm ordinary chunks generate before starting pregen, and confirm the Studio world is separate from the production snapshot before editing files.
+
 ## Prerequisites
 
 - Iris installed per `01 - Installation & Platforms.md`
@@ -49,6 +55,8 @@ Aliases for the create command itself: `c`.
 /iris create myworld type=overworld seed=1337
 ```
 
+Run `/iris worlds` after the command. On non-Folia servers, `myworld` must appear as a loaded Iris world. On Folia, success is the staging-and-restart message; restart before continuing.
+
 ### Mod
 
 ```
@@ -70,6 +78,8 @@ If the pack is not installed, create starts an async download of `IrisDimensions
 ```
 
 There is no separate “load” step on modded after a successful create.
+
+Run `/iris world status` and confirm the new dimension uses pack `overworld`. Then run `/iris info irisworldgen:myworld` as a gamemaster and verify seed `1337` before teleporting.
 
 ## 2. Load a world (plugin only)
 
@@ -95,6 +105,8 @@ Aliases: `tp`. Teleports the target (or the executing player) to the world spawn
 /iris tp myworld
 ```
 
+Success is a completed teleport followed by normal chunk generation around spawn. If the teleport target is missing, return to the create/load gate instead of retrying pregen.
+
 ### Mod
 
 ```
@@ -107,6 +119,8 @@ Dimension is a loaded level argument (tab-completes Iris dimensions). Console mu
 ```
 /iris tp irisworldgen:myworld
 ```
+
+Success is entry into `irisworldgen:myworld` with `/iris info irisworldgen:myworld` still reporting the expected pack and seed.
 
 ## 4. Pregenerate
 
@@ -140,6 +154,8 @@ Example:
 /iris pregen start 352 world=myworld center=0,0 gui=false
 ```
 
+Immediately run `/iris pregen status`. A 352-block radius centered at `0,0` should report a 2,025-chunk job and advance without a growing failed count.
+
 ### Mod
 
 ```
@@ -160,6 +176,8 @@ Flags are optional and combinable in any order after the radius/dimension/center
 ```
 /iris pregen start 352 irisworldgen:myworld at 0 0 sync
 ```
+
+Immediately run `/iris pregen status` and confirm the target dimension, total, and generated count. Use `/iris pregen stop` before retrying with different flags.
 
 Control: `/iris pregen stop`, `pause` / `resume`, `status`. Progress: client mod HUD when present, otherwise boss bar / console.
 
@@ -205,10 +223,21 @@ Default create name is `studio`; if that folder already exists, Iris picks the n
 
 Some Bukkit studio tools (importvanilla feature capture, loot GUI, profile, etc.) refuse or redirect on modded with an explicit message; capture vanilla features on Bukkit and copy the pack folder if needed.
 
-```
-/iris studio open overworld
+Plugin example:
+
+```text
+/iris studio open overworld seed=1337
 /iris studio vscode dimension=overworld
 ```
+
+Modded example:
+
+```text
+/iris studio open overworld 1337
+/iris studio vscode overworld
+```
+
+The Studio gate passes when the transient Studio world opens, the workspace points at the live `packs/overworld/` tree, and a saved valid JSON change produces a hotload result. Close it with `/iris studio close`; production `myworld` must remain separate.
 
 ## Suggested first-session flow
 
@@ -218,6 +247,8 @@ Some Bukkit studio tools (importvanilla feature capture, loot GUI, profile, etc.
 4. Teleport into the world.
 5. Optional: `/iris pregen start 352 …` for a small square (~704×704 blocks).
 6. Optional: `/iris studio open <pack>` to edit live; use VSCode schemas for autocomplete of blocks/items/entities (mod content included on mod loaders).
+
+The session passes when the production world loads again after a clean restart and generates new chunks from its copied pack snapshot. Remove a disposable world only through the lifecycle command after evacuating players; see `06 - Worlds & Lifecycle.md`.
 
 ## Common pitfalls
 

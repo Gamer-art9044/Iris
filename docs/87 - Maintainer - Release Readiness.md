@@ -8,6 +8,12 @@ The current runtime pass prioritizes isolated world creation, deterministic gene
 
 Cross-links: GoldenHash (`32 - Determinism & Goldenhash.md`), operator smokes (`31 - Operator Runbooks & Smoke Tests.md`), performance knobs (`33 - Performance Tuning.md`), MC bump (`85 - Maintainer - MC Version Bump.md`).
 
+## How to maintain this tracker
+
+Work from the first incomplete blocking section. For each checked item, preserve the exact commit, platform artifact, input pack/seed, command or workload, and result outside this document; summarize only stable conclusions here. When a fix supersedes an earlier note, rewrite the note instead of stacking contradictory history.
+
+Automated tests, server startup, real-player gameplay, profiler captures, and publishing are distinct gates. Mark only the gate actually observed, and leave client-operated or cross-server checks open until that evidence exists.
+
 ## Completion rules
 
 - [ ] Work through the sections in order. A later section does not override a failed earlier gate.

@@ -4,6 +4,24 @@ A dimension is the root pack object for a world type. File location is `dimensio
 
 Related: see `05 - Concepts & Pack Layout.md`, `10 - Studio & VSCode Schemas.md`, `12 - Regions.md`, `14 - Generators & Noise.md`, `15 - Caves & Carving.md`, `22 - Native Structures & Datapacks.md`, `26 - Example - Minimal Dimension.md`.
 
+## Tutorial outcome
+
+Build the smallest dimension graph first: one dimension, one region, one biome, and one generator. Open that graph in Studio and confirm solid terrain before enabling caves, structures, deposits, or external datapacks. The complete four-file example is in `26 - Example - Minimal Dimension.md`; the field reference below explains how to extend it.
+
+Dimension height and environment are world contracts, not ordinary visual tuning. Decide them before creating a production world and use a disposable Studio world for revisions.
+
+### Prerequisites and file placement
+
+Start with a writable pack directory and operator or gamemaster access. Place the root object at `plugins/Iris/packs/mypack/dimensions/mypack.json` on Bukkit, or `config/irisworldgen/packs/mypack/dimensions/mypack.json` on a mod loader. The minimal complete graph also needs `regions/starter.json`, `biomes/starter.json`, and `generators/flat.json`; copy the exact four files from `26 - Example - Minimal Dimension.md` before loading the pack.
+
+### Build and verify
+
+1. Set the dimension file to the minimal JSON under **Minimal Dimension JSON** below. Keep its dimension load key (`mypack`) equal to the file name.
+2. Create the three referenced resources from the minimal walkthrough and validate: Bukkit `/iris pack validate pack=mypack`; modded `/iris pack validate mypack`.
+3. Open the live authoring pack with `/iris studio open mypack seed=1337` on Bukkit or `/iris studio open mypack 1337` on modded.
+4. Generate new chunks and inspect the build floor, terrain top, fluid level, sky, and biome. A successful baseline has solid terrain, the `starter` biome, and no unresolved resource keys in validation or the console.
+5. If the Studio world is empty, confirm all four file paths and exact keys before changing noise. If height or environment changes are rejected, close and reopen Studio; those values are bound to the running dimension contract.
+
 ## Role in the Pack Graph
 
 ```
@@ -149,12 +167,14 @@ If mode construction fails, the engine logs a warning and falls back to `OVERWOR
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `structures` | `IrisStructurePlacement[]` | empty | Dimension-level Iris structure placements |
+| `structures` | `IrisStructurePlacement[]` | empty | Dimension-level Iris/native structure placements; editable Iris structures support surface, height-band, and cave anchors |
 | `importedStructures` | `IrisImportedStructureControl` | default | Vanilla/mod/datapack structure allow/deny and adjustments |
 | `importedFeatures` | `IrisImportedFeatureControl` | default off | Optional vanilla feature decoration pass |
-| `datapackImports` | string[] | empty | External datapack URLs requested by this pack |
+| `datapackImports` | string[] | empty | External datapack URLs owned by this dimension; managed structures generate and locate only in dimensions declaring the source |
 
 Structure placement and native control details: see `18 - Structures Overview.md`, `22 - Native Structures & Datapacks.md`.
+
+Dimension-level placements are considered throughout the dimension. `anchor: LEGACY` preserves the historical `underground` switch; explicit `SURFACE`, `HEIGHT_BAND`, `CAVE_FLOOR`, `CAVE_CEILING`, `CAVE_CENTER`, and `CAVE_ANY` make the vertical contract unambiguous. Cave anchors use Iris carved-space data and apply only to editable `structures`, not the `nativeStructures` backend; see `15 - Caves & Carving.md` and `21 - Jigsaw Structures.md`.
 
 ## Loot, Spawns, Drops, Studio Debug
 
@@ -237,14 +257,17 @@ Matches studio starter plus an explicit mode (recommended):
 
 ## How To: Make a Dimension
 
-1. Create a pack (`/iris studio create name=mypack`) or copy a template.
-2. Edit `dimensions/<key>.json`: set `name`, `regions`, `dimensionHeight`, `fluidHeight`, `mode.type`.
-3. Ensure every region key exists under `regions/` (see `12 - Regions.md`).
-4. Set land/sea styles and zooms only after basic terrain generates.
-5. Add `ores` / `deposits` / `caveProfile` / structures after biomes render correctly.
-6. Open studio: `/iris studio open mypack`. Iterate with hotload.
-7. For isolation: set `"focusRegion": "starter"` or `"focus": "starter"` while authoring one biome.
-8. When ready for a permanent world, create a world from the pack key (`06 - Worlds & Lifecycle.md`). Do not change height/logicalHeight without recreating the world dimension type.
+1. Create a starter pack with `/iris studio create name=mypack` or copy a known-good template.
+2. Open `dimensions/mypack.json`. Set `name`, `regions`, `dimensionHeight`, `logicalHeight`, `fluidHeight`, `environment`, and `mode.type` explicitly.
+3. Create every referenced region under `regions/`; start with one region and one land biome (`12 - Regions.md`).
+4. Validate the pack, then open Studio with `/iris studio open mypack seed=1337`.
+5. Confirm the build floor, fluid level, sky/environment behavior, and solid terrain in newly generated chunks. Fix this baseline before changing zoom or adding content.
+6. Set `"focusRegion": "starter"` or `"focus": "starter"` while isolating one region or biome. Remove the focus field before packaging.
+7. Tune land/sea styles and zooms. Add caves, ores, deposits, and structures one subsystem at a time, validating after each new resource edge.
+8. Close and reopen Studio after changing height, logical height, environment-derived dimension type, or another runtime-contract field.
+9. Create a permanent world only after the Studio baseline and pack validation pass (`06 - Worlds & Lifecycle.md`). Recreate the production world rather than changing its dimension type or height contract in place.
+
+Success means a clean Studio open, no unresolved region/biome/generator keys, and repeatable terrain on seed `1337` after reopening the project.
 
 ## Common Author Mistakes
 

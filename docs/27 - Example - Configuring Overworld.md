@@ -4,6 +4,95 @@ The shipping overworld pack is the default Iris dimension pack. This guide shows
 
 Related: `05 - Concepts & Pack Layout.md`, `06 - Worlds & Lifecycle.md`, `10 - Studio & VSCode Schemas.md`, `11 - Dimensions.md`, `12 - Regions.md`, `13 - Biomes.md`, `14 - Generators & Noise.md`, `23 - Loot, Entities, Spawners, Markers.md`, `24 - Pack Mods & Snippets.md`, `25 - Pack Management.md`, `04 - Commands & Permissions.md`, `02 - Getting Started.md`.
 
+## Tutorial result
+
+Fork the shipping pack, add one visible biome, prove it in Studio and a disposable world, and leave the original `overworld` pack untouched. This is the recommended first Overworld customization because it exercises references, hotload, snapshots, and rollback without changing dimension height or native registries.
+
+Prerequisites:
+
+- The `overworld` pack is installed and validates.
+- You have operator access on Bukkit or gamemaster access on a mod loader.
+- The keys `my-overworld`, `overworld-test`, and `tutorial/meadow` are unused.
+- You can keep the fork in source control or make a filesystem backup before production use.
+
+## End-to-end tutorial: add a temperate meadow
+
+### 1. Fork and open the pack
+
+Create the fork with Bukkit `/iris studio create name=my-overworld template=overworld` or modded `/iris studio create my-overworld overworld`. Wait for the command to report the completed project path; pack creation runs asynchronously.
+
+Validate with Bukkit `/iris pack validate pack=my-overworld` or modded `/iris pack validate my-overworld`. Then open Studio with Bukkit `/iris studio open my-overworld seed=1337` or modded `/iris studio open my-overworld 1337`.
+
+### 2. Add the biome file
+
+Save this complete biome as `plugins/Iris/packs/my-overworld/biomes/tutorial/meadow.json` on Bukkit or `config/irisworldgen/packs/my-overworld/biomes/tutorial/meadow.json` on a mod loader:
+
+```json
+{
+  "name": "Tutorial Meadow",
+  "rarity": 1,
+  "derivative": "minecraft:plains",
+  "vanillaDerivative": "minecraft:plains",
+  "layers": [
+    {
+      "minHeight": 1,
+      "maxHeight": 1,
+      "palette": [{ "block": "minecraft:grass_block" }]
+    },
+    {
+      "minHeight": 3,
+      "maxHeight": 3,
+      "palette": [{ "block": "minecraft:dirt" }]
+    }
+  ],
+  "generators": [
+    { "generator": "plain", "min": 18, "max": 24 }
+  ],
+  "decorators": ["snippet/decorator/wildflowers"]
+}
+```
+
+The fork already contains `generators/plain.json` and `snippet/decorator/wildflowers.json`. Do not copy this biome into the original `overworld` folder.
+
+### 3. Attach and focus the biome
+
+Append `"tutorial/meadow"` to `landBiomes` in `regions/temperate.json`. In `dimensions/my-overworld.json`, temporarily add:
+
+```json
+{
+  "focusRegion": "temperate",
+  "focus": "tutorial/meadow"
+}
+```
+
+These are field excerpts: merge them into the existing region and dimension objects instead of replacing either file. Validate again after both edits.
+
+### 4. Prove the authoring result
+
+Generate untouched Studio chunks and run `/iris what region` and `/iris what biome`. Success is the `temperate` region, the `tutorial/meadow` biome, a grass-over-dirt surface, visibly higher rolling terrain than shipping plains, and wildflower decoration with no missing-key errors.
+
+If validation cannot resolve the biome, compare `tutorial/meadow` against the file path and region entry character-for-character. If terrain is empty, confirm `generators/plain.json` still exists in the fork. If flowers are missing, confirm `snippet/decorator/wildflowers.json` exists; remove the decorator reference until the terrain baseline passes.
+
+### 5. Prove natural selection and restart behavior
+
+Remove `focus` and `focusRegion`, close Studio, and reopen with seed `1337`. On Bukkit, `/iris find biome tutorial/meadow` can locate the naturally selected biome after it appears; the same command is available on modded.
+
+Create a disposable world with Bukkit `/iris create overworld-test type=my-overworld seed=1337` or modded `/iris create overworld-test my-overworld 1337`. Teleport with Bukkit `/iris tp overworld-test` or modded `/iris tp irisworldgen:overworld-test`, generate new chunks, stop cleanly, restart, and verify another new area. On Folia, honor the required restart immediately after the create command before teleporting.
+
+The tutorial passes when validation is loadable, focused and natural selection both work, the disposable world contains `<world>/iris/pack/`, and the world reloads without pack or registry errors.
+
+### 6. Package or recover
+
+Package with Bukkit `/iris studio package dimension=my-overworld` or modded `/iris studio package my-overworld`. Keep the validated fork as the source of truth; the `.iris` export and world snapshot are outputs.
+
+| Failure | Recovery |
+|---------|----------|
+| Fork creation fails or is partial | Move only the newly created incomplete `my-overworld` folder aside, then rerun after confirming the source pack validates |
+| Studio still shows old content | Generate untouched chunks; close and reopen Studio after dimension-contract or registry changes |
+| Natural selection cannot find the biome | Confirm it remains in `regions/temperate.json`, remove focus fields, and sample a broader new area |
+| Disposable world differs from Studio | Inspect `<world>/iris/pack/`; recreate the disposable world from the current validated fork |
+| Production update would change height, registries, or large terrain systems | Do not update in place; create a new world and migrate intentionally |
+
 ## Pack locations
 
 | Platform | Authoritative packs root |
@@ -44,7 +133,7 @@ Dimension load key is `overworld` (`dimensions/overworld.json`).
 
 From `dimensions/overworld.json` (selected fields):
 
-| Field | Shipping value (probe) |
+| Field | Shipping value |
 |-------|------------------------|
 | `name` | `"Overworld"` |
 | `version` | `4000` |
@@ -86,13 +175,15 @@ Generator referenced by that biome: `generators/plain.json` (composite IRIS_DOUB
 ### Prefer studio for authoring
 
 1. Ensure overworld exists under `packs/overworld/`.
-2. Open studio: `/iris studio open overworld` (optional seed).
-3. Edit files under `packs/overworld/` with VSCode workspace / schemas (`10 - Studio & VSCode Schemas.md`).
-4. Hotload picks up JSON changes in the studio world. Regenerate or move to see new terrain.
-5. Use focus fields on the dimension for isolation:
+2. Fork it: `/iris studio create name=my-overworld template=overworld`.
+3. Open Studio: `/iris studio open my-overworld seed=1337`.
+4. Edit the fork under `packs/my-overworld/` with the generated VSCode workspace and schemas (`10 - Studio & VSCode Schemas.md`).
+5. Hotload picks up JSON changes in the Studio world. Generate new chunks to see terrain changes.
+6. Use focus fields on the forked dimension for isolation:
    - `"focus": "temperate/plains"` — only that biome
    - `"focusRegion": "temperate"` — only that region
-6. Close studio when finished: `/iris studio close`.
+7. Change `biomes/temperate/plains.json` generator `min` or `max` by a small amount, validate, and compare the same seed in fresh chunks.
+8. Restore/remove focus, close Studio, create a disposable world from `my-overworld`, and restart-test it.
 
 Studio is the live pack. Production worlds still run on their `iris/pack` snapshot until updated.
 

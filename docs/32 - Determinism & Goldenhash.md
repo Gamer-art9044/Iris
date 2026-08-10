@@ -2,6 +2,42 @@
 
 GoldenHash is the cross-platform determinism gate: it generates chunks into in-memory buffers (no world block writes), hashes blocks and biomes, and either captures a baseline file or verifies against one. Identical pack bytes, Iris seed, radius, center, and height range must produce the same combined hash on Bukkit-family and every mod loader. Operator smoke sequences that use this gate are in `31 - Operator Runbooks & Smoke Tests.md`.
 
+## Tutorial: capture and compare a baseline
+
+Prerequisites: a disposable Iris world, fixed pack bytes, seed `1337`, center chunk `0,0`, and a small radius such as `8` for the first run. Record the Iris artifact, Minecraft version, pack hash, dimension height range, and JVM before capture.
+
+1. On Bukkit, run the same `AUTO` command twice. The first run captures when the file is absent; the second must verify it:
+
+   ```text
+   /iris developer goldenhash world=<world> radius=8 threads=1 center-x=0 center-z=0 reset-mantle=true deep=false
+   /iris developer goldenhash world=<world> radius=8 threads=1 center-x=0 center-z=0 reset-mantle=true deep=false
+   ```
+
+2. On Fabric, Forge, or NeoForge, use explicit modes:
+
+   ```text
+   /iris goldenhash 8 1 capture
+   /iris goldenhash 8 1 verify
+   ```
+
+3. Retain the generated `.hashes` file with the exact artifact and pack hash. Copy that baseline into the platform-specific golden directory on another loader, keep the dimension key, seed, radius, center, and height range identical, then run `verify` or Bukkit `AUTO`.
+4. Confirm every platform reports `MATCH` and the same `#combined` value. Visual similarity is not parity evidence.
+5. In a disposable copy, change one pack or engine input, rerun verify, and confirm the expected mismatch produces `.new` and a diagnosis file.
+6. Restore the original input and confirm `MATCH` again before treating the baseline as a release artifact.
+
+GoldenHash resets mantle according to the platform rules below. Never use a production world merely because block writes are buffered.
+
+### Recovery
+
+| Result | Correction |
+|---|---|
+| No baseline on Bukkit | Confirm the target is a loaded Iris world; the first `AUTO` run should capture. |
+| `VERIFY` says the file is missing | Check the golden directory and exact filename inputs: dimension key, seed, center, and radius. |
+| Seed or dimension mismatch | Recreate the disposable world with the recorded input; do not rename metadata to force a comparison. |
+| Multi-thread mismatch only | Re-run both sides with `threads=1`; treat continued order dependence as an engine defect. |
+| Stable mismatch | Compare pack bytes, height range, Iris artifact, Minecraft version warning, and mantle-reset choice, then inspect `.new` and the first `.diag-*` file. |
+| Unstable repeat generation | Preserve the diagnosis artifacts and stop the release comparison; consecutive generation is nondeterministic. |
+
 ## What it measures
 
 - **Blocks:** every local column `x,z ∈ [0,15]` and every `y` from engine/world min height (inclusive) to max height (exclusive). Each block state key (for example `minecraft:stone`) is fed into a per-chunk SHA-256 digest.

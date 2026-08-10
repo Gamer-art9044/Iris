@@ -4,6 +4,36 @@ Snippets are active reusable JSON fragments for types annotated `@Snippet`; fiel
 
 Related: `05 - Concepts & Pack Layout.md`, `10 - Studio & VSCode Schemas.md`, `11 - Dimensions.md`, `12 - Regions.md`, `13 - Biomes.md`, `14 - Generators & Noise.md`, `20 - Object Placement.md`, `25 - Pack Management.md`.
 
+## Tutorial: reuse one active decorator snippet
+
+Snippets are the executable reuse mechanism on this page. Start with a validating pack and a biome that already generates correctly. Save this complete decorator as `snippet/decorator/tutorial-wildflowers.json`:
+
+```json
+{
+  "chance": 0.08,
+  "palette": [
+    { "block": "minecraft:dandelion" },
+    { "block": "minecraft:poppy" }
+  ],
+  "slopeCondition": { "maximumSlope": 4 }
+}
+```
+
+Reference it from the existing biome's `decorators` array without `.json`:
+
+```json
+{
+  "decorators": ["snippet/decorator/tutorial-wildflowers"]
+}
+```
+
+1. Validate the pack and open it in Studio on a fixed seed.
+2. Generate new chunks in the target biome. Success is both flower types appearing only on slopes accepted by the snippet, with no missing-snippet error.
+3. If the field resolves to null, confirm the singular `snippet/` folder, the exact `decorator` type folder, and the suffix-free reference. If the snippet loads but does not place, raise `chance` temporarily and verify dimension `decorate` is true.
+4. Reuse the same string in another biome only after the first placement works. Generate the VSCode workspace so schema completion exposes valid snippet paths.
+
+Do not implement this workflow with `mods/*.json`. Pack-mod files remain parseable schema data but are not applied by engine creation or Studio hotload.
+
 ## Pack mod schema (`IrisMod`, inactive)
 
 Folder: `mods/`. The loader key is the path under `mods/` without `.json`. `IrisData` can parse and expose these registrants to schema and tooling paths, but engine creation and Studio hotload do not consume them. Treat the fields below as an inactive schema, not a supported way to modify a dimension.
@@ -278,12 +308,15 @@ Schema registration alone does not prove a runtime consumer. The following types
 
 The `mods/*.json` family is likewise schema/tooling-only as documented above.
 
-### Authoring snippets
+### Tutorial: author and verify a snippet
 
-1. Create `snippet/<type>/<name>.json` matching the field type shape.
-2. Reference as `"snippet/<type>/<name>"` (no `.json` suffix in the string).
-3. Prefer snippets for values reused across many biomes (decorators, styles, palettes).
-4. Open studio so VSCode schemas list available snippet paths under `.iris/schema/snippet/`.
+1. Copy one working inline value into `snippet/<type>/<name>.json`; the folder must match the field's `@Snippet` type.
+2. Replace one original value with `"snippet/<type>/<name>"` (no `.json` suffix).
+3. Validate and open Studio. Confirm schema completion lists the path and fixed-seed output matches the inline version.
+4. Replace the second duplicate only after the first call site passes.
+5. Change one value inside the snippet and confirm both call sites change on newly generated chunks, then restore the intended value.
+
+Use snippets for values genuinely shared across biomes, such as decorators, styles, and palettes. A missing or wrong-type snippet resolves to null after an error, so treat validation and console output as required gates.
 
 ## Related commands
 

@@ -24,13 +24,43 @@ Biome JSON does not embed generators. It references them by key:
 
 `IrisBiomeGeneratorLink` loads `generators/<generator>.json`, samples height in 0..1, then lerps to `min`..`max` relative to fluid height. Negative ranges produce ocean floors.
 
-## Authoring workflow
+## Tutorial: add and tune a height generator
 
-1. Create `generators/<name>.json` with `seed`, `interpolator`, and at least one `composite` entry.
-2. Reference that key from every biome that should share the shape (`generators[].generator`).
-3. Tune `min`/`max` per biome for local relief; leave the generator file for global shape and frequency.
-4. Hotload in studio; regenerate nearby chunks to verify blending across biome edges (`interpolator.horizontalScale`).
-5. Optional: replace a style's built-in `NoiseStyle` with `expression` or `imageMap` for custom fields.
+Prerequisites are a validating pack, one biome that can be focused, and a fixed test seed. Save this complete baseline as `generators/tutorial-hills.json`:
+
+```json
+{
+  "interpolator": { "function": "NONE", "horizontalScale": 1 },
+  "seed": 310,
+  "composite": [
+    {
+      "seed": 310,
+      "style": { "style": "FLAT" }
+    }
+  ]
+}
+```
+
+Reference it from the focused biome; this is a field excerpt, not a second file:
+
+```json
+{
+  "generators": [
+    { "generator": "tutorial-hills", "min": 16, "max": 48 }
+  ]
+}
+```
+
+1. Validate the pack and open it in Studio on seed `1337`.
+2. Generate new chunks. The first result should be a flat surface because `FLAT` produces a constant signal; this proves the file path, biome link, and height range.
+3. Change only `style.style` from `FLAT` to `IRIS`, then generate another new area. Keep generator seed and biome `min`/`max` fixed so the new relief is attributable to the style.
+4. Adjust generator `zoom` for feature scale, then biome `min`/`max` for relief. Do not change both in the same comparison.
+5. Add a second neighboring biome using the same generator and inspect the boundary. Tune `interpolator.horizontalScale` only after both isolated biomes look correct.
+6. Add composite layers, fracture, expressions, or image maps one at a time. Recheck performance after nested fracture or expensive interpolation.
+
+The tutorial passes when seed `1337` reproduces the same shape after Studio reopen, neighboring biomes blend as intended, and pack validation resolves every generator/expression/image key.
+
+If the result is flat after switching to `IRIS`, confirm that the biome references `tutorial-hills` and that new chunks were generated. If terrain becomes void, restore the complete baseline above and check validation for a missing generator or invalid style before changing noise values again.
 
 ## Generator file (`IrisGenerator`)
 

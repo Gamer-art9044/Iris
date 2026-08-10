@@ -4,6 +4,74 @@ Loot tables fill containers and entity drop inventories. Entities describe what 
 
 Related: `05 - Concepts & Pack Layout.md`, `11 - Dimensions.md`, `12 - Regions.md`, `13 - Biomes.md`, `19 - Objects.md`, `20 - Object Placement.md`, `03 - Configuration.md`, `10 - Studio & VSCode Schemas.md`.
 
+## Tutorial: spawn one loot-bearing entity
+
+This workflow adds a zombie that always rolls one iron nugget, spawns it at night in one biome, and proves each resource edge independently. Prerequisites are a validating pack, a working land biome with load key `tutorial/meadow`, and `world.ambientEntitySpawningSystem: true` in `settings.json`.
+
+Create these files:
+
+```
+loot/tutorial/zombie-drops.json
+entities/tutorial/zombie.json
+spawners/tutorial/night-zombies.json
+```
+
+`loot/tutorial/zombie-drops.json`:
+
+```json
+{
+  "name": "Tutorial Zombie Drops",
+  "minPicked": 1,
+  "maxPicked": 1,
+  "maxTries": 1,
+  "loot": [
+    { "type": "iron_nugget", "rarity": 1, "minAmount": 1, "maxAmount": 1 }
+  ]
+}
+```
+
+`entities/tutorial/zombie.json`:
+
+```json
+{
+  "type": "minecraft:zombie",
+  "loot": {
+    "mode": "ADD",
+    "tables": ["tutorial/zombie-drops"]
+  }
+}
+```
+
+`spawners/tutorial/night-zombies.json`:
+
+```json
+{
+  "group": "NORMAL",
+  "maxEntitiesPerChunk": 3,
+  "timeBlock": { "startHour": 20, "endHour": 5 },
+  "weather": "ANY",
+  "allowedLightLevels": { "min": 0, "max": 7 },
+  "maximumRate": { "amount": 4, "per": { "seconds": 30 } },
+  "spawns": [
+    { "entity": "tutorial/zombie", "rarity": 1, "minSpawns": 1, "maxSpawns": 2 }
+  ]
+}
+```
+
+Add the spawner key to the existing biome; this is a field excerpt, not a separate JSON file:
+
+```json
+{
+  "entitySpawners": ["tutorial/night-zombies"]
+}
+```
+
+1. Validate the pack before opening the test world. The validator must resolve the spawner-to-entity edge and the entity's loot table.
+2. On Bukkit, run `/iris studio spawn tutorial/zombie` to prove the entity file loads, then kill it and confirm the nugget drop. On modded, continue directly to ambient spawning because the Studio spawn command is a stub.
+3. Open the pack in Studio, focus `tutorial/meadow`, set night, and stand in a dark surface area. Success is an Iris-spawned zombie within the configured rate and chunk cap; killing it rolls the custom table.
+4. If the entity loads manually but never spawns, check the ambient-spawning setting, time, block light, biome attachment, and living-entity cap. If validation fails, fix the first unresolved key in the chain rather than changing rarity or rate.
+5. Remove biome focus after the chain works. Add effects, markers, gear, passengers, and additional loot only after this minimal path remains repeatable.
+
 ## Where files live
 
 | Path | Registrant | Role |
@@ -115,6 +183,8 @@ On `IrisObjectPlacement`:
 | `overrideGlobalLoot` | When true, object tables replace dim/region/biome tables for that placement |
 
 `IrisObjectLoot` fields: `name` (loot table key), `weight` (default 1), `filter` (block list, empty = all containers), `exact` (exact block-data match).
+
+Object tile payloads, including authored container NBT, and deferred custom-block identifiers remain in Mantle until the platform post-load materialization iteration completes normally. Generic cleanup and pregeneration cleanup retain these sparse payloads for chunks that have not reached that pass; Bukkit keeps a failed region-scheduled pass retryable without repeating earlier completed passes.
 
 ### Real overworld loot sample
 
@@ -375,7 +445,7 @@ From `settings.json` → `world`:
 
 Studio command `/iris studio loot` previews chest loot at the player position (see `10 - Studio & VSCode Schemas.md`, `04 - Commands & Permissions.md`).
 
-## Authoring checklist
+## Reference checklist
 
 1. Write `loot/<key>.json` tables; reference them from dim/region/biome `loot.tables` or object `loot[].name`.
 2. Write `entities/<key>.json` with at least `type`.

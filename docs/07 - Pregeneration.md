@@ -4,6 +4,44 @@ Pregeneration walks a rectangular (by default square) block radius around a cent
 
 See also: `03 - Configuration.md`, `04 - Commands & Permissions.md`, `02 - Getting Started.md`, `06 - Worlds & Lifecycle.md`, `29 - Client HUD & Protocol.md`, `33 - Performance Tuning.md`.
 
+## Tutorial: run a bounded pregen safely
+
+Prerequisites: a disposable or backed-up world, enough free disk for the requested area, ordinary on-demand chunk generation already proven, and no other active pregen job. The commands use `release_candidate` from `06 - Worlds & Lifecycle.md`; substitute the exact loaded world or dimension id if yours differs.
+
+1. Choose a block radius. The standard smoke uses `352` blocks centered at `0,0`, which covers 2,025 chunks.
+2. Start without the desktop GUI on a headless server.
+
+   Bukkit-family:
+
+   ```text
+   /iris pregen start 352 world=release_candidate center=0,0 gui=false serial=false
+   ```
+
+   Fabric / Forge / NeoForge:
+
+   ```text
+   /iris pregen start 352 irisworldgen:release_candidate at 0 0
+   ```
+
+3. Run `/iris pregen status`. Confirm the target, 2,025 total chunks, generated count, rate, ETA, and failed count.
+4. Run `/iris pregen pause`, wait for progress to stop, then `/iris pregen resume` and confirm it continues.
+5. Let the run complete. To test cancellation instead, run `/iris pregen stop` once and wait for in-flight work to close before starting another job.
+6. Restart the server and visit chunks near the generated boundary.
+
+The workflow passes when status reaches completion without accumulating failures, no job remains active after restart, and the generated boundary loads normally. Change concurrency, scheduler, or cache settings only after this baseline succeeds; compare one change at a time using `33 - Performance Tuning.md`.
+
+### Recovery
+
+| Symptom | Check | Recovery |
+|---|---|---|
+| Start reports an active job | One job is already server-wide | Inspect `/iris pregen status`; finish it or stop it and wait for closure before retrying |
+| Status total is unexpected | Radius is in blocks and center-to-chunk rounding changes bounds | Verify radius and center; use the 352-at-0,0 baseline before larger runs |
+| Failed count increases | Chunk load timeout, generation exception, disk failure, or lifecycle interruption | Stop the job, fix the first logged failure, verify ordinary generation, then retry the same small area |
+| `serial=true` is rejected | Strict serial generation is unavailable on this Bukkit platform | Use the normal method or run the diagnostic on a Paper-compatible server |
+| Desktop GUI does not open | Server is headless or GUI launch is disabled | Use `gui=false` and monitor status, console, boss bar, or client HUD |
+| Memory pressure repeatedly pauses progress | Effective mantle/heap cap is being reached | Keep the job stopped while tuning; lower residency/in-flight work before increasing heap-sensitive limits |
+| Restart does not skip completed work | Cache wrapper was disabled, Folia routing disabled it, `nocache` was used, or cache files were removed | Treat the rerun as uncached; do not infer corruption from regeneration alone |
+
 ## Commands
 
 | Command | Behavior |

@@ -2,6 +2,28 @@
 
 Iris throughput is dominated by generation threads, mantle residency, pregen in-flight limits, cache sizes, and optional SIMD kernels. All knobs below live in `settings.json` under the Iris data directory unless noted. Settings overview: `03 - Configuration.md`. Pregen operations: `07 - Pregeneration.md`. Determinism must stay intact after tuning — verify with GoldenHash (`32 - Determinism & Goldenhash.md`).
 
+## Tutorial: measure one tuning change
+
+Choose the first knob from observed evidence, not from hardware size alone:
+
+| Observed limit | First controlled change |
+|---|---|
+| Mantle backpressure or timeout warnings | Lower pregen in-flight concurrency; then test a lower `maxResidentTectonicPlates` if heap pressure remains |
+| High retained heap or long GC pauses | Lower loader caches and resident plate cap; do not raise concurrency |
+| Repeated object/resource loading with spare heap | Raise only the cache that is missing (`objectLoaderCacheSize` or `resourceLoaderCacheSize`) |
+| CPU-bound generation with stable heap | Confirm the Vector API module and A/B `simdKernels`; benchmark `engineSVC.parallelism` only afterward |
+| Region scheduler warnings or chunk-load timeouts | Lower pregen concurrency or use serial/sync isolation before increasing timeout values |
+| Studio memory growth during repeated edits | A/B `trimMantleInStudio` in Studio only |
+
+1. Freeze the Iris artifact, pack bytes, seed, center, radius, Java flags, and server population.
+2. Run one warmup, then record at least three baseline runs with chunk throughput, wall time, peak heap, GC behavior, failed chunks, and GoldenHash.
+3. Change one setting from the tables below and restart if that setting constructs a pool, cache, or SIMD kernel.
+4. Repeat the same warmup and three measured runs. Reject comparisons that used different generated areas or active plugins.
+5. Keep the change only when the median improves without a determinism mismatch, new failure, unacceptable memory growth, or worse tick latency.
+6. Restore the previous value before testing the next knob.
+
+Use JProfiler for stalls, allocation pressure, scheduler behavior, or unexplained regressions. A faster pregen status line by itself is not enough evidence for a production tuning recommendation.
+
 ## Where settings live
 
 | Platform | Data directory | Settings file |

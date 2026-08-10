@@ -2,6 +2,22 @@
 
 Iris is a world generation engine for Minecraft servers and mod loaders. It builds terrain, biomes, caves, structures, objects, and entities from editable JSON packs, exposes an in-game studio authoring workflow, and runs as a Bukkit-family plugin or as a Fabric, Forge, or NeoForge server mod. Cross-platform generation is designed and tested for deterministic parity when artifacts, pack bytes, seeds, and test areas are identical; verify release candidates with GoldenHash. This branch targets Minecraft 26.2; Java 25 is required everywhere.
 
+## Choose a learning path
+
+Do not read the documentation as one long reference. Start with the outcome you need and follow that path in order:
+
+| Outcome | Read and complete |
+|---|---|
+| Install Iris and create a world | `01 - Installation & Platforms.md` → `02 - Getting Started.md` → `31 - Operator Runbooks & Smoke Tests.md` |
+| Build a pack from nothing | `05 - Concepts & Pack Layout.md` → `10 - Studio & VSCode Schemas.md` → `26 - Example - Minimal Dimension.md` |
+| Design terrain and biomes | `11 - Dimensions.md` → `12 - Regions.md` → `13 - Biomes.md` → `14 - Generators & Noise.md` |
+| Add caves and surface detail | `15 - Caves & Carving.md` → `16 - Surfaces, Decorators & Deposits.md` → `17 - Trees, Fungi, Coral, Crystals, Formations, Ruins.md` |
+| Add a structure | `18 - Structures Overview.md`, then `19 - Objects.md` + `20 - Object Placement.md`, `21 - Jigsaw Structures.md`, or `22 - Native Structures & Datapacks.md` |
+| Prepare a production world | `25 - Pack Management.md` → `06 - Worlds & Lifecycle.md` → `07 - Pregeneration.md` → `31 - Operator Runbooks & Smoke Tests.md` |
+| Integrate another plugin or mod | `28 - Integrations.md` → `30 - Platform Differences.md`; Java consumers start at `90 - API - Getting Started.md` |
+
+Each tutorial gives an observable gate. Stop and resolve that gate before layering on the next system; otherwise a missing biome key can look like a cave, decorator, or structure failure later.
+
 ## Platforms
 
 | Platform | Artifact | Minecraft | Notes |
@@ -94,15 +110,17 @@ Docs `00`–`33` are for operators and pack authors in reading order. `85`–`87
 | `dist/` | Built consumer jars after `buildAllToOut` |
 | `docs/` | Authoritative product and API documentation |
 
-## Building
+## Developer build check
 
-Requirements: JDK 25 (`JAVA_HOME` set). From the Iris repo root:
+Set `JAVA_HOME` to JDK 25, then run the repository gate from the Iris root:
 
-```
+```text
+java -version
 ./gradlew build
-./gradlew test
 ./gradlew buildAllToOut
 ```
+
+The check passes when `build` completes with no failed tasks and `buildAllToOut` publishes one current jar per supported platform under `dist/`. `build` already runs the test suite; use `./gradlew test` when you need to rerun tests without assembling every artifact.
 
 `buildAllToOut` writes every platform jar into `dist/`:
 
@@ -126,3 +144,5 @@ Modded adapters are driven with their own project root when developing:
 `-PincludeModdedAdapters=true` can surface those builds in the root composite for IDE import only; it is off by default because each adapter includes the root build back for `core`/`spi` substitution.
 
 Current version property: `irisVersion=4.0.0-26.2` in `gradle.properties`.
+
+If a mod-loader build fails while the root Bukkit/core build passes, rerun that adapter from its own project root and fix the first loader-specific error. Do not treat a Bukkit jar or core test pass as proof that Fabric, Forge, or NeoForge compiled.

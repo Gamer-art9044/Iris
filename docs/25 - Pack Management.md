@@ -4,6 +4,20 @@ Pack management covers download/install into the packs workspace, validation, un
 
 See also: `03 - Configuration.md`, `04 - Commands & Permissions.md`, `10 - Studio & VSCode Schemas.md`, `24 - Pack Mods & Snippets.md`, `27 - Example - Configuring Overworld.md`.
 
+## Tutorial: take a pack from workspace to production
+
+Use this loop after a pack works in Studio and before creating or updating a production world. It produces a validated export while keeping cleanup and live-world replacement separate, reviewable decisions.
+
+1. Place the authoritative authoring tree under `packs/<key>/` and confirm it contains at least one `dimensions/*.json`.
+2. Validate and read the result: Bukkit `/iris pack validate pack=<key>` then `/iris pack status pack=<key>`; modded `/iris pack validate <key>` then `/iris pack status <key>`. Continue only when the pack is loadable and every blocking error is resolved.
+3. Preview unused resources without writing: Bukkit `/iris pack cleanup <key> mode=preview`; modded `/iris pack cleanup <key>`. Review every candidate before applying cleanup.
+4. If cleanup is approved, apply it with Bukkit `mode=apply` or the modded `apply` literal, validate again, and use `pack restore` if a required resource was quarantined.
+5. Package the validated closure: Bukkit `/iris studio package dimension=<key>`; modded `/iris studio package <key>`. Success is `exports/<key>.iris` plus a completed command message; the source pack and world snapshots remain unchanged.
+6. Create a new disposable world from the release pack and run fresh-world and restart smokes. Prefer a new production world for breaking pack changes.
+7. Replace an existing `<world>/iris/pack` snapshot only after a world backup and explicit maintenance decision; use the **Developer update-world (unsafe)** procedure below.
+
+If validation reports a missing edge, restore or repair that resource before packaging. If cleanup preview names an intentional dynamically loaded resource, leave cleanup unapplied. The workflow passes when the source closure validates, the package command creates the expected export, the disposable world reloads, and its world snapshot matches the intended release pack. Validate an unpacked export separately before distributing it when the release process consumes the `.iris` artifact rather than the source tree.
+
 ## Pack workspace
 
 | Item | Path / rule |
@@ -143,7 +157,7 @@ This is intentionally unsafe for production without backups: existing chunks kee
 | Strict content keys | `settings.general.strictContentKeys` (`03 - Configuration.md`) |
 | Datapack bootstrap / install | Server configurator + `/iris datapack` (see platform docs) |
 
-## Operator checklist
+## Quick reference checklist
 
 1. Download or place pack under `packs/<key>/` with `dimensions/*.json`.
 2. On Bukkit, run `/iris pack validate pack=<key>` until loadable. Modded uses `/iris pack validate <key>`.

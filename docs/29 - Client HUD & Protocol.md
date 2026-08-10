@@ -2,6 +2,17 @@
 
 The Iris client mod (Fabric/Forge/NeoForge jar on the client) adds a native pregeneration HUD, Vision map, What overlay, studio toasts, and singleplayer world-type entries. It talks to Iris servers over the shared channel `irisworldgen:main`. Vanilla clients ignore the channel and use server-side fallbacks. See also `07 - Pregeneration.md`, `08 - Localization.md`, `10 - Studio & VSCode Schemas.md`, and `30 - Platform Differences.md`.
 
+## Tutorial: verify the client/server path
+
+1. Join the same Iris server once with a vanilla client and once with a matching Iris client mod.
+2. Start a small pregen. On a modded server, confirm the vanilla client receives the boss-bar fallback. On Bukkit-family servers, confirm progress through console/status or the configured Bukkit HUD path. In both cases, the client with Iris must receive the native HUD.
+3. On the modded client, toggle the HUD, open Vision, and toggle What using rebound keys if defaults conflict.
+4. Move between an Iris world and a non-Iris world. Confirm Vision/What report Iris data only where the handshake and world state allow it.
+5. Reconnect and repeat one action to prove the handshake is not relying on stale client state.
+6. Check the server log for payload decode, version, or channel errors.
+
+The protocol smoke passes only when both client types follow the server-family behavior in the matrix below. A working boss bar or Bukkit status path proves server progress, not the Iris client payload path. If the native HUD remains absent, verify matching Iris/Minecraft versions, reconnect to force a new handshake, and check the server log for an unsupported protocol version or rejected capability frame.
+
 ## When the client mod does something
 
 | Server | Client without Iris | Client with Iris mod |

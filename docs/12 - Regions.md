@@ -4,6 +4,23 @@ A region is a mid-level spatial unit inside a dimension. File location is `regio
 
 Related: see `05 - Concepts & Pack Layout.md`, `11 - Dimensions.md`, `13 - Biomes.md`, `16 - Surfaces, Decorators & Deposits.md`, `20 - Object Placement.md`, `15 - Caves & Carving.md`.
 
+## Tutorial outcome
+
+Add one region to an already working dimension and make one biome fill that region. Keep sea, shore, cave, object, and structure lists empty until the land path resolves; this separates region selection problems from content-placement problems.
+
+### Prerequisites and file placement
+
+Use a pack whose dimension and one biome already validate. Create `regions/tutorial.json` with the complete **Minimal Region JSON** below, replace `starter` with the exact load key of the existing biome, and add `"tutorial"` to the dimension's `regions` array.
+
+### Build and verify
+
+1. Keep `rarity` at `1` and put one root biome in `landBiomes`; do not list a child biome here.
+2. Temporarily set `"focusRegion": "tutorial"` on the dimension.
+3. Validate the pack, then open Studio on seed `1337` using the platform command in `10 - Studio & VSCode Schemas.md`.
+4. Generate new chunks and run `/iris what region` while standing in them. Success is a consistent `tutorial` region whose biome resolves without warnings.
+5. If another region appears, verify the dimension reference and the `focusRegion` spelling. If terrain is missing, verify the biome key and its generator; region rarity and zoom cannot repair a broken resource edge.
+6. Remove `focusRegion`, reopen Studio, and sample new chunks before adding sea, shore, or cave lists.
+
 ## Role
 
 Dimensions pick regions by noise (`regionStyle` / `regionZoom` / region `rarity`). Within a region, land/sea/shore/cave biome lists pick biomes (also rarity-weighted). Child biomes are **not** listed on the region; only root parents go in the region arrays. Children are declared on the parent biome (`children` field).
@@ -65,7 +82,7 @@ Keys are biome load keys under `biomes/` (e.g. `temperate/plains`, `carving/drip
 |-------|------|---------|-------|
 | `objects` | `IrisObjectPlacement[]` | empty | Region-wide `.iob` placements |
 | `proceduralObjects` | `IrisProceduralObjects` | empty | Trees/ruins/formations/coral/fungi/crystals generated procedurally |
-| `structures` | `IrisStructurePlacement[]` | empty | Jigsaw / native structure placements |
+| `structures` | `IrisStructurePlacement[]` | empty | Region-scoped jigsaw/native placements; editable Iris structures may use explicit cave anchors |
 | `entitySpawners` | string[] | empty | `IrisSpawner` load keys |
 | `effects` | `IrisEffect[]` | empty | Packet ambient effects (potions, sounds, particles) |
 | `loot` | `IrisLootReference` | empty | Region loot |
@@ -76,6 +93,8 @@ Keys are biome load keys under `biomes/` (e.g. `temperate/plains`, `carving/drip
 | `caveProfile` | `IrisCaveProfile` | default | Region cave profile |
 
 Deposit precedence (documented on fields): biome variants → region variants → dimension variants; first match wins at each tier.
+
+Region `structures[]` is evaluated where that region owns the start chunk center. A cave anchor searches existing carved-space mantle data inside that chunk and can further restrict the actual anchor with `caveBiomes`; it does not require the placement to be duplicated on every cave biome. See `21 - Jigsaw Structures.md` for distribution and anchor fields.
 
 ## Overworld Sample: Temperate
 
@@ -127,13 +146,16 @@ Land-only dimension (no ocean shoreline generated):
 
 ## How To: Make a Region
 
-1. Create `regions/<key>.json`.
-2. Set `name` and `rarity`.
-3. List **root** biomes only under `landBiomes` (and sea/shore/cave as needed). Keys must match files under `biomes/` (subfolders become path segments in the key).
-4. Add the region key to the dimension’s `regions` array.
-5. Tune `landBiomeZoom` / `seaBiomeZoom` / `shoreBiomeZoom` after biomes look right.
-6. Optionally add regional `deposits`, `ores`, `objects`, `structures`, `caveProfile`.
-7. Studio: set dimension `"focusRegion": "<key>"` to generate only that region while authoring.
+1. Create `regions/<key>.json` from the minimal region above.
+2. Set `name`, keep `rarity: 1`, and list one existing **root** biome under `landBiomes`.
+3. Add the region key to the dimension's `regions` array.
+4. Set dimension `"focusRegion": "<key>"`, validate, and open Studio on seed `1337`.
+5. Generate new chunks until the biome appears consistently. If it does not, verify the exact biome file path before tuning rarity or noise.
+6. Add sea and shore biomes together, then cave biomes, validating each path separately.
+7. Remove `focusRegion`; add a second region and only then tune rarity and region zoom while sampling broad new areas.
+8. Add regional deposits, ores, objects, structures, and cave profiles after selection is proven.
+
+The tutorial passes when the focused region generates, the unfocused dimension selects it among peers, and validation reports no missing biome keys.
 
 ## Resolution Notes
 

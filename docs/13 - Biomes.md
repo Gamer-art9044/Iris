@@ -4,6 +4,22 @@ A biome is the primary surface/authoring unit for terrain height, block layers, 
 
 Related: see `12 - Regions.md`, `14 - Generators & Noise.md`, `16 - Surfaces, Decorators & Deposits.md`, `17 - Trees, Fungi, Coral, Crystals, Formations, Ruins.md`, `19 - Objects.md`, `20 - Object Placement.md`, `23 - Loot, Entities, Spawners, Markers.md`.
 
+## Tutorial outcome
+
+Create a visible, selectable biome with a known surface and height before adding variants or decoration. Use the minimal JSON near the end of this guide, attach it to one focused region, and keep the seed fixed while testing.
+
+### Prerequisites and file placement
+
+Use a validating dimension, a region listed by that dimension, and `generators/flat.json` from `26 - Example - Minimal Dimension.md`. Save the complete **Minimal Biome JSON** below as `biomes/tutorial/meadow.json`, reference `tutorial/meadow` from the region's `landBiomes`, and temporarily set dimension `focus` to the same key.
+
+### Build and verify
+
+1. Keep both derivative fields at `minecraft:plains`, one grass surface layer, and the flat generator link until the resource graph works.
+2. Validate the pack and open Studio on seed `1337`.
+3. Generate new chunks, then run `/iris what biome`. Success is the `tutorial/meadow` load key, a grass surface, and a constant terrain height with no unresolved generator warnings.
+4. If the biome does not appear, compare the region entry, biome path, and dimension `focus` character-for-character. If the biome appears over void terrain, validate `generators/flat.json` and its link before changing height values.
+5. Remove `focus`, reopen Studio, and confirm the biome can be selected naturally. Add children, decorators, objects, and custom derivatives only after this baseline passes.
+
 ## Role
 
 | Layer | Responsibility |
@@ -166,7 +182,7 @@ Spawn groups: `MONSTER`, `CREATURE`, `AMBIENT`, `AXOLOTLS`, `UNDERGROUND_WATER_C
 | `decorators` | `IrisDecorator[]` | Tall grass, cactus, kelp-style placements (see `16 - Surfaces, Decorators & Deposits.md`) |
 | `objects` | `IrisObjectPlacement[]` | `.iob` placements |
 | `proceduralObjects` | `IrisProceduralObjects` | Procedural trees/coral/etc. |
-| `structures` | `IrisStructurePlacement[]` | Jigsaw / native structures |
+| `structures` | `IrisStructurePlacement[]` | Jigsaw/native placements; cave-biome lists contribute only editable Iris placements using a resolved cave anchor |
 | `floatingChildBiomes` | `IrisFloatingChildBiomes[]` | Floating islands using another biome’s visuals |
 | `mergeFloatingChildBiomes` | boolean | When true, all floating entries sample independently |
 | `deposits` | `IrisDepositGenerator[]` | Biome deposits |
@@ -179,6 +195,8 @@ Spawn groups: `MONSTER`, `CREATURE`, `AMBIENT`, `AXOLOTLS`, `UNDERGROUND_WATER_C
 | `loot` | `IrisLootReference` | Biome loot |
 | `blockDrops` | `IrisBlockDrops[]` | Custom drops |
 | `caveProfile` | `IrisCaveProfile` | Biome cave profile override |
+
+A surface biome contributes all of its `structures[]` placements when it owns the start chunk center. The cave biome sampled at that center contributes only placements whose resolved anchor is `CAVE_FLOOR`, `CAVE_CEILING`, `CAVE_CENTER`, or `CAVE_ANY`; surface/height-band placements in cave-biome JSON are ignored. `caveBiomes` on the placement is an additional allowlist rechecked against the cave/mantle biome at each actual anchor candidate. See `15 - Caves & Carving.md` and `21 - Jigsaw Structures.md`.
 
 ## Floating child biomes (`IrisFloatingChildBiomes`)
 
@@ -358,11 +376,14 @@ Requires a matching generator file under `generators/` (starter uses `generators
 2. Set `name`, `derivative`, `vanillaDerivative`.
 3. Add at least one `generators` link and a generator JSON under `generators/`.
 4. Define `layers` from topsoil down (grass → dirt → stone blend).
-5. Optionally set `wall` for cliffs, `decorators` for grass, `objects` for trees/clutter.
-6. For variants inside a parent, create a child biome file and list its key in the parent’s `children`.
-7. For custom colors/tags/mobs, add `customDerivitives` with a unique `id` and `category`.
-8. Attach the biome to a region: land → `landBiomes`, ocean floor → `seaBiomes`, beach → `shoreBiomes`, cave → `caveBiomes`.
-9. Studio test: dimension `"focus": "temperate/plains"` forces only that biome.
+5. Attach the biome to exactly one region role: land → `landBiomes`, ocean floor → `seaBiomes`, beach → `shoreBiomes`, cave → `caveBiomes`.
+6. Set dimension `"focus": "<biome-key>"`, validate, open Studio, and inspect newly generated chunks. Confirm surface blocks, terrain Y, fluid relationship, and vanilla structure eligibility.
+7. Optionally set `wall` for cliffs, then add decorators and objects one group at a time.
+8. For variants inside a parent, create a child biome file and list its key in the parent's `children`; do not also list the child as a region root.
+9. For custom colors, tags, or mobs, add `customDerivitives` with a unique `id` and `category`, then reopen the world if the generated biome registry changed.
+10. Remove `focus` and verify the biome appears through ordinary region selection.
+
+Success means the biome is visible through Iris inspection tools, uses the intended derivative, and appears both focused and naturally selected without unresolved keys.
 
 ## Generator Link How-To
 

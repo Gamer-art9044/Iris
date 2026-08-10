@@ -2,6 +2,36 @@
 
 Object placements wire a saved object (`objects/<key>.iob`) into biome or region JSON so the generator stamps it. Creating objects is `19 - Objects.md`; multi-piece assemblies are `21 - Jigsaw Structures.md`.
 
+## Tutorial: place one object before tuning a library
+
+Prerequisites: a saved object such as `objects/tutorial/lookout.iob`, a biome or region used by the target dimension, and a Studio or disposable test world. Merge this complete `objects` fragment into one focused biome for the first test; keep the resource's other fields:
+
+```json
+{
+  "objects": [
+    {
+      "place": ["tutorial/lookout"],
+      "chance": 1,
+      "density": 1,
+      "mode": "CENTER_HEIGHT",
+      "rotation": { "enabled": false }
+    }
+  ]
+}
+```
+
+1. Paste the saved object directly with `/iris object paste tutorial/lookout` and verify its geometry and origin first.
+2. Add the fragment above and run `/iris pack validate pack=<pack>` on Bukkit or `/iris pack validate <pack>` on a modded loader.
+3. Open or hotload Studio and generate fresh chunks whose center uses the edited biome. Confirm the object appears in the intended surface scope.
+4. Run `/iris find object tutorial/lookout`, or obtain `/iris object dust` and right-click a placed block. Confirm Iris reports the expected object key.
+5. Select the terrain mode that solves the observed problem: `PAINT` for ground-hugging clutter, a stilt mode for support, `CEILING_HANG` for roofs, or a vacuum mode for flattened foundations.
+6. Test negative cases: slopes, water, cave openings, and neighboring biomes where the object should not place.
+7. Reduce chance/density to production values, validate again, and generate another fresh area.
+
+The placement passes when direct paste and natural generation agree on orientation, the terrain interaction is stable, and the object remains absent outside its configured scope. Existing chunks are not a valid iteration target.
+
+If validation cannot resolve the object, compare its key with the path under `objects/`. If no placement appears, check the chunk-center biome first, then water, slope, surface-support, height, collision, and carving gates. If a non-Studio world still uses the old placement, update its pack snapshot and restart as described in `18 - Structures Overview.md`.
+
 ## 1. Where placements go
 
 `objects[]` exists on exactly two resource types:

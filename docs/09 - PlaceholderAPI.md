@@ -1,6 +1,31 @@
 # 09 - PlaceholderAPI
 
-Iris registers the `iris` PlaceholderAPI expansion on Bukkit-family servers when PlaceholderAPI is enabled at Iris enable time. It publishes sixteen keys: seven world-family readings for the player and nine global pregeneration keys. This is an operator board contract, not a Java API; plugins that need the same data with more precision use `90 - API - Getting Started.md`, `91 - API - Terrain.md`, and `92 - API - World Events.md`. PlaceholderAPI is not available on Fabric/Forge/NeoForge. See also `07 - Pregeneration.md` and `28 - Integrations.md`.
+Iris registers the `iris` PlaceholderAPI expansion on Bukkit-family servers when PlaceholderAPI is enabled at Iris enable time. It publishes sixteen keys: seven world-family readings for the player and nine global pregeneration keys. This is an operator board contract, not a Java API; plugins that need the same data with more precision use `90 - API - Getting Started.md`, `91 - API - Terrain.md`, and `92 - API - World Events.md`. PlaceholderAPI is not available on Fabric/Forge/NeoForge; related runtime and integration details are in `07 - Pregeneration.md` and `28 - Integrations.md`.
+
+## Tutorial: verify a placeholder before using it in another plugin
+
+Prerequisites: Bukkit-family Iris, PlaceholderAPI installed before Iris enables, a full server restart, and a player in a loaded Iris world.
+
+1. Confirm registration: `/papi info iris`. The output must list expansion id `iris` and its published paths.
+2. Confirm the service: `/papi parse me %iris_available%`. Expect `true` while Iris terrain service is live.
+3. Confirm player context: `/papi parse me %iris_world.available%`. Expect `true` while the named player is in an Iris world.
+4. Parse a concrete terrain value: `/papi parse me %iris_world.biome-key%`. Expect a load key such as `desert/hot-dunes`, not `---`.
+5. While standing in the Iris world, run `/iris pregen start 352 center=0,0 gui=false`, then parse `/papi parse me %iris_pregen.percent%`. Expect a numeric value from `0.00` through `100.00` with no percent sign.
+6. Stop with `/iris pregen stop` or let the job finish, then run `/papi parse me %iris_pregen.available%`. Expect `false`; other pregen values return `---` after the snapshot clears.
+7. Copy the exact verified placeholder into the scoreboard, chat, or HUD plugin and test that consumer once more.
+
+The workflow passes when registration, player-scoped terrain, and global pregen values each produce their documented value shape. Do not debug formatting in the consuming plugin until direct `/papi parse` succeeds.
+
+### Recovery
+
+| Symptom | Meaning | Recovery |
+|---|---|---|
+| `/papi info iris` has no expansion | PlaceholderAPI was unavailable when Iris scheduled registration | Perform a full restart with both plugins installed; `/papi reload` alone does not trigger Iris registration |
+| Placeholder remains literal | Path is unknown or uses a removed pre-2.0 name | Copy an exact path from `/papi info iris` or the full table below |
+| World value is `---` | No online player context, player is outside Iris, or terrain service has no reading | Parse as a named online player after entering a loaded Iris world |
+| `world.available` is true but biome lags movement | Player view cache is within its one-second TTL | Wait one second or trigger an immediate publish by teleport/world change before diagnosing the consumer |
+| Pregen value is `---` | No global job snapshot is active | Start a job and wait for its first event; use `pregen.available` as the guard in board templates |
+| Scoreboard adds `%` twice | `pregen.percent` deliberately omits the suffix | Add one literal `%` in the consumer format, not in the placeholder |
 
 ## Registration
 

@@ -2,6 +2,28 @@
 
 Iris integrates with selected Bukkit plugins for world management, selections, external blocks/items/entities, Mythic skill conditions, PlaceholderAPI, and tree felling. Soft-depends declare load order only; Iris still checks `isPluginEnabled` / readiness before use. Integrations are Bukkit-family unless noted. See also `04 - Commands & Permissions.md`, `06 - Worlds & Lifecycle.md`, `09 - PlaceholderAPI.md`, `19 - Objects.md`, and `93 - API - Tree Feller.md`.
 
+## Tutorial: prove an integration boundary
+
+Choose one boundary and one observable result:
+
+| Boundary | Positive proof | Negative control |
+|---|---|---|
+| WorldEdit | Make a cuboid selection, run `/iris object we`, and save a disposable object | Clear the selection; Iris must report that no area is selected |
+| Multiverse-Core | Create or update a disposable Iris world and confirm generator `Iris:<pack>` in Multiverse | In a separate disposable test copy, restart without Multiverse installed; Iris must skip the link without failing its own world lifecycle |
+| External item/block/entity provider | Validate one exact namespaced key and generate one consumer in a new chunk | An invalid key logs and resolves empty without crashing generation |
+| MythicMobs conditions | `irisbiome` or `irisregion` passes inside the named Iris resource | The same condition returns false outside Iris or with engine access unavailable |
+| PlaceholderAPI | Complete the direct parse sequence in `09 - PlaceholderAPI.md` | A player outside Iris receives the documented unavailable values |
+| Tree feller | A sneaking survival player with permission and an axe fells a provenanced Iris tree | A player-planted or hand-built tree remains intact |
+
+1. Start from a server where Iris alone passes its fresh-world smoke.
+2. Install one integration and its required dependencies; perform a full restart rather than a plugin reload.
+3. Confirm enable order and that both plugins report ready without a linkage or missing-class exception.
+4. Exercise the smallest read-only path listed in that integration section, then one controlled mutation such as a selection conversion, external item resolution, or managed-world import.
+5. Restart and repeat the same path. Test one unavailable/invalid external key so failure behavior is also known.
+6. Add the next integration only after the current boundary passes.
+
+Soft-depend presence is not proof that an external provider is ready. Diagnose integration failures with both plugins' versions and startup order before changing an Iris pack.
+
 ## Soft-depends and load order (`plugin.yml`)
 
 | Plugin | Relation | Role |

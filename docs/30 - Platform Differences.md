@@ -2,6 +2,17 @@
 
 Iris runs the same generation core on Bukkit-family servers and on Fabric, Forge, and NeoForge. Adapters differ in world lifecycle, command surface, permissions, datapacks, and optional tools. Shared config is `settings.json`; mod loaders add `modded.json`. See `01 - Installation & Platforms.md`, `03 - Configuration.md`, and `04 - Commands & Permissions.md`.
 
+## Tutorial: move a pack between platform families
+
+1. Freeze the source pack bytes and seed. Validate and package it on the source platform.
+2. Install the correct destination artifact and copy only the pack into the destination packs root; do not copy a Bukkit world folder into a modded world or vice versa.
+3. Restart so destination registries and forced datapacks are built before world creation.
+4. Validate the pack on the destination, then create a disposable world with the same seed.
+5. Run the same small GoldenHash inputs and the platform-specific fresh-world smoke.
+6. Exercise features marked partial or unavailable in the matrix below with explicit alternatives rather than assuming command parity.
+
+The move passes when pack validation, world creation, restart, and deterministic comparison pass. Matching screenshots are useful visual evidence but do not replace GoldenHash or lifecycle checks.
+
 ## Artifacts and entry points
 
 | Surface | Artifact | Bootstrap |
@@ -35,7 +46,7 @@ Hotload: Bukkit file-watch engine; modded 3s poll. Same invalidate/reload/locale
 | Remove / delete | `/iris remove` optional folder delete | `/iris world delete` wipes chunk/mantle data |
 | Primary / main world | create `main=true` and Bukkit yml registration paths | `modded.json` primary + `routePlayersToPrimaryWorld`; `/iris world mainworld`, `replace-overworld` |
 | Evacuate | `/iris evacuate <world>` | `/iris evacuate [dimension]` → primary/overworld fallback |
-| Studio world | Transient studio world via StudioSVC | Studio dimension under `irisworldgen:studio_*` |
+| Studio world | Transient studio world via StudioSVC; `/iris jigsaw` can select the Jigsaw Studio generator for one activation | Studio dimension under `irisworldgen:studio_*`; no Jigsaw Studio authoring command tree |
 | Folia | Regionized schedulers; pregen `runtimeSchedulerMode` forces `FOLIA` when regionized | N/A (not Bukkit Folia) |
 
 Default pack bootstrap still downloads the IrisDimensions overworld release into `packs/overworld` when missing (shared provisioner).
@@ -55,11 +66,15 @@ Modded startup quarantines a corrupt persistent-dimension registry as `iris-dime
 
 Full command tables and stubs: `04 - Commands & Permissions.md`.
 
+Jigsaw pack resources are shared runtime data, but in-game Jigsaw Studio is not a shared command surface. Bukkit exposes one global Studio project/world and one owning Jigsaw command session. Non-owner block, inventory, interaction, and mutating-command changes are cancelled across that Studio world, while autosave and graph-operation barriers serialize the owner's changes. On Folia, a save schedules every intersecting chunk snapshot on its owning region and writes only after the complete capture validates; these protections and the coordinator have automated coverage but still require the live multi-region smoke in `31 - Operator Runbooks & Smoke Tests.md`. Then copy the saved pack to mod loaders for validation and generation. A strict `VANILLA_PORTABLE` export targets unmodded Minecraft 26.2 and is a separate compatibility gate.
+
 ## Feature matrix
 
 | Feature | Bukkit | Fabric | Forge | NeoForge |
 |---------|--------|--------|-------|----------|
 | Core terrain / biomes / objects / jigsaw | yes | yes | yes | yes |
+| Jigsaw Studio create/grid/marker capture/rules/export | yes | no | no | no |
+| Saved planar/spatial Iris jigsaw runtime | yes | yes | yes | yes |
 | Pack validate / cleanup / download | yes | yes | yes | yes |
 | Pregen | yes (Paper-like / Folia modes) | yes (`moddedPregenInFlight`) | yes | yes |
 | Studio open/close/vscode/package | yes | yes | yes | yes |
@@ -123,9 +138,10 @@ Goldenhash and genhash exist on both surfaces (command placement differs: Bukkit
 
 1. Copy `packs/<key>/` between data folders.
 2. Structure/vanilla imports that need Bukkit: run import on Bukkit, then copy the pack to the mod server.
-3. Align `settings.json` keys that matter for generation (`generator`, `performance`, `treeFeller`); ignore Bukkit-only autoConfiguration if unused.
-4. On modded, set `modded.json` primary/main-world if you need overworld replacement.
-5. Re-run `/iris pack validate` and `/iris datapack status` (modded) or ingest (Bukkit) after moves.
+3. Jigsaw Studio projects: finish atomic saves and pack validation on Bukkit, then copy the saved pack; do not expect `/iris jigsaw` on mod loaders.
+4. Align `settings.json` keys that matter for generation (`generator`, `performance`, `treeFeller`); ignore Bukkit-only autoConfiguration if unused.
+5. On modded, set `modded.json` primary/main-world if you need overworld replacement.
+6. Re-run `/iris pack validate` and `/iris datapack status` (modded) or ingest (Bukkit) after moves.
 
 ## Related
 
@@ -134,6 +150,7 @@ Goldenhash and genhash exist on both surfaces (command placement differs: Bukkit
 - `04 - Commands & Permissions.md`
 - `06 - Worlds & Lifecycle.md`
 - `07 - Pregeneration.md`
+- `21 - Jigsaw Structures.md`
 - `22 - Native Structures & Datapacks.md`
 - `28 - Integrations.md`
 - `29 - Client HUD & Protocol.md`

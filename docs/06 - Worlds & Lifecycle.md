@@ -1,8 +1,45 @@
 # 06 - Worlds & Lifecycle
 
-Iris manages world identity, storage paths, pack installation, create/load/unload/remove/evacuate, and main-world promotion through Bukkit-family lifecycle services. Managed Iris worlds live under the level root as `dimensions/iris/<key>/` with namespace `iris`. Non-studio worlds carry a frozen pack at `iris/pack`; studio worlds bind the live packs directory.
+Iris manages world identity, storage paths, pack installation, creation, persistence, and removal across Bukkit-family servers and the three mod loaders. Bukkit-managed Iris worlds live under the level root as `dimensions/iris/<key>/` with namespace `iris`; modded dimensions persist through `iris-dimensions.json`. Non-Studio worlds carry a frozen pack at `iris/pack`, while Studio worlds bind the live packs directory.
 
 See also: `04 - Commands & Permissions.md`, `02 - Getting Started.md`, `05 - Concepts & Pack Layout.md`, `07 - Pregeneration.md`, `10 - Studio & VSCode Schemas.md`, `30 - Platform Differences.md`.
+
+## Tutorial: promote a tested pack to a persistent world
+
+Prerequisites: a validated pack, a fixed test seed, a current backup, and no active lifecycle or pack-publish operation. The commands below use the installed `overworld` pack and disposable world name `release_candidate`; substitute one pack key consistently when promoting a different pack.
+
+### Bukkit-family
+
+1. Validate the live pack: `/iris pack validate pack=overworld`.
+2. Open it with `/iris studio open overworld seed=1337`, generate representative terrain, then run `/iris studio close` after the final hotload succeeds.
+3. Create a new world with explicit identity: `/iris create release_candidate type=overworld seed=1337`.
+4. On Folia, stop and restart after the staging message. On other Bukkit-family servers, continue after `/iris worlds` lists `release_candidate` as loaded.
+5. Enter it: `/iris tp release_candidate`.
+6. Generate a bounded baseline: `/iris pregen start 352 world=release_candidate center=0,0 gui=false`.
+7. Wait for completion, restart cleanly, return with `/iris tp release_candidate`, and generate one new boundary chunk.
+
+The workflow passes when the world reloads with the same seed and dimension, the pregenerated area loads without generation failures, and new terrain still comes from `<world>/iris/pack`. Never replace or delete that snapshot while its world is loaded. Continued edits under `packs/overworld/` affect Studio only; publish deliberately through `25 - Pack Management.md` or create a new world for breaking height/type changes.
+
+### Fabric / Forge / NeoForge
+
+1. Validate the installed pack: `/iris pack validate overworld`.
+2. Enable a persistent dimension: `/iris world enable irisworldgen:release_candidate overworld 1337`.
+3. Confirm it in `/iris world status`, then enter it with `/iris tp irisworldgen:release_candidate`.
+4. Run `/iris pregen start 352 irisworldgen:release_candidate at 0 0` and wait for completion.
+5. Restart the server. Confirm `/iris world status` restores the same dimension and pack, then run `/iris info irisworldgen:release_candidate` as a gamemaster to verify seed `1337` from `iris-dimensions.json`.
+
+This workflow passes when the dimension is re-injected after restart and generates normally. `/iris world disable` unloads while retaining persistent data; `/iris world delete` is the destructive removal path.
+
+### Lifecycle recovery
+
+| Symptom | Meaning | Recovery |
+|---|---|---|
+| Command reports busy | Another `WORLD_MUTATION` or `PACK_MUTATION` lease owns the lifecycle coordinator | Let that operation finish; do not retry concurrent create/remove/update commands |
+| Folia create succeeds but teleport cannot find the world | Creation staged files and registration only | Restart, then load/teleport as instructed by the staging result |
+| Bukkit load reports missing or inconsistent data | Managed dimension root, registration, or `iris/pack` snapshot is incomplete | Keep the directory, restore from backup, and reconcile registration before retrying; load never redownloads the snapshot |
+| Unload reaches its terminal timeout | World, generator, or scheduler work did not settle within 150 seconds | Allow the requested restart; do not force-delete the live directory |
+| Remove returns `DELETE_QUEUED` | Files were quarantined for startup deletion | Restart and confirm the target is gone before reusing its name |
+| Modded registry is quarantined as `.broken-<timestamp>` | Whole-file JSON could not be parsed | Keep the backup, recreate or repair each logged id with the original pack/dimension/seed, then verify status |
 
 ## Identity and storage
 
@@ -90,8 +127,10 @@ Studio uses `IrisCreator.studio(true)`:
 
 - Does **not** copy the pack into the world folder (except benchmark).
 - Engine data folder is the live pack path; hotloader starts after engine setup.
+- Biome Buffet prepares a changed focus before opening the chunk generation session. Its exclusive fair-stage admission downgrades directly to the retained chunk permit, so no other transition can enter between the focus hotload and that chunk.
 - Studio worlds are transient: unloaded studio worlds are cleaned; `bukkit.yml` studio entries are removed on shutdown cleanup paths.
 - Studio open/close uses `StudioSVC` transition queue (see `10 - Studio & VSCode Schemas.md`).
+- Ordinary Studio suppresses native structure starts only while its initial FULL entry chunk is loading, then restores them for later preview chunks. A failed open never unloads or closes the generator while that exact asynchronous entry request remains active; another Studio open is rejected, cleanup begins after it settles, or its transient world is queued for deletion at the next clean startup if it remains active for another 120 seconds.
 
 ## Load
 
@@ -112,6 +151,8 @@ Load does not re-download packs; the world must already have `iris/pack` content
 3. `IrisToolbelt.evacuateAsync` → `WorldLifecycleService.unloadAsync(world, true)` → `generator.closeAsync()`.
 4. Terminal timeout **150 seconds**: if unload has not settled, marks timeout, requests server restart (`ServerConfigurator.restart`), and fails the future.
 
+`WorldUnloadEvent` stops Iris engine maintenance immediately, but it is not treated as proof that Paper's chunk scheduler has drained. Generator close waits for the raw world-lifecycle backend to confirm a successful unload, and the 26.2 noise pipeline retains one generation lease through terrain generation and worldgen-heightmap priming.
+
 ## Evacuate
 
 `/iris evacuate` moves all players out of the Iris world into another loaded world (or kicks if none). Used as a step inside unload and removal.
@@ -130,6 +171,8 @@ Load does not re-download packs; the world must already have `iris/pack` content
 | Other failure statuses | Partial registry change without delete; quarantine path may remain |
 
 Only safe `iris` namespace dimension paths are mutable. Phase timeouts use 120s and can request restart on stuck phases.
+
+With `delete=true`, Iris records the exact quarantine name in the durable startup queue before moving the world directory. Immediate cleanup and startup retry both snapshot every directory's direct children before deleting them, reject symbolic links and special filesystem entries, and retain the queue entry with the full error when a concurrent writer or filesystem failure leaves content behind.
 
 ## Main world promotion
 

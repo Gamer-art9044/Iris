@@ -6,6 +6,12 @@ Before starting this publication procedure, complete `87 - Maintainer - Release 
 
 Reference values below assume the current `gradle.properties`: `irisVersion=4.0.0-26.2`, `minecraftVersion=26.2`, `fabricLoaderVersion=0.19.3`, `forgeVersion=26.2-65.0.4`, `neoForgeVersion=26.2.0.12-beta`. For a Minecraft version bump, do `85 - Maintainer - MC Version Bump.md` first, then start this checklist.
 
+## How to execute this checklist
+
+Use one immutable commit and one JDK 25 environment from preflight through publication. Record build, automated, startup, gameplay, determinism, and publication evidence as separate results; a later successful gate does not erase an earlier unexplained failure. Stop at the first failed required item, fix it on a new candidate commit, and restart the checklist from preflight.
+
+Publication remains manual. Commands in this document produce local artifacts until the explicit publish section; do not upload, tag, or announce from an unclean or differently tested tree.
+
 ## a. Preflight
 
 - [ ] Working tree clean on the exact commit you intend to tag (`git status` shows nothing to commit).

@@ -2,6 +2,12 @@
 
 `gradle.properties` `minecraftVersion` is the single source of truth for the target Minecraft version. Most build outputs derive from it. This document lists every edit required to move Iris to a new Minecraft version, in order.
 
+## How to run the bump
+
+Use a dedicated branch or worktree and begin from a green build. Record the old and new Minecraft, Bukkit API, loader, datapack-format, and NMS binding values before editing. Complete the ordered steps without skipping ahead, run the focused gate after each platform boundary, then run the full all-platform build and disposable-server lifecycle smokes.
+
+Stop when an upstream API, mapping, or loader artifact is unavailable; do not hide the gap behind a legacy fallback. The bump is complete only when generated artifact names, metadata ranges, data fixers, NMS selection, tests, and documentation all agree on the same target.
+
 ## Source of truth
 
 `gradle.properties`:

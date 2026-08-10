@@ -4,6 +4,29 @@ An Iris pack is a directory of JSON, binary objects, and optional assets under t
 
 See also: `00 - Overview.md`, `01 - Installation & Platforms.md`, `10 - Studio & VSCode Schemas.md`, `11 - Dimensions.md`, `24 - Pack Mods & Snippets.md`, `25 - Pack Management.md`.
 
+## Tutorial: trace one resource through a pack
+
+Prerequisites: a loadable pack under the correct platform packs root, command permission, and an editor that preserves JSON syntax. Use this exercise before authoring a large pack:
+
+1. Validate the pack before editing: `/iris pack validate pack=overworld` on Bukkit, or `/iris pack validate overworld` on a mod loader. Substitute your pack key consistently when tracing another pack.
+2. Open `dimensions/<dimension>.json` and pick one key from its `regions` array.
+3. Open `regions/<key>.json` and pick one root key from `landBiomes`.
+4. Open `biomes/<key>.json` and follow its first generator, object, decorator, or structure reference to the matching registrant folder.
+5. Confirm every key is the file path relative to that registrant folder with the extension removed.
+6. Open the pack in Studio and focus that region or biome while editing. Save one valid change, wait for hotload, then rerun pack validation before creating a production snapshot.
+
+The exercise passes when every reference resolves without guessing a namespace or filename, Studio hotload succeeds, and validation has no blocking errors. If a file exists but never appears, work backward from the dimension graph; unreferenced files are valid but unreachable.
+
+### Resource-resolution recovery
+
+| Symptom | Likely cause | Recovery |
+|---|---|---|
+| File exists but its key is unresolved | Extension or type-folder prefix was included, path case differs, or the reference starts from the wrong registrant root | Rebuild the key as the exact relative path under the type folder, without extension |
+| File validates but never generates | It is not reachable from the active dimension → region → biome graph, or its chance/filter excludes it | Trace references from the dimension root and test with Studio focus/buffet modes |
+| Studio schema does not list a new resource | Workspace schema/resource enums are stale | Run `/iris studio update dimension=<pack>` on Bukkit or `/iris studio update <pack>` on modded |
+| Two files appear to share a key | Dotted variants or same-base-name candidates are ambiguous | Keep one canonical filename; Iris warns and otherwise selects the sorted first match |
+| Production world ignores a corrected resource | It is reading its copied snapshot | Validate in Studio, then use the explicit world-update workflow or create a new world |
+
 ## Content model
 
 | Concept | Role |

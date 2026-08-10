@@ -4,6 +4,56 @@ Surface composition is layered block palettes on biomes (and default rock/fluid 
 
 Related: `11 - Dimensions.md`, `12 - Regions.md`, `13 - Biomes.md`, `14 - Generators & Noise.md`, `15 - Caves & Carving.md`, `17 - Trees, Fungi, Coral, Crystals, Formations, Ruins.md`, `20 - Object Placement.md`, `24 - Pack Mods & Snippets.md`.
 
+## Tutorial: build a surface, flower scatter, and deposit
+
+Start with the flat generator from `26 - Example - Minimal Dimension.md`. Save the following complete biome as `biomes/tutorial/surface-test.json`, list `tutorial/surface-test` in one region's `landBiomes`, and temporarily set the dimension `focus` to the same key:
+
+```json
+{
+  "name": "Surface Test",
+  "derivative": "minecraft:plains",
+  "vanillaDerivative": "minecraft:plains",
+  "generators": [
+    { "generator": "flat", "min": 16, "max": 16 }
+  ],
+  "layers": [
+    {
+      "minHeight": 1,
+      "maxHeight": 1,
+      "palette": [{ "block": "minecraft:grass_block" }]
+    },
+    {
+      "minHeight": 3,
+      "maxHeight": 3,
+      "palette": [{ "block": "minecraft:dirt" }]
+    }
+  ],
+  "decorators": [
+    {
+      "chance": 0.05,
+      "palette": [{ "block": "minecraft:dandelion" }]
+    }
+  ],
+  "deposits": [
+    {
+      "minHeight": 0,
+      "maxHeight": 96,
+      "minSize": 3,
+      "maxSize": 6,
+      "minPerChunk": 1,
+      "maxPerChunk": 2,
+      "palette": [{ "block": "minecraft:coal_ore" }],
+      "varience": 2
+    }
+  ]
+}
+```
+
+1. Validate and open Studio on seed `1337`.
+2. Generate new chunks and inspect a cross-section. Success is one grass block over three dirt blocks, dandelions scattered above valid surfaces, and coal clumps only inside the configured absolute Y band.
+3. If the surface is wrong, remove `decorators` and `deposits` and verify `layers` first. If flowers do not appear, raise `chance` temporarily and confirm `decorate` remains true on the dimension. If deposits do not appear, verify the absolute Y range intersects the generated terrain and keep the code-authoritative spelling `varience`.
+4. Remove dimension focus after the biome works, then tune each subsystem independently using the full tables below.
+
 ## Surfaces and material layers
 
 ### Biome palette layer (`IrisBiomePaletteLayer`)
@@ -306,13 +356,16 @@ Deepslate remap (`dimensions/overworld.json`):
 }
 ```
 
-## Authoring workflows
+## Tune each surface-detail subsystem
+
+Start from a focused biome that already produces correct height. Complete and verify each stage before adding the next; this makes a wrong palette, placement filter, or deposit range independently visible.
 
 ### Surface
 
 1. Define 1–3 `layers` from top soil to subsoil; leave stone to `rockPalette`.
 2. Set `wall` for cliff biomes; set `seaLayers` for oceans.
 3. Use `lockLayers` only for mesa stripes.
+4. Generate fresh Studio chunks and inspect flat ground, slopes, exposed walls, and underwater columns before continuing.
 
 ### Decorators
 
@@ -320,6 +373,7 @@ Deepslate remap (`dimensions/overworld.json`):
 2. Use `partOf` for shore/sea/ceiling-only content.
 3. For cactus/bamboo, set `stackMin`/`stackMax` and optional `topPalette`.
 4. Extract repeated decorators into `snippet/decorator/*.json` and reference via pack snippets.
+5. Verify both places where the decorator should appear and nearby places where its filter should reject it.
 
 ### Deposits
 
@@ -327,6 +381,7 @@ Deepslate remap (`dimensions/overworld.json`):
 2. Region/biome deposits add local minerals.
 3. Use `depositVariants` for deepslate or mod ore remaps by Y.
 4. Tune `varience` for clump shape diversity; keep sizes moderate for performance.
+5. Inspect multiple Y bands in new chunks. The workflow passes when the surface palette is stable, decorators honor their part/filter rules, and deposits remain inside their configured material and height targets.
 
 ## Practical notes
 

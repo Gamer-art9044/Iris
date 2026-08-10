@@ -2,6 +2,27 @@
 
 An Iris object is a sparse voxel volume (block states plus block-entity data) stored as `.iob` under a pack's `objects/` folder. This guide covers creating, importing, and editing objects. Generation wiring is `20 - Object Placement.md`; jigsaw pieces are `21 - Jigsaw Structures.md`.
 
+## Tutorial outcome
+
+Build a small object in Studio, select its exact bounds, save it under a stable key, paste it once for geometry verification, and then wire it into generation in `20 - Object Placement.md`. Use a disposable object key until the bounds and origin are correct; overwriting an object has no automatic backup and does not rewrite copies already placed in chunks.
+
+The object tutorial is complete when `/iris object analyze <key>` reports the expected dimensions and block count, `/iris object paste <key> edit=true` aligns correctly at the target, and a save/reopen cycle preserves block states and block-entity data.
+
+Prerequisites: a writable pack, operator access on a Bukkit-family server, and a finished test build. A Studio world is the shortest path:
+
+```text
+/iris studio open <pack> seed=1337
+/iris object wand
+```
+
+1. Left-click one selection corner and right-click the opposite corner. Run `/iris object x+y` if the rough selection should tighten around the build while keeping its base.
+2. Save a stable path with `/iris object save tutorial/lookout overwrite=true`. Outside an Iris world, use `/iris object save dimension=<pack> tutorial/lookout overwrite=true`.
+3. Confirm that `objects/tutorial/lookout.iob` exists and run `/iris object analyze tutorial/lookout`.
+4. Run `/iris object paste tutorial/lookout edit=true`; inspect alignment and block-entity data, make any edits, and save the same key with `overwrite=true`.
+5. Close and reopen Studio, paste the object again, then complete the natural-placement tutorial in `20 - Object Placement.md`.
+
+If the save cannot resolve a pack, pass `dimension=<pack>`. If the paste is offset, inspect air padding inside the selection because the object origin is the bounding-box center. If a converted schematic has empty chests, signs, or spawners, use the live paste-and-wand route in section 3.2.
+
 ## 1. What an object is
 
 An object stores bounding box (`w × h × d`), a sparse block map, and a sparse tile-data map. Origin is always the **center** of the bounding box (`w/2, h/2, d/2`, integer division) — derived from dimensions, never stored, recomputed on load.

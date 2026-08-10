@@ -80,7 +80,10 @@ public record StructureWriteResult(
         MODIFIED_RESOURCE,
         MISSING_OWNED_RESOURCE,
         NON_FILE_RESOURCE,
-        INVALID_MANIFEST
+        INVALID_MANIFEST,
+        PROVENANCE_MISMATCH,
+        STALE_MANIFEST,
+        STALE_READ_SET
     }
 
     public record Conflict(
@@ -114,6 +117,31 @@ public record StructureWriteResult(
 
         public static Conflict invalidManifest(String relativePath, String detail) {
             return new Conflict(relativePath, ConflictReason.INVALID_MANIFEST, "", "", detail);
+        }
+
+        public static Conflict staleManifest(String relativePath, String expectedHash, String actualHash) {
+            return new Conflict(
+                    relativePath,
+                    ConflictReason.STALE_MANIFEST,
+                    expectedHash,
+                    actualHash,
+                    "Ownership manifest changed after the graph edit was loaded"
+            );
+        }
+
+        public static Conflict staleReadSet(
+                String relativePath,
+                String expectedHash,
+                String actualHash,
+                String detail
+        ) {
+            return new Conflict(
+                    relativePath,
+                    ConflictReason.STALE_READ_SET,
+                    expectedHash,
+                    actualHash,
+                    detail
+            );
         }
     }
 }

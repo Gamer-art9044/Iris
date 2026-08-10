@@ -40,6 +40,7 @@ import art.arcane.iris.core.project.IrisProjectCopier;
 import art.arcane.iris.core.runtime.StudioOpenCoordinator;
 import art.arcane.iris.core.runtime.TransientWorldCleanupSupport;
 import art.arcane.iris.core.runtime.WorldDeletionQueue;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioActivation;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -497,6 +498,81 @@ public class StudioSVC implements IrisService {
                 });
     }
 
+    public CompletableFuture<StudioOpenCoordinator.StudioOpenResult> openTracked(
+            VolmitSender sender,
+            long seed,
+            String dimension,
+            StudioOpenCoordinator.StudioOpenKind openKind,
+            Runnable beforeOpen,
+            Consumer<World> onDone
+    ) {
+        if (blockIfPackBroken(sender, dimension)) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("Studio pack '" + dimension + "' has blocking validation errors."));
+        }
+        return studioTransitions.submit(() -> replaceActiveProjectTracked(
+                sender,
+                seed,
+                dimension,
+                Objects.requireNonNull(openKind, "Studio open kind"),
+                Objects.requireNonNull(beforeOpen, "Studio before-open callback"),
+                Objects.requireNonNull(onDone, "Studio open completion callback")));
+    }
+
+    private CompletableFuture<StudioOpenCoordinator.StudioOpenResult> replaceActiveProjectTracked(
+            VolmitSender sender,
+            long seed,
+            String dimension,
+            StudioOpenCoordinator.StudioOpenKind openKind,
+            Runnable beforeOpen,
+            Consumer<World> onDone
+    ) {
+        return closeActiveProject().thenCompose(closeResult -> {
+            if (closeResult == null) {
+                return CompletableFuture.failedFuture(
+                        new IllegalStateException("Studio close completed without a result."));
+            }
+            if (closeResult.failureCause() != null) {
+                return CompletableFuture.failedFuture(closeResult.failureCause());
+            }
+            beforeOpen.run();
+            return beginStudioOpenTracked(sender, seed, dimension, openKind, onDone);
+        });
+    }
+
+    private CompletableFuture<StudioOpenCoordinator.StudioOpenResult> beginStudioOpenTracked(
+            VolmitSender sender,
+            long seed,
+            String dimension,
+            StudioOpenCoordinator.StudioOpenKind openKind,
+            Consumer<World> onDone
+    ) {
+        IrisProject project = new IrisProject(new File(getWorkspaceFolder(), dimension));
+        activeProject = project;
+        CompletableFuture<StudioOpenCoordinator.StudioOpenResult> opening;
+        try {
+            opening = project.open(sender, seed, openKind, onDone);
+        } catch (IrisException exception) {
+            if (activeProject == project) {
+                activeProject = null;
+            }
+            return CompletableFuture.failedFuture(exception);
+        }
+
+        activeOpen = opening;
+        return opening.thenApply(result -> Objects.requireNonNull(
+                        result,
+                        "Studio open completed without a result."))
+                .whenComplete((result, throwable) -> {
+                    if (activeOpen == opening) {
+                        activeOpen = null;
+                    }
+                    if (throwable != null && activeProject == project && !project.isOpen()) {
+                        activeProject = null;
+                    }
+                });
+    }
+
     private CompletableFuture<Void> replaceActiveProject(
             VolmitSender sender,
             long seed,
@@ -543,7 +619,11 @@ public class StudioSVC implements IrisService {
         activeProject = project;
         CompletableFuture<StudioOpenCoordinator.StudioOpenResult> opening;
         try {
-            opening = project.open(sender, seed, onDone);
+            opening = project.open(
+                    sender,
+                    seed,
+                    StudioOpenCoordinator.StudioOpenKind.STANDARD,
+                    onDone);
         } catch (IrisException e) {
             if (activeProject == project) {
                 activeProject = null;
@@ -592,6 +672,15 @@ public class StudioSVC implements IrisService {
                     false,
                     null
             ));
+        }
+
+        JigsawStudioActivation.Request jigsawRequest = JigsawStudioActivation.getRequest(project.getName());
+        if (jigsawRequest != null) {
+            String protectionFailure = JigsawStudioService.get()
+                    .closeProtectionFailure(jigsawRequest.requestId());
+            if (protectionFailure != null) {
+                return CompletableFuture.failedFuture(new IllegalStateException(protectionFailure));
+            }
         }
 
         IrisLogging.debug("Closing Active Project");

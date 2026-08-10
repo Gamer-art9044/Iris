@@ -141,7 +141,7 @@ public final class ModdedParityProbe {
                 .maxHeight(dimension.getMaxHeight())
                 .build();
         EngineTarget target = new EngineTarget(world, dimension, data);
-        Engine engine = new IrisEngine(target, false);
+        Engine engine = new IrisEngine(target, IrisEngine.InitializationMode.RUNTIME);
 
         settle();
         int minY = dimension.getMinHeight();

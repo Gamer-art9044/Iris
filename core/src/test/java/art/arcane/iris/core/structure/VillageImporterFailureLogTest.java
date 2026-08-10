@@ -13,7 +13,6 @@ import static org.junit.Assert.assertTrue;
  * instead of re-printing.
  */
 public class VillageImporterFailureLogTest {
-    /** One throw site, mirroring a repeated in-loop failure (same class, message, and top frame). */
     private static Throwable raise(boolean illegalArgument, String message) {
         return illegalArgument ? new IllegalArgumentException(message) : new IllegalStateException(message);
     }
@@ -31,7 +30,7 @@ public class VillageImporterFailureLogTest {
     }
 
     @Test
-    public void distinctFailuresEachPrintOnce() {
+    public void distinctFailureMessagesAndCategoriesEachPrintOnce() {
         VillageImporter.resetFailureLogState();
 
         assertTrue(VillageImporter.shouldPrintFullTrace(raise(true, "a")));

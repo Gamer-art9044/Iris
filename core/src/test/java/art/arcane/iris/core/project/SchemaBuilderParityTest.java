@@ -253,6 +253,17 @@ public class SchemaBuilderParityTest {
     }
 
     @Test
+    public void jigsawStructureSchemaExposesBranchFailurePolicy() {
+        JSONObject schema = new SchemaBuilder(IrisStructure.class, structureSchemaData()).construct();
+        JSONObject policy = rootProperties(schema).getJSONObject("branchFailurePolicy");
+        String policyDefinition = definitionKey(policy);
+
+        assertEquals(List.of("FAIL_ASSEMBLY", "TERMINATE_BRANCH"),
+                oneOfValues(schema.getJSONObject("definitions"), policyDefinition));
+        assertTrue(policy.getString("description").contains("Default Value is FAIL_ASSEMBLY"));
+    }
+
+    @Test
     public void structurePolicyArraysUseLiveRegistryKeys() {
         JSONObject schema = new SchemaBuilder(StructureArrayModel.class, (IrisData) null).construct();
         JSONObject disabled = schema.getJSONObject("properties").getJSONObject("disabled");

@@ -30,6 +30,7 @@ import java.io.IOException;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 public class StructureResourceBundleGraphCompilerTest {
     @Test
@@ -74,7 +75,7 @@ public class StructureResourceBundleGraphCompilerTest {
                         "{\"startPool\":\"start\",\"maxDepth\":1,\"maxSizeChunks\":1}")
                 .build();
 
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(StructureGraphValidationException.class,
                 () -> StructureResourceBundleGraphCompiler.requireViable(bundle));
     }
 
@@ -91,6 +92,88 @@ public class StructureResourceBundleGraphCompilerTest {
     }
 
     @Test
+    public void sampledFailureReportsItsSeedStatusAndRuntimeDetailInsteadOfAWarning() throws IOException {
+        String sourceConnector = "{\"position\":{\"x\":0,\"y\":0,\"z\":0},"
+                + "\"direction\":\"EAST_POSITIVE_X\",\"top\":\"UP_POSITIVE_Y\","
+                + "\"pool\":\"target\",\"name\":\"source\",\"targetName\":\"door\","
+                + "\"joint\":\"ROLLABLE\"}";
+        StructureResourceBundle bundle = baseBundle()
+                .resource("objects/start.iob", object(1, 1, 1))
+                .resource("objects/orphan.iob", object(1, 1, 1))
+                .textResource("jigsaw-pieces/start.json",
+                        "{\"object\":\"start\",\"connectors\":[" + sourceConnector
+                                + "],\"rotatable\":false}")
+                .textResource("jigsaw-pieces/orphan.json",
+                        "{\"object\":\"orphan\",\"connectors\":[],\"rotatable\":false}")
+                .textResource("jigsaw-pools/start.json",
+                        "{\"pieces\":[{\"piece\":\"start\",\"weight\":1}]}")
+                .textResource("jigsaw-pools/target.json",
+                        "{\"pieces\":[{\"piece\":\"orphan\",\"weight\":1}]}")
+                .textResource("structures/test.json",
+                        "{\"startPool\":\"start\",\"maxDepth\":2,\"maxSizeChunks\":1}")
+                .build();
+
+        StructureGraphValidationException failure = assertThrows(
+                StructureGraphValidationException.class,
+                () -> StructureResourceBundleGraphCompiler.requireViable(bundle));
+
+        assertTrue(failure.getMessage(), failure.getMessage().contains(
+                "sampled assembly at seed 0 returned FAILED_UNCAPPED"));
+        assertTrue(failure.getMessage(), failure.getMessage().contains(
+                "Connector pool 'target' could not place a piece and has no direct fallback"));
+    }
+
+    @Test
+    public void branchTerminationPolicyAcceptsTheSameUnmatchedOptionalBranch() throws IOException {
+        String sourceConnector = "{\"position\":{\"x\":0,\"y\":0,\"z\":0},"
+                + "\"direction\":\"EAST_POSITIVE_X\",\"top\":\"UP_POSITIVE_Y\","
+                + "\"pool\":\"target\",\"name\":\"source\",\"targetName\":\"door\","
+                + "\"joint\":\"ROLLABLE\"}";
+        StructureResourceBundle bundle = baseBundle()
+                .resource("objects/start.iob", object(1, 1, 1))
+                .resource("objects/orphan.iob", object(1, 1, 1))
+                .textResource("jigsaw-pieces/start.json",
+                        "{\"object\":\"start\",\"connectors\":[" + sourceConnector
+                                + "],\"rotatable\":false}")
+                .textResource("jigsaw-pieces/orphan.json",
+                        "{\"object\":\"orphan\",\"connectors\":[],\"rotatable\":false}")
+                .textResource("jigsaw-pools/start.json",
+                        "{\"pieces\":[{\"piece\":\"start\",\"weight\":1}]}")
+                .textResource("jigsaw-pools/target.json",
+                        "{\"pieces\":[{\"piece\":\"orphan\",\"weight\":1}]}")
+                .textResource("structures/test.json",
+                        "{\"startPool\":\"start\",\"maxDepth\":2,\"maxSizeChunks\":1,"
+                                + "\"branchFailurePolicy\":\"TERMINATE_BRANCH\"}")
+                .build();
+
+        StructureResourceBundleGraphCompiler.requireViable(bundle);
+
+        StructureGraphCompilation compilation = StructureResourceBundleGraphCompiler.compile(bundle).getFirst();
+        assertTrue(compilation.isAssemblyViable());
+        assertTrue(compilation.getAssemblySamples().stream()
+                .allMatch(sample -> sample.outcome().status() == StructureAssemblyStatus.COMPLETE));
+    }
+
+    @Test
+    public void structuralErrorDiagnosticRemainsAuthoritative() {
+        StructureResourceBundle bundle = baseBundle()
+                .textResource("jigsaw-pieces/start.json",
+                        "{\"object\":\"missing\",\"connectors\":[],\"rotatable\":false}")
+                .textResource("jigsaw-pools/start.json",
+                        "{\"pieces\":[{\"piece\":\"start\",\"weight\":1}]}")
+                .textResource("structures/test.json",
+                        "{\"startPool\":\"start\",\"maxDepth\":1,\"maxSizeChunks\":1}")
+                .build();
+
+        StructureGraphValidationException failure = assertThrows(
+                StructureGraphValidationException.class,
+                () -> StructureResourceBundleGraphCompiler.requireViable(bundle));
+
+        assertTrue(failure.getMessage(), failure.getMessage().contains(
+                "Jigsaw piece 'start' references missing object 'missing'"));
+    }
+
+    @Test
     public void truncatedObjectFrameIsRejectedBeforePublish() throws IOException {
         StructureResourceBundle bundle = baseBundle()
                 .resource("objects/start.iob", truncatedObject(1, 1, 1))
@@ -102,7 +185,7 @@ public class StructureResourceBundleGraphCompilerTest {
                         "{\"startPool\":\"start\",\"maxDepth\":1,\"maxSizeChunks\":1}")
                 .build();
 
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(StructureGraphValidationException.class,
                 () -> StructureResourceBundleGraphCompiler.requireViable(bundle));
     }
 

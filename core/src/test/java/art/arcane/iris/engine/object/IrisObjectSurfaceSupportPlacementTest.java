@@ -19,15 +19,21 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class IrisObjectSurfaceSupportPlacementTest {
     private static final int SURFACE_Y = 80;
 
     private IrisData data;
+    private Engine engine;
 
     @Before
     public void bindPlatform() {
@@ -41,9 +47,10 @@ public class IrisObjectSurfaceSupportPlacementTest {
 
         @SuppressWarnings("unchecked")
         ProceduralStream<Double> heightStream = mock(ProceduralStream.class);
+        when(heightStream.get(anyDouble(), anyDouble())).thenReturn((double) SURFACE_Y);
         IrisComplex complex = mock(IrisComplex.class);
         when(complex.getHeightStream()).thenReturn(heightStream);
-        Engine engine = mock(Engine.class);
+        engine = mock(Engine.class);
         when(engine.getHeight()).thenReturn(256);
         when(engine.getComplex()).thenReturn(complex);
         data = mock(IrisData.class);
@@ -146,6 +153,59 @@ public class IrisObjectSurfaceSupportPlacementTest {
     }
 
     @Test
+    public void explicitStructurePiecePlacesAfterItsStudioEngineCloses() {
+        when(data.getEngine()).thenReturn(null);
+        SurfacePlacer placer = new SurfacePlacer();
+        IrisObjectPlacement placement = placement(ObjectPlaceMode.STRUCTURE_PIECE);
+
+        assertTrue(place(placer, placement, SURFACE_Y) >= 0);
+        assertFalse(placer.written().isEmpty());
+        verify(data, never()).getEngine();
+    }
+
+    @Test
+    public void targetWorldEngineSuppliesRequestedSlopeContext() {
+        when(data.getEngine()).thenReturn(null);
+        SurfacePlacer placer = new SurfacePlacer(engine);
+        IrisObjectPlacement placement = placement(ObjectPlaceMode.STRUCTURE_PIECE);
+        placement.setRotateTowardsSlope(true);
+
+        assertTrue(place(placer, placement, SURFACE_Y) >= 0);
+        assertFalse(placer.written().isEmpty());
+        verify(data, never()).getEngine();
+    }
+
+    @Test
+    public void forcePlaceBypassesSlopeConditionWithoutAnEngine() {
+        when(data.getEngine()).thenReturn(null);
+        SurfacePlacer placer = new SurfacePlacer();
+        IrisObjectPlacement placement = placement(ObjectPlaceMode.STRUCTURE_PIECE);
+        placement.setSlopeCondition(new IrisSlopeClip().setMinimumSlope(100).setMaximumSlope(100));
+        placement.setForcePlace(true);
+
+        assertTrue(place(placer, placement, SURFACE_Y) >= 0);
+        assertFalse(placer.written().isEmpty());
+        verify(data, never()).getEngine();
+    }
+
+    @Test
+    public void forcePlaceStillRequiresSlopeRotationContext() {
+        when(data.getEngine()).thenReturn(null);
+        SurfacePlacer placer = new SurfacePlacer();
+        IrisObjectPlacement placement = placement(ObjectPlaceMode.STRUCTURE_PIECE);
+        placement.setSlopeCondition(new IrisSlopeClip().setMinimumSlope(100).setMaximumSlope(100));
+        placement.setForcePlace(true);
+        placement.setRotateTowardsSlope(true);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> place(placer, placement, SURFACE_Y));
+
+        assertTrue(error.getMessage().contains("require an active Iris engine"));
+        assertTrue(placer.written().isEmpty());
+        verify(data, never()).getEngine();
+    }
+
+    @Test
     public void floatingIsNotGuarded() {
         SurfacePlacer placer = new SurfacePlacer();
         placer.carve(0, SURFACE_Y, 0);
@@ -168,6 +228,8 @@ public class IrisObjectSurfaceSupportPlacementTest {
     private IrisObject object() {
         PlatformBlockState solid = mock(PlatformBlockState.class);
         when(solid.isSolid()).thenReturn(true);
+        when(solid.key()).thenReturn("minecraft:stone");
+        when(solid.materialKey()).thenReturn("minecraft:stone");
         IrisObject object = new IrisObject(3, 3, 3);
         object.setUnsigned(1, 0, 1, solid);
         object.setUnsigned(1, 1, 1, solid);
@@ -177,6 +239,15 @@ public class IrisObjectSurfaceSupportPlacementTest {
     private static final class SurfacePlacer implements IObjectPlacer {
         private final Set<String> carved = new HashSet<>();
         private final Map<String, PlatformBlockState> written = new HashMap<>();
+        private final Engine engine;
+
+        private SurfacePlacer() {
+            this(null);
+        }
+
+        private SurfacePlacer(Engine engine) {
+            this.engine = engine;
+        }
 
         private void carve(int x, int y, int z) {
             carved.add(blockKey(x, y, z));
@@ -251,7 +322,7 @@ public class IrisObjectSurfaceSupportPlacementTest {
 
         @Override
         public Engine getEngine() {
-            return null;
+            return engine;
         }
 
         private static String blockKey(int x, int y, int z) {

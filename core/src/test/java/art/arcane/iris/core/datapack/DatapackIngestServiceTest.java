@@ -37,6 +37,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -309,11 +310,11 @@ public class DatapackIngestServiceTest {
         StructureKey alphaSource = StructureKey.parse("example:alpha");
         StructureKey zetaSource = StructureKey.parse("example:zeta");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        StructureWriteResult alphaWrite = writer.write(
+        StructureWriteResult alphaWrite = writer.writeManagedDatapack(
                 importedBundle(alphaKey, alphaSource, "alpha"),
                 StructureWriteMode.ADD_ONLY
         );
-        StructureWriteResult zetaWrite = writer.write(
+        StructureWriteResult zetaWrite = writer.writeManagedDatapack(
                 importedBundle(zetaKey, zetaSource, "zeta"),
                 StructureWriteMode.ADD_ONLY
         );
@@ -360,7 +361,7 @@ public class DatapackIngestServiceTest {
         StructureKey targetKey = StructureKey.parse("iris:owned");
         StructureKey sourceKey = StructureKey.parse("example:owned");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        StructureWriteResult write = writer.write(
+        StructureWriteResult write = writer.writeManagedDatapack(
                 importedBundle(targetKey, sourceKey, "owned"),
                 StructureWriteMode.ADD_ONLY
         );
@@ -391,6 +392,29 @@ public class DatapackIngestServiceTest {
         assertFalse(stagingTarget.exists());
         assertFalse(worldTarget.exists());
         assertFalse(Files.readString(manifest.toPath(), StandardCharsets.UTF_8).contains("managed"));
+    }
+
+    @Test
+    public void removalPreservesAnOrdinaryEditableBundleWithMatchingInventory() throws Exception {
+        File root = temporaryFolder.newFolder("ordinary-editable-removal-root");
+        File editablePack = temporaryFolder.newFolder("ordinary-editable-removal-pack");
+        StructureKey targetKey = StructureKey.parse("iris:owned");
+        StructureKey sourceKey = StructureKey.parse("example:owned");
+        StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
+        assertEquals(StructureWriteResult.Status.ADDED, writer.write(
+                importedBundle(targetKey, sourceKey, "ordinary"),
+                StructureWriteMode.ADD_ONLY
+        ).status());
+        DatapackIngestService.Entry entry = entry("managed", "v1", "1", "sha");
+        String targetId = editablePack.getAbsolutePath();
+        entry.importedTargets.put(targetId, "revision");
+        entry.importedBundles.put(targetId, Map.of(targetKey.value(), sourceKey.value()));
+        writeManifest(root, entry);
+
+        assertTrue(DatapackIngestService.removeLocked(null, entry.id, root, List.of()));
+
+        assertEquals("ordinary", Files.readString(new File(editablePack, "objects/owned.iob").toPath()));
+        assertTrue(Files.exists(writer.ownershipManifestPath(targetKey)));
     }
 
     @Test
@@ -1235,6 +1259,42 @@ public class DatapackIngestServiceTest {
     }
 
     @Test
+    public void installedStructureScopeReadsEffectiveStructureSetsWithoutManifestMigration() throws Exception {
+        DatapackIngestService.Entry entry = entry("managed", "v1", "1", "sha");
+        File installed = datapackDirectory("effective-scope");
+        Path set = new File(installed,
+                "data/nova_structures/worldgen/structure_set/illager_barracks.json").toPath();
+        Files.createDirectories(set.getParent());
+        Files.writeString(set, "{}", StandardCharsets.UTF_8);
+        DatapackIngestService.writeOwnership(installed, entry);
+
+        DatapackIngestService.StructureScopeResources resources =
+                DatapackIngestService.scanInstalledStructureScope(installed, entry);
+
+        assertEquals(entry.url, resources.source());
+        assertEquals(List.of(), resources.structureKeys());
+        assertEquals(List.of("nova_structures:illager_barracks"), resources.structureSetKeys());
+    }
+
+    @Test
+    public void installedStructureScopeDoesNotClaimOverridesStrippedFromEffectiveCopy() throws Exception {
+        DatapackIngestService.Entry entry = entry("managed-stripped", "v1", "1", "sha");
+        File installed = datapackDirectory("effective-stripped-scope");
+        Path retained = new File(installed,
+                "data/nova_structures/worldgen/structure_set/taverns.json").toPath();
+        Files.createDirectories(retained.getParent());
+        Files.writeString(retained, "{}", StandardCharsets.UTF_8);
+        Files.writeString(new File(installed, ".iris-overrides-stripped").toPath(), "", StandardCharsets.UTF_8);
+        DatapackIngestService.writeOwnership(installed, entry);
+
+        DatapackIngestService.StructureScopeResources resources =
+                DatapackIngestService.scanInstalledStructureScope(installed, entry);
+
+        assertEquals(List.of("nova_structures:taverns"), resources.structureSetKeys());
+        assertFalse(resources.structureSetKeys().contains("minecraft:villages"));
+    }
+
+    @Test
     public void unchangedContentRefreshesRecoverableOwnershipMetadataWithoutRestart() throws Exception {
         DatapackIngestService.Entry current = new DatapackIngestService.Entry();
         current.id = "managed";
@@ -1308,13 +1368,82 @@ public class DatapackIngestServiceTest {
     }
 
     @Test
+    public void deterministicPartialImportIsRetainedWithoutRetryingSameRevision() {
+        DatapackIngestService.Entry entry = entry("managed", "v2", "2", "sha-two");
+        entry.importedBundles.put("pack", Map.of("iris:test_castle", "test:castle"));
+
+        DatapackIngestService.recordDeterministicImportAttempt(entry, "pack");
+
+        assertFalse(DatapackIngestService.importPending(entry, "pack"));
+        assertEquals(Map.of("iris:test_castle", "test:castle"), entry.importedBundles.get("pack"));
+        assertFalse(entry.importedTargets.containsKey("pack"));
+    }
+
+    @Test
+    public void changedSourceRevisionRetriesDeterministicImportAttempt() {
+        DatapackIngestService.Entry entry = entry("managed", "v2", "2", "sha-two");
+        DatapackIngestService.recordDeterministicImportAttempt(entry, "pack");
+
+        entry.sha1 = "sha-three";
+
+        assertTrue(DatapackIngestService.importPending(entry, "pack"));
+    }
+
+    @Test
+    public void changedImporterFormatRetriesDeterministicImportAttempt() {
+        DatapackIngestService.Entry entry = entry("managed", "v2", "2", "sha-two");
+        entry.importAttempts.put("pack", DatapackIngestService.importRevision(entry, 1));
+
+        assertTrue(DatapackIngestService.importPending(entry, "pack"));
+    }
+
+    @Test
+    public void provenanceImportFormatRetriesVersionTwoEditableImports() {
+        DatapackIngestService.Entry entry = entry("managed", "v2", "2", "sha-two");
+        entry.importedTargets.put("pack", DatapackIngestService.importRevision(entry, 2));
+
+        assertTrue(DatapackIngestService.importPending(entry, "pack"));
+    }
+
+    @Test
+    public void newTargetRetriesDeterministicImportAttempt() {
+        DatapackIngestService.Entry entry = entry("managed", "v2", "2", "sha-two");
+        DatapackIngestService.recordDeterministicImportAttempt(entry, "pack-one");
+
+        assertTrue(DatapackIngestService.importPending(entry, "pack-two"));
+    }
+
+    @Test
+    public void retryableImportPreparationClearsPriorAttempt() {
+        DatapackIngestService.Entry entry = entry("managed", "v2", "2", "sha-two");
+        DatapackIngestService.recordDeterministicImportAttempt(entry, "pack");
+
+        DatapackIngestService.prepareImportRecoveryInventory(entry, "pack");
+
+        assertTrue(DatapackIngestService.importPending(entry, "pack"));
+        assertFalse(entry.importAttempts.containsKey("pack"));
+    }
+
+    @Test
+    public void successfulImportReplacesDeterministicAttempt() {
+        DatapackIngestService.Entry entry = entry("managed", "v2", "2", "sha-two");
+        DatapackIngestService.recordDeterministicImportAttempt(entry, "pack");
+
+        DatapackIngestService.recordSuccessfulImport(entry, "pack");
+
+        assertFalse(DatapackIngestService.importPending(entry, "pack"));
+        assertEquals(DatapackIngestService.importRevision(entry), entry.importedTargets.get("pack"));
+        assertFalse(entry.importAttempts.containsKey("pack"));
+    }
+
+    @Test
     public void removingOneDatapackPreservesAStillClaimedEditableBundle() throws Exception {
         File root = temporaryFolder.newFolder("shared-removal-root");
         File editablePack = temporaryFolder.newFolder("shared-removal-editable");
         StructureKey targetKey = StructureKey.parse("iris:owned");
         StructureKey sourceKey = StructureKey.parse("example:owned");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        assertEquals(StructureWriteResult.Status.ADDED, writer.write(
+        assertEquals(StructureWriteResult.Status.ADDED, writer.writeManagedDatapack(
                 importedBundle(targetKey, sourceKey, "owned"),
                 StructureWriteMode.ADD_ONLY
         ).status());
@@ -1350,7 +1479,7 @@ public class DatapackIngestServiceTest {
         StructureKey targetKey = StructureKey.parse("iris:foo_a_b");
         StructureKey currentSource = StructureKey.parse("foo:a/b");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        assertEquals(StructureWriteResult.Status.ADDED, writer.write(
+        assertEquals(StructureWriteResult.Status.ADDED, writer.writeManagedDatapack(
                 importedBundle(targetKey, currentSource, "current"),
                 StructureWriteMode.ADD_ONLY
         ).status());
@@ -1385,11 +1514,11 @@ public class DatapackIngestServiceTest {
         StructureKey staleTarget = StructureKey.parse("iris:stale");
         StructureKey staleSource = StructureKey.parse("old:stale");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        assertEquals(StructureWriteResult.Status.ADDED, writer.write(
+        assertEquals(StructureWriteResult.Status.ADDED, writer.writeManagedDatapack(
                 importedBundle(collisionTarget, removedCollisionSource, "current"),
                 StructureWriteMode.ADD_ONLY
         ).status());
-        assertEquals(StructureWriteResult.Status.ADDED, writer.write(
+        assertEquals(StructureWriteResult.Status.ADDED, writer.writeManagedDatapack(
                 importedBundle(staleTarget, staleSource, "stale"),
                 StructureWriteMode.ADD_ONLY
         ).status());
@@ -1409,6 +1538,7 @@ public class DatapackIngestServiceTest {
         DatapackIngestService.Entry retained = entry("retained", "v1", "1", "sha-two");
         retained.structureKeys = List.of("foo:a_b");
         retained.importedTargets.put(targetId, "retained-revision");
+        retained.importAttempts.put(targetId, "retained-attempt");
         retained.importedBundles.put(targetId, Map.of(collisionTarget.value(), "foo:a_b"));
         retained.structuresImported = true;
         IrisData data = mock(IrisData.class);
@@ -1426,6 +1556,7 @@ public class DatapackIngestServiceTest {
         assertEquals("modified", Files.readString(
                 new File(editablePack, "objects/stale.iob").toPath(), StandardCharsets.UTF_8));
         assertFalse(retained.importedTargets.containsKey(targetId));
+        assertFalse(retained.importAttempts.containsKey(targetId));
         assertFalse(retained.structuresImported);
     }
 
@@ -1436,7 +1567,7 @@ public class DatapackIngestServiceTest {
         StructureKey targetKey = StructureKey.parse("iris:foo_a_b");
         StructureKey currentSource = StructureKey.parse("foo:a/b");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        assertEquals(StructureWriteResult.Status.ADDED, writer.write(
+        assertEquals(StructureWriteResult.Status.ADDED, writer.writeManagedDatapack(
                 importedBundle(targetKey, currentSource, "current"),
                 StructureWriteMode.ADD_ONLY
         ).status());
@@ -1466,7 +1597,7 @@ public class DatapackIngestServiceTest {
         StructureKey targetKey = StructureKey.parse("iris:owned");
         StructureKey actualSource = StructureKey.parse("other:owner");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        assertEquals(StructureWriteResult.Status.ADDED, writer.write(
+        assertEquals(StructureWriteResult.Status.ADDED, writer.writeManagedDatapack(
                 importedBundle(targetKey, actualSource, "other"),
                 StructureWriteMode.ADD_ONLY
         ).status());
@@ -1526,17 +1657,20 @@ public class DatapackIngestServiceTest {
         committed.versionId = "v1";
         committed.structureKeys = new ArrayList<>(List.of("test:old"));
         committed.importedTargets.put("pack", "old");
+        committed.importAttempts.put("pack", "old-attempt");
         committed.importedBundles.put("pack", new HashMap<>(Map.of("iris:old", "test:old")));
 
         DatapackIngestService.Entry candidate = DatapackIngestService.copyEntry(committed);
         candidate.versionId = "v2";
         candidate.structureKeys.add("test:new");
         candidate.importedTargets.put("pack", "new");
+        candidate.importAttempts.put("pack", "new-attempt");
         candidate.importedBundles.get("pack").put("iris:new", "test:new");
 
         assertEquals("v1", committed.versionId);
         assertEquals(List.of("test:old"), committed.structureKeys);
         assertEquals("old", committed.importedTargets.get("pack"));
+        assertEquals("old-attempt", committed.importAttempts.get("pack"));
         assertEquals(Map.of("iris:old", "test:old"), committed.importedBundles.get("pack"));
     }
 
@@ -1974,8 +2108,16 @@ public class DatapackIngestServiceTest {
         writeManifest(root, entry);
         File stagingRoot = new File(root, "staging");
 
-        assertFalse(DatapackIngestService.reapplyStagingRoot(
-                root, stagingRoot, new KList<>(), false));
+        DatapackIngestService.ReapplyOutcome outcome =
+                DatapackIngestService.reapplyStagingRootOutcome(
+                        root,
+                        stagingRoot,
+                        new KList<>(),
+                        false);
+
+        assertEquals(DatapackIngestService.ReapplyStatus.FAILED, outcome.status());
+        assertFalse(outcome.succeeded());
+        assertTrue(outcome.failure().orElseThrow().getMessage().contains(stagingRoot.getPath()));
     }
 
     @Test
@@ -2222,7 +2364,7 @@ public class DatapackIngestServiceTest {
         StructureKey targetKey = StructureKey.parse("iris:owned");
         StructureKey sourceKey = StructureKey.parse("example:owned");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        StructureWriteResult write = writer.write(
+        StructureWriteResult write = writer.writeManagedDatapack(
                 importedBundle(targetKey, sourceKey, "owned"),
                 StructureWriteMode.ADD_ONLY
         );
@@ -2231,7 +2373,9 @@ public class DatapackIngestServiceTest {
                 new StructureTransactionWriter.OwnedRemoval(
                         targetKey,
                         StructureSource.Kind.DATAPACK,
-                        sourceKey
+                        sourceKey,
+                        Optional.empty(),
+                        Optional.empty()
                 )
         ));
         StructureTransactionWriter.PreparedRemovalToken token = removal.recoveryToken().orElseThrow();
@@ -2266,7 +2410,7 @@ public class DatapackIngestServiceTest {
         StructureKey targetKey = StructureKey.parse("iris:owned");
         StructureKey sourceKey = StructureKey.parse("example:owned");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        StructureWriteResult write = writer.write(
+        StructureWriteResult write = writer.writeManagedDatapack(
                 importedBundle(targetKey, sourceKey, "owned"),
                 StructureWriteMode.ADD_ONLY
         );
@@ -2275,7 +2419,9 @@ public class DatapackIngestServiceTest {
                 new StructureTransactionWriter.OwnedRemoval(
                         targetKey,
                         StructureSource.Kind.DATAPACK,
-                        sourceKey
+                        sourceKey,
+                        Optional.empty(),
+                        Optional.empty()
                 )
         ));
         StructureTransactionWriter.PreparedRemovalToken token = removal.recoveryToken().orElseThrow();
@@ -2423,9 +2569,16 @@ public class DatapackIngestServiceTest {
         File metadata = new File(transactions, ".DS_Store");
         Files.writeString(metadata.toPath(), "finder", StandardCharsets.UTF_8);
 
-        DatapackIngestService.recoverTransactions(root, List.of());
+        assertTrue(DatapackIngestService.recoverTransactions(root, List.of()));
 
         assertFalse(metadata.exists());
+    }
+
+    @Test
+    public void recoveryReportsUnchangedWhenNoRecoveryArtifactsExist() throws Exception {
+        File root = temporaryFolder.newFolder("unchanged-recovery-root");
+
+        assertFalse(DatapackIngestService.recoverTransactions(root, List.of()));
     }
 
     @Test
@@ -2570,6 +2723,31 @@ public class DatapackIngestServiceTest {
         assertFalse(recorded.get("stagingMetadata").getAsString().isBlank());
         assertTrue(recorded.getAsJsonObject("installMetadata")
                 .has(fixture.target().toPath().toAbsolutePath().normalize().toString()));
+    }
+
+    @Test
+    public void reapplyOutcomeDistinguishesRepairFromAnUnchangedPass() throws Exception {
+        ReapplyFixture fixture = reapplyFixture("reapply-outcome");
+
+        DatapackIngestService.ReapplyOutcome repaired =
+                DatapackIngestService.reapplyStagingRootOutcome(
+                        fixture.root(),
+                        fixture.stagingRoot(),
+                        fixture.worlds(),
+                        false);
+        DatapackIngestService.ReapplyOutcome unchanged =
+                DatapackIngestService.reapplyStagingRootOutcome(
+                        fixture.root(),
+                        fixture.stagingRoot(),
+                        fixture.worlds(),
+                        false);
+
+        assertEquals(DatapackIngestService.ReapplyStatus.REPAIRED, repaired.status());
+        assertTrue(repaired.succeeded());
+        assertTrue(repaired.changed());
+        assertEquals(DatapackIngestService.ReapplyStatus.UNCHANGED, unchanged.status());
+        assertTrue(unchanged.succeeded());
+        assertFalse(unchanged.changed());
     }
 
     @Test
@@ -2926,7 +3104,7 @@ public class DatapackIngestServiceTest {
         StructureKey targetKey = StructureKey.parse("iris:owned");
         StructureKey sourceKey = StructureKey.parse("example:owned");
         StructureTransactionWriter writer = new StructureTransactionWriter(editablePack.toPath());
-        StructureWriteResult write = writer.write(
+        StructureWriteResult write = writer.writeManagedDatapack(
                 importedBundle(targetKey, sourceKey, "owned"),
                 StructureWriteMode.ADD_ONLY
         );
@@ -2935,7 +3113,9 @@ public class DatapackIngestServiceTest {
                 new StructureTransactionWriter.OwnedRemoval(
                         targetKey,
                         StructureSource.Kind.DATAPACK,
-                        sourceKey
+                        sourceKey,
+                        Optional.empty(),
+                        Optional.empty()
                 )
         ));
         StructureTransactionWriter.PreparedRemovalToken token = removal.recoveryToken().orElseThrow();

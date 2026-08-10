@@ -32,6 +32,8 @@ import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioActivation;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioSession;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.IrisEngine;
@@ -41,12 +43,14 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
+import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.IrisDimensionContractException;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.object.StudioMode;
 import art.arcane.iris.engine.platform.studio.StudioGenerator;
+import art.arcane.iris.engine.platform.studio.generators.JigsawStudioGenerator;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -83,10 +87,13 @@ import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.Random;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 @EqualsAndHashCode(callSuper = true)
 @Data
@@ -94,7 +101,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private static final int LOAD_LOCKS = Runtime.getRuntime().availableProcessors() * 4;
     private static final long HOTLOAD_LOOP_DELAY_MS = 250L;
     private static final long HOTLOAD_MAINTENANCE_DELAY_MS = 4000L;
-    private final Semaphore loadLock;
+    private final GenerationStageGate loadLock;
     private final IrisWorld world;
     private final File dataLocation;
     private final String dimensionKey;
@@ -104,6 +111,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private final ChronoLatch hotloadChecker;
     private final AtomicBoolean setup;
     private final boolean studio;
+    private final AtomicBoolean studioEntryBootstrapActive;
     private final AtomicInteger a = new AtomicInteger(0);
     private volatile long lastChunkGenTime = 0L;
     private final CompletableFuture<Integer> spawnChunks = new CompletableFuture<>();
@@ -112,6 +120,8 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private volatile Engine engine;
     private volatile Looper hotloader;
     private volatile StudioMode lastMode;
+    private volatile UUID lastJigsawStudioRequestId;
+    private volatile boolean jigsawStudioActive;
     private volatile DummyBiomeProvider dummyBiomeProvider;
     private volatile Throwable initializationFailure;
     private volatile IrisDimension validatedDimension;
@@ -125,10 +135,11 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         studioGenerator = null;
         dummyBiomeProvider = new DummyBiomeProvider();
         populators = new KList<>();
-        loadLock = new Semaphore(LOAD_LOCKS);
+        loadLock = new GenerationStageGate(LOAD_LOCKS, () -> closing);
         this.world = world;
         this.hotloadChecker = new ChronoLatch(1000, false);
         this.studio = studio;
+        this.studioEntryBootstrapActive = new AtomicBoolean(studio);
         this.dataLocation = dataLocation;
         this.dimensionKey = dimensionKey;
         this.folder = new ReactiveFolder(
@@ -139,6 +150,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 new KList<>()
         );
         this.initializationFailure = null;
+        this.jigsawStudioActive = false;
         this.validatedDimension = null;
         this.validatedWorldContract = null;
         this.closing = false;
@@ -256,9 +268,37 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
     private void setupEngine() {
         lastMode = StudioMode.NORMAL;
-        engine = new IrisEngine(getTarget(), studio);
+        lastJigsawStudioRequestId = null;
+        EngineTarget engineTarget = getTarget();
+        String packKey = engineTarget.getDimension().getLoadKey();
+        JigsawStudioActivation.Request request = studio
+                ? JigsawStudioActivation.getGeneratorRequest(packKey)
+                : null;
+        JigsawStudioSession session = request == null
+                ? null
+                : JigsawStudioActivation.getGeneratorSession(packKey);
+        jigsawStudioActive = request != null
+                && session != null
+                && session.sessionId().equals(request.requestId());
+        IrisEngine createdEngine = new IrisEngine(
+                engineTarget,
+                selectInitializationMode(studio, jigsawStudioActive));
+        createdEngine.setNativeStructureVolumeQueriesEnabled(shouldGenerateNativeStructures(
+                jigsawStudioActive,
+                studioEntryBootstrapActive.get(),
+                initializationFailure != null));
+        engine = createdEngine;
         populators.clear();
         targetCache.reset();
+    }
+
+    static IrisEngine.InitializationMode selectInitializationMode(boolean studio, boolean jigsawStudioActive) {
+        if (!studio) {
+            return IrisEngine.InitializationMode.RUNTIME;
+        }
+        return jigsawStudioActive
+                ? IrisEngine.InitializationMode.JIGSAW_STUDIO
+                : IrisEngine.InitializationMode.STUDIO;
     }
 
     @NotNull
@@ -316,7 +356,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             getWorld().setRawWorldSeed(world.getSeed());
             setupEngine();
             setup.set(true);
-            this.hotloader = studio ? new Looper() {
+            this.hotloader = shouldRunStudioHotload(studio, closing, jigsawStudioActive) ? new Looper() {
                 @Override
                 protected long loop() {
                     if (shouldThrottleHotload()) {
@@ -331,7 +371,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 }
             } : null;
 
-            if (studio) {
+            if (hotloader != null) {
                 hotloader.setPriority(Thread.MIN_PRIORITY);
                 hotloader.start();
                 hotloader.setName(getTarget().getWorld().name() + " Hotloader");
@@ -437,20 +477,121 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         return studio;
     }
 
+    public void endStudioEntryBootstrap() {
+        Engine activeEngine = engine;
+        if (activeEngine instanceof IrisEngine irisEngine) {
+            irisEngine.setNativeStructureVolumeQueriesEnabled(shouldGenerateNativeStructures(
+                    jigsawStudioActive,
+                    false,
+                    initializationFailure != null));
+        }
+        studioEntryBootstrapActive.set(false);
+    }
+
+    public boolean isStudioEntryBootstrapActive() {
+        return studioEntryBootstrapActive.get();
+    }
+
+    public boolean isJigsawStudioActive() {
+        return jigsawStudioActive;
+    }
+
     @Override
     public void hotload() {
-        if (!isStudio() || closing) {
+        if (!shouldRunStudioHotload(isStudio(), closing, jigsawStudioActive)) {
             return;
         }
 
         withExclusiveControl(() -> getEngine().hotload());
     }
 
+    static boolean shouldRunStudioHotload(boolean studio, boolean closing, boolean jigsawStudioActive) {
+        return studio && !closing && !jigsawStudioActive;
+    }
+
+    public GenerationStagePermit acquireGenerationStage(String operation) {
+        return loadLock.acquireStage(operation);
+    }
+
+    public GenerationStagePermit acquireNoiseGenerationStage(
+            Engine expectedEngine,
+            int chunkX,
+            int chunkZ,
+            String operation
+    ) {
+        Engine activeEngine = Objects.requireNonNull(expectedEngine, "Noise generation engine");
+        return acquirePreparedGenerationStage(
+                loadLock,
+                operation,
+                () -> resolveStudioGeneratorForNoise(activeEngine),
+                activeEngine,
+                chunkX,
+                chunkZ);
+    }
+
+    static GenerationStagePermit acquirePreparedGenerationStage(
+            GenerationStageGate gate,
+            String operation,
+            Supplier<StudioGenerator> resolver,
+            Engine engine,
+            int chunkX,
+            int chunkZ
+    ) {
+        GenerationStageGate activeGate = Objects.requireNonNull(gate, "Generation stage gate");
+        Supplier<StudioGenerator> activeResolver = Objects.requireNonNull(resolver, "Studio generator resolver");
+        Engine activeEngine = Objects.requireNonNull(engine, "Prepared generation engine");
+        while (true) {
+            GenerationStagePermit stage = activeGate.acquireStage(operation);
+            StudioGenerator selected;
+            boolean retained = false;
+            try {
+                selected = activeResolver.get();
+                if (selected == null || !selected.requiresPreSessionPreparation()) {
+                    if (activeResolver.get() == selected) {
+                        retained = true;
+                        return stage;
+                    }
+                    continue;
+                }
+            } finally {
+                if (!retained) {
+                    stage.close();
+                }
+            }
+
+            GenerationStageExclusivePermit exclusive = activeGate.acquireExclusiveStage(operation);
+            try {
+                StudioGenerator active = activeResolver.get();
+                if (active != selected) {
+                    continue;
+                }
+                active.prepareChunkBeforeSession(activeEngine, chunkX, chunkZ);
+                return exclusive.downgradeToStage();
+            } catch (WrongEngineBroException e) {
+                throw new IllegalStateException("Iris generation stage " + operation
+                        + " could not prepare its Studio generator.", e);
+            } finally {
+                exclusive.close();
+            }
+        }
+    }
+
+    private StudioGenerator resolveStudioGeneratorForNoise(Engine expectedEngine) {
+        if (engine != expectedEngine) {
+            throw new IllegalStateException("Iris noise generation belongs to a replaced engine runtime.");
+        }
+        computeStudioGenerator();
+        if (engine != expectedEngine) {
+            throw new IllegalStateException("Iris noise generation changed engine runtime during Studio resolution.");
+        }
+        return studioGenerator;
+    }
+
     public void withExclusiveControl(Runnable r) {
         J.a(() -> {
             boolean acquired = false;
             try {
-                loadLock.acquire(LOAD_LOCKS);
+                loadLock.acquireExclusive();
                 acquired = true;
                 r.run();
             } catch (InterruptedException e) {
@@ -462,7 +603,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 e.printStackTrace();
             } finally {
                 if (acquired) {
-                    loadLock.release(LOAD_LOCKS);
+                    loadLock.releaseExclusive();
                 }
             }
         });
@@ -470,25 +611,40 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
     public CompletableFuture<Void> withExclusiveControlFuture(Runnable r) {
         CompletableFuture<Void> future = new CompletableFuture<>();
-        J.a(() -> {
-            boolean acquired = false;
-            try {
-                loadLock.acquire(LOAD_LOCKS);
-                acquired = true;
-                r.run();
-                future.complete(null);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                future.completeExceptionally(e);
-            } catch (Throwable e) {
-                future.completeExceptionally(e);
-            } finally {
-                if (acquired) {
-                    loadLock.release(LOAD_LOCKS);
-                }
-            }
-        });
+        J.a(() -> completeExclusiveControlFuture(loadLock, r, future));
         return future;
+    }
+
+    static void completeExclusiveControlFuture(
+            GenerationStageGate gate,
+            Runnable operation,
+            CompletableFuture<Void> future
+    ) {
+        GenerationStageGate activeGate = Objects.requireNonNull(gate, "Exclusive control gate");
+        Runnable activeOperation = Objects.requireNonNull(operation, "Exclusive control operation");
+        CompletableFuture<Void> outward = Objects.requireNonNull(future, "Exclusive control future");
+        boolean acquired = false;
+        Throwable failure = null;
+        try {
+            activeGate.acquireExclusive();
+            acquired = true;
+            activeOperation.run();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            failure = e;
+        } catch (Throwable e) {
+            failure = e;
+        } finally {
+            if (acquired) {
+                activeGate.releaseExclusive();
+            }
+        }
+
+        if (failure == null) {
+            outward.complete(null);
+        } else {
+            outward.completeExceptionally(failure);
+        }
     }
 
     public void touch(World world) {
@@ -612,6 +768,25 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     }
 
     private void computeStudioGenerator() {
+        String packKey = getEngine().getDimension().getLoadKey();
+        JigsawStudioActivation.Request jigsawRequest = studio
+                ? JigsawStudioActivation.getGeneratorRequest(packKey)
+                : null;
+        if (jigsawRequest != null) {
+            JigsawStudioSession session = JigsawStudioActivation.getGeneratorSession(packKey);
+            if (session != null && session.sessionId().equals(jigsawRequest.requestId())) {
+                if (!jigsawRequest.requestId().equals(lastJigsawStudioRequestId)) {
+                    setStudioGenerator(new JigsawStudioGenerator(getEngine(), jigsawRequest, session));
+                    lastJigsawStudioRequestId = jigsawRequest.requestId();
+                    lastMode = null;
+                }
+                return;
+            }
+        }
+        if (lastJigsawStudioRequestId != null) {
+            lastJigsawStudioRequestId = null;
+            lastMode = null;
+        }
         StudioMode desired = getEngine().getDimension().getStudioMode();
         if (studio && art.arcane.iris.core.runtime.ObjectStudioActivation.isActive(getEngine().getDimension().getLoadKey())) {
             desired = StudioMode.OBJECT_BUFFET;
@@ -645,10 +820,18 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
     @Override
     public boolean shouldGenerateStructures() {
-        if (initializationFailure != null) {
-            return false;
-        }
-        return true;
+        return shouldGenerateNativeStructures(
+                jigsawStudioActive,
+                studioEntryBootstrapActive.get(),
+                initializationFailure != null);
+    }
+
+    static boolean shouldGenerateNativeStructures(
+            boolean jigsawStudioActive,
+            boolean studioEntryBootstrapActive,
+            boolean initializationFailed
+    ) {
+        return !jigsawStudioActive && !studioEntryBootstrapActive && !initializationFailed;
     }
 
     @Override
@@ -670,5 +853,132 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     @Override
     public BiomeProvider getDefaultBiomeProvider(@NotNull WorldInfo worldInfo) {
         return dummyBiomeProvider;
+    }
+
+    static final class GenerationStageGate {
+        private final int permitCount;
+        private final @Nullable Semaphore permits;
+        private final BooleanSupplier closing;
+
+        GenerationStageGate(int permitCount, BooleanSupplier closing) {
+            if (permitCount <= 0) {
+                throw new IllegalArgumentException("Generation stage permit count must be positive.");
+            }
+            this.permitCount = permitCount;
+            this.permits = new Semaphore(permitCount, true);
+            this.closing = Objects.requireNonNull(closing, "Generation stage close state");
+        }
+
+        GenerationStagePermit acquireStage(String operation) {
+            String activeOperation = Objects.requireNonNull(operation, "Generation stage operation");
+            if (closing.getAsBoolean()) {
+                throw rejected(activeOperation);
+            }
+            try {
+                permits.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Iris generation stage " + activeOperation
+                        + " was interrupted while waiting for engine access.", e);
+            }
+            if (closing.getAsBoolean()) {
+                permits.release();
+                throw rejected(activeOperation);
+            }
+            return new GenerationStagePermit(permits);
+        }
+
+        GenerationStageExclusivePermit acquireExclusiveStage(String operation) {
+            String activeOperation = Objects.requireNonNull(operation, "Generation stage operation");
+            if (closing.getAsBoolean()) {
+                throw rejected(activeOperation);
+            }
+            try {
+                permits.acquire(permitCount);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Iris generation stage " + activeOperation
+                        + " was interrupted while waiting for exclusive engine access.", e);
+            }
+            if (closing.getAsBoolean()) {
+                permits.release(permitCount);
+                throw rejected(activeOperation);
+            }
+            return new GenerationStageExclusivePermit(permits, permitCount);
+        }
+
+        void acquireExclusive() throws InterruptedException {
+            permits.acquire(permitCount);
+        }
+
+        void releaseExclusive() {
+            permits.release(permitCount);
+        }
+
+        int queueLength() {
+            return permits.getQueueLength();
+        }
+
+        int availablePermits() {
+            return permits.availablePermits();
+        }
+
+        private IllegalStateException rejected(String operation) {
+            return new IllegalStateException("Iris generation stage " + operation
+                    + " was rejected while the generator is closing.");
+        }
+    }
+
+    static final class GenerationStageExclusivePermit implements AutoCloseable {
+        private final Semaphore permits;
+        private final int permitCount;
+        private final AtomicBoolean released;
+
+        private GenerationStageExclusivePermit(Semaphore permits, int permitCount) {
+            this.permits = permits;
+            this.permitCount = permitCount;
+            this.released = new AtomicBoolean(false);
+        }
+
+        GenerationStagePermit downgradeToStage() {
+            if (!released.compareAndSet(false, true)) {
+                throw new IllegalStateException("Exclusive Iris generation stage was already released.");
+            }
+            GenerationStagePermit stage = new GenerationStagePermit(permits);
+            if (permitCount > 1) {
+                permits.release(permitCount - 1);
+            }
+            return stage;
+        }
+
+        @Override
+        public void close() {
+            if (released.compareAndSet(false, true)) {
+                permits.release(permitCount);
+            }
+        }
+    }
+
+    public static final class GenerationStagePermit implements AutoCloseable {
+        private static final GenerationStagePermit NOOP = new GenerationStagePermit(null);
+
+        private final Semaphore permits;
+        private final AtomicBoolean released;
+
+        private GenerationStagePermit(@Nullable Semaphore permits) {
+            this.permits = permits;
+            this.released = new AtomicBoolean(permits == null);
+        }
+
+        public static GenerationStagePermit noop() {
+            return NOOP;
+        }
+
+        @Override
+        public void close() {
+            if (permits != null && released.compareAndSet(false, true)) {
+                permits.release();
+            }
+        }
     }
 }

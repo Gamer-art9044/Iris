@@ -1,5 +1,6 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.core.datapack.DatapackIngestService;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.Assume;
@@ -8,6 +9,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,6 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -157,6 +160,67 @@ public class ServerConfiguratorDatapackFingerprintTest {
     }
 
     @Test
+    public void recoveryForcesAPostRecoveryContentFingerprint() throws Exception {
+        File packsDir = tmp.newFolder("recovered-packs");
+        Path dimension = packsDir.toPath().resolve("testpack/dimensions/overworld.json");
+        Files.createDirectories(dimension.getParent());
+        Files.writeString(dimension, "aaaa", StandardCharsets.UTF_8);
+        ServerConfigurator.PackFingerprint cached =
+                ServerConfigurator.resolvePackFingerprint(packsDir, "", "");
+        FileTime originalMtime = Files.getLastModifiedTime(dimension);
+
+        Files.writeString(dimension, "bbbb", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(dimension, originalMtime);
+
+        ServerConfigurator.PackFingerprint reused =
+                ServerConfigurator.resolvePostRecoveryPackFingerprint(
+                        packsDir,
+                        cached.metadata(),
+                        cached.content(),
+                        DatapackIngestService.ReapplyOutcome.success(false, false));
+        ServerConfigurator.PackFingerprint recovered =
+                ServerConfigurator.resolvePostRecoveryPackFingerprint(
+                        packsDir,
+                        cached.metadata(),
+                        cached.content(),
+                        DatapackIngestService.ReapplyOutcome.success(true, false));
+
+        assertEquals(cached.content(), reused.content());
+        assertNotEquals(cached.content(), recovered.content());
+        assertEquals(ServerConfigurator.computePackFingerprint(packsDir), recovered.content());
+    }
+
+    @Test
+    public void fullInstallRequiresRestartWhenRecoveryOrRepairChangedFiles() {
+        assertEquals(
+                DatapackInstallResult.Status.UNCHANGED,
+                ServerConfigurator.resultForUnchangedFingerprint(
+                        true,
+                        DatapackIngestService.ReapplyOutcome.success(false, false)).status());
+        assertEquals(
+                DatapackInstallResult.Status.RESTART_REQUIRED,
+                ServerConfigurator.resultForUnchangedFingerprint(
+                        true,
+                        DatapackIngestService.ReapplyOutcome.success(true, false)).status());
+        assertEquals(
+                DatapackInstallResult.Status.RESTART_REQUIRED,
+                ServerConfigurator.resultForUnchangedFingerprint(
+                        true,
+                        DatapackIngestService.ReapplyOutcome.success(false, true)).status());
+        assertEquals(
+                DatapackInstallResult.Status.READY,
+                ServerConfigurator.resultForUnchangedFingerprint(
+                        false,
+                        DatapackIngestService.ReapplyOutcome.success(true, true)).status());
+        assertEquals(
+                DatapackInstallResult.Status.FAILED,
+                ServerConfigurator.resultForUnchangedFingerprint(
+                        true,
+                        DatapackIngestService.ReapplyOutcome.failed(
+                                new IOException("recovery failed"))).status());
+    }
+
+    @Test
     public void computePackMetadataDigestIgnoresGeneratedCodeWorkspaceFiles() throws Exception {
         File packsDir = tmp.newFolder("metadata-workspace-packs");
         Path dimension = packsDir.toPath().resolve("overworld/dimensions/overworld.json");
@@ -252,15 +316,61 @@ public class ServerConfiguratorDatapackFingerprintTest {
     }
 
     @Test
-    public void incompleteExternalDatapackRecoveryBlocksCompilation() throws Exception {
+    public void recoveryRunsBeforeFingerprintEarlyReturnAndCompilation() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/ServerConfigurator.java"));
-        int recovery = source.indexOf("if (!DatapackIngestService.reapplyFromStaging(datapacksFolders))");
-        int blocked = source.indexOf("return DatapackInstallResult.failedResult();", recovery);
-        int compile = source.indexOf("IrisDatapackCompiler.compile(", recovery);
+        int installIfChanged = source.indexOf("installDataPacksIfChanged(boolean fullInstall)");
+        int recovery = source.indexOf("DatapackIngestService.reapplyFromStaging", installIfChanged);
+        int fingerprint = source.indexOf("computeCurrentDatapackCompilerInputFingerprint", recovery);
+        int earlyReturn = source.indexOf("resultForUnchangedFingerprint", fingerprint);
+        int compile = source.indexOf("compileDataPacksLocked(", earlyReturn);
+        int cache = source.indexOf("writeCompilerInputFingerprintCache(cacheFile.toPath(), current)", compile);
 
         assertTrue(recovery >= 0);
-        assertTrue(blocked > recovery);
-        assertTrue(compile > blocked);
+        assertTrue(fingerprint > recovery);
+        assertTrue(earlyReturn > fingerprint);
+        assertTrue(compile > earlyReturn);
+        assertTrue(cache > compile);
+    }
+
+    @Test
+    public void studioTimingSeparatesRecoveryFingerprintCompilationAndTotal() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/ServerConfigurator.java"));
+        int timedInstall = source.indexOf("BiConsumer<String, Long> timingConsumer");
+        int recovery = source.indexOf("\"datapack_external_recovery\"", timedInstall);
+        int fingerprint = source.indexOf("\"datapack_compiler_input_fingerprint\"", recovery);
+        int compile = source.indexOf("\"datapack_compile_publish\"", fingerprint);
+        int total = source.indexOf("\"datapack_install_if_changed_total\"", compile);
+
+        assertTrue(timedInstall >= 0);
+        assertTrue(recovery > timedInstall);
+        assertTrue(fingerprint > recovery);
+        assertTrue(compile > fingerprint);
+        assertTrue(total > compile);
+    }
+
+    @Test
+    public void loadedRuntimeReuseRequiresAnExactPinnedCompilerInputFingerprint() {
+        assertTrue(ServerConfigurator.reusableRuntimeFingerprint("abc", "abc"));
+        assertFalse(ServerConfigurator.reusableRuntimeFingerprint("abc", "def"));
+        assertFalse(ServerConfigurator.reusableRuntimeFingerprint("", ""));
+        assertFalse(ServerConfigurator.reusableRuntimeFingerprint(null, "abc"));
+    }
+
+    @Test
+    public void externalDatapackMutationInvalidatesReadinessAndRetainsComparisonPin() throws Exception {
+        Field ready = ServerConfigurator.class.getDeclaredField("loadedDatapackRuntimeReady");
+        Field fingerprint = ServerConfigurator.class.getDeclaredField(
+                "loadedDatapackCompilerInputFingerprint");
+        ready.setAccessible(true);
+        fingerprint.setAccessible(true);
+        ready.setBoolean(null, true);
+        fingerprint.set(null, "abc");
+
+        ServerConfigurator.invalidateLoadedDatapackRuntime();
+
+        assertFalse(ready.getBoolean(null));
+        assertEquals("abc", fingerprint.get(null));
     }
 }

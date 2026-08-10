@@ -182,8 +182,7 @@ public class CommandObject implements DirectorExecutor {
     private static final Set<Material> skipBlocks = Set.of(Materials.GRASS, Material.SNOW, Material.VINE, Material.TORCH, Material.DEAD_BUSH,
             Material.POPPY, Material.DANDELION);
 
-    public static IObjectPlacer createPlacer(World world, Map<Block, BlockData> futureBlockChanges) {
-
+    public static IObjectPlacer createPlacer(World world, Map<Block, BlockData> futureBlockChanges, Engine targetEngine) {
         return new IObjectPlacer() {
             @Override
             public int getHighest(int x, int z, IrisData data) {
@@ -263,7 +262,7 @@ public class CommandObject implements DirectorExecutor {
 
             @Override
             public Engine getEngine() {
-                return null;
+                return targetEngine;
             }
         };
     }
@@ -565,7 +564,7 @@ public class CommandObject implements DirectorExecutor {
         // Block writes must run on the thread owning the target chunk; the undo log stays global.
         final IrisObject placed = o;
         if (!J.runAt(block, () -> {
-            placed.place(block.getBlockX(), block.getBlockY() + (int) placed.getCenter().getY(), block.getBlockZ(), createPlacer(block.getWorld(), futureChanges), placement, new RNG(), null);
+            placed.place(block.getBlockX(), block.getBlockY() + (int) placed.getCenter().getY(), block.getBlockZ(), createPlacer(block.getWorld(), futureChanges, null), placement, new RNG(), null);
             J.runGlobal(() -> Iris.service(ObjectSVC.class).addChanges(futureChanges));
 
             if (!edit) {

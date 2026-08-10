@@ -158,7 +158,8 @@ public class StructurePackageClosureTest {
         File pack = temporaryFolder.newFolder("pack");
         write(pack, "structures/broken.json", "{\"startPool\":\"broken/start\"}");
         write(pack, "jigsaw-pools/broken/start.json",
-                "{\"pieces\":[{},{\"empty\":\"true\"},{\"empty\":true,\"piece\":\"broken/piece\"}]}");
+                "{\"pieces\":[{},{\"empty\":\"true\"},{\"empty\":true,\"piece\":\"broken/piece\"},"
+                        + "{\"empty\":true,\"piece\":7}]}");
 
         StructurePackageClosure closure = StructurePackageClosure.collect(pack, List.of("broken"));
 
@@ -168,14 +169,18 @@ public class StructurePackageClosureTest {
         assertTrue(closure.errors().toString(), closure.errors().contains(
                 "Piece entry 1 in jigsaw pool 'broken/start' requires boolean field 'empty'."));
         assertTrue(closure.errors().toString(), closure.errors().contains(
-                "Empty piece entry 2 in jigsaw pool 'broken/start' cannot define field 'piece'."));
+                "Empty piece entry 2 in jigsaw pool 'broken/start' cannot define non-empty field 'piece'."));
+        assertTrue(closure.errors().toString(), closure.errors().contains(
+                "Empty piece entry 3 in jigsaw pool 'broken/start' requires string field 'piece' when defined."));
     }
 
     @Test
     public void acceptsExplicitEmptyPoolEntry() throws Exception {
         File pack = temporaryFolder.newFolder("pack");
         write(pack, "structures/empty.json", "{\"startPool\":\"empty/start\"}");
-        write(pack, "jigsaw-pools/empty/start.json", "{\"pieces\":[{\"empty\":true,\"weight\":3}]}");
+        write(pack, "jigsaw-pools/empty/start.json",
+                "{\"pieces\":[{\"empty\":true,\"weight\":3},{\"empty\":true,\"piece\":\"\"},"
+                        + "{\"empty\":true,\"piece\":\"   \"}]}");
 
         StructurePackageClosure closure = StructurePackageClosure.collect(pack, List.of("empty"));
 

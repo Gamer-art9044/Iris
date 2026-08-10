@@ -21,11 +21,13 @@ package art.arcane.iris.engine.framework;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.structure.StructureGraphCatalog;
 import art.arcane.iris.engine.framework.structure.StructureGraphCompilation;
+import art.arcane.iris.engine.framework.structure.StructureAssemblyResult;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisNativeStructure;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
+import art.arcane.iris.engine.object.IrisStructureAnchorMode;
 import art.arcane.iris.engine.object.IrisStructureCarveShape;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.IrisStructureTerrain;
@@ -66,6 +68,7 @@ public final class IrisStructureLocator {
     private static final int CANDIDATE_BUDGET = 4_096;
     private static final int MAX_BURIAL_COLUMNS = 2_000_000;
     private static final int UNDERGROUND_SURFACE_CLEARANCE = 1;
+    private static final long CAVE_ANCHOR_DOMAIN = 0x43415645414E4348L;
     private static final Pattern NAMESPACED_RESOURCE_KEY = Pattern.compile("[a-z0-9_.-]+:[a-z0-9/._-]+");
 
     private static final Cache<Engine, PlacementIndex> INDEX_CACHE = Caffeine.newBuilder().weakKeys().build();
@@ -487,10 +490,13 @@ public final class IrisStructureLocator {
         RNG rng = StructurePlacementGrid.placementRng(placement, cx, cz, seed);
         int originX = (cx << 4) + rng.nextInt(16);
         int originZ = (cz << 4) + rng.nextInt(16);
-        Integer baseY = resolveBaseY(engine, placement, originX, originZ, rng);
-        if (baseY == null) {
+        PlacementAnchor anchor = resolveAnchor(engine, placement, cx, cz, originX, originZ, rng);
+        if (anchor == null) {
             return null;
         }
+        originX = anchor.x();
+        originZ = anchor.z();
+        int baseY = anchor.y();
 
         String selectedKey = selectStructureKey(placement, rng);
         if (selectedKey == null || selectedKey.isBlank()) {
@@ -509,11 +515,13 @@ public final class IrisStructureLocator {
 
         StructureAssembler assembler = StructureAssembler.forData(
                 engine.getData(), structure, new IrisPosition(originX, baseY, originZ));
-        KList<PlacedStructurePiece> pieces = assembler.assemble(rng);
+        StructureAssemblyResult assembly = assembler.assemble(rng);
         if (!requirePlacementOutput(placement, selectedKey, cx, cz,
-                pieces != null && !pieces.isEmpty(), "runtime assembly produced no pieces")) {
+                assembly.hasOutput(), "runtime assembly produced " + assembly.status() + ": " + assembly.detail())) {
             return null;
         }
+        KList<PlacedStructurePiece> pieces = new KList<>(assembly.pieces());
+        pieces = alignCavePieces(pieces, placement, baseY);
         pieces = alignSurfacePieces(pieces, placement, structure, baseY);
         if (!requirePlacementOutput(placement, selectedKey, cx, cz,
                 pieces != null && !pieces.isEmpty(), "surface alignment produced no pieces")) {
@@ -534,7 +542,7 @@ public final class IrisStructureLocator {
                 baseY += verticalShift;
             }
         }
-        if (placement.isUnderground()) {
+        if (placement.isAnchoredUnderground() && !placement.resolvedAnchor().isCave()) {
             Integer burialShift = resolveUndergroundBurialShift(
                     engine, pieces, placement, baseY, worldMin, worldMax);
             if (!requirePlacementOutput(placement, selectedKey, cx, cz, burialShift != null,
@@ -614,6 +622,24 @@ public final class IrisStructureLocator {
         return null;
     }
 
+    private static PlacementAnchor resolveAnchor(
+            Engine engine,
+            IrisStructurePlacement placement,
+            int chunkX,
+            int chunkZ,
+            int originX,
+            int originZ,
+            RNG rng
+    ) {
+        if (placement.resolvedAnchor().isCave()) {
+            StructureCaveAnchorResolver.Anchor caveAnchor = StructureCaveAnchorResolver.resolve(
+                    engine, placement, chunkX, chunkZ, rng.nextParallelRNG(CAVE_ANCHOR_DOMAIN));
+            return caveAnchor == null ? null : new PlacementAnchor(caveAnchor.x(), caveAnchor.y(), caveAnchor.z());
+        }
+        Integer baseY = resolveBaseY(engine, placement, originX, originZ, rng);
+        return baseY == null ? null : new PlacementAnchor(originX, baseY, originZ);
+    }
+
     private static Integer resolveBaseY(Engine engine, IrisStructurePlacement placement, int originX, int originZ, RNG rng) {
         int worldMin = engine.getMinHeight() + 1;
         int worldMax = engine.getMinHeight() + engine.getHeight() - 1;
@@ -624,7 +650,7 @@ public final class IrisStructureLocator {
                 && NativeStructurePlacementPlanner.isSubmerged(engine, originX, originZ)) {
             return null;
         }
-        if (!placement.isUnderground()) {
+        if (placement.resolvedAnchor() == IrisStructureAnchorMode.SURFACE) {
             int surfaceY = engine.getHeight(originX, originZ, true) + engine.getMinHeight();
             return surfaceY < placement.getMinHeight() || surfaceY > placement.getMaxHeight() ? null : surfaceY;
         }
@@ -642,7 +668,7 @@ public final class IrisStructureLocator {
         if (bounds == null) {
             return null;
         }
-        if (!placement.isUnderground()) {
+        if (!placement.isAnchoredUnderground() || placement.resolvedAnchor().isCave()) {
             return bounds[1] >= worldMin && bounds[4] <= worldMax ? 0 : null;
         }
         int bandMin = Math.max(worldMin, Math.min(placement.getMinHeight(), placement.getMaxHeight()));
@@ -665,7 +691,8 @@ public final class IrisStructureLocator {
                                                   IrisStructurePlacement placement, int baseY,
                                                   int worldMin, int worldMax) {
         int[] bounds = computeBounds(pieces);
-        if (engine == null || bounds == null || placement == null || !placement.isUnderground()) {
+        if (engine == null || bounds == null || placement == null || !placement.isAnchoredUnderground()
+                || placement.resolvedAnchor().isCave()) {
             return null;
         }
 
@@ -752,10 +779,32 @@ public final class IrisStructureLocator {
         return placement.getStructures().get(rng.nextInt(placement.getStructures().size()));
     }
 
+    static KList<PlacedStructurePiece> alignCavePieces(
+            KList<PlacedStructurePiece> pieces,
+            IrisStructurePlacement placement,
+            int anchorY
+    ) {
+        IrisStructureAnchorMode mode = placement.resolvedAnchor();
+        if (!mode.isCave()) {
+            return pieces;
+        }
+        int[] bounds = computeBounds(pieces);
+        if (bounds == null) {
+            return pieces;
+        }
+        int targetY = switch (mode) {
+            case CAVE_FLOOR -> bounds[1];
+            case CAVE_CEILING -> bounds[4];
+            case CAVE_CENTER, CAVE_ANY -> bounds[1] + Math.floorDiv(bounds[4] - bounds[1], 2);
+            default -> anchorY;
+        };
+        return shiftPieces(pieces, anchorY - targetY);
+    }
+
     private static KList<PlacedStructurePiece> alignSurfacePieces(KList<PlacedStructurePiece> pieces,
                                                                   IrisStructurePlacement placement,
                                                                   IrisStructure structure, int baseY) {
-        if (placement.isUnderground() || pieces.size() <= 1
+        if (placement.isAnchoredUnderground() || pieces.size() <= 1
                 || structure.getPlaceMode() == ObjectPlaceMode.STRUCTURE_PIECE
                 || structure.getPlaceMode() == ObjectPlaceMode.FLOATING) {
             return pieces;
@@ -766,7 +815,7 @@ public final class IrisStructureLocator {
 
     static boolean hasExactY(IrisStructurePlacement placement, IrisStructure structure,
                              KList<PlacedStructurePiece> pieces) {
-        return placement.isUnderground() || pieces.size() > 1
+        return placement.isAnchoredUnderground() || pieces.size() > 1
                 || structure.getPlaceMode() == ObjectPlaceMode.STRUCTURE_PIECE
                 || structure.getPlaceMode() == ObjectPlaceMode.FLOATING;
     }
@@ -867,12 +916,16 @@ public final class IrisStructureLocator {
                 && !(placement.getDensity() > 0.0)) {
             return false;
         }
-        long worldMin = (long) engine.getMinHeight() + (placement.isUnderground() ? 1L : 0L);
-        long worldMax = (long) engine.getMinHeight() + engine.getHeight() - 1L;
-        long configuredMin = placement.isUnderground()
+        long worldMin = (long) engine.getMinHeight() + (placement.isAnchoredUnderground() ? 1L : 0L);
+        long worldMax = (long) engine.getMinHeight() + engine.getHeight()
+                - (placement.resolvedAnchor().isCave() ? 2L : 1L);
+        if (worldMin > worldMax) {
+            return false;
+        }
+        long configuredMin = placement.isAnchoredUnderground()
                 ? Math.min(placement.getMinHeight(), placement.getMaxHeight())
                 : placement.getMinHeight();
-        long configuredMax = placement.isUnderground()
+        long configuredMax = placement.isAnchoredUnderground()
                 ? Math.max(placement.getMinHeight(), placement.getMaxHeight())
                 : placement.getMaxHeight();
         return configuredMin <= configuredMax && configuredMin <= worldMax && configuredMax >= worldMin;
@@ -947,6 +1000,9 @@ public final class IrisStructureLocator {
 
     private static long chunkKey(int cx, int cz) {
         return ((long) cx << 32) ^ (cz & 0xffffffffL);
+    }
+
+    private record PlacementAnchor(int x, int y, int z) {
     }
 
     private static boolean matches(IrisStructurePlacement placement, String key, IrisData data) {

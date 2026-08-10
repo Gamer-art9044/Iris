@@ -108,6 +108,22 @@ public class BulkStructureImporterTemplateNameTest {
         assertEquals(3, report.imported());
         assertEquals(1, report.skipped());
         assertEquals(1, report.failed());
+        assertFalse(report.retryRequired());
+    }
+
+    @Test
+    public void datapackReportRetainsRetryClassification() {
+        BulkStructureImporter.Report report = BulkStructureImporter.datapackReport(
+                1,
+                0,
+                0,
+                0,
+                1,
+                Map.of(),
+                true
+        );
+
+        assertTrue(report.retryRequired());
     }
 
     @Test
@@ -118,6 +134,7 @@ public class BulkStructureImporterTemplateNameTest {
         assertEquals(0, report.imported());
         assertEquals(0, report.skipped());
         assertEquals(1, report.failed());
+        assertTrue(report.retryRequired());
     }
 
     @Test

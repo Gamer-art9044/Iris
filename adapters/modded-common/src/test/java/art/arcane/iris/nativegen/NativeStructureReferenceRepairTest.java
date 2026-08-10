@@ -416,7 +416,7 @@ public class NativeStructureReferenceRepairTest {
         private IrisData data;
 
         private TestEngine() {
-            super(null, false);
+            super(null, InitializationMode.RUNTIME);
         }
 
         @Override

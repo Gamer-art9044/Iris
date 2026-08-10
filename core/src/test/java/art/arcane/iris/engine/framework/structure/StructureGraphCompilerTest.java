@@ -1,10 +1,15 @@
 package art.arcane.iris.engine.framework.structure;
 
 import art.arcane.iris.engine.object.IrisDirection;
+import art.arcane.iris.engine.object.IrisJigsawBranchFailurePolicy;
+import art.arcane.iris.engine.object.IrisJigsawCompatibility;
 import art.arcane.iris.engine.object.IrisJigsawConnector;
+import art.arcane.iris.engine.object.IrisJigsawMode;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
 import art.arcane.iris.engine.object.IrisJigsawPieceEntry;
+import art.arcane.iris.engine.object.IrisJigsawPieceRules;
 import art.arcane.iris.engine.object.IrisJigsawPool;
+import art.arcane.iris.engine.object.IrisJigsawThemeSet;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisStructure;
@@ -66,6 +71,8 @@ public class StructureGraphCompilerTest {
         assertEquals(first.getAssemblySamples(), second.getAssemblySamples());
         for (StructureGraphAssemblySample sample : first.getAssemblySamples()) {
             assertEquals(List.of("pieces/start"), sample.outcome().pieceKeys());
+            assertEquals(StructureAssemblyStatus.COMPLETE, sample.outcome().status());
+            assertEquals("", sample.outcome().detail());
             assertTrue(sample.outcome().isComplete());
         }
     }
@@ -124,6 +131,8 @@ public class StructureGraphCompilerTest {
         assertFalse(result.getGraph().getReachablePieces().contains("pieces/target"));
         assertFalse(result.isAssemblyViable());
         for (StructureGraphAssemblySample sample : result.getAssemblySamples()) {
+            assertEquals(StructureAssemblyStatus.FAILED_UNCAPPED, sample.outcome().status());
+            assertTrue(sample.outcome().detail().contains("could not place a piece"));
             assertFalse(sample.outcome().isComplete());
         }
     }
@@ -141,6 +150,20 @@ public class StructureGraphCompilerTest {
             assertEquals(List.of("pieces/start", "pieces/target"), sample.outcome().pieceKeys());
             assertTrue(sample.outcome().isComplete());
         }
+    }
+
+    @Test
+    public void connectorNamesUseTheRuntimeExactMatchingContract() {
+        InMemoryResolver resolver = connectorGraph(false, IrisDirection.SOUTH_POSITIVE_Z);
+        resolver.pieces.get("pieces/target").getConnectors().getFirst().setName(" door");
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(
+                structure("pools/start"), resolver);
+
+        assertCodes(result,
+                StructureGraphDiagnostic.Code.NO_COMPATIBLE_CONNECTOR,
+                StructureGraphDiagnostic.Code.UNREACHABLE_PIECE);
+        assertFalse(result.isAssemblyViable());
     }
 
     @Test
@@ -174,6 +197,383 @@ public class StructureGraphCompilerTest {
         StructureGraphCompilation rollable = StructureGraphCompiler.compile(
                 structure("pools/start"), resolver);
         assertTrue(rollable.isAssemblyViable());
+    }
+
+    @Test
+    public void channelsParticipateInMatchingAndPortableGraphsRejectThem() {
+        InMemoryResolver resolver = connectorGraph(false, IrisDirection.SOUTH_POSITIVE_Z);
+        IrisJigsawConnector source = resolver.pieces.get("pieces/start").getConnectors().getFirst();
+        IrisJigsawConnector target = resolver.pieces.get("pieces/target").getConnectors().getFirst();
+        source.setChannel("roads");
+        target.setChannel("rooms");
+
+        StructureGraphCompilation mismatched = StructureGraphCompiler.compile(
+                structure("pools/start"), resolver);
+
+        assertCodes(mismatched,
+                StructureGraphDiagnostic.Code.NO_COMPATIBLE_CONNECTOR,
+                StructureGraphDiagnostic.Code.UNREACHABLE_PIECE);
+
+        target.setChannel("Roads");
+        StructureGraphCompilation mismatchedCase = StructureGraphCompiler.compile(
+                structure("pools/start"), resolver);
+
+        assertCodes(mismatchedCase,
+                StructureGraphDiagnostic.Code.NO_COMPATIBLE_CONNECTOR,
+                StructureGraphDiagnostic.Code.UNREACHABLE_PIECE);
+
+        target.setChannel(" roads");
+        StructureGraphCompilation mismatchedWhitespace = StructureGraphCompiler.compile(
+                structure("pools/start"), resolver);
+
+        assertCodes(mismatchedWhitespace,
+                StructureGraphDiagnostic.Code.NO_COMPATIBLE_CONNECTOR,
+                StructureGraphDiagnostic.Code.UNREACHABLE_PIECE);
+
+        target.setChannel("roads");
+        StructureGraphCompilation matched = StructureGraphCompiler.compile(
+                structure("pools/start"), resolver);
+
+        assertTrue(matched.isAssemblyViable());
+
+        IrisStructure portable = structure("pools/start")
+                .setCompatibility(IrisJigsawCompatibility.VANILLA_PORTABLE)
+                .setBranchFailurePolicy(IrisJigsawBranchFailurePolicy.TERMINATE_BRANCH);
+        StructureGraphCompilation rejectedPortable = StructureGraphCompiler.compile(portable, resolver);
+
+        assertCodes(rejectedPortable, StructureGraphDiagnostic.Code.NON_PORTABLE_CONNECTOR);
+        assertTrue(rejectedPortable.hasErrors());
+    }
+
+    @Test
+    public void validatesPlanarCellSizeAndConnectorMetadata() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawConnector connector = connector(
+                new IrisPosition(1, 1, 0), IrisDirection.NORTH_NEGATIVE_Z,
+                "pools/terminal", "source", "door")
+                .setFinalState("")
+                .setSelectionPriority(-1);
+        resolver.objects.put("objects/start", object());
+        resolver.pieces.put("pieces/start", piece("objects/start", connector));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        resolver.pools.put("pools/terminal", pool());
+        IrisStructure structure = structure("pools/start")
+                .setMode(IrisJigsawMode.PLANAR_JIGSAW)
+                .setCellSize(new IrisPosition(16, 0, 16));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
+
+        assertCodes(result,
+                StructureGraphDiagnostic.Code.INVALID_PLANAR_CELL_SIZE,
+                StructureGraphDiagnostic.Code.INVALID_CONNECTOR_METADATA);
+        assertTrue(result.hasErrors());
+    }
+
+    @Test
+    public void acceptsRectangularPlanarCellSize() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        resolver.objects.put("objects/start", new IrisObject(16, 8, 8));
+        resolver.pieces.put("pieces/start", piece("objects/start"));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        IrisStructure structure = structure("pools/start")
+                .setMode(IrisJigsawMode.PLANAR_JIGSAW)
+                .setCellSize(new IrisPosition(16, 8, 8));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
+
+        assertFalse(hasCode(result, StructureGraphDiagnostic.Code.INVALID_PLANAR_CELL_SIZE));
+        assertTrue(result.isAssemblyViable());
+    }
+
+    @Test
+    public void allowsSmallerPlanarObjectsAndRejectsObjectsOutsideTheirWorkcell() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        resolver.objects.put("objects/start", new IrisObject(4, 3, 4));
+        resolver.pieces.put("pieces/start", piece("objects/start"));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        IrisStructure structure = structure("pools/start")
+                .setMode(IrisJigsawMode.PLANAR_JIGSAW)
+                .setCellSize(new IrisPosition(4, 3, 4));
+
+        StructureGraphCompilation valid = StructureGraphCompiler.compile(structure, resolver);
+
+        assertFalse(hasCode(valid, StructureGraphDiagnostic.Code.INVALID_PLANAR_OBJECT_SIZE));
+
+        resolver.objects.put("objects/start", new IrisObject(4, 2, 4));
+        StructureGraphCompilation smaller = StructureGraphCompiler.compile(structure, resolver);
+
+        assertFalse(hasCode(smaller, StructureGraphDiagnostic.Code.INVALID_PLANAR_OBJECT_SIZE));
+
+        resolver.objects.put("objects/start", new IrisObject(5, 3, 4));
+        StructureGraphCompilation oversized = StructureGraphCompiler.compile(structure, resolver);
+
+        assertCodes(oversized, StructureGraphDiagnostic.Code.INVALID_PLANAR_OBJECT_SIZE);
+        assertTrue(oversized.getDiagnostics().stream().anyMatch(
+                diagnostic -> diagnostic.message().contains("does not fit")));
+    }
+
+    @Test
+    public void ignoresPlanarObjectSizeForPiecesThatCannotBeReached() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawConnector source = connector(
+                new IrisPosition(2, 1, 0), IrisDirection.NORTH_NEGATIVE_Z,
+                "pools/target", "source", "door");
+        IrisJigsawConnector target = connector(
+                new IrisPosition(2, 1, 0), IrisDirection.NORTH_NEGATIVE_Z,
+                "pools/target", "door", "unused");
+        resolver.objects.put("objects/start", new IrisObject(4, 3, 4));
+        resolver.objects.put("objects/target", new IrisObject(4, 2, 4));
+        resolver.pieces.put("pieces/start", piece("objects/start", source).setRotatable(false));
+        resolver.pieces.put("pieces/target", piece("objects/target", target).setRotatable(false));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        resolver.pools.put("pools/target", pool(entry("pieces/target", 1)));
+        IrisStructure structure = structure("pools/start")
+                .setMode(IrisJigsawMode.PLANAR_JIGSAW)
+                .setCellSize(new IrisPosition(4, 3, 4));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
+
+        assertFalse(result.getGraph().getReachablePieces().contains("pieces/target"));
+        assertFalse(hasCode(result, StructureGraphDiagnostic.Code.INVALID_PLANAR_OBJECT_SIZE));
+    }
+
+    @Test
+    public void acceptsAllCanonicalPlanarFaceCenterSockets() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawConnector north = connector(
+                new IrisPosition(2, 1, 0), IrisDirection.NORTH_NEGATIVE_Z,
+                "pools/terminal", "north", "door");
+        IrisJigsawConnector east = connector(
+                new IrisPosition(3, 1, 2), IrisDirection.EAST_POSITIVE_X,
+                "pools/terminal", "east", "door");
+        IrisJigsawConnector south = connector(
+                new IrisPosition(2, 1, 3), IrisDirection.SOUTH_POSITIVE_Z,
+                "pools/terminal", "south", "door");
+        IrisJigsawConnector west = connector(
+                new IrisPosition(0, 1, 2), IrisDirection.WEST_NEGATIVE_X,
+                "pools/terminal", "west", "door");
+        resolver.objects.put("objects/start", new IrisObject(4, 3, 4));
+        resolver.pieces.put("pieces/start", piece("objects/start", north, east, south, west));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        resolver.pools.put("pools/terminal", pool());
+        IrisStructure structure = structure("pools/start")
+                .setMode(IrisJigsawMode.PLANAR_JIGSAW)
+                .setCellSize(new IrisPosition(4, 3, 4));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
+
+        assertTrue(result.getDiagnostics().isEmpty());
+        assertTrue(result.isAssemblyViable());
+    }
+
+    @Test
+    public void rejectsOffsetVerticalAndTiltedPlanarConnectors() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawConnector offset = connector(
+                new IrisPosition(1, 1, 0), IrisDirection.NORTH_NEGATIVE_Z,
+                "pools/terminal", "offset", "door");
+        IrisJigsawConnector vertical = connector(
+                new IrisPosition(2, 1, 2), IrisDirection.UP_POSITIVE_Y,
+                "pools/terminal", "vertical", "door");
+        IrisJigsawConnector tilted = connector(
+                new IrisPosition(2, 1, 3), IrisDirection.SOUTH_POSITIVE_Z,
+                "pools/terminal", "tilted", "door")
+                .setTop(IrisDirection.DOWN_NEGATIVE_Y);
+        resolver.objects.put("objects/start", new IrisObject(4, 3, 4));
+        resolver.pieces.put("pieces/start", piece("objects/start", offset, vertical, tilted));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        resolver.pools.put("pools/terminal", pool());
+        IrisStructure structure = structure("pools/start")
+                .setMode(IrisJigsawMode.PLANAR_JIGSAW)
+                .setCellSize(new IrisPosition(4, 3, 4));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
+        List<String> messages = new ArrayList<>();
+        for (StructureGraphDiagnostic diagnostic : result.getDiagnostics()) {
+            if (diagnostic.code() == StructureGraphDiagnostic.Code.INVALID_PLANAR_CONNECTOR) {
+                messages.add(diagnostic.message());
+            }
+        }
+
+        assertEquals(3, messages.size());
+        assertTrue(messages.stream().anyMatch(message -> message.contains("canonical NORTH_NEGATIVE_Z")));
+        assertTrue(messages.stream().anyMatch(message -> message.contains("uses vertical direction")));
+        assertTrue(messages.stream().anyMatch(message -> message.contains("keep connected cells on one Y level")));
+        assertTrue(result.hasErrors());
+    }
+
+    @Test
+    public void spatialGraphsIgnoreThePlanarGeometryContract() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawConnector vertical = connector(
+                new IrisPosition(1, 4, 1), IrisDirection.UP_POSITIVE_Y,
+                "pools/terminal", "vertical", "door")
+                .setTop(IrisDirection.DOWN_NEGATIVE_Y);
+        resolver.objects.put("objects/start", new IrisObject(2, 5, 3));
+        resolver.pieces.put("pieces/start", piece("objects/start", vertical));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        resolver.pools.put("pools/terminal", pool());
+        IrisStructure structure = structure("pools/start")
+                .setMode(IrisJigsawMode.SPATIAL_JIGSAW)
+                .setCellSize(new IrisPosition(16, 0, 8));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
+
+        assertFalse(hasCode(result, StructureGraphDiagnostic.Code.INVALID_PLANAR_CELL_SIZE));
+        assertFalse(hasCode(result, StructureGraphDiagnostic.Code.INVALID_PLANAR_OBJECT_SIZE));
+        assertFalse(hasCode(result, StructureGraphDiagnostic.Code.INVALID_PLANAR_CONNECTOR));
+        assertFalse(result.hasErrors());
+    }
+
+    @Test
+    public void deterministicSamplesHonorSelectionPriorityAndStableTies() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawConnector east = connector(
+                new IrisPosition(2, 1, 1), IrisDirection.EAST_POSITIVE_X,
+                "pools/east", "source", "door").setSelectionPriority(-20);
+        IrisJigsawConnector west = connector(
+                new IrisPosition(0, 1, 1), IrisDirection.WEST_NEGATIVE_X,
+                "pools/west", "source", "door").setSelectionPriority(-10);
+        resolver.objects.put("objects/start", object());
+        resolver.objects.put("objects/east", object());
+        resolver.objects.put("objects/west", object());
+        resolver.pieces.put("pieces/start", piece("objects/start", east, west));
+        resolver.pieces.put("pieces/east", piece("objects/east", connector(
+                new IrisPosition(0, 1, 1), IrisDirection.WEST_NEGATIVE_X,
+                "pools/terminal", "door", "unused")));
+        resolver.pieces.put("pieces/west", piece("objects/west", connector(
+                new IrisPosition(2, 1, 1), IrisDirection.EAST_POSITIVE_X,
+                "pools/terminal", "door", "unused")));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        resolver.pools.put("pools/east", pool(entry("pieces/east", 1)));
+        resolver.pools.put("pools/west", pool(entry("pieces/west", 1)));
+        resolver.pools.put("pools/terminal", pool());
+        IrisStructure structure = structure("pools/start");
+
+        StructureGraphCompilation prioritized = StructureGraphCompiler.compile(structure, resolver);
+
+        for (StructureGraphAssemblySample sample : prioritized.getAssemblySamples()) {
+            assertEquals(List.of("pieces/start", "pieces/west", "pieces/east"),
+                    sample.outcome().pieceKeys());
+        }
+
+        east.setSelectionPriority(-10);
+        StructureGraphCompilation tied = StructureGraphCompiler.compile(structure, resolver);
+
+        for (StructureGraphAssemblySample sample : tied.getAssemblySamples()) {
+            assertEquals(List.of("pieces/start", "pieces/east", "pieces/west"),
+                    sample.outcome().pieceKeys());
+        }
+    }
+
+    @Test
+    public void deterministicSamplesScheduleChildExpansionBySourcePlacementPriority() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawConnector eastSource = connector(
+                new IrisPosition(2, 1, 1), IrisDirection.EAST_POSITIVE_X,
+                "pools/east", "source", "door").setPlacementPriority(-20);
+        IrisJigsawConnector westSource = connector(
+                new IrisPosition(0, 1, 1), IrisDirection.WEST_NEGATIVE_X,
+                "pools/west", "source", "door").setPlacementPriority(-10);
+        IrisJigsawConnector eastTarget = connector(
+                new IrisPosition(0, 1, 1), IrisDirection.WEST_NEGATIVE_X,
+                "pools/terminal", "door", "unused");
+        IrisJigsawConnector eastBranch = connector(
+                new IrisPosition(2, 1, 1), IrisDirection.EAST_POSITIVE_X,
+                "pools/east-leaf", "east", "leaf");
+        IrisJigsawConnector westTarget = connector(
+                new IrisPosition(2, 1, 1), IrisDirection.EAST_POSITIVE_X,
+                "pools/terminal", "door", "unused");
+        IrisJigsawConnector westBranch = connector(
+                new IrisPosition(0, 1, 1), IrisDirection.WEST_NEGATIVE_X,
+                "pools/west-leaf", "west", "leaf");
+        resolver.objects.put("objects/start", object());
+        resolver.objects.put("objects/east", object());
+        resolver.objects.put("objects/west", object());
+        resolver.objects.put("objects/east-leaf", object());
+        resolver.objects.put("objects/west-leaf", object());
+        resolver.pieces.put("pieces/start", piece("objects/start", eastSource, westSource));
+        resolver.pieces.put("pieces/east", piece("objects/east", eastTarget, eastBranch));
+        resolver.pieces.put("pieces/west", piece("objects/west", westTarget, westBranch));
+        resolver.pieces.put("pieces/east-leaf", piece("objects/east-leaf", connector(
+                new IrisPosition(0, 1, 1), IrisDirection.WEST_NEGATIVE_X,
+                "pools/terminal", "leaf", "unused")));
+        resolver.pieces.put("pieces/west-leaf", piece("objects/west-leaf", connector(
+                new IrisPosition(2, 1, 1), IrisDirection.EAST_POSITIVE_X,
+                "pools/terminal", "leaf", "unused")));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        resolver.pools.put("pools/east", pool(entry("pieces/east", 1)));
+        resolver.pools.put("pools/west", pool(entry("pieces/west", 1)));
+        resolver.pools.put("pools/east-leaf", pool(entry("pieces/east-leaf", 1)));
+        resolver.pools.put("pools/west-leaf", pool(entry("pieces/west-leaf", 1)));
+        resolver.pools.put("pools/terminal", pool());
+        IrisStructure structure = structure("pools/start");
+
+        StructureGraphCompilation prioritized = StructureGraphCompiler.compile(structure, resolver);
+
+        for (StructureGraphAssemblySample sample : prioritized.getAssemblySamples()) {
+            assertEquals(List.of(
+                            "pieces/start", "pieces/east", "pieces/west",
+                            "pieces/west-leaf", "pieces/east-leaf"),
+                    sample.outcome().pieceKeys());
+        }
+
+        westSource.setPlacementPriority(-20);
+        StructureGraphCompilation tied = StructureGraphCompiler.compile(structure, resolver);
+
+        for (StructureGraphAssemblySample sample : tied.getAssemblySamples()) {
+            assertEquals(List.of(
+                            "pieces/start", "pieces/east", "pieces/west",
+                            "pieces/east-leaf", "pieces/west-leaf"),
+                    sample.outcome().pieceKeys());
+        }
+    }
+
+    @Test
+    public void deterministicSamplesUseSelectionPriorityForCandidateConnectors() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawConnector source = connector(
+                new IrisPosition(0, 1, 0), IrisDirection.EAST_POSITIVE_X,
+                "pools/target", "source", "door");
+        IrisJigsawConnector low = connector(
+                new IrisPosition(0, 1, 0), IrisDirection.WEST_NEGATIVE_X,
+                "pools/low", "door", "leaf").setSelectionPriority(-20);
+        IrisJigsawConnector high = connector(
+                new IrisPosition(0, 1, 2), IrisDirection.WEST_NEGATIVE_X,
+                "pools/high", "door", "leaf").setSelectionPriority(-10);
+        resolver.objects.put("objects/start", new IrisObject(1, 3, 1));
+        resolver.objects.put("objects/target", new IrisObject(1, 3, 3));
+        resolver.objects.put("objects/low-leaf", new IrisObject(1, 3, 1));
+        resolver.objects.put("objects/high-leaf", new IrisObject(1, 3, 1));
+        resolver.pieces.put("pieces/start", piece("objects/start", source).setRotatable(false));
+        resolver.pieces.put("pieces/target", piece("objects/target", low, high).setRotatable(false));
+        resolver.pieces.put("pieces/low-leaf", piece("objects/low-leaf", connector(
+                new IrisPosition(0, 1, 0), IrisDirection.EAST_POSITIVE_X,
+                "pools/terminal", "leaf", "unused")).setRotatable(false));
+        resolver.pieces.put("pieces/high-leaf", piece("objects/high-leaf", connector(
+                new IrisPosition(0, 1, 0), IrisDirection.EAST_POSITIVE_X,
+                "pools/terminal", "leaf", "unused")).setRotatable(false));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        resolver.pools.put("pools/target", pool(entry("pieces/target", 1)));
+        resolver.pools.put("pools/low", pool(entry("pieces/low-leaf", 1)));
+        resolver.pools.put("pools/high", pool(entry("pieces/high-leaf", 1)));
+        resolver.pools.put("pools/terminal", pool());
+        IrisStructure structure = structure("pools/start");
+
+        StructureGraphCompilation prioritized = StructureGraphCompiler.compile(structure, resolver);
+
+        for (StructureGraphAssemblySample sample : prioritized.getAssemblySamples()) {
+            assertEquals(List.of("pieces/start", "pieces/target", "pieces/low-leaf"),
+                    sample.outcome().pieceKeys());
+        }
+
+        low.setSelectionPriority(-10);
+        StructureGraphCompilation tied = StructureGraphCompiler.compile(structure, resolver);
+
+        for (StructureGraphAssemblySample sample : tied.getAssemblySamples()) {
+            assertEquals(List.of("pieces/start", "pieces/target", "pieces/high-leaf"),
+                    sample.outcome().pieceKeys());
+        }
     }
 
     @Test
@@ -251,7 +651,8 @@ public class StructureGraphCompilerTest {
         assertFalse(result.isAssemblyViable());
         for (StructureGraphAssemblySample sample : result.getAssemblySamples()) {
             assertEquals(List.of("pieces/start"), sample.outcome().pieceKeys());
-            assertEquals(1, sample.outcome().unresolvedConnectorCount());
+            assertEquals(StructureAssemblyStatus.FAILED_UNCAPPED, sample.outcome().status());
+            assertTrue(sample.outcome().detail().contains("could not place"));
         }
     }
 
@@ -389,6 +790,24 @@ public class StructureGraphCompilerTest {
     }
 
     @Test
+    public void intentionalEmptyStartSamplesPreserveRuntimeStatusAndDetail() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        resolver.pools.put("pools/start", pool(emptyEntry(1)));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(
+                structure("pools/start"), resolver);
+
+        assertTrue(result.isAssemblyViable());
+        for (StructureGraphAssemblySample sample : result.getAssemblySamples()) {
+            assertEquals(StructureAssemblyStatus.INTENTIONAL_EMPTY, sample.outcome().status());
+            assertEquals(
+                    "The selected start-pool membership intentionally produces no structure",
+                    sample.outcome().detail());
+            assertTrue(sample.outcome().intentionalEmpty());
+        }
+    }
+
+    @Test
     public void rareEmptyStartPreventsGuaranteedReplacementOutputWithoutDependingOnSamples() {
         InMemoryResolver resolver = new InMemoryResolver();
         resolver.objects.put("objects/start", object());
@@ -439,7 +858,52 @@ public class StructureGraphCompilerTest {
     }
 
     @Test
-    public void defersTopologyPieceCapsToGeometryValidation() {
+    public void branchTerminationPolicyMakesUnmatchedOptionalBranchesViable() {
+        InMemoryResolver resolver = connectorGraph(false, IrisDirection.NORTH_NEGATIVE_Z);
+        IrisStructure strictStructure = structure("pools/start");
+        IrisStructure terminatingStructure = structure("pools/start")
+                .setBranchFailurePolicy(IrisJigsawBranchFailurePolicy.TERMINATE_BRANCH);
+
+        StructureGraphCompilation strict = StructureGraphCompiler.compile(strictStructure, resolver);
+        StructureGraphCompilation terminating = StructureGraphCompiler.compile(terminatingStructure, resolver);
+
+        assertCodes(strict,
+                StructureGraphDiagnostic.Code.NO_COMPATIBLE_CONNECTOR,
+                StructureGraphDiagnostic.Code.UNREACHABLE_PIECE);
+        assertFalse(strict.isAssemblyViable());
+        assertFalse(strict.guaranteesAssemblyOutput());
+        assertCodes(terminating,
+                StructureGraphDiagnostic.Code.NO_COMPATIBLE_CONNECTOR,
+                StructureGraphDiagnostic.Code.UNREACHABLE_PIECE);
+        assertTrue(terminating.isAssemblyViable());
+        assertTrue(terminating.guaranteesAssemblyOutput());
+        for (StructureGraphAssemblySample sample : terminating.getAssemblySamples()) {
+            assertEquals(StructureAssemblyStatus.COMPLETE, sample.outcome().status());
+            assertEquals(List.of("pieces/start"), sample.outcome().pieceKeys());
+        }
+    }
+
+    @Test
+    public void vanillaPortableGraphsRequireBranchTerminationPolicy() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        resolver.objects.put("objects/start", object());
+        resolver.pieces.put("pieces/start", piece("objects/start"));
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        IrisStructure structure = structure("pools/start")
+                .setCompatibility(IrisJigsawCompatibility.VANILLA_PORTABLE);
+
+        StructureGraphCompilation strict = StructureGraphCompiler.compile(structure, resolver);
+        structure.setBranchFailurePolicy(IrisJigsawBranchFailurePolicy.TERMINATE_BRANCH);
+        StructureGraphCompilation terminating = StructureGraphCompiler.compile(structure, resolver);
+
+        assertCodes(strict, StructureGraphDiagnostic.Code.NON_PORTABLE_METADATA);
+        assertTrue(strict.hasErrors());
+        assertFalse(hasCode(terminating, StructureGraphDiagnostic.Code.NON_PORTABLE_METADATA));
+        assertTrue(terminating.isAssemblyViable());
+    }
+
+    @Test
+    public void authoritativeGeometrySamplingDoesNotReportTopologyOnlyPieceCaps() {
         InMemoryResolver resolver = new InMemoryResolver();
         IrisJigsawConnector startSource = connector(
                 new IrisPosition(1, 1, 0), IrisDirection.NORTH_NEGATIVE_Z,
@@ -455,9 +919,9 @@ public class StructureGraphCompilerTest {
                 "pools/recursive", "source", "door");
         resolver.objects.put("objects/start", object());
         resolver.objects.put("objects/recursive", object());
-        resolver.pieces.put("pieces/start", piece("objects/start", startSource));
+        resolver.pieces.put("pieces/start", piece("objects/start", startSource).setRotatable(false));
         resolver.pieces.put("pieces/recursive", piece(
-                "objects/recursive", recursiveTarget, firstBranch, secondBranch));
+                "objects/recursive", recursiveTarget, firstBranch, secondBranch).setRotatable(false));
         resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
         IrisJigsawPool recursive = pool(entry("pieces/recursive", 1));
         recursive.setFallback("pools/empty");
@@ -465,15 +929,82 @@ public class StructureGraphCompilerTest {
         resolver.pools.put("pools/empty", pool());
         IrisStructure structure = structure("pools/start");
         structure.setMaxDepth(30);
+        structure.setMaxSizeChunks(8);
 
         StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
 
-        assertCodes(result, StructureGraphDiagnostic.Code.ASSEMBLY_PIECE_CAP_REACHED);
+        assertFalse(hasCode(result, StructureGraphDiagnostic.Code.ASSEMBLY_PIECE_CAP_REACHED));
         assertTrue(result.isAssemblyViable());
         for (StructureGraphAssemblySample sample : result.getAssemblySamples()) {
-            assertTrue(sample.outcome().pieceCapReached());
-            assertEquals(0, sample.outcome().unresolvedConnectorCount());
+            assertFalse(sample.outcome().pieceCapReached());
+            assertEquals(31, sample.outcome().pieceKeys().size());
+            assertEquals(StructureAssemblyStatus.COMPLETE, sample.outcome().status());
         }
+    }
+
+    @Test
+    public void validatesChanceThemeAndRuleMetadataBeforeSampling() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawPiece start = piece("objects/start");
+        start.getThemes().add("missing-theme");
+        start.setRules(new IrisJigsawPieceRules().setMinimumDepth(4).setMaximumDepth(2));
+        resolver.objects.put("objects/start", object());
+        resolver.pieces.put("pieces/start", start);
+        resolver.pools.put("pools/start", pool(
+                entry("pieces/start", 1).setChance(Double.NaN)));
+        IrisStructure structure = structure("pools/start");
+        structure.getThemeSets().add(new IrisJigsawThemeSet("variant-1", 1));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
+
+        assertCodes(result,
+                StructureGraphDiagnostic.Code.INVALID_CHANCE,
+                StructureGraphDiagnostic.Code.INVALID_THEME,
+                StructureGraphDiagnostic.Code.INVALID_PIECE_RULE);
+        assertTrue(result.getAssemblySamples().isEmpty());
+    }
+
+    @Test
+    public void rejectsADeclaredThemeWithoutAnEligibleStartPiece() {
+        InMemoryResolver resolver = new InMemoryResolver();
+        IrisJigsawPiece start = piece("objects/start");
+        start.getThemes().add("variant-1");
+        resolver.objects.put("objects/start", object());
+        resolver.pieces.put("pieces/start", start);
+        resolver.pools.put("pools/start", pool(entry("pieces/start", 1)));
+        IrisStructure structure = structure("pools/start");
+        structure.getThemeSets().add(new IrisJigsawThemeSet("variant-1", 1));
+        structure.getThemeSets().add(new IrisJigsawThemeSet("variant-2", 1));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
+
+        assertCodes(result, StructureGraphDiagnostic.Code.UNSATISFIABLE_PIECE_RULE);
+    }
+
+    @Test
+    public void terminalPiecesDoNotMakeTheirOutgoingPoolsReachable() {
+        InMemoryResolver resolver = connectorGraph(true, IrisDirection.SOUTH_POSITIVE_Z);
+        resolver.pieces.get("pieces/start").setRules(
+                new IrisJigsawPieceRules().setTerminal(true));
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(
+                structure("pools/start"), resolver);
+
+        assertTrue(result.getGraph().getReachablePieces().contains("pieces/start"));
+        assertFalse(result.getGraph().getReachablePieces().contains("pieces/target"));
+        assertCodes(result, StructureGraphDiagnostic.Code.UNREACHABLE_POOL);
+    }
+
+    @Test
+    public void requiredCapsNeedACompatibleTerminalInTheDirectFallback() {
+        InMemoryResolver resolver = connectorGraph(true, IrisDirection.SOUTH_POSITIVE_Z);
+        resolver.pools.get("pools/target").setFallback("pools/fallback");
+        resolver.pools.put("pools/fallback", pool(entry("pieces/target", 1)));
+        IrisStructure structure = structure("pools/start").setRequireCaps(true);
+
+        StructureGraphCompilation result = StructureGraphCompiler.compile(structure, resolver);
+
+        assertCodes(result, StructureGraphDiagnostic.Code.NO_REQUIRED_TERMINAL);
     }
 
     private static InMemoryResolver connectorGraph(boolean rotatable, IrisDirection targetDirection) {
@@ -482,7 +1013,7 @@ public class StructureGraphCompilerTest {
                 new IrisPosition(1, 1, 0), IrisDirection.NORTH_NEGATIVE_Z,
                 "pools/target", "source", "door");
         IrisJigsawConnector target = connector(
-                new IrisPosition(1, 1, 0), targetDirection,
+                canonicalPosition(targetDirection), targetDirection,
                 "pools/target", "door", "unrelated-target");
         IrisJigsawPiece targetPiece = piece("objects/target", target);
         targetPiece.setRotatable(rotatable);
@@ -508,6 +1039,17 @@ public class StructureGraphCompilerTest {
 
     private static IrisObject object() {
         return new IrisObject(3, 3, 3);
+    }
+
+    private static IrisPosition canonicalPosition(IrisDirection direction) {
+        return switch (direction) {
+            case NORTH_NEGATIVE_Z -> new IrisPosition(1, 1, 0);
+            case EAST_POSITIVE_X -> new IrisPosition(2, 1, 1);
+            case SOUTH_POSITIVE_Z -> new IrisPosition(1, 1, 2);
+            case WEST_NEGATIVE_X -> new IrisPosition(0, 1, 1);
+            case UP_POSITIVE_Y -> new IrisPosition(1, 2, 1);
+            case DOWN_NEGATIVE_Y -> new IrisPosition(1, 0, 1);
+        };
     }
 
     private static IrisJigsawPiece piece(String object, IrisJigsawConnector... connectors) {
@@ -551,6 +1093,15 @@ public class StructureGraphCompilerTest {
         for (StructureGraphDiagnostic.Code code : expected) {
             assertTrue("Missing diagnostic " + code + " in " + actual, actual.contains(code));
         }
+    }
+
+    private static boolean hasCode(StructureGraphCompilation result, StructureGraphDiagnostic.Code code) {
+        for (StructureGraphDiagnostic diagnostic : result.getDiagnostics()) {
+            if (diagnostic.code() == code) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static final class InMemoryResolver implements StructureGraphResolver {

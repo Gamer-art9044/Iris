@@ -74,20 +74,30 @@ public class IrisProject {
     }
 
     public void open(VolmitSender sender) throws IrisException {
-        open(sender, 1337, (w) ->
+        open(sender, 1337, StudioOpenCoordinator.StudioOpenKind.STANDARD, (w) ->
         {
         });
     }
 
-    public CompletableFuture<StudioOpenCoordinator.StudioOpenResult> open(VolmitSender sender, long seed, Consumer<World> onDone) throws IrisException {
+    public CompletableFuture<StudioOpenCoordinator.StudioOpenResult> open(
+            VolmitSender sender,
+            long seed,
+            StudioOpenCoordinator.StudioOpenKind openKind,
+            Consumer<World> onDone
+    ) throws IrisException {
         if (isOpen()) {
-            return close().thenCompose(ignored -> openInternal(sender, seed, onDone));
+            return close().thenCompose(ignored -> openInternal(sender, seed, openKind, onDone));
         }
 
-        return openInternal(sender, seed, onDone);
+        return openInternal(sender, seed, openKind, onDone);
     }
 
-    private CompletableFuture<StudioOpenCoordinator.StudioOpenResult> openInternal(VolmitSender sender, long seed, Consumer<World> onDone) {
+    private CompletableFuture<StudioOpenCoordinator.StudioOpenResult> openInternal(
+            VolmitSender sender,
+            long seed,
+            StudioOpenCoordinator.StudioOpenKind openKind,
+            Consumer<World> onDone
+    ) {
         AtomicReference<String> stage = new AtomicReference<>("Queued");
         AtomicReference<Double> progress = new AtomicReference<>(0.01D);
         AtomicBoolean complete = new AtomicBoolean(false);
@@ -97,6 +107,7 @@ public class IrisProject {
                         this,
                         sender,
                         seed,
+                        openKind,
                         update -> {
                             if (update.stage() != null && !update.stage().isBlank()) {
                                 stage.set(update.stage());

@@ -239,6 +239,38 @@ public class IrisStructureLocateCommandContractTest {
     }
 
     @Test
+    public void bulkStructureImportRestrictsCaptureWithoutChangingStandaloneCapture() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.commandStructureSource")));
+        int importStart = source.indexOf("public void importAll(");
+        int importEnd = source.indexOf("@Director(name = \"capture\"", importStart);
+        int captureStart = source.indexOf("public void capture(", importEnd);
+        int captureEnd = source.indexOf("@Director(description = \"Verify", captureStart);
+
+        assertTrue(importStart >= 0);
+        assertTrue(importEnd > importStart);
+        assertTrue(captureStart > importEnd);
+        assertTrue(captureEnd > captureStart);
+        String importMethod = source.substring(importStart, importEnd);
+        String captureMethod = source.substring(captureStart, captureEnd);
+        assertTrue(importMethod.contains("StructureCaptureImporter.importStructures("));
+        assertTrue(importMethod.contains("jigsaws.captureCandidates()"));
+        assertFalse(importMethod.contains("StructureCaptureImporter.importAllStructures("));
+        assertTrue(captureMethod.contains("StructureCaptureImporter.importAllStructures("));
+    }
+
+    @Test
+    public void structurePlaceSeparatesPackContentFromTargetWorldEngine() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.commandStructureSource")));
+        int methodStart = source.indexOf("public void place(");
+        assertTrue(methodStart >= 0);
+        String method = source.substring(methodStart);
+        assertTrue(method.contains("IrisData data = dimension.getLoader()"));
+        assertTrue(method.contains("PlatformChunkGenerator targetGenerator = IrisToolbelt.access(targetWorld)"));
+        assertTrue(method.contains("CommandObject.createPlacer(targetWorld, future, targetEngine)"));
+        assertFalse(method.contains("data.getEngine()"));
+    }
+
+    @Test
     public void structureVerifyPartitionsPolicyBeforeNativeReachability() throws IOException {
         String source = Files.readString(Path.of(System.getProperty("iris.commandStructureSource")));
         int methodStart = source.indexOf("private void runVerification(");

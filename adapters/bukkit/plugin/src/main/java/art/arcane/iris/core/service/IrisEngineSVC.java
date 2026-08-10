@@ -2,6 +2,7 @@ package art.arcane.iris.core.service;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.gui.PregeneratorJob;
+import art.arcane.iris.core.lifecycle.WorldUnloadBoundaryRegistry;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.core.pregenerator.MantleHeapPressure;
 import art.arcane.iris.core.tools.IrisToolbelt;
@@ -36,6 +37,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
@@ -157,7 +159,10 @@ public final class IrisEngineSVC implements IrisService {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onWorldUnload(WorldUnloadEvent event) {
-        remove(event.getWorld());
+        World world = event.getWorld();
+        CompletionStage<Boolean> unloadBoundary = WorldUnloadBoundaryRegistry.claim(
+                WorldIdentity.serialize(world));
+        remove(world, unloadBoundary);
     }
 
     @EventHandler
@@ -230,7 +235,7 @@ public final class IrisEngineSVC implements IrisService {
         }
     }
 
-    private void remove(World world) {
+    private void remove(World world, CompletionStage<Boolean> unloadBoundary) {
         if (world == null) {
             return;
         }
@@ -247,8 +252,51 @@ public final class IrisEngineSVC implements IrisService {
         }
         if (closing != null) {
             phases.closing(world);
-            startClose(registered, closing);
+            deferCloseUntilWorldUnload(world, registered, closing, unloadBoundary);
         }
+    }
+
+    private void deferCloseUntilWorldUnload(
+            World world,
+            Registered registered,
+            ClosingGenerator closing,
+            CompletionStage<Boolean> unloadBoundary
+    ) {
+        if (unloadBoundary == null) {
+            J.sfut(() -> startClose(registered, closing), 1)
+                    .whenComplete((ignored, failure) -> {
+                        if (failure != null) {
+                            Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+                            reportFailure("Failed to defer generator close for " + registered.name(), cause);
+                            completeClose(closing, cause);
+                        }
+                    });
+            return;
+        }
+        unloadBoundary.whenComplete((unloaded, failure) -> {
+            if (failure == null && Boolean.TRUE.equals(unloaded)) {
+                startClose(registered, closing);
+                return;
+            }
+            abandonClose(world, closing);
+        });
+    }
+
+    private void abandonClose(World world, ClosingGenerator closing) {
+        synchronized (registrationLock) {
+            closingGenerators.remove(closing);
+        }
+        closing.completion().complete(null);
+        J.sfut(() -> {
+            if (isCurrentWorld(world)) {
+                add(world);
+            }
+        }, 1).whenComplete((ignored, failure) -> {
+            if (failure != null) {
+                Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+                reportFailure("Failed to restore generator maintenance for " + world.getName(), cause);
+            }
+        });
     }
 
     private ClosingGenerator reserveClose(Registered registered) {

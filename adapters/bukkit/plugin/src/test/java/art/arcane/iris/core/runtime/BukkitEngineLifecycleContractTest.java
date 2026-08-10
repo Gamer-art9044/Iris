@@ -20,6 +20,12 @@ public class BukkitEngineLifecycleContractTest {
         assertTrue(closeAsync.contains("operation.whenComplete("));
         assertFalse(closeAsync.contains("!existing.isDone()"));
 
+        String exclusiveFuture = method(source, "public CompletableFuture<Void> withExclusiveControlFuture(Runnable r)");
+        assertTrue(exclusiveFuture.contains("J.a(() -> completeExclusiveControlFuture(loadLock, r, future))"));
+        String exclusiveCompletion = method(source, "static void completeExclusiveControlFuture(");
+        assertBefore(exclusiveCompletion, "activeGate.releaseExclusive();", "outward.complete(null);");
+        assertBefore(exclusiveCompletion, "activeGate.releaseExclusive();", "outward.completeExceptionally(failure);");
+
         String baseHeight = method(source, "public int getBaseHeight(");
         assertTrue(baseHeight.contains("currentEngine.acquireGenerationLease(\"bukkit_base_height\")"));
         assertTrue(baseHeight.contains("IrisContext.open(currentEngine, lease.sessionId(), null)"));

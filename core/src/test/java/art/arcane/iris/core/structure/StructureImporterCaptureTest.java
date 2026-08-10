@@ -60,11 +60,40 @@ public class StructureImporterCaptureTest {
         assertEquals(4, captured.depth());
         assertEquals(1, captured.structureMarkers());
         assertEquals(0, captured.blocks());
+        assertEquals(0, captured.nonAirBlocks());
         assertTrue(captured.capabilities().contains(StructureCapability.BLOCKS));
         assertFalse(captured.capabilities().contains(StructureCapability.CONNECTORS));
         assertTrue(captured.losses().stream().anyMatch(loss ->
                 loss.capability() == StructureCapability.BLOCKS
                         && loss.code().equals("structure_markers_resolved")));
         assertFalse(captured.losses().stream().anyMatch(loss -> loss.code().equals("connectors_not_imported")));
+    }
+
+    @Test
+    public void captureCountsStoredAirSeparatelyFromPhysicalBlocks() {
+        Structure structure = mock(Structure.class);
+        Palette palette = mock(Palette.class);
+        BlockState air = blockState(Material.AIR, "minecraft:air", 0);
+        BlockState stone = blockState(Material.STONE, "minecraft:stone", 1);
+        when(structure.getSize()).thenReturn(new BlockVector(2, 1, 1));
+        when(structure.getPalettes()).thenReturn(List.of(palette));
+        when(palette.getBlocks()).thenReturn(List.of(air, stone));
+
+        StructureImporter.CapturedStructure captured = StructureImporter.captureStructure(structure);
+
+        assertEquals(2, captured.blocks());
+        assertEquals(1, captured.nonAirBlocks());
+    }
+
+    private static BlockState blockState(Material material, String state, int x) {
+        BlockState block = mock(BlockState.class);
+        BlockData data = mock(BlockData.class);
+        Location location = mock(Location.class);
+        when(block.getLocation()).thenReturn(location);
+        when(block.getBlockData()).thenReturn(data);
+        when(location.getBlockX()).thenReturn(x);
+        when(data.getMaterial()).thenReturn(material);
+        when(data.getAsString()).thenReturn(state);
+        return block;
     }
 }

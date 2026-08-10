@@ -1,28 +1,37 @@
 package art.arcane.iris.engine.framework.structure;
 
+import art.arcane.iris.engine.framework.PlacedStructurePiece;
+import art.arcane.iris.engine.framework.StructureAssembler;
 import art.arcane.iris.engine.object.IrisDirection;
+import art.arcane.iris.engine.object.IrisJigsawBranchFailurePolicy;
+import art.arcane.iris.engine.object.IrisJigsawCompatibility;
 import art.arcane.iris.engine.object.IrisJigsawConnector;
+import art.arcane.iris.engine.object.IrisJigsawMode;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
 import art.arcane.iris.engine.object.IrisJigsawPieceEntry;
+import art.arcane.iris.engine.object.IrisJigsawPieceRules;
 import art.arcane.iris.engine.object.IrisJigsawPool;
+import art.arcane.iris.engine.object.IrisJigsawThemeSet;
+import art.arcane.iris.engine.object.IrisJigsawWorkcellArchetype;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.JigsawJoint;
 import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.math.RNG;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.SplittableRandom;
 
 public final class StructureGraphCompiler {
     private static final int ASSEMBLY_PIECE_CAP = 512;
@@ -41,9 +50,15 @@ public final class StructureGraphCompiler {
         state.loadClosure();
         state.detectFallbackCycles();
         state.analyzeReachability();
-        List<StructureGraphAssemblySample> samples = state.sampleAssemblies();
-        state.reportPieceCapSamples(samples);
+        state.validatePlanarReachableObjects();
+        state.validateRuleFeasibility();
+        state.validateRequiredCaps();
         CompiledStructureGraph graph = state.buildGraph();
+        StructureGraphCompilation validated = StructureGraphCompilation.builder(graph)
+                .diagnostics(state.diagnostics())
+                .build();
+        List<StructureGraphAssemblySample> samples = state.sampleAssemblies(validated);
+        state.reportPieceCapSamples(samples);
         return StructureGraphCompilation.builder(graph)
                 .diagnostics(state.diagnostics())
                 .assemblySamples(samples)
@@ -67,9 +82,12 @@ public final class StructureGraphCompiler {
         private final Set<String> missingObjects = new HashSet<>();
         private final Set<String> reachableEntries = new LinkedHashSet<>();
         private final Set<PieceReachState> reachablePieceStates = new LinkedHashSet<>();
-        private final Map<String, List<OrientedConnector>> activeConnectors = new LinkedHashMap<>();
+        private final Map<String, Set<String>> reachablePiecesByTheme = new LinkedHashMap<>();
+        private final Map<ReachableConnectorKey, List<OrientedConnector>> activeConnectors = new LinkedHashMap<>();
         private final List<StructureGraphDiagnostic> diagnostics = new ArrayList<>();
         private final Set<String> diagnosticKeys = new HashSet<>();
+        private Map<IrisJigsawWorkcellArchetype, PlanarJigsawWorkcellResolver.ResolvedWorkcell>
+                planarWorkcells = Map.of();
 
         private CompilationState(IrisStructure structure, StructureGraphResolver resolver) {
             this.structure = structure;
@@ -96,6 +114,7 @@ public final class StructureGraphCompiler {
         }
 
         private void validateStructureLimits() {
+            validateThemes();
             if (structure.getMaxDepth() < 1 || structure.getMaxDepth() > MAX_DEPTH) {
                 addDiagnostic(StructureGraphDiagnostic.Code.INVALID_MAX_DEPTH,
                         "Structure '" + structureKey() + "' has maxDepth " + structure.getMaxDepth()
@@ -107,6 +126,80 @@ public final class StructureGraphCompiler {
                         "Structure '" + structureKey() + "' has maxSizeChunks " + structure.getMaxSizeChunks()
                                 + "; it must be between 1 and " + MAX_SIZE_CHUNKS + ".",
                         "structure:max-size");
+            }
+            if (structure.resolvedMode() != IrisJigsawMode.PLANAR_JIGSAW) {
+                return;
+            }
+            try {
+                planarWorkcells = PlanarJigsawWorkcellResolver.resolve(structure);
+            } catch (IllegalArgumentException exception) {
+                boolean legacy = structure.getPlanarWorkcells() == null || structure.getPlanarWorkcells().isEmpty();
+                addDiagnostic(
+                        legacy
+                                ? StructureGraphDiagnostic.Code.INVALID_PLANAR_CELL_SIZE
+                                : StructureGraphDiagnostic.Code.INVALID_PLANAR_WORKCELL,
+                        "Structure '" + structureKey() + "' has invalid planar workcells: "
+                                + exception.getMessage() + ".",
+                        "structure:planar-workcells");
+            }
+        }
+
+        private void validateThemes() {
+            KList<IrisJigsawThemeSet> themeSets = structure.getThemeSets();
+            if (themeSets == null) {
+                addDiagnostic(StructureGraphDiagnostic.Code.INVALID_THEME,
+                        "Structure '" + structureKey() + "' declares a null themeSets list.",
+                        "structure:themes:null");
+                return;
+            }
+            Set<String> keys = new LinkedHashSet<>();
+            for (int index = 0; index < themeSets.size(); index++) {
+                IrisJigsawThemeSet theme = themeSets.get(index);
+                if (theme == null) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.INVALID_THEME,
+                            "Structure '" + structureKey() + "' themeSets[" + index + "] is null.",
+                            "structure:theme:null:" + index);
+                    continue;
+                }
+                String key = normalize(theme.getKey());
+                if (key.isEmpty() || !key.equals(theme.getKey())) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.INVALID_THEME,
+                            "Structure '" + structureKey() + "' themeSets[" + index
+                                    + "] must declare a non-blank, whitespace-normalized key.",
+                            "structure:theme:key:" + index);
+                } else if (!keys.add(key)) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.INVALID_THEME,
+                            "Structure '" + structureKey() + "' declares duplicate theme key '" + key + "'.",
+                            "structure:theme:duplicate:" + key);
+                }
+                if (theme.getWeight() <= 0) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.INVALID_WEIGHT,
+                            "Structure '" + structureKey() + "' theme '" + key
+                                    + "' has non-positive weight " + theme.getWeight() + ".",
+                            "structure:theme:weight:" + index);
+                }
+            }
+            if (!themeSets.isEmpty()
+                    && structure.resolvedCompatibility() == IrisJigsawCompatibility.VANILLA_PORTABLE) {
+                addDiagnostic(StructureGraphDiagnostic.Code.NON_PORTABLE_METADATA,
+                        "Structure '" + structureKey()
+                                + "' declares coherent Iris theme sets in a VANILLA_PORTABLE graph.",
+                        "structure:portable:themes");
+            }
+            if (structure.isRequireCaps()
+                    && structure.resolvedCompatibility() == IrisJigsawCompatibility.VANILLA_PORTABLE) {
+                addDiagnostic(StructureGraphDiagnostic.Code.NON_PORTABLE_METADATA,
+                        "Structure '" + structureKey()
+                                + "' requires physical terminal caps, which vanilla jigsaws cannot enforce.",
+                        "structure:portable:require-caps");
+            }
+            if (structure.resolvedCompatibility() == IrisJigsawCompatibility.VANILLA_PORTABLE
+                    && structure.resolvedBranchFailurePolicy()
+                    != IrisJigsawBranchFailurePolicy.TERMINATE_BRANCH) {
+                addDiagnostic(StructureGraphDiagnostic.Code.NON_PORTABLE_METADATA,
+                        "Structure '" + structureKey()
+                                + "' fails unresolved optional connector branches, which vanilla jigsaws terminate.",
+                        "structure:portable:branch-failure-policy");
             }
         }
 
@@ -156,6 +249,19 @@ public final class StructureGraphCompiler {
             }
 
             String fallback = JigsawPoolSelection.directFallbackKey(pool);
+            if (pool.isMandatoryFallback() && fallback.isEmpty()) {
+                addDiagnostic(StructureGraphDiagnostic.Code.MISSING_REQUIRED_FALLBACK,
+                        "Jigsaw pool '" + key
+                                + "' requires a direct fallback but does not declare one.",
+                        "pool:required-fallback:" + key);
+            }
+            if (pool.isMandatoryFallback()
+                    && structure.resolvedCompatibility() == IrisJigsawCompatibility.VANILLA_PORTABLE) {
+                addDiagnostic(StructureGraphDiagnostic.Code.NON_PORTABLE_METADATA,
+                        "Jigsaw pool '" + key
+                                + "' declares mandatoryFallback, which vanilla jigsaws cannot enforce.",
+                        "pool:portable:mandatory-fallback:" + key);
+            }
             if (!fallback.isEmpty()) {
                 requestPool(fallback, new PoolReference(
                         "Jigsaw pool '" + key + "' references missing fallback pool '" + fallback + "'.",
@@ -174,13 +280,26 @@ public final class StructureGraphCompiler {
 
             String pieceKey = normalize(entry.getPiece());
             PoolEntryReference entryReference = new PoolEntryReference(
-                    poolKey, index, pieceKey, entry.getWeight(), entry.isEmpty());
+                    poolKey, index, pieceKey, entry.getWeight(), entry.getChance(), entry.isEmpty());
             entries.add(entryReference);
             if (entry.getWeight() <= 0) {
                 addDiagnostic(StructureGraphDiagnostic.Code.INVALID_WEIGHT,
                         "Jigsaw pool '" + poolKey + "' pieces[" + index + "] has non-positive weight "
                                 + entry.getWeight() + ".",
                         "pool-entry:weight:" + poolKey + ":" + index);
+            }
+            if (!Double.isFinite(entry.getChance()) || entry.getChance() < 0D || entry.getChance() > 1D) {
+                addDiagnostic(StructureGraphDiagnostic.Code.INVALID_CHANCE,
+                        "Jigsaw pool '" + poolKey + "' pieces[" + index + "] has chance "
+                                + entry.getChance() + "; it must be finite and within 0..1.",
+                        "pool-entry:chance:" + poolKey + ":" + index);
+            }
+            if (entry.getChance() != 1D
+                    && structure.resolvedCompatibility() == IrisJigsawCompatibility.VANILLA_PORTABLE) {
+                addDiagnostic(StructureGraphDiagnostic.Code.NON_PORTABLE_METADATA,
+                        "Jigsaw pool '" + poolKey + "' pieces[" + index
+                                + "] declares an Iris chance gate in a VANILLA_PORTABLE graph.",
+                        "pool-entry:portable-chance:" + poolKey + ":" + index);
             }
             if (entry.isEmpty()) {
                 if (!pieceKey.isEmpty()) {
@@ -221,7 +340,83 @@ public final class StructureGraphCompiler {
 
             graph.pieces().put(key, piece);
             IrisObject object = loadPieceObject(key, piece);
+            validatePieceMetadata(key, piece);
             scanConnectors(key, piece, object);
+        }
+
+        private void validatePieceMetadata(String pieceKey, IrisJigsawPiece piece) {
+            KList<String> themes = piece.getThemes();
+            if (themes == null) {
+                addDiagnostic(StructureGraphDiagnostic.Code.INVALID_THEME,
+                        "Jigsaw piece '" + pieceKey + "' declares a null themes list.",
+                        "piece:themes:null:" + pieceKey);
+            } else {
+                Set<String> declaredThemes = declaredThemeKeys();
+                Set<String> seenThemes = new LinkedHashSet<>();
+                for (int index = 0; index < themes.size(); index++) {
+                    String configured = themes.get(index);
+                    String theme = normalize(configured);
+                    if (theme.isEmpty() || !theme.equals(configured)) {
+                        addDiagnostic(StructureGraphDiagnostic.Code.INVALID_THEME,
+                                "Jigsaw piece '" + pieceKey + "' themes[" + index
+                                        + "] must be non-blank and whitespace-normalized.",
+                                "piece:theme:key:" + pieceKey + ":" + index);
+                    } else if (!seenThemes.add(theme)) {
+                        addDiagnostic(StructureGraphDiagnostic.Code.INVALID_THEME,
+                                "Jigsaw piece '" + pieceKey + "' declares duplicate theme '" + theme + "'.",
+                                "piece:theme:duplicate:" + pieceKey + ":" + theme);
+                    } else if (!declaredThemes.contains(theme)) {
+                        addDiagnostic(StructureGraphDiagnostic.Code.INVALID_THEME,
+                                "Jigsaw piece '" + pieceKey + "' references undeclared theme '" + theme + "'.",
+                                "piece:theme:undeclared:" + pieceKey + ":" + theme);
+                    }
+                }
+            }
+
+            IrisJigsawPieceRules rules = piece.resolvedRules();
+            boolean validDepths = rules.getMinimumDepth() >= 0
+                    && rules.getMaximumDepth() >= rules.getMinimumDepth()
+                    && rules.getMaximumDepth() <= MAX_DEPTH;
+            boolean validPlacements = rules.getMinimumPlacements() >= 0
+                    && rules.getMaximumPlacements() >= 0
+                    && rules.getMinimumPlacements() <= ASSEMBLY_PIECE_CAP
+                    && rules.getMaximumPlacements() <= ASSEMBLY_PIECE_CAP
+                    && (rules.getMaximumPlacements() == 0
+                    || rules.getMinimumPlacements() <= rules.getMaximumPlacements());
+            if (!validDepths || !validPlacements) {
+                addDiagnostic(StructureGraphDiagnostic.Code.INVALID_PIECE_RULE,
+                        "Jigsaw piece '" + pieceKey
+                                + "' has invalid depth or placement-count rules.",
+                        "piece:rules:" + pieceKey);
+            }
+            if (structure.resolvedCompatibility() == IrisJigsawCompatibility.VANILLA_PORTABLE
+                    && (themes != null && !themes.isEmpty() || !defaultRules(rules))) {
+                addDiagnostic(StructureGraphDiagnostic.Code.NON_PORTABLE_METADATA,
+                        "Jigsaw piece '" + pieceKey
+                                + "' declares Iris theme or placement rules in a VANILLA_PORTABLE graph.",
+                        "piece:portable:metadata:" + pieceKey);
+            }
+        }
+
+        private Set<String> declaredThemeKeys() {
+            Set<String> themes = new LinkedHashSet<>();
+            if (structure.getThemeSets() == null) {
+                return themes;
+            }
+            for (IrisJigsawThemeSet theme : structure.getThemeSets()) {
+                if (theme != null && !normalize(theme.getKey()).isEmpty()) {
+                    themes.add(normalize(theme.getKey()));
+                }
+            }
+            return themes;
+        }
+
+        private boolean defaultRules(IrisJigsawPieceRules rules) {
+            return rules.getMinimumDepth() == 0
+                    && rules.getMaximumDepth() == MAX_DEPTH
+                    && rules.getMinimumPlacements() == 0
+                    && rules.getMaximumPlacements() == 0
+                    && !rules.isTerminal();
         }
 
         private IrisObject loadPieceObject(String pieceKey, IrisJigsawPiece piece) {
@@ -317,6 +512,27 @@ public final class StructureGraphCompiler {
                             "connector:names:" + pieceKey + ":" + index);
                 }
 
+                boolean validMetadata = connector.getChannel() != null
+                        && connector.getFinalState() != null
+                        && !connector.getFinalState().isBlank();
+                if (!validMetadata) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.INVALID_CONNECTOR_METADATA,
+                            "Jigsaw piece '" + pieceKey + "' connectors[" + index
+                                    + "] must declare a channel and non-blank finalState.",
+                            "connector:metadata:" + pieceKey + ":" + index);
+                }
+                if (structure.resolvedCompatibility() == IrisJigsawCompatibility.VANILLA_PORTABLE
+                        && connector.getChannel() != null && !connector.getChannel().isBlank()) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.NON_PORTABLE_CONNECTOR,
+                            "Jigsaw piece '" + pieceKey + "' connectors[" + index
+                                    + "] declares Iris-only channel '" + connector.getChannel()
+                                    + "' in a VANILLA_PORTABLE structure.",
+                            "connector:portable-channel:" + pieceKey + ":" + index);
+                }
+
+                boolean validPlanarContract = validatePlanarConnector(
+                        pieceKey, index, connector, object, validDirection, validTop, validPosition);
+
                 String poolKey = normalize(connector.getPool());
                 if (poolKey.isEmpty()) {
                     addDiagnostic(StructureGraphDiagnostic.Code.MISSING_CONNECTOR_POOL,
@@ -330,8 +546,54 @@ public final class StructureGraphCompiler {
                             StructureGraphDiagnostic.Code.MISSING_POOL));
                 }
                 references.add(new ConnectorReference(
-                        pieceKey, index, connector, validPosition, validDirection, validTop, validJoint, validNames));
+                        pieceKey, index, connector, validPosition, validDirection, validTop, validJoint, validNames,
+                        validMetadata, validPlanarContract));
             }
+        }
+
+        private boolean validatePlanarConnector(String pieceKey, int index, IrisJigsawConnector connector,
+                                                IrisObject object, boolean validDirection, boolean validTop,
+                                                boolean validPosition) {
+            if (structure.resolvedMode() != IrisJigsawMode.PLANAR_JIGSAW) {
+                return true;
+            }
+
+            boolean valid = true;
+            if (validDirection && connector.getDirection().isVertical()) {
+                addDiagnostic(StructureGraphDiagnostic.Code.INVALID_PLANAR_CONNECTOR,
+                        "Jigsaw piece '" + pieceKey + "' connectors[" + index + "] uses vertical direction "
+                                + connector.getDirection().name()
+                                + "; planar connectors must face north, east, south,"
+                                + " or west.",
+                        "connector:planar-direction:" + pieceKey + ":" + index);
+                valid = false;
+            }
+            if (validTop && connector.getTop() != IrisDirection.UP_POSITIVE_Y) {
+                addDiagnostic(StructureGraphDiagnostic.Code.INVALID_PLANAR_CONNECTOR,
+                        "Jigsaw piece '" + pieceKey + "' connectors[" + index + "] has top "
+                                + connector.getTop().name()
+                                + "; planar connectors must use UP_POSITIVE_Y to keep"
+                                + " connected cells on one Y level.",
+                        "connector:planar-top:" + pieceKey + ":" + index);
+                valid = false;
+            }
+
+            if (!validDirection || connector.getDirection().isVertical()
+                    || object == null || !validPosition) {
+                return valid;
+            }
+            IrisPosition objectSize = new IrisPosition(object.getW(), object.getH(), object.getD());
+            IrisPosition expected = IrisJigsawConnector.canonicalPlanarPosition(
+                    objectSize, connector.getDirection());
+            if (!expected.equals(connector.getPosition())) {
+                addDiagnostic(StructureGraphDiagnostic.Code.INVALID_PLANAR_CONNECTOR,
+                        "Jigsaw piece '" + pieceKey + "' connectors[" + index + "] is at "
+                                + connector.getPosition() + "; the canonical " + connector.getDirection().name()
+                                + " face-center socket for object dimensions " + objectSize + " is " + expected + ".",
+                        "connector:planar-position:" + pieceKey + ":" + index);
+                valid = false;
+            }
+            return valid;
         }
 
         private String invalidPositionMessage(String pieceKey, int index, IrisPosition position, IrisObject object) {
@@ -399,11 +661,23 @@ public final class StructureGraphCompiler {
             if (!graph.pools().containsKey(startPool)) {
                 return;
             }
-
             graph.reachablePools().add(startPool);
+            for (String theme : reachabilityThemes()) {
+                analyzeThemeReachability(startPool, theme);
+            }
+            reportUnmatchedReachableConnectors();
+            reportUnreachableResources();
+        }
+
+        private void analyzeThemeReachability(String startPool, String theme) {
             Deque<PieceReachState> pendingPieces = new ArrayDeque<>();
+            boolean viableStart = false;
             for (PoolEntryReference entry : poolEntries.getOrDefault(startPool, List.of())) {
-                markReachableEntry(entry);
+                if (!entryIsViable(entry, theme, 0)) {
+                    continue;
+                }
+                viableStart = true;
+                markReachableEntry(entry, theme);
                 if (entry.empty()) {
                     continue;
                 }
@@ -412,14 +686,35 @@ public final class StructureGraphCompiler {
                     continue;
                 }
                 for (int rotation : rotationsFor(piece)) {
-                    markReachablePieceState(new PieceReachState(entry.pieceKey(), -1, rotation), pendingPieces);
+                    markReachablePieceState(
+                            new PieceReachState(entry.pieceKey(), -1, rotation, 0, theme),
+                            pendingPieces);
                 }
             }
-            if (pendingPieces.isEmpty()) {
-                addDiagnostic(StructureGraphDiagnostic.Code.NO_VIABLE_START_PIECE,
-                        "Structure '" + structureKey() + "' has no start-pool entry with a positive weight,"
-                                + " resolvable piece, and resolvable object.",
-                        "structure:no-viable-start");
+            if (!viableStart) {
+                boolean disabledStart = false;
+                for (PoolEntryReference entry : poolEntries.getOrDefault(startPool, List.of())) {
+                    if (!entry.empty() && entryIsResolvable(entry) && !pieceEnabled(entry.pieceKey())) {
+                        disabledStart = true;
+                        break;
+                    }
+                }
+                if (disabledStart) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.NO_ENABLED_START_PIECE,
+                            "Structure '" + structureKey()
+                                    + "' has no enabled planar workcell represented by a viable start entry.",
+                            "structure:no-enabled-start:" + theme);
+                } else if (!theme.isEmpty()) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.UNSATISFIABLE_PIECE_RULE,
+                            "Structure '" + structureKey() + "' theme '" + theme
+                                    + "' has no positive-chance start entry eligible at depth zero.",
+                            "structure:no-theme-start:" + theme);
+                } else {
+                    addDiagnostic(StructureGraphDiagnostic.Code.NO_VIABLE_START_PIECE,
+                            "Structure '" + structureKey() + "' has no start-pool entry with a positive weight,"
+                                    + " positive chance, resolvable piece, and resolvable object.",
+                            "structure:no-viable-start");
+                }
             }
 
             while (!pendingPieces.isEmpty()) {
@@ -429,23 +724,37 @@ public final class StructureGraphCompiler {
                         continue;
                     }
                     OrientedConnector orientedSource = new OrientedConnector(source, pieceState.rotation());
-                    activeConnectors.computeIfAbsent(source.id(), ignored -> new ArrayList<>())
+                    ReachableConnectorKey connectorKey = new ReachableConnectorKey(
+                            pieceState.theme(), source.id(), pieceState.depth());
+                    activeConnectors.computeIfAbsent(connectorKey, ignored -> new ArrayList<>())
                             .add(orientedSource);
-                    List<String> candidatePools = candidatePools(normalize(source.connector().getPool()), true);
+                    boolean includePrimary = pieceState.depth() < Math.max(1, structure.getMaxDepth());
+                    int candidateDepth = Math.min(
+                            pieceState.depth() + 1,
+                            Math.max(1, structure.getMaxDepth()));
+                    List<String> candidatePools = candidatePools(
+                            normalize(source.connector().getPool()), includePrimary);
                     for (String candidatePool : candidatePools) {
                         graph.reachablePools().add(candidatePool);
                         for (PoolEntryReference entry : poolEntries.getOrDefault(candidatePool, List.of())) {
-                            if (!entryIsViable(entry)) {
+                            if (!entryIsViable(entry, pieceState.theme(), candidateDepth)) {
+                                continue;
+                            }
+                            if (entry.empty()) {
+                                markReachableEntry(entry, pieceState.theme());
                                 continue;
                             }
                             List<ConnectorMatch> compatible = findCompatibleConnectors(
                                     orientedSource, entry.pieceKey());
                             if (!compatible.isEmpty()) {
-                                markReachableEntry(entry);
+                                markReachableEntry(entry, pieceState.theme());
+                                if (!includePrimary) {
+                                    continue;
+                                }
                                 for (ConnectorMatch target : compatible) {
                                     markReachablePieceState(
                                             new PieceReachState(entry.pieceKey(), target.connector().index(),
-                                                    target.rotation()),
+                                                    target.rotation(), candidateDepth, pieceState.theme()),
                                             pendingPieces);
                                 }
                             }
@@ -453,18 +762,56 @@ public final class StructureGraphCompiler {
                     }
                 }
             }
-
-            reportUnmatchedReachableConnectors();
-            reportUnreachableResources();
         }
 
-        private void markReachableEntry(PoolEntryReference entry) {
-            if (!entryIsViable(entry)) {
+        private List<String> reachabilityThemes() {
+            if (structure.getThemeSets() == null || structure.getThemeSets().isEmpty()) {
+                return List.of("");
+            }
+            List<String> themes = new ArrayList<>(structure.getThemeSets().size());
+            for (IrisJigsawThemeSet theme : structure.getThemeSets()) {
+                if (theme != null && !normalize(theme.getKey()).isEmpty()) {
+                    themes.add(normalize(theme.getKey()));
+                }
+            }
+            return themes.isEmpty() ? List.of("") : List.copyOf(themes);
+        }
+
+        private void validatePlanarReachableObjects() {
+            if (structure.resolvedMode() != IrisJigsawMode.PLANAR_JIGSAW
+                    || planarWorkcells.isEmpty()) {
                 return;
             }
+            for (String pieceKey : graph.reachablePieces()) {
+                IrisJigsawPiece piece = graph.pieces().get(pieceKey);
+                String objectKey = pieceObjects.get(pieceKey);
+                IrisObject object = graph.objects().get(objectKey);
+                if (piece == null || object == null) {
+                    continue;
+                }
+                PlanarJigsawWorkcellResolver.ResolvedWorkcell workcell =
+                        PlanarJigsawWorkcellResolver.workcell(planarWorkcells, piece);
+                IrisPosition dimensions = PlanarJigsawWorkcellResolver.canonicalDimensions(piece, object);
+                if (workcell.contains(dimensions)) {
+                    continue;
+                }
+                addDiagnostic(StructureGraphDiagnostic.Code.INVALID_PLANAR_OBJECT_SIZE,
+                        "Object '" + objectKey + "' used by reachable planar piece '" + pieceKey
+                                + "' is " + object.getW() + "x" + object.getH() + "x" + object.getD()
+                                + " and canonically occupies " + dimensions.getX() + "x" + dimensions.getY()
+                                + "x" + dimensions.getZ() + "; it does not fit " + workcell.archetype()
+                                + " workcell " + workcell.width() + "x" + workcell.height() + "x"
+                                + workcell.depth() + ".",
+                        "object:planar-size:" + pieceKey);
+            }
+        }
+
+        private void markReachableEntry(PoolEntryReference entry, String theme) {
             reachableEntries.add(entry.id());
             if (!entry.empty()) {
                 graph.reachablePieces().add(entry.pieceKey());
+                reachablePiecesByTheme.computeIfAbsent(theme, ignored -> new LinkedHashSet<>())
+                        .add(entry.pieceKey());
             }
         }
 
@@ -472,13 +819,31 @@ public final class StructureGraphCompiler {
             if (!graph.reachablePieces().contains(state.pieceKey())) {
                 return;
             }
+            IrisJigsawPiece piece = graph.pieces().get(state.pieceKey());
+            if (piece == null || piece.resolvedRules().isTerminal()) {
+                return;
+            }
             if (reachablePieceStates.add(state)) {
                 pendingPieces.addLast(state);
             }
         }
 
-        private boolean entryIsViable(PoolEntryReference entry) {
-            if (entry.weight() <= 0) {
+        private boolean entryIsViable(PoolEntryReference entry, String theme, int depth) {
+            if (!entryIsResolvable(entry)) {
+                return false;
+            }
+            if (entry.empty()) {
+                return true;
+            }
+            IrisJigsawPiece piece = graph.pieces().get(entry.pieceKey());
+            return piece != null
+                    && pieceEnabled(entry.pieceKey())
+                    && JigsawPoolSelection.pieceEligible(piece, theme, depth, 0);
+        }
+
+        private boolean entryIsResolvable(PoolEntryReference entry) {
+            if (entry.weight() <= 0 || !Double.isFinite(entry.chance()) || entry.chance() <= 0D
+                    || entry.chance() > 1D) {
                 return false;
             }
             if (entry.empty()) {
@@ -491,16 +856,41 @@ public final class StructureGraphCompiler {
             return !objectKey.isEmpty() && graph.objects().containsKey(objectKey);
         }
 
+        private boolean entryIsViableForAnyTheme(PoolEntryReference entry) {
+            for (String theme : reachabilityThemes()) {
+                for (int depth = 0; depth <= Math.max(1, structure.getMaxDepth()); depth++) {
+                    if (entryIsViable(entry, theme, depth)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private boolean pieceEnabled(String pieceKey) {
+            if (structure.resolvedMode() != IrisJigsawMode.PLANAR_JIGSAW || planarWorkcells.isEmpty()) {
+                return true;
+            }
+            IrisJigsawPiece piece = graph.pieces().get(pieceKey);
+            return piece == null || PlanarJigsawWorkcellResolver.workcell(planarWorkcells, piece).enabled();
+        }
+
         private void reportUnmatchedReachableConnectors() {
-            for (List<OrientedConnector> orientations : activeConnectors.values()) {
+            for (Map.Entry<ReachableConnectorKey, List<OrientedConnector>> active : activeConnectors.entrySet()) {
+                ReachableConnectorKey connectorKey = active.getKey();
+                List<OrientedConnector> orientations = active.getValue();
                 OrientedConnector representative = orientations.getFirst();
+                boolean includePrimary = connectorKey.depth() < Math.max(1, structure.getMaxDepth());
+                int candidateDepth = Math.min(
+                        connectorKey.depth() + 1,
+                        Math.max(1, structure.getMaxDepth()));
                 List<String> candidates = candidatePools(
-                        normalize(representative.definition().getPool()), true);
+                        normalize(representative.definition().getPool()), includePrimary);
                 boolean hasViableEntry = false;
                 boolean hasCompatibleEntry = false;
                 for (String candidatePool : candidates) {
                     for (PoolEntryReference entry : poolEntries.getOrDefault(candidatePool, List.of())) {
-                        if (!entryIsViable(entry)) {
+                        if (!entryIsViable(entry, connectorKey.theme(), candidateDepth)) {
                             continue;
                         }
                         hasViableEntry = true;
@@ -528,9 +918,10 @@ public final class StructureGraphCompiler {
                                     + representative.connector().index() + "] targets pool '"
                                     + normalize(representative.definition().getPool())
                                     + "', but no reachable candidate exposes the requested target name with a"
-                                    + " compatible direction.",
+                                    + " compatible direction for theme '" + themeLabel(connectorKey.theme()) + "'.",
                             "connector:no-match:" + representative.connector().pieceKey() + ":"
-                                    + representative.connector().index());
+                                    + representative.connector().index() + ":" + connectorKey.theme()
+                                    + ":" + connectorKey.depth());
                 }
             }
         }
@@ -545,7 +936,8 @@ public final class StructureGraphCompiler {
                     continue;
                 }
                 for (PoolEntryReference entry : poolEntries.getOrDefault(poolKey, List.of())) {
-                    if (!entry.empty() && entryIsViable(entry) && !reachableEntries.contains(entry.id())) {
+                    if (!entry.empty() && entryIsViableForAnyTheme(entry)
+                            && !reachableEntries.contains(entry.id())) {
                         addDiagnostic(StructureGraphDiagnostic.Code.UNREACHABLE_PIECE,
                                 "Jigsaw pool '" + poolKey + "' pieces[" + entry.index() + "] references piece '"
                                         + entry.pieceKey() + "', but no reachable connector can attach it.",
@@ -553,6 +945,10 @@ public final class StructureGraphCompiler {
                     }
                 }
             }
+        }
+
+        private String themeLabel(String theme) {
+            return theme == null || theme.isEmpty() ? "<unthemed>" : theme;
         }
 
         private List<ConnectorMatch> findCompatibleConnectors(OrientedConnector source,
@@ -569,6 +965,9 @@ public final class StructureGraphCompiler {
                     }
                 }
             }
+            compatible.sort((first, second) -> Integer.compare(
+                    second.connector().connector().getSelectionPriority(),
+                    first.connector().connector().getSelectionPriority()));
             return compatible;
         }
 
@@ -579,7 +978,10 @@ public final class StructureGraphCompiler {
             }
             IrisJigsawConnector sourceConnector = source.definition();
             IrisJigsawConnector candidateConnector = candidate.connector();
-            if (!normalize(sourceConnector.getTargetName()).equals(normalize(candidateConnector.getName()))) {
+            if (!Objects.equals(sourceConnector.getChannel(), candidateConnector.getChannel())) {
+                return false;
+            }
+            if (!Objects.equals(sourceConnector.getTargetName(), candidateConnector.getName())) {
                 return false;
             }
 
@@ -612,157 +1014,135 @@ public final class StructureGraphCompiler {
             return result;
         }
 
-        private List<StructureGraphAssemblySample> sampleAssemblies() {
+        private void validateRuleFeasibility() {
+            for (String theme : reachabilityThemes()) {
+                int minimumTotal = 0;
+                Set<String> reachable = reachablePiecesByTheme.getOrDefault(theme, Set.of());
+                for (Map.Entry<String, IrisJigsawPiece> entry : graph.pieces().entrySet()) {
+                    String pieceKey = entry.getKey();
+                    IrisJigsawPiece piece = entry.getValue();
+                    if (!pieceEnabled(pieceKey) || !piece.supportsTheme(theme)) {
+                        continue;
+                    }
+                    IrisJigsawPieceRules rules = piece.resolvedRules();
+                    if (rules.getMinimumPlacements() <= 0) {
+                        continue;
+                    }
+                    minimumTotal = Math.addExact(minimumTotal, rules.getMinimumPlacements());
+                    if (!reachable.contains(pieceKey)) {
+                        addDiagnostic(StructureGraphDiagnostic.Code.UNSATISFIABLE_PIECE_RULE,
+                                "Jigsaw piece '" + pieceKey + "' requires at least "
+                                        + rules.getMinimumPlacements() + " placement(s) for theme '"
+                                        + themeLabel(theme) + "' but is not reachable for that theme.",
+                                "piece:minimum:unreachable:" + pieceKey + ":" + theme);
+                    }
+                    if (rules.getMinimumDepth() > Math.max(1, structure.getMaxDepth())) {
+                        addDiagnostic(StructureGraphDiagnostic.Code.UNSATISFIABLE_PIECE_RULE,
+                                "Jigsaw piece '" + pieceKey + "' requires placement for theme '"
+                                        + themeLabel(theme) + "' but its minimumDepth "
+                                        + rules.getMinimumDepth() + " exceeds the structure depth boundary.",
+                                "piece:minimum:depth:" + pieceKey + ":" + theme);
+                    }
+                }
+                if (minimumTotal > ASSEMBLY_PIECE_CAP) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.UNSATISFIABLE_PIECE_RULE,
+                            "Structure '" + structureKey() + "' requires " + minimumTotal
+                                    + " minimum piece placements for theme '" + themeLabel(theme)
+                                    + "', exceeding the " + ASSEMBLY_PIECE_CAP + "-piece safety cap.",
+                            "structure:minimum-total:" + theme);
+                }
+            }
+        }
+
+        private void validateRequiredCaps() {
+            for (Map.Entry<ReachableConnectorKey, List<OrientedConnector>> active : activeConnectors.entrySet()) {
+                ReachableConnectorKey connectorKey = active.getKey();
+                List<OrientedConnector> orientations = active.getValue();
+                OrientedConnector representative = orientations.getFirst();
+                String poolKey = normalize(representative.definition().getPool());
+                IrisJigsawPool pool = graph.pools().get(poolKey);
+                if (pool == null || !pool.requiresFallback(structure.isRequireCaps())) {
+                    continue;
+                }
+                String fallbackKey = JigsawPoolSelection.directFallbackKey(pool);
+                if (fallbackKey.isEmpty() || !graph.pools().containsKey(fallbackKey)) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.MISSING_REQUIRED_FALLBACK,
+                            "Reachable connector '" + representative.connector().id()
+                                    + "' requires a direct fallback from pool '" + poolKey + "'.",
+                            "connector:required-fallback:" + connectorKey);
+                    continue;
+                }
+                int candidateDepth = Math.min(
+                        connectorKey.depth() + 1,
+                        Math.max(1, structure.getMaxDepth()));
+                boolean compatibleTerminal = false;
+                for (PoolEntryReference entry : poolEntries.getOrDefault(fallbackKey, List.of())) {
+                    if (entry.empty() || !entryIsViable(entry, connectorKey.theme(), candidateDepth)) {
+                        continue;
+                    }
+                    IrisJigsawPiece piece = graph.pieces().get(entry.pieceKey());
+                    if (piece == null || !piece.resolvedRules().isTerminal()) {
+                        continue;
+                    }
+                    for (OrientedConnector source : orientations) {
+                        if (!findCompatibleConnectors(source, entry.pieceKey()).isEmpty()) {
+                            compatibleTerminal = true;
+                            break;
+                        }
+                    }
+                    if (compatibleTerminal) {
+                        break;
+                    }
+                }
+                if (!compatibleTerminal) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.NO_REQUIRED_TERMINAL,
+                            "Direct fallback pool '" + fallbackKey + "' has no compatible positive-chance"
+                                    + " terminal piece for connector '" + representative.connector().id()
+                                    + "' and theme '" + themeLabel(connectorKey.theme()) + "'.",
+                            "connector:required-terminal:" + connectorKey);
+                }
+            }
+        }
+
+        private List<StructureGraphAssemblySample> sampleAssemblies(StructureGraphCompilation compilation) {
+            if (compilation.hasErrors()) {
+                return List.of();
+            }
             List<StructureGraphAssemblySample> samples = new ArrayList<>(ASSEMBLY_SEEDS.size());
+            Map<IrisJigsawPiece, String> pieceKeys = new IdentityHashMap<>();
+            for (Map.Entry<String, IrisJigsawPiece> entry : compilation.getGraph().getPieces().entrySet()) {
+                pieceKeys.put(entry.getValue(), entry.getKey());
+            }
             for (long seed : ASSEMBLY_SEEDS) {
-                samples.add(sampleAssembly(seed));
+                try {
+                    StructureAssembler assembler = StructureAssembler.forCompilation(
+                            compilation, new IrisPosition(0, 64, 0));
+                    StructureAssemblyResult result = assembler.assemble(new RNG(seed));
+                    List<String> pieces = new ArrayList<>(result.pieces().size());
+                    for (PlacedStructurePiece placed : result.pieces()) {
+                        String pieceKey = pieceKeys.get(placed.getPiece());
+                        pieces.add(pieceKey == null ? "<unknown>" : pieceKey);
+                    }
+                    samples.add(new StructureGraphAssemblySample(
+                            seed,
+                            new StructureGraphAssemblySample.Outcome(
+                                    pieces,
+                                    result.status(),
+                                    result.detail())));
+                } catch (RuntimeException exception) {
+                    addDiagnostic(StructureGraphDiagnostic.Code.ASSEMBLY_RUNTIME_FAILURE,
+                            "Runtime assembly sampling failed at seed " + seed + ": "
+                                    + exception.getClass().getSimpleName() + ": "
+                                    + failureMessage(exception) + ".",
+                            "assembly:runtime:" + seed);
+                }
             }
             return samples;
         }
 
-        private StructureGraphAssemblySample sampleAssembly(long seed) {
-            SplittableRandom random = new SplittableRandom(seed);
-            List<String> pieces = new ArrayList<>();
-            Deque<SampleConnector> open = new ArrayDeque<>();
-            String startPool = normalize(structure.getStartPool());
-            PoolEntryReference start = weightedPick(viableEntries(startPool), random);
-            if (start == null) {
-                return new StructureGraphAssemblySample(seed,
-                        new StructureGraphAssemblySample.Outcome(pieces, 1, false));
-            }
-            if (start.empty()) {
-                return new StructureGraphAssemblySample(seed,
-                        new StructureGraphAssemblySample.Outcome(pieces, 0, false, true));
-            }
-
-            IrisJigsawPiece startPiece = graph.pieces().get(start.pieceKey());
-            int startRotation = startPiece != null && startPiece.isRotatable()
-                    ? Y_ROTATIONS[random.nextInt(Y_ROTATIONS.length)]
-                    : 0;
-            addSamplePiece(start.pieceKey(), -1, 0, startRotation, pieces, open);
-            int unresolvedConnectors = 0;
-            while (!open.isEmpty() && pieces.size() < ASSEMBLY_PIECE_CAP) {
-                SampleConnector source = open.removeFirst();
-                AttachmentCandidate candidate = sampleCandidate(source, random);
-                if (candidate == null) {
-                    if (!isIntentionalTermination(source)) {
-                        unresolvedConnectors++;
-                    }
-                    continue;
-                }
-                if (candidate.entry().empty()) {
-                    continue;
-                }
-                if (source.depth() < Math.max(1, structure.getMaxDepth())) {
-                    addSamplePiece(candidate.entry().pieceKey(), candidate.match().connector().index(),
-                            source.depth() + 1, candidate.match().rotation(), pieces, open);
-                } else {
-                    pieces.add(candidate.entry().pieceKey());
-                }
-            }
-            boolean capped = !open.isEmpty();
-            return new StructureGraphAssemblySample(seed,
-                    new StructureGraphAssemblySample.Outcome(pieces, unresolvedConnectors, capped));
-        }
-
-        private AttachmentCandidate sampleCandidate(SampleConnector source, SplittableRandom random) {
-            String primaryPool = normalize(source.connector().definition().getPool());
-            boolean withinDepth = source.depth() < Math.max(1, structure.getMaxDepth());
-            List<String> candidates = candidatePools(primaryPool, withinDepth);
-            for (String candidatePool : candidates) {
-                List<AttachmentCandidate> attachments = new ArrayList<>();
-                for (PoolEntryReference entry : viableEntries(candidatePool)) {
-                    if (entry.empty()) {
-                        attachments.add(new AttachmentCandidate(entry, null));
-                        continue;
-                    }
-                    List<ConnectorMatch> matching = findCompatibleConnectors(
-                            source.connector(), entry.pieceKey());
-                    if (!matching.isEmpty()) {
-                        attachments.add(new AttachmentCandidate(entry, matching.getFirst()));
-                    }
-                }
-                AttachmentCandidate selected = weightedPickAttachments(attachments, random);
-                if (selected != null) {
-                    return selected;
-                }
-            }
-            return null;
-        }
-
-        private boolean isIntentionalTermination(SampleConnector source) {
-            String poolKey = normalize(source.connector().definition().getPool());
-            IrisJigsawPool pool = graph.pools().get(poolKey);
-            if (pool == null) {
-                return false;
-            }
-            boolean includePrimary = source.depth() < Math.max(1, structure.getMaxDepth());
-            for (String candidate : candidatePools(poolKey, includePrimary)) {
-                IrisJigsawPool candidatePool = graph.pools().get(candidate);
-                if (candidatePool != null && candidatePool.getPieces() != null
-                        && candidatePool.getPieces().isEmpty()) {
-                    return true;
-                }
-            }
-            return !includePrimary;
-        }
-
-        private void addSamplePiece(String pieceKey, int skippedConnector, int connectorDepth, int rotation,
-                                    List<String> pieces, Deque<SampleConnector> open) {
-            pieces.add(pieceKey);
-            for (ConnectorReference connector : pieceConnectors.getOrDefault(pieceKey, List.of())) {
-                if (connector.index() != skippedConnector && connector.canSource()) {
-                    open.addLast(new SampleConnector(
-                            new OrientedConnector(connector, rotation), connectorDepth));
-                }
-            }
-        }
-
-        private List<PoolEntryReference> viableEntries(String poolKey) {
-            List<PoolEntryReference> result = new ArrayList<>();
-            for (PoolEntryReference entry : poolEntries.getOrDefault(poolKey, List.of())) {
-                if (entryIsViable(entry)) {
-                    result.add(entry);
-                }
-            }
-            return result;
-        }
-
-        private PoolEntryReference weightedPick(List<PoolEntryReference> entries, SplittableRandom random) {
-            long totalWeight = 0L;
-            for (PoolEntryReference entry : entries) {
-                totalWeight += entry.weight();
-            }
-            if (totalWeight <= 0L) {
-                return null;
-            }
-            long target = random.nextLong(totalWeight);
-            for (PoolEntryReference entry : entries) {
-                target -= entry.weight();
-                if (target < 0L) {
-                    return entry;
-                }
-            }
-            return entries.getLast();
-        }
-
-        private AttachmentCandidate weightedPickAttachments(List<AttachmentCandidate> attachments,
-                                                            SplittableRandom random) {
-            long totalWeight = 0L;
-            for (AttachmentCandidate attachment : attachments) {
-                totalWeight += attachment.entry().weight();
-            }
-            if (totalWeight <= 0L) {
-                return null;
-            }
-            long target = random.nextLong(totalWeight);
-            for (AttachmentCandidate attachment : attachments) {
-                target -= attachment.entry().weight();
-                if (target < 0L) {
-                    return attachment;
-                }
-            }
-            return attachments.getLast();
+        private String failureMessage(RuntimeException exception) {
+            return exception.getMessage() == null || exception.getMessage().isBlank()
+                    ? "no failure detail" : exception.getMessage();
         }
 
         private void reportPieceCapSamples(List<StructureGraphAssemblySample> samples) {
@@ -829,7 +1209,14 @@ public final class StructureGraphCompiler {
     private record PoolReference(String message, StructureGraphDiagnostic.Code code) {
     }
 
-    private record PoolEntryReference(String poolKey, int index, String pieceKey, int weight, boolean empty) {
+    private record PoolEntryReference(
+            String poolKey,
+            int index,
+            String pieceKey,
+            int weight,
+            double chance,
+            boolean empty
+    ) {
         private String id() {
             return poolKey + "#" + index;
         }
@@ -837,7 +1224,8 @@ public final class StructureGraphCompiler {
 
     private record ConnectorReference(String pieceKey, int index, IrisJigsawConnector connector,
                                       boolean validPosition, boolean validDirection, boolean validTop,
-                                      boolean validJoint, boolean validNames) {
+                                      boolean validJoint, boolean validNames, boolean validMetadata,
+                                      boolean validPlanarContract) {
         private String id() {
             return pieceKey + "#" + index;
         }
@@ -847,11 +1235,21 @@ public final class StructureGraphCompiler {
         }
 
         private boolean canTarget() {
-            return connector != null && validPosition && validDirection && validTop && validJoint && validNames;
+            return connector != null && validPosition && validDirection && validTop && validJoint && validNames
+                    && validMetadata && validPlanarContract;
         }
     }
 
-    private record PieceReachState(String pieceKey, int skippedConnectorIndex, int rotation) {
+    private record PieceReachState(
+            String pieceKey,
+            int skippedConnectorIndex,
+            int rotation,
+            int depth,
+            String theme
+    ) {
+    }
+
+    private record ReachableConnectorKey(String theme, String connectorId, int depth) {
     }
 
     private record OrientedConnector(ConnectorReference connector, int rotation) {
@@ -863,9 +1261,4 @@ public final class StructureGraphCompiler {
     private record ConnectorMatch(ConnectorReference connector, int rotation) {
     }
 
-    private record SampleConnector(OrientedConnector connector, int depth) {
-    }
-
-    private record AttachmentCandidate(PoolEntryReference entry, ConnectorMatch match) {
-    }
 }

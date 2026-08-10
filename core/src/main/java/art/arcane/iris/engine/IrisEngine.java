@@ -67,11 +67,15 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.util.HashSet;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 @Data
 public class IrisEngine implements Engine {
@@ -84,6 +88,7 @@ public class IrisEngine implements Engine {
     private final AtomicDouble perSecond;
     private final AtomicLong lastGPS;
     private final EngineTarget target;
+    private final InitializationMode initializationMode;
     private final EngineMantle mantle;
     private final ChronoLatch perSecondLatch;
     private final ChronoLatch perSecondBudLatch;
@@ -113,6 +118,9 @@ public class IrisEngine implements Engine {
     final EngineHotloader hotloader = new EngineHotloader(this);
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
+    final NativeStructureBootstrapBarrier nativeStructureBootstrapBarrier = new NativeStructureBootstrapBarrier();
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
     final EngineMetricsReport metricsReport = new EngineMetricsReport(this);
     private final AtomicBoolean cleaning;
     private final ChronoLatch cleanLatch;
@@ -123,6 +131,7 @@ public class IrisEngine implements Engine {
     @Setter(AccessLevel.NONE)
     private final NativeStructureVolumeMemo nativeStructureVolumeMemo = new NativeStructureVolumeMemo();
     private final AtomicBoolean closing;
+    private final AtomicBoolean nativeStructureVolumeQueriesEnabled;
     @Setter(AccessLevel.NONE)
     volatile IrisEngineData engineData;
     @Getter(AccessLevel.NONE)
@@ -158,13 +167,16 @@ public class IrisEngine implements Engine {
         return System.identityHashCode(this);
     }
 
-    public IrisEngine(EngineTarget target, boolean studio) {
-        this.studio = studio;
+    public IrisEngine(EngineTarget target, InitializationMode initializationMode) {
+        InitializationMode requiredMode = Objects.requireNonNull(initializationMode, "initialization mode");
+        this.initializationMode = requiredMode;
+        this.studio = requiredMode.studio();
         this.target = target;
         this.publishedTarget = target;
         this.platformHooks = IrisServices.get(EnginePlatformHooks.class);
         this.generationSessions = new GenerationSessionManager();
         this.closing = new AtomicBoolean(true);
+        this.nativeStructureVolumeQueriesEnabled = new AtomicBoolean(!requiredMode.studio());
         this.lifecycleState = LifecycleState.INITIALIZING;
         this.closed = false;
         this.failing = false;
@@ -204,8 +216,10 @@ public class IrisEngine implements Engine {
             }
             getData().registerEngine(this);
             _t0 = M.ms();
+            long phaseStartedAt = System.nanoTime();
             getData().loadPrefetch(this);
             IrisLogging.debug("[IrisEngine timing] loadPrefetch=" + (M.ms() - _t0) + "ms");
+            logStudioInitializationPhase("load_prefetch", phaseStartedAt, false);
             try {
                 StructureIndexService.writeOnce(getData());
             } catch (Throwable e) {
@@ -214,18 +228,39 @@ public class IrisEngine implements Engine {
             }
             IrisLogging.info("Engine init: " + target.getWorld().name() + "/" + target.getDimension().getLoadKey() + " seed=" + getSeedManager().getSeed());
             _t0 = M.ms();
+            phaseStartedAt = System.nanoTime();
             EngineRuntime initialRuntime = runtimeBuilder.buildRuntime();
             runtimeBuilder.publishRuntime(initialRuntime, null);
             IrisLogging.debug("[IrisEngine timing] setupEngine total=" + (M.ms() - _t0) + "ms");
+            logStudioInitializationPhase("build_runtime", phaseStartedAt, false);
             _t0 = M.ms();
-            GenerationCacheWarmer.warm(this);
+            phaseStartedAt = System.nanoTime();
+            if (requiredMode.warmGenerationCaches()) {
+                GenerationCacheWarmer.warm(this);
+            }
             IrisLogging.debug("[IrisEngine timing] cache warm total=" + (M.ms() - _t0) + "ms");
+            logStudioInitializationPhase(
+                    "generation_cache_warm",
+                    phaseStartedAt,
+                    !requiredMode.warmGenerationCaches());
             EngineTickRegistry.registerTicking(this);
         } catch (Throwable e) {
             shutdownSequence.cleanupFailedConstruction(e);
             throw new IllegalStateException("Failed to initialize Iris engine for world '" + target.getWorld().name() + "'.", e);
         }
         IrisLogging.debug("Engine Initialized " + getCacheID());
+    }
+
+    private void logStudioInitializationPhase(String phase, long startedAtNanos, boolean skipped) {
+        if (!studio) {
+            return;
+        }
+        IrisLogging.info("[Studio engine timing] world=%s kind=%s phase=%s duration=%dms skipped=%s",
+                target.getWorld().name(),
+                initializationMode.name().toLowerCase(Locale.ROOT),
+                phase,
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos),
+                Boolean.toString(skipped));
     }
 
     private void verifySeed() {
@@ -268,6 +303,23 @@ public class IrisEngine implements Engine {
         } catch (GenerationSessionException e) {
             throw new IllegalStateException("Failed to drain Iris generation for " + reason + ".", e);
         }
+    }
+
+    public CompletableFuture<Void> startNativeStructureBootstrap(
+            Runnable claim,
+            Supplier<CompletableFuture<Void>> starter,
+            Runnable activation
+    ) {
+        synchronized (lifecycleLock) {
+            requireRunning("prepare native structure placements");
+            CompletableFuture<Void> completion = nativeStructureBootstrapBarrier.start(claim, starter);
+            activation.run();
+            return completion;
+        }
+    }
+
+    void awaitNativeStructureBootstrap(String transition) {
+        nativeStructureBootstrapBarrier.await(transition);
     }
 
     @Override
@@ -328,7 +380,20 @@ public class IrisEngine implements Engine {
 
     @Override
     public KList<NativeStructureVolume> getNativeStructureVolumes(int minX, int minZ, int maxX, int maxZ) {
+        if (!nativeStructureVolumeQueriesEnabled.get()) {
+            return NativeStructureVolume.NONE;
+        }
         return nativeStructureVolumeMemo.volumes(this, platformHooks, minX, minZ, maxX, maxZ);
+    }
+
+    public void setNativeStructureVolumeQueriesEnabled(boolean enabled) {
+        if (!enabled) {
+            nativeStructureVolumeQueriesEnabled.set(false);
+            nativeStructureVolumeMemo.clear();
+            return;
+        }
+        nativeStructureVolumeMemo.clear();
+        nativeStructureVolumeQueriesEnabled.set(true);
     }
 
     @Override
@@ -635,6 +700,28 @@ public class IrisEngine implements Engine {
         CLOSING,
         CLOSED,
         FAILED
+    }
+
+    public enum InitializationMode {
+        RUNTIME(false, true),
+        STUDIO(true, true),
+        JIGSAW_STUDIO(true, false);
+
+        private final boolean studio;
+        private final boolean warmGenerationCaches;
+
+        InitializationMode(boolean studio, boolean warmGenerationCaches) {
+            this.studio = studio;
+            this.warmGenerationCaches = warmGenerationCaches;
+        }
+
+        public boolean studio() {
+            return studio;
+        }
+
+        public boolean warmGenerationCaches() {
+            return warmGenerationCaches;
+        }
     }
 
 }

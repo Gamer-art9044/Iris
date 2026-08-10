@@ -29,12 +29,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class StructureTransactionWriterTest {
@@ -114,6 +116,35 @@ public class StructureTransactionWriterTest {
         assertEquals(failureMessage(initial), StructureWriteResult.Status.ADDED, initial.status());
         assertEquals(StructureWriteResult.Status.OVERWRITTEN, result.status());
         assertEquals(StructureWriteResult.Action.OVERWRITE, result.action());
+        assertArrayEquals("object-v2".getBytes(StandardCharsets.UTF_8),
+                Files.readAllBytes(root.resolve("objects/temple.iob")));
+        assertArrayEquals("structure-v2".getBytes(StandardCharsets.UTF_8),
+                Files.readAllBytes(root.resolve("structures/temple.json")));
+    }
+
+    @Test
+    public void expectedManifestHashRejectsAStaleWholeGraphEdit() throws IOException {
+        Path root = temporaryFolder.newFolder("manifest-cas").toPath();
+        StructureTransactionWriter writer = new StructureTransactionWriter(root);
+        StructureWriteResult initial = writer.write(
+                bundle("object-v1", "structure-v1"),
+                StructureWriteMode.ADD_ONLY);
+        assertEquals(failureMessage(initial), StructureWriteResult.Status.ADDED, initial.status());
+        Path manifestPath = writer.ownershipManifestPath(TARGET_KEY);
+        String observedHash = StructureHash.sha256(Files.readAllBytes(manifestPath));
+
+        StructureWriteResult competing = writer.write(
+                bundle("object-v2", "structure-v2"),
+                StructureWriteMode.OVERWRITE);
+        assertEquals(failureMessage(competing), StructureWriteResult.Status.OVERWRITTEN, competing.status());
+
+        StructureWriteResult stale = writer.write(
+                bundle("object-stale", "structure-stale"),
+                StructureWriteOptions.overwriteExpected(observedHash));
+
+        assertEquals(StructureWriteResult.Status.OWNERSHIP_CONFLICT, stale.status());
+        assertEquals(StructureWriteResult.ConflictReason.STALE_MANIFEST,
+                stale.conflicts().getFirst().reason());
         assertArrayEquals("object-v2".getBytes(StandardCharsets.UTF_8),
                 Files.readAllBytes(root.resolve("objects/temple.iob")));
         assertArrayEquals("structure-v2".getBytes(StandardCharsets.UTF_8),
@@ -496,12 +527,16 @@ public class StructureTransactionWriterTest {
                     new StructureTransactionWriter.OwnedRemoval(
                             alphaKey,
                             StructureSource.Kind.DATAPACK,
-                            alphaSource
+                            alphaSource,
+                            Optional.empty(),
+                            Optional.empty()
                     ),
                     new StructureTransactionWriter.OwnedRemoval(
                             zetaKey,
                             StructureSource.Kind.DATAPACK,
-                            zetaSource
+                            zetaSource,
+                            Optional.empty(),
+                            Optional.empty()
                     )
             ));
             throw new AssertionError("Expected the later removal move to fail");
@@ -516,6 +551,77 @@ public class StructureTransactionWriterTest {
     }
 
     @Test
+    public void preparedRemovalRejectsAStaleExpectedManifestHashBeforeMovingResources() throws IOException {
+        Path root = temporaryFolder.newFolder("owned-removal-stale-manifest").toPath();
+        StructureTransactionWriter writer = new StructureTransactionWriter(root);
+        StructureWriteResult initial = writer.write(
+                bundle("object-v1", "structure-v1"),
+                StructureWriteMode.ADD_ONLY);
+        assertEquals(failureMessage(initial), StructureWriteResult.Status.ADDED, initial.status());
+        Path manifestPath = writer.ownershipManifestPath(TARGET_KEY);
+        String staleManifestHash = StructureHash.sha256(Files.readAllBytes(manifestPath));
+        StructureWriteResult updated = writer.write(
+                bundle("object-v2", "structure-v2"),
+                StructureWriteOptions.overwriteExpected(staleManifestHash));
+        assertEquals(failureMessage(updated), StructureWriteResult.Status.OVERWRITTEN, updated.status());
+
+        try {
+            writer.prepareOwnedRemovals(List.of(new StructureTransactionWriter.OwnedRemoval(
+                    TARGET_KEY,
+                    StructureSource.Kind.VANILLA,
+                    SOURCE_KEY,
+                    Optional.empty(),
+                    Optional.of(staleManifestHash))));
+            throw new AssertionError("Expected stale removal manifest hash to be rejected");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("changed after removal was planned"));
+        }
+
+        assertEquals("object-v2", Files.readString(root.resolve("objects/temple.iob"), StandardCharsets.UTF_8));
+        assertEquals("structure-v2", Files.readString(
+                root.resolve("structures/temple.json"),
+                StandardCharsets.UTF_8));
+        assertTrue(Files.exists(manifestPath));
+    }
+
+    @Test
+    public void lockedRemovalValidatorRejectsBeforeMovingOwnedResources() throws IOException {
+        Path root = temporaryFolder.newFolder("owned-removal-locked-validator").toPath();
+        StructureTransactionWriter writer = new StructureTransactionWriter(root);
+        StructureWriteResult initial = writer.write(
+                bundle("object-v1", "structure-v1"),
+                StructureWriteMode.ADD_ONLY);
+        assertEquals(failureMessage(initial), StructureWriteResult.Status.ADDED, initial.status());
+        Path objectPath = root.resolve("objects/temple.iob");
+        Path structurePath = root.resolve("structures/temple.json");
+        Path manifestPath = writer.ownershipManifestPath(TARGET_KEY);
+        byte[] expectedObject = Files.readAllBytes(objectPath);
+        byte[] expectedStructure = Files.readAllBytes(structurePath);
+        byte[] expectedManifest = Files.readAllBytes(manifestPath);
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> writer.prepareOwnedRemovals(
+                        List.of(new StructureTransactionWriter.OwnedRemoval(
+                                TARGET_KEY,
+                                StructureSource.Kind.VANILLA,
+                                SOURCE_KEY,
+                                Optional.empty(),
+                                Optional.of(StructureHash.sha256(expectedManifest)))),
+                        () -> {
+                            assertArrayEquals(expectedObject, Files.readAllBytes(objectPath));
+                            assertArrayEquals(expectedStructure, Files.readAllBytes(structurePath));
+                            assertArrayEquals(expectedManifest, Files.readAllBytes(manifestPath));
+                            throw new IOException("Injected locked removal validation failure");
+                        }));
+
+        assertTrue(failure.getMessage().contains("Injected locked removal validation failure"));
+        assertArrayEquals(expectedObject, Files.readAllBytes(objectPath));
+        assertArrayEquals(expectedStructure, Files.readAllBytes(structurePath));
+        assertArrayEquals(expectedManifest, Files.readAllBytes(manifestPath));
+    }
+
+    @Test
     public void preparedRemovalCanRollbackAfterCommitMarkerBeforeCoordinatorPublish() throws IOException {
         Path root = temporaryFolder.newFolder("owned-removal-coordinator-rollback").toPath();
         StructureTransactionWriter writer = new StructureTransactionWriter(root);
@@ -525,7 +631,9 @@ public class StructureTransactionWriterTest {
                 new StructureTransactionWriter.OwnedRemoval(
                         TARGET_KEY,
                         StructureSource.Kind.VANILLA,
-                        SOURCE_KEY
+                        SOURCE_KEY,
+                        Optional.empty(),
+                        Optional.empty()
                 )
         ));
         assertFalse(Files.exists(root.resolve("objects/temple.iob")));
@@ -548,7 +656,9 @@ public class StructureTransactionWriterTest {
                 new StructureTransactionWriter.OwnedRemoval(
                         TARGET_KEY,
                         StructureSource.Kind.VANILLA,
-                        SOURCE_KEY
+                        SOURCE_KEY,
+                        Optional.empty(),
+                        Optional.empty()
                 )
         ));
         StructureTransactionWriter.PreparedRemovalToken token = removal.recoveryToken().orElseThrow();
@@ -572,7 +682,9 @@ public class StructureTransactionWriterTest {
                 new StructureTransactionWriter.OwnedRemoval(
                         TARGET_KEY,
                         StructureSource.Kind.VANILLA,
-                        SOURCE_KEY
+                        SOURCE_KEY,
+                        Optional.empty(),
+                        Optional.empty()
                 )
         ));
         StructureTransactionWriter.PreparedRemovalToken token = removal.recoveryToken().orElseThrow();

@@ -183,7 +183,7 @@ public final class GenerationProbe {
                     .maxHeight(dimension.getMaxHeight())
                     .build();
             EngineTarget target = new EngineTarget(world, dimension, data);
-            engine = new IrisEngine(target, false);
+            engine = new IrisEngine(target, IrisEngine.InitializationMode.RUNTIME);
         } catch (Throwable e) {
             System.out.println("[genprobe] FAIL: engine construction threw before generation could start");
             e.printStackTrace(System.out);

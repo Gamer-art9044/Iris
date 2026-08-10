@@ -37,14 +37,11 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -341,40 +338,31 @@ public final class PendingWorldDeleteQueue implements WorldDeletionQueue {
             LinkedHashMap<String, String> remaining
     ) {
         try {
-            QueueEntry entry = QueueEntry.parse(worldName, levelRoot.getName());
-            List<DeleteTarget> targets = entry.targets(levelRoot);
-            if (targets.stream().anyMatch(PendingWorldDeleteQueue::isLoaded)) {
+            EntryDeletionResult result = attemptEntry(
+                    levelRoot,
+                    worldName,
+                    PendingWorldDeleteQueue::isLoaded
+            );
+            if (result.loaded()) {
                 Iris.warn("Skipping queued deletion for \"" + worldName + "\" because it is currently loaded.");
                 remaining.put(worldName.toLowerCase(Locale.ROOT), worldName);
                 return;
             }
 
-            boolean foundAny = false;
-            boolean deletedAll = true;
-            for (DeleteTarget target : targets) {
-                Path worldFolder = target.path();
-                if (!Files.exists(worldFolder, LinkOption.NOFOLLOW_LINKS)) {
-                    continue;
-                }
-                if (Files.isSymbolicLink(worldFolder) || !Files.isDirectory(worldFolder, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new IOException("Queued world target is not a safe directory: " + worldFolder);
-                }
-
-                foundAny = true;
-                try {
-                    deleteTree(worldFolder);
-                    Iris.info("Deleted queued world folder \"" + worldFolder.getFileName() + "\".");
-                } catch (IOException failure) {
-                    deletedAll = false;
-                    Iris.reportError("Failed to delete queued world folder \"" + worldFolder + "\".", failure);
-                }
+            for (Path deleted : result.deleted()) {
+                Iris.info("Deleted queued world folder \"" + deleted.getFileName() + "\".");
             }
-
-            if (!foundAny) {
+            for (DeletionFailure deletionFailure : result.failures()) {
+                Iris.reportError(
+                        "Failed to delete queued world folder \"" + deletionFailure.path() + "\".",
+                        deletionFailure.failure()
+                );
+            }
+            if (!result.foundAny()) {
                 Iris.info("Queued world deletion skipped for \"" + worldName + "\" (folder missing).");
                 return;
             }
-            if (!deletedAll) {
+            if (result.retainQueueEntry()) {
                 remaining.put(worldName.toLowerCase(Locale.ROOT), worldName);
             }
         } catch (Throwable failure) {
@@ -383,37 +371,57 @@ public final class PendingWorldDeleteQueue implements WorldDeletionQueue {
         }
     }
 
-    private static boolean isLoaded(DeleteTarget target) {
-        if (target.key() != null && WorldIdentity.resolve(target.key()).isPresent()) {
+    static EntryDeletionResult attemptEntry(
+            File levelRoot,
+            String worldName,
+            LoadedTargetCheck loadedTargetCheck
+    ) throws IOException {
+        QueueEntry entry = QueueEntry.parse(worldName, levelRoot.getName());
+        List<DeleteTarget> targets = entry.targets(levelRoot);
+        if (targets.stream().anyMatch(target -> loadedTargetCheck.isLoaded(target.key(), target.path()))) {
+            return new EntryDeletionResult(true, false, List.of(), List.of());
+        }
+
+        boolean foundAny = false;
+        ArrayList<Path> deleted = new ArrayList<>(targets.size());
+        ArrayList<DeletionFailure> failures = new ArrayList<>(targets.size());
+        for (DeleteTarget target : targets) {
+            Path worldFolder = target.path();
+            if (!Files.exists(worldFolder, LinkOption.NOFOLLOW_LINKS)) {
+                continue;
+            }
+            if (Files.isSymbolicLink(worldFolder) || !Files.isDirectory(worldFolder, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Queued world target is not a safe directory: " + worldFolder);
+            }
+
+            foundAny = true;
+            try {
+                SnapshotDirectoryTreeDeleter.delete(worldFolder);
+                deleted.add(worldFolder);
+            } catch (IOException failure) {
+                failures.add(new DeletionFailure(worldFolder, failure));
+            }
+        }
+        return new EntryDeletionResult(
+                false,
+                foundAny,
+                List.copyOf(deleted),
+                List.copyOf(failures)
+        );
+    }
+
+    private static boolean isLoaded(@Nullable NamespacedKey key, Path path) {
+        if (key != null && WorldIdentity.resolve(key).isPresent()) {
             return true;
         }
 
-        Path targetPath = target.path().toAbsolutePath().normalize();
+        Path targetPath = path.toAbsolutePath().normalize();
         for (World world : Bukkit.getWorlds()) {
             if (world.getWorldFolder().toPath().toAbsolutePath().normalize().equals(targetPath)) {
                 return true;
             }
         }
         return false;
-    }
-
-    private static void deleteTree(Path target) throws IOException {
-        Files.walkFileTree(target, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
-                Files.delete(file);
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult postVisitDirectory(Path directory, IOException failure) throws IOException {
-                if (failure != null) {
-                    throw failure;
-                }
-                Files.delete(directory);
-                return FileVisitResult.CONTINUE;
-            }
-        });
     }
 
     private enum QueueEntryType {
@@ -478,5 +486,24 @@ public final class PendingWorldDeleteQueue implements WorldDeletionQueue {
     }
 
     private record DeleteTarget(@Nullable NamespacedKey key, Path path) {
+    }
+
+    @FunctionalInterface
+    interface LoadedTargetCheck {
+        boolean isLoaded(@Nullable NamespacedKey key, Path path);
+    }
+
+    record EntryDeletionResult(
+            boolean loaded,
+            boolean foundAny,
+            List<Path> deleted,
+            List<DeletionFailure> failures
+    ) {
+        boolean retainQueueEntry() {
+            return loaded || !failures.isEmpty();
+        }
+    }
+
+    record DeletionFailure(Path path, IOException failure) {
     }
 }

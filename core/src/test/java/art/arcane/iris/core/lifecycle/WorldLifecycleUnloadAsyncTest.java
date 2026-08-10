@@ -1,5 +1,6 @@
 package art.arcane.iris.core.lifecycle;
 
+import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.junit.Test;
@@ -7,10 +8,12 @@ import org.junit.Test;
 import java.lang.reflect.Method;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -99,6 +102,26 @@ public class WorldLifecycleUnloadAsyncTest {
         remembered.complete(true);
         assertTrue(result.join());
         assertEquals("fallback", service.backendNameForWorld(worldKey));
+    }
+
+    @Test
+    public void servicePublishesRawUnloadCompletionForTheWorldEventConsumer() {
+        ControlledBackend remembered = new ControlledBackend("remembered");
+        ControlledBackend fallback = new ControlledBackend("fallback");
+        WorldLifecycleService service = service(remembered, fallback);
+        NamespacedKey worldKey = new NamespacedKey("iris", "raw_boundary");
+        World world = world(worldKey);
+        service.rememberBackend(worldKey, remembered.backendName());
+
+        CompletableFuture<Boolean> result = service.unloadAsync(world, false);
+        CompletionStage<Boolean> boundary = WorldUnloadBoundaryRegistry.claim(WorldIdentity.serialize(world));
+
+        assertNotNull(boundary);
+        assertFalse(boundary.toCompletableFuture().isDone());
+        assertFalse(result.isDone());
+        remembered.complete(true);
+        assertTrue(boundary.toCompletableFuture().join());
+        assertTrue(result.join());
     }
 
     @Test

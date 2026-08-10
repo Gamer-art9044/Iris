@@ -30,6 +30,7 @@ import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.framework.StructureAssembler;
 import art.arcane.iris.engine.framework.StructureReachability;
+import art.arcane.iris.engine.framework.structure.StructureAssemblyResult;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
@@ -61,6 +62,7 @@ import org.bukkit.generator.structure.Structure;
 
 import java.io.File;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -99,14 +101,15 @@ public class CommandStructure implements DirectorExecutor {
         BulkStructureImporter.Report jigsaws = BulkStructureImporter.importAllVanilla(data, StructureImporter.Mode.OVERWRITE, true, sender());
         BulkStructureImporter.Report templates = BulkStructureImporter.importAllTemplates(data, StructureImporter.Mode.OVERWRITE, sender());
         BulkStructureImporter.Report groups = BulkStructureImporter.importTemplateGroups(data, StructureImporter.Mode.OVERWRITE, sender());
-        StructureCaptureImporter.Report captured = StructureCaptureImporter.importAllStructures(data, StructureImporter.Mode.OVERWRITE, sender());
+        StructureCaptureImporter.Report captured = StructureCaptureImporter.importStructures(
+                data, StructureImporter.Mode.OVERWRITE, sender(), jigsaws.captureCandidates());
         int imported = jigsaws.imported() + templates.imported() + groups.imported() + captured.imported();
         int failed = jigsaws.failed() + templates.failed() + groups.failed() + captured.failed();
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_IMPORT_COMPLETE_STRUCTURES_OBJECTS_WRITTEN_FAILED, MessageArgument.untrusted("imported", imported), MessageArgument.untrusted("failed", failed)));
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_REFERENCE_THEM_FROM_BIOME_REGION_DIMENSION_STRUCTURES_LIST_RUN_IRIS, MessageArgument.untrusted("value", dimension.getLoadKey())));
     }
 
-    @Director(name = "capture", description = "Capture code-generated structures that have no NBT template (swamp huts, igloos, etc.) into editable Iris objects by generating each one in a throwaway scratch world and reading back its blocks. Skips structures that already import as a structure, structures wider/taller than the capture cap (strongholds, mansions, monuments stay vanilla), and anything that will not generate in a flat overworld. Each captured structure becomes a single-piece Iris structure you can place from a biome/region/dimension 'structures' list. Runs automatically as the last pass of /iris structure import.", descriptionKey = "iris.director.commandstructure.director.capture_code_generated_structures_that_have_no_nbt_template_swamp_huts_igloos", aliases = {"cap"}, origin = DirectorOrigin.BOTH)
+    @Director(name = "capture", description = "Capture live registered structures into editable Iris objects by generating each one in a throwaway scratch world and reading back its blocks. This standalone command overwrites its owned outputs; structures wider/taller than the capture cap and anything that will not generate in a flat overworld are skipped. Each captured structure becomes a single-piece Iris structure you can place from a biome/region/dimension 'structures' list. /iris structure import runs a restricted final capture pass only for non-jigsaw structures that have no loadable NBT template.", descriptionKey = "iris.director.commandstructure.director.capture_code_generated_structures_that_have_no_nbt_template_swamp_huts_igloos", aliases = {"cap"}, origin = DirectorOrigin.BOTH)
     public void capture(
             @Param(description = "The dimension whose pack to capture into", descriptionKey = "iris.director.commandstructure.param.dimension_whose_pack_capture_into", aliases = "dim")
             IrisDimension dimension
@@ -305,8 +308,9 @@ public class CommandStructure implements DirectorExecutor {
         }
         StructureAssembler assembler = StructureAssembler.forData(
                 data, s, new IrisPosition(0, 64, 0));
-        KList<PlacedStructurePiece> pieces = assembler.assemble(new RNG(1234));
-        if (pieces == null || pieces.isEmpty()) {
+        StructureAssemblyResult assembly = assembler.assemble(new RNG(1234));
+        List<PlacedStructurePiece> pieces = assembly.pieces();
+        if (!assembly.hasOutput()) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_STRUCTURE_ASSEMBLED_0_PIECES_CHECK_STARTPOOL, MessageArgument.untrusted("structure", structure), MessageArgument.untrusted("value", s.getStartPool())));
             return;
         }
@@ -344,13 +348,17 @@ public class CommandStructure implements DirectorExecutor {
         StructureAssembler assembler = StructureAssembler.forData(
                 data, s, new IrisPosition(loc.getBlockX(), loc.getBlockY(), loc.getBlockZ()));
         RNG rng = new RNG((long) loc.getBlockX() * 341873128712L + loc.getBlockZ());
-        KList<PlacedStructurePiece> pieces = assembler.assemble(rng);
-        if (pieces == null || pieces.isEmpty()) {
+        StructureAssemblyResult assembly = assembler.assemble(rng);
+        List<PlacedStructurePiece> pieces = assembly.pieces();
+        if (!assembly.hasOutput()) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STRUCTURE_STRUCTURE_ASSEMBLED_0_PIECES, MessageArgument.untrusted("structure", structure)));
             return;
         }
         Map<Block, BlockData> future = new HashMap<>();
-        IObjectPlacer placer = CommandObject.createPlacer(player().getWorld(), future);
+        World targetWorld = player().getWorld();
+        PlatformChunkGenerator targetGenerator = IrisToolbelt.access(targetWorld);
+        Engine targetEngine = targetGenerator == null ? null : targetGenerator.getEngine();
+        IObjectPlacer placer = CommandObject.createPlacer(targetWorld, future, targetEngine);
         for (PlacedStructurePiece p : pieces) {
             IrisObjectPlacement config = new IrisObjectPlacement();
             config.setMode(ObjectPlaceMode.STRUCTURE_PIECE);

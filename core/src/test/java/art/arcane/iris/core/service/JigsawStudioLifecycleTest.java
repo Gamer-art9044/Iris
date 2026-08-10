@@ -1,0 +1,317 @@
+package art.arcane.iris.core.service;
+
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioActivation;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioBay;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioCellDimensions;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioCompatibilityTarget;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioLayout;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioMode;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioPieceRules;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioSession;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioVariant;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioVariantCatalog;
+import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.platform.studio.generators.JigsawStudioGenerator;
+import art.arcane.iris.util.common.scheduling.J;
+import art.arcane.volmlib.util.collection.KMap;
+import org.bukkit.World;
+import org.junit.After;
+import org.junit.Test;
+import org.mockito.MockedStatic;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+
+public class JigsawStudioLifecycleTest {
+    private static final UUID OWNER = UUID.fromString("11111111-1111-1111-1111-111111111111");
+    private static final UUID OTHER_OWNER = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+    @After
+    public void clearLifecycle() {
+        JigsawStudioActivation.finishOpen(OWNER);
+        JigsawStudioActivation.finishOpen(OTHER_OWNER);
+        JigsawStudioActivation.deactivate("overworld");
+    }
+
+    @Test
+    public void openingLeaseAndActivationOwnerAreCentralized() {
+        assertTrue(JigsawStudioActivation.tryBeginOpen(OWNER));
+        assertFalse(JigsawStudioActivation.tryBeginOpen(OTHER_OWNER));
+        JigsawStudioActivation.finishOpen(OTHER_OWNER);
+        assertEquals(OWNER, JigsawStudioActivation.openingOwnerId());
+
+        JigsawStudioActivation.Request request = activateOwnedStudio();
+
+        assertEquals(OWNER, request.ownerId());
+        assertEquals(OWNER, JigsawStudioActivation.activeOwnerId());
+        JigsawStudioActivation.finishOpen(OWNER);
+        assertNull(JigsawStudioActivation.openingOwnerId());
+        assertFalse(JigsawStudioActivation.tryBeginOpen(OTHER_OWNER));
+    }
+
+    @Test
+    public void closeAuthorizationChecksOwnerDirtyStateAndSaveBarrierAtomically() {
+        assertTrue(JigsawStudioActivation.tryBeginOpen(OWNER));
+        JigsawStudioActivation.Request request = activateOwnedStudio();
+        JigsawStudioActivation.finishOpen(OWNER);
+        JigsawStudioSession session = JigsawStudioActivation.getSession(request.requestId());
+        JigsawStudioService service = new JigsawStudioService();
+
+        assertEquals(
+                JigsawStudioService.CloseStart.NOT_OWNER,
+                service.tryBeginClose(request.requestId(), OTHER_OWNER, false));
+        assertTrue(service.closeProtectionFailure(request.requestId()).contains("owner-controlled"));
+
+        assertEquals(
+                JigsawStudioSession.DirtyStatus.MARKED,
+                session.markWorkcellDirty(JigsawStudioLayout.SPATIAL_WORKCELL_ID).status());
+        assertEquals(
+                JigsawStudioService.CloseStart.DIRTY,
+                service.tryBeginClose(request.requestId(), OWNER, false));
+        assertTrue(service.closeProtectionFailure(request.requestId()).contains("autosave"));
+
+        JigsawStudioSession.VariantSwitchToken switchToken = session.beginVariantSwitch(
+                JigsawStudioLayout.SPATIAL_WORKCELL_ID,
+                "stronghold/tower",
+                true).token().orElseThrow();
+        assertEquals(
+                JigsawStudioService.CloseStart.OPERATION_IN_PROGRESS,
+                service.tryBeginClose(request.requestId(), OWNER, true));
+        assertTrue(service.closeProtectionFailure(request.requestId()).contains("loading a variant"));
+        assertTrue(session.abortVariantSwitch(switchToken));
+
+        assertEquals(JigsawStudioService.SaveStart.STARTED, service.tryBeginSave(request.requestId()));
+        assertEquals(
+                JigsawStudioService.CloseStart.SAVE_IN_PROGRESS,
+                service.tryBeginClose(request.requestId(), OWNER, true));
+        assertTrue(service.closeProtectionFailure(request.requestId()).contains("saving"));
+
+        service.finishSave(request.requestId());
+        assertEquals(
+                JigsawStudioService.CloseStart.STARTED,
+                service.tryBeginClose(request.requestId(), OWNER, true));
+        assertNull(service.closeProtectionFailure(request.requestId()));
+        assertEquals(JigsawStudioService.SaveStart.CLOSING, service.tryBeginSave(request.requestId()));
+    }
+
+    @Test
+    public void lateJigsawGuiMutationKeepsCloseBehindTheFinalSnapshotAndAutosaveBarriers()
+            throws ReflectiveOperationException {
+        assertTrue(JigsawStudioActivation.tryBeginOpen(OWNER));
+        JigsawStudioActivation.Request request = activateOwnedStudio();
+        JigsawStudioActivation.finishOpen(OWNER);
+        JigsawStudioSession session = JigsawStudioActivation.getSession(request.requestId());
+        JigsawStudioService service = new JigsawStudioService();
+        KMap<String, Object> baseline = new KMap<>();
+        baseline.put("name", "iris:start");
+        KMap<String, Object> updated = new KMap<>();
+        updated.put("name", "iris:hall");
+        assertTrue(JigsawStudioService.tileSnapshotChanged(baseline, updated));
+
+        Class<?> keyType = Class.forName(JigsawStudioService.class.getName() + "$JigsawTileWatchKey");
+        Constructor<?> constructor = keyType.getDeclaredConstructor(
+                UUID.class, UUID.class, int.class, int.class, int.class);
+        constructor.setAccessible(true);
+        Object key = constructor.newInstance(request.requestId(), UUID.randomUUID(), 1, 64, 1);
+        Class<?> studioType = Class.forName(JigsawStudioService.class.getName() + "$ActiveStudio");
+        Constructor<?> studioConstructor = studioType.getDeclaredConstructor(
+                UUID.class,
+                World.class,
+                Engine.class,
+                JigsawStudioGenerator.class,
+                ConcurrentHashMap.class,
+                Set.class,
+                AtomicLong.class);
+        studioConstructor.setAccessible(true);
+        World world = mock(World.class);
+        Object studio = studioConstructor.newInstance(
+                UUID.randomUUID(),
+                world,
+                mock(Engine.class),
+                mock(JigsawStudioGenerator.class),
+                new ConcurrentHashMap<>(),
+                ConcurrentHashMap.newKeySet(),
+                new AtomicLong());
+        Class<?> watchType = Class.forName(JigsawStudioService.class.getName() + "$JigsawTileWatch");
+        Constructor<?> watchConstructor = watchType.getDeclaredConstructor(
+                keyType,
+                studioType,
+                UUID.class,
+                String.class,
+                KMap.class,
+                AtomicBoolean.class,
+                AtomicBoolean.class);
+        watchConstructor.setAccessible(true);
+        Object watch = watchConstructor.newInstance(
+                key,
+                studio,
+                OWNER,
+                JigsawStudioLayout.SPATIAL_WORKCELL_ID,
+                baseline,
+                new AtomicBoolean(),
+                new AtomicBoolean());
+        Field watchesField = JigsawStudioService.class.getDeclaredField("jigsawTileWatches");
+        watchesField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<Object, Object> watches = (Map<Object, Object>) watchesField.get(service);
+        watches.put(key, watch);
+
+        try (MockedStatic<J> scheduling = mockStatic(J.class)) {
+            scheduling.when(() -> J.isOwnedByCurrentRegion(any(World.class), anyInt(), anyInt()))
+                    .thenReturn(false);
+            scheduling.when(() -> J.runRegion(
+                    any(World.class), anyInt(), anyInt(), any(Runnable.class)))
+                    .thenReturn(false);
+            assertEquals(
+                    JigsawStudioService.CloseStart.OPERATION_IN_PROGRESS,
+                    service.tryBeginClose(request.requestId(), OWNER, false));
+            assertTrue(service.closeProtectionFailure(request.requestId()).contains("finalizing"));
+            assertEquals(1, watches.size());
+            scheduling.verify(() -> J.s(any(Runnable.class), eq(5)));
+        }
+
+        watches.clear();
+        assertEquals(
+                JigsawStudioSession.DirtyStatus.MARKED,
+                session.markWorkcellDirty(JigsawStudioLayout.SPATIAL_WORKCELL_ID).status());
+        assertEquals(
+                JigsawStudioService.CloseStart.DIRTY,
+                service.tryBeginClose(request.requestId(), OWNER, false));
+    }
+
+    @Test
+    public void exportLeaseSerializesSavesAndCloseAgainstThePinnedRequest() {
+        assertTrue(JigsawStudioActivation.tryBeginOpen(OWNER));
+        JigsawStudioActivation.Request request = activateOwnedStudio();
+        JigsawStudioActivation.finishOpen(OWNER);
+        JigsawStudioService service = new JigsawStudioService();
+
+        assertEquals(
+                JigsawStudioService.ExportStart.NOT_OWNER,
+                service.tryBeginExport(request.requestId(), OTHER_OWNER));
+        assertEquals(
+                JigsawStudioService.ExportStart.STARTED,
+                service.tryBeginExport(request.requestId(), OWNER));
+        assertEquals(
+                JigsawStudioService.ExportStart.IN_PROGRESS,
+                service.tryBeginExport(request.requestId(), OWNER));
+        assertEquals(
+                JigsawStudioService.SaveStart.EXPORT_OPERATION,
+                service.tryBeginSave(request.requestId()));
+        assertEquals(
+                JigsawStudioService.CloseStart.OPERATION_IN_PROGRESS,
+                service.tryBeginClose(request.requestId(), OWNER, false));
+        assertTrue(service.closeProtectionFailure(request.requestId()).contains("exporting"));
+
+        service.finishExport(request.requestId());
+        assertEquals(JigsawStudioService.SaveStart.STARTED, service.tryBeginSave(request.requestId()));
+        service.finishSave(request.requestId());
+    }
+
+    @Test
+    public void immediateSingleAndFamilyDuplicatesWaitForAutosaveThenRunExactlyOnce() {
+        assertEquals(
+                JigsawStudioService.DeferredDuplicationReadiness.WAITING_FOR_AUTOSAVE,
+                JigsawStudioService.deferredDuplicationReadiness(
+                        true, true, true, false, false));
+        assertEquals(
+                JigsawStudioService.DeferredDuplicationReadiness.WAITING_FOR_AUTOSAVE,
+                JigsawStudioService.deferredDuplicationReadiness(
+                        true, true, true, true, false));
+        assertEquals(
+                JigsawStudioService.DeferredDuplicationReadiness.WAITING_FOR_OPERATION,
+                JigsawStudioService.deferredDuplicationReadiness(
+                        true, true, false, true, false));
+        assertEquals(
+                JigsawStudioService.DeferredDuplicationReadiness.READY,
+                JigsawStudioService.deferredDuplicationReadiness(
+                        true, true, false, false, false));
+        assertEquals(
+                JigsawStudioService.DeferredDuplicationReadiness.STALE,
+                JigsawStudioService.deferredDuplicationReadiness(
+                        true, false, false, false, false));
+    }
+
+    @Test
+    public void initialEvaluationWaitsForCommitAndSchedulesExactlyOnce() {
+        AtomicLong registrationBeforeCommit = new AtomicLong();
+        assertFalse(JigsawStudioService.claimInitialEvaluation(registrationBeforeCommit, false));
+        assertEquals(0L, registrationBeforeCommit.get());
+        assertTrue(JigsawStudioService.claimInitialEvaluation(registrationBeforeCommit, true));
+        assertEquals(1L, registrationBeforeCommit.get());
+        assertFalse(JigsawStudioService.claimInitialEvaluation(registrationBeforeCommit, true));
+
+        AtomicLong registrationAfterCommit = new AtomicLong();
+        assertTrue(JigsawStudioService.claimInitialEvaluation(registrationAfterCommit, true));
+        assertEquals(1L, registrationAfterCommit.get());
+        assertFalse(JigsawStudioService.claimInitialEvaluation(registrationAfterCommit, true));
+    }
+
+    @Test
+    public void ownerEnteringAWorkcellMakesItTheNextMenuSelection() {
+        JigsawStudioLayout layout = JigsawStudioLayout.create(
+                JigsawStudioMode.PLANAR_JIGSAW,
+                new JigsawStudioCellDimensions(16, 16, 16),
+                new JigsawStudioVariantCatalog(List.of()));
+        JigsawStudioSession session = new JigsawStudioSession("overworld", "village", layout);
+        JigsawStudioBay end = layout.get("workcell/end");
+        JigsawStudioBay blank = layout.get("workcell/blank");
+
+        assertTrue(session.selectedBayId().isEmpty());
+        assertTrue(JigsawStudioService.selectEnteredWorkcell(session, end, true));
+        assertEquals(end.stableId(), session.selectedBayId().orElseThrow());
+        assertFalse(JigsawStudioService.selectEnteredWorkcell(session, blank, false));
+        assertEquals(end.stableId(), session.selectedBayId().orElseThrow());
+    }
+
+    private static JigsawStudioActivation.Request activateOwnedStudio() {
+        return JigsawStudioActivation.activate(
+                "overworld",
+                "stronghold",
+                JigsawStudioMode.SPATIAL_JIGSAW,
+                JigsawStudioCompatibilityTarget.IRIS_EXTENDED,
+                new JigsawStudioCellDimensions(16, 16, 16),
+                mock(IrisData.class),
+                JigsawStudioLayout.create(
+                        JigsawStudioMode.SPATIAL_JIGSAW,
+                        new JigsawStudioCellDimensions(16, 16, 16),
+                        new JigsawStudioVariantCatalog(List.of(
+                                spatialVariant("stronghold/hall"),
+                                spatialVariant("stronghold/tower")))),
+                OWNER);
+    }
+
+    private static JigsawStudioVariant spatialVariant(String key) {
+        return new JigsawStudioVariant(
+                key,
+                key,
+                "",
+                Optional.of(new JigsawStudioCellDimensions(16, 16, 16)),
+                JigsawStudioMode.SPATIAL_JIGSAW,
+                Optional.empty(),
+                true,
+                true,
+                List.of(),
+                new JigsawStudioPieceRules(0, 30, 0, 0, false),
+                List.of());
+    }
+}

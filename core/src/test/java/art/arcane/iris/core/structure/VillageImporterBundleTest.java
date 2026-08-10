@@ -28,6 +28,7 @@ import art.arcane.iris.core.structure.authoring.StructureSource;
 import art.arcane.iris.core.structure.authoring.StructureTransactionWriter;
 import art.arcane.iris.core.structure.authoring.StructureWriteMode;
 import art.arcane.iris.core.structure.authoring.StructureWriteResult;
+import art.arcane.iris.engine.object.IrisJigsawBranchFailurePolicy;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -121,6 +122,8 @@ public class VillageImporterBundleTest {
 
         assertEquals(6, structure.get("maxDepth"));
         assertEquals(6, structure.get("maxSizeChunks"));
+        assertEquals(IrisJigsawBranchFailurePolicy.TERMINATE_BRANCH.name(),
+                structure.get("branchFailurePolicy"));
     }
 
     private StructureResourceBundle bundle(String objectContent) {

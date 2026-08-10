@@ -20,7 +20,6 @@ package art.arcane.iris.engine.mantle;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.framework.Engine;
@@ -34,7 +33,6 @@ import art.arcane.iris.util.common.data.B;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.iris.util.project.hunk.Hunk;
-import art.arcane.iris.util.project.matter.TileWrapper;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
@@ -262,8 +260,6 @@ public interface EngineMantle extends MatterGenerator {
             chunk.raiseFlagUnchecked(MantleFlag.CLEANED, () -> {
                 chunk.deleteSlices(PlatformBlockState.class);
                 chunk.deleteSlices(String.class);
-                chunk.deleteSlices(TileWrapper.class);
-                chunk.deleteSlices(Identifier.class);
                 chunk.deleteSlices(UpdateMatter.class);
                 chunk.deleteSlices(MatterCavern.class);
                 chunk.deleteSlices(MatterFluidBody.class);
@@ -281,8 +277,6 @@ public interface EngineMantle extends MatterGenerator {
         try {
             chunk.raiseFlagUnchecked(MantleFlag.CLEANED, () -> {
                 chunk.deleteSlices(PlatformBlockState.class);
-                chunk.deleteSlices(TileWrapper.class);
-                chunk.deleteSlices(Identifier.class);
                 chunk.deleteSlices(UpdateMatter.class);
                 chunk.deleteSlices(MatterCavern.class);
                 chunk.deleteSlices(MatterFluidBody.class);

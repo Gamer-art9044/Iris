@@ -33,6 +33,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -41,11 +42,13 @@ import java.util.zip.ZipInputStream;
 public final class DefaultPackBootstrapProvisioner {
     private static final URI DEFAULT_SOURCE = URI.create("https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip");
     private static final String WORLD_DATAPACK_DIRECTORY = "iris";
-    private static final int MARKER_SCHEMA = 2;
+    private static final int MARKER_SCHEMA = 3;
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_ARCHIVE_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_EXPANDED_BYTES = 2L * 1024L * 1024L * 1024L;
     private static final AtomicBoolean PROVISIONED_THIS_STARTUP = new AtomicBoolean(false);
+    private static final AtomicReference<String> PROVISIONED_COMPILER_INPUT_FINGERPRINT =
+            new AtomicReference<>("");
 
     private DefaultPackBootstrapProvisioner() {
     }
@@ -102,6 +105,12 @@ public final class DefaultPackBootstrapProvisioner {
             if (!Integer.toString(MARKER_SCHEMA).equals(marker.getProperty("schema"))) {
                 return false;
             }
+            IDataFixer fixer = DataVersion.getLatest().get();
+            if (fixer == null
+                    || !IrisDatapackCompiler.compilerIdentity(fixer)
+                    .equals(marker.getProperty("compilerIdentity"))) {
+                return false;
+            }
             return directoryFingerprint(packRoot).equals(marker.getProperty("defaultPackFingerprint"))
                     && directoryFingerprint(datapackRoot).equals(marker.getProperty("datapackFingerprint"))
                     && datapackRoot.toString().equals(marker.getProperty("datapackPath"))
@@ -118,7 +127,13 @@ public final class DefaultPackBootstrapProvisioner {
         return PROVISIONED_THIS_STARTUP.get();
     }
 
+    public static String compilerInputFingerprintThisStartup() {
+        return PROVISIONED_COMPILER_INPUT_FINGERPRINT.get();
+    }
+
     static ProvisionResult provision(Path dataDirectory, Consumer<String> feedback, ProvisionOptions options) throws IOException {
+        PROVISIONED_THIS_STARTUP.set(false);
+        PROVISIONED_COMPILER_INPUT_FINGERPRINT.set("");
         Path normalizedData = dataDirectory.toAbsolutePath().normalize();
         Path packsRoot = normalizedData.resolve("packs");
         Path packRoot = packsRoot.resolve("overworld");
@@ -174,20 +189,22 @@ public final class DefaultPackBootstrapProvisioner {
             if (packRoots.isEmpty()) {
                 throw new IOException("No Iris pack roots were available for bootstrap datapack compilation");
             }
+            IDataFixer fixer = DataVersion.getLatest().get();
+            if (fixer == null) {
+                throw new IOException("Latest Iris datapack fixer is unavailable during bootstrap");
+            }
+            String compilerIdentity = IrisDatapackCompiler.compilerIdentity(fixer);
             String aggregateFingerprint = packRootsFingerprint(packRoots);
             boolean rebuildDatapack = replacePack
                     || !existingDatapack
                     || !aggregateFingerprint.equals(previousMarker.getProperty("aggregateFingerprint"))
+                    || !compilerIdentity.equals(previousMarker.getProperty("compilerIdentity"))
                     || !datapackRoot.toString().equals(previousMarker.getProperty("datapackPath"))
                     || !directoryFingerprint(datapackRoot).equals(previousMarker.getProperty("datapackFingerprint"));
             if (rebuildDatapack) {
                 compileContainer = datapacksRoot.resolve("." + WORLD_DATAPACK_DIRECTORY + "-stage-" + UUID.randomUUID());
                 Files.createDirectories(compileContainer);
                 KList<File> outputFolders = new KList<File>().qadd(compileContainer.toFile());
-                IDataFixer fixer = DataVersion.getLatest().get();
-                if (fixer == null) {
-                    throw new IOException("Latest Iris datapack fixer is unavailable during bootstrap");
-                }
                 IrisDatapackCompiler.compile(packRoots, outputFolders, fixer, false);
                 if (!isDatapackRoot(compileContainer)) {
                     throw new IOException("Canonical Iris datapack compiler produced incomplete output at " + compileContainer);
@@ -202,9 +219,14 @@ public final class DefaultPackBootstrapProvisioner {
                 throw new IOException("Bootstrap datapack output is incomplete at " + datapackRoot);
             }
             String finalPackFingerprint = directoryFingerprint(packRoot);
-            String finalAggregateFingerprint = packRootsFingerprint(
-                    IrisDatapackCompiler.collectPackRoots(normalizedData, options.levelRoot())
-            );
+            List<File> finalPackRoots = IrisDatapackCompiler.collectPackRoots(
+                    normalizedData,
+                    options.levelRoot());
+            String finalAggregateFingerprint = packRootsFingerprint(finalPackRoots);
+            String finalCompilerInputFingerprint = IrisDatapackCompiler.computeInputFingerprint(
+                    finalPackRoots,
+                    fixer,
+                    false);
             String finalDatapackFingerprint = directoryFingerprint(datapackRoot);
             Properties marker = new Properties();
             marker.setProperty("schema", Integer.toString(MARKER_SCHEMA));
@@ -213,10 +235,12 @@ public final class DefaultPackBootstrapProvisioner {
             marker.setProperty("managedDefault", Boolean.toString(managedDefault));
             marker.setProperty("defaultPackFingerprint", finalPackFingerprint);
             marker.setProperty("aggregateFingerprint", finalAggregateFingerprint);
+            marker.setProperty("compilerIdentity", compilerIdentity);
             marker.setProperty("datapackFingerprint", finalDatapackFingerprint);
             marker.setProperty("datapackPath", datapackRoot.toString());
             marker.setProperty("completedAt", Long.toString(options.clock().millis()));
             storePropertiesAtomic(markerFile, marker);
+            PROVISIONED_COMPILER_INPUT_FINGERPRINT.set(finalCompilerInputFingerprint);
             PROVISIONED_THIS_STARTUP.set(true);
             deleteQuietly(packBackup, feedback);
             deleteQuietly(datapackBackup, feedback);

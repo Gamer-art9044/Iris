@@ -82,14 +82,36 @@ public class IrisStructurePlacement {
     @Desc("CONCENTRIC_RINGS only: how many placements share each ring before moving outward.")
     private int ringSpread = 3;
 
-    @Desc("When underground=false this is the minimum surface Y the placement is allowed at (a gate); when underground=true this is the lower bound of the Y band the structure is placed within.")
+    @Desc("Minimum world Y. SURFACE uses it as a terrain-height gate; HEIGHT_BAND and cave anchors use it as the lower candidate bound. LEGACY follows underground.")
     private int minHeight = -2032;
 
-    @Desc("When underground=false this is the maximum surface Y the placement is allowed at (a gate); when underground=true this is the upper bound of the Y band the structure is placed within.")
+    @Desc("Maximum world Y. SURFACE uses it as a terrain-height gate; HEIGHT_BAND and cave anchors use it as the upper candidate bound. LEGACY follows underground.")
     private int maxHeight = 2032;
 
-    @Desc("If true, the structure starts at a deterministic random world Y inside [minHeight, maxHeight]. Terrain integration is then controlled independently by terrain.")
+    @Desc("LEGACY anchor only: if true, choose a deterministic world Y inside [minHeight, maxHeight]; otherwise gate the terrain surface. Explicit anchor modes override this field.")
     private boolean underground = false;
+
+    @Desc("Vertical anchor policy. LEGACY preserves the underground boolean. Cave modes search existing carved-space data and implicitly behave as underground placements.")
+    private IrisStructureAnchorMode anchor = IrisStructureAnchorMode.LEGACY;
+
+    @ArrayType(type = String.class, min = 1)
+    @Desc("Optional cave-biome allowlist for cave anchor modes. Empty accepts the cave biome resolved at the selected anchor.")
+    private KList<String> caveBiomes = new KList<>();
+
+    @MinNumber(1)
+    @MaxNumber(64)
+    @Desc("Cave anchor modes only: deterministic X/Z columns tested inside the start chunk before the placement is skipped.")
+    private int caveAnchorAttempts = 8;
+
+    @MinNumber(1)
+    @MaxNumber(16)
+    @Desc("Cave anchor modes only: vertical scan step in blocks. One is exact; larger values trade precision for speed.")
+    private int caveAnchorScanStep = 1;
+
+    @MinNumber(1)
+    @MaxNumber(64)
+    @Desc("Cave anchor modes only: minimum contiguous carved-space height required at the selected anchor.")
+    private int caveMinimumClearance = 3;
 
     @Desc("Terrain integration for this placement. The editable structures backend supports SOURCE, PRESERVE, BORE, and FORCE_CARVE. The nativeStructures backend supports every terrain mode.")
     private IrisStructureTerrain terrain = new IrisStructureTerrain();
@@ -97,7 +119,7 @@ public class IrisStructurePlacement {
     @Desc("Optional foundation columns placed beneath the assembled structure's occupied bottom cells. Columns pass through air and fluids until they reach solid ground, up to maxDepth.")
     private IrisStructureStiltSettings stilt = null;
 
-    @Desc("If false, this placement is skipped underwater.")
+    @Desc("If false, the placement is skipped when its selected surface or cave column is submerged.")
     private boolean underwater = false;
 
     public IrisStructureTerrain resolvedTerrain() {
@@ -110,5 +132,17 @@ public class IrisStructurePlacement {
 
     public boolean hasNativeStructures() {
         return nativeStructures != null && !nativeStructures.isEmpty();
+    }
+
+    public IrisStructureAnchorMode resolvedAnchor() {
+        if (anchor == null || anchor == IrisStructureAnchorMode.LEGACY) {
+            return underground ? IrisStructureAnchorMode.HEIGHT_BAND : IrisStructureAnchorMode.SURFACE;
+        }
+        return anchor;
+    }
+
+    public boolean isAnchoredUnderground() {
+        IrisStructureAnchorMode activeAnchor = resolvedAnchor();
+        return activeAnchor == IrisStructureAnchorMode.HEIGHT_BAND || activeAnchor.isCave();
     }
 }

@@ -36,6 +36,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,7 +58,10 @@ public final class StructureTransactionWriter {
     private static final int MAX_RECOVERY_CLAIM_BYTES = 64 * 1024;
     private static final int MAX_COORDINATOR_JOURNAL_BYTES = 4 * 1024 * 1024;
     private static final int MAX_STRUCTURE_STATE_BYTES = 64 * 1024 * 1024;
+    private static final long MAX_VERIFIED_READ_FILE_BYTES = 256L * 1024L * 1024L;
     private static final int MAX_RECOVERY_TRANSACTIONS = 1_024;
+    private static final LockedRemovalValidator NO_REMOVAL_VALIDATION = () -> {
+    };
     private static final ConcurrentMap<Path, ReentrantLock> ROOT_LOCKS = new ConcurrentHashMap<>();
     private static final Gson GSON = new Gson();
 
@@ -139,7 +143,23 @@ public final class StructureTransactionWriter {
     }
 
     public boolean removeOwned(StructureKey key, StructureSource.Kind sourceKind, StructureKey sourceKey) throws IOException {
-        OwnedRemoval request = new OwnedRemoval(key, sourceKind, sourceKey);
+        return removeOwned(new OwnedRemoval(
+                key,
+                sourceKind,
+                sourceKey,
+                Optional.empty(),
+                Optional.empty()));
+    }
+
+    public boolean removeManagedDatapackOwned(
+            StructureKey key,
+            StructureSource.Kind sourceKind,
+            StructureKey sourceKey
+    ) throws IOException {
+        return removeOwned(OwnedRemoval.managedDatapack(key, sourceKind, sourceKey));
+    }
+
+    private boolean removeOwned(OwnedRemoval request) throws IOException {
         try (PreparedRemoval removal = prepareOwnedRemovals(List.of(request))) {
             boolean changed = removal.changed();
             removal.markCommitted();
@@ -149,19 +169,30 @@ public final class StructureTransactionWriter {
     }
 
     public PreparedRemoval prepareOwnedRemovals(List<OwnedRemoval> removals) throws IOException {
-        return prepareOwnedRemovals(removals, false);
+        return prepareOwnedRemovals(removals, NO_REMOVAL_VALIDATION);
+    }
+
+    public PreparedRemoval prepareOwnedRemovals(
+            List<OwnedRemoval> removals,
+            LockedRemovalValidator validator
+    ) throws IOException {
+        return prepareOwnedRemovals(removals, false, validator);
     }
 
     public PreparedRemoval prepareMatchingOwnedRemovals(List<OwnedRemoval> removals) throws IOException {
-        return prepareOwnedRemovals(removals, true);
+        return prepareOwnedRemovals(removals, true, NO_REMOVAL_VALIDATION);
     }
 
     private PreparedRemoval prepareOwnedRemovals(
             List<OwnedRemoval> removals,
-            boolean skipOwnershipMismatches
+            boolean skipOwnershipMismatches,
+            LockedRemovalValidator validator
     ) throws IOException {
         Objects.requireNonNull(removals, "removals");
         List<OwnedRemoval> requests = List.copyOf(removals);
+        LockedRemovalValidator requiredValidator = Objects.requireNonNull(
+                validator,
+                "locked removal validator");
         rootLock.lock();
         ProcessLock processLock = null;
         Path transactionRoot = null;
@@ -172,6 +203,7 @@ public final class StructureTransactionWriter {
             if (!recovery.successful()) {
                 throw recoveryFailure(recovery);
             }
+            requiredValidator.validate();
             RemovalPlan plan = buildRemovalPlan(requests, skipOwnershipMismatches);
             if (plan.targets().isEmpty()) {
                 return new PreparedRemoval(null, null, backups, processLock, false);
@@ -216,13 +248,40 @@ public final class StructureTransactionWriter {
     public record OwnedRemoval(
             StructureKey key,
             StructureSource.Kind sourceKind,
-            StructureKey sourceKey
+            StructureKey sourceKey,
+            Optional<StructureOwnershipManifest.Origin> requiredOrigin,
+            Optional<String> expectedManifestHash
     ) {
         public OwnedRemoval {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(sourceKind, "sourceKind");
             Objects.requireNonNull(sourceKey, "sourceKey");
+            requiredOrigin = Objects.requireNonNull(requiredOrigin, "requiredOrigin");
+            expectedManifestHash = Objects.requireNonNull(expectedManifestHash, "expectedManifestHash");
+            if (expectedManifestHash.isPresent()
+                    && !StructureHash.isSha256(expectedManifestHash.get())) {
+                throw new IllegalArgumentException("Expected ownership manifest hash must be SHA-256");
+            }
         }
+
+        public static OwnedRemoval managedDatapack(
+                StructureKey key,
+                StructureSource.Kind sourceKind,
+                StructureKey sourceKey
+        ) {
+            return new OwnedRemoval(
+                    key,
+                    sourceKind,
+                    sourceKey,
+                    Optional.of(StructureOwnershipManifest.Origin.MANAGED_DATAPACK),
+                    Optional.empty()
+            );
+        }
+    }
+
+    @FunctionalInterface
+    public interface LockedRemovalValidator {
+        void validate() throws IOException;
     }
 
     public record PreparedRemovalToken(Path packRoot, UUID transactionId) {
@@ -491,16 +550,121 @@ public final class StructureTransactionWriter {
         return write(bundle, StructureWriteOptions.preview(mode));
     }
 
+    public StructureWriteResult claimExisting(
+            StructureOwnershipManifest manifest,
+            StructureTransactionReadSet readSet
+    ) {
+        Objects.requireNonNull(manifest, "manifest");
+        Objects.requireNonNull(readSet, "readSet");
+        for (Map.Entry<String, String> resource : manifest.resourceHashes().entrySet()) {
+            String expectedHash = readSet.fileHashes().get(resource.getKey());
+            if (!resource.getValue().equals(expectedHash)) {
+                throw new IllegalArgumentException(
+                        "Claim read set does not pin owned resource " + resource.getKey());
+            }
+        }
+        rootLock.lock();
+        try (ProcessLock ignored = acquireProcessLock()) {
+            StructureRecoveryResult recovery = recoverIncompleteTransactionsLocked();
+            if (!recovery.successful()) {
+                return claimResult(
+                        StructureWriteResult.Status.FAILED,
+                        manifest,
+                        List.of(),
+                        Optional.of(recoveryFailure(recovery))
+                );
+            }
+            List<StructureWriteResult.Conflict> conflicts = verifyReadSet(readSet);
+            Path manifestPath = ownershipManifestPath(manifest.structure());
+            if (files.exists(manifestPath)) {
+                ArrayList<StructureWriteResult.Conflict> updated = new ArrayList<>(conflicts);
+                updated.add(StructureWriteResult.Conflict.at(
+                        manifest.relativePath(),
+                        StructureWriteResult.ConflictReason.MANIFEST_EXISTS));
+                conflicts = orderedConflicts(updated);
+            }
+            if (!conflicts.isEmpty()) {
+                StructureWriteResult.Status status = conflicts.stream().anyMatch(conflict ->
+                        conflict.reason() == StructureWriteResult.ConflictReason.MANIFEST_EXISTS)
+                        ? StructureWriteResult.Status.ADD_ONLY_CONFLICT
+                        : StructureWriteResult.Status.OWNERSHIP_CONFLICT;
+                return claimResult(status, manifest, conflicts, Optional.empty());
+            }
+            return commitClaim(manifest, readSet);
+        } catch (IOException | RuntimeException exception) {
+            return claimResult(
+                    StructureWriteResult.Status.FAILED,
+                    manifest,
+                    List.of(),
+                    Optional.of(exception)
+            );
+        } finally {
+            rootLock.unlock();
+        }
+    }
+
     public StructureWriteResult write(StructureResourceBundle bundle, StructureWriteOptions options) {
+        return writeVerified(
+                bundle,
+                options,
+                StructureTransactionReadSet.empty(),
+                StructureOwnershipManifest.Provenance.created()
+        );
+    }
+
+    public StructureWriteResult writeManagedDatapack(
+            StructureResourceBundle bundle,
+            StructureWriteMode mode
+    ) {
+        Objects.requireNonNull(bundle, "bundle");
+        Objects.requireNonNull(mode, "mode");
+        if (bundle.source().kind() != StructureSource.Kind.DATAPACK
+                && bundle.source().kind() != StructureSource.Kind.VANILLA) {
+            throw new IllegalArgumentException("Managed datapack writes require a datapack or vanilla source");
+        }
+        return writeVerified(
+                bundle,
+                new StructureWriteOptions(mode, false),
+                StructureTransactionReadSet.empty(),
+                managedDatapackProvenance(bundle),
+                ExistingProvenancePolicy.INSTALL_MANAGED_DATAPACK
+        );
+    }
+
+    public StructureWriteResult writeVerified(
+            StructureResourceBundle bundle,
+            StructureWriteOptions options,
+            StructureTransactionReadSet readSet,
+            StructureOwnershipManifest.Provenance provenance
+    ) {
+        return writeVerified(
+                bundle,
+                options,
+                readSet,
+                provenance,
+                ExistingProvenancePolicy.PRESERVE
+        );
+    }
+
+    private StructureWriteResult writeVerified(
+            StructureResourceBundle bundle,
+            StructureWriteOptions options,
+            StructureTransactionReadSet readSet,
+            StructureOwnershipManifest.Provenance provenance,
+            ExistingProvenancePolicy provenancePolicy
+    ) {
         Objects.requireNonNull(bundle, "bundle");
         Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(readSet, "readSet");
+        Objects.requireNonNull(provenance, "provenance");
+        Objects.requireNonNull(provenancePolicy, "provenancePolicy");
         rootLock.lock();
         try {
             if (options.dryRun()) {
-                return writeLocked(bundle, options);
+                return writeLocked(bundle, options, readSet, provenance, provenancePolicy);
             }
             try (ProcessLock ignored = acquireProcessLock()) {
-                return writeLocked(bundle, options);
+                return writeLocked(bundle, options, readSet, provenance, provenancePolicy);
             }
         } catch (IOException | RuntimeException e) {
             return failedResult(bundle, e);
@@ -509,7 +673,13 @@ public final class StructureTransactionWriter {
         }
     }
 
-    private StructureWriteResult writeLocked(StructureResourceBundle bundle, StructureWriteOptions options)
+    private StructureWriteResult writeLocked(
+            StructureResourceBundle bundle,
+            StructureWriteOptions options,
+            StructureTransactionReadSet readSet,
+            StructureOwnershipManifest.Provenance provenance,
+            ExistingProvenancePolicy provenancePolicy
+    )
             throws IOException {
         if (!options.dryRun()) {
             StructureRecoveryResult recovery = recoverIncompleteTransactionsLocked();
@@ -517,7 +687,11 @@ public final class StructureTransactionWriter {
                 return failedResult(bundle, recoveryFailure(recovery));
             }
         }
-        WritePlan plan = buildPlan(bundle, options.mode());
+        List<StructureWriteResult.Conflict> readSetConflicts = verifyReadSet(readSet);
+        if (!readSetConflicts.isEmpty()) {
+            return readSetConflictResult(bundle, readSetConflicts);
+        }
+        WritePlan plan = buildPlan(bundle, options, provenance, provenancePolicy);
         if (!plan.conflicts().isEmpty()) {
             StructureWriteResult.Status status = options.mode() == StructureWriteMode.ADD_ONLY
                     ? StructureWriteResult.Status.ADD_ONLY_CONFLICT
@@ -530,7 +704,7 @@ public final class StructureTransactionWriter {
         if (plan.action() == StructureWriteResult.Action.NONE) {
             return result(StructureWriteResult.Status.UNCHANGED, plan, Optional.empty());
         }
-        return commit(plan);
+        return commit(plan, readSet);
     }
 
     private RemovalPlan buildRemovalPlan(
@@ -551,6 +725,12 @@ public final class StructureTransactionWriter {
                     MAX_STRUCTURE_STATE_BYTES,
                     "Structure ownership manifest"
             );
+            String manifestHash = StructureHash.sha256(manifestContent);
+            if (removal.expectedManifestHash().isPresent()
+                    && !removal.expectedManifestHash().get().equals(manifestHash)) {
+                throw new IOException("Structure ownership manifest changed after removal was planned: "
+                        + removal.key());
+            }
             StructureOwnershipManifest manifest;
             try {
                 manifest = StructureOwnershipManifest.fromJson(manifestContent);
@@ -560,10 +740,17 @@ public final class StructureTransactionWriter {
             if (!manifest.structure().equals(removal.key())) {
                 throw new IOException("Structure ownership manifest belongs to " + manifest.structure());
             }
-            if (manifest.source().kind() != removal.sourceKind()
-                    || !manifest.source().key().equals(removal.sourceKey())) {
+            boolean sourceMismatch = manifest.source().kind() != removal.sourceKind()
+                    || !manifest.source().key().equals(removal.sourceKey());
+            boolean originMismatch = removal.requiredOrigin().isPresent()
+                    && manifest.provenance().origin() != removal.requiredOrigin().get();
+            if (sourceMismatch || originMismatch) {
                 if (skipOwnershipMismatches) {
                     continue;
+                }
+                if (originMismatch) {
+                    throw new IOException("Structure '" + removal.key()
+                            + "' is not owned by managed datapack ingest");
                 }
                 throw new IOException("Structure '" + removal.key() + "' is owned by source "
                         + manifest.source().key() + " (" + manifest.source().kind() + "), not "
@@ -1036,8 +1223,61 @@ public final class StructureTransactionWriter {
         return failure;
     }
 
-    private WritePlan buildPlan(StructureResourceBundle bundle, StructureWriteMode mode) throws IOException {
-        StructureOwnershipManifest nextManifest = StructureOwnershipManifest.from(bundle);
+    private StructureOwnershipManifest.Provenance managedDatapackProvenance(
+            StructureResourceBundle bundle
+    ) {
+        TreeMap<String, String> hashes = new TreeMap<>();
+        TreeMap<String, String> mappings = new TreeMap<>();
+        StringBuilder closure = new StringBuilder();
+        for (StructureResourceBundle.Resource resource : bundle.resources().values()) {
+            hashes.put(resource.relativePath(), resource.contentHash());
+            mappings.put(resource.relativePath(), resource.relativePath());
+            closure.append(resource.relativePath())
+                    .append('=')
+                    .append(resource.contentHash())
+                    .append('\n');
+        }
+        String closureHash = StructureHash.sha256(closure.toString().getBytes(StandardCharsets.UTF_8));
+        StructureSource source = bundle.source();
+        String planInput = "managed-datapack\n"
+                + source.kind() + '\n'
+                + source.key().value() + '\n'
+                + source.version() + '\n'
+                + source.contentHash() + '\n'
+                + closureHash;
+        return new StructureOwnershipManifest.Provenance(
+                StructureOwnershipManifest.Origin.MANAGED_DATAPACK,
+                UUID.randomUUID().toString(),
+                StructureHash.sha256(planInput.getBytes(StandardCharsets.UTF_8)),
+                closureHash,
+                Math.max(1L, System.currentTimeMillis()),
+                hashes,
+                mappings,
+                StructureOwnershipManifest.RollbackDisposition.NONE
+        );
+    }
+
+    private boolean managedDatapackUpgradeAllowed(
+            StructureOwnershipManifest previousManifest,
+            StructureSource nextSource
+    ) {
+        StructureOwnershipManifest.Origin origin = previousManifest.provenance().origin();
+        if (origin != StructureOwnershipManifest.Origin.CREATED
+                && origin != StructureOwnershipManifest.Origin.MANAGED_DATAPACK) {
+            return false;
+        }
+        return previousManifest.source().kind() == nextSource.kind()
+                && previousManifest.source().key().equals(nextSource.key());
+    }
+
+    private WritePlan buildPlan(
+            StructureResourceBundle bundle,
+            StructureWriteOptions options,
+            StructureOwnershipManifest.Provenance provenance,
+            ExistingProvenancePolicy provenancePolicy
+    ) throws IOException {
+        StructureWriteMode mode = options.mode();
+        StructureOwnershipManifest nextManifest = StructureOwnershipManifest.from(bundle, provenance);
         String manifestRelativePath = nextManifest.relativePath();
         Path manifestPath = resolveTarget(manifestRelativePath);
         ArrayList<StructureWriteResult.Conflict> conflicts = new ArrayList<>();
@@ -1061,6 +1301,12 @@ public final class StructureTransactionWriter {
         }
 
         if (!files.exists(manifestPath)) {
+            if (!options.expectedManifestHash().isEmpty()) {
+                conflicts.add(StructureWriteResult.Conflict.staleManifest(
+                        manifestRelativePath,
+                        options.expectedManifestHash(),
+                        ""));
+            }
             findUnownedResources(bundle, previousResourceHashes, conflicts);
             return createPlan(
                     bundle,
@@ -1085,13 +1331,45 @@ public final class StructureTransactionWriter {
             );
         }
 
-        StructureOwnershipManifest previousManifest;
+        byte[] manifestContent;
         try {
-            previousManifest = StructureOwnershipManifest.fromJson(readBoundedBytes(
+            manifestContent = readBoundedBytes(
                     manifestPath,
                     MAX_STRUCTURE_STATE_BYTES,
                     "Structure ownership manifest"
-            ));
+            );
+        } catch (IOException exception) {
+            conflicts.add(StructureWriteResult.Conflict.invalidManifest(
+                    manifestRelativePath,
+                    exception.toString()));
+            return createPlan(
+                    bundle,
+                    nextManifest,
+                    previousResourceHashes,
+                    StructureWriteResult.Action.OVERWRITE,
+                    conflicts
+            );
+        }
+        if (!options.expectedManifestHash().isEmpty()) {
+            String actualManifestHash = StructureHash.sha256(manifestContent);
+            if (!options.expectedManifestHash().equals(actualManifestHash)) {
+                conflicts.add(StructureWriteResult.Conflict.staleManifest(
+                        manifestRelativePath,
+                        options.expectedManifestHash(),
+                        actualManifestHash));
+                return createPlan(
+                        bundle,
+                        nextManifest,
+                        previousResourceHashes,
+                        StructureWriteResult.Action.OVERWRITE,
+                        conflicts
+                );
+            }
+        }
+
+        StructureOwnershipManifest previousManifest;
+        try {
+            previousManifest = StructureOwnershipManifest.fromJson(manifestContent);
         } catch (RuntimeException e) {
             conflicts.add(StructureWriteResult.Conflict.invalidManifest(manifestRelativePath, e.toString()));
             return createPlan(
@@ -1117,6 +1395,24 @@ public final class StructureTransactionWriter {
             );
         }
 
+        if (provenancePolicy == ExistingProvenancePolicy.PRESERVE) {
+            nextManifest = StructureOwnershipManifest.from(bundle, previousManifest.provenance());
+        } else if (!managedDatapackUpgradeAllowed(previousManifest, bundle.source())) {
+            conflicts.add(new StructureWriteResult.Conflict(
+                    manifestRelativePath,
+                    StructureWriteResult.ConflictReason.PROVENANCE_MISMATCH,
+                    "",
+                    "",
+                    "Managed datapack import cannot replace non-managed structure provenance"
+            ));
+            return createPlan(
+                    bundle,
+                    nextManifest,
+                    previousResourceHashes,
+                    StructureWriteResult.Action.OVERWRITE,
+                    conflicts
+            );
+        }
         previousResourceHashes.putAll(previousManifest.resourceHashes());
         verifyOwnedResources(previousResourceHashes, conflicts);
         findUnownedResources(bundle, previousResourceHashes, conflicts);
@@ -1205,7 +1501,296 @@ public final class StructureTransactionWriter {
         );
     }
 
-    private StructureWriteResult commit(WritePlan plan) {
+    private List<StructureWriteResult.Conflict> verifyReadSet(StructureTransactionReadSet readSet) {
+        if (readSet.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<StructureWriteResult.Conflict> conflicts = new ArrayList<>();
+        for (Map.Entry<String, String> entry : readSet.fileHashes().entrySet()) {
+            String relativePath = entry.getKey();
+            String expectedHash = entry.getValue();
+            try {
+                Path target = resolveTarget(relativePath);
+                if (!files.exists(target)) {
+                    conflicts.add(StructureWriteResult.Conflict.staleReadSet(
+                            relativePath,
+                            expectedHash,
+                            "",
+                            "Read-set file is missing"));
+                } else if (!files.isRegularFile(target)) {
+                    conflicts.add(StructureWriteResult.Conflict.staleReadSet(
+                            relativePath,
+                            expectedHash,
+                            "",
+                            "Read-set path is not a regular file"));
+                } else {
+                    String actualHash = sha256ReadSetTarget(target);
+                    if (!expectedHash.equals(actualHash)) {
+                        conflicts.add(StructureWriteResult.Conflict.staleReadSet(
+                                relativePath,
+                                expectedHash,
+                                actualHash,
+                                "Read-set file content changed"));
+                    }
+                }
+            } catch (IOException | RuntimeException exception) {
+                conflicts.add(StructureWriteResult.Conflict.staleReadSet(
+                        relativePath,
+                        expectedHash,
+                        "",
+                        "Cannot verify read-set file: " + describe(exception)));
+            }
+        }
+        for (String relativePath : readSet.absentPaths()) {
+            try {
+                Path target = resolveTarget(relativePath);
+                if (files.exists(target)) {
+                    conflicts.add(StructureWriteResult.Conflict.staleReadSet(
+                            relativePath,
+                            "",
+                            "",
+                            "Read-set path was expected to remain absent"));
+                }
+            } catch (RuntimeException exception) {
+                conflicts.add(StructureWriteResult.Conflict.staleReadSet(
+                        relativePath,
+                        "",
+                        "",
+                        "Cannot verify absent read-set path: " + describe(exception)));
+            }
+        }
+        for (Map.Entry<String, List<String>> entry : readSet.directoryEntries().entrySet()) {
+            String relativePath = entry.getKey();
+            List<String> expectedEntries = entry.getValue();
+            try {
+                List<String> actualEntries = actualDirectoryEntries(relativePath);
+                if (!expectedEntries.equals(actualEntries)) {
+                    String expectedHash = StructureHash.sha256(
+                            String.join("\n", expectedEntries).getBytes(StandardCharsets.UTF_8));
+                    String actualHash = StructureHash.sha256(
+                            String.join("\n", actualEntries).getBytes(StandardCharsets.UTF_8));
+                    conflicts.add(StructureWriteResult.Conflict.staleReadSet(
+                            relativePath,
+                            expectedHash,
+                            actualHash,
+                            "Read-set directory membership changed"));
+                }
+            } catch (IOException | RuntimeException exception) {
+                conflicts.add(StructureWriteResult.Conflict.staleReadSet(
+                        relativePath,
+                        "",
+                        "",
+                        "Cannot verify read-set directory: " + describe(exception)));
+            }
+        }
+        return orderedConflicts(conflicts);
+    }
+
+    private List<String> actualDirectoryEntries(String relativePath) throws IOException {
+        Path directory = resolveTarget(relativePath);
+        if (!files.exists(directory)) {
+            return List.of();
+        }
+        if (!files.isDirectory(directory)) {
+            throw new IOException("Read-set directory is not a directory: " + relativePath);
+        }
+        ArrayList<String> entries = new ArrayList<>();
+        try (Stream<Path> paths = Files.walk(directory)) {
+            Iterator<Path> iterator = paths.iterator();
+            while (iterator.hasNext()) {
+                Path path = iterator.next();
+                if (path.equals(directory)) {
+                    continue;
+                }
+                if (Files.isSymbolicLink(path)) {
+                    throw new IOException("Read-set directory contains a symbolic link: " + path);
+                }
+                if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                    continue;
+                }
+                if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IOException("Read-set directory contains a non-file entry: " + path);
+                }
+                entries.add(packRoot.relativize(path.toAbsolutePath().normalize()).toString().replace('\\', '/'));
+                if (entries.size() > StructureTransactionReadSet.MAX_ENTRIES) {
+                    throw new IOException("Read-set directory exceeds "
+                            + StructureTransactionReadSet.MAX_ENTRIES + " entries");
+                }
+            }
+        }
+        Collections.sort(entries);
+        return List.copyOf(entries);
+    }
+
+    private String sha256ReadSetTarget(Path target) throws IOException {
+        try (InputStream input = Files.newInputStream(
+                target,
+                StandardOpenOption.READ,
+                LinkOption.NOFOLLOW_LINKS)) {
+            return StructureHash.sha256(new BoundedReadSetInputStream(input));
+        }
+    }
+
+    private void requireReadSetUnchanged(StructureTransactionReadSet readSet) throws IOException {
+        List<StructureWriteResult.Conflict> conflicts = verifyReadSet(readSet);
+        if (conflicts.isEmpty()) {
+            return;
+        }
+        StructureWriteResult.Conflict conflict = conflicts.getFirst();
+        throw new ReadSetChangedException(conflict);
+    }
+
+    private StructureWriteResult readSetConflictResult(
+            StructureResourceBundle bundle,
+            List<StructureWriteResult.Conflict> conflicts
+    ) {
+        StructureOwnershipManifest manifest = StructureOwnershipManifest.from(bundle);
+        TreeSet<String> affectedResources = new TreeSet<>(bundle.resources().keySet());
+        affectedResources.addAll(conflicts.stream().map(StructureWriteResult.Conflict::relativePath).toList());
+        affectedResources.add(manifest.relativePath());
+        return new StructureWriteResult(
+                StructureWriteResult.Status.OWNERSHIP_CONFLICT,
+                StructureWriteResult.Action.NONE,
+                orderedConflicts(conflicts),
+                List.copyOf(affectedResources),
+                manifest.relativePath(),
+                Optional.empty()
+        );
+    }
+
+    private List<StructureWriteResult.Conflict> orderedConflicts(
+            List<StructureWriteResult.Conflict> conflicts
+    ) {
+        ArrayList<StructureWriteResult.Conflict> ordered = new ArrayList<>(conflicts);
+        ordered.sort((left, right) -> left.relativePath().compareTo(right.relativePath()));
+        return List.copyOf(ordered);
+    }
+
+    private StructureWriteResult commitClaim(
+            StructureOwnershipManifest manifest,
+            StructureTransactionReadSet readSet
+    ) {
+        UUID transactionId = UUID.randomUUID();
+        Path transactionRoot = stagingRoot().resolve(transactionId.toString()).normalize();
+        Path stagedRoot = transactionRoot.resolve("staged");
+        Path backupRoot = transactionRoot.resolve("backup");
+        Path stagedManifest = stagedRoot.resolve("ownership-manifest.json");
+        byte[] manifestContent = manifest.toJson();
+        ArrayList<InstalledTarget> installedTargets = new ArrayList<>();
+        StructureTransactionJournal journal;
+        try {
+            if (manifestContent.length > MAX_STRUCTURE_STATE_BYTES) {
+                throw new IOException("Structure ownership manifest exceeds "
+                        + MAX_STRUCTURE_STATE_BYTES + " bytes");
+            }
+            files.createDirectories(stagedRoot);
+            files.createDirectories(backupRoot);
+            files.writeNew(stagedManifest, manifestContent);
+            files.forceFile(stagedManifest);
+            StructureTransactionJournal.Target target = new StructureTransactionJournal.Target(
+                    manifest.relativePath(),
+                    false,
+                    "",
+                    StructureHash.sha256(manifestContent));
+            journal = StructureTransactionJournal.prepared(transactionId, List.of(target));
+            writeJournal(transactionRoot, journal);
+            files.forceDirectory(transactionRoot);
+            files.forceDirectory(stagingRoot());
+            requireReadSetUnchanged(readSet);
+            verifyTargetSnapshot(journal);
+            Path manifestTarget = resolveTarget(manifest.relativePath());
+            files.createDirectories(Objects.requireNonNull(manifestTarget.getParent(), "manifest target parent"));
+            files.moveNew(stagedManifest, manifestTarget);
+            installedTargets.add(new InstalledTarget(manifestTarget, StructureHash.sha256(manifestContent)));
+            files.forceFile(manifestTarget);
+            files.forceDirectory(Objects.requireNonNull(manifestTarget.getParent(), "manifest target parent"));
+        } catch (IOException | RuntimeException commitFailure) {
+            return rollbackClaimResult(manifest, transactionRoot, installedTargets, commitFailure);
+        }
+
+        boolean committedJournalWritten = false;
+        try {
+            writeJournal(transactionRoot, journal.committed());
+            committedJournalWritten = true;
+            files.forceDirectory(transactionRoot);
+        } catch (IOException | RuntimeException commitPhaseFailure) {
+            if (committedJournalWritten || isCommittedJournal(transactionRoot, commitPhaseFailure)) {
+                return claimResult(
+                        StructureWriteResult.Status.COMMITTED_CLEANUP_REQUIRED,
+                        manifest,
+                        List.of(),
+                        Optional.of(commitPhaseFailure));
+            }
+            return rollbackClaimResult(manifest, transactionRoot, installedTargets, commitPhaseFailure);
+        }
+
+        try {
+            cleanupTransaction(transactionRoot);
+        } catch (IOException | RuntimeException cleanupFailure) {
+            return claimResult(
+                    StructureWriteResult.Status.COMMITTED_CLEANUP_REQUIRED,
+                    manifest,
+                    List.of(),
+                    Optional.of(cleanupFailure));
+        }
+        return claimResult(
+                StructureWriteResult.Status.ADDED,
+                manifest,
+                List.of(),
+                Optional.empty());
+    }
+
+    private StructureWriteResult rollbackClaimResult(
+            StructureOwnershipManifest manifest,
+            Path transactionRoot,
+            List<InstalledTarget> installedTargets,
+            Throwable failure
+    ) {
+        Optional<Throwable> rollbackFailure = rollback(Map.of(), installedTargets);
+        if (rollbackFailure.isPresent()) {
+            failure.addSuppressed(new IOException(
+                    "Transaction recovery data retained at " + transactionRoot,
+                    rollbackFailure.get()));
+            return claimResult(
+                    StructureWriteResult.Status.FAILED,
+                    manifest,
+                    List.of(),
+                    Optional.of(failure));
+        }
+        cleanupAfterFailure(transactionRoot, failure);
+        if (failure instanceof ReadSetChangedException readSetChanged) {
+            return claimResult(
+                    StructureWriteResult.Status.OWNERSHIP_CONFLICT,
+                    manifest,
+                    List.of(readSetChanged.conflict()),
+                    Optional.empty());
+        }
+        return claimResult(
+                StructureWriteResult.Status.ROLLED_BACK,
+                manifest,
+                List.of(),
+                Optional.of(failure));
+    }
+
+    private StructureWriteResult claimResult(
+            StructureWriteResult.Status status,
+            StructureOwnershipManifest manifest,
+            List<StructureWriteResult.Conflict> conflicts,
+            Optional<Throwable> failure
+    ) {
+        TreeSet<String> affectedResources = new TreeSet<>(manifest.resourceHashes().keySet());
+        affectedResources.add(manifest.relativePath());
+        return new StructureWriteResult(
+                status,
+                StructureWriteResult.Action.ADD,
+                orderedConflicts(conflicts),
+                List.copyOf(affectedResources),
+                manifest.relativePath(),
+                failure
+        );
+    }
+
+    private StructureWriteResult commit(WritePlan plan, StructureTransactionReadSet readSet) {
         UUID transactionId = UUID.randomUUID();
         Path transactionRoot = stagingRoot().resolve(transactionId.toString()).normalize();
         Path stagedRoot = transactionRoot.resolve("staged");
@@ -1223,6 +1808,7 @@ public final class StructureTransactionWriter {
             writeJournal(transactionRoot, journal);
             files.forceDirectory(transactionRoot);
             files.forceDirectory(stagingRoot());
+            requireReadSetUnchanged(readSet);
             verifyTargetSnapshot(journal);
             backupTargets(journal, backupRoot, backups);
             installResources(plan, stagedRoot, stagedManifest, installedTargets);
@@ -1401,6 +1987,9 @@ public final class StructureTransactionWriter {
             return result(StructureWriteResult.Status.FAILED, plan, Optional.of(commitFailure));
         }
         cleanupAfterFailure(transactionRoot, commitFailure);
+        if (commitFailure instanceof ReadSetChangedException readSetChanged) {
+            return readSetConflictResult(plan.bundle(), List.of(readSetChanged.conflict()));
+        }
         return result(StructureWriteResult.Status.ROLLED_BACK, plan, Optional.of(commitFailure));
     }
 
@@ -1464,6 +2053,11 @@ public final class StructureTransactionWriter {
         }
         existing.addSuppressed(next);
         return existing;
+    }
+
+    private String describe(Throwable throwable) {
+        String message = throwable.getMessage();
+        return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message;
     }
 
     private void verifyOriginalTarget(
@@ -1685,11 +2279,65 @@ public final class StructureTransactionWriter {
         CLEANED_ORPHAN
     }
 
+    private enum ExistingProvenancePolicy {
+        PRESERVE,
+        INSTALL_MANAGED_DATAPACK
+    }
+
     private record InstalledTarget(Path path, String contentHash) {
         private InstalledTarget {
             Objects.requireNonNull(path, "path");
             if (!StructureHash.isSha256(contentHash)) {
                 throw new IllegalArgumentException("Installed target content hash is invalid");
+            }
+        }
+    }
+
+    private static final class ReadSetChangedException extends IOException {
+        private final StructureWriteResult.Conflict conflict;
+
+        private ReadSetChangedException(StructureWriteResult.Conflict conflict) {
+            super("Structure transaction read set changed at " + conflict.relativePath()
+                    + ": " + conflict.detail());
+            this.conflict = conflict;
+        }
+
+        private StructureWriteResult.Conflict conflict() {
+            return conflict;
+        }
+    }
+
+    private static final class BoundedReadSetInputStream extends InputStream {
+        private final InputStream delegate;
+        private long consumed;
+
+        private BoundedReadSetInputStream(InputStream delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = delegate.read();
+            if (value >= 0) {
+                recordBytes(1L);
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int read = delegate.read(buffer, offset, length);
+            if (read > 0) {
+                recordBytes(read);
+            }
+            return read;
+        }
+
+        private void recordBytes(long bytes) throws IOException {
+            consumed = Math.addExact(consumed, bytes);
+            if (consumed > MAX_VERIFIED_READ_FILE_BYTES) {
+                throw new IOException("Verified read-set file exceeds "
+                        + MAX_VERIFIED_READ_FILE_BYTES + " bytes");
             }
         }
     }

@@ -1,24 +1,30 @@
 package art.arcane.iris.engine.framework.structure;
 
 import java.util.List;
+import java.util.Objects;
 
 public record StructureGraphAssemblySample(long seed, Outcome outcome) {
-    public record Outcome(List<String> pieceKeys, int unresolvedConnectorCount, boolean pieceCapReached,
-                          boolean intentionalEmpty) {
+    public record Outcome(
+            List<String> pieceKeys,
+            StructureAssemblyStatus status,
+            String detail
+    ) {
         public Outcome {
-            pieceKeys = List.copyOf(pieceKeys);
+            pieceKeys = List.copyOf(Objects.requireNonNull(pieceKeys));
+            status = Objects.requireNonNull(status);
+            detail = Objects.requireNonNull(detail);
         }
 
-        public Outcome(List<String> pieceKeys, int unresolvedConnectorCount, boolean pieceCapReached) {
-            this(pieceKeys, unresolvedConnectorCount, pieceCapReached, false);
+        public boolean pieceCapReached() {
+            return status == StructureAssemblyStatus.HARD_CAP;
         }
 
-        public boolean isViable() {
-            return (intentionalEmpty || !pieceKeys.isEmpty()) && !pieceCapReached;
+        public boolean intentionalEmpty() {
+            return status == StructureAssemblyStatus.INTENTIONAL_EMPTY;
         }
 
         public boolean isComplete() {
-            return isViable() && unresolvedConnectorCount == 0;
+            return status.isComplete();
         }
     }
 }

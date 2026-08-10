@@ -118,6 +118,13 @@ public final class WorldLifecycleService {
                 worldName,
                 backend.backendName());
 
+        WorldUnloadBoundaryRegistry.Boundary rawBoundary;
+        try {
+            rawBoundary = WorldUnloadBoundaryRegistry.begin(worldIdentity);
+        } catch (Throwable e) {
+            return CompletableFuture.failedFuture(e);
+        }
+
         CompletableFuture<Boolean> unloadFuture;
         try {
             unloadFuture = backend.unloadAsync(requiredWorld, save);
@@ -127,6 +134,8 @@ public final class WorldLifecycleService {
         } catch (Throwable e) {
             unloadFuture = CompletableFuture.failedFuture(e);
         }
+        unloadFuture.whenComplete((unloaded, throwable) ->
+                WorldUnloadBoundaryRegistry.complete(rawBoundary, unloaded, throwable));
 
         CompletableFuture<Boolean> guardedFuture = guardUnloadCompletion(worldName, unloadFuture);
         return guardedFuture.whenComplete((unloaded, throwable) -> {

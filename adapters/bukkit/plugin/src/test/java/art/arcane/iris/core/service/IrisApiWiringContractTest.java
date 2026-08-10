@@ -75,9 +75,11 @@ public class IrisApiWiringContractTest {
         assertBefore(add, "catch (RejectedExecutionException exception)", "phases.ready(world)");
         assertBefore(add, "registered = true;", "phases.ready(world)");
 
-        String remove = method(source, "private void remove(World world)");
+        String remove = method(source,
+                "private void remove(World world, CompletionStage<Boolean> unloadBoundary)");
         assertBefore(remove, "registered = worlds.remove(world)", "phases.closing(world)");
-        assertBefore(remove, "phases.closing(world)", "startClose(registered, closing)");
+        assertBefore(remove, "phases.closing(world)",
+                "deferCloseUntilWorldUnload(world, registered, closing, unloadBoundary)");
     }
 
     @Test

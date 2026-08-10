@@ -12,7 +12,9 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.util.concurrent.ExecutorService;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 public class IrisDataDatapackCompilerCacheTest {
     @Rule
@@ -47,6 +49,16 @@ public class IrisDataDatapackCompilerCacheTest {
         compilerData = null;
 
         assertSame(runtimeData, IrisData.getLoaded(packDirectory).orElseThrow());
+    }
+
+    @Test
+    public void structureInvalidationMatchesNormalizedLoadedPackPaths() throws Exception {
+        File packDirectory = temporaryFolder.newFolder("invalidate-pack");
+        runtimeData = IrisData.get(new File(packDirectory, "."));
+
+        assertTrue(IrisData.invalidateLoadedStructureResources(packDirectory));
+        assertFalse(IrisData.invalidateLoadedStructureResources(
+                temporaryFolder.newFolder("unloaded-pack")));
     }
 
     private static final class NoOpPreservationRegistry implements PreservationRegistry {

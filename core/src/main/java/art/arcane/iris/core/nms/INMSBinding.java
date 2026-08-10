@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.nms;
 
+import art.arcane.iris.core.datapack.DatapackStructureScopeIndex;
 import art.arcane.iris.core.lifecycle.WorldLifecycleCaller;
 import art.arcane.iris.core.lifecycle.WorldLifecycleRequest;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
@@ -53,6 +54,7 @@ import org.bukkit.inventory.ItemStack;
 
 import java.awt.Color;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 public interface INMSBinding {
@@ -225,6 +227,16 @@ public interface INMSBinding {
     ItemStack applyCustomNbt(ItemStack itemStack, KMap<String, Object> customNbt) throws IllegalArgumentException;
 
     void inject(long seed, Engine engine, World world) throws NoSuchFieldException, IllegalAccessException;
+
+    DatapackStructureScopeResult scopeDatapackStructures(
+            World world,
+            DatapackStructureScopeIndex scopeIndex,
+            Set<String> declaredSources
+    ) throws NoSuchFieldException, IllegalAccessException;
+
+    void completeStudioStructureBootstrap(World world) throws NoSuchFieldException, IllegalAccessException;
+
+    void abandonStudioStructureBootstrap(World world);
 
     Vector3d getBoundingbox(org.bukkit.entity.EntityType entity);
 

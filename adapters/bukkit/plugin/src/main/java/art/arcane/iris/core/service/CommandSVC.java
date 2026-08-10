@@ -67,6 +67,7 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     private static final String ROOT_PERMISSION = "iris.all";
 
     private final transient AtomicCache<DirectorRuntimeEngine> directorCache = new AtomicCache<>();
+    private final transient ThreadLocal<CommandSender> dispatchSenders = new ThreadLocal<>();
 
     @Override
     public void onEnable() {
@@ -120,11 +121,18 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     }
 
     private void dispatchDirector(DirectorExecutionMode mode, Runnable runnable) {
-        if (mode == DirectorExecutionMode.SYNC) {
-            J.s(runnable);
-        } else {
+        if (mode != DirectorExecutionMode.SYNC) {
             runnable.run();
+            return;
         }
+        CommandSender sender = dispatchSenders.get();
+        if (sender instanceof Player player) {
+            if (!J.runEntity(player, runnable)) {
+                throw new IllegalStateException("Failed to schedule player command on its entity thread");
+            }
+            return;
+        }
+        J.s(runnable);
     }
 
     @Override
@@ -241,11 +249,14 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     }
 
     private DirectorExecutionResult runDirector(CommandSender sender, String label, String[] args) {
+        dispatchSenders.set(sender);
         try {
             return getDirector().execute(new DirectorInvocation(new BukkitDirectorSender(sender), label, Arrays.asList(args)));
         } catch (Throwable e) {
             Iris.warn("Director command execution failed: " + e.getClass().getSimpleName() + " " + e.getMessage());
             return DirectorExecutionResult.notHandled();
+        } finally {
+            dispatchSenders.remove();
         }
     }
 
@@ -267,7 +278,8 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
         }
 
         if (sender instanceof Player player) {
-            J.s(() -> playSounds(player, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.77f, 0.25f, Sound.BLOCK_BEACON_DEACTIVATE, 0.2f, 0.45f));
+            J.runEntity(player, () -> playSounds(player, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.77f, 0.25f,
+                    Sound.BLOCK_BEACON_DEACTIVATE, 0.2f, 0.45f));
         }
     }
 
@@ -277,7 +289,8 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
         }
 
         if (sender instanceof Player player) {
-            J.s(() -> playSounds(player, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.77f, 1.65f, Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 0.125f, 2.99f));
+            J.runEntity(player, () -> playSounds(player, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.77f, 1.65f,
+                    Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 0.125f, 2.99f));
         }
     }
 

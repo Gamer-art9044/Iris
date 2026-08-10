@@ -31,6 +31,11 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -51,6 +56,11 @@ public final class StructureCaptureImporter {
     }
 
     public static Report importAllStructures(IrisData data, StructureImporter.Mode mode, VolmitSender sender) {
+        return importStructures(data, mode, sender, null);
+    }
+
+    public static Report importStructures(IrisData data, StructureImporter.Mode mode, VolmitSender sender,
+                                          Set<String> allowedStructureKeys) {
         StructureImporter.Mode activeMode = mode == null ? StructureImporter.Mode.ADD_ONLY : mode;
         if (!INMS.get().supportsStructureCapture()) {
             sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_STRUCTURE_CAPTURE_IS_NOT_SUPPORTED_BY_ACTIVE_NMS_BINDING_SKIPPING_CAPTURE_PASS));
@@ -62,11 +72,8 @@ public final class StructureCaptureImporter {
             return new Report(0, 0, 0, 0);
         }
 
-        KList<String> targets = new KList<>();
-        for (String key : keys) {
-            if (key == null || key.isEmpty()) {
-                continue;
-            }
+        ArrayList<String> targets = new ArrayList<>();
+        for (String key : selectCaptureKeys(keys, allowedStructureKeys)) {
             String name = StructureImporter.deriveName(key);
             File structureFile = new File(data.getDataFolder(), "structures/" + name + ".json");
             if (structureFile.exists() && activeMode != StructureImporter.Mode.OVERWRITE) {
@@ -131,6 +138,35 @@ public final class StructureCaptureImporter {
 
         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_STRUCTURE_CAPTURE_COMPLETE_CAPTURED_SKIPPED_FAILED_TOTAL, MessageArgument.untrusted("imported", String.valueOf(imported)), MessageArgument.untrusted("skipped", String.valueOf(skipped)), MessageArgument.untrusted("failed", String.valueOf(failed)), MessageArgument.untrusted("total", String.valueOf(total))));
         return new Report(total, imported, skipped, failed);
+    }
+
+    static List<String> selectCaptureKeys(Iterable<String> keys, Set<String> allowedStructureKeys) {
+        TreeSet<String> allowed = null;
+        if (allowedStructureKeys != null) {
+            allowed = normalizeKeys(allowedStructureKeys);
+        }
+        TreeSet<String> selected = new TreeSet<>();
+        for (String key : keys) {
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            String normalized = key.trim().toLowerCase(Locale.ROOT);
+            if (allowed == null || allowed.contains(normalized)) {
+                selected.add(normalized);
+            }
+        }
+        return new ArrayList<>(selected);
+    }
+
+    private static TreeSet<String> normalizeKeys(Iterable<String> keys) {
+        TreeSet<String> normalized = new TreeSet<>();
+        for (String key : keys) {
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            normalized.add(key.trim().toLowerCase(Locale.ROOT));
+        }
+        return normalized;
     }
 
     private static IrisObject captureOne(World world, String key, int cellIndex) {

@@ -45,10 +45,25 @@ public class BiomeBuffetGenerator extends EnginedStudioGenerator {
     }
 
     @Override
-    public synchronized void generateChunk(Engine engine, TerrainChunk tc, int x, int z) throws WrongEngineBroException {
-        int id = Cache.to1D(x / biomeSize, 0, z / biomeSize, width, 1);
+    public boolean requiresPreSessionPreparation() {
+        return true;
+    }
 
-        if (id < 0 || id >= biomes.length) {
+    @Override
+    public synchronized void prepareChunkBeforeSession(Engine engine, int x, int z) {
+        IrisBiome biome = biomeAt(x, z);
+        if (biome == null || Objects.equals(engine.getDimension().getFocus(), biome.getLoadKey())) {
+            return;
+        }
+
+        engine.getDimension().setFocus(biome.getLoadKey());
+        engine.hotloadComplex();
+    }
+
+    @Override
+    public synchronized void generateChunk(Engine engine, TerrainChunk tc, int x, int z) throws WrongEngineBroException {
+        IrisBiome biome = biomeAt(x, z);
+        if (biome == null) {
             try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_biome_buffet_stage");
                  IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
                 tc.setRegion(0, 0, 0, 16, 1, 16, FLOOR);
@@ -56,17 +71,16 @@ public class BiomeBuffetGenerator extends EnginedStudioGenerator {
             return;
         }
 
-        IrisBiome biome = biomes[id];
-        String focus = engine.getDimension().getFocus();
-
-        if (!Objects.equals(focus, biome.getLoadKey())) {
-            engine.getDimension().setFocus(biome.getLoadKey());
-            engine.hotloadComplex();
-        }
+        prepareChunkBeforeSession(engine, x, z);
 
         try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_biome_buffet_stage");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             engine.generate(x << 4, z << 4, tc, true);
         }
+    }
+
+    private IrisBiome biomeAt(int x, int z) {
+        int id = Cache.to1D(x / biomeSize, 0, z / biomeSize, width, 1);
+        return id < 0 || id >= biomes.length ? null : biomes[id];
     }
 }

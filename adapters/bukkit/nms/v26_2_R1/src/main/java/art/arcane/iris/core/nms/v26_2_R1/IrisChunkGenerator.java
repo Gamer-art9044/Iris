@@ -7,6 +7,8 @@ import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
+import art.arcane.iris.engine.IrisEngine;
+import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
@@ -25,6 +27,7 @@ import art.arcane.iris.nativegen.NativeStructureVerticalPlacer;
 import art.arcane.iris.nativegen.NativeStructureVanillaLocator;
 import art.arcane.iris.nativegen.NativeStructureVolumeIndex;
 import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.IrisCustomData;
 import art.arcane.iris.util.common.reflect.WrappedField;
@@ -43,6 +46,7 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.util.random.Weighted;
@@ -91,6 +95,8 @@ import javax.annotation.Nullable;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -98,23 +104,32 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntBinaryOperator;
 
 public class IrisChunkGenerator extends CustomChunkGenerator {
     private static final WrappedField<ChunkGenerator, BiomeSource> BIOME_SOURCE;
     private static final WrappedReturningMethod<Heightmap, Object> SET_HEIGHT;
+    private static final Runnable NO_OP = () -> {
+    };
     private final ChunkGenerator delegate;
     private final Engine engine;
     private final CustomBiomeSource customBiomeSource;
+    private final ServerLevel runtimeLevel;
+    private final @Nullable BukkitChunkGenerator platformGenerator;
     private final int runtimeMinY;
     private final int runtimeHeight;
     private final int runtimeSeaLevel;
     private final ConcurrentHashMap<SpawnTableKey, WeightedList<MobSpawnSettings.SpawnerData>> mergedSpawnTables = new ConcurrentHashMap<>();
     private final ImportedFeatureStage importedFeatures;
+    private final AtomicReference<StudioStructureState> retainedStudioStructureState = new AtomicReference<>();
     private volatile ReachableStructureCache reachableStructureCache;
     private volatile StructureStepCache structureStepCache;
 
@@ -129,6 +144,10 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         this.customBiomeSource = customBiomeSource;
         this.importedFeatures = new ImportedFeatureStage(engine);
         ServerLevel level = ((CraftWorld) world).getHandle();
+        this.runtimeLevel = level;
+        this.platformGenerator = world.getGenerator() instanceof BukkitChunkGenerator bukkitGenerator
+                ? bukkitGenerator
+                : null;
         this.runtimeMinY = level.getMinY();
         this.runtimeHeight = level.getHeight();
         this.runtimeSeaLevel = runtimeMinY + engine.getDimension().getFluidHeight();
@@ -154,6 +173,12 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public @Nullable Pair<BlockPos, Holder<Structure>> findNearestMapStructure(ServerLevel level, HolderSet<Structure> holders, BlockPos pos, int radius, boolean findUnexplored) {
+        if (platformGenerator != null && !platformGenerator.shouldGenerateStructures()) {
+            return null;
+        }
+        if (level != runtimeLevel || level.getChunkSource().getGenerator() != this) {
+            return null;
+        }
         try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_structure_locate");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             HolderSet<Structure> reachable = filterReachableStructures(level, holders);
@@ -325,7 +350,15 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void createStructures(RegistryAccess registryAccess, ChunkGeneratorStructureState structureState, StructureManager structureManager, ChunkAccess access, StructureTemplateManager templateManager, ResourceKey<Level> levelKey) {
-        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_structures");
+        if (platformGenerator != null && !platformGenerator.shouldGenerateStructures()) {
+            return;
+        }
+        if (runtimeLevel.getChunkSource().getGenerator() != this
+                || runtimeLevel.getChunkSource().getGeneratorState() != structureState) {
+            return;
+        }
+        try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_create_structures");
+             GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_structures");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             Map<Structure, StructureStart> previousStarts = new HashMap<>(access.getAllStarts());
             super.createStructures(registryAccess, structureState, structureManager, access, templateManager, levelKey);
@@ -409,9 +442,192 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         return delegate.createState(holderlookup, randomstate, i, conf);
     }
 
+    void retainStudioStructureState(
+            ServerLevel level,
+            ChunkMap chunkMap,
+            ChunkGeneratorStructureState structureState
+    ) {
+        requireCurrentStructureOwner(level, chunkMap);
+        StudioStructureState retained = new StudioStructureState(
+                level,
+                chunkMap,
+                Objects.requireNonNull(structureState, "Studio native structure state"));
+        if (!retainedStudioStructureState.compareAndSet(null, retained)) {
+            throw new IllegalStateException("Studio native structure state is already retained.");
+        }
+    }
+
+    StudioStructureState retainedStudioStructureState(ServerLevel level, ChunkMap chunkMap) {
+        StudioStructureState retained = retainedStudioStructureState.get();
+        if (retained == null) {
+            return null;
+        }
+        requireCurrentStructureOwner(level, chunkMap);
+        if (retained.level() != level || retained.chunkMap() != chunkMap) {
+            throw new IllegalStateException("Retained Studio native structure state belongs to another world runtime.");
+        }
+        if (level.getChunkSource().getGeneratorState() != retained.structureState()) {
+            throw new IllegalStateException("Studio native structure state is no longer current.");
+        }
+        return retained;
+    }
+
+    void claimStudioStructureState(StudioStructureState retained) {
+        if (!retainedStudioStructureState.compareAndSet(retained, null)) {
+            throw new IllegalStateException("Studio native structure state changed before activation began.");
+        }
+    }
+
+    void abandonStudioStructureState() {
+        retainedStudioStructureState.set(null);
+    }
+
+    CompletableFuture<Void> initializeAndPublishStructureState(
+            ChunkGeneratorStructureState structureState,
+            StructureStatePublisher publisher
+    ) {
+        return startStructureStateBootstrap(
+                structureState,
+                NO_OP,
+                () -> publishStructureState(publisher));
+    }
+
+    CompletableFuture<Void> activateStudioStructureState(StudioStructureState retained) {
+        Objects.requireNonNull(retained, "Retained Studio native structure state");
+        return startStructureStateBootstrap(
+                retained.structureState(),
+                () -> {
+                    StudioStructureState current = retainedStudioStructureState(
+                            retained.level(), retained.chunkMap());
+                    if (current != retained) {
+                        throw new IllegalStateException("Studio native structure state changed before activation.");
+                    }
+                    claimStudioStructureState(retained);
+                },
+                NO_OP);
+    }
+
+    private CompletableFuture<Void> startStructureStateBootstrap(
+            ChunkGeneratorStructureState structureState,
+            Runnable claim,
+            Runnable activation
+    ) {
+        if (!(engine instanceof IrisEngine irisEngine)) {
+            throw new IllegalStateException("Native structure bootstrap requires an IrisEngine runtime.");
+        }
+        AtomicReference<CompletableFuture<Void>> registeredCompletion = new AtomicReference<>();
+        CompletableFuture<Void> completion = irisEngine.startNativeStructureBootstrap(
+                claim,
+                () -> {
+                    CompletableFuture<Void> rings = initializeStructureState(structureState);
+                    registeredCompletion.set(rings);
+                    return rings;
+                },
+                () -> {
+                    CompletableFuture<Void> rings = Objects.requireNonNull(
+                            registeredCompletion.get(),
+                            "Registered native structure ring completion");
+                    if (rings.isCompletedExceptionally()) {
+                        throw new IllegalStateException(
+                                "Minecraft native structure ring bootstrap failed before activation.");
+                    }
+                    activation.run();
+                });
+        completion.whenComplete((ignored, failure) -> {
+            if (failure != null) {
+                Throwable cause = failure instanceof CompletionException && failure.getCause() != null
+                        ? failure.getCause()
+                        : failure;
+                IrisLogging.reportError("Native structure ring bootstrap failed for world '"
+                        + runtimeLevel.getWorld().getName() + "'.", cause);
+            }
+        });
+        return completion;
+    }
+
+    private CompletableFuture<Void> initializeStructureState(ChunkGeneratorStructureState structureState) {
+        Map<?, ?> ringPositions = structureRingPositions(structureState);
+        structureState.ensureStructuresGenerated();
+        return structureRingCompletion(ringPositions);
+    }
+
+    private Map<?, ?> structureRingPositions(ChunkGeneratorStructureState structureState) {
+        try {
+            Field field = structureRingPositionsField();
+            field.setAccessible(true);
+            Object value = field.get(structureState);
+            if (!(value instanceof Map<?, ?> ringPositions)) {
+                throw new IllegalStateException("Minecraft native structure ring state is unavailable.");
+            }
+            return ringPositions;
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("Could not bind Minecraft native structure ring completions.", e);
+        }
+    }
+
+    private CompletableFuture<Void> structureRingCompletion(Map<?, ?> ringPositions) {
+        List<CompletableFuture<?>> futures = new ArrayList<>(ringPositions.size());
+        for (Object candidate : ringPositions.values()) {
+            if (candidate instanceof CompletableFuture<?> future) {
+                futures.add(future);
+            } else {
+                throw new IllegalStateException(
+                        "Minecraft native structure ring completion is not a future.");
+            }
+        }
+        CompletableFuture<?>[] completions = futures.toArray(new CompletableFuture<?>[0]);
+        return CompletableFuture.allOf(completions);
+    }
+
+    private Field structureRingPositionsField() {
+        List<Field> candidates = new ArrayList<>(1);
+        for (Field field : ChunkGeneratorStructureState.class.getDeclaredFields()) {
+            if (!Map.class.isAssignableFrom(field.getType())) {
+                continue;
+            }
+            Type genericType = field.getGenericType();
+            if (!(genericType instanceof ParameterizedType parameterizedType)) {
+                continue;
+            }
+            Type[] arguments = parameterizedType.getActualTypeArguments();
+            if (arguments.length == 2
+                    && arguments[1].getTypeName().contains(CompletableFuture.class.getName())) {
+                candidates.add(field);
+            }
+        }
+        if (candidates.size() != 1) {
+            throw new IllegalStateException("Expected one Minecraft native structure ring-future map, found "
+                    + candidates.size() + ".");
+        }
+        return candidates.getFirst();
+    }
+
+    private void requireCurrentStructureOwner(ServerLevel level, ChunkMap chunkMap) {
+        if (runtimeLevel != level
+                || level.getChunkSource().chunkMap != chunkMap
+                || level.getChunkSource().getGenerator() != this) {
+            throw new IllegalStateException("Iris native structure state no longer belongs to the active world runtime.");
+        }
+    }
+
+    private void publishStructureState(StructureStatePublisher publisher) {
+        try {
+            publisher.publish();
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("Could not publish Minecraft native structure state.", e);
+        }
+    }
+
     @Override
     public void createReferences(WorldGenLevel generatoraccessseed, StructureManager structuremanager, ChunkAccess ichunkaccess) {
-        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_references");
+        if (platformGenerator != null && !platformGenerator.shouldGenerateStructures()) {
+            return;
+        }
+        if (runtimeLevel.getChunkSource().getGenerator() != this) {
+            return;
+        }
+        try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_create_references");
+             GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_references");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             NativeStructureReferenceRepair.createReferences(
                     engine, generatoraccessseed, structuremanager, ichunkaccess);
@@ -420,7 +636,8 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public CompletableFuture<ChunkAccess> createBiomes(RandomState randomstate, Blender blender, StructureManager structuremanager, ChunkAccess ichunkaccess) {
-        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_biomes");
+        try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_create_biomes");
+             GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_biomes");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             ichunkaccess.fillBiomesFromNoise(customBiomeSource::getVisibleNoiseBiome, randomstate.sampler());
             return CompletableFuture.completedFuture(ichunkaccess);
@@ -439,17 +656,52 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public CompletableFuture<ChunkAccess> fillFromNoise(Blender blender, RandomState randomstate, StructureManager structuremanager, ChunkAccess ichunkaccess) {
-        return delegate.fillFromNoise(blender, randomstate, structuremanager, ichunkaccess)
-                .thenApply(filled -> {
-                    try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_worldgen_heightmaps");
-                         IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-                        primeWorldgenHeightmaps(filled);
-                        return filled;
-                    } catch (GenerationSessionException e) {
-                        throw new IllegalStateException(
-                                "Iris worldgen heightmap priming could not acquire its engine runtime.", e);
-                    }
-                });
+        BukkitChunkGenerator.GenerationStagePermit stage = requireNoiseGenerationStage(
+                ichunkaccess.getPos(),
+                "bukkit_nms_chunk_pipeline");
+        GenerationSessionLease lease;
+        try {
+            lease = requireGenerationLease("bukkit_nms_chunk_pipeline");
+        } catch (RuntimeException | Error failure) {
+            stage.close();
+            throw failure;
+        }
+        try {
+            CompletableFuture<ChunkAccess> pipeline = delegate
+                    .fillFromNoise(blender, randomstate, structuremanager, ichunkaccess)
+                    .thenApply(filled -> {
+                        try (IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                            primeWorldgenHeightmaps(filled);
+                            return filled;
+                        }
+                    });
+            CompletableFuture<ChunkAccess> completion = new CompletableFuture<>();
+            pipeline.whenComplete((filled, failure) -> {
+                boolean cancelled = isCancellationFailure(failure);
+                lease.close();
+                stage.close();
+                if (failure == null) {
+                    completion.complete(filled);
+                } else if (cancelled) {
+                    completion.cancel(false);
+                } else {
+                    completion.completeExceptionally(failure);
+                }
+            });
+            return completion;
+        } catch (RuntimeException | Error failure) {
+            lease.close();
+            stage.close();
+            throw failure;
+        }
+    }
+
+    private static boolean isCancellationFailure(Throwable failure) {
+        Throwable current = failure;
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current instanceof CancellationException;
     }
 
     private void primeWorldgenHeightmaps(ChunkAccess chunkAccess) {
@@ -502,11 +754,12 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void applyBiomeDecoration(WorldGenLevel generatoraccessseed, ChunkAccess ichunkaccess, StructureManager structuremanager, boolean vanilla) {
-        // Bind-time equivalent for Bukkit: the table is built on the first decorated chunk, which is where a
-        // feature-order cycle is reported once and degraded to features-off.
-        importedFeatures.prepare(generatoraccessseed);
-        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_biome_decoration");
+        try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_biome_decoration");
+             GenerationSessionLease lease = requireGenerationLease("bukkit_nms_biome_decoration");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            // Bind-time equivalent for Bukkit: the table is built on the first decorated chunk, which is where a
+            // feature-order cycle is reported once and degraded to features-off.
+            importedFeatures.prepare(generatoraccessseed);
             addVanillaDecorations(generatoraccessseed, ichunkaccess, structuremanager);
             placeVanillaStructures(generatoraccessseed, ichunkaccess, structuremanager);
             // Vanilla's placed-feature pass, on THIS thread. The delegate is still called with
@@ -833,6 +1086,25 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         }
     }
 
+    private BukkitChunkGenerator.GenerationStagePermit requireGenerationStage(String operation) {
+        return platformGenerator == null
+                ? BukkitChunkGenerator.GenerationStagePermit.noop()
+                : platformGenerator.acquireGenerationStage(operation);
+    }
+
+    private BukkitChunkGenerator.GenerationStagePermit requireNoiseGenerationStage(
+            ChunkPos chunkPos,
+            String operation
+    ) {
+        return platformGenerator == null
+                ? BukkitChunkGenerator.GenerationStagePermit.noop()
+                : platformGenerator.acquireNoiseGenerationStage(
+                        engine,
+                        chunkPos.x(),
+                        chunkPos.z(),
+                        operation);
+    }
+
     @Override
     public Optional<Identifier> getTypeNameForDataFixer() {
         return delegate.getTypeNameForDataFixer();
@@ -892,6 +1164,18 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     }
 
     private record StructureStepCache(Registry<Structure> registry, List<List<Structure>> structures) {
+    }
+
+    record StudioStructureState(
+            ServerLevel level,
+            ChunkMap chunkMap,
+            ChunkGeneratorStructureState structureState
+    ) {
+    }
+
+    @FunctionalInterface
+    interface StructureStatePublisher {
+        void publish() throws IllegalAccessException;
     }
 
     private record NativePlacement(StructureStart start, IrisNativeStructureDecision decision) {

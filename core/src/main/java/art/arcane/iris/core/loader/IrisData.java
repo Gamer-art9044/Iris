@@ -153,6 +153,22 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         return Optional.ofNullable(dataLoaders.get(dataFolder));
     }
 
+    public static boolean invalidateLoadedStructureResources(File dataFolder) {
+        Path requested = dataFolderIdentity(Objects.requireNonNull(
+                dataFolder,
+                "Iris data folder to invalidate"));
+        boolean invalidated = false;
+        for (Map.Entry<File, IrisData> entry : dataLoaders.entrySet()) {
+            Path loaded = dataFolderIdentity(entry.getKey());
+            if (!loaded.equals(requested)) {
+                continue;
+            }
+            entry.getValue().invalidateStructureResources();
+            invalidated = true;
+        }
+        return invalidated;
+    }
+
     public static void dereference() {
         dataLoaders.values().forEach(IrisData::cleanupEngine);
     }
@@ -526,6 +542,17 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         }
         loader.clearCache();
         loader.clearList();
+    }
+
+    private static Path dataFolderIdentity(File dataFolder) {
+        Path normalized = dataFolder.toPath().toAbsolutePath().normalize();
+        try {
+            return Files.exists(normalized) ? normalized.toRealPath() : normalized;
+        } catch (IOException exception) {
+            IrisLogging.debug("Unable to resolve Iris data folder identity for "
+                    + normalized + "; using its normalized path: " + exception.getMessage());
+            return normalized;
+        }
     }
 
     public Set<Class<?>> resolveSnippets() {

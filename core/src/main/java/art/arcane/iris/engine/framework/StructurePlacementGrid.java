@@ -19,8 +19,13 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.engine.object.IrisNativeStructure;
+import art.arcane.iris.engine.object.IrisStructureAnchorMode;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.volmlib.util.math.RNG;
+
+import java.util.Locale;
+import java.util.Set;
+import java.util.TreeSet;
 
 public final class StructurePlacementGrid {
     private static final long DENSITY_SIGNATURE = 0x6A09E667F3BCC909L;
@@ -155,6 +160,7 @@ public final class StructurePlacementGrid {
             signature = appendLong(signature, placement.isUnderground() ? 1L : 0L);
             signature = appendLong(signature, placement.isUnderwater() ? 1L : 0L);
             signature = appendSources(signature, placement);
+            signature = appendAnchor(signature, placement);
         }
         return signature;
     }
@@ -211,6 +217,35 @@ public final class StructurePlacementGrid {
         return result;
     }
 
+    private static long appendAnchor(long signature, IrisStructurePlacement placement) {
+        IrisStructureAnchorMode anchor = placement.getAnchor();
+        if (anchor == null || anchor == IrisStructureAnchorMode.LEGACY) {
+            return signature;
+        }
+        long result = appendLong(signature, 0x4A49475341574C41L);
+        result = appendLong(result, anchor.ordinal());
+        if (!anchor.isCave()) {
+            return result;
+        }
+        result = appendLong(result, placement.getCaveAnchorAttempts());
+        result = appendLong(result, placement.getCaveAnchorScanStep());
+        result = appendLong(result, placement.getCaveMinimumClearance());
+        if (placement.getCaveBiomes() == null) {
+            return appendLong(result, 0L);
+        }
+        Set<String> biomes = new TreeSet<>();
+        for (String biome : placement.getCaveBiomes()) {
+            if (biome != null && !biome.isBlank()) {
+                biomes.add(biome.trim().toLowerCase(Locale.ROOT));
+            }
+        }
+        result = appendLong(result, biomes.size());
+        for (String biome : biomes) {
+            result = appendSignature(result, biome);
+        }
+        return result;
+    }
+
     static int placementSalt(IrisStructurePlacement placement) {
         String placementId = placement.getPlacementId();
         long identity;
@@ -230,6 +265,7 @@ public final class StructurePlacementGrid {
             identity = appendLong(identity, placement.isUnderground() ? 1L : 0L);
             identity = appendLong(identity, placement.isUnderwater() ? 1L : 0L);
             identity = appendSources(identity, placement);
+            identity = appendAnchor(identity, placement);
         }
         return placement.getSalt() ^ (int) (identity ^ (identity >>> 32));
     }

@@ -19,14 +19,12 @@
 package art.arcane.iris.engine.framework.structure;
 
 import art.arcane.iris.core.structure.authoring.StructureResourceBundle;
-import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.framework.StructureAssembler;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
 import art.arcane.iris.engine.object.IrisJigsawPool;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisStructure;
-import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -60,18 +58,32 @@ public final class StructureResourceBundleGraphCompiler {
     public static void requireViable(StructureResourceBundle bundle) {
         BundleGraph graph = parse(Objects.requireNonNull(bundle));
         if (graph.structures().isEmpty()) {
-            throw new IllegalArgumentException("Structure bundle does not contain a root structure resource");
+            throw new StructureGraphValidationException("Structure bundle does not contain a root structure resource");
         }
         for (IrisStructure structure : graph.structures().values()) {
             StructureGraphCompilation compilation = StructureGraphCompiler.compile(structure, graph.resolver());
             if (!compilation.isAssemblyViable()) {
-                String diagnostic = compilation.getDiagnostics().isEmpty()
-                        ? "deterministic assembly did not complete"
-                        : compilation.getDiagnostics().getFirst().message();
-                throw new IllegalArgumentException("Structure bundle graph is not viable: " + diagnostic);
+                throw new StructureGraphValidationException(
+                        "Structure bundle graph is not viable: " + viabilityFailure(compilation));
             }
             requireGeometryViable(compilation);
         }
+    }
+
+    private static String viabilityFailure(StructureGraphCompilation compilation) {
+        for (StructureGraphDiagnostic diagnostic : compilation.getDiagnostics()) {
+            if (diagnostic.severity() == StructureGraphDiagnostic.Severity.ERROR) {
+                return diagnostic.message();
+            }
+        }
+        for (StructureGraphAssemblySample sample : compilation.getAssemblySamples()) {
+            StructureGraphAssemblySample.Outcome outcome = sample.outcome();
+            if (!outcome.isComplete()) {
+                return "sampled assembly at seed " + sample.seed() + " returned "
+                        + outcome.status() + ": " + outcome.detail();
+            }
+        }
+        return "deterministic assembly did not complete";
     }
 
     private static BundleGraph parse(StructureResourceBundle activeBundle) {
@@ -103,19 +115,17 @@ public final class StructureResourceBundleGraphCompiler {
             try {
                 StructureAssembler assembler = StructureAssembler.forCompilation(
                         compilation, new IrisPosition(0, 64, 0));
-                KList<PlacedStructurePiece> pieces = assembler.assemble(new RNG(seed));
-                if (pieces == null) {
-                    throw new IllegalArgumentException("Structure bundle graph '" + structureKey
-                            + "' fails sampled runtime geometry assembly at seed " + seed);
+                StructureAssemblyResult result = assembler.assemble(new RNG(seed));
+                if (result.status().isFailure()) {
+                    throw new StructureGraphValidationException("Structure bundle graph '" + structureKey
+                            + "' fails sampled runtime geometry assembly at seed " + seed + ": "
+                            + result.status() + ": " + result.detail());
                 }
+            } catch (StructureGraphValidationException e) {
+                throw e;
             } catch (RuntimeException e) {
-                if (e instanceof IllegalArgumentException
-                        && e.getMessage() != null
-                        && e.getMessage().startsWith("Structure bundle graph '")) {
-                    throw e;
-                }
-                throw new IllegalArgumentException("Structure bundle graph '" + structureKey
-                        + "' fails sampled runtime geometry assembly at seed " + seed + ": "
+                throw new IllegalStateException("Structure bundle graph '" + structureKey
+                        + "' encountered an unexpected sampled runtime geometry failure at seed " + seed + ": "
                         + e.getClass().getSimpleName() + ": " + failureMessage(e), e);
             }
         }
@@ -139,10 +149,10 @@ public final class StructureResourceBundleGraphCompiler {
         try {
             value = GSON.fromJson(new String(resource.content(), StandardCharsets.UTF_8), type);
         } catch (RuntimeException e) {
-            throw new IllegalArgumentException("Malformed structure resource " + resource.relativePath(), e);
+            throw new StructureGraphValidationException("Malformed structure resource " + resource.relativePath(), e);
         }
         if (value == null) {
-            throw new IllegalArgumentException("Empty structure resource " + resource.relativePath());
+            throw new StructureGraphValidationException("Empty structure resource " + resource.relativePath());
         }
         return value;
     }
@@ -151,7 +161,7 @@ public final class StructureResourceBundleGraphCompiler {
         try (ByteArrayInputStream input = new ByteArrayInputStream(resource.content())) {
             return IrisObjectFrameReader.readBounds(input, resource.relativePath());
         } catch (IOException e) {
-            throw new IllegalArgumentException(e.getMessage(), e);
+            throw new StructureGraphValidationException(e.getMessage(), e);
         }
     }
 

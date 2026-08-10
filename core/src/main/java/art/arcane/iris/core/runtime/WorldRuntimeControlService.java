@@ -198,6 +198,16 @@ public final class WorldRuntimeControlService {
         return backend.requestChunkAsync(world, chunkX, chunkZ, generate);
     }
 
+    public CompletableFuture<Chunk> requestChunkAsync(
+            World world,
+            int chunkX,
+            int chunkZ,
+            boolean generate,
+            boolean urgent
+    ) {
+        return backend.requestChunkAsync(world, chunkX, chunkZ, generate, urgent);
+    }
+
     public void prepareGenerator(World world) {
         if (world == null) {
             return;

@@ -44,6 +44,13 @@ public class IrisJigsawPool extends IrisRegistrant {
     @Desc("The direct fallback pool tried after this pool, or used alone at maximum depth. The fallback pool's own fallback is not part of the same selection. Leave empty to stop expanding at maximum depth.")
     private String fallback = "";
 
+    @Desc("Whether failure to place from this pool must be resolved through its direct fallback even when the structure does not require every branch to be capped.")
+    private boolean mandatoryFallback = false;
+
+    public boolean requiresFallback(boolean structureRequiresCaps) {
+        return structureRequiresCaps || mandatoryFallback;
+    }
+
     @Override
     public String getFolderName() {
         return "jigsaw-pools";

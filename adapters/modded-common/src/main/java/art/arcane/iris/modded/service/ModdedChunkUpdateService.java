@@ -189,30 +189,37 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
     }
 
     private void runTilePass(Engine engine, ServerLevel level, int chunkX, int chunkZ, MantleChunk<Matter> chunk) {
-        int minHeight = engine.getWorld().minHeight();
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
-        chunk.iterate(TileWrapper.class, (Integer x, Integer yf, Integer z, TileWrapper v) -> {
-            int y = yf + minHeight;
-            if (y < level.getMinY() || y >= level.getMaxY()) {
-                return;
-            }
-            applyTile(level, baseX + (x & 15), y, baseZ + (z & 15), v.getData());
-        });
+        int minHeight = engine.getWorld().minHeight();
+        materializeDeferredSlice(chunk, TileWrapper.class, () ->
+                chunk.iterate(TileWrapper.class, (Integer x, Integer yf, Integer z, TileWrapper v) -> {
+                    int y = yf + minHeight;
+                    if (y < level.getMinY() || y >= level.getMaxY()) {
+                        return;
+                    }
+                    applyTile(level, baseX + (x & 15), y, baseZ + (z & 15), v.getData());
+                }));
     }
 
     private void runCustomPass(Engine engine, ServerLevel level, int chunkX, int chunkZ, MantleChunk<Matter> chunk) {
-        int minHeight = engine.getWorld().minHeight();
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
-        chunk.iterate(Identifier.class, (Integer x, Integer yf, Integer z, Identifier identifier) -> {
-            int y = yf + minHeight;
-            if (y < level.getMinY() || y >= level.getMaxY()) {
-                return;
-            }
-            BlockPos position = new BlockPos(baseX + (x & 15), y, baseZ + (z & 15));
-            ModdedCustomContentRegistry.processBlockPlacement(engine, level, position, identifier.toString());
-        });
+        int minHeight = engine.getWorld().minHeight();
+        materializeDeferredSlice(chunk, Identifier.class, () ->
+                chunk.iterate(Identifier.class, (Integer x, Integer yf, Integer z, Identifier identifier) -> {
+                    int y = yf + minHeight;
+                    if (y < level.getMinY() || y >= level.getMaxY()) {
+                        return;
+                    }
+                    BlockPos position = new BlockPos(baseX + (x & 15), y, baseZ + (z & 15));
+                    ModdedCustomContentRegistry.processBlockPlacement(engine, level, position, identifier.toString());
+                }));
+    }
+
+    static void materializeDeferredSlice(MantleChunk<Matter> chunk, Class<?> sliceType, Runnable materializer) {
+        materializer.run();
+        chunk.deleteSlices(sliceType);
     }
 
     private void applyTile(ServerLevel level, int x, int y, int z, TileData tile) {

@@ -129,6 +129,8 @@ public class IrisCreator {
      */
     private boolean benchmark = false;
     private BiConsumer<Double, String> studioProgressConsumer;
+    private BiConsumer<String, Long> studioTimingConsumer;
+    private DatapackPreparation datapackPreparation = DatapackPreparation.INSTALL_IF_CHANGED;
 
     public static boolean removeFromBukkitYml(String name) throws IOException {
         return BukkitWorldConfiguration.remove(BUKKIT_YML, name);
@@ -185,7 +187,6 @@ public class IrisCreator {
     }
 
     private World createReserved(NamespacedKey worldKey, IrisDimension resolvedDimension) throws IrisException {
-        long createStart = System.currentTimeMillis();
         File dimensionRoot;
         try {
             dimensionRoot = IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
@@ -204,7 +205,7 @@ public class IrisCreator {
         try {
             reportStudioProgress(0.08D, "resolve_dimension");
             reportStudioProgress(0.16D, "prepare_world_pack");
-            DatapackInstallResult datapackResult = ServerConfigurator.installDataPacksIfChanged(true);
+            DatapackInstallResult datapackResult = prepareDatapacks(resolvedDimension);
             if (!datapackResult.succeeded()) {
                 throw new IrisException("Failed to compile datapacks for dimension \"" + dimension() + "\".");
             }
@@ -232,13 +233,14 @@ public class IrisCreator {
             reportStudioProgress(0.28D, "install_datapacks");
             AtomicDouble pp = new AtomicDouble(0);
             AtomicBoolean done = new AtomicBoolean(false);
+            long generatorPrepareStart = System.nanoTime();
             WorldCreator wc = new IrisWorldCreator()
                     .dimension(installedDimension)
                     .name(name)
                     .seed(seed)
                     .studio(studio)
                     .create();
-            IrisLogging.debug("[Studio timing]   create.packPrep + datapacks = " + (System.currentTimeMillis() - createStart) + "ms (cumulative in create)");
+            reportStudioTiming("prepare_studio_generator", generatorPrepareStart);
             reportStudioProgress(0.40D, "install_datapacks");
 
             PlatformChunkGenerator access = (PlatformChunkGenerator) wc.generator();
@@ -251,14 +253,13 @@ public class IrisCreator {
             AtomicInteger createProgressTask = startCreateProgressReporter(access, done, createClaim);
 
             reportStudioProgress(0.46D, "create_world");
-            long nmsStart = System.currentTimeMillis();
+            long nmsStartNanos = System.nanoTime();
             try {
                 WorldLifecycleCaller callerKind = benchmark ? WorldLifecycleCaller.BENCHMARK : studio() ? WorldLifecycleCaller.STUDIO : WorldLifecycleCaller.CREATE;
                 WorldLifecycleRequest request = WorldLifecycleRequest.fromCreator(wc, studio(), benchmark, callerKind);
                 world = J.sfut(() -> INMS.get().createWorldAsync(wc, request))
                         .thenCompose(Function.identity())
                         .get(WORLD_CREATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                IrisLogging.debug("[Studio timing]   create.createWorldAsync (NMS bukkit world load + spawn prep) = " + (System.currentTimeMillis() - nmsStart) + "ms");
             } catch (Throwable e) {
                 done.set(true);
                 cancelRepeatingTask(createProgressTask);
@@ -275,6 +276,8 @@ public class IrisCreator {
                             + "Iris queued a restart; run the command again after the server returns.", e);
                 }
                 throw new IrisException("Failed to create world with backend family " + WorldLifecycleService.get().capabilities().serverFamily().id() + "!", e);
+            } finally {
+                reportStudioTiming("create_bukkit_world", nmsStartNanos);
             }
 
             done.set(true);
@@ -415,6 +418,34 @@ public class IrisCreator {
         } catch (Throwable e) {
             IrisLogging.reportError("Studio progress consumer failed for world \"" + name() + "\".", e);
         }
+    }
+
+    private void reportStudioTiming(String phase, long startedAtNanos) {
+        BiConsumer<String, Long> consumer = studioTimingConsumer;
+        if (consumer == null) {
+            return;
+        }
+
+        long duration = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
+        try {
+            consumer.accept(phase, duration);
+        } catch (Throwable e) {
+            IrisLogging.reportError("Studio timing consumer failed for world \"" + name() + "\".", e);
+        }
+    }
+
+    private DatapackInstallResult prepareDatapacks(IrisDimension resolvedDimension) {
+        DatapackPreparation preparation = Objects.requireNonNull(
+                datapackPreparation,
+                "Datapack preparation mode");
+        boolean runtimeReady = preparation == DatapackPreparation.REUSE_LOADED_RUNTIME_IF_READY
+                && ServerConfigurator.isLoadedDatapackRuntimeReady(resolvedDimension);
+        if (!preparation.requiresInstall(runtimeReady)) {
+            long reuseStart = System.nanoTime();
+            reportStudioTiming("datapack_reuse_loaded_runtime", reuseStart);
+            return DatapackInstallResult.unchangedResult();
+        }
+        return ServerConfigurator.installDataPacksIfChanged(true, studioTimingConsumer);
     }
 
     private AtomicInteger startCreateProgressReporter(PlatformChunkGenerator access, AtomicBoolean done, HudSlotClaim claim) {
@@ -726,5 +757,20 @@ public class IrisCreator {
             cursor = cursor.getCause();
         }
         return cursor;
+    }
+
+    public enum DatapackPreparation {
+        INSTALL_IF_CHANGED(false),
+        REUSE_LOADED_RUNTIME_IF_READY(true);
+
+        private final boolean reusesLoadedRuntime;
+
+        DatapackPreparation(boolean reusesLoadedRuntime) {
+            this.reusesLoadedRuntime = reusesLoadedRuntime;
+        }
+
+        boolean requiresInstall(boolean runtimeReady) {
+            return !reusesLoadedRuntime || !runtimeReady;
+        }
     }
 }

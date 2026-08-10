@@ -21,6 +21,7 @@ package art.arcane.iris.core.pack;
 import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.framework.StructureAssembler;
 import art.arcane.iris.engine.framework.structure.IrisObjectFrameReader;
+import art.arcane.iris.engine.framework.structure.StructureAssemblyResult;
 import art.arcane.iris.engine.framework.structure.StructureGraphCompilation;
 import art.arcane.iris.engine.framework.structure.StructureGraphCompiler;
 import art.arcane.iris.engine.framework.structure.StructureGraphDiagnostic;
@@ -31,7 +32,6 @@ import art.arcane.iris.engine.object.IrisJigsawPool;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisStructure;
-import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -131,13 +131,13 @@ final class StructureGraphPackValidator {
             try {
                 StructureAssembler assembler = StructureAssembler.forCompilation(
                         compilation, new IrisPosition(0, GEOMETRY_SAMPLE_ORIGIN_Y, 0));
-                KList<PlacedStructurePiece> pieces = assembler.assemble(new RNG(seed));
-                if (pieces == null) {
-                    failures.add("seed " + seed + " returned no complete assembly");
-                } else if (pieces.isEmpty()) {
+                StructureAssemblyResult result = assembler.assemble(new RNG(seed));
+                if (result.status().isFailure()) {
+                    failures.add("seed " + seed + " returned " + result.status() + ": " + result.detail());
+                } else if (!result.hasOutput()) {
                     outputForEverySample = false;
                 } else {
-                    sampledVerticalEnvelopes.add(sampleVerticalEnvelope(seed, pieces));
+                    sampledVerticalEnvelopes.add(sampleVerticalEnvelope(seed, result.pieces()));
                 }
             } catch (RuntimeException e) {
                 failures.add("seed " + seed + " threw " + e.getClass().getSimpleName()
@@ -150,7 +150,7 @@ final class StructureGraphPackValidator {
 
     private static SampledVerticalEnvelope sampleVerticalEnvelope(
             long seed,
-            KList<PlacedStructurePiece> pieces
+            List<PlacedStructurePiece> pieces
     ) {
         int minimumY = Integer.MAX_VALUE;
         int maximumY = Integer.MIN_VALUE;
@@ -187,8 +187,8 @@ final class StructureGraphPackValidator {
                 continue;
             }
             failures.add("seed " + sample.seed() + " placed " + sample.outcome().pieceKeys().size()
-                    + " piece(s), left " + sample.outcome().unresolvedConnectorCount()
-                    + " unresolved, cap=" + sample.outcome().pieceCapReached());
+                    + " piece(s), status=" + sample.outcome().status()
+                    + ": " + sample.outcome().detail());
             if (failures.size() == 3) {
                 break;
             }

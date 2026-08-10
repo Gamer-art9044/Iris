@@ -4,6 +4,8 @@ import ca.spottedleaf.moonrise.patches.chunk_system.io.MoonriseRegionFileIO;
 import ca.spottedleaf.moonrise.patches.chunk_system.scheduling.ChunkHolderManager;
 import ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import art.arcane.iris.core.datapack.DatapackStructureScopeIndex;
+import art.arcane.iris.core.nms.DatapackStructureScopeResult;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.nms.INMSBinding;
 import art.arcane.iris.core.nms.MinecraftVersion;
@@ -17,6 +19,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.NativeStructureVolume;
 import art.arcane.iris.nativegen.NativeStructureVolumeIndex;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
+import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.nativegen.NativeStructureFactory;
 import art.arcane.iris.nativegen.NativeStructureGenerationException;
@@ -95,6 +98,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.ProtoChunk;
@@ -156,6 +160,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -313,8 +318,14 @@ public class NMSBinding implements INMSBinding {
             return;
         }
 
-        var level = ((CraftWorld) pos.getWorld()).getHandle();
-        var blockPos = new BlockPos(pos.getBlockX(), pos.getBlockY(), pos.getBlockZ());
+        ServerLevel level = ((CraftWorld) pos.getWorld()).getHandle();
+        BlockPos blockPos = new BlockPos(pos.getBlockX(), pos.getBlockY(), pos.getBlockZ());
+        int chunkX = pos.getBlockX() >> 4;
+        int chunkZ = pos.getBlockZ() >> 4;
+        if (J.isOwnedByCurrentRegion(pos.getWorld(), chunkX, chunkZ)) {
+            merge(level, blockPos, tag);
+            return;
+        }
         if (!J.runAt(pos, () -> merge(level, blockPos, tag))) {
             IrisLogging.warn("[NMS] Failed to schedule tile deserialize at " + blockPos + " in world " + pos.getWorld().getName());
         }
@@ -1199,6 +1210,121 @@ public class NMSBinding implements INMSBinding {
 
         worldGenContextField.set(chunkMap, newContext);
         retargetStructureCheck(level, irisGenerator);
+    }
+
+    @Override
+    public DatapackStructureScopeResult scopeDatapackStructures(
+            World world,
+            DatapackStructureScopeIndex scopeIndex,
+            Set<String> declaredSources
+    ) throws NoSuchFieldException, IllegalAccessException {
+        ServerLevel level = ((CraftWorld) world).getHandle();
+        ChunkMap chunkMap = level.getChunkSource().chunkMap;
+        ChunkGeneratorStructureState currentState = level.getChunkSource().getGeneratorState();
+        net.minecraft.world.level.chunk.ChunkGenerator generator = level.getChunkSource().getGenerator();
+        ChunkGeneratorStructureState scopedState = createStructureState(level, generator, currentState);
+        DatapackStructureStateFilter.Selection selection = DatapackStructureStateFilter.filter(
+                scopedState.possibleStructureSets(), scopeIndex, declaredSources);
+
+        Field possibleSetsField = getField(scopedState.getClass(), List.class);
+        possibleSetsField.setAccessible(true);
+        possibleSetsField.set(scopedState, selection.structureSets());
+
+        Field stateField = getField(chunkMap.getClass(), ChunkGeneratorStructureState.class);
+        stateField.setAccessible(true);
+        BukkitChunkGenerator platformGenerator = world.getGenerator() instanceof BukkitChunkGenerator bukkitGenerator
+                ? bukkitGenerator
+                : null;
+        boolean studioBootstrap = platformGenerator != null
+                && platformGenerator.isStudioEntryBootstrapActive();
+        boolean jigsawStudio = platformGenerator != null
+                && platformGenerator.isJigsawStudioActive();
+        if (jigsawStudio) {
+            requireIrisGenerator(generator);
+            if (currentState.possibleStructureSets().isEmpty()) {
+                currentState.ensureStructuresGenerated();
+            } else {
+                ChunkGeneratorStructureState bootstrapState = createStructureState(level, generator, currentState);
+                Field bootstrapSetsField = getField(bootstrapState.getClass(), List.class);
+                bootstrapSetsField.setAccessible(true);
+                bootstrapSetsField.set(bootstrapState, List.of());
+                bootstrapState.ensureStructuresGenerated();
+                stateField.set(chunkMap, bootstrapState);
+            }
+        } else if (studioBootstrap) {
+            IrisChunkGenerator irisGenerator = requireIrisGenerator(generator);
+            irisGenerator.retainStudioStructureState(level, chunkMap, scopedState);
+            try {
+                stateField.set(chunkMap, scopedState);
+            } catch (IllegalAccessException | RuntimeException | Error failure) {
+                irisGenerator.abandonStudioStructureState();
+                throw failure;
+            }
+        } else {
+            initializeAndPublishStructureState(
+                    generator,
+                    scopedState,
+                    () -> stateField.set(chunkMap, scopedState));
+        }
+        return new DatapackStructureScopeResult(
+                selection.retainedManagedSets(),
+                selection.excludedManagedSets());
+    }
+
+    @Override
+    public void completeStudioStructureBootstrap(World world) throws NoSuchFieldException, IllegalAccessException {
+        ServerLevel level = ((CraftWorld) world).getHandle();
+        ChunkMap chunkMap = level.getChunkSource().chunkMap;
+        IrisChunkGenerator generator = requireIrisGenerator(level.getChunkSource().getGenerator());
+        IrisChunkGenerator.StudioStructureState retained =
+                generator.retainedStudioStructureState(level, chunkMap);
+        if (retained == null) {
+            return;
+        }
+        generator.activateStudioStructureState(retained);
+    }
+
+    @Override
+    public void abandonStudioStructureBootstrap(World world) {
+        ServerLevel level = ((CraftWorld) world).getHandle();
+        net.minecraft.world.level.chunk.ChunkGenerator generator = level.getChunkSource().getGenerator();
+        if (generator instanceof IrisChunkGenerator irisGenerator) {
+            irisGenerator.abandonStudioStructureState();
+        }
+    }
+
+    private ChunkGeneratorStructureState createStructureState(
+            ServerLevel level,
+            net.minecraft.world.level.chunk.ChunkGenerator generator,
+            ChunkGeneratorStructureState currentState
+    ) {
+        return generator.createState(
+                level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET),
+                currentState.randomState(),
+                currentState.getLevelSeed(),
+                currentState.conf);
+    }
+
+    private void initializeAndPublishStructureState(
+            net.minecraft.world.level.chunk.ChunkGenerator generator,
+            ChunkGeneratorStructureState structureState,
+            IrisChunkGenerator.StructureStatePublisher publisher
+    ) throws IllegalAccessException {
+        if (generator instanceof IrisChunkGenerator irisGenerator) {
+            irisGenerator.initializeAndPublishStructureState(structureState, publisher);
+            return;
+        }
+        structureState.ensureStructuresGenerated();
+        publisher.publish();
+    }
+
+    private IrisChunkGenerator requireIrisGenerator(
+            net.minecraft.world.level.chunk.ChunkGenerator generator
+    ) {
+        if (generator instanceof IrisChunkGenerator irisGenerator) {
+            return irisGenerator;
+        }
+        throw new IllegalStateException("Studio native structure state is not owned by the active Iris generator.");
     }
 
     private void validateDimensionContract(Engine engine, World world, ServerLevel level) {

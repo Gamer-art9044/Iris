@@ -21,6 +21,7 @@ package art.arcane.iris.core;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.datapack.DatapackIngestService;
+import art.arcane.iris.core.datapack.DatapackIngestService.ReapplyOutcome;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
@@ -73,6 +74,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import java.util.stream.Stream;
 
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
@@ -81,8 +83,18 @@ import art.arcane.volmlib.util.localization.MessageArgument;
 public class ServerConfigurator {
     private static final Object DATAPACK_INSTALL_LOCK = new Object();
     private static final String CODE_WORKSPACE_SUFFIX = ".code-workspace";
+    private static final String COMPILER_INPUT_FINGERPRINT_CACHE = "datapack-compiler-input-fingerprint";
+    private static volatile boolean loadedDatapackRuntimeReady;
+    private static volatile String loadedDatapackCompilerInputFingerprint = "";
+    private static volatile long loadedDatapackRuntimeGeneration;
+    private static volatile boolean loadedDatapackRestartRequired;
 
     public static void configure() {
+        synchronized (DATAPACK_INSTALL_LOCK) {
+            invalidateLoadedDatapackRuntime();
+            loadedDatapackCompilerInputFingerprint = "";
+            loadedDatapackRestartRequired = false;
+        }
         IrisSettings.IrisSettingsAutoconfiguration s = IrisSettings.get().getAutoConfiguration();
         if (s.isConfigureSpigotTimeoutTime()) {
             J.attempt(ServerConfigurator::increaseKeepAliveSpigot);
@@ -93,12 +105,88 @@ public class ServerConfigurator {
         }
 
         if (DefaultPackBootstrapProvisioner.wasProvisionedThisStartup()) {
+            loadedDatapackRuntimeReady = !IrisSettings.get().getGeneral().adjustVanillaHeight
+                    && pinLoadedDatapackCompilerInputs(
+                            DefaultPackBootstrapProvisioner.compilerInputFingerprintThisStartup());
             IrisLogging.info("Paper loaded the Iris datapack during bootstrap; skipping the legacy startup install.");
         } else {
             DatapackInstallResult result = installDataPacks(true);
+            loadedDatapackRuntimeReady = result.succeeded()
+                    && !result.restartRequired()
+                    && pinLoadedDatapackCompilerInputs();
             if (result.restartRequired() && IrisSettings.get().getAutoConfiguration().isAutoRestartOnCustomBiomeInstall()) {
                 restart();
             }
+        }
+    }
+
+    public static boolean isLoadedDatapackRuntimeReady(IrisDimension dimension) {
+        IrisDimension requiredDimension = Objects.requireNonNull(dimension, "Iris dimension");
+        if (!loadedDatapackRuntimeReady
+                || loadedDatapackRestartRequired
+                || !BukkitPlatform.hasPlugin()
+                || !BukkitPlatform.plugin().isEnabled()) {
+            return false;
+        }
+        try {
+            if (!INMS.get().supportsIrisWorldGeneration()
+                    || INMS.get().missingDimensionTypes(requiredDimension.getDimensionTypeKey())) {
+                return false;
+            }
+            String currentFingerprint = computeCurrentDatapackCompilerInputFingerprint(resolveDataFixer());
+            return reusableRuntimeFingerprint(
+                    loadedDatapackCompilerInputFingerprint,
+                    currentFingerprint);
+        } catch (IOException | RuntimeException exception) {
+            IrisLogging.reportError("Unable to verify loaded Iris datapack compiler inputs.", exception);
+            return false;
+        }
+    }
+
+    public static LoadedDatapackRuntimeInvalidation invalidateLoadedDatapackRuntime() {
+        synchronized (DATAPACK_INSTALL_LOCK) {
+            boolean wasReady = loadedDatapackRuntimeReady;
+            String fingerprint = loadedDatapackCompilerInputFingerprint;
+            loadedDatapackRuntimeReady = false;
+            loadedDatapackRuntimeGeneration++;
+            return new LoadedDatapackRuntimeInvalidation(
+                    loadedDatapackRuntimeGeneration,
+                    wasReady,
+                    fingerprint);
+        }
+    }
+
+    public static void requireDatapackRestart() {
+        synchronized (DATAPACK_INSTALL_LOCK) {
+            invalidateLoadedDatapackRuntime();
+            loadedDatapackRestartRequired = true;
+        }
+    }
+
+    public static void restoreLoadedDatapackRuntimeIfUnchanged(
+            LoadedDatapackRuntimeInvalidation invalidation
+    ) {
+        if (invalidation == null
+                || !invalidation.wasReady()
+                || invalidation.fingerprint().isBlank()) {
+            return;
+        }
+        String currentFingerprint;
+        try {
+            currentFingerprint = computeCurrentDatapackCompilerInputFingerprint(resolveDataFixer());
+        } catch (IOException | RuntimeException exception) {
+            IrisLogging.reportError("Unable to restore loaded Iris datapack runtime readiness.", exception);
+            return;
+        }
+        synchronized (DATAPACK_INSTALL_LOCK) {
+            if (loadedDatapackRuntimeGeneration != invalidation.generation()
+                    || loadedDatapackRuntimeReady
+                    || loadedDatapackRestartRequired
+                    || !reusableRuntimeFingerprint(invalidation.fingerprint(), currentFingerprint)) {
+                return;
+            }
+            loadedDatapackCompilerInputFingerprint = currentFingerprint;
+            loadedDatapackRuntimeReady = true;
         }
     }
 
@@ -160,23 +248,37 @@ public class ServerConfigurator {
             IrisLogging.error("Unable to install datapacks, fixer is null!");
             return DatapackInstallResult.failedResult();
         }
+        KList<File> datapacksFolders = getDatapacksFolder();
+        ReapplyOutcome reapply = DatapackIngestService.reapplyFromStaging(datapacksFolders);
+        if (!reapply.succeeded()) {
+            return DatapackInstallResult.failedResult();
+        }
+        return compileDataPacksLocked(fixer, fullInstall, reapply);
+    }
+
+    private static DatapackInstallResult compileDataPacksLocked(
+            IDataFixer fixer,
+            boolean fullInstall,
+            ReapplyOutcome reapply
+    ) {
+        if (!Objects.requireNonNull(reapply, "External datapack reapply outcome").succeeded()) {
+            return DatapackInstallResult.failedResult();
+        }
+        if (fixer == null) {
+            IrisLogging.error("Unable to install datapacks, fixer is null!");
+            return DatapackInstallResult.failedResult();
+        }
         if (fullInstall) {
             IrisLogging.info("Checking Data Packs...");
         } else {
             IrisLogging.debug("Checking Data Packs...");
         }
-        KList<File> datapacksFolders = getDatapacksFolder();
-        if (!DatapackIngestService.reapplyFromStaging(datapacksFolders)) {
-            IrisLogging.error("Unable to compile Iris datapacks while external datapack recovery is incomplete.");
-            return DatapackInstallResult.failedResult();
-        }
         List<File> packRoots;
-        try (Stream<IrisData> stream = allPacks()) {
-            packRoots = stream
-                    .map(IrisData::getDataFolder)
-                    .map(File::getAbsoluteFile)
-                    .distinct()
-                    .toList();
+        try {
+            packRoots = collectCompilerPackRoots();
+        } catch (IOException exception) {
+            IrisLogging.reportError("Unable to resolve Iris datapack compiler roots.", exception);
+            return DatapackInstallResult.failedResult();
         }
 
         KList<File> liveRoots = getIrisDatapackRoots();
@@ -237,7 +339,8 @@ public class ServerConfigurator {
             IrisLogging.debug("Data Packs Setup!");
         }
 
-        boolean restartRequired = fullInstall && verifyDataPacksPost();
+        boolean verifiedRestartRequired = fullInstall && verifyDataPacksPost();
+        boolean restartRequired = fullInstall && (reapply.changed() || verifiedRestartRequired);
         return restartRequired
                 ? DatapackInstallResult.restartRequiredResult()
                 : DatapackInstallResult.readyResult();
@@ -264,31 +367,165 @@ public class ServerConfigurator {
     }
 
     public static DatapackInstallResult installDataPacksIfChanged(boolean fullInstall) {
+        return installDataPacksIfChanged(fullInstall, null);
+    }
+
+    public static DatapackInstallResult installDataPacksIfChanged(
+            boolean fullInstall,
+            BiConsumer<String, Long> timingConsumer
+    ) {
         synchronized (DATAPACK_INSTALL_LOCK) {
-            File packsDir = IrisPlatforms.get().dataFolder("packs");
-            File cacheFile = new File(IrisPlatforms.get().dataFolder("cache"), "datapack-fingerprint");
-            FingerprintCache cached = readFingerprintCache(cacheFile.toPath());
-            PackFingerprint fingerprint;
-            try {
-                fingerprint = resolvePackFingerprint(packsDir, cached.metadata(), cached.content());
-            } catch (RuntimeException exception) {
-                IrisLogging.reportError("Unable to fingerprint Iris packs safely", exception);
+            long totalStart = System.nanoTime();
+            File cacheFile = new File(
+                    IrisPlatforms.get().dataFolder("cache"),
+                    COMPILER_INPUT_FINGERPRINT_CACHE);
+            String cached = readCompilerInputFingerprintCache(cacheFile.toPath());
+            long recoveryStart = System.nanoTime();
+            ReapplyOutcome reapply = DatapackIngestService.reapplyFromStaging(getDatapacksFolder());
+            reportTiming(timingConsumer, "datapack_external_recovery", recoveryStart);
+            if (!reapply.succeeded()) {
+                reportTiming(timingConsumer, "datapack_install_if_changed_total", totalStart);
                 return DatapackInstallResult.failedResult();
             }
-            String current = fingerprint.content();
-            if (!current.isEmpty() && current.equals(cached.content())) {
-                if (!fingerprint.metadata().equals(cached.metadata())) {
-                    writeFingerprintCache(cacheFile.toPath(), fingerprint);
-                }
+            if (fullInstall && loadedDatapackRestartRequired) {
+                reportTiming(timingConsumer, "datapack_install_if_changed_total", totalStart);
+                return DatapackInstallResult.restartRequiredResult();
+            }
+            String current;
+            long fingerprintStart = System.nanoTime();
+            try {
+                current = computeCurrentDatapackCompilerInputFingerprint(resolveDataFixer());
+            } catch (IOException | RuntimeException exception) {
+                reportTiming(timingConsumer, "datapack_compiler_input_fingerprint", fingerprintStart);
+                reportTiming(timingConsumer, "datapack_install_if_changed_total", totalStart);
+                IrisLogging.reportError("Unable to fingerprint Iris datapack compiler inputs safely", exception);
+                return DatapackInstallResult.failedResult();
+            }
+            reportTiming(timingConsumer, "datapack_compiler_input_fingerprint", fingerprintStart);
+            boolean loadedCompilerInputsChanged = !loadedDatapackCompilerInputFingerprint.isBlank()
+                    && !reusableRuntimeFingerprint(
+                            loadedDatapackCompilerInputFingerprint,
+                            current);
+            if (!current.isEmpty() && current.equals(cached)) {
                 IrisLogging.debug("Data packs unchanged, skipping install.");
-                return DatapackInstallResult.unchangedResult();
+                DatapackInstallResult result = fullInstall && loadedCompilerInputsChanged
+                        ? DatapackInstallResult.restartRequiredResult()
+                        : resultForUnchangedFingerprint(fullInstall, reapply);
+                if (result.restartRequired()) {
+                    requireDatapackRestart();
+                }
+                reportTiming(timingConsumer, "datapack_install_if_changed_total", totalStart);
+                return result;
             }
-            DatapackInstallResult result = installDataPacksLocked(resolveDataFixer(), fullInstall);
-            if (result.succeeded()) {
-                writeFingerprintCache(cacheFile.toPath(), fingerprint);
+            long compileStart = System.nanoTime();
+            DatapackInstallResult result = compileDataPacksLocked(
+                    resolveDataFixer(),
+                    fullInstall,
+                    reapply);
+            if (fullInstall && loadedCompilerInputsChanged && result.succeeded()) {
+                result = DatapackInstallResult.restartRequiredResult();
             }
+            if (result.restartRequired()) {
+                requireDatapackRestart();
+            }
+            reportTiming(timingConsumer, "datapack_compile_publish", compileStart);
+            if (result.succeeded() && !result.restartRequired()) {
+                writeCompilerInputFingerprintCache(cacheFile.toPath(), current);
+            }
+            reportTiming(timingConsumer, "datapack_install_if_changed_total", totalStart);
             return result;
         }
+    }
+
+    private static List<File> collectCompilerPackRoots() throws IOException {
+        return IrisDatapackCompiler.collectPackRoots(
+                IrisPlatforms.get().dataFolder().toPath(),
+                IrisWorldStorage.levelRoot().toPath());
+    }
+
+    private static String computeCurrentDatapackCompilerInputFingerprint(IDataFixer fixer) throws IOException {
+        return IrisDatapackCompiler.computeInputFingerprint(
+                IrisDatapackCompiler.collectCompilerInputRoots(
+                        IrisPlatforms.get().dataFolder().toPath(),
+                        IrisWorldStorage.levelRoot().toPath()),
+                Objects.requireNonNull(fixer, "Datapack fixer"),
+                IrisSettings.get().getGeneral().adjustVanillaHeight);
+    }
+
+    private static boolean pinLoadedDatapackCompilerInputs() {
+        return pinLoadedDatapackCompilerInputs(null);
+    }
+
+    private static boolean pinLoadedDatapackCompilerInputs(String expectedFingerprint) {
+        if (loadedDatapackRestartRequired) {
+            return false;
+        }
+        try {
+            String fingerprint = computeCurrentDatapackCompilerInputFingerprint(resolveDataFixer());
+            if (fingerprint.isBlank()
+                    || expectedFingerprint != null
+                    && !reusableRuntimeFingerprint(expectedFingerprint, fingerprint)) {
+                return false;
+            }
+            loadedDatapackCompilerInputFingerprint = fingerprint;
+            File cacheFile = new File(
+                    IrisPlatforms.get().dataFolder("cache"),
+                    COMPILER_INPUT_FINGERPRINT_CACHE);
+            writeCompilerInputFingerprintCache(cacheFile.toPath(), fingerprint);
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            loadedDatapackCompilerInputFingerprint = "";
+            IrisLogging.reportError("Unable to pin loaded Iris datapack compiler inputs.", exception);
+            return false;
+        }
+    }
+
+    static boolean reusableRuntimeFingerprint(String loadedFingerprint, String currentFingerprint) {
+        return loadedFingerprint != null
+                && !loadedFingerprint.isBlank()
+                && loadedFingerprint.equals(currentFingerprint);
+    }
+
+    private static void reportTiming(
+            BiConsumer<String, Long> timingConsumer,
+            String phase,
+            long startedAtNanos
+    ) {
+        if (timingConsumer == null) {
+            return;
+        }
+        try {
+            timingConsumer.accept(phase, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos));
+        } catch (Throwable exception) {
+            IrisLogging.reportError("Datapack timing consumer failed during phase \"" + phase + "\".", exception);
+        }
+    }
+
+    static DatapackInstallResult resultForUnchangedFingerprint(
+            boolean fullInstall,
+            ReapplyOutcome reapply
+    ) {
+        if (!Objects.requireNonNull(reapply, "External datapack reapply outcome").succeeded()) {
+            return DatapackInstallResult.failedResult();
+        }
+        if (!reapply.changed()) {
+            return DatapackInstallResult.unchangedResult();
+        }
+        return fullInstall
+                ? DatapackInstallResult.restartRequiredResult()
+                : DatapackInstallResult.readyResult();
+    }
+
+    static PackFingerprint resolvePostRecoveryPackFingerprint(
+            File packsDir,
+            String cachedMetadata,
+            String cachedContent,
+            ReapplyOutcome reapply
+    ) {
+        if (Objects.requireNonNull(reapply, "External datapack reapply outcome").changed()) {
+            return resolvePackFingerprint(packsDir, "", "");
+        }
+        return resolvePackFingerprint(packsDir, cachedMetadata, cachedContent);
     }
 
     static PackFingerprint resolvePackFingerprint(File packsDir, String cachedMetadata, String cachedContent) {
@@ -392,11 +629,31 @@ public class ServerConfigurator {
         }
     }
 
+    private static String readCompilerInputFingerprintCache(Path cacheFile) {
+        if (!Files.isRegularFile(cacheFile)) {
+            return "";
+        }
+        try {
+            return Files.readString(cacheFile, StandardCharsets.UTF_8).trim();
+        } catch (IOException exception) {
+            return "";
+        }
+    }
+
     private static void writeFingerprintCache(Path cacheFile, PackFingerprint fingerprint) {
         try {
             writeFingerprintAtomic(cacheFile, fingerprint.content() + "\n" + fingerprint.metadata());
         } catch (IOException e) {
             IrisLogging.warn("Failed to write datapack fingerprint cache: " + e.getMessage());
+        }
+    }
+
+    private static void writeCompilerInputFingerprintCache(Path cacheFile, String fingerprint) {
+        try {
+            writeFingerprintAtomic(cacheFile, fingerprint);
+        } catch (IOException exception) {
+            IrisLogging.warn("Failed to write datapack compiler-input fingerprint cache: "
+                    + exception.getMessage());
         }
     }
 
@@ -571,6 +828,7 @@ public class ServerConfigurator {
     }
 
     public static void restart(String reason) {
+        requireDatapackRestart();
         LifecycleOperationCoordinator.get().quiesceForRestart(() -> J.s(() -> {
             IrisLogging.warn(reason + " Restarting server to restore a safe lifecycle boundary.");
             J.s(() -> {
@@ -657,6 +915,16 @@ public class ServerConfigurator {
         File dimensionRoot = dimensionPath.toFile();
         NamespacedKey key = IrisWorldStorage.keyFromDimensionRoot(IrisWorldStorage.levelRoot(), dimensionRoot).orElse(null);
         return key == null ? null : key.toString();
+    }
+
+    public record LoadedDatapackRuntimeInvalidation(
+            long generation,
+            boolean wasReady,
+            String fingerprint
+    ) {
+        public LoadedDatapackRuntimeInvalidation {
+            fingerprint = Objects.requireNonNullElse(fingerprint, "");
+        }
     }
 
 }

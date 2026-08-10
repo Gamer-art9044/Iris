@@ -96,6 +96,32 @@ public class StructureGraphPackValidatorTest {
     }
 
     @Test
+    public void branchTerminationPolicyAcceptsTheSameOptionalPartialGraph() throws Exception {
+        Path pack = temporaryFolder.newFolder("terminating-pack").toPath();
+        write(pack, "structures/castle.json",
+                "{\"startPool\":\"castle/start\",\"maxDepth\":2,"
+                        + "\"branchFailurePolicy\":\"TERMINATE_BRANCH\"}");
+        write(pack, "jigsaw-pools/castle/start.json",
+                "{\"pieces\":[{\"piece\":\"castle/start\"}]}");
+        write(pack, "jigsaw-pools/castle/target.json",
+                "{\"pieces\":[{\"piece\":\"castle/target\"}]}");
+        write(pack, "jigsaw-pieces/castle/start.json",
+                "{\"object\":\"castle/start\",\"connectors\":[{\"position\":{\"x\":0,\"y\":0,\"z\":0},"
+                        + "\"direction\":\"NORTH_NEGATIVE_Z\",\"pool\":\"castle/target\","
+                        + "\"name\":\"source\",\"targetName\":\"door\"}]}");
+        write(pack, "jigsaw-pieces/castle/target.json",
+                "{\"object\":\"castle/target\",\"rotatable\":false,\"connectors\":[{\"position\":{\"x\":0,\"y\":0,\"z\":0},"
+                        + "\"direction\":\"NORTH_NEGATIVE_Z\",\"pool\":\"castle/target\","
+                        + "\"name\":\"door\",\"targetName\":\"unused\"}]}");
+        writeObjectHeader(pack.resolve("objects/castle/start.iob"), 1, 1, 1);
+        writeObjectHeader(pack.resolve("objects/castle/target.iob"), 1, 1, 1);
+
+        StructureGraphPackValidator.Validation validation = StructureGraphPackValidator.validate(pack);
+
+        assertTrue(validation.errors().toString(), validation.errors().isEmpty());
+    }
+
+    @Test
     public void inactiveLibraryGraphDoesNotEnterTheRuntimeGate() throws Exception {
         Path pack = temporaryFolder.newFolder("pack").toPath();
         write(pack, "structures/library.json", "{\"startPool\":\"library/start\",\"maxDepth\":2}");
@@ -260,7 +286,7 @@ public class StructureGraphPackValidatorTest {
     }
 
     @Test
-    public void reportsSampledRuntimeGeometryFailureWithoutEscapingValidation() throws Exception {
+    public void reportsAuthoritativeGeometryFailureWithoutEscapingValidation() throws Exception {
         Path pack = temporaryFolder.newFolder("pack").toPath();
         String source = "{\"position\":{\"x\":1,\"y\":1,\"z\":0},"
                 + "\"direction\":\"NORTH_NEGATIVE_Z\",\"top\":\"UP_POSITIVE_Y\","
@@ -287,7 +313,7 @@ public class StructureGraphPackValidatorTest {
         StructureGraphPackValidator.Validation validation = StructureGraphPackValidator.validate(pack);
 
         assertTrue(validation.errors().toString(), validation.errors().stream().anyMatch(
-                message -> message.contains("fails sampled collision- and radius-aware assembly")
+                message -> message.contains("does not produce a complete deterministic assembly")
                         && message.contains("seed 0")));
     }
 

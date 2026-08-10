@@ -23,11 +23,11 @@ import art.arcane.iris.core.structure.StructureIndexService;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.framework.StructureAssembler;
+import art.arcane.iris.engine.framework.structure.StructureAssemblyResult;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
-import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -44,6 +44,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
@@ -148,8 +149,9 @@ public final class ModdedStructureCommands {
         }
         StructureAssembler assembler = StructureAssembler.forData(
                 data, structure, new IrisPosition(0, 64, 0));
-        KList<PlacedStructurePiece> pieces = assembler.assemble(new RNG(1234));
-        if (pieces == null || pieces.isEmpty()) {
+        StructureAssemblyResult assembly = assembler.assemble(new RNG(1234));
+        List<PlacedStructurePiece> pieces = assembly.pieces();
+        if (!assembly.hasOutput()) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STRUCTURE_COMMANDS_STRUCTURE_ASSEMBLED_0_PIECES_CHECK_STARTPOOL, MessageArgument.untrusted("key", key), MessageArgument.untrusted("value", structure.getStartPool())));
             return 0;
         }
@@ -191,8 +193,9 @@ public final class ModdedStructureCommands {
         StructureAssembler assembler = StructureAssembler.forData(
                 data, structure, new IrisPosition(originX, originY, originZ));
         RNG rng = new RNG((long) originX * 341873128712L + originZ);
-        KList<PlacedStructurePiece> pieces = assembler.assemble(rng);
-        if (pieces == null || pieces.isEmpty()) {
+        StructureAssemblyResult assembly = assembler.assemble(rng);
+        List<PlacedStructurePiece> pieces = assembly.pieces();
+        if (!assembly.hasOutput()) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STRUCTURE_COMMANDS_STRUCTURE_ASSEMBLED_0_PIECES, MessageArgument.untrusted("key", key)));
             return 0;
         }

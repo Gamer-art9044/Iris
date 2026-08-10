@@ -29,6 +29,7 @@ import art.arcane.iris.core.structure.authoring.StructureSource;
 import art.arcane.iris.core.structure.authoring.StructureTransactionWriter;
 import art.arcane.iris.core.structure.authoring.StructureWriteMode;
 import art.arcane.iris.core.structure.authoring.StructureWriteResult;
+import art.arcane.iris.engine.framework.structure.StructureGraphValidationException;
 import art.arcane.iris.engine.framework.structure.StructureResourceBundleGraphCompiler;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.LegacyTileData;
@@ -66,7 +67,33 @@ public final class StructureImporter {
         ADD_ONLY
     }
 
-    public record Result(boolean success, String message, int blocks, List<StructureLoss> losses) {
+    enum Ownership {
+        EDITABLE,
+        MANAGED_DATAPACK;
+
+        StructureWriteResult write(
+                IrisData data,
+                StructureResourceBundle bundle,
+                StructureWriteMode mode
+        ) {
+            StructureTransactionWriter writer = new StructureTransactionWriter(data.getDataFolder().toPath());
+            return this == MANAGED_DATAPACK
+                    ? writer.writeManagedDatapack(bundle, mode)
+                    : writer.write(bundle, mode);
+        }
+    }
+
+    public record Result(
+            boolean success,
+            String message,
+            int blocks,
+            List<StructureLoss> losses,
+            boolean retryableFailure
+    ) {
+        public Result(boolean success, String message, int blocks, List<StructureLoss> losses) {
+            this(success, message, blocks, losses, false);
+        }
+
         public Result {
             losses = List.copyOf(losses);
         }
@@ -75,6 +102,7 @@ public final class StructureImporter {
     record CapturedStructure(
             IrisObject object,
             int blocks,
+            int nonAirBlocks,
             int tiles,
             int width,
             int height,
@@ -113,10 +141,21 @@ public final class StructureImporter {
     }
 
     public static Result importStructure(IrisData data, NamespacedKey key, String name, Mode mode) {
-        return importStructure(data, key, name, mode, false);
+        return importStructure(data, key, name, mode, false, Ownership.EDITABLE);
     }
 
     public static Result importStructure(IrisData data, NamespacedKey key, String name, Mode mode, boolean objectOnly) {
+        return importStructure(data, key, name, mode, objectOnly, Ownership.EDITABLE);
+    }
+
+    static Result importStructure(
+            IrisData data,
+            NamespacedKey key,
+            String name,
+            Mode mode,
+            boolean objectOnly,
+            Ownership ownership
+    ) {
         Mode activeMode = mode == null ? Mode.ADD_ONLY : mode;
         Structure structure;
         try {
@@ -124,7 +163,7 @@ public final class StructureImporter {
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
-            return new Result(false, "Failed to load structure " + key + ": " + e.getMessage(), 0, List.of());
+            return new Result(false, "Failed to load structure " + key + ": " + e.getMessage(), 0, List.of(), true);
         }
         if (structure == null || structure.getPalettes().isEmpty()) {
             return new Result(false, "No loadable structure NBT for key " + key + " (jigsaw structures must be imported by their piece keys)", 0, List.of());
@@ -136,7 +175,7 @@ public final class StructureImporter {
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
-            return new Result(false, "Failed to capture structure " + key + ": " + e.getMessage(), 0, List.of());
+            return new Result(false, "Failed to capture structure " + key + ": " + e.getMessage(), 0, List.of(), true);
         }
 
         IrisObject object = captured.object();
@@ -168,20 +207,23 @@ public final class StructureImporter {
             }
             StructureWriteMode writeMode = activeMode == Mode.ADD_ONLY
                     ? StructureWriteMode.ADD_ONLY : StructureWriteMode.OVERWRITE;
-            StructureWriteResult writeResult = new StructureTransactionWriter(data.getDataFolder().toPath())
-                    .write(bundle, writeMode);
+            StructureWriteResult writeResult = ownership.write(data, bundle, writeMode);
             reportWriteFailure(writeResult);
             if (!writeResult.successful()) {
-                return new Result(false, writeFailureMessage(name, activeMode, writeResult), count, losses);
+                return new Result(false, writeFailureMessage(name, activeMode, writeResult), count, losses,
+                        writeResult.failure().isPresent());
             }
             if (writeResult.committed()) {
                 data.invalidateStructureResources();
             }
             writeNote = writeResultNote(writeResult);
+        } catch (StructureGraphValidationException e) {
+            return new Result(false, "Failed writing import for '" + name + "': " + e.getMessage(), count, losses);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
-            return new Result(false, "Failed writing import for '" + name + "': " + e.getMessage(), count, losses);
+            return new Result(false, "Failed writing import for '" + name + "': " + e.getMessage(), count, losses,
+                    true);
         }
 
         String lossSummary = losses.isEmpty() ? "" : ", " + losses.size() + " fidelity warning(s) recorded";
@@ -201,8 +243,10 @@ public final class StructureImporter {
         int d = Math.max(1, size.getBlockZ());
         IrisObject object = new IrisObject(w, h, d);
         int count = 0;
+        int nonAirBlocks = 0;
         int tiles = 0;
         int structureMarkers = 0;
+        int invalidFinalStates = 0;
         Palette palette = activeStructure.getPalettes().get(0);
         for (BlockState block : palette.getBlocks()) {
             Location loc = block.getLocation();
@@ -222,7 +266,11 @@ public final class StructureImporter {
                 structureMarkers++;
             }
             if (mat == Material.JIGSAW) {
-                BlockData resolved = readJigsawFinalState(block);
+                FinalStateResult finalState = readJigsawFinalState(block);
+                BlockData resolved = finalState.blockData();
+                if (finalState.invalidSourceState()) {
+                    invalidFinalStates++;
+                }
                 if (resolved == null || isAir(resolved)) {
                     continue;
                 }
@@ -232,6 +280,9 @@ public final class StructureImporter {
             }
             object.setUnsigned(x, y, z, art.arcane.iris.platform.bukkit.BukkitBlockState.of(blockData));
             count++;
+            if (!isAir(blockData)) {
+                nonAirBlocks++;
+            }
             if (!structural) {
                 LegacyTileData tile = captureTile(block);
                 if (tile != null) {
@@ -249,13 +300,14 @@ public final class StructureImporter {
         return new CapturedStructure(
                 object,
                 count,
+                nonAirBlocks,
                 tiles,
                 w,
                 h,
                 d,
                 structureMarkers,
                 capabilities,
-                importLosses(activeStructure, structureMarkers)
+                importLosses(activeStructure, structureMarkers, invalidFinalStates)
         );
     }
 
@@ -264,7 +316,11 @@ public final class StructureImporter {
         return m == Material.AIR || m == Material.CAVE_AIR || m == Material.VOID_AIR;
     }
 
-    private static List<StructureLoss> importLosses(Structure structure, int structureMarkers) {
+    private static List<StructureLoss> importLosses(
+            Structure structure,
+            int structureMarkers,
+            int invalidFinalStates
+    ) {
         List<StructureLoss> losses = new ArrayList<>();
         if (structure.getPaletteCount() > 1) {
             losses.add(StructureLoss.warning(
@@ -284,6 +340,12 @@ public final class StructureImporter {
                     StructureCapability.BLOCKS,
                     "structure_markers_resolved",
                     structureMarkers + " jigsaw or structure marker(s) were resolved to final blocks or omitted from the Iris snapshot."));
+        }
+        if (invalidFinalStates > 0) {
+            losses.add(StructureLoss.warning(
+                    StructureCapability.BLOCKS,
+                    "invalid_jigsaw_final_state",
+                    invalidFinalStates + " jigsaw final-state value(s) were invalid and omitted from the Iris snapshot."));
         }
         return losses;
     }
@@ -313,28 +375,56 @@ public final class StructureImporter {
         return "Failed writing import for '" + name + "' in " + mode.name().toLowerCase() + " mode: " + failure;
     }
 
-    private static BlockData readJigsawFinalState(BlockState block) {
+    private static FinalStateResult readJigsawFinalState(BlockState block) {
+        String finalState;
         try {
             Object nbt = block.getClass().getMethod("getSnapshotNBT").invoke(block);
             if (nbt == null) {
-                return null;
+                return new FinalStateResult(null, false);
             }
             Object res = nbt.getClass().getMethod("getString", String.class).invoke(nbt, "final_state");
-            String finalState = null;
+            finalState = null;
             if (res instanceof String s) {
                 finalState = s;
             } else if (res instanceof Optional<?> o && o.isPresent()) {
                 finalState = String.valueOf(o.get());
             }
             if (finalState == null || finalState.isBlank()) {
-                return null;
+                return new FinalStateResult(null, false);
             }
-            return Bukkit.createBlockData(finalState);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
+            if (VillageImporter.shouldPrintFullTrace(e)) {
+                e.printStackTrace();
+            }
+            return new FinalStateResult(null, false);
+        }
+        try {
+            return new FinalStateResult(Bukkit.createBlockData(normalizeJigsawFinalState(finalState)), false);
+        } catch (IllegalArgumentException e) {
+            return new FinalStateResult(null, true);
+        }
+    }
+
+    static String normalizeJigsawFinalState(String finalState) {
+        if (finalState == null) {
             return null;
         }
+        int propertiesStart = finalState.indexOf('[');
+        String blockId = propertiesStart < 0 ? finalState : finalState.substring(0, propertiesStart);
+        if (blockId.equals("minecraft:chisled_polished_blackstone")) {
+            finalState = "minecraft:chiseled_polished_blackstone"
+                    + (propertiesStart < 0 ? "" : finalState.substring(propertiesStart));
+            propertiesStart = finalState.indexOf('[');
+        }
+        if (propertiesStart < 0 || !finalState.substring(0, propertiesStart).endsWith("_slab")
+                || finalState.contains("type=")) {
+            return finalState;
+        }
+        return finalState.replaceAll("([\\[,])half=(top|bottom)(?=[,\\]])", "$1type=$2");
+    }
+
+    private record FinalStateResult(BlockData blockData, boolean invalidSourceState) {
     }
 
     private static LegacyTileData captureTile(BlockState block) {
@@ -376,7 +466,8 @@ public final class StructureImporter {
             } catch (IOException e) {
                 IrisLogging.reportError(e);
                 e.printStackTrace();
-                return new Result(false, "Cannot read imported object '" + rel + "': " + e.getMessage(), 0, List.of());
+                return new Result(false, "Cannot read imported object '" + rel + "': " + e.getMessage(), 0,
+                        List.of(), true);
             }
         }
 
@@ -407,7 +498,8 @@ public final class StructureImporter {
                     .write(bundle, writeMode);
             reportWriteFailure(writeResult);
             if (!writeResult.successful()) {
-                return new Result(false, writeFailureMessage(groupName, activeMode, writeResult), 0, List.of());
+                return new Result(false, writeFailureMessage(groupName, activeMode, writeResult), 0, List.of(),
+                        writeResult.failure().isPresent());
             }
             if (writeResult.committed()) {
                 data.invalidateStructureResources();
@@ -417,7 +509,8 @@ public final class StructureImporter {
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
-            return new Result(false, "Failed writing group structure '" + groupName + "': " + e.getMessage(), 0, List.of());
+            return new Result(false, "Failed writing group structure '" + groupName + "': " + e.getMessage(), 0,
+                    List.of(), true);
         }
 
     }
@@ -493,17 +586,21 @@ public final class StructureImporter {
                     .write(bundle, writeMode);
             reportWriteFailure(writeResult);
             if (!writeResult.successful()) {
-                return new Result(false, writeFailureMessage(name, activeMode, writeResult), 0, List.of());
+                return new Result(false, writeFailureMessage(name, activeMode, writeResult), 0, List.of(),
+                        writeResult.failure().isPresent());
             }
             if (writeResult.committed()) {
                 data.invalidateStructureResources();
             }
             return new Result(true, "Captured '" + vanillaSource + "' as '" + name + "'"
                     + writeResultNote(writeResult), object.getBlocks().size(), List.of());
+        } catch (StructureGraphValidationException e) {
+            return new Result(false, "Failed writing capture for '" + name + "': " + e.getMessage(), 0, List.of());
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             e.printStackTrace();
-            return new Result(false, "Failed writing capture for '" + name + "': " + e.getMessage(), 0, List.of());
+            return new Result(false, "Failed writing capture for '" + name + "': " + e.getMessage(), 0, List.of(),
+                    true);
         }
     }
 

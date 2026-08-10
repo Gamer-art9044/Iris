@@ -50,6 +50,7 @@ final class EngineShutdownSequence {
             if (engine.closed) {
                 return;
             }
+            engine.awaitNativeStructureBootstrap("close");
             engine.lifecycleState = LifecycleState.CLOSING;
             engine.getClosing().set(true);
             engine.backgroundTasks.closeBackgroundTaskAdmission();

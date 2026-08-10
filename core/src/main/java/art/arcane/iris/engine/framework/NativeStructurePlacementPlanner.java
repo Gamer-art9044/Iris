@@ -2,6 +2,7 @@ package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.engine.object.IrisNativeStructure;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
+import art.arcane.iris.engine.object.IrisStructureAnchorMode;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.volmlib.util.collection.KList;
@@ -93,6 +94,10 @@ public final class NativeStructurePlacementPlanner {
         if (iris == nativeStructure) {
             throw new IllegalStateException("Structure placement must declare exactly one backend: "
                     + "structures or nativeStructures");
+        }
+        if (nativeStructure && placement.getAnchor() != null
+                && placement.getAnchor() != IrisStructureAnchorMode.LEGACY) {
+            throw new IllegalStateException("Native structure placements do not support the Iris anchor field");
         }
     }
 

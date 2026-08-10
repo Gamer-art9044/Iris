@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.engine.object.annotations.Desc;
+import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import lombok.AllArgsConstructor;
@@ -33,17 +34,33 @@ import lombok.experimental.Accessors;
 @Data
 public class IrisJigsawPieceEntry {
     @RegistryListResource(IrisJigsawPiece.class)
-    @Desc("The jigsaw piece this entry refers to. Leave empty only when empty is true.")
-    private String piece = "";
+    @Desc("The jigsaw piece this entry refers to. Omit when empty is true.")
+    private String piece;
 
     @MinNumber(1)
     @Desc("The relative weight of this piece within its pool. Higher weights are chosen more often.")
     private int weight = 1;
 
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("The independent eligibility chance applied to this exact pool membership before weighted selection. Zero never passes and one always passes.")
+    private double chance = 1D;
+
     @Desc("When true, choosing this entry successfully terminates the current branch without placing a piece.")
     private boolean empty = false;
 
     public IrisJigsawPieceEntry(String piece, int weight) {
-        this(piece, weight, false);
+        this(piece, weight, 1D, false);
+    }
+
+    public boolean requiresChanceRoll() {
+        return chance > 0D && chance < 1D;
+    }
+
+    public boolean passesChance(double roll) {
+        if (!Double.isFinite(roll) || roll < 0D || roll >= 1D) {
+            throw new IllegalArgumentException("Jigsaw chance roll must be finite and within 0 inclusive and 1 exclusive");
+        }
+        return chance >= 1D || chance > 0D && roll < chance;
     }
 }

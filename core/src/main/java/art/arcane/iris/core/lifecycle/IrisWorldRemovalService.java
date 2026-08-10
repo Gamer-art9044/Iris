@@ -3,6 +3,7 @@ package art.arcane.iris.core.lifecycle;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.ServerConfigurator;
+import art.arcane.iris.core.SnapshotDirectoryTreeDeleter;
 import art.arcane.iris.core.WorldRemovalPathPolicy;
 import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.runtime.WorldDeletionQueue;
@@ -22,13 +23,10 @@ import org.bukkit.entity.Player;
 
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -1062,7 +1060,7 @@ public final class IrisWorldRemovalService {
 
         private DeleteDisposition deleteQuarantine(Path quarantine) {
             try {
-                deleteTree(quarantine);
+                SnapshotDirectoryTreeDeleter.delete(quarantine);
                 return new DeleteDisposition(false, quarantine);
             } catch (Throwable deletionFailure) {
                 IrisLogging.reportError(
@@ -1071,25 +1069,6 @@ public final class IrisWorldRemovalService {
                 );
                 return new DeleteDisposition(true, quarantine);
             }
-        }
-
-        private static void deleteTree(Path target) throws IOException {
-            Files.walkFileTree(target, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
-                    Files.delete(file);
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult postVisitDirectory(Path directory, IOException failure) throws IOException {
-                    if (failure != null) {
-                        throw failure;
-                    }
-                    Files.delete(directory);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
         }
 
         private static <T> CompletableFuture<T> onGlobal(Supplier<T> supplier) {

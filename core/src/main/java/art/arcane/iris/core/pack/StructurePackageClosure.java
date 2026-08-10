@@ -7,6 +7,7 @@ import art.arcane.volmlib.util.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -51,8 +52,16 @@ public final class StructurePackageClosure {
     }
 
     public static StructurePackageClosure collect(File sourceRoot, Collection<String> rootStructures) {
+        return collect(sourceRoot, rootStructures, null);
+    }
+
+    public static StructurePackageClosure collect(
+            File sourceRoot,
+            Collection<String> rootStructures,
+            Limits limits
+    ) {
         Path normalizedRoot = sourceRoot.toPath().toAbsolutePath().normalize();
-        MutableClosure closure = new MutableClosure();
+        MutableClosure closure = new MutableClosure(limits);
         if (!Files.isDirectory(normalizedRoot)) {
             closure.errors.add("Structure package source is not a directory: " + normalizedRoot);
             return new StructurePackageClosure(normalizedRoot, closure);
@@ -127,7 +136,7 @@ public final class StructurePackageClosure {
                 continue;
             }
 
-            JSONObject structure = readJson(sourceRoot, STRUCTURES, structureKey, closure.errors);
+            JSONObject structure = readJson(sourceRoot, STRUCTURES, structureKey, closure.errors, closure.limits);
             if (structure == null) {
                 continue;
             }
@@ -148,7 +157,7 @@ public final class StructurePackageClosure {
                 continue;
             }
 
-            JSONObject pool = readJson(sourceRoot, POOLS, poolKey, closure.errors);
+            JSONObject pool = readJson(sourceRoot, POOLS, poolKey, closure.errors, closure.limits);
             if (pool == null) {
                 continue;
             }
@@ -184,7 +193,7 @@ public final class StructurePackageClosure {
                 continue;
             }
 
-            JSONObject piece = readJson(sourceRoot, PIECES, pieceKey, closure.errors);
+            JSONObject piece = readJson(sourceRoot, PIECES, pieceKey, closure.errors, closure.limits);
             if (piece == null) {
                 continue;
             }
@@ -223,16 +232,35 @@ public final class StructurePackageClosure {
         }
     }
 
-    private static JSONObject readJson(Path sourceRoot, String folder, String key, List<String> errors) {
+    private static JSONObject readJson(
+            Path sourceRoot,
+            String folder,
+            String key,
+            List<String> errors,
+            Limits limits
+    ) {
         Path file = resolveExisting(sourceRoot, folder, key, ".json", errors);
         if (file == null) {
             return null;
         }
         try {
-            return new JSONObject(Files.readString(file, StandardCharsets.UTF_8));
+            String content = limits == null
+                    ? Files.readString(file, StandardCharsets.UTF_8)
+                    : new String(readBounded(file, limits.maxJsonBytes()), StandardCharsets.UTF_8);
+            return new JSONObject(content);
         } catch (IOException | RuntimeException e) {
             errors.add("Invalid " + folder + " resource '" + key + "': " + describe(e));
             return null;
+        }
+    }
+
+    private static byte[] readBounded(Path file, int maximumBytes) throws IOException {
+        try (InputStream input = Files.newInputStream(file)) {
+            byte[] content = input.readNBytes(maximumBytes + 1);
+            if (content.length > maximumBytes) {
+                throw new IOException("JSON resource exceeds " + maximumBytes + " bytes");
+            }
+            return content;
         }
     }
 
@@ -481,8 +509,16 @@ public final class StructurePackageClosure {
         if (!isEmpty) {
             return false;
         }
-        if (entry.has("piece")) {
-            errors.add("Empty piece entry " + index + " in jigsaw pool '" + poolKey + "' cannot define field 'piece'.");
+        if (!entry.has("piece")) {
+            return true;
+        }
+        Object pieceValue = entry.opt("piece");
+        if (!(pieceValue instanceof String piece)) {
+            errors.add("Empty piece entry " + index + " in jigsaw pool '" + poolKey
+                    + "' requires string field 'piece' when defined.");
+        } else if (!piece.isBlank()) {
+            errors.add("Empty piece entry " + index + " in jigsaw pool '" + poolKey
+                    + "' cannot define non-empty field 'piece'.");
         }
         return true;
     }
@@ -504,15 +540,66 @@ public final class StructurePackageClosure {
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
+    public record Limits(int maxResources, int maxJsonBytes) {
+        public Limits {
+            if (maxResources < 1 || maxResources > 100_000) {
+                throw new IllegalArgumentException("Structure closure resource limit must be between 1 and 100000");
+            }
+            if (maxJsonBytes < 1 || maxJsonBytes > 64 * 1024 * 1024) {
+                throw new IllegalArgumentException("Structure closure JSON limit must be between 1 and 67108864 bytes");
+            }
+        }
+    }
+
     private static final class MutableClosure {
-        private final Set<String> structures = new LinkedHashSet<>();
-        private final Set<String> pools = new LinkedHashSet<>();
-        private final Set<String> pieces = new LinkedHashSet<>();
-        private final Set<String> objects = new LinkedHashSet<>();
-        private final Set<String> loot = new LinkedHashSet<>();
+        private final Limits limits;
+        private final Set<String> structures;
+        private final Set<String> pools;
+        private final Set<String> pieces;
+        private final Set<String> objects;
+        private final Set<String> loot;
         private final List<String> errors = new ArrayList<>();
         private final Deque<String> structureQueue = new ArrayDeque<>();
         private final Deque<String> poolQueue = new ArrayDeque<>();
         private final Deque<String> pieceQueue = new ArrayDeque<>();
+        private int resources;
+        private boolean resourceLimitReported;
+
+        private MutableClosure(Limits limits) {
+            this.limits = limits;
+            structures = new BudgetedSet(this);
+            pools = new BudgetedSet(this);
+            pieces = new BudgetedSet(this);
+            objects = new BudgetedSet(this);
+            loot = new BudgetedSet(this);
+        }
+
+        private boolean reserveResource() {
+            if (limits == null || resources < limits.maxResources()) {
+                resources++;
+                return true;
+            }
+            if (!resourceLimitReported) {
+                errors.add("Structure closure exceeds " + limits.maxResources() + " resources.");
+                resourceLimitReported = true;
+            }
+            return false;
+        }
+    }
+
+    private static final class BudgetedSet extends LinkedHashSet<String> {
+        private final MutableClosure closure;
+
+        private BudgetedSet(MutableClosure closure) {
+            this.closure = closure;
+        }
+
+        @Override
+        public boolean add(String value) {
+            if (contains(value) || !closure.reserveResource()) {
+                return false;
+            }
+            return super.add(value);
+        }
     }
 }

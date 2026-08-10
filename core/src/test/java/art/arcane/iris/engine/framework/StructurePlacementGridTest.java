@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.engine.object.IrisStructurePlacement;
+import art.arcane.iris.engine.object.IrisStructureAnchorMode;
 import art.arcane.iris.engine.object.StructureDistribution;
 import org.junit.Test;
 
@@ -253,6 +254,67 @@ public class StructurePlacementGridTest {
         long firstSeed = StructurePlacementGrid.placementRng(first, 9, 14, 42L).getSeed();
         long secondSeed = StructurePlacementGrid.placementRng(second, 9, 14, 42L).getSeed();
         assertNotEquals(firstSeed, secondSeed);
+    }
+
+    @Test
+    public void legacyAnchorDoesNotMoveExistingPlacements() {
+        IrisStructurePlacement implicit = placement(StructureDistribution.RANDOM_SPREAD);
+        IrisStructurePlacement explicit = placement(StructureDistribution.RANDOM_SPREAD)
+                .setAnchor(IrisStructureAnchorMode.LEGACY);
+
+        assertEquals(StructurePlacementGrid.placementIdentity(implicit),
+                StructurePlacementGrid.placementIdentity(explicit));
+        assertEquals(StructurePlacementGrid.placementSalt(implicit),
+                StructurePlacementGrid.placementSalt(explicit));
+    }
+
+    @Test
+    public void caveAnchorConfigurationParticipatesInAnonymousIdentity() {
+        IrisStructurePlacement floor = placement(StructureDistribution.RANDOM_SPREAD)
+                .setAnchor(IrisStructureAnchorMode.CAVE_FLOOR);
+        IrisStructurePlacement ceiling = placement(StructureDistribution.RANDOM_SPREAD)
+                .setAnchor(IrisStructureAnchorMode.CAVE_CEILING);
+
+        assertNotEquals(StructurePlacementGrid.placementIdentity(floor),
+                StructurePlacementGrid.placementIdentity(ceiling));
+        assertNotEquals(StructurePlacementGrid.placementSalt(floor),
+                StructurePlacementGrid.placementSalt(ceiling));
+    }
+
+    @Test
+    public void unusedCaveSettingsDoNotMoveExplicitSurfacePlacements() {
+        IrisStructurePlacement first = placement(StructureDistribution.RANDOM_SPREAD)
+                .setAnchor(IrisStructureAnchorMode.SURFACE);
+        IrisStructurePlacement second = placement(StructureDistribution.RANDOM_SPREAD)
+                .setAnchor(IrisStructureAnchorMode.SURFACE)
+                .setCaveAnchorAttempts(64)
+                .setCaveAnchorScanStep(16)
+                .setCaveMinimumClearance(64);
+        second.getCaveBiomes().add("unused");
+
+        assertEquals(StructurePlacementGrid.placementIdentity(first),
+                StructurePlacementGrid.placementIdentity(second));
+        assertEquals(StructurePlacementGrid.placementSalt(first),
+                StructurePlacementGrid.placementSalt(second));
+    }
+
+    @Test
+    public void caveBiomeAllowlistIdentityIgnoresOrderCaseWhitespaceAndDuplicates() {
+        IrisStructurePlacement first = placement(StructureDistribution.RANDOM_SPREAD)
+                .setAnchor(IrisStructureAnchorMode.CAVE_CENTER);
+        first.getCaveBiomes().add("crystal");
+        first.getCaveBiomes().add("deep");
+        IrisStructurePlacement second = placement(StructureDistribution.RANDOM_SPREAD)
+                .setAnchor(IrisStructureAnchorMode.CAVE_CENTER);
+        second.getCaveBiomes().add(" DEEP ");
+        second.getCaveBiomes().add("CRYSTAL");
+        second.getCaveBiomes().add("crystal");
+        second.getCaveBiomes().add(" ");
+
+        assertEquals(StructurePlacementGrid.placementIdentity(first),
+                StructurePlacementGrid.placementIdentity(second));
+        assertEquals(StructurePlacementGrid.placementSalt(first),
+                StructurePlacementGrid.placementSalt(second));
     }
 
     @Test

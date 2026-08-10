@@ -78,9 +78,9 @@ import java.lang.reflect.Method;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -127,31 +127,8 @@ public final class EngineBukkitOps {
 
         MantleChunk<Matter> chunk = mantle.getChunk(c).use();
         try {
-            Runnable tileTask = () -> {
-                chunk.iterate(TileWrapper.class, (x, y, z, v) -> {
-                    int worldY = y + engine.getWorld().minHeight();
-                    if (worldY < c.getWorld().getMinHeight() || worldY >= c.getWorld().getMaxHeight()) {
-                        return;
-                    }
-                    Block block = c.getBlock(x & 15, worldY, z & 15);
-                    if (!TileData.setTileState(block, v.getData())) {
-                        NamespacedKey blockTypeKey = KeyedType.getKey(block.getType());
-                        String blockType = blockTypeKey == null ? block.getType().name() : blockTypeKey.toString();
-                        String tileType = v.getData().getMaterialKey();
-                        IrisLogging.warn("Failed to set tile entity data at [%d %d %d | %s] for tile %s!", block.getX(), block.getY(), block.getZ(), blockType, tileType);
-                    }
-                });
-            };
-
-            Runnable customTask = () -> {
-                chunk.iterate(Identifier.class, (x, y, z, v) -> {
-                    int worldY = y + engine.getWorld().minHeight();
-                    if (worldY < c.getWorld().getMinHeight() || worldY >= c.getWorld().getMaxHeight()) {
-                        return;
-                    }
-                    IrisServices.get(ExternalDataSVC.class).processUpdate(engine, c.getBlock(x & 15, worldY, z & 15), v);
-                });
-            };
+            Runnable tileTask = () -> materializeTiles(engine, c, chunk);
+            Runnable customTask = () -> materializeCustomBlocks(engine, c, chunk);
 
             Runnable updateTask = () -> {
                 PrecisionStopwatch p = PrecisionStopwatch.start();
@@ -199,30 +176,59 @@ public final class EngineBukkitOps {
             };
 
             if (shouldRunChunkUpdateInline(c)) {
-                chunk.raiseFlagUnchecked(MantleFlag.ETCHED, () -> {
-                    chunk.raiseFlagUnchecked(MantleFlag.TILE, tileTask);
-                    chunk.raiseFlagUnchecked(MantleFlag.CUSTOM, customTask);
-                    chunk.raiseFlagUnchecked(MantleFlag.UPDATE, updateTask);
-                });
+                runMaterializationPasses(chunk, tileTask, customTask, updateTask);
                 return;
             }
 
-            Semaphore semaphore = new Semaphore(1024);
-            chunk.raiseFlagUnchecked(MantleFlag.ETCHED, () -> {
-                chunk.raiseFlagUnchecked(MantleFlag.TILE, run(semaphore, c, tileTask, 0));
-                chunk.raiseFlagUnchecked(MantleFlag.CUSTOM, run(semaphore, c, customTask, 0));
-                chunk.raiseFlagUnchecked(MantleFlag.UPDATE, run(semaphore, c, updateTask, RNG.r.i(1, 20)));
-            });
-
-            try {
-                semaphore.acquire(1024);
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                IrisLogging.reportError(ex);
-            }
+            runScheduledMaterializationPasses(c, () -> runMaterializationPasses(chunk, tileTask, customTask, updateTask));
         } finally {
             chunk.release();
         }
+    }
+
+    static void materializeTiles(Engine engine, Chunk chunk, MantleChunk<Matter> mantleChunk) {
+        mantleChunk.iterate(TileWrapper.class, (x, y, z, value) -> {
+            int worldY = y + engine.getWorld().minHeight();
+            if (worldY < chunk.getWorld().getMinHeight() || worldY >= chunk.getWorld().getMaxHeight()) {
+                return;
+            }
+            Block block = chunk.getBlock(x & 15, worldY, z & 15);
+            if (!TileData.setTileState(block, value.getData())) {
+                NamespacedKey blockTypeKey = KeyedType.getKey(block.getType());
+                String blockType = blockTypeKey == null ? block.getType().name() : blockTypeKey.toString();
+                String tileType = value.getData().getMaterialKey();
+                IrisLogging.warn("Failed to set tile entity data at [%d %d %d | %s] for tile %s!", block.getX(), block.getY(), block.getZ(), blockType, tileType);
+            }
+        });
+        mantleChunk.deleteSlices(TileWrapper.class);
+    }
+
+    static void materializeCustomBlocks(Engine engine, Chunk chunk, MantleChunk<Matter> mantleChunk) {
+        mantleChunk.iterate(Identifier.class, (x, y, z, value) -> {
+            int worldY = y + engine.getWorld().minHeight();
+            if (worldY < chunk.getWorld().getMinHeight() || worldY >= chunk.getWorld().getMaxHeight()) {
+                return;
+            }
+            IrisServices.get(ExternalDataSVC.class).processUpdate(
+                    engine,
+                    chunk.getBlock(x & 15, worldY, z & 15),
+                    value
+            );
+        });
+        mantleChunk.deleteSlices(Identifier.class);
+    }
+
+    static void runMaterializationPasses(
+            MantleChunk<Matter> chunk,
+            Runnable tileTask,
+            Runnable customTask,
+            Runnable updateTask
+    ) {
+        chunk.raiseFlagUnchecked(MantleFlag.ETCHED, () -> {
+            chunk.raiseFlagUnchecked(MantleFlag.TILE, tileTask);
+            chunk.raiseFlagUnchecked(MantleFlag.CUSTOM, customTask);
+            chunk.raiseFlagUnchecked(MantleFlag.UPDATE, updateTask);
+        });
     }
 
     private static boolean shouldRunChunkUpdateInline(Chunk chunk) {
@@ -237,33 +243,34 @@ public final class EngineBukkitOps {
         return J.isOwnedByCurrentRegion(chunk.getWorld(), chunk.getX(), chunk.getZ());
     }
 
-    private static Runnable run(Semaphore semaphore, Chunk contextChunk, Runnable runnable, int delay) {
-        return () -> {
+    private static void runScheduledMaterializationPasses(Chunk contextChunk, Runnable runnable) {
+        CompletableFuture<Void> completion = new CompletableFuture<>();
+        boolean scheduled = J.runRegion(contextChunk.getWorld(), contextChunk.getX(), contextChunk.getZ(), () -> {
             try {
-                semaphore.acquire();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+                runnable.run();
+                completion.complete(null);
+            } catch (Throwable error) {
+                completion.completeExceptionally(error);
             }
+        });
 
-            int effectiveDelay = J.isFolia() ? 0 : delay;
-            boolean scheduled = J.runRegion(contextChunk.getWorld(), contextChunk.getX(), contextChunk.getZ(), () -> {
-                try {
-                    runnable.run();
-                } finally {
-                    semaphore.release();
-                }
-            }, effectiveDelay);
-
-            if (!scheduled) {
-                try {
-                    if (J.isPrimaryThread()) {
-                        runnable.run();
-                    }
-                } finally {
-                    semaphore.release();
-                }
+        if (!scheduled) {
+            if (J.isPrimaryThread()) {
+                runnable.run();
             }
-        };
+            return;
+        }
+
+        try {
+            completion.join();
+        } catch (CompletionException error) {
+            Throwable cause = error.getCause();
+            IrisLogging.reportError(
+                    "Failed deferred chunk materialization for " + contextChunk.getWorld().getName()
+                            + " at chunk " + contextChunk.getX() + "," + contextChunk.getZ() + ".",
+                    cause == null ? error : cause
+            );
+        }
     }
 
     public static void update(Engine engine, int x, int y, int z, Chunk c, MantleChunk<Matter> mc) {

@@ -99,6 +99,7 @@ public final class DatapackIngestService {
     private static final String TRANSACTION_JOURNAL_NEXT = "journal.next.json";
     private static final int OWNERSHIP_SCHEMA = 1;
     private static final int TRANSACTION_SCHEMA = 2;
+    private static final int STRUCTURE_IMPORT_FORMAT_REVISION = 3;
     private static final int MAX_REDIRECTS = 5;
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final int MAX_CACHE_FILES = 32;
@@ -157,12 +158,25 @@ public final class DatapackIngestService {
     }
 
     public static Report ingest(VolmitSender sender, KList<String> urls, boolean restart) {
+        ServerConfigurator.LoadedDatapackRuntimeInvalidation invalidation =
+                ServerConfigurator.invalidateLoadedDatapackRuntime();
+        Report report;
         TRANSACTION_LOCK.lock();
         try {
-            return ingestLocked(sender, urls, restart);
+            report = ingestLocked(sender, urls, restart);
         } finally {
             TRANSACTION_LOCK.unlock();
         }
+        if (!report.changed() && report.getFailed().isEmpty()) {
+            ServerConfigurator.restoreLoadedDatapackRuntimeIfUnchanged(invalidation);
+        } else if (report.changed()) {
+            if (restart) {
+                ServerConfigurator.restart();
+            } else {
+                ServerConfigurator.requireDatapackRestart();
+            }
+        }
+        return report;
     }
 
     private static Report ingestLocked(VolmitSender sender, KList<String> urls, boolean restart) {
@@ -266,11 +280,9 @@ public final class DatapackIngestService {
 
         if (report.changed()) {
             message(sender, C.YELLOW + "New datapack structures were installed. A server restart is required for them to register and generate.");
-            message(sender, C.GRAY + "After the restart they generate natively - no import needed. To get editable Iris copies (jigsaw pools, pieces & objects written into the pack) run /iris structure import <dimension>, or set general.autoImportDatapackStructures=true to do it on every ingest. Place any registered key directly with a 'structures' placement using nativeStructures.");
+            message(sender, C.GRAY + "After the restart they generate natively only in Iris dimensions that declare their source URL - no import needed. To get editable Iris copies (jigsaw pools, pieces & objects written into the pack) run /iris structure import <dimension>, or set general.autoImportDatapackStructures=true to do it on every ingest. Place any registered key directly with a 'structures' placement using nativeStructures.");
             message(sender, C.GRAY + "Datapacks replace matching vanilla structure keys by default. Set 'importedStructures.datapackOverrides' to false to keep minecraft-namespaced structure definitions untouched; deny non-minecraft datapack and mod structures explicitly with importedStructures.disabled.");
-            if (restart) {
-                ServerConfigurator.restart();
-            } else {
+            if (!restart) {
                 message(sender, C.GRAY + "Run with restart=true to restart now, or restart manually. After restart, run /iris structure list <dimension> to see the new keys.");
             }
         }
@@ -278,26 +290,56 @@ public final class DatapackIngestService {
         return report;
     }
 
-    public static boolean reapplyFromStaging(KList<File> worldFolders) {
+    public static ReapplyOutcome reapplyFromStaging(KList<File> worldFolders) {
+        ServerConfigurator.LoadedDatapackRuntimeInvalidation invalidation =
+                ServerConfigurator.invalidateLoadedDatapackRuntime();
+        ReapplyOutcome outcome;
         TRANSACTION_LOCK.lock();
         try {
-            return reapplyFromStagingLocked(worldFolders);
+            outcome = reapplyFromStagingLocked(worldFolders);
         } finally {
             TRANSACTION_LOCK.unlock();
         }
+        if (outcome.succeeded() && !outcome.changed()) {
+            ServerConfigurator.restoreLoadedDatapackRuntimeIfUnchanged(invalidation);
+        } else if (outcome.changed()) {
+            ServerConfigurator.requireDatapackRestart();
+        }
+        return outcome;
     }
 
-    private static boolean reapplyFromStagingLocked(KList<File> worldFolders) {
+    private static ReapplyOutcome reapplyFromStagingLocked(KList<File> worldFolders) {
         File root = IrisPlatforms.get().dataFolder("datapacks");
-        if (!recoverBeforeReapply(root, worldFolders)) {
-            return false;
+        ReapplyOutcome recovery = recoverBeforeReapplyOutcome(root, worldFolders);
+        if (!recovery.succeeded()) {
+            return reportReapplyFailure(recovery);
         }
         File stagingDir = IrisPlatforms.get().dataFolderNoCreate("datapacks", "staging");
-        return reapplyStagingRoot(
-                root, stagingDir, worldFolders, resolveStripOverrides());
+        ReapplyOutcome repair = reapplyStagingRootOutcome(
+                root,
+                stagingDir,
+                worldFolders,
+                resolveStripOverrides());
+        if (!repair.succeeded()) {
+            return reportReapplyFailure(repair);
+        }
+        return ReapplyOutcome.success(recovery.recovered(), repair.repaired());
     }
 
     static boolean reapplyStagingRoot(
+            File root,
+            File stagingDir,
+            KList<File> worldFolders,
+            boolean stripOverrides
+    ) {
+        return reportReapplyFailure(reapplyStagingRootOutcome(
+                root,
+                stagingDir,
+                worldFolders,
+                stripOverrides)).succeeded();
+    }
+
+    static ReapplyOutcome reapplyStagingRootOutcome(
             File root,
             File stagingDir,
             KList<File> worldFolders,
@@ -307,18 +349,18 @@ public final class DatapackIngestService {
         if (stagingDir == null
                 || !Files.exists(stagingDir.toPath(), LinkOption.NOFOLLOW_LINKS)) {
             if (manifest.entries.isEmpty()) {
-                return true;
+                return ReapplyOutcome.success(false, false);
             }
-            IrisLogging.error("Managed datapack staging is missing at "
-                    + (stagingDir == null ? new File(root, "staging").getPath() : stagingDir.getPath()));
-            return false;
+            File missing = stagingDir == null ? new File(root, "staging") : stagingDir;
+            return ReapplyOutcome.failed(new IOException(
+                    "Managed datapack staging is missing at " + missing.getPath()));
         }
         if (Files.isSymbolicLink(stagingDir.toPath())
                 || !Files.isDirectory(stagingDir.toPath(), LinkOption.NOFOLLOW_LINKS)) {
-            IrisLogging.error("Managed datapack staging is not a safe directory at " + stagingDir.getPath());
-            return false;
+            return ReapplyOutcome.failed(new IOException(
+                    "Managed datapack staging is not a safe directory at " + stagingDir.getPath()));
         }
-        return reapplyStagedDirectories(
+        return reapplyStagedDirectoriesOutcome(
                 root, stagingDir, worldFolders, stripOverrides, manifest);
     }
 
@@ -330,14 +372,19 @@ public final class DatapackIngestService {
     ) {
         if (Files.isSymbolicLink(stagingDir.toPath())
                 || !Files.isDirectory(stagingDir.toPath(), LinkOption.NOFOLLOW_LINKS)) {
-            IrisLogging.error("Managed datapack staging is not a safe directory at " + stagingDir.getPath());
-            return false;
+            return reportReapplyFailure(ReapplyOutcome.failed(new IOException(
+                    "Managed datapack staging is not a safe directory at "
+                            + stagingDir.getPath()))).succeeded();
         }
-        return reapplyStagedDirectories(
-                root, stagingDir, worldFolders, stripOverrides, readManifest(root));
+        return reportReapplyFailure(reapplyStagedDirectoriesOutcome(
+                root,
+                stagingDir,
+                worldFolders,
+                stripOverrides,
+                readManifest(root))).succeeded();
     }
 
-    private static boolean reapplyStagedDirectories(
+    private static ReapplyOutcome reapplyStagedDirectoriesOutcome(
             File root,
             File stagingDir,
             KList<File> worldFolders,
@@ -346,37 +393,57 @@ public final class DatapackIngestService {
     ) {
         File[] staged = stagingDir.listFiles(File::isDirectory);
         if (staged == null) {
-            IrisLogging.error("Unable to enumerate managed datapack staging at " + stagingDir.getPath());
-            return false;
+            return ReapplyOutcome.failed(new IOException(
+                    "Unable to enumerate managed datapack staging at " + stagingDir.getPath()));
         }
-        boolean successful = true;
+        boolean repaired = false;
+        IOException failure = null;
         for (Entry entry : manifest.entries) {
             File stagedDir = new File(stagingDir, entry.id);
             if (isRecordedUnchangedInstall(stagedDir, worldFolders, entry, stripOverrides)) {
                 continue;
             }
             if (!isUsableStaging(stagedDir, entry)) {
-                IrisLogging.error("Managed datapack staging is unusable for '" + entry.id
-                        + "' at " + stagedDir.getPath());
                 forgetInstallMetadata(entry);
-                successful = false;
+                failure = appendFailure(failure, new IOException(
+                        "Managed datapack staging is unusable for '" + entry.id
+                                + "' at " + stagedDir.getPath()));
                 continue;
             }
             try {
                 InstallResult result = install(stagedDir, worldFolders, entry, stripOverrides);
                 if (result.changed()) {
+                    repaired = true;
                     IrisLogging.warn("Repaired installed datapack '" + entry.id
                             + "' from Iris staging before datapack compilation.");
                 }
                 recordInstallMetadata(stagedDir, worldFolders, entry);
             } catch (IOException e) {
-                IrisLogging.reportError(e);
                 forgetInstallMetadata(entry);
-                successful = false;
+                failure = appendFailure(failure, e);
             }
         }
         writeManifest(root, manifest);
-        return successful;
+        return failure == null
+                ? ReapplyOutcome.success(false, repaired)
+                : ReapplyOutcome.failed(failure);
+    }
+
+    private static IOException appendFailure(IOException current, IOException additional) {
+        if (current == null) {
+            return additional;
+        }
+        current.addSuppressed(additional);
+        return current;
+    }
+
+    private static ReapplyOutcome reportReapplyFailure(ReapplyOutcome outcome) {
+        if (!outcome.succeeded()) {
+            IrisLogging.reportError(
+                    "External datapack recovery or staging repair failed.",
+                    outcome.failure().orElseThrow());
+        }
+        return outcome;
     }
 
     private static boolean isRecordedUnchangedInstall(
@@ -501,22 +568,30 @@ public final class DatapackIngestService {
     }
 
     static boolean recoverBeforeReapply(File root, List<File> worldFolders) {
+        return reportReapplyFailure(recoverBeforeReapplyOutcome(root, worldFolders)).succeeded();
+    }
+
+    private static ReapplyOutcome recoverBeforeReapplyOutcome(File root, List<File> worldFolders) {
         try {
-            recoverTransactions(root, worldFolders);
+            return ReapplyOutcome.success(recoverTransactions(root, worldFolders), false);
         } catch (IOException e) {
-            IrisLogging.reportError("Datapack staging reapply blocked by incomplete transaction recovery.", e);
-            return false;
+            return ReapplyOutcome.failed(e);
         }
-        return true;
     }
 
     public static boolean remove(VolmitSender sender, String id) {
+        ServerConfigurator.invalidateLoadedDatapackRuntime();
+        boolean removed;
         TRANSACTION_LOCK.lock();
         try {
-            return removeLocked(sender, id);
+            removed = removeLocked(sender, id);
         } finally {
             TRANSACTION_LOCK.unlock();
         }
+        if (removed) {
+            ServerConfigurator.requireDatapackRestart();
+        }
+        return removed;
     }
 
     private static boolean removeLocked(VolmitSender sender, String id) {
@@ -737,6 +812,7 @@ public final class DatapackIngestService {
         List<PreparedEditableImport> prepared = new ArrayList<>();
         Set<String> targetIdSet = new TreeSet<>(entry.importedBundles.keySet());
         targetIdSet.addAll(entry.importedTargets.keySet());
+        targetIdSet.addAll(entry.importAttempts.keySet());
         List<String> targetIds = new ArrayList<>(targetIdSet);
         targetIds.sort(String::compareTo);
         try {
@@ -792,7 +868,7 @@ public final class DatapackIngestService {
                 if (ownedSource.isEmpty() || !sourceClaimsContain(bundle.getValue(), ownedSource.get())) {
                     continue;
                 }
-                removals.add(new StructureTransactionWriter.OwnedRemoval(
+                removals.add(StructureTransactionWriter.OwnedRemoval.managedDatapack(
                         targetKey,
                         ownedSource.get().kind(),
                         ownedSource.get().key()
@@ -826,6 +902,7 @@ public final class DatapackIngestService {
             }
             if (candidateRetained) {
                 candidate.importedTargets.remove(targetId);
+                candidate.importAttempts.remove(targetId);
                 candidate.structuresImported = false;
             }
         }
@@ -961,6 +1038,56 @@ public final class DatapackIngestService {
         } finally {
             TRANSACTION_LOCK.unlock();
         }
+    }
+
+    public static List<StructureScopeResources> installedStructureScopeResources() throws IOException {
+        TRANSACTION_LOCK.lock();
+        try {
+            File root = IrisPlatforms.get().dataFolder("datapacks");
+            Manifest manifest = readManifest(root);
+            KList<File> datapackFolders = ServerConfigurator.getDatapacksFolder();
+            List<StructureScopeResources> resources = new ArrayList<>();
+            for (Entry entry : manifest.entries) {
+                boolean found = false;
+                for (File datapackFolder : datapackFolders) {
+                    File installedDirectory = new File(datapackFolder, entry.id);
+                    if (!Files.exists(installedDirectory.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                        continue;
+                    }
+                    resources.add(scanInstalledStructureScope(installedDirectory, entry));
+                    found = true;
+                }
+                if (!found) {
+                    throw new IOException("Missing installed Iris-managed datapack '" + entry.id + "'");
+                }
+            }
+            return List.copyOf(resources);
+        } finally {
+            TRANSACTION_LOCK.unlock();
+        }
+    }
+
+    static StructureScopeResources scanInstalledStructureScope(File directory, Entry entry) throws IOException {
+        Path path = directory.toPath();
+        if (Files.isSymbolicLink(path)
+                || !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Invalid installed Iris-managed datapack directory " + directory.getPath());
+        }
+        validatePackMetadata(directory);
+        rejectSymbolicLinks(directory);
+        Ownership ownership = readOwnership(directory);
+        if (!ownershipSourceMatches(ownership, entry)) {
+            throw new IOException("Installed datapack ownership mismatch at " + directory.getPath());
+        }
+        if (!Objects.equals(ownership.contentHash, directoryHash(directory))) {
+            throw new IOException("Installed Iris-managed datapack is modified or corrupt at "
+                    + directory.getPath());
+        }
+        PackResources resources = scanPackResources(directory);
+        return new StructureScopeResources(
+                entry.url,
+                resources.structureKeys(),
+                resources.structureSetKeys());
     }
 
     private static void ingestSingle(
@@ -2258,10 +2385,11 @@ public final class DatapackIngestService {
 
     private static PackResources scanPackResources(File root) throws IOException {
         TreeSet<String> structureKeys = new TreeSet<>();
+        TreeSet<String> structureSetKeys = new TreeSet<>();
         TreeSet<String> templateKeys = new TreeSet<>();
         Path dataRoot = new File(root, "data").toPath();
         if (!Files.isDirectory(dataRoot, LinkOption.NOFOLLOW_LINKS)) {
-            return new PackResources(new ArrayList<>(), new ArrayList<>());
+            return new PackResources(new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
         }
         try (Stream<Path> paths = Files.walk(dataRoot)) {
             for (Path path : paths.filter(file -> Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)).toList()) {
@@ -2273,11 +2401,16 @@ public final class DatapackIngestService {
                 String normalized = relative.subpath(1, relative.getNameCount()).toString().replace(File.separatorChar, '/');
                 addResourceKey(structureKeys, namespace, normalized, "worldgen/structure/", ".json");
                 addResourceKey(structureKeys, namespace, normalized, "worldgen/structures/", ".json");
+                addResourceKey(structureSetKeys, namespace, normalized, "worldgen/structure_set/", ".json");
+                addResourceKey(structureSetKeys, namespace, normalized, "worldgen/structure_sets/", ".json");
                 addResourceKey(templateKeys, namespace, normalized, "structure/", ".nbt");
                 addResourceKey(templateKeys, namespace, normalized, "structures/", ".nbt");
             }
         }
-        return new PackResources(new ArrayList<>(structureKeys), new ArrayList<>(templateKeys));
+        return new PackResources(
+                new ArrayList<>(structureKeys),
+                new ArrayList<>(structureSetKeys),
+                new ArrayList<>(templateKeys));
     }
 
     private static void addResourceKey(Set<String> keys, String namespace, String path, String prefix, String suffix) {
@@ -2362,13 +2495,13 @@ public final class DatapackIngestService {
             Set<String> configured = configuredImports(data);
             String targetId = data.getDataFolder().toPath().toAbsolutePath().normalize().toString();
             for (Entry entry : manifest.entries) {
-                if (!configured.contains(entry.url) && entry.importedBundles.containsKey(targetId)) {
+                if (!configured.contains(entry.url) && hasImportState(entry, targetId)) {
                     cleanupTargets++;
                 }
             }
             if (!cleanupRemovedImports(data, targetId, configured, manifest.entries, manifestEntriesByUrl)) {
                 for (Entry entry : manifest.entries) {
-                    if (!configured.contains(entry.url) && entry.importedBundles.containsKey(targetId)) {
+                    if (!configured.contains(entry.url) && hasImportState(entry, targetId)) {
                         failedUrls.add(entry.url);
                     }
                 }
@@ -2380,7 +2513,7 @@ public final class DatapackIngestService {
             Set<String> pendingUrls = new HashSet<>();
             for (String url : configured) {
                 Entry entry = entriesByUrl.get(url);
-                if (entry != null && !importRevision(entry).equals(entry.importedTargets.get(targetId))) {
+                if (entry != null && importPending(entry, targetId)) {
                     pendingUrls.add(url);
                 }
             }
@@ -2411,20 +2544,13 @@ public final class DatapackIngestService {
             }
             attemptedPacks++;
             try {
-                BulkStructureImporter.Report report = BulkStructureImporter.importDatapackStructures(
+                BulkStructureImporter.Report report = BulkStructureImporter.importManagedDatapackStructures(
                         data,
                         StructureImporter.Mode.OVERWRITE,
                         BukkitPlatform.console(),
                         structureKeys,
                         templateKeys
                 );
-                if (report.failed() > 0) {
-                    IrisLogging.error("Datapack structure import for pack '%s' reported %d failure(s); the manifest remains pending for retry.",
-                            data.getDataFolder().getPath(), report.failed());
-                    failedUrls.addAll(pendingUrls);
-                    reconcileFailedImportInventories(root, manifest, data, targetId, pendingUrls, entriesByUrl);
-                    continue;
-                }
                 Set<String> successfulPendingUrls = new HashSet<>(pendingUrls);
                 Set<String> incompleteUrls = new HashSet<>();
                 for (String pendingUrl : pendingUrls) {
@@ -2434,13 +2560,25 @@ public final class DatapackIngestService {
                         successfulPendingUrls.remove(pendingUrl);
                         incompleteUrls.add(pendingUrl);
                         failedUrls.add(pendingUrl);
-                        IrisLogging.error("Datapack structure import for '%s' did not prove every requested bundle in pack '%s'; the source remains pending for retry.",
-                                pendingUrl, data.getDataFolder().getPath());
                     }
                 }
+                if (report.failed() > 0 && incompleteUrls.isEmpty()) {
+                    successfulPendingUrls.clear();
+                    incompleteUrls.addAll(pendingUrls);
+                    failedUrls.addAll(pendingUrls);
+                }
                 if (!incompleteUrls.isEmpty()) {
-                    reconcileFailedImportInventories(
+                    boolean reconciled = reconcileFailedImportInventories(
                             root, manifest, data, targetId, incompleteUrls, entriesByUrl);
+                    if (report.retryRequired() || !reconciled) {
+                        IrisLogging.error("Datapack structure import for pack '%s' reported %d incomplete source(s) and remains pending because a retryable runtime failure occurred.",
+                                data.getDataFolder().getPath(), incompleteUrls.size());
+                    } else if (recordDeterministicImportAttempts(
+                            root, manifest, targetId, incompleteUrls, entriesByUrl)) {
+                        IrisLogging.warn("Datapack structure import for pack '"
+                                + data.getDataFolder().getPath() + "' left " + incompleteUrls.size()
+                                + " source(s) incomplete after deterministic validation failures. Iris will retain the partial editable imports without retrying until the datapack source, importer format, or target pack changes.");
+                    }
                 }
                 Map<String, String> sharedBundles = desiredBundles(configured, entriesByUrl);
                 boolean packCompleted = false;
@@ -2457,7 +2595,7 @@ public final class DatapackIngestService {
                         continue;
                     }
                     entry.importedBundles.put(targetId, desired);
-                    entry.importedTargets.put(targetId, importRevision(entry));
+                    recordSuccessfulImport(entry, targetId);
                     completedUrls.add(pendingUrl);
                     packCompleted = true;
                 }
@@ -2492,8 +2630,29 @@ public final class DatapackIngestService {
                 + " pack(s). Reference the imported keys from a 'structures' placement to position them manually.");
     }
 
-    private static String importRevision(Entry entry) {
-        return safe(entry.versionId) + ":" + safe(entry.sha1);
+    static String importRevision(Entry entry) {
+        return importRevision(entry, STRUCTURE_IMPORT_FORMAT_REVISION);
+    }
+
+    static String importRevision(Entry entry, int importerFormatRevision) {
+        return "v" + importerFormatRevision + ":" + safe(entry.versionId) + ":" + safe(entry.sha1);
+    }
+
+    static boolean importPending(Entry entry, String targetId) {
+        String revision = importRevision(entry);
+        return !revision.equals(entry.importedTargets.get(targetId))
+                && !revision.equals(entry.importAttempts.get(targetId));
+    }
+
+    static void recordDeterministicImportAttempt(Entry entry, String targetId) {
+        entry.importedTargets.remove(targetId);
+        entry.importAttempts.put(targetId, importRevision(entry));
+        entry.structuresImported = false;
+    }
+
+    static void recordSuccessfulImport(Entry entry, String targetId) {
+        entry.importedTargets.put(targetId, importRevision(entry));
+        entry.importAttempts.remove(targetId);
     }
 
     static void prepareImportRecoveryInventory(Entry entry, String targetId) {
@@ -2502,10 +2661,11 @@ public final class DatapackIngestService {
         recovery.putAll(entry.importedBundles.getOrDefault(targetId, Map.of()));
         entry.importedBundles.put(targetId, recovery);
         entry.importedTargets.remove(targetId);
+        entry.importAttempts.remove(targetId);
         entry.structuresImported = false;
     }
 
-    private static void reconcileFailedImportInventories(
+    private static boolean reconcileFailedImportInventories(
             File root,
             Manifest manifest,
             IrisData data,
@@ -2513,11 +2673,13 @@ public final class DatapackIngestService {
             Set<String> pendingUrls,
             Map<String, Entry> entriesByUrl
     ) {
+        boolean reconciled = true;
         for (String pendingUrl : pendingUrls) {
             Entry entry = entriesByUrl.get(pendingUrl);
             try {
                 reconcileFailedImportInventory(data, entry, targetId);
             } catch (IOException | RuntimeException e) {
+                reconciled = false;
                 IrisLogging.reportError("Could not reconcile partial editable structure imports for '"
                         + pendingUrl + "' in pack '" + data.getDataFolder().getPath()
                         + "'; the conservative recovery inventory remains pending.", e);
@@ -2526,8 +2688,32 @@ public final class DatapackIngestService {
         try {
             writeManifestChecked(root, manifest);
         } catch (IOException e) {
+            reconciled = false;
             IrisLogging.reportError("Could not persist reconciled partial editable structure imports for pack '"
                     + data.getDataFolder().getPath() + "'; the earlier recovery inventory remains durable.", e);
+        }
+        return reconciled;
+    }
+
+    private static boolean recordDeterministicImportAttempts(
+            File root,
+            Manifest manifest,
+            String targetId,
+            Set<String> incompleteUrls,
+            Map<String, Entry> entriesByUrl
+    ) {
+        for (String incompleteUrl : incompleteUrls) {
+            recordDeterministicImportAttempt(entriesByUrl.get(incompleteUrl), targetId);
+        }
+        try {
+            writeManifestChecked(root, manifest);
+            return true;
+        } catch (IOException e) {
+            for (String incompleteUrl : incompleteUrls) {
+                entriesByUrl.get(incompleteUrl).importAttempts.remove(targetId);
+            }
+            IrisLogging.reportError("Could not persist deterministic editable structure import attempts; the sources remain pending for retry.", e);
+            return false;
         }
     }
 
@@ -2557,6 +2743,7 @@ public final class DatapackIngestService {
             entry.importedBundles.put(targetId, reconciled);
         }
         entry.importedTargets.remove(targetId);
+        entry.importAttempts.remove(targetId);
         entry.structuresImported = false;
     }
 
@@ -2574,34 +2761,45 @@ public final class DatapackIngestService {
                 continue;
             }
             Map<String, String> inventory = entry.importedBundles.get(targetId);
-            if (inventory == null) {
+            if (inventory == null && !hasImportState(entry, targetId)) {
                 continue;
             }
+            Map<String, String> resolvedInventory = inventory == null ? Map.of() : inventory;
             for (Entry retainedEntry : entries) {
                 if (configured.contains(retainedEntry.url)) {
                     retainedEntry.importedTargets.remove(targetId);
+                    retainedEntry.importAttempts.remove(targetId);
                     retainedEntry.structuresImported = false;
                 }
             }
-            Map<String, String> removable = new TreeMap<>(inventory);
+            Map<String, String> removable = new TreeMap<>(resolvedInventory);
             removable.keySet().removeAll(retainedBundles.keySet());
             Map<String, String> remaining = cleanupImportedBundles(data, removable);
             if (!remaining.isEmpty()) {
                 Map<String, String> retained = new TreeMap<>();
-                for (Map.Entry<String, String> bundle : inventory.entrySet()) {
+                for (Map.Entry<String, String> bundle : resolvedInventory.entrySet()) {
                     if (retainedBundles.containsKey(bundle.getKey()) || remaining.containsKey(bundle.getKey())) {
                         retained.put(bundle.getKey(), bundle.getValue());
                     }
                 }
                 entry.importedBundles.put(targetId, retained);
+                entry.importedTargets.remove(targetId);
+                entry.importAttempts.remove(targetId);
                 entry.structuresImported = false;
                 successful = false;
                 continue;
             }
             entry.importedBundles.remove(targetId);
             entry.importedTargets.remove(targetId);
+            entry.importAttempts.remove(targetId);
         }
         return successful;
+    }
+
+    private static boolean hasImportState(Entry entry, String targetId) {
+        return entry.importedBundles.containsKey(targetId)
+                || entry.importedTargets.containsKey(targetId)
+                || entry.importAttempts.containsKey(targetId);
     }
 
     private static Map<String, String> cleanupImportedBundles(IrisData data, Map<String, String> inventory) {
@@ -2614,7 +2812,11 @@ public final class DatapackIngestService {
                 sourceKey = StructureKey.parse(bundle.getValue());
                 StructureSource.Kind sourceKind = sourceKey.namespace().equals("minecraft")
                         ? StructureSource.Kind.VANILLA : StructureSource.Kind.DATAPACK;
-                removed |= writer.removeOwned(StructureKey.parse(bundle.getKey()), sourceKind, sourceKey);
+                removed |= writer.removeManagedDatapackOwned(
+                        StructureKey.parse(bundle.getKey()),
+                        sourceKind,
+                        sourceKey
+                );
             } catch (IOException | RuntimeException e) {
                 remaining.put(bundle.getKey(), bundle.getValue());
                 IrisLogging.reportError("Preserving imported structure bundle '" + bundle.getKey()
@@ -2940,6 +3142,8 @@ public final class DatapackIngestService {
                 resolved.installMetadata, Map::of));
         copy.importedTargets = new HashMap<>(Objects.requireNonNullElseGet(
                 resolved.importedTargets, Map::of));
+        copy.importAttempts = new HashMap<>(Objects.requireNonNullElseGet(
+                resolved.importAttempts, Map::of));
         copy.importedBundles = new HashMap<>();
         if (resolved.importedBundles != null) {
             for (Map.Entry<String, Map<String, String>> bundle : resolved.importedBundles.entrySet()) {
@@ -3049,6 +3253,7 @@ public final class DatapackIngestService {
             entry.stagingMetadata = entry.stagingMetadata == null ? "" : entry.stagingMetadata.trim();
             entry.installMetadata = normalizeImportedTargets(entry.installMetadata);
             entry.importedTargets = normalizeImportedTargets(entry.importedTargets);
+            entry.importAttempts = normalizeImportedTargets(entry.importAttempts);
             entry.importedBundles = normalizeImportedBundles(entry.importedBundles);
             if (!urls.add(entry.url) || !ids.add(entry.id)) {
                 IrisLogging.warn("Ignoring duplicate datapack manifest entry for id '" + entry.id + "' and url " + entry.url);
@@ -3361,13 +3566,12 @@ public final class DatapackIngestService {
         return path.toRealPath().toString();
     }
 
-    static void recoverTransactions(File root, List<File> worldFolders) throws IOException {
-        recoverStagingScratch(new File(root, "staging"));
+    static boolean recoverTransactions(File root, List<File> worldFolders) throws IOException {
+        boolean changed = recoverStagingScratch(new File(root, "staging"));
         File transactionDirectory = new File(root, TRANSACTION_DIRECTORY);
         Path transactionPath = transactionDirectory.toPath();
         if (!Files.exists(transactionPath, LinkOption.NOFOLLOW_LINKS)) {
-            recoverInstallScratch(root, worldFolders);
-            return;
+            return recoverInstallScratch(root, worldFolders) | changed;
         }
         verifyDirectoryContainerIfPresent(transactionDirectory, "datapack transaction");
         Manifest committedManifest = readCommittedManifest(root);
@@ -3390,29 +3594,32 @@ public final class DatapackIngestService {
         }
         for (Path transactionRoot : transactionRoots) {
             if (isHarmlessRecoveryArtifact(transactionRoot)) {
-                Files.deleteIfExists(transactionRoot);
+                changed |= Files.deleteIfExists(transactionRoot);
                 continue;
             }
             recoverTransaction(root, worldFolders, committedManifest, transactionPath, transactionRoot);
+            changed = true;
         }
-        transactionDirectory.delete();
-        recoverInstallScratch(root, worldFolders);
+        changed |= transactionDirectory.delete();
+        return recoverInstallScratch(root, worldFolders) | changed;
     }
 
-    private static void recoverInstallScratch(File root, List<File> worldFolders) throws IOException {
+    private static boolean recoverInstallScratch(File root, List<File> worldFolders) throws IOException {
         Set<Path> scratchRoots = new TreeSet<>();
         scratchRoots.add(installScratchRoot(new File(root, "staging")).toPath().toAbsolutePath().normalize());
         for (File worldFolder : worldFolders) {
             scratchRoots.add(installScratchRoot(worldFolder).toPath().toAbsolutePath().normalize());
         }
+        boolean changed = false;
         for (Path scratchRoot : scratchRoots) {
-            recoverInstallScratchRoot(scratchRoot);
+            changed |= recoverInstallScratchRoot(scratchRoot);
         }
+        return changed;
     }
 
-    private static void recoverInstallScratchRoot(Path scratchRoot) throws IOException {
+    private static boolean recoverInstallScratchRoot(Path scratchRoot) throws IOException {
         if (!Files.exists(scratchRoot, LinkOption.NOFOLLOW_LINKS)) {
-            return;
+            return false;
         }
         verifyDirectoryContainerIfPresent(scratchRoot.toFile(), "datapack install scratch");
         List<Path> children;
@@ -3431,9 +3638,10 @@ public final class DatapackIngestService {
 
         List<StagingScratch> pending = new ArrayList<>();
         List<StagingScratch> backups = new ArrayList<>();
+        boolean changed = false;
         for (Path child : children) {
             if (isHarmlessRecoveryArtifact(child)) {
-                Files.deleteIfExists(child);
+                changed |= Files.deleteIfExists(child);
                 continue;
             }
             StagingScratch scratch = parseInstallScratch(scratchRoot, child);
@@ -3456,8 +3664,10 @@ public final class DatapackIngestService {
         }
         for (StagingScratch scratch : pending) {
             deleteInstallScratch(scratch.path().toFile(), "orphan datapack install pending directory");
+            changed = true;
         }
-        scratchRoot.toFile().delete();
+        changed |= scratchRoot.toFile().delete();
+        return changed;
     }
 
     private static StagingScratch parseInstallScratch(Path scratchRoot, Path child) throws IOException {
@@ -3486,10 +3696,10 @@ public final class DatapackIngestService {
         return new StagingScratch(kind, id, normalized);
     }
 
-    private static void recoverStagingScratch(File stagingDirectory) throws IOException {
+    private static boolean recoverStagingScratch(File stagingDirectory) throws IOException {
         Path stagingRoot = stagingDirectory.toPath().toAbsolutePath().normalize();
         if (!Files.exists(stagingRoot, LinkOption.NOFOLLOW_LINKS)) {
-            return;
+            return false;
         }
         verifyDirectoryContainerIfPresent(stagingDirectory, "datapack staging");
         List<Path> children;
@@ -3536,6 +3746,7 @@ public final class DatapackIngestService {
             }
         }
 
+        boolean changed = false;
         for (List<StagingScratch> matches : backups.values()) {
             StagingScratch backup = matches.getFirst();
             Path target = stagingRoot.resolve(backup.id()).normalize();
@@ -3544,11 +3755,14 @@ public final class DatapackIngestService {
             } else {
                 moveNew(backup.path(), target);
             }
+            changed = true;
         }
         for (StagingScratch scratch : pending) {
             deleteVerifiedDirectory(scratch.path().toFile());
+            changed = true;
         }
         forceDirectoryIfSupported(stagingRoot);
+        return changed;
     }
 
     private static StagingScratch parseStagingScratch(Path stagingRoot, Path child) throws IOException {
@@ -3825,6 +4039,7 @@ public final class DatapackIngestService {
                 throw new IOException("Datapack transaction conflicts with the committed editable pack owner");
             }
             addExistingPackRoots(roots, committed.importedTargets.keySet());
+            addExistingPackRoots(roots, committed.importAttempts.keySet());
             addExistingPackRoots(roots, committed.importedBundles.keySet());
             return roots;
         }
@@ -4125,6 +4340,7 @@ public final class DatapackIngestService {
                         ),
                         commit
                 );
+                IrisData.invalidateLoadedStructureResources(packRoot.toFile());
             } catch (IOException | RuntimeException e) {
                 IOException participantFailure = e instanceof IOException ioFailure
                         ? ioFailure : new IOException("Failed resolving editable structure participant", e);
@@ -4524,6 +4740,7 @@ public final class DatapackIngestService {
                     && copyList(current.structureKeys).equals(copyList(expected.structureKeys))
                     && copyList(current.templateKeys).equals(copyList(expected.templateKeys))
                     && Objects.equals(current.importedTargets, expected.importedTargets)
+                    && Objects.equals(current.importAttempts, expected.importAttempts)
                     && Objects.equals(current.importedBundles, expected.importedBundles);
         }
 
@@ -4610,6 +4827,7 @@ public final class DatapackIngestService {
         public List<String> templateKeys = new ArrayList<>();
         public Map<String, String> installMetadata = new HashMap<>();
         public Map<String, String> importedTargets = new HashMap<>();
+        public Map<String, String> importAttempts = new HashMap<>();
         public Map<String, Map<String, String>> importedBundles = new HashMap<>();
     }
 
@@ -4656,10 +4874,83 @@ public final class DatapackIngestService {
     static record InstallResult(boolean changed) {
     }
 
+    public record ReapplyOutcome(
+            ReapplyStatus status,
+            Optional<Throwable> failure
+    ) {
+        public ReapplyOutcome {
+            status = Objects.requireNonNull(status, "External datapack reapply status");
+            failure = Objects.requireNonNull(failure, "External datapack reapply failure");
+            if (status == ReapplyStatus.FAILED && failure.isEmpty()) {
+                throw new IllegalArgumentException("Failed external datapack reapply requires a cause");
+            }
+            if (status != ReapplyStatus.FAILED && failure.isPresent()) {
+                throw new IllegalArgumentException("Successful external datapack reapply cannot carry a cause");
+            }
+        }
+
+        public static ReapplyOutcome success(boolean recovered, boolean repaired) {
+            ReapplyStatus status;
+            if (recovered && repaired) {
+                status = ReapplyStatus.RECOVERED_AND_REPAIRED;
+            } else if (recovered) {
+                status = ReapplyStatus.RECOVERED;
+            } else if (repaired) {
+                status = ReapplyStatus.REPAIRED;
+            } else {
+                status = ReapplyStatus.UNCHANGED;
+            }
+            return new ReapplyOutcome(status, Optional.empty());
+        }
+
+        public static ReapplyOutcome failed(Throwable failure) {
+            return new ReapplyOutcome(
+                    ReapplyStatus.FAILED,
+                    Optional.of(Objects.requireNonNull(failure, "External datapack reapply failure cause")));
+        }
+
+        public boolean succeeded() {
+            return status != ReapplyStatus.FAILED;
+        }
+
+        public boolean changed() {
+            return recovered() || repaired();
+        }
+
+        public boolean recovered() {
+            return status == ReapplyStatus.RECOVERED
+                    || status == ReapplyStatus.RECOVERED_AND_REPAIRED;
+        }
+
+        public boolean repaired() {
+            return status == ReapplyStatus.REPAIRED
+                    || status == ReapplyStatus.RECOVERED_AND_REPAIRED;
+        }
+    }
+
+    public enum ReapplyStatus {
+        UNCHANGED,
+        RECOVERED,
+        REPAIRED,
+        RECOVERED_AND_REPAIRED,
+        FAILED
+    }
+
     record InstallExecution(InstallResult result, DatapackCoordinator coordinator) {
     }
 
-    private record PackResources(List<String> structureKeys, List<String> templateKeys) {
+    private record PackResources(
+            List<String> structureKeys,
+            List<String> structureSetKeys,
+            List<String> templateKeys
+    ) {
+    }
+
+    public record StructureScopeResources(
+            String source,
+            List<String> structureKeys,
+            List<String> structureSetKeys
+    ) {
     }
 
     private static final class EditableImportRemoval {

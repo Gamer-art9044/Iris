@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.nms.v1X;
 
+import art.arcane.iris.core.datapack.DatapackStructureScopeIndex;
+import art.arcane.iris.core.nms.DatapackStructureScopeResult;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.nms.INMSBinding;
 import art.arcane.iris.core.nms.container.BiomeColor;
@@ -45,6 +47,7 @@ import org.bukkit.inventory.ItemStack;
 
 import java.awt.Color;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.StreamSupport;
 
 public class NMSBinding1X implements INMSBinding {
@@ -100,6 +103,23 @@ public class NMSBinding1X implements INMSBinding {
     public void inject(long seed, Engine engine, World world) throws NoSuchFieldException, IllegalAccessException {
         throw new IllegalStateException("Iris world generation requires the supported NMS binding; "
                 + "general.disableNMS=true cannot create or initialize an Iris world");
+    }
+
+    @Override
+    public DatapackStructureScopeResult scopeDatapackStructures(
+            World world,
+            DatapackStructureScopeIndex scopeIndex,
+            Set<String> declaredSources
+    ) {
+        throw new IllegalStateException("Iris-managed datapack structure isolation requires the supported NMS binding");
+    }
+
+    @Override
+    public void completeStudioStructureBootstrap(World world) {
+    }
+
+    @Override
+    public void abandonStudioStructureBootstrap(World world) {
     }
 
     public Vector3d getBoundingbox() {

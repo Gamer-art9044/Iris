@@ -1,7 +1,9 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.BuildConstants;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
@@ -12,15 +14,20 @@ import art.arcane.volmlib.util.collection.KSet;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,16 +37,103 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.stream.Stream;
 
 public final class IrisDatapackCompiler {
+    private static final int INPUT_FINGERPRINT_SCHEMA = 1;
     private static final int WORLD_PACK_SCAN_DEPTH = 8;
+    private static final List<String> INPUT_DIRECTORIES = List.of("dimensions", "biomes", "snippet");
 
     private IrisDatapackCompiler() {
     }
 
     public static List<File> collectPackRoots(Path dataDirectory, Path serverRoot) throws IOException {
+        return collectPackRoots(dataDirectory, serverRoot, true);
+    }
+
+    public static List<File> collectCompilerInputRoots(Path dataDirectory, Path serverRoot) throws IOException {
+        return collectPackRoots(dataDirectory, serverRoot, false);
+    }
+
+    private static List<File> collectPackRoots(
+            Path dataDirectory,
+            Path serverRoot,
+            boolean validateWholePack
+    ) throws IOException {
         LinkedHashMap<Path, File> roots = new LinkedHashMap<>();
-        collectInstalledPackRoots(dataDirectory.resolve("packs"), roots);
-        collectWorldPackRoots(serverRoot.resolve("dimensions"), roots);
+        collectInstalledPackRoots(dataDirectory.resolve("packs"), roots, validateWholePack);
+        collectWorldPackRoots(serverRoot.resolve("dimensions"), roots, validateWholePack);
         return new ArrayList<>(roots.values());
+    }
+
+    public static String computeInputFingerprint(
+            List<File> packRoots,
+            IDataFixer fixer,
+            boolean adjustVanillaHeight
+    ) throws IOException {
+        Objects.requireNonNull(fixer, "fixer");
+        return computeInputFingerprint(
+                packRoots,
+                adjustVanillaHeight,
+                compilerIdentity(fixer));
+    }
+
+    static String computeInputFingerprint(
+            List<File> packRoots,
+            boolean adjustVanillaHeight,
+            String compilerIdentity
+    ) throws IOException {
+        Objects.requireNonNull(packRoots, "packRoots");
+        Objects.requireNonNull(compilerIdentity, "compilerIdentity");
+        MessageDigest digest = sha256();
+        updateDigestString(digest, "iris-datapack-compiler-input");
+        updateDigestInt(digest, INPUT_FINGERPRINT_SCHEMA);
+        updateDigestString(digest, compilerIdentity);
+        digest.update((byte) (adjustVanillaHeight ? 1 : 0));
+        updateDigestInt(digest, packRoots.size());
+
+        for (int index = 0; index < packRoots.size(); index++) {
+            File packRoot = Objects.requireNonNull(packRoots.get(index), "pack root");
+            Path normalizedRoot = packRoot.toPath().toAbsolutePath().normalize();
+            if (!Files.isDirectory(normalizedRoot)) {
+                throw new IOException("Iris datapack compiler input root is missing or unsafe: " + normalizedRoot);
+            }
+            Path realRoot = normalizedRoot.toRealPath();
+            updateDigestInt(digest, index);
+            updateDigestString(digest, normalizedRoot.toString());
+            updateDigestString(digest, realRoot.toString());
+            boolean active = hasDimensions(normalizedRoot);
+            digest.update((byte) (active ? 1 : 0));
+            if (!active) {
+                continue;
+            }
+
+            List<CompilerInputEntry> entries = collectCompilerInputEntries(normalizedRoot);
+            updateDigestInt(digest, entries.size());
+            byte[] buffer = new byte[8192];
+            for (CompilerInputEntry entry : entries) {
+                updateDigestString(digest, entry.relativePath());
+                updateDigestLong(digest, Files.size(entry.source()));
+                try (InputStream input = Files.newInputStream(entry.source())) {
+                    int read;
+                    while ((read = input.read(buffer)) >= 0) {
+                        if (read > 0) {
+                            digest.update(buffer, 0, read);
+                        }
+                    }
+                }
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    public static String compilerIdentity(IDataFixer fixer) {
+        IDataFixer requiredFixer = Objects.requireNonNull(fixer, "fixer");
+        return String.join(
+                "|",
+                Integer.toString(INPUT_FINGERPRINT_SCHEMA),
+                BuildConstants.COMMIT,
+                BuildConstants.MINECRAFT_VERSION,
+                requiredFixer.getClass().getName(),
+                Integer.toString(DataVersion.minSupportedPackFormat()),
+                Integer.toString(DataVersion.getLatest().getPackFormat()));
     }
 
     public static CompilationResult compile(
@@ -102,14 +196,22 @@ public final class IrisDatapackCompiler {
         return new CompilationResult(packCount, dimensionCount, countBiomes(biomes));
     }
 
-    private static void collectInstalledPackRoots(Path packsRoot, Map<Path, File> roots) throws IOException {
+    private static void collectInstalledPackRoots(
+            Path packsRoot,
+            Map<Path, File> roots,
+            boolean validateWholePack
+    ) throws IOException {
         List<File> candidates = PackDirectoryResolver.listVisiblePackDirectoriesOrThrow(packsRoot.toFile());
         for (File candidate : candidates) {
-            addPackRoot(candidate.toPath(), roots);
+            addPackRoot(candidate.toPath(), roots, validateWholePack);
         }
     }
 
-    private static void collectWorldPackRoots(Path dimensionsRoot, Map<Path, File> roots) throws IOException {
+    private static void collectWorldPackRoots(
+            Path dimensionsRoot,
+            Map<Path, File> roots,
+            boolean validateWholePack
+    ) throws IOException {
         if (Files.isSymbolicLink(dimensionsRoot)
                 || !Files.isDirectory(dimensionsRoot, LinkOption.NOFOLLOW_LINKS)) {
             return;
@@ -133,11 +235,15 @@ public final class IrisDatapackCompiler {
         });
         candidates.sort(Comparator.comparing(Path::toString));
         for (Path candidate : candidates) {
-            addPackRoot(candidate, roots);
+            addPackRoot(candidate, roots, validateWholePack);
         }
     }
 
-    private static void addPackRoot(Path root, Map<Path, File> roots) throws IOException {
+    private static void addPackRoot(
+            Path root,
+            Map<Path, File> roots,
+            boolean validateWholePack
+    ) throws IOException {
         if (!hasDimensions(root)) {
             return;
         }
@@ -145,8 +251,13 @@ public final class IrisDatapackCompiler {
         if (!Files.isDirectory(normalized)) {
             return;
         }
-        PackDirectoryResolver.requireSafePackTree(normalized.toFile());
         Path identity = normalized.toRealPath();
+        if (!Files.isDirectory(identity, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        if (validateWholePack) {
+            PackDirectoryResolver.requireSafePackTree(normalized.toFile());
+        }
         roots.putIfAbsent(identity, normalized.toFile());
     }
 
@@ -162,6 +273,77 @@ public final class IrisDatapackCompiler {
                     && path.getFileName().toString().endsWith(".json"));
         } catch (IOException e) {
             return false;
+        }
+    }
+
+    private static List<CompilerInputEntry> collectCompilerInputEntries(Path packRoot) throws IOException {
+        List<CompilerInputEntry> entries = new ArrayList<>();
+        for (String directoryName : INPUT_DIRECTORIES) {
+            Path directory = packRoot.resolve(directoryName);
+            if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
+                continue;
+            }
+            if (Files.isSymbolicLink(directory)
+                    || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Iris datapack compiler input is missing or unsafe: " + directory);
+            }
+            Files.walkFileTree(directory, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path child, BasicFileAttributes attributes) throws IOException {
+                    if (attributes.isSymbolicLink() || Files.isSymbolicLink(child)) {
+                        throw new IOException("Iris datapack compiler input contains a symbolic link: " + child);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                    if (attributes.isSymbolicLink() || Files.isSymbolicLink(file)) {
+                        throw new IOException("Iris datapack compiler input contains a symbolic link: " + file);
+                    }
+                    if (!attributes.isRegularFile()) {
+                        throw new IOException("Iris datapack compiler input contains an unsupported entry: " + file);
+                    }
+                    if (file.getFileName().toString().endsWith(".json")) {
+                        String relativePath = packRoot.relativize(file).toString().replace(File.separatorChar, '/');
+                        entries.add(new CompilerInputEntry(file, relativePath));
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException failure) throws IOException {
+                    throw new IOException("Unable to inspect Iris datapack compiler input: " + file, failure);
+                }
+            });
+        }
+        entries.sort(Comparator.comparing(CompilerInputEntry::relativePath));
+        return entries;
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 not available", exception);
+        }
+    }
+
+    private static void updateDigestString(MessageDigest digest, String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        updateDigestInt(digest, bytes.length);
+        digest.update(bytes);
+    }
+
+    private static void updateDigestInt(MessageDigest digest, int value) {
+        for (int shift = Integer.SIZE - Byte.SIZE; shift >= 0; shift -= Byte.SIZE) {
+            digest.update((byte) (value >>> shift));
+        }
+    }
+
+    private static void updateDigestLong(MessageDigest digest, long value) {
+        for (int shift = Long.SIZE - Byte.SIZE; shift >= 0; shift -= Byte.SIZE) {
+            digest.update((byte) (value >>> shift));
         }
     }
 
@@ -202,6 +384,9 @@ public final class IrisDatapackCompiler {
     }
 
     public record CompilationResult(int packCount, int dimensionCount, int biomeCount) {
+    }
+
+    private record CompilerInputEntry(Path source, String relativePath) {
     }
 
     public static final class DimensionHeight {

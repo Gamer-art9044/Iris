@@ -31,6 +31,7 @@ import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
+import art.arcane.iris.engine.object.IrisStructureAnchorMode;
 import art.arcane.iris.engine.object.IrisStructureCarveShape;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.IrisStructureTerrain;
@@ -276,7 +277,7 @@ public class IrisStructureLocatorContractTest {
         when(data.load(IrisJigsawPiece.class, "test:target-piece", false)).thenReturn(targetPiece);
         when(data.load(IrisObject.class, "test:start-object", false)).thenReturn(startObject);
         when(data.load(IrisObject.class, "test:target-object", false)).thenReturn(targetObject);
-        assertTrue(StructureGraphCatalog.compile(data, structure).isAssemblyViable());
+        assertFalse(StructureGraphCatalog.compile(data, structure).isAssemblyViable());
 
         IrisStructurePlacement placement = new IrisStructurePlacement()
                 .setNativeSuppression(NativeStructureSuppression.REPLACE_SOURCE);
@@ -572,6 +573,49 @@ public class IrisStructureLocatorContractTest {
         KList<PlacedStructurePiece> clippedSurface = new KList<>();
         clippedSurface.add(piece(-4, 300, -4, 4, 330, 4));
         assertNull(IrisStructureLocator.resolveVerticalShift(clippedSurface, placement, 300, -64, 319));
+    }
+
+    @Test
+    public void caveAssemblyBoundsAlignToTheRequestedAnchorFace() {
+        KList<PlacedStructurePiece> pieces = new KList<>();
+        pieces.add(piece(-2, 10, -2, 2, 14, 2));
+        IrisStructurePlacement placement = new IrisStructurePlacement();
+
+        placement.setAnchor(IrisStructureAnchorMode.CAVE_FLOOR);
+        KList<PlacedStructurePiece> floor = IrisStructureLocator.alignCavePieces(pieces, placement, 40);
+        assertEquals(40, floor.getFirst().getMinY());
+        assertEquals(44, floor.getFirst().getMaxY());
+
+        placement.setAnchor(IrisStructureAnchorMode.CAVE_CEILING);
+        KList<PlacedStructurePiece> ceiling = IrisStructureLocator.alignCavePieces(pieces, placement, 40);
+        assertEquals(36, ceiling.getFirst().getMinY());
+        assertEquals(40, ceiling.getFirst().getMaxY());
+
+        placement.setAnchor(IrisStructureAnchorMode.CAVE_CENTER);
+        KList<PlacedStructurePiece> center = IrisStructureLocator.alignCavePieces(pieces, placement, 40);
+        assertEquals(38, center.getFirst().getMinY());
+        assertEquals(42, center.getFirst().getMaxY());
+    }
+
+    @Test
+    public void caveSearchabilityReservesVerticalBoundaryCells() {
+        Engine engine = mock(Engine.class);
+        when(engine.getMinHeight()).thenReturn(-64);
+        when(engine.getHeight()).thenReturn(384);
+        IrisStructurePlacement placement = new IrisStructurePlacement()
+                .setDistribution(StructureDistribution.DENSITY)
+                .setDensity(1D)
+                .setAnchor(IrisStructureAnchorMode.CAVE_FLOOR)
+                .setMinHeight(319)
+                .setMaxHeight(319);
+
+        assertFalse(IrisStructureLocator.isSearchableDensityPlacement(engine, placement));
+        placement.setMinHeight(318).setMaxHeight(318);
+        assertTrue(IrisStructureLocator.isSearchableDensityPlacement(engine, placement));
+
+        when(engine.getHeight()).thenReturn(2);
+        placement.setMinHeight(-2032).setMaxHeight(2032);
+        assertFalse(IrisStructureLocator.isSearchableDensityPlacement(engine, placement));
     }
 
     @Test

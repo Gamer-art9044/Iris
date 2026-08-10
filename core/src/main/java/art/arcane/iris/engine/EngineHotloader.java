@@ -58,6 +58,7 @@ final class EngineHotloader {
     void hotloadComplex() {
         synchronized (engine.lifecycleLock) {
             engine.requireRunning("rebuild the biome complex");
+            engine.awaitNativeStructureBootstrap("complex hotload");
             engine.lifecycleState = LifecycleState.HOTLOADING;
             EngineRuntime previous = engine.runtime;
             IrisComplex nextComplex = null;
@@ -105,6 +106,7 @@ final class EngineHotloader {
     void hotloadSilently() {
         synchronized (engine.lifecycleLock) {
             engine.requireRunning("hotload");
+            engine.awaitNativeStructureBootstrap("hotload");
             engine.lifecycleState = LifecycleState.HOTLOADING;
             EngineRuntime previousRuntime = engine.runtime;
             IrisDimension previousDimension = engine.getDimension();

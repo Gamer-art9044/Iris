@@ -62,17 +62,17 @@ final class IrisObjectPlacementRunner {
     int place(int x, int yv, int z, IObjectPlacer oplacer, IrisObjectPlacement config, RNG rng, BiConsumer<BlockPosition, PlatformBlockState> listener, CarveResult c, IrisData rdata) {
         IObjectPlacer placer = config.getHeightmap() != null ? new HeightmapObjectPlacer(rng, x, yv, z, config, oplacer) : oplacer;
 
-        if (rdata != null) {
-            // Slope condition
-            if (!config.getSlopeCondition().isDefault() &&
-                    !config.getSlopeCondition().isValid(rdata.getEngine().getComplex().getSlopeStream().get(x, z)) && !config.isForcePlace()) {
+        boolean evaluateSlopeCondition = !config.isForcePlace() && !config.getSlopeCondition().isDefault();
+        if (rdata != null && (evaluateSlopeCondition || config.isRotateTowardsSlope())) {
+            Engine placementEngine = requireSlopeEngine(placer);
+            if (evaluateSlopeCondition &&
+                    !config.getSlopeCondition().isValid(placementEngine.getComplex().getSlopeStream().get(x, z))) {
                 return -1;
             }
 
-            // Rotation calculation
-            int slopeRotationY = 0;
-            ProceduralStream<Double> heightStream = rdata.getEngine().getComplex().getHeightStream();
             if (config.isRotateTowardsSlope()) {
+                int slopeRotationY = 0;
+                ProceduralStream<Double> heightStream = placementEngine.getComplex().getHeightStream();
                 // Whichever side of the rectangle that bounds the object is lowest is the 'direction' of the slope (simply said).
                 double hNorth = heightStream.get(x, z + ((float) self.d) / 2);
                 double hEast = heightStream.get(x + ((float) self.w) / 2, z);
@@ -846,6 +846,14 @@ final class IrisObjectPlacementRunner {
 
     static boolean shouldPlaceObjectBlock(boolean rawStructurePiece, boolean air, boolean wouldReplace) {
         return !wouldReplace && (rawStructurePiece || !air);
+    }
+
+    private static Engine requireSlopeEngine(IObjectPlacer placer) {
+        Engine engine = placer.getEngine();
+        if (engine == null) {
+            throw new IllegalStateException("Object placement slope settings require an active Iris engine for the target world.");
+        }
+        return engine;
     }
 
     /**

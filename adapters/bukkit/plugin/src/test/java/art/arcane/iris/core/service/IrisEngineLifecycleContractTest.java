@@ -49,13 +49,14 @@ public class IrisEngineLifecycleContractTest {
     public void registrationRetryWaitsAsynchronouslyForClose() throws IOException {
         String source = Files.readString(Path.of(System.getProperty("iris.engineSvcSource")));
         String add = method(source, "private void add(World world)");
-        String remove = method(source, "private void remove(World world)");
+        String remove = method(source, "private void remove(World world, CompletionStage<Boolean> unloadBoundary)");
         String completeClose = method(source, "private void completeClose(");
         String retry = method(source, "private void retryRegistrationAfterClose(");
         String invokeClose = method(source, "private CompletableFuture<Void> invokeGeneratorClose()");
 
         assertBefore(add, "findClosingGenerator(registrationIdentity)", "new Registered(");
-        assertBefore(remove, "reserveClose(registered)", "startClose(registered, closing)");
+        assertBefore(remove, "registered.close()", "reserveClose(registered)");
+        assertBefore(remove, "reserveClose(registered)", "deferCloseUntilWorldUnload(");
         assertBefore(completeClose, "if (failure == null)", "closingGenerators.remove(closing)");
         assertBefore(completeClose, "closingGenerators.remove(closing)", "closing.completion().complete(null)");
         assertBefore(completeClose, "} else {", "closing.completion().completeExceptionally(failure)");
@@ -66,6 +67,24 @@ public class IrisEngineLifecycleContractTest {
         assertFalse(retry.contains("completion.join("));
         assertTrue(invokeClose.contains("CompletableFuture.failedFuture("));
         assertTrue(invokeClose.contains("future.whenComplete("));
+    }
+
+    @Test
+    public void worldUnloadDefersGeneratorCloseUntilTheRawBoundaryCompletesTrue() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.engineSvcSource")));
+        String handler = method(source, "public void onWorldUnload(WorldUnloadEvent event)");
+        String remove = method(source, "private void remove(World world, CompletionStage<Boolean> unloadBoundary)");
+        String defer = method(source, "private void deferCloseUntilWorldUnload(");
+
+        assertBefore(handler, "WorldUnloadBoundaryRegistry.claim(", "remove(world, unloadBoundary)");
+        assertBefore(remove, "registered.close()", "deferCloseUntilWorldUnload(");
+        assertFalse(remove.contains("startClose(registered, closing)"));
+        assertTrue(defer.contains("J.sfut(() -> startClose(registered, closing), 1)"));
+        assertTrue(defer.contains("unloadBoundary.whenComplete("));
+        String managedBoundary = defer.substring(defer.indexOf("unloadBoundary.whenComplete("));
+        assertBefore(managedBoundary, "failure == null && Boolean.TRUE.equals(unloaded)",
+                "startClose(registered, closing)");
+        assertBefore(managedBoundary, "startClose(registered, closing)", "abandonClose(world, closing)");
     }
 
     private static void assertMonitorUnloadHandler(Method method) {

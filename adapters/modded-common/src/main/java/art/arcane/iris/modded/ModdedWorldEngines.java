@@ -122,7 +122,9 @@ public final class ModdedWorldEngines {
                 .maxHeight(dimension.getMaxHeight())
                 .platformWorld(new ModdedPlatformWorld(level))
                 .build();
-        Engine engine = new IrisEngine(new EngineTarget(world, dimension, data), false);
+        Engine engine = new IrisEngine(
+                new EngineTarget(world, dimension, data),
+                IrisEngine.InitializationMode.RUNTIME);
         if (engine.isClosed() || engine.getComplex() == null) {
             IllegalStateException failure = new IllegalStateException("Iris engine for "
                     + level.dimension().identifier() + " did not initialize a ready biome complex");

@@ -173,4 +173,37 @@ public class PendingWorldDeleteQueueTest {
                 levelRoot.toPath().resolve("dimensions/iris/alpha_the_end").toAbsolutePath()
         ), family);
     }
+
+    @Test
+    public void failedSafeDeletionSignalsQueueRetentionAndSucceedsOnRetry() throws IOException {
+        File levelRoot = temporaryFolder.newFolder("retry-world");
+        Path quarantine = levelRoot.toPath().resolve("dimensions/iris").resolve(QUARANTINE_NAME);
+        Files.createDirectories(quarantine);
+        Path external = temporaryFolder.newFolder("retry-external").toPath();
+        Path link = Files.createSymbolicLink(quarantine.resolve("unsafe-link"), external);
+
+        PendingWorldDeleteQueue.EntryDeletionResult first = PendingWorldDeleteQueue.attemptEntry(
+                levelRoot,
+                QUARANTINE_NAME,
+                (key, path) -> false
+        );
+
+        assertTrue(first.retainQueueEntry());
+        assertEquals(1, first.failures().size());
+        assertTrue(Files.isSymbolicLink(link));
+        assertTrue(Files.exists(external));
+
+        Files.delete(link);
+        Files.writeString(quarantine.resolve("safe.dat"), "safe");
+
+        PendingWorldDeleteQueue.EntryDeletionResult retry = PendingWorldDeleteQueue.attemptEntry(
+                levelRoot,
+                QUARANTINE_NAME,
+                (key, path) -> false
+        );
+
+        assertFalse(retry.retainQueueEntry());
+        assertTrue(retry.failures().isEmpty());
+        assertFalse(Files.exists(quarantine));
+    }
 }

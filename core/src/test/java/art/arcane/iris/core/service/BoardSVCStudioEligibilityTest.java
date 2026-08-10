@@ -2,13 +2,11 @@ package art.arcane.iris.core.service;
 
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
-import org.bukkit.scoreboard.Scoreboard;
 import org.junit.Test;
 
 import java.util.UUID;
 
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -56,23 +54,6 @@ public class BoardSVCStudioEligibilityTest {
         service.togglePlayerBoard(playerId);
         service.clearPlayerPreference(playerId);
         assertTrue(service.isPlayerBoardEnabled(playerId));
-    }
-
-    @Test
-    public void restoresPreviousScoreboardWhileIrisStillOwnsThePlayer() {
-        Scoreboard previous = mock(Scoreboard.class);
-        Scoreboard iris = mock(Scoreboard.class);
-
-        assertSame(previous, BoardSVC.selectScoreboardToRestore(iris, iris, previous));
-    }
-
-    @Test
-    public void preservesScoreboardAssignedAfterIris() {
-        Scoreboard previous = mock(Scoreboard.class);
-        Scoreboard iris = mock(Scoreboard.class);
-        Scoreboard replacement = mock(Scoreboard.class);
-
-        assertSame(replacement, BoardSVC.selectScoreboardToRestore(replacement, iris, previous));
     }
 
     private PlatformChunkGenerator generator(boolean studio, boolean closing, Engine engine) {

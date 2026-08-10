@@ -20,9 +20,20 @@ package art.arcane.iris.core.structure.authoring;
 
 import java.util.Objects;
 
-public record StructureWriteOptions(StructureWriteMode mode, boolean dryRun) {
+public record StructureWriteOptions(StructureWriteMode mode, boolean dryRun, String expectedManifestHash) {
     public StructureWriteOptions {
         Objects.requireNonNull(mode, "mode");
+        expectedManifestHash = expectedManifestHash == null ? "" : expectedManifestHash.trim();
+        if (!expectedManifestHash.isEmpty() && !StructureHash.isSha256(expectedManifestHash)) {
+            throw new IllegalArgumentException("Expected structure manifest hash must be SHA-256");
+        }
+        if (!expectedManifestHash.isEmpty() && mode != StructureWriteMode.OVERWRITE) {
+            throw new IllegalArgumentException("Expected structure manifest hashes require overwrite mode");
+        }
+    }
+
+    public StructureWriteOptions(StructureWriteMode mode, boolean dryRun) {
+        this(mode, dryRun, "");
     }
 
     public static StructureWriteOptions addOnly() {
@@ -35,5 +46,9 @@ public record StructureWriteOptions(StructureWriteMode mode, boolean dryRun) {
 
     public static StructureWriteOptions preview(StructureWriteMode mode) {
         return new StructureWriteOptions(mode, true);
+    }
+
+    public static StructureWriteOptions overwriteExpected(String manifestHash) {
+        return new StructureWriteOptions(StructureWriteMode.OVERWRITE, false, manifestHash);
     }
 }

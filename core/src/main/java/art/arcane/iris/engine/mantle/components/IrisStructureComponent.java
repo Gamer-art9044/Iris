@@ -96,7 +96,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
         boolean trace = IrisSettings.get().getGeneral().isDebug();
         if (trace) {
             IrisLogging.info("[StructTrace] ORIGIN chunk=" + cx + "," + cz + " structures=" + placement.getStructures()
-                    + " underground=" + placement.isUnderground() + " band=" + placement.getMinHeight() + ".." + placement.getMaxHeight());
+                    + " anchor=" + placement.resolvedAnchor() + " band=" + placement.getMinHeight() + ".." + placement.getMaxHeight());
         }
 
         String key = resolved.structureKey();
@@ -111,7 +111,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
             IrisLogging.info("[StructTrace] ASSEMBLED chunk=" + cx + "," + cz + " key=" + key + " baseY=" + baseY + " pieces=" + pieces.size());
         }
 
-        if (!placement.isUnderground()) {
+        if (!placement.isAnchoredUnderground()) {
             clearIntersectingObjectTrees(writer, resolved);
         }
 
@@ -133,7 +133,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
         Long2IntOpenHashMap foundationColumns = stilt == null
                 ? null : new Long2IntOpenHashMap();
         boolean supportNonOccluding = stilt != null && stilt.isSupportNonOccluding();
-        if (placement.isUnderground()) {
+        if (placement.isAnchoredUnderground()) {
             ObjectPlaceMode undergroundMode = (mode == ObjectPlaceMode.ORGANIC_STILT || mode == ObjectPlaceMode.CEILING_HANG)
                     ? mode : ObjectPlaceMode.STRUCTURE_PIECE;
             for (PlacedStructurePiece p : pieces) {
@@ -164,7 +164,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
         }
         requireAppliedPieces(resolved, cx, cz, failedPieces);
         if (failedPieces == 0 && stilt != null) {
-            placeFoundation(writer, foundationColumns, stilt, rng, !placement.isUnderground());
+            placeFoundation(writer, foundationColumns, stilt, rng, !placement.isAnchoredUnderground());
         }
     }
 

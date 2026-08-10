@@ -1,12 +1,10 @@
 package art.arcane.iris.engine.framework.structure;
 
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.framework.StructureAssembler;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.spi.IrisLogging;
-import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -87,8 +85,8 @@ public final class StructureGraphCatalog {
             try {
                 StructureAssembler assembler = StructureAssembler.forData(
                         data, structure, new IrisPosition(0, 64, 0));
-                KList<PlacedStructurePiece> pieces = assembler.assemble(new RNG(seed));
-                if (pieces == null || pieces.isEmpty()) {
+                StructureAssemblyResult result = assembler.assemble(new RNG(seed));
+                if (!result.hasOutput()) {
                     return false;
                 }
             } catch (Throwable e) {

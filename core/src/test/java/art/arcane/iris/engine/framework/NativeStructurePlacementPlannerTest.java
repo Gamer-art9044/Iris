@@ -3,6 +3,7 @@ package art.arcane.iris.engine.framework;
 import art.arcane.iris.engine.object.IrisNativeStructure;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisStructureAnchorMode;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.engine.object.IrisStructureTerrain;
 import art.arcane.iris.engine.object.IrisStructureTerrainMode;
@@ -156,6 +157,13 @@ public class NativeStructurePlacementPlannerTest {
         assertInvalid(mixed);
     }
 
+    @Test
+    public void nativeBackendRejectsEveryExplicitIrisAnchorMode() {
+        assertUnsupportedAnchor(nativePlacement().setAnchor(IrisStructureAnchorMode.SURFACE));
+        assertUnsupportedAnchor(nativePlacement().setAnchor(IrisStructureAnchorMode.HEIGHT_BAND));
+        assertUnsupportedAnchor(nativePlacement().setAnchor(IrisStructureAnchorMode.CAVE_FLOOR));
+    }
+
     private IrisStructurePlacement nativePlacement() {
         IrisStructurePlacement placement = new IrisStructurePlacement()
                 .setDistribution(StructureDistribution.DENSITY)
@@ -197,6 +205,15 @@ public class NativeStructurePlacementPlannerTest {
             fail("Expected an invalid structure backend");
         } catch (IllegalStateException expected) {
             assertTrue(expected.getMessage().contains("exactly one backend"));
+        }
+    }
+
+    private void assertUnsupportedAnchor(IrisStructurePlacement placement) {
+        try {
+            NativeStructurePlacementPlanner.validateBackend(placement);
+            fail("Expected native structure anchor rejection");
+        } catch (IllegalStateException expected) {
+            assertTrue(expected.getMessage().contains("do not support the Iris anchor field"));
         }
     }
 }

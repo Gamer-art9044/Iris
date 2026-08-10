@@ -1,9 +1,11 @@
 package art.arcane.iris.engine.framework.structure;
 
 import art.arcane.iris.engine.object.IrisJigsawConnector;
+import art.arcane.iris.engine.object.IrisJigsawBranchFailurePolicy;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
 import art.arcane.iris.engine.object.IrisJigsawPieceEntry;
 import art.arcane.iris.engine.object.IrisJigsawPool;
+import art.arcane.iris.engine.object.IrisJigsawThemeSet;
 import art.arcane.iris.engine.object.IrisObject;
 
 import java.util.ArrayList;
@@ -52,8 +54,7 @@ public final class StructureGraphCompilation {
             return false;
         }
         for (StructureGraphAssemblySample sample : assemblySamples) {
-            StructureGraphAssemblySample.Outcome outcome = sample.outcome();
-            if (!outcome.isComplete() && !isGeometryBoundedCandidate(outcome)) {
+            if (!sample.outcome().isComplete()) {
                 return false;
             }
         }
@@ -72,39 +73,90 @@ public final class StructureGraphCompilation {
         if (startPool == null || startPool.getPieces() == null || startPool.getPieces().isEmpty()) {
             return false;
         }
+        for (String theme : themes()) {
+            if (!startPoolGuaranteesOutput(startPool, theme)
+                    || !reachableBranchesCanTerminate(theme)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean startPoolGuaranteesOutput(IrisJigsawPool startPool, String theme) {
+        boolean certainPhysicalEntry = false;
         for (IrisJigsawPieceEntry entry : startPool.getPieces()) {
-            if (entry == null || entry.getWeight() <= 0 || entry.isEmpty()) {
+            if (entry == null || entry.getWeight() <= 0 || !Double.isFinite(entry.getChance())
+                    || entry.getChance() <= 0D || entry.getChance() > 1D) {
+                continue;
+            }
+            if (entry.isEmpty()) {
                 return false;
             }
             IrisJigsawPiece piece = graph.getPieces().get(normalize(entry.getPiece()));
-            if (piece == null) {
-                return false;
+            if (piece == null || !JigsawPoolSelection.pieceEligible(piece, theme, 0, 0)) {
+                continue;
             }
             IrisObject object = graph.getObjects().get(normalize(piece.getObject()));
             if (object == null || !fitsStartRadius(object)) {
                 return false;
             }
+            if (entry.getChance() == 1D) {
+                certainPhysicalEntry = true;
+            }
         }
-        return reachableBranchesCanTerminate();
+        return certainPhysicalEntry;
     }
 
-    private boolean reachableBranchesCanTerminate() {
+    private boolean reachableBranchesCanTerminate(String theme) {
         for (String pieceKey : graph.getReachablePieces()) {
             IrisJigsawPiece piece = graph.getPieces().get(pieceKey);
             if (piece == null || piece.getConnectors() == null) {
                 return false;
+            }
+            if (!piece.supportsTheme(theme) || piece.resolvedRules().isTerminal()) {
+                continue;
             }
             for (IrisJigsawConnector connector : piece.getConnectors()) {
                 if (connector == null) {
                     return false;
                 }
                 IrisJigsawPool pool = graph.getPools().get(normalize(connector.getPool()));
-                if (!canTerminateWithoutPlacement(pool)) {
+                if (pool == null) {
+                    return false;
+                }
+                if (pool.requiresFallback(graph.getStructure().isRequireCaps())) {
+                    if (!hasRequiredTerminal(pool, theme)) {
+                        return false;
+                    }
+                } else if (graph.getStructure().resolvedBranchFailurePolicy()
+                        != IrisJigsawBranchFailurePolicy.TERMINATE_BRANCH
+                        && !canTerminateWithoutPlacement(pool)) {
                     return false;
                 }
             }
         }
         return true;
+    }
+
+    private boolean hasRequiredTerminal(IrisJigsawPool pool, String theme) {
+        String fallbackKey = JigsawPoolSelection.directFallbackKey(pool);
+        if (fallbackKey.isEmpty()) {
+            return false;
+        }
+        IrisJigsawPool fallback = graph.getPools().get(fallbackKey);
+        if (fallback == null || fallback.getPieces() == null) {
+            return false;
+        }
+        for (IrisJigsawPieceEntry entry : fallback.getPieces()) {
+            if (entry == null || entry.isEmpty() || entry.getWeight() <= 0 || entry.getChance() != 1D) {
+                continue;
+            }
+            IrisJigsawPiece piece = graph.getPieces().get(normalize(entry.getPiece()));
+            if (piece != null && piece.supportsTheme(theme) && piece.resolvedRules().isTerminal()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean canTerminateWithoutPlacement(IrisJigsawPool pool) {
@@ -126,7 +178,7 @@ public final class StructureGraphCompilation {
             return true;
         }
         for (IrisJigsawPieceEntry entry : pool.getPieces()) {
-            if (entry != null && entry.getWeight() > 0 && entry.isEmpty()) {
+            if (entry != null && entry.getWeight() > 0 && entry.getChance() == 1D && entry.isEmpty()) {
                 return true;
             }
         }
@@ -136,6 +188,19 @@ public final class StructureGraphCompilation {
     private boolean fitsStartRadius(IrisObject object) {
         long radius = (long) graph.getStructure().getMaxSizeChunks() * 16L;
         return axisFitsRadius(object.getW(), radius) && axisFitsRadius(object.getD(), radius);
+    }
+
+    private List<String> themes() {
+        if (graph.getStructure().getThemeSets() == null || graph.getStructure().getThemeSets().isEmpty()) {
+            return List.of("");
+        }
+        List<String> themes = new ArrayList<>(graph.getStructure().getThemeSets().size());
+        for (IrisJigsawThemeSet theme : graph.getStructure().getThemeSets()) {
+            if (theme != null && theme.getKey() != null && !theme.getKey().isBlank()) {
+                themes.add(theme.getKey().trim());
+            }
+        }
+        return List.copyOf(themes);
     }
 
     private boolean axisFitsRadius(int size, long radius) {
@@ -149,12 +214,6 @@ public final class StructureGraphCompilation {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim();
-    }
-
-    private boolean isGeometryBoundedCandidate(StructureGraphAssemblySample.Outcome outcome) {
-        return outcome.pieceCapReached()
-                && !outcome.pieceKeys().isEmpty()
-                && outcome.unresolvedConnectorCount() == 0;
     }
 
     static final class Builder {

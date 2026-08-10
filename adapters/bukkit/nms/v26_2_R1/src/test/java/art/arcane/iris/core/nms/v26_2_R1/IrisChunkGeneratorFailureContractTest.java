@@ -5,9 +5,21 @@ import org.junit.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class IrisChunkGeneratorFailureContractTest {
@@ -20,9 +32,17 @@ public class IrisChunkGeneratorFailureContractTest {
         int reachabilityStart = source.indexOf("private Set<String> reachableStructureKeys");
         int reachabilityEnd = source.indexOf("protected MapCodec", reachabilityStart);
         String reachability = source.substring(reachabilityStart, reachabilityEnd);
+        int bootstrapGate = locate.indexOf("!platformGenerator.shouldGenerateStructures()");
+        int generatorIdentity = locate.indexOf("level.getChunkSource().getGenerator() != this");
+        int lease = locate.indexOf("requireGenerationLease(\"bukkit_nms_structure_locate\")");
+        int nativePrediction = locate.indexOf("NativeStructureVanillaLocator.predict(");
 
         assertTrue(locate.contains("reached its safety limit"));
         assertTrue(locate.contains("unregistered structure holder"));
+        assertTrue(bootstrapGate >= 0);
+        assertTrue(generatorIdentity > bootstrapGate);
+        assertTrue(lease > generatorIdentity);
+        assertTrue(nativePrediction > lease);
         assertFalse(locate.contains("catch (Throwable"));
         assertFalse(locate.contains("IrisLogging.reportError"));
         assertFalse(reachability.contains("catch (Throwable"));
@@ -78,11 +98,99 @@ public class IrisChunkGeneratorFailureContractTest {
         int referencesEnd = source.indexOf("public CompletableFuture<ChunkAccess> createBiomes", referencesStart);
         String references = source.substring(referencesStart, referencesEnd);
 
-        assertTrue(references.contains("requireGenerationLease(\"bukkit_nms_create_references\")"));
+        int nativeStructureGate = references.indexOf("!platformGenerator.shouldGenerateStructures()");
+        int generatorIdentity = references.indexOf("runtimeLevel.getChunkSource().getGenerator() != this");
+        int stage = references.indexOf("requireGenerationStage(\"bukkit_nms_create_references\")");
+        int lease = references.indexOf("requireGenerationLease(\"bukkit_nms_create_references\")");
+        int repair = references.indexOf("NativeStructureReferenceRepair.createReferences(");
+
+        assertTrue(nativeStructureGate >= 0);
+        assertTrue(generatorIdentity > nativeStructureGate);
+        assertTrue(stage > generatorIdentity);
+        assertTrue(lease > stage);
+        assertTrue(repair > lease);
         assertTrue(references.contains("IrisContext.open(engine, lease.sessionId(), null)"));
-        assertTrue(references.contains("NativeStructureReferenceRepair.createReferences("));
         assertFalse(references.contains("delegate.createReferences("));
         assertFalse(references.contains("catch ("));
+    }
+
+    @Test
+    public void structureGenerationAcquiresBootstrapGateBeforeUsingPublishedState() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int generationStart = source.indexOf("public void createStructures(");
+        int generationEnd = source.indexOf("private void adjustGeneratedStructures", generationStart);
+        String generation = source.substring(generationStart, generationEnd);
+        int gate = generation.indexOf("!platformGenerator.shouldGenerateStructures()");
+        int currentGenerator = generation.indexOf(
+                "runtimeLevel.getChunkSource().getGenerator() != this");
+        int stateIdentity = generation.indexOf(
+                "runtimeLevel.getChunkSource().getGeneratorState() != structureState");
+        int stage = generation.indexOf(
+                "requireGenerationStage(\"bukkit_nms_create_structures\")");
+        int lease = generation.indexOf(
+                "requireGenerationLease(\"bukkit_nms_create_structures\")");
+        int generationCall = generation.indexOf(
+                "super.createStructures(registryAccess, structureState");
+
+        assertTrue(gate >= 0);
+        assertTrue(currentGenerator > gate);
+        assertTrue(stateIdentity > currentGenerator);
+        assertTrue(stage > stateIdentity);
+        assertTrue(lease > stage);
+        assertTrue(generationCall > lease);
+        assertTrue(generation.contains("structureState,\n                            structureManager"));
+        assertFalse(generation.contains("resolvePublishedStructureState"));
+    }
+
+    @Test
+    public void nativeRingBootstrapTracksTheExactMinecraftFutures() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int initializeStart = source.indexOf("private CompletableFuture<Void> initializeStructureState(");
+        int initializeEnd = source.indexOf("private Map<?, ?> structureRingPositions", initializeStart);
+        String initialize = source.substring(initializeStart, initializeEnd);
+        int completionStart = source.indexOf(
+                "private CompletableFuture<Void> structureRingCompletion", initializeEnd);
+        int completionEnd = source.indexOf("private void requireCurrentStructureOwner", completionStart);
+        String completion = source.substring(completionStart, completionEnd);
+
+        assertBefore(initialize,
+                "structureRingPositions(structureState)",
+                "structureState.ensureStructuresGenerated()");
+        assertBefore(initialize,
+                "structureState.ensureStructuresGenerated()",
+                "structureRingCompletion(ringPositions)");
+        assertFalse(initialize.contains("catch ("));
+        assertTrue(completion.contains("for (Object candidate : ringPositions.values())"));
+        assertTrue(completion.contains("CompletableFuture.allOf(completions)"));
+        assertTrue(completion.contains("throw new IllegalStateException("));
+        assertFalse(completion.contains("join()"));
+        assertFalse(completion.contains("get()"));
+    }
+
+    @Test
+    public void standardActivationClaimsTheExactPublishedStateBeforeInitialization() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int activationStart = source.indexOf("CompletableFuture<Void> activateStudioStructureState(");
+        int activationEnd = source.indexOf(
+                "private CompletableFuture<Void> startStructureStateBootstrap", activationStart);
+        String activation = source.substring(activationStart, activationEnd);
+        int bootstrapStart = activationEnd;
+        int bootstrapEnd = source.indexOf(
+                "private CompletableFuture<Void> initializeStructureState", bootstrapStart);
+        String bootstrap = source.substring(bootstrapStart, bootstrapEnd);
+
+        assertTrue(activation.contains("retained.structureState()"));
+        assertBefore(activation,
+                "retainedStudioStructureState(",
+                "claimStudioStructureState(retained)");
+        assertBefore(bootstrap,
+                "claim,",
+                "initializeStructureState(");
+        assertBefore(bootstrap,
+                "initializeStructureState(",
+                "activation.run()");
+        assertFalse(activation.contains("publishStructureState("));
+        assertFalse(source.contains("ChunkGeneratorStructureState fullState"));
     }
 
     @Test
@@ -107,8 +215,169 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(placement.contains("WorldgenTerrainHeightmaps.primeStructurePlacement("));
         assertTrue(placement.indexOf("WorldgenTerrainHeightmaps.primeStructurePlacement(")
                 < placement.indexOf("prepareSurfaceStructures"));
-        assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_worldgen_heightmaps\")"));
+        assertTrue(fill.contains("requireGenerationLease(\"bukkit_nms_chunk_pipeline\")"));
         assertTrue(source.contains("int minY = chunk.getMinY() + 1;"));
+    }
+
+    @Test
+    public void fillFromNoiseLeaseSpansTheDelegateAndHeightmapPipeline() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int fillStart = source.indexOf("public CompletableFuture<ChunkAccess> fillFromNoise");
+        int fillEnd = source.indexOf("private static boolean isCancellationFailure", fillStart);
+        String fill = source.substring(fillStart, fillEnd);
+        int completionStart = fill.indexOf("pipeline.whenComplete(");
+        int completionEnd = fill.indexOf("            return completion;", completionStart);
+        assertTrue(completionStart >= 0);
+        assertTrue(completionEnd > completionStart);
+        String completion = fill.substring(completionStart, completionEnd);
+
+        assertBefore(fill,
+                "BukkitChunkGenerator.GenerationStagePermit stage = requireNoiseGenerationStage(",
+                "GenerationSessionLease lease");
+        assertBefore(fill,
+                "requireNoiseGenerationStage(",
+                "\"bukkit_nms_chunk_pipeline\")");
+        assertBefore(fill,
+                "lease = requireGenerationLease(\"bukkit_nms_chunk_pipeline\")",
+                ".fillFromNoise(blender, randomstate, structuremanager, ichunkaccess)");
+        assertTrue(fill.contains("IrisContext.open(engine, lease.sessionId(), null)"));
+        assertBefore(fill, "primeWorldgenHeightmaps(filled)", "pipeline.whenComplete(");
+        assertTrue(fill.contains("CompletableFuture<ChunkAccess> completion = new CompletableFuture<>()"));
+        assertBefore(completion, "boolean cancelled = isCancellationFailure(failure);", "lease.close();");
+        assertBefore(completion, "lease.close();", "stage.close();");
+        assertBefore(completion, "stage.close();", "completion.complete(filled)");
+        assertBefore(completion, "stage.close();", "completion.cancel(false)");
+        assertBefore(completion, "stage.close();", "completion.completeExceptionally(failure)");
+        assertTrue(completion.contains("else if (cancelled)"));
+        assertFalse(completion.contains("pipeline.isCancelled()"));
+        assertFalse(completion.contains("finally"));
+        assertTrue(fill.contains("catch (RuntimeException | Error failure)"));
+        assertTrue(fill.contains("lease.close();\n            stage.close();\n            throw failure;"));
+        assertTrue(fill.contains("return completion;"));
+        assertFalse(fill.contains("return pipeline;"));
+        assertFalse(fill.contains("pipeline.cancel("));
+        assertFalse(fill.contains("bukkit_nms_worldgen_heightmaps"));
+    }
+
+    @Test
+    public void releasedNoiseAdmissionLetsSynchronousDependentWaitForQueuedExclusive() throws Exception {
+        Semaphore admission = new Semaphore(1, true);
+        admission.acquire();
+        CountDownLatch exclusiveEntered = new CountDownLatch(1);
+        CountDownLatch releaseExclusive = new CountDownLatch(1);
+        AtomicBoolean dependentFinished = new AtomicBoolean(false);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        boolean stageReleased = false;
+
+        try {
+            Future<?> exclusive = executor.submit(() -> {
+                boolean acquired = false;
+                try {
+                    admission.acquire();
+                    acquired = true;
+                    exclusiveEntered.countDown();
+                    assertTrue(releaseExclusive.await(2, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                } finally {
+                    if (acquired) {
+                        admission.release();
+                    }
+                }
+            });
+            awaitQueueLength(admission, 1);
+            CompletableFuture<Void> outward = new CompletableFuture<>();
+            outward.thenRun(() -> {
+                try {
+                    assertTrue(exclusiveEntered.await(2, TimeUnit.SECONDS));
+                    dependentFinished.set(true);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            });
+
+            admission.release();
+            stageReleased = true;
+            assertTrue(outward.complete(null));
+            assertTrue(dependentFinished.get());
+            releaseExclusive.countDown();
+            exclusive.get(2, TimeUnit.SECONDS);
+            assertEquals(1, admission.availablePermits());
+        } finally {
+            if (!stageReleased) {
+                admission.release();
+            }
+            releaseExclusive.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void transformedDelegateCancellationIsDetectedThroughItsCompletionFailure() throws IOException {
+        CompletableFuture<Void> delegate = new CompletableFuture<>();
+        CompletableFuture<Void> transformed = delegate.thenApply(value -> value);
+
+        assertTrue(delegate.cancel(false));
+        assertFalse(transformed.isCancelled());
+        CompletionException failure = assertThrows(CompletionException.class, transformed::join);
+        assertTrue(failure.getCause() instanceof CancellationException);
+
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String cancellation = method(
+                source,
+                "private static boolean isCancellationFailure",
+                "private void primeWorldgenHeightmaps");
+        assertTrue(cancellation.contains("current instanceof CompletionException"));
+        assertTrue(cancellation.contains("current instanceof CancellationException"));
+    }
+
+    @Test
+    public void noiseAdmissionCanPrepareStudioBeforeAcquiringTheGenerationLease() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String fill = method(
+                source,
+                "public CompletableFuture<ChunkAccess> fillFromNoise",
+                "private static boolean isCancellationFailure");
+        String admission = method(
+                source,
+                "private BukkitChunkGenerator.GenerationStagePermit requireNoiseGenerationStage",
+                "public Optional<Identifier> getTypeNameForDataFixer");
+
+        assertBefore(fill,
+                "requireNoiseGenerationStage(",
+                "requireGenerationLease(\"bukkit_nms_chunk_pipeline\")");
+        assertTrue(admission.contains("platformGenerator.acquireNoiseGenerationStage("));
+        assertBefore(admission, "engine,", "chunkPos.x(),");
+        assertBefore(admission, "chunkPos.x(),", "chunkPos.z(),");
+        assertFalse(fill.contains("requireGenerationStage(\"bukkit_nms_chunk_pipeline\")"));
+    }
+
+    @Test
+    public void everyTopLevelMoonriseStageEntersTheFairGateBeforeItsGenerationLease() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String structures = method(source, "public void createStructures(", "private void adjustGeneratedStructures");
+        String references = method(source, "public void createReferences(", "public CompletableFuture<ChunkAccess> createBiomes");
+        String biomes = method(source, "public CompletableFuture<ChunkAccess> createBiomes", "public void buildSurface");
+        String noise = method(source, "public CompletableFuture<ChunkAccess> fillFromNoise", "private static boolean isCancellationFailure");
+        String decoration = method(source,
+                "public void applyBiomeDecoration(WorldGenLevel generatoraccessseed, ChunkAccess ichunkaccess, StructureManager structuremanager, boolean vanilla)",
+                "public BiomeGenerationSettings getBiomeGenerationSettings");
+
+        assertStageBeforeLease(structures, "bukkit_nms_create_structures");
+        assertStageBeforeLease(references, "bukkit_nms_create_references");
+        assertStageBeforeLease(biomes, "bukkit_nms_create_biomes");
+        assertBefore(noise,
+                "requireNoiseGenerationStage(",
+                "requireGenerationLease(\"bukkit_nms_chunk_pipeline\")");
+        assertStageBeforeLease(decoration, "bukkit_nms_biome_decoration");
+        assertBefore(decoration,
+                "requireGenerationLease(\"bukkit_nms_biome_decoration\")",
+                "importedFeatures.prepare(generatoraccessseed)");
+        assertEquals(4, occurrences(source, "requireGenerationStage(\"bukkit_nms_"));
+        assertEquals(2, occurrences(source, "requireNoiseGenerationStage("));
+        assertFalse(source.contains("GenerationSessionManager"));
     }
 
     @Test
@@ -172,6 +441,37 @@ public class IrisChunkGeneratorFailureContractTest {
             index = source.indexOf(needle, index + needle.length());
         }
         return count;
+    }
+
+    private static void awaitQueueLength(Semaphore semaphore, int expected) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (semaphore.getQueueLength() < expected && System.nanoTime() < deadline) {
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+        }
+        assertTrue("Expected at least " + expected + " queued semaphore threads",
+                semaphore.getQueueLength() >= expected);
+    }
+
+    private static String method(String source, String startToken, String endToken) {
+        int start = source.indexOf(startToken);
+        int end = source.indexOf(endToken, start);
+        assertTrue("Missing source contract token: " + startToken, start >= 0);
+        assertTrue("Missing source contract token: " + endToken, end > start);
+        return source.substring(start, end);
+    }
+
+    private static void assertStageBeforeLease(String source, String operation) {
+        assertBefore(source,
+                "requireGenerationStage(\"" + operation + "\")",
+                "requireGenerationLease(\"" + operation + "\")");
+    }
+
+    private static void assertBefore(String source, String first, String second) {
+        int firstIndex = source.indexOf(first);
+        int secondIndex = source.indexOf(second);
+        assertTrue("Missing source contract token: " + first, firstIndex >= 0);
+        assertTrue("Missing source contract token: " + second, secondIndex >= 0);
+        assertTrue(first + " must occur before " + second, firstIndex < secondIndex);
     }
 
     @Test

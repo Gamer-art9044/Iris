@@ -70,4 +70,36 @@ public class StructureImporterModeTest {
         NamespacedKey key = NamespacedKey.fromString("nova_structures:temple/large");
         assertEquals("nova_structures_temple_large", StructureImporter.deriveName(key));
     }
+
+    @Test
+    public void normalizesLegacySlabHalfProperties() {
+        assertEquals("minecraft:pale_oak_slab[type=top]",
+                StructureImporter.normalizeJigsawFinalState("minecraft:pale_oak_slab[half=top]"));
+        assertEquals("minecraft:pale_oak_slab[waterlogged=false,type=bottom]",
+                StructureImporter.normalizeJigsawFinalState(
+                        "minecraft:pale_oak_slab[waterlogged=false,half=bottom]"));
+    }
+
+    @Test
+    public void normalizesMisspelledPolishedBlackstone() {
+        assertEquals("minecraft:chiseled_polished_blackstone",
+                StructureImporter.normalizeJigsawFinalState("minecraft:chisled_polished_blackstone"));
+        assertEquals("minecraft:chiseled_polished_blackstone[axis=y]",
+                StructureImporter.normalizeJigsawFinalState(
+                        "minecraft:chisled_polished_blackstone[axis=y]"));
+    }
+
+    @Test
+    public void leavesNonSlabAndModernStatesUnchanged() {
+        assertEquals("minecraft:oak_stairs[half=top]",
+                StructureImporter.normalizeJigsawFinalState("minecraft:oak_stairs[half=top]"));
+        assertEquals("minecraft:pale_oak_slab[type=bottom]",
+                StructureImporter.normalizeJigsawFinalState("minecraft:pale_oak_slab[type=bottom]"));
+        assertEquals("minecraft:chisled_polished_blackstone_stairs",
+                StructureImporter.normalizeJigsawFinalState(
+                        "minecraft:chisled_polished_blackstone_stairs"));
+        assertEquals("example:chisled_polished_blackstone",
+                StructureImporter.normalizeJigsawFinalState(
+                        "example:chisled_polished_blackstone"));
+    }
 }

@@ -37,6 +37,9 @@ import lombok.experimental.Accessors;
 @Data
 @EqualsAndHashCode(callSuper = false)
 public class IrisJigsawPiece extends IrisRegistrant {
+    @Desc("Optional author-facing name shown by Jigsaw Studio. The resource key is shown when this is blank.")
+    private String displayName = "";
+
     @Required
     @RegistryListResource(IrisObject.class)
     @Desc("The object (schematic) that makes up this piece.")
@@ -48,6 +51,35 @@ public class IrisJigsawPiece extends IrisRegistrant {
 
     @Desc("If true, this piece may be rotated around the Y axis when placed so the assembler can match its connectors. Disable for pieces that must keep a fixed orientation.")
     private boolean rotatable = true;
+
+    @Desc("If true, this piece's object bounds block overlapping jigsaw pieces. Disable for connector-only scaffolds whose stored volume is intentionally shared with physical pieces.")
+    private boolean collidable = true;
+
+    @ArrayType(type = String.class, min = 1)
+    @Desc("Theme keys that may select this piece. An empty list makes the piece available to every selected theme.")
+    private KList<String> themes = new KList<>();
+
+    @Desc("Deterministic depth, placement-count, and terminal-role rules for this piece.")
+    private IrisJigsawPieceRules rules = new IrisJigsawPieceRules();
+
+    public boolean supportsTheme(String selectedTheme) {
+        if (themes == null || themes.isEmpty()) {
+            return true;
+        }
+        if (selectedTheme == null || selectedTheme.isBlank()) {
+            return false;
+        }
+        for (String theme : themes) {
+            if (selectedTheme.equals(theme)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public IrisJigsawPieceRules resolvedRules() {
+        return rules == null ? new IrisJigsawPieceRules() : rules;
+    }
 
     @Override
     public String getFolderName() {

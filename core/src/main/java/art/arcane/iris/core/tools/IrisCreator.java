@@ -26,6 +26,7 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.IrisRuntimeSchedulerMode;
+import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.DatapackInstallResult;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.IrisWorlds;
@@ -41,6 +42,7 @@ import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
+import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.runtime.WorldDeletionQueue;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -172,6 +174,9 @@ public class IrisCreator {
             if (resolvedDimension == null) {
                 throw new IrisException("Dimension cannot be found for id " + dimension());
             }
+            IrisStartupValidation.requireWorldCreationReady();
+            PackValidationRegistry.requireLoadable(
+                    resolvedDimension.getLoader().getDataFolder().getName());
             worldLease = coordinator.acquire(
                     LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
                     LifecycleOperationCoordinator.OperationKind.WORLD_CREATE,

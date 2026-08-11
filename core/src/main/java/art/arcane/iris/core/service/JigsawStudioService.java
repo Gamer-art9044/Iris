@@ -67,6 +67,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
 import org.bukkit.Color;
+import org.bukkit.GameRules;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
@@ -100,6 +101,7 @@ import org.bukkit.event.block.BrewingStartEvent;
 import org.bukkit.event.block.CrafterCraftEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.inventory.BrewEvent;
 import org.bukkit.event.inventory.BrewingStandFuelEvent;
 import org.bukkit.event.inventory.FurnaceBurnEvent;
@@ -123,7 +125,6 @@ import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.event.server.ServerCommandEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
-import org.bukkit.event.world.ChunkUnloadEvent;
 import org.bukkit.event.world.StructureGrowEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -161,6 +162,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
     private static final List<Integer> AUTOSAVE_PERSISTENT_RETRY_DELAYS =
             List.of(40, 80, 160, 320, 600);
     private static final long PREVIEW_SEED = 1337L;
+    private static final int SPATIAL_PREVIEW_BASE_Y = JigsawStudioLayout.FLOOR_Y + 48;
     private static final JigsawStudioPieceRules DEFAULT_PIECE_RULES =
             new JigsawStudioPieceRules(0, 30, 0, 0, false);
     private static final long TOOL_CONFIRM_NANOS = 10_000_000_000L;
@@ -207,8 +209,6 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
     private final Map<UUID, JigsawStudioGraphEvaluation> evaluations = new ConcurrentHashMap<>();
     private final JigsawStudioTripleSneakTracker tripleSneakTracker = new JigsawStudioTripleSneakTracker();
     private final JigsawStudioToolCodec toolCodec = new JigsawStudioToolCodec();
-    private final JigsawStudioDisabledWorkcellRenderer disabledWorkcellRenderer =
-            new JigsawStudioDisabledWorkcellRenderer();
     private final JigsawStudioPreviewRenderer previewRenderer = new JigsawStudioPreviewRenderer();
     private final Object saveLifecycleLock = new Object();
     private final Set<UUID> savesInProgress = new HashSet<>();
@@ -258,7 +258,6 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
         jigsawTileWatches.clear();
         toolConfirmations.clear();
         tripleSneakTracker.clearAll();
-        disabledWorkcellRenderer.removeAll();
         evaluations.clear();
         previewRenderer.removeAll();
         reopenRequiredRequests.clear();
@@ -329,16 +328,11 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             unregisterRetries.remove(displacedRequestId);
             unregisterDrainWarnings.remove(displacedRequestId);
             tripleSneakTracker.clearRequest(displacedRequestId);
-            disabledWorkcellRenderer.removeRequest(displacedRequestId);
             evaluations.remove(displacedRequestId);
             previewRenderer.removeRequest(displacedRequestId);
         }
         IrisLogging.info("Jigsaw Studio authoring registered: world=%s structure=%s bays=%d",
                 world.getName(), activeGenerator.getSession().structureKey(), activeGenerator.getLayout().bays().size());
-        disabledWorkcellRenderer.reconcile(
-                world,
-                activeGenerator.getRequest().requestId(),
-                activeGenerator.getLayout());
         scheduleInitialEvaluation(next);
         scheduleOnlinePlayers(world.getUID());
     }
@@ -351,6 +345,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
         if (studio == null || !requestId.equals(studio.generator().getRequest().requestId())) {
             return;
         }
+        disableNaturalStudioSpawning(world);
         scheduleInitialEvaluation(studio);
     }
 
@@ -429,7 +424,6 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
         unregisterDrainWarnings.remove(request.requestId());
         toolConfirmations.entrySet().removeIf(entry -> entry.getValue().payload().requestId().equals(request.requestId()));
         tripleSneakTracker.clearRequest(request.requestId());
-        disabledWorkcellRenderer.removeRequest(request.requestId());
         evaluations.remove(request.requestId());
         previewRenderer.forgetRequest(request.requestId());
         JigsawStudioActivation.deactivate(request.packKey(), request.requestId());
@@ -1309,9 +1303,22 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
                                 sourcePieceKey,
                                 pieceKey);
                     }
+                    JigsawStudioLayout updatedLayout = loadMappedLayout(studio);
+                    String targetWorkcellId = updatedLayout.workcellForVariant(pieceKey)
+                            .map(JigsawStudioBay::stableId)
+                            .orElseThrow(() -> new IOException(
+                                    "Created variant '" + pieceKey + "' has no Studio workcell"));
+                    if (updatedLayout.mode() == JigsawStudioMode.SPATIAL_JIGSAW) {
+                        return new CommandGraphMutationResult(
+                                updatedLayout,
+                                "",
+                                "",
+                                (duplicateActive ? "Duplicated" : "Created") + " variant '" + pieceKey
+                                        + "' in " + targetWorkcellId + ".");
+                    }
                     return new CommandGraphMutationResult(
-                            loadMappedLayout(studio),
-                            workcell.stableId(),
+                            updatedLayout,
+                            targetWorkcellId,
                             pieceKey,
                             (duplicateActive ? "Duplicated" : "Created") + " variant '" + pieceKey + "'.");
                 });
@@ -1548,11 +1555,15 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
                         throw new IOException("Variant-family transaction failed with "
                                 + creation.writeResult().status());
                     }
+                    JigsawStudioLayout updatedLayout = loadMappedLayout(studio);
+                    Map<String, String> rebinds = updatedLayout.mode() == JigsawStudioMode.SPATIAL_JIGSAW
+                            ? Map.of()
+                            : creation.pieceKeysByWorkcell();
                     return new CommandGraphMutationResult(
-                            loadMappedLayout(studio),
+                            updatedLayout,
                             "",
                             "",
-                            creation.pieceKeysByWorkcell(),
+                            rebinds,
                             Optional.empty(),
                             "Duplicated every enabled workcell as coherent family '" + themeKey + "' with "
                                     + creation.pieceKeysByWorkcell().size() + " variant(s).");
@@ -2201,7 +2212,8 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
         String activePieceKey = session.activeVariant(workcellId)
                 .map(JigsawStudioVariant::pieceKey)
                 .orElse("");
-        if (activePieceKey.equals(pieceKey)) {
+        if (session.layout().mode() == JigsawStudioMode.PLANAR_JIGSAW
+                && activePieceKey.equals(pieceKey)) {
             message(player, "Load another variant in this workcell before deleting '" + pieceKey + "'.");
             return false;
         }
@@ -2575,7 +2587,12 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
                 IrisPosition origin = previewOrigin(studio.generator().getLayout(), structure);
                 StructureAssembler assembler = StructureAssembler.forCompilation(compilation, origin);
                 StructureAssemblyResult assembly = assembler.assemble(new RNG(PREVIEW_SEED));
-                computation = evaluationForAssembly(requestId, generation, compilation, assembly);
+                computation = evaluationForAssembly(
+                        requestId,
+                        generation,
+                        compilation,
+                        assembly,
+                        studio.generator().getLayout().mode());
             }
         } catch (Throwable exception) {
             IrisLogging.reportError(exception);
@@ -2588,7 +2605,8 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             UUID requestId,
             long generation,
             StructureGraphCompilation compilation,
-            StructureAssemblyResult assembly
+            StructureAssemblyResult assembly,
+            JigsawStudioMode mode
     ) throws IOException {
         if (assembly.status().isFailure()) {
             return invalidEvaluation(
@@ -2611,7 +2629,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
                             JigsawStudioPreviewRenderer.PreviewBounds.empty()),
                     JigsawStudioPreviewRenderer.PreviewPlan.empty());
         }
-        List<PlacedStructurePiece> aligned = alignPreviewPieces(assembly.pieces());
+        List<PlacedStructurePiece> aligned = alignPreviewPieces(assembly.pieces(), mode);
         JigsawStudioPreviewRenderer.PreviewPlan plan = JigsawStudioPreviewRenderer.plan(aligned);
         StructureGraphDiagnostic firstWarning = firstDiagnostic(
                 compilation,
@@ -2713,12 +2731,18 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
                 Math.max(16, layout.extentZ() / 2));
     }
 
-    private static List<PlacedStructurePiece> alignPreviewPieces(List<PlacedStructurePiece> pieces) {
+    static List<PlacedStructurePiece> alignPreviewPieces(
+            List<PlacedStructurePiece> pieces,
+            JigsawStudioMode mode
+    ) {
         int minimumY = Integer.MAX_VALUE;
         for (PlacedStructurePiece piece : pieces) {
             minimumY = Math.min(minimumY, piece.getMinY());
         }
-        int shiftY = JigsawStudioLayout.FLOOR_Y + 1 - minimumY;
+        int baseY = mode == JigsawStudioMode.SPATIAL_JIGSAW
+                ? SPATIAL_PREVIEW_BASE_Y
+                : JigsawStudioLayout.FLOOR_Y + 1;
+        int shiftY = baseY - minimumY;
         List<PlacedStructurePiece> aligned = new ArrayList<>(pieces.size());
         for (PlacedStructurePiece piece : pieces) {
             aligned.add(new PlacedStructurePiece(
@@ -3534,7 +3558,6 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             UUID requestId,
             CommandGraphMutationResult result
     ) {
-        disabledWorkcellRenderer.reconcile(studio.world(), requestId, result.layout());
         for (JigsawStudioBay workcell : result.layout().bays()) {
             refreshWorkcellContext(studio.worldId(), workcell.stableId());
         }
@@ -3801,28 +3824,6 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
         ActiveStudio studio = studios.get(event.getWorld().getUID());
         if (studio != null) {
             markChunkAvailable(studio, event.getChunk().getX(), event.getChunk().getZ());
-            for (JigsawStudioBay bay : studio.generator().getLayout().bays()) {
-                if (!bay.enabled()
-                        && bay.bounds().originX() >> 4 == event.getChunk().getX()
-                        && bay.bounds().originZ() >> 4 == event.getChunk().getZ()) {
-                    disabledWorkcellRenderer.reconcile(
-                            studio.world(),
-                            studio.generator().getRequest().requestId(),
-                            studio.generator().getLayout());
-                    break;
-                }
-            }
-        }
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onChunkUnload(ChunkUnloadEvent event) {
-        ActiveStudio studio = studios.get(event.getWorld().getUID());
-        if (studio != null) {
-            disabledWorkcellRenderer.unloadChunk(
-                    studio.generator().getRequest().requestId(),
-                    event.getChunk().getX(),
-                    event.getChunk().getZ());
         }
     }
 
@@ -3920,6 +3921,14 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
     public void onPlayerRespawn(PlayerRespawnEvent event) {
         finalizeJigsawTileWatchesForPlayer(event.getPlayer().getUniqueId());
         reconcilePlayerContext(event.getPlayer(), event.getRespawnLocation());
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onNaturalCreatureSpawn(CreatureSpawnEvent event) {
+        if (studios.containsKey(event.getLocation().getWorld().getUID())
+                && isNaturalStudioSpawn(event.getSpawnReason())) {
+            event.setCancelled(true);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -5947,6 +5956,11 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
                     + " connector(s) from " + snapshots.size()
                     + " chunk(s); validating and writing the owned structure graph...");
             persistCapture(coordinator, capture, connectors);
+        } catch (WorkcellTopologyException exception) {
+            coordinator.failPersistent(
+                    "Jigsaw Studio cannot autosave this planar workcell: "
+                            + failureMessage(exception),
+                    null);
         } catch (Throwable exception) {
             coordinator.failPersistent(
                     "Jigsaw Studio capture assembly failed: " + failureMessage(exception),
@@ -6025,6 +6039,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             String mutationNotice = unchanged ? "" : " Newer edits remain unsaved.";
             message(player, "Saved piece '" + coordinator.saveIdentity().variantKey() + "' and object '"
                     + assembly.objectKey() + "' atomically." + mutationNotice + cleanup);
+            playSaveSound(player);
             if (unchanged) {
                 scheduleEvaluation(studio);
             }
@@ -6518,19 +6533,27 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
                 case EAST_POSITIVE_X -> JigsawPlanarDirection.EAST.bit();
                 case SOUTH_POSITIVE_Z -> JigsawPlanarDirection.SOUTH.bit();
                 case WEST_NEGATIVE_X -> JigsawPlanarDirection.WEST.bit();
-                case UP_POSITIVE_Y, DOWN_NEGATIVE_Y -> throw new IOException(
-                        "Planar workcells cannot save vertical connectors");
+                case UP_POSITIVE_Y, DOWN_NEGATIVE_Y -> throw new WorkcellTopologyException(
+                        "Planar workcell '" + workcell.stableId()
+                                + "' cannot save a vertical connector. Remove it or use Reset Connector Blocks.");
             };
         }
         JigsawPlanarTopology sourceTopology = JigsawPlanarTopology.fromMask(mask);
         JigsawPlanarTopology displayedTopology = sourceTopology.rotateClockwise(displayRotationQuarterTurns);
         if (displayedTopology != expected.canonicalTopology()) {
-            throw new IOException("Workcell '" + workcell.stableId() + "' requires "
-                    + expected.canonicalTopology().name().toLowerCase(Locale.ROOT)
-                    + " connector orientation, but the edited markers form "
-                    + displayedTopology.name().toLowerCase(Locale.ROOT)
-                    + ". Keep the workcell's red floor glyph orientation; Iris rotates the saved variant automatically.");
+            throw new WorkcellTopologyException("Workcell '" + workcell.stableId() + "' requires "
+                    + topologyDescription(expected.canonicalTopology())
+                    + ", but the edited markers form "
+                    + topologyDescription(displayedTopology)
+                    + ". Use Reset Connector Blocks to restore the saved topology, or edit the markers to match the floor glyph.");
         }
+    }
+
+    private static String topologyDescription(JigsawPlanarTopology topology) {
+        int connectorCount = topology.directions().size();
+        return topology.name().toLowerCase(Locale.ROOT).replace('_', ' ')
+                + " (" + connectorCount + " horizontal connector"
+                + (connectorCount == 1 ? "" : "s") + ")";
     }
 
     static void storeConnectorFinalState(
@@ -7039,10 +7062,6 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
     private void reloadSessionLayout(ActiveStudio studio) throws IOException {
         JigsawStudioLayout layout = loadMappedLayout(studio);
         studio.generator().getSession().replaceLayout(layout);
-        disabledWorkcellRenderer.reconcile(
-                studio.world(),
-                studio.generator().getRequest().requestId(),
-                layout);
         for (JigsawStudioBay workcell : layout.bays()) {
             studio.generator().invalidateRender(workcell.stableId());
         }
@@ -7080,7 +7099,8 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
         JigsawStudioSession session = studio.generator().getSession();
         JigsawStudioBay workcell = session.layout().findAt(
                 target.getBlockX(), target.getBlockY(), target.getBlockZ());
-        selectEnteredWorkcell(session, workcell, ownerMatches(player, studio));
+        boolean owner = ownerMatches(player, studio);
+        selectEnteredWorkcell(session, workcell, owner);
         String workcellId = workcell == null ? "" : workcell.stableId();
         playerWorkcells.put(player.getUniqueId(), new PlayerWorkcellContext(
                 studio.worldId(),
@@ -7113,6 +7133,14 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             boolean owner
     ) {
         return owner && workcell != null && session.selectBay(workcell.stableId());
+    }
+
+    static boolean isNaturalStudioSpawn(CreatureSpawnEvent.SpawnReason reason) {
+        return reason == CreatureSpawnEvent.SpawnReason.NATURAL;
+    }
+
+    static void disableNaturalStudioSpawning(World world) {
+        Objects.requireNonNull(world, "world").setGameRule(GameRules.SPAWN_MOBS, false);
     }
 
     public void refreshWorkcellContext(UUID worldId, String workcellId) {
@@ -7708,9 +7736,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             if (!variant.pieceKey().equalsIgnoreCase(key)) {
                 continue;
             }
-            return variant.archetype()
-                    .map(archetype -> layout.get(archetype.stableId()))
-                    .orElse(layout.get(JigsawStudioLayout.SPATIAL_WORKCELL_ID));
+            return layout.workcellForVariant(variant.pieceKey()).orElse(null);
         }
         return null;
     }
@@ -7735,6 +7761,16 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
     private static void message(Player player, String text) {
         if (player != null) {
             J.runEntity(player, () -> player.sendMessage("[Iris Jigsaw Studio] " + text));
+        }
+    }
+
+    static void playSaveSound(Player player) {
+        if (player != null) {
+            J.runEntity(player, () -> player.playSound(
+                    player.getLocation(),
+                    "minecraft:block.note_block.bell",
+                    0.65F,
+                    1.65F));
         }
     }
 
@@ -8719,6 +8755,12 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
         @Override
         public byte[] objectContent() {
             return objectContent.clone();
+        }
+    }
+
+    static final class WorkcellTopologyException extends IOException {
+        WorkcellTopologyException(String message) {
+            super(message);
         }
     }
 

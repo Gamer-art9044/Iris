@@ -21,6 +21,7 @@ package art.arcane.iris.core.commands;
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackResourceCleanup;
+import art.arcane.iris.core.pack.PackValidationCache;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
@@ -31,6 +32,8 @@ import art.arcane.volmlib.util.director.annotations.Param;
 import art.arcane.volmlib.util.localization.TextKey;
 
 import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import art.arcane.iris.core.localization.IrisLanguage;
@@ -64,6 +67,7 @@ public class CommandPack implements DirectorExecutor {
                     broken++;
                 }
             }
+            persistValidationCache(packsRoot);
             s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_VALIDATION_COMPLETE_BROKEN_PACKS, MessageArgument.untrusted("broken", String.valueOf(broken)), MessageArgument.untrusted("value", String.valueOf(dirs.size()))));
             return;
         }
@@ -74,6 +78,7 @@ public class CommandPack implements DirectorExecutor {
             return;
         }
         runValidate(s, target);
+        persistValidationCache(packsRoot);
     }
 
     @Director(description = "Preview or apply unused-resource cleanup", descriptionKey = "iris.director.commandpack.director.preview_apply_unused_resource_cleanup", aliases = {"c"})
@@ -102,6 +107,7 @@ public class CommandPack implements DirectorExecutor {
                 s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_NO_CLEANUP_CANDIDATES_FOUND_PACK, MessageArgument.untrusted("pack", String.valueOf(pack))));
                 return;
             }
+            PackValidationRegistry.remove(packFolder.getName());
             s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_QUARANTINED_CLEANUP_CANDIDATE_S_UNDER, MessageArgument.untrusted("size", String.valueOf(result.quarantinedPaths().size())), MessageArgument.untrusted("quarantinePath", String.valueOf(result.quarantinePath()))));
             reportPaths(s, result.quarantinedPaths(), BukkitRuntimeMessages.COMMAND_PACK_PATH_QUARANTINED);
             return;
@@ -157,6 +163,7 @@ public class CommandPack implements DirectorExecutor {
                 s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_NOTHING_RESTORE_PACK, MessageArgument.untrusted("pack", String.valueOf(pack))));
                 return;
             }
+            PackValidationRegistry.remove(packFolder.getName());
             s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_RESTORED_FILE_S_FROM, MessageArgument.untrusted("size", String.valueOf(result.restoredPaths().size())), MessageArgument.untrusted("dumpPath", String.valueOf(result.dumpPath()))));
             reportPaths(s, result.restoredPaths(), BukkitRuntimeMessages.COMMAND_PACK_PATH_RESTORED);
             return;
@@ -227,8 +234,38 @@ public class CommandPack implements DirectorExecutor {
             return result;
         } catch (Throwable e) {
             Iris.reportError("Pack validation failed for '" + packFolder.getName() + "'", e);
-            s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_VALIDATION_FAILED, MessageArgument.untrusted("name", String.valueOf(packFolder.getName())), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
-            return null;
+            String detail = e.getMessage() == null || e.getMessage().isBlank()
+                    ? e.getClass().getSimpleName()
+                    : e.getMessage();
+            PackValidationResult result = new PackValidationResult(
+                    packFolder.getName(),
+                    List.of("Pack validation failed with " + e.getClass().getSimpleName() + ": " + detail),
+                    List.of(),
+                    System.currentTimeMillis());
+            PackValidationRegistry.publish(result);
+            reportResult(s, result);
+            return result;
+        }
+    }
+
+    private void persistValidationCache(File packsRoot) {
+        List<File> packDirectories = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
+        List<PackValidationResult> results = new ArrayList<>(packDirectories.size());
+        for (File packDirectory : packDirectories) {
+            PackValidationResult result = PackValidationRegistry.get(packDirectory.getName());
+            if (result == null) {
+                return;
+            }
+            results.add(result);
+        }
+        try {
+            PackValidationCache.save(
+                    Iris.instance.getDataFile("cache", "pack-validation.json").toPath(),
+                    PackValidationCache.contentFingerprint(packsRoot),
+                    PackValidationCache.contextFingerprint(),
+                    results);
+        } catch (IOException | RuntimeException e) {
+            Iris.reportError("Could not persist refreshed pack-validation results", e);
         }
     }
 

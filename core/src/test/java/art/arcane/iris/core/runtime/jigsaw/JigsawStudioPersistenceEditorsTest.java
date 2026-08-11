@@ -448,7 +448,7 @@ public class JigsawStudioPersistenceEditorsTest {
     }
 
     @Test
-    public void createsSpatialThemeSetFromTheSingleSpatialWorkcellSource() throws Exception {
+    public void createsSpatialThemeSetFromTheSelectedSpatialWorkcellSource() throws Exception {
         Path packRoot = temporaryFolder.newFolder("spatial-theme").toPath();
         JigsawStudioProjectCreator.Options options = new JigsawStudioProjectCreator.Options(
                 "spatial/theme",
@@ -468,7 +468,39 @@ public class JigsawStudioPersistenceEditorsTest {
                 "spatial/theme/variants/spatial/variant-2",
                 creation.pieceKeysByWorkcell().get(JigsawStudioLayout.SPATIAL_WORKCELL_ID));
         JsonObject pool = readJson(packRoot.resolve("jigsaw-pools/spatial/theme/start.json"));
-        assertEquals(2, pool.getAsJsonArray("pieces").size());
+        assertEquals(8, pool.getAsJsonArray("pieces").size());
+    }
+
+    @Test
+    public void createsSpatialThemeSetAcrossEveryDedicatedSpatialWorkcell() throws Exception {
+        Path packRoot = temporaryFolder.newFolder("spatial-theme-row").toPath();
+        JigsawStudioProjectCreator.Options options = new JigsawStudioProjectCreator.Options(
+                "spatial/row",
+                JigsawStudioMode.SPATIAL_JIGSAW,
+                JigsawStudioCompatibilityTarget.IRIS_EXTENDED,
+                new JigsawStudioCellDimensions(15, 15, 15));
+        assertTrue(JigsawStudioProjectCreator.create(packRoot, options).successful());
+
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put(JigsawStudioLayout.SPATIAL_WORKCELL_ID, "spatial/row/start");
+        for (int connectorCount = 1; connectorCount <= 6; connectorCount++) {
+            String pieceKey = "spatial/row/connectors-" + connectorCount;
+            sources.put(JigsawStudioLayout.SPATIAL_WORKCELL_ID + "/" + pieceKey, pieceKey);
+        }
+        JigsawStudioGraphEditor.VariantFamilyCreation creation = JigsawStudioGraphEditor.duplicateActiveFamily(
+                packRoot,
+                "spatial/row",
+                sources,
+                "variant-2");
+
+        assertTrue(creation.writeResult().successful());
+        assertEquals(7, creation.pieceKeysByWorkcell().size());
+        for (String targetPieceKey : creation.pieceKeysByWorkcell().values()) {
+            assertTrue(Files.isRegularFile(packRoot.resolve("jigsaw-pieces/" + targetPieceKey + ".json")));
+            assertTrue(Files.isRegularFile(packRoot.resolve("objects/" + targetPieceKey + ".iob")));
+        }
+        JsonObject pool = readJson(packRoot.resolve("jigsaw-pools/spatial/row/start.json"));
+        assertEquals(14, pool.getAsJsonArray("pieces").size());
     }
 
     @Test

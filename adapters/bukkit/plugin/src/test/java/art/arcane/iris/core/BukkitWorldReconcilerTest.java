@@ -5,6 +5,7 @@ import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -28,6 +29,11 @@ import static org.junit.Assert.assertTrue;
 public class BukkitWorldReconcilerTest {
     @Rule
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+    @After
+    public void disableStartupValidation() {
+        IrisStartupValidation.disable();
+    }
 
     @Test
     public void loadLeaseCoversRegistrationThroughExactWorldCompletion() throws Exception {
@@ -222,6 +228,38 @@ public class BukkitWorldReconcilerTest {
     }
 
     @Test
+    public void pendingStartupValidationRefusesWorldLoadBeforeRegistration() throws Exception {
+        File configuration = temporaryFolder.newFile("startup-pending.yml");
+        FakeBackend backend = new FakeBackend();
+        BukkitWorldReconciler reconciler = new BukkitWorldReconciler(backend, coordinator());
+        IrisStartupValidation.begin();
+
+        BukkitWorldReconciler.LoadResult result = reconciler
+                .loadWorld(configuration, backend.worldKey.toString())
+                .join();
+
+        assertEquals(BukkitWorldReconciler.ReconciliationStatus.DIMENSION_UNRESOLVED, result.status());
+        assertEquals(0, backend.createCount.get());
+        assertEquals(0L, configuration.length());
+    }
+
+    @Test
+    public void invalidDimensionRefusesWorldLoadBeforeRegistration() throws Exception {
+        File configuration = temporaryFolder.newFile("invalid-dimension.yml");
+        FakeBackend backend = new FakeBackend();
+        backend.validationFailure = new IllegalStateException("pack is invalid");
+        BukkitWorldReconciler reconciler = new BukkitWorldReconciler(backend, coordinator());
+
+        BukkitWorldReconciler.LoadResult result = reconciler
+                .loadWorld(configuration, backend.worldKey.toString())
+                .join();
+
+        assertEquals(BukkitWorldReconciler.ReconciliationStatus.DIMENSION_UNRESOLVED, result.status());
+        assertEquals(0, backend.createCount.get());
+        assertEquals(0L, configuration.length());
+    }
+
+    @Test
     public void terminalCreateTimeoutWinsOverLateWorldCompletion() {
         NamespacedKey worldKey = new NamespacedKey("iris", "probe");
         CompletableFuture<World> source = new CompletableFuture<>();
@@ -317,6 +355,7 @@ public class BukkitWorldReconcilerTest {
         private boolean irisWorld;
         private Long configuredSeed;
         private BukkitWorldReconciler.DimensionResolution dimensionResolution;
+        private RuntimeException validationFailure;
 
         private FakeBackend() {
             worldKey = new NamespacedKey("iris", "probe");
@@ -326,6 +365,7 @@ public class BukkitWorldReconcilerTest {
             irisWorld = true;
             configuredSeed = null;
             dimensionResolution = BukkitWorldReconciler.DimensionResolution.resolved("overworld");
+            validationFailure = null;
         }
 
         @Override
@@ -357,6 +397,13 @@ public class BukkitWorldReconcilerTest {
         @Override
         public BukkitWorldReconciler.DimensionResolution resolveDimension(NamespacedKey requestedWorldKey) {
             return dimensionResolution;
+        }
+
+        @Override
+        public void requireDimensionLoadable(NamespacedKey requestedWorldKey, String dimension) {
+            if (validationFailure != null) {
+                throw validationFailure;
+            }
         }
     }
 }

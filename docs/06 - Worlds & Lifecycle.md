@@ -35,6 +35,7 @@ This workflow passes when the dimension is re-injected after restart and generat
 | Symptom | Meaning | Recovery |
 |---|---|---|
 | Command reports busy | Another `WORLD_MUTATION` or `PACK_MUTATION` lease owns the lifecycle coordinator | Let that operation finish; do not retry concurrent create/remove/update commands |
+| Login or create reports startup validation pending/failed/restart-required | External datapacks or dimension-pack validation has not reached a safe state | Fix the first logged failure or complete the requested restart; do not create folders or add `bukkit.yml` entries manually |
 | Folia create succeeds but teleport cannot find the world | Creation staged files and registration only | Restart, then load/teleport as instructed by the staging result |
 | Bukkit load reports missing or inconsistent data | Managed dimension root, registration, or `iris/pack` snapshot is incomplete | Keep the directory, restore from backup, and reconcile registration before retrying; load never redownloads the snapshot |
 | Unload reaches its terminal timeout | World, generator, or scheduler work did not settle within 150 seconds | Allow the requested restart; do not force-delete the live directory |
@@ -95,29 +96,30 @@ Full permission table: `04 - Commands & Permissions.md`.
 | `seed` | `1337` | World seed |
 | `main` | `false` | Schedule main-world promotion on JVM shutdown (Paper path) or promote during Folia staging |
 
-Create refuses the primary Bukkit thread. Lifecycle domain `WORLD_MUTATION` / kind `WORLD_CREATE` must be free or create fails busy.
+Create refuses the primary Bukkit thread. Startup datapack validation must be ready and the selected source pack must have a loadable validation result before the lifecycle lease, datapack preparation, dimension folder, pack snapshot, registration, or Bukkit/NMS create path is entered; lifecycle domain `WORLD_MUTATION` / kind `WORLD_CREATE` must then be free or create fails busy.
 
 ## Production create flow (non-Folia)
 
-1. Resolve managed key and empty dimension root.
-2. Resolve dimension via `IrisToolbelt.getDimension` (may download pack if missing).
+1. Resolve the managed key and dimension without creating the dimension root.
+2. Require startup datapack readiness and a loadable validation result for the dimension's owning pack.
 3. Ensure datapacks for the dimension types are installed; queue restart if types not yet loaded.
-4. Copy pack into `<world>/iris/pack` (`StudioSVC.installIntoWorld`) — atomic stage → publish; refuses primary thread.
+4. Copy the pack into `<world>/iris/pack` (`StudioSVC.installIntoWorld`) — atomic stage → publish; refuses primary thread.
 5. Build `WorldCreator` with Iris generator (`studio=false`).
-6. Create world through `WorldLifecycleService` / NMS async create (timeout 120s; timeout triggers server restart).
-7. Register world in `bukkit.yml` with generator `Iris` dimension key and seed; Multiverse link update when present.
-8. Optional creation-time pregen if a `PregenTask` was attached by the creator API.
+6. Create the world through `WorldLifecycleService` / NMS async create (timeout 120s; timeout triggers server restart).
+7. Register the world in `bukkit.yml` with generator `Iris` dimension key and seed; update the Multiverse link when present.
+8. Run optional creation-time pregen if a `PregenTask` was attached by the creator API.
 
 ## Folia staging
 
 Runtime world creation is disabled on Folia. `/iris create` instead:
 
-1. Acquires `WORLD_CREATE` lease.
-2. Installs datapacks if changed.
-3. Stages pack into the managed dimension root via `installIntoWorld`.
-4. Registers the world in `bukkit.yml` (`BukkitWorldConfiguration.register`).
-5. If `main=true`, promotes main-world files immediately under lease (failure rolls back bukkit.yml + deletes staged folder).
-6. Instructs operator to restart; generation/load happens on next startup.
+1. Requires startup datapack readiness and a loadable validation result for the selected pack; refusal leaves no dimension folder or registration.
+2. Acquires the `WORLD_CREATE` lease.
+3. Installs datapacks if changed.
+4. Stages the pack into the managed dimension root via `installIntoWorld`.
+5. Registers the world in `bukkit.yml` (`BukkitWorldConfiguration.register`).
+6. If `main=true`, promotes main-world files immediately under lease (failure rolls back bukkit.yml + deletes staged folder).
+7. Instructs the operator to restart; generation/load happens on next startup.
 
 `WorldLifecycleStaging` holds staged generators/biome providers for the backend that consumes them at load.
 
@@ -125,6 +127,7 @@ Runtime world creation is disabled on Folia. `/iris create` instead:
 
 Studio uses `IrisCreator.studio(true)`:
 
+- Startup datapack validation and the selected pack's validation must be loadable before a Studio project/world folder, snapshot, generator, or Bukkit world is created. Missing validation fails closed.
 - Does **not** copy the pack into the world folder (except benchmark).
 - Engine data folder is the live pack path; hotloader starts after engine setup.
 - Biome Buffet prepares a changed focus before opening the chunk generation session. Its exclusive fair-stage admission downgrades directly to the retained chunk permit, so no other transition can enter between the focus hotload and that chunk.
@@ -140,7 +143,7 @@ Studio uses `IrisCreator.studio(true)`:
 2. `BukkitWorldReconciler.loadWorld(bukkit.yml, worldKey)`.
 3. Reports success, busy, restart-required, or failure.
 
-Load does not re-download packs; the world must already have `iris/pack` content and registration data consistent with Iris.
+Load does not re-download packs; the world must already have `iris/pack` content and registration data consistent with Iris. Reconciliation checks startup readiness and the resolved pack before touching `bukkit.yml` or calling a world backend.
 
 ## Unload
 

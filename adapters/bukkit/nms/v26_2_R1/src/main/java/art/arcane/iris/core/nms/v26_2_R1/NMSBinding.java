@@ -1209,6 +1209,11 @@ public class NMSBinding implements INMSBinding {
                 worldGenContext.structureManager(), worldGenContext.lightEngine(), worldGenContext.mainThreadExecutor(), worldGenContext.unsavedListener());
 
         worldGenContextField.set(chunkMap, newContext);
+        net.minecraft.world.level.chunk.ChunkGenerator activeGenerator = level.getChunkSource().getGenerator();
+        if (activeGenerator != irisGenerator) {
+            throw new IllegalStateException("Iris generator injection did not become the active Paper chunk generator; active="
+                    + activeGenerator.getClass().getName());
+        }
         retargetStructureCheck(level, irisGenerator);
     }
 

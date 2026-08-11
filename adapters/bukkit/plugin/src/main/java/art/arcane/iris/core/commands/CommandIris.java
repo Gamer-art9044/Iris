@@ -22,6 +22,7 @@ import art.arcane.iris.Iris;
 import art.arcane.iris.core.BukkitWorldReconciler;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.DatapackInstallResult;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.IrisWorlds;
@@ -34,6 +35,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
+import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
@@ -394,6 +396,14 @@ public class CommandIris implements DirectorExecutor {
     }
 
     private boolean stageFoliaWorldCreation(String name, IrisDimension dimension, long seed, boolean main) {
+        try {
+            IrisStartupValidation.requireWorldCreationReady();
+            PackValidationRegistry.requireLoadable(
+                    dimension.getLoader().getDataFolder().getName());
+        } catch (RuntimeException exception) {
+            sender().sendMessage(C.RED + exception.getMessage());
+            return false;
+        }
         NamespacedKey worldKey = IrisWorldStorage.managedKeyFromName(name);
         LifecycleOperationCoordinator.Lease worldLease = null;
         File worldFolder = IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);

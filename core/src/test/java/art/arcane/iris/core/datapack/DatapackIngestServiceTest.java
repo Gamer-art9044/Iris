@@ -29,9 +29,11 @@ import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -73,6 +75,174 @@ public class DatapackIngestServiceTest {
         doReturn("1.21.4-R0.1-SNAPSHOT").when(server).getBukkitVersion();
 
         assertEquals("1.21.4", DatapackIngestService.serverMcVersion(server));
+    }
+
+    @Test
+    public void windowsLongPathAliasAcceptsTheSameVolumeSerialAndRoot() throws Exception {
+        FileStore shortPathStore = mock(FileStore.class);
+        FileStore longPathStore = mock(FileStore.class);
+        when(shortPathStore.getAttribute("volume:vsn")).thenReturn(41234L);
+        when(longPathStore.getAttribute("volume:vsn")).thenReturn(41234L);
+
+        assertTrue(DatapackIngestService.sameWindowsVolume(
+                shortPathStore, "C:\\", longPathStore, "c:\\"));
+    }
+
+    @Test
+    public void windowsLongPathAliasRejectsDifferentRootsAndVolumeSerials() throws Exception {
+        FileStore firstStore = mock(FileStore.class);
+        FileStore secondStore = mock(FileStore.class);
+        when(firstStore.getAttribute("volume:vsn")).thenReturn(1L);
+        when(secondStore.getAttribute("volume:vsn")).thenReturn(2L);
+
+        assertFalse(DatapackIngestService.sameWindowsVolume(
+                firstStore, "C:\\", secondStore, "C:\\"));
+
+        when(secondStore.getAttribute("volume:vsn")).thenReturn(1L);
+        assertFalse(DatapackIngestService.sameWindowsVolume(
+                firstStore, "C:\\", secondStore, "D:\\"));
+    }
+
+    @Test
+    public void scratchDirectoryRejectsJunctionLikeOtherAttributes() {
+        BasicFileAttributes attributes = mock(BasicFileAttributes.class);
+        when(attributes.isDirectory()).thenReturn(true);
+        when(attributes.isOther()).thenReturn(true);
+
+        assertFalse(DatapackIngestService.isSupportedScratchDirectory(attributes));
+
+        when(attributes.isOther()).thenReturn(false);
+        assertTrue(DatapackIngestService.isSupportedScratchDirectory(attributes));
+    }
+
+    @Test
+    public void startupValidationCacheRequiresEveryInputAndLocalFingerprint() {
+        DatapackIngestService.StartupValidationCache cache = new DatapackIngestService.StartupValidationCache();
+        cache.schemaVersion = 1;
+        cache.minecraftVersion = "26.2";
+        cache.irisVersion = 4000;
+        cache.autoIngest = true;
+        cache.stripOverrides = false;
+        cache.urls = List.of("https://modrinth.com/datapack/example");
+        cache.localFingerprint = "fingerprint";
+
+        assertTrue(DatapackIngestService.startupValidationCacheMatches(
+                cache,
+                "26.2",
+                4000,
+                true,
+                false,
+                List.of("https://modrinth.com/datapack/example"),
+                "fingerprint"));
+        assertFalse(DatapackIngestService.startupValidationCacheMatches(
+                cache,
+                "26.3",
+                4000,
+                true,
+                false,
+                cache.urls,
+                "fingerprint"));
+        assertFalse(DatapackIngestService.startupValidationCacheMatches(
+                cache,
+                "26.2",
+                4000,
+                true,
+                true,
+                cache.urls,
+                "fingerprint"));
+        assertFalse(DatapackIngestService.startupValidationCacheMatches(
+                cache,
+                "26.2",
+                4000,
+                true,
+                false,
+                List.of("https://modrinth.com/datapack/changed"),
+                "fingerprint"));
+        assertFalse(DatapackIngestService.startupValidationCacheMatches(
+                cache,
+                "26.2",
+                4000,
+                true,
+                false,
+                cache.urls,
+                "changed"));
+    }
+
+    @Test
+    public void startupValidationFingerprintChangesWithStagedContent() throws Exception {
+        File root = temporaryFolder.newFolder("startup-validation-fingerprint");
+        File staged = new File(root, "staging/managed");
+        assertTrue(staged.mkdirs());
+        Path content = new File(staged, "value.txt").toPath();
+        Files.writeString(content, "alpha", StandardCharsets.UTF_8);
+        KList<File> worldFolders = new KList<>();
+        String before = DatapackIngestService.startupValidationFingerprint(root, worldFolders);
+
+        Files.writeString(content, "bravo", StandardCharsets.UTF_8);
+        String after = DatapackIngestService.startupValidationFingerprint(root, worldFolders);
+
+        assertFalse(before.equals(after));
+    }
+
+    @Test
+    public void authorizedStartupMaintenanceRefreshesOnlyTheLocalFingerprint() throws Exception {
+        File root = temporaryFolder.newFolder("startup-validation-maintenance");
+        File staging = new File(root, "staging/managed");
+        assertTrue(staging.mkdirs());
+        Path content = new File(staging, "value.txt").toPath();
+        Files.writeString(content, "before", StandardCharsets.UTF_8);
+        KList<File> worldFolders = new KList<>();
+
+        DatapackIngestService.StartupValidationCache validated = new DatapackIngestService.StartupValidationCache();
+        validated.schemaVersion = 1;
+        validated.minecraftVersion = "26.2";
+        validated.irisVersion = 4000;
+        validated.autoIngest = true;
+        validated.stripOverrides = false;
+        validated.urls = List.of("https://modrinth.com/datapack/example");
+        validated.localFingerprint = DatapackIngestService.startupValidationFingerprint(root, worldFolders);
+
+        Files.writeString(content, "after", StandardCharsets.UTF_8);
+        assertFalse(DatapackIngestService.startupValidationCacheMatches(
+                validated,
+                "26.2",
+                4000,
+                true,
+                false,
+                validated.urls,
+                DatapackIngestService.startupValidationFingerprint(root, worldFolders)));
+
+        DatapackIngestService.StartupValidationCache refreshed =
+                DatapackIngestService.refreshStartupValidationCache(validated, root, worldFolders);
+
+        assertTrue(DatapackIngestService.startupValidationCacheMatches(
+                refreshed,
+                "26.2",
+                4000,
+                true,
+                false,
+                validated.urls,
+                DatapackIngestService.startupValidationFingerprint(root, worldFolders)));
+        assertEquals(validated.urls, refreshed.urls);
+    }
+
+    @Test
+    public void startupMaintenanceDoesNotAuthorizeChangedValidationInputs() {
+        DatapackIngestService.StartupValidationCache validated = new DatapackIngestService.StartupValidationCache();
+        validated.schemaVersion = 1;
+        validated.minecraftVersion = "26.2";
+        validated.irisVersion = 4000;
+        validated.autoIngest = true;
+        validated.stripOverrides = false;
+        validated.urls = List.of("https://modrinth.com/datapack/example");
+
+        assertTrue(DatapackIngestService.startupValidationContextMatches(
+                validated, "26.2", 4000, true, false, validated.urls));
+        assertFalse(DatapackIngestService.startupValidationContextMatches(
+                validated, "26.2", 4000, true, false,
+                List.of("https://modrinth.com/datapack/changed")));
+        assertFalse(DatapackIngestService.startupValidationContextMatches(
+                validated, "26.2", 4000, true, true, validated.urls));
     }
 
     @Test
@@ -1975,6 +2145,38 @@ public class DatapackIngestServiceTest {
     }
 
     @Test
+    public void installScratchDeletionRetriesATransientDirectoryFailure() throws Exception {
+        File root = temporaryFolder.newFolder("transient-install-scratch-delete-root");
+        DeleteAttemptFile scratch = new DeleteAttemptFile(
+                new File(root, "managed-" + UUID.randomUUID()).getPath(), 2);
+        assertTrue(scratch.mkdir());
+        Files.writeString(new File(scratch, ".DS_Store").toPath(), "finder", StandardCharsets.UTF_8);
+
+        DatapackIngestService.deleteInstallScratch(scratch, "test datapack install scratch");
+
+        assertFalse(scratch.exists());
+        assertEquals(2, scratch.deleteAttempts());
+    }
+
+    @Test
+    public void installScratchDeletionStillFailsAfterBoundedRetries() throws Exception {
+        File root = temporaryFolder.newFolder("persistent-install-scratch-delete-root");
+        DeleteAttemptFile scratch = new DeleteAttemptFile(
+                new File(root, "managed-" + UUID.randomUUID()).getPath(), Integer.MAX_VALUE);
+        assertTrue(scratch.mkdir());
+
+        try {
+            DatapackIngestService.deleteInstallScratch(scratch, "test datapack install scratch");
+            fail("Expected persistent scratch deletion failure");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("Could not remove test datapack install scratch"));
+        }
+
+        assertTrue(scratch.exists());
+        assertEquals(3, scratch.deleteAttempts());
+    }
+
+    @Test
     public void recoveryRejectsFinderMetadataDirectoryInInstallScratch() throws Exception {
         File root = temporaryFolder.newFolder("orphan-install-finder-directory-root");
         File scratch = new File(root, ".iris-datapack-install");
@@ -3172,5 +3374,27 @@ public class DatapackIngestServiceTest {
             String sourceHash,
             DatapackIngestService.VerifiedStagingInstall authorization
     ) {
+    }
+
+    private static final class DeleteAttemptFile extends File {
+        private static final long serialVersionUID = 1L;
+
+        private final int successfulAttempt;
+        private int deleteAttempts;
+
+        private DeleteAttemptFile(String pathname, int successfulAttempt) {
+            super(pathname);
+            this.successfulAttempt = successfulAttempt;
+        }
+
+        @Override
+        public boolean delete() {
+            deleteAttempts++;
+            return deleteAttempts >= successfulAttempt && super.delete();
+        }
+
+        private int deleteAttempts() {
+            return deleteAttempts;
+        }
     }
 }

@@ -1,5 +1,7 @@
 package art.arcane.iris.core.service;
 
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioLayout;
+import art.arcane.iris.core.runtime.jigsaw.JigsawStudioMode;
 import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
 import art.arcane.iris.engine.object.IrisObject;
@@ -66,6 +68,28 @@ public class JigsawStudioPreviewRendererTest {
 
         assertTrue(plan.blocks().isEmpty());
         assertTrue(plan.bounds().isEmpty());
+    }
+
+    @Test
+    public void spatialPreviewFloatsAboveThePlanarEditingFloor() {
+        PlacedStructurePiece source = piece(
+                new IrisObject(3, 3, 3),
+                10,
+                10,
+                10,
+                IrisObjectRotation.of(0, 0, 0));
+
+        PlacedStructurePiece planar = JigsawStudioService.alignPreviewPieces(
+                List.of(source),
+                JigsawStudioMode.PLANAR_JIGSAW).getFirst();
+        PlacedStructurePiece spatial = JigsawStudioService.alignPreviewPieces(
+                List.of(source),
+                JigsawStudioMode.SPATIAL_JIGSAW).getFirst();
+
+        assertEquals(JigsawStudioLayout.FLOOR_Y + 1, planar.getMinY());
+        assertEquals(JigsawStudioLayout.FLOOR_Y + 48, spatial.getMinY());
+        assertEquals(planar.getMinX(), spatial.getMinX());
+        assertEquals(planar.getMinZ(), spatial.getMinZ());
     }
 
     @Test

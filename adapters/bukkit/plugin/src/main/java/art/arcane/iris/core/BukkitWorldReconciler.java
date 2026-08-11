@@ -22,6 +22,7 @@ import art.arcane.iris.Iris;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.nms.INMS;
+import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.platform.bukkit.BukkitEnvironment;
@@ -203,6 +204,14 @@ public final class BukkitWorldReconciler {
             Long seed,
             LifecycleOperationCoordinator.Lease lease
     ) {
+
+        try {
+            IrisStartupValidation.requireWorldCreationReady();
+            backend.requireDimensionLoadable(worldKey, dimension);
+        } catch (Throwable failure) {
+            lease.close();
+            return CompletableFuture.completedFuture(LoadResult.dimensionFailure(worldKey, failure));
+        }
 
         BukkitWorldConfiguration.Registration registration;
         String worldName = IrisWorldStorage.logicalName(worldKey);
@@ -424,6 +433,8 @@ public final class BukkitWorldReconciler {
         boolean isIrisWorld(World world);
 
         DimensionResolution resolveDimension(NamespacedKey worldKey);
+
+        void requireDimensionLoadable(NamespacedKey worldKey, String dimension);
     }
 
     public enum ReconciliationStatus {
@@ -726,6 +737,17 @@ public final class BukkitWorldReconciler {
             return DimensionResolution.failed(new IllegalStateException(
                     "Multiple dimension definitions were found without an exact registered dimension: "
                             + String.join(", ", dimensions)));
+        }
+
+        @Override
+        public void requireDimensionLoadable(NamespacedKey worldKey, String dimension) {
+            String worldName = IrisWorldStorage.logicalName(worldKey);
+            IrisDimension irisDimension = IrisWorldGeneratorResolver.loadDimension(worldName, dimension);
+            if (irisDimension == null) {
+                throw new IllegalStateException("Could not resolve the Iris dimension \"" + dimension + "\".");
+            }
+            PackValidationRegistry.requireLoadable(
+                    irisDimension.getLoader().getDataFolder().getName());
         }
     }
 }

@@ -36,6 +36,8 @@ public final class JigsawStudioMenuController {
     static final int PLACEMENT_RULE_SHIFT_STEP = 16;
 
     private static final long DESTRUCTIVE_CONFIRM_NANOS = 10_000_000_000L;
+    private static final int WORKCELL_RESIZE_REFRESH_TICKS = 2;
+    private static final int WORKCELL_RESIZE_REFRESH_ATTEMPTS = 200;
     private static final int[] GRID_POSITIONS = {-3, -2, -1, 0, 1, 2, 3};
 
     private final JavaPlugin plugin;
@@ -44,6 +46,7 @@ public final class JigsawStudioMenuController {
     private final Map<UUID, PendingUnlink> pendingUnlinks = new ConcurrentHashMap<>();
     private final Map<UUID, PendingDelete> pendingDeletes = new ConcurrentHashMap<>();
     private final Map<UUID, PendingProjectDelete> pendingProjectDeletes = new ConcurrentHashMap<>();
+    private final Map<UUID, PendingWorkcellResize> pendingWorkcellResizes = new ConcurrentHashMap<>();
 
     public JigsawStudioMenuController(JavaPlugin plugin, Actions actions) {
         this.plugin = Objects.requireNonNull(plugin, "Jigsaw Studio menu plugin");
@@ -100,11 +103,13 @@ public final class JigsawStudioMenuController {
             pendingUnlinks.remove(playerId);
             pendingDeletes.remove(playerId);
             pendingProjectDeletes.remove(playerId);
+            pendingWorkcellResizes.remove(playerId);
         });
         windows.put(playerId, window);
         pendingUnlinks.remove(playerId);
         pendingDeletes.remove(playerId);
         pendingProjectDeletes.remove(playerId);
+        pendingWorkcellResizes.remove(playerId);
         renderMain(window, state, selected, 0);
         window.open();
         return true;
@@ -242,6 +247,7 @@ public final class JigsawStudioMenuController {
         pendingUnlinks.clear();
         pendingDeletes.clear();
         pendingProjectDeletes.clear();
+        pendingWorkcellResizes.clear();
         for (UIWindow window : activeWindows) {
             Player player = window.getViewer();
             if (J.isOwnedByCurrentRegion(player)) {
@@ -508,26 +514,38 @@ public final class JigsawStudioMenuController {
             JigsawStudioMenuState state,
             JigsawStudioMenuState.Workcell workcell
     ) {
+        PendingWorkcellResize pendingResize = pendingWorkcellResize(
+                window.getViewer().getUniqueId(),
+                state.requestId(),
+                workcell.stableId());
+        JigsawStudioMenuState.Workcell renderedWorkcell = pendingResize == null
+                ? workcell
+                : withCapacity(workcell, pendingResize.dimensions());
         window.batch(() -> {
             window.clearElements();
 
             UIElement back = element("settings-back", Material.ARROW, ChatColor.YELLOW + "Back to Variants");
-            back.onLeftClick(clicked -> refreshMain(
-                    window.getViewer(), state.requestId(), workcell.stableId(), 0));
+            back.onLeftClick(clicked -> leaveWorkcellSettings(
+                    window.getViewer(), state.requestId(), renderedWorkcell.stableId()));
             window.setElement(-4, 0, back);
 
             UIElement identity = element(
                     "settings-identity",
-                    workcell.enabled() ? Material.LIME_WOOL : Material.GRAY_WOOL,
-                    ChatColor.AQUA + safe(workcell.displayName()));
-            identity.addLore(ChatColor.DARK_GRAY + safe(workcell.stableId()));
-            identity.addLore(workcell.enabled()
+                    renderedWorkcell.enabled() ? Material.LIME_WOOL : Material.GRAY_WOOL,
+                    ChatColor.AQUA + safe(renderedWorkcell.displayName()));
+            identity.addLore(ChatColor.DARK_GRAY + safe(renderedWorkcell.stableId()));
+            identity.addLore(renderedWorkcell.enabled()
                     ? ChatColor.GREEN + "Enabled"
                     : ChatColor.RED + "Disabled for assembly and export");
-            if (!workcell.canonicalName().equals(workcell.displayName())) {
-                identity.addLore(ChatColor.GRAY + "Solver role: " + safe(workcell.canonicalName()));
+            if (!renderedWorkcell.canonicalName().equals(renderedWorkcell.displayName())) {
+                identity.addLore(ChatColor.GRAY + "Solver role: " + safe(renderedWorkcell.canonicalName()));
             }
-            identity.addLore(ChatColor.GRAY + "Capacity: " + dimensions(workcell.capacity()));
+            identity.addLore(ChatColor.GRAY + "Capacity: " + dimensions(renderedWorkcell.capacity()));
+            if (pendingResize != null) {
+                identity.addLore(pendingResize.applying()
+                        ? ChatColor.YELLOW + "Applying one live relayout"
+                        : ChatColor.GOLD + "Pending; apply when all dimensions are ready");
+            }
             identity.addLore(ChatColor.YELLOW + "Left-click for a rename stick");
             identity.addLore(ChatColor.GRAY + "Rename that stick in an anvil, then right-click it.");
             identity.addLore(ChatColor.GRAY + "Sneak-right-click the stick to reset this label.");
@@ -536,25 +554,25 @@ public final class JigsawStudioMenuController {
                     JigsawStudioToolPayload.workcell(
                             JigsawStudioToolAction.RENAME_WORKCELL,
                             state.requestId(),
-                            workcell.stableId())));
+                            renderedWorkcell.stableId())));
             window.setElement(0, 0, identity);
             window.setElement(4, 0, evaluationElement(state.evaluation()));
 
             if (state.mode() == JigsawStudioMode.PLANAR_JIGSAW) {
                 UIElement enabled = element(
                         "settings-enabled",
-                        workcell.enabled() ? Material.LEVER : Material.REDSTONE_TORCH,
-                        workcell.enabled()
+                        renderedWorkcell.enabled() ? Material.LEVER : Material.REDSTONE_TORCH,
+                        renderedWorkcell.enabled()
                                 ? ChatColor.GREEN + "Workcell Enabled"
                                 : ChatColor.RED + "Workcell Disabled");
                 enabled.addLore(ChatColor.GRAY + "Disabled workcells remain editable and keep their size.");
                 enabled.addLore(ChatColor.YELLOW + "Left-click to "
-                        + (workcell.enabled() ? "disable" : "enable"));
+                        + (renderedWorkcell.enabled() ? "disable" : "enable"));
                 enabled.onLeftClick(clicked -> setWorkcellEnabled(
                         window.getViewer(),
                         state.requestId(),
-                        workcell.stableId(),
-                        !workcell.enabled()));
+                        renderedWorkcell.stableId(),
+                        !renderedWorkcell.enabled()));
                 window.setElement(0, 1, enabled);
             } else {
                 UIElement spatial = element(
@@ -568,18 +586,18 @@ public final class JigsawStudioMenuController {
 
             UIElement connectors = element(
                     "settings-connectors",
-                    workcell.connectorsVisible() ? Material.JIGSAW : Material.STRUCTURE_VOID,
-                    workcell.connectorsVisible()
+                    renderedWorkcell.connectorsVisible() ? Material.JIGSAW : Material.STRUCTURE_VOID,
+                    renderedWorkcell.connectorsVisible()
                             ? ChatColor.GREEN + "Connector Blocks Visible"
                             : ChatColor.YELLOW + "Connector Blocks Hidden");
             connectors.addLore(ChatColor.GRAY + "Hidden connectors retain their metadata and final block state.");
             connectors.addLore(ChatColor.YELLOW + "Left-click to "
-                    + (workcell.connectorsVisible() ? "hide" : "show") + " connector blocks");
+                    + (renderedWorkcell.connectorsVisible() ? "hide" : "show") + " connector blocks");
             connectors.onLeftClick(clicked -> toggleConnectorBlocks(
                     window.getViewer(),
                     state.requestId(),
-                    workcell.stableId(),
-                    !workcell.connectorsVisible()));
+                    renderedWorkcell.stableId(),
+                    !renderedWorkcell.connectorsVisible()));
             window.setElement(2, 1, connectors);
 
             UIElement resetConnectors = element(
@@ -591,31 +609,57 @@ public final class JigsawStudioMenuController {
             resetConnectors.onLeftClick(clicked -> resetConnectorBlocks(
                     window.getViewer(),
                     state.requestId(),
-                    workcell.stableId()));
+                    renderedWorkcell.stableId()));
             window.setElement(4, 1, resetConnectors);
 
             window.setElement(-2, 2, axisElement(
                     window,
                     state,
-                    workcell,
+                    renderedWorkcell,
                     DimensionAxis.WIDTH,
                     Material.IRON_INGOT));
             window.setElement(0, 2, axisElement(
                     window,
                     state,
-                    workcell,
+                    renderedWorkcell,
                     DimensionAxis.HEIGHT,
                     Material.GOLD_INGOT));
             window.setElement(2, 2, axisElement(
                     window,
                     state,
-                    workcell,
+                    renderedWorkcell,
                     DimensionAxis.DEPTH,
                     Material.COPPER_INGOT));
 
+            if (pendingResize != null) {
+                UIElement apply = element(
+                        "settings-apply-capacity",
+                        pendingResize.applying() ? Material.CLOCK : Material.EMERALD_BLOCK,
+                        pendingResize.applying()
+                                ? ChatColor.YELLOW + "Applying Cell Size"
+                                : ChatColor.GREEN + "Apply Cell Size");
+                apply.addLore(ChatColor.WHITE + dimensions(pendingResize.dimensions()));
+                apply.addLore(ChatColor.GRAY + "Regenerates the layout once after all size edits.");
+                if (!pendingResize.applying()) {
+                    apply.onLeftClick(clicked -> applyWorkcellResize(
+                            window.getViewer(), state.requestId(), renderedWorkcell.stableId()));
+                }
+                window.setElement(0, 3, apply);
+
+                if (!pendingResize.applying()) {
+                    UIElement discard = element(
+                            "settings-discard-capacity",
+                            Material.BARRIER,
+                            ChatColor.RED + "Discard Size Changes");
+                    discard.onLeftClick(clicked -> discardWorkcellResize(
+                            window.getViewer(), state.requestId(), renderedWorkcell.stableId()));
+                    window.setElement(2, 3, discard);
+                }
+            }
+
             UIElement footerBack = element("settings-footer-back", Material.ARROW, ChatColor.YELLOW + "Back");
-            footerBack.onLeftClick(clicked -> refreshMain(
-                    window.getViewer(), state.requestId(), workcell.stableId(), 0));
+            footerBack.onLeftClick(clicked -> leaveWorkcellSettings(
+                    window.getViewer(), state.requestId(), renderedWorkcell.stableId()));
             window.setElement(-4, 5, footerBack);
 
             UIElement undo = element(
@@ -629,7 +673,7 @@ public final class JigsawStudioMenuController {
                     state.requestId()));
             window.setElement(0, 5, undo);
 
-            if (workcell.dirty() && !workcell.saving()) {
+            if (renderedWorkcell.dirty() && !renderedWorkcell.saving()) {
                 UIElement saveNow = element(
                         "save-now",
                         Material.EMERALD,
@@ -637,7 +681,7 @@ public final class JigsawStudioMenuController {
                 saveNow.addLore(ChatColor.GRAY + "Autosave is automatic.");
                 saveNow.addLore(ChatColor.GRAY + "Use this only to flush pending work or recover immediately.");
                 saveNow.onLeftClick(clicked -> flushNow(
-                        window.getViewer(), state.requestId(), workcell.stableId()));
+                        window.getViewer(), state.requestId(), renderedWorkcell.stableId()));
                 window.setElement(2, 5, saveNow);
             }
 
@@ -650,7 +694,7 @@ public final class JigsawStudioMenuController {
 
             UIElement toolbox = element("settings-toolbox", Material.STICK, ChatColor.AQUA + "Toolbox");
             toolbox.onLeftClick(clicked -> openToolbox(
-                    window.getViewer(), state.requestId(), workcell.stableId(), 0));
+                    window.getViewer(), state.requestId(), renderedWorkcell.stableId(), 0));
             window.setElement(4, 5, toolbox);
         });
     }
@@ -802,6 +846,7 @@ public final class JigsawStudioMenuController {
             if (themeEditingAvailable) {
                 createTheme.addLore(ChatColor.GRAY + "Creates one new owned variant for every enabled workcell.");
                 createTheme.addLore(ChatColor.GRAY + "All created variants join " + safe(nextThemeKey) + ".");
+                createTheme.addLore(ChatColor.GRAY + "One family is selected for the complete assembly.");
                 createTheme.addLore(ChatColor.YELLOW + "Left-click to create the complete set");
                 createTheme.onLeftClick(clicked -> duplicateActiveFamily(
                         window.getViewer(), state.requestId(), nextThemeKey));
@@ -884,6 +929,8 @@ public final class JigsawStudioMenuController {
                     state.irisExtended() ? Material.PURPLE_DYE : Material.GRAY_DYE,
                     (state.irisExtended() ? ChatColor.LIGHT_PURPLE : ChatColor.GRAY) + safe(themeSet.key()));
             element.addLore(ChatColor.WHITE + "Selection weight: " + themeSet.weight());
+            element.addLore(ChatColor.WHITE + "Whole-assembly chance: "
+                    + themeSelectionPercent(state.themeSets(), themeSet));
             if (state.irisExtended()) {
                 element.addLore(ChatColor.GREEN + "Left-click: weight +1");
                 element.addLore(ChatColor.YELLOW + "Right-click: weight -1");
@@ -919,7 +966,7 @@ public final class JigsawStudioMenuController {
         element.addLore(ChatColor.YELLOW + "Right-click: -1");
         element.addLore(ChatColor.GREEN + "Shift-left: +8");
         element.addLore(ChatColor.YELLOW + "Shift-right: -8");
-        element.addLore(ChatColor.GRAY + "The Studio layout regenerates after resizing.");
+        element.addLore(ChatColor.GRAY + "Changes stay in this menu until Apply Cell Size.");
         element.onLeftClick(clicked -> resizeWorkcell(
                 window.getViewer(), state.requestId(), workcell.stableId(), axis, 1));
         element.onRightClick(clicked -> resizeWorkcell(
@@ -1396,6 +1443,7 @@ public final class JigsawStudioMenuController {
             element.addLore(member
                     ? ChatColor.GREEN + "This variant belongs to the theme."
                     : ChatColor.GRAY + "This variant does not belong to the theme.");
+            element.addLore(ChatColor.GRAY + "Only variants in the selected family are eligible.");
             element.addLore(ChatColor.YELLOW + "Left-click to toggle membership");
             element.onLeftClick(clicked -> toggleVariantTheme(
                     window.getViewer(), state.requestId(), workcell, variant, themeSet.key()));
@@ -1702,15 +1750,160 @@ public final class JigsawStudioMenuController {
             stale(player);
             return;
         }
+        UUID playerId = player.getUniqueId();
+        PendingWorkcellResize existing = pendingWorkcellResize(playerId, requestId, workcellId);
+        if (existing != null && existing.applying()) {
+            player.sendMessage(ChatColor.YELLOW + "That cell size is already being applied.");
+            return;
+        }
+        JigsawStudioCellDimensions base = existing == null
+                ? workcell.capacity()
+                : existing.dimensions();
         Optional<JigsawStudioCellDimensions> adjusted = adjustedDimensions(
-                workcell.capacity(), axis, delta);
+                base, axis, delta);
         if (adjusted.isEmpty()) {
             player.sendMessage(ChatColor.RED + "That workcell size is outside Iris limits.");
             return;
         }
-        if (actions.updateWorkcellDimensions(player, workcellId, adjusted.get())) {
-            closeAfterAction(player);
+        PendingWorkcellResize pending = new PendingWorkcellResize(
+                requestId,
+                workcellId,
+                adjusted.get(),
+                false);
+        pendingWorkcellResizes.put(playerId, pending);
+        UIWindow window = windows.get(playerId);
+        if (window != null) {
+            renderWorkcellSettings(window, current.get(), withCapacity(workcell, pending.dimensions()));
         }
+    }
+
+    private void applyWorkcellResize(Player player, UUID requestId, String workcellId) {
+        Optional<JigsawStudioMenuState> current = matchingState(player, requestId, true);
+        if (current.isEmpty()) {
+            return;
+        }
+        UUID playerId = player.getUniqueId();
+        PendingWorkcellResize pending = pendingWorkcellResize(playerId, requestId, workcellId);
+        JigsawStudioMenuState.Workcell workcell = current.get().workcell(workcellId);
+        if (pending == null || pending.applying() || workcell == null) {
+            return;
+        }
+        if (workcell.capacity().equals(pending.dimensions())) {
+            pendingWorkcellResizes.remove(playerId, pending);
+            refreshWorkcellSettings(player, requestId, workcellId);
+            return;
+        }
+        PendingWorkcellResize applying = new PendingWorkcellResize(
+                requestId,
+                workcellId,
+                pending.dimensions(),
+                true);
+        pendingWorkcellResizes.put(playerId, applying);
+        UIWindow window = windows.get(playerId);
+        if (window != null) {
+            renderWorkcellSettings(window, current.get(), withCapacity(workcell, applying.dimensions()));
+        }
+        if (!actions.updateWorkcellDimensions(player, workcellId, applying.dimensions())) {
+            pendingWorkcellResizes.replace(playerId, applying, pending);
+            refreshWorkcellSettings(player, requestId, workcellId);
+            return;
+        }
+        scheduleWorkcellResizeRefresh(player, applying, WORKCELL_RESIZE_REFRESH_ATTEMPTS);
+    }
+
+    private void scheduleWorkcellResizeRefresh(
+            Player player,
+            PendingWorkcellResize pending,
+            int attemptsRemaining
+    ) {
+        boolean scheduled = J.runEntity(
+                player,
+                () -> refreshAppliedWorkcellResize(player, pending, attemptsRemaining),
+                WORKCELL_RESIZE_REFRESH_TICKS);
+        if (!scheduled) {
+            pendingWorkcellResizes.remove(player.getUniqueId(), pending);
+        }
+    }
+
+    private void refreshAppliedWorkcellResize(
+            Player player,
+            PendingWorkcellResize pending,
+            int attemptsRemaining
+    ) {
+        UUID playerId = player.getUniqueId();
+        if (!pending.equals(pendingWorkcellResizes.get(playerId))) {
+            return;
+        }
+        Optional<JigsawStudioMenuState> current = matchingState(player, pending.requestId(), false);
+        JigsawStudioMenuState.Workcell workcell = current
+                .map(state -> state.workcell(pending.workcellId()))
+                .orElse(null);
+        if (workcell == null) {
+            pendingWorkcellResizes.remove(playerId, pending);
+            return;
+        }
+        if (workcell.capacity().equals(pending.dimensions())) {
+            pendingWorkcellResizes.remove(playerId, pending);
+            UIWindow window = windows.get(playerId);
+            if (window != null) {
+                renderWorkcellSettings(window, current.orElseThrow(), workcell);
+            }
+            return;
+        }
+        if (attemptsRemaining > 0) {
+            scheduleWorkcellResizeRefresh(player, pending, attemptsRemaining - 1);
+            return;
+        }
+        PendingWorkcellResize retry = new PendingWorkcellResize(
+                pending.requestId(),
+                pending.workcellId(),
+                pending.dimensions(),
+                false);
+        pendingWorkcellResizes.replace(playerId, pending, retry);
+        UIWindow window = windows.get(playerId);
+        if (window != null) {
+            renderWorkcellSettings(window, current.orElseThrow(), withCapacity(workcell, retry.dimensions()));
+        }
+        player.sendMessage(ChatColor.YELLOW
+                + "Cell resizing is still pending; use Apply Cell Size to retry after the current operation settles.");
+    }
+
+    private void discardWorkcellResize(Player player, UUID requestId, String workcellId) {
+        PendingWorkcellResize pending = pendingWorkcellResize(player.getUniqueId(), requestId, workcellId);
+        if (pending != null && !pending.applying()) {
+            pendingWorkcellResizes.remove(player.getUniqueId(), pending);
+        }
+        refreshWorkcellSettings(player, requestId, workcellId);
+    }
+
+    private void leaveWorkcellSettings(Player player, UUID requestId, String workcellId) {
+        PendingWorkcellResize pending = pendingWorkcellResize(player.getUniqueId(), requestId, workcellId);
+        if (pending != null && !pending.applying()) {
+            pendingWorkcellResizes.remove(player.getUniqueId(), pending);
+        }
+        refreshMain(player, requestId, workcellId, 0);
+    }
+
+    private void refreshWorkcellSettings(Player player, UUID requestId, String workcellId) {
+        Optional<JigsawStudioMenuState> current = matchingState(player, requestId, true);
+        UIWindow window = windows.get(player.getUniqueId());
+        JigsawStudioMenuState.Workcell workcell = current
+                .map(state -> state.workcell(workcellId))
+                .orElse(null);
+        if (window == null || workcell == null) {
+            return;
+        }
+        renderWorkcellSettings(window, current.orElseThrow(), workcell);
+    }
+
+    private PendingWorkcellResize pendingWorkcellResize(UUID playerId, UUID requestId, String workcellId) {
+        PendingWorkcellResize pending = pendingWorkcellResizes.get(playerId);
+        if (pending == null
+                || !pending.requestId().equals(requestId)
+                || !pending.workcellId().equals(workcellId)) {
+            return null;
+        }
+        return pending;
     }
 
     private void resizeVariantAxis(
@@ -2400,6 +2593,31 @@ public final class JigsawStudioMenuController {
         throw new IllegalStateException("Jigsaw Studio cannot allocate another numbered theme set");
     }
 
+    static String themeSelectionPercent(
+            List<JigsawStudioMenuState.ThemeSet> themeSets,
+            JigsawStudioMenuState.ThemeSet target
+    ) {
+        List<JigsawStudioMenuState.ThemeSet> activeThemeSets = Objects.requireNonNull(
+                themeSets,
+                "Jigsaw Studio theme sets");
+        JigsawStudioMenuState.ThemeSet activeTarget = Objects.requireNonNull(
+                target,
+                "Jigsaw Studio target theme set");
+        int totalWeight = 0;
+        for (JigsawStudioMenuState.ThemeSet themeSet : activeThemeSets) {
+            totalWeight = Math.addExact(totalWeight, Objects.requireNonNull(
+                    themeSet,
+                    "Jigsaw Studio theme set").weight());
+        }
+        if (totalWeight < 1) {
+            return "0.0%";
+        }
+        return String.format(
+                Locale.ROOT,
+                "%.1f%%",
+                activeTarget.weight() * 100.0D / totalWeight);
+    }
+
     static Optional<Integer> adjustedPositiveValue(int value, int delta) {
         if (value < 1 || delta == 0) {
             throw new IllegalArgumentException("Jigsaw Studio positive value adjustment is invalid");
@@ -2501,6 +2719,27 @@ public final class JigsawStudioMenuController {
         } catch (ArithmeticException | IllegalArgumentException exception) {
             return Optional.empty();
         }
+    }
+
+    static JigsawStudioMenuState.Workcell withCapacity(
+            JigsawStudioMenuState.Workcell workcell,
+            JigsawStudioCellDimensions capacity
+    ) {
+        JigsawStudioMenuState.Workcell source = Objects.requireNonNull(
+                workcell,
+                "Jigsaw Studio menu workcell");
+        return new JigsawStudioMenuState.Workcell(
+                source.stableId(),
+                source.canonicalName(),
+                source.displayName(),
+                Objects.requireNonNull(capacity, "Jigsaw Studio staged workcell capacity"),
+                source.enabled(),
+                source.activeVariantKey(),
+                source.dirty(),
+                source.saving(),
+                source.loading(),
+                source.connectorsVisible(),
+                source.variants());
     }
 
     static List<ToolboxTool> toolboxTools(
@@ -3137,5 +3376,18 @@ public final class JigsawStudioMenuController {
     }
 
     private record PendingProjectDelete(UUID requestId, long expiresAtNanos) {
+    }
+
+    private record PendingWorkcellResize(
+            UUID requestId,
+            String workcellId,
+            JigsawStudioCellDimensions dimensions,
+            boolean applying
+    ) {
+        private PendingWorkcellResize {
+            requestId = Objects.requireNonNull(requestId, "Jigsaw Studio resize request ID");
+            workcellId = Objects.requireNonNull(workcellId, "Jigsaw Studio resize workcell ID");
+            dimensions = Objects.requireNonNull(dimensions, "Jigsaw Studio resize dimensions");
+        }
     }
 }

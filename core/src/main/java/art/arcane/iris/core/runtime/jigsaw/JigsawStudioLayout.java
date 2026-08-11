@@ -27,6 +27,7 @@ public final class JigsawStudioLayout {
     private final JigsawStudioVariantCatalog variantCatalog;
     private final List<JigsawStudioBay> bays;
     private final Map<String, JigsawStudioBay> byStableId;
+    private final Map<String, String> spatialVariantByBay;
 
     private JigsawStudioLayout(
             JigsawStudioMode mode,
@@ -34,7 +35,8 @@ public final class JigsawStudioLayout {
             int columns,
             int gap,
             JigsawStudioVariantCatalog variantCatalog,
-            List<JigsawStudioBay> bays
+            List<JigsawStudioBay> bays,
+            Map<String, String> spatialVariantByBay
     ) {
         this.mode = mode;
         this.cellDimensions = cellDimensions;
@@ -50,6 +52,7 @@ public final class JigsawStudioLayout {
             }
         }
         this.byStableId = Collections.unmodifiableMap(index);
+        this.spatialVariantByBay = Collections.unmodifiableMap(new LinkedHashMap<>(spatialVariantByBay));
     }
 
     public static JigsawStudioLayout create(
@@ -87,20 +90,41 @@ public final class JigsawStudioLayout {
         validateCatalogMode(JigsawStudioMode.SPATIAL_JIGSAW, catalog);
         String resolvedDisplayName = displayName == null ? "" : displayName.trim();
 
-        List<JigsawStudioBay> workcells = new ArrayList<>();
-        workcells.add(new JigsawStudioBay(
-                SPATIAL_WORKCELL_ID,
-                JigsawStudioBayKind.SPATIAL_WORKCELL,
-                Optional.empty(),
-                resolvedDisplayName,
-                new JigsawStudioBounds(FIRST_ORIGIN, FLOOR_Y + 1, FIRST_ORIGIN, dimensions)));
+        List<JigsawStudioVariant> variants = catalog.spatialVariants();
+        List<JigsawStudioBay> workcells = new ArrayList<>(Math.max(1, variants.size()));
+        Map<String, String> variantsByWorkcell = new LinkedHashMap<>();
+        if (variants.isEmpty()) {
+            workcells.add(new JigsawStudioBay(
+                    SPATIAL_WORKCELL_ID,
+                    JigsawStudioBayKind.SPATIAL_WORKCELL,
+                    Optional.empty(),
+                    resolvedDisplayName,
+                    new JigsawStudioBounds(FIRST_ORIGIN, FLOOR_Y + 1, FIRST_ORIGIN, dimensions)));
+        } else {
+            int originX = FIRST_ORIGIN;
+            for (int index = 0; index < variants.size(); index++) {
+                JigsawStudioVariant variant = variants.get(index);
+                String stableId = index == 0
+                        ? SPATIAL_WORKCELL_ID
+                        : SPATIAL_WORKCELL_ID + "/" + variant.pieceKey();
+                workcells.add(new JigsawStudioBay(
+                        stableId,
+                        JigsawStudioBayKind.SPATIAL_WORKCELL,
+                        Optional.empty(),
+                        variant.resolvedDisplayName(),
+                        new JigsawStudioBounds(originX, FLOOR_Y + 1, FIRST_ORIGIN, dimensions)));
+                variantsByWorkcell.put(stableId, variant.pieceKey());
+                originX = Math.addExact(originX, Math.addExact(dimensions.width(), PLANAR_GAP));
+            }
+        }
         return new JigsawStudioLayout(
                 JigsawStudioMode.SPATIAL_JIGSAW,
                 dimensions,
-                1,
+                workcells.size(),
                 PLANAR_GAP,
                 catalog,
-                workcells);
+                workcells,
+                variantsByWorkcell);
     }
 
     public static JigsawStudioLayout createPlanar(
@@ -143,7 +167,8 @@ public final class JigsawStudioLayout {
                 PLANAR_COLUMNS,
                 PLANAR_GAP,
                 catalog,
-                workcells);
+                workcells,
+                Map.of());
     }
 
     public JigsawStudioMode mode() {
@@ -186,7 +211,11 @@ public final class JigsawStudioLayout {
     public List<JigsawStudioVariant> variants(JigsawStudioBay workcell) {
         JigsawStudioBay activeWorkcell = requireWorkcell(workcell);
         if (activeWorkcell.kind() == JigsawStudioBayKind.SPATIAL_WORKCELL) {
-            return variantCatalog.spatialVariants();
+            String pieceKey = spatialVariantByBay.get(activeWorkcell.stableId());
+            if (pieceKey == null) {
+                return variantCatalog.spatialVariants();
+            }
+            return variantCatalog.find(pieceKey).map(List::of).orElseGet(List::of);
         }
         return variantCatalog.variants(activeWorkcell.archetype().orElseThrow());
     }
@@ -203,9 +232,26 @@ public final class JigsawStudioLayout {
             return false;
         }
         if (activeWorkcell.kind() == JigsawStudioBayKind.SPATIAL_WORKCELL) {
-            return activeVariant.mode() == JigsawStudioMode.SPATIAL_JIGSAW;
+            return activeVariant.mode() == JigsawStudioMode.SPATIAL_JIGSAW
+                    && variants(activeWorkcell).contains(activeVariant);
         }
         return activeVariant.archetype().filter(activeWorkcell.archetype().orElseThrow()::equals).isPresent();
+    }
+
+    public Optional<JigsawStudioBay> workcellForVariant(String pieceKey) {
+        Optional<JigsawStudioVariant> variant = variantCatalog.find(pieceKey);
+        if (variant.isEmpty()) {
+            return Optional.empty();
+        }
+        if (mode == JigsawStudioMode.PLANAR_JIGSAW) {
+            return variant.get().archetype().map(archetype -> get(archetype.stableId()));
+        }
+        for (Map.Entry<String, String> entry : spatialVariantByBay.entrySet()) {
+            if (entry.getValue().equals(variant.get().pieceKey())) {
+                return Optional.ofNullable(get(entry.getKey()));
+            }
+        }
+        return Optional.ofNullable(get(SPATIAL_WORKCELL_ID));
     }
 
     public JigsawStudioControlPosition controlPosition() {

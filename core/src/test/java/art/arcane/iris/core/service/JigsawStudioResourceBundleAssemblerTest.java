@@ -63,7 +63,7 @@ public class JigsawStudioResourceBundleAssemblerTest {
                         List.of(connector),
                         false);
 
-        assertEquals(4, assembly.bundle().resources().size());
+        assertEquals(17, assembly.bundle().resources().size());
         assertEquals("fort/start", assembly.objectKey());
         assertEquals(1, assembly.piece().getConnectors().size());
         StructureWriteResult result = new StructureTransactionWriter(packRoot)

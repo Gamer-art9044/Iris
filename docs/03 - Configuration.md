@@ -93,7 +93,7 @@ Static helper `IrisSettings.getThreadCount(int c)`: for `c` in `{-1,-2,-4}` retu
 | `useConsoleCustomColors` | boolean | `true` | Custom colors for console senders |
 | `useCustomColorsIngame` | boolean | `true` | Custom colors for player senders |
 | `adjustVanillaHeight` | boolean | `false` | Adjust vanilla height handling |
-| `autoIngestDatapacks` | boolean | `true` | Auto-ingest configured external datapacks; managed structures remain scoped to declaring Iris dimensions |
+| `autoIngestDatapacks` | boolean | `true` | Validate and ingest configured external datapacks during the startup admission gate; unchanged committed content reuses its persisted result without another remote/full validation, and managed structures remain scoped to declaring Iris dimensions |
 | `autoImportDatapackStructures` | boolean | `false` | Opt-in bulk write of every registered datapack structure as editable Iris resources; prefer `/iris structure import <dimension>` |
 | `strictContentKeys` | boolean | `false` | Unresolved pack content keys and bad block-state properties become blocking pack errors; system property `-Diris.strictContent` overrides when set |
 | `spinh` | int | `-20` | Splash / spin color H |

@@ -131,4 +131,24 @@ public class StudioOpenCoordinatorOpenKindTest {
         assertTrue(method.contains("CompletableFuture<Void> abandonment = J.sfut("));
         assertTrue(method.contains("abandonment.get(STUDIO_STRUCTURE_ACTIVATION_TIMEOUT_SECONDS"));
     }
+
+    @Test
+    public void openFinalizerReturnsToTheServerThreadBeforeCompletion() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));
+        int finalizerCall = source.indexOf("runOpenFinalizer(request.onDone(), world);");
+        int futureCompletion = source.indexOf(
+                "future.complete(new StudioOpenResult(world, safeEntry))", finalizerCall);
+        int methodStart = source.indexOf(
+                "private void runOpenFinalizer(Consumer<World> finalizer, World world)");
+        int methodEnd = source.indexOf("private long elapsedMillis", methodStart);
+        String method = source.substring(methodStart, methodEnd);
+
+        assertTrue(finalizerCall >= 0);
+        assertTrue(futureCompletion > finalizerCall);
+        assertTrue(method.contains("if (J.isPrimaryThread())"));
+        assertTrue(method.contains("J.sfut(() -> finalizer.accept(world))"));
+        assertTrue(method.contains(
+                "completion.get(STUDIO_STRUCTURE_ACTIVATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)"));
+    }
 }

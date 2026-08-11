@@ -41,6 +41,7 @@ import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import org.bukkit.Chunk;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
@@ -103,6 +104,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -111,6 +113,24 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class JigsawStudioServiceCaptureTest {
+
+    @Test
+    public void successfulStudioSavePlaysOneOwnerLocalBell() {
+        Player player = mock(Player.class);
+        Location location = mock(Location.class);
+        when(player.getLocation()).thenReturn(location);
+
+        try (MockedStatic<J> scheduling = mockStatic(J.class)) {
+            scheduling.when(() -> J.runEntity(same(player), any(Runnable.class))).thenAnswer(invocation -> {
+                invocation.getArgument(1, Runnable.class).run();
+                return true;
+            });
+
+            JigsawStudioService.playSaveSound(player);
+
+            verify(player).playSound(location, "minecraft:block.note_block.bell", 0.65F, 1.65F);
+        }
+    }
 
     @Test
     public void hiddenConnectorResetRestoresOnlyItsSavedOrdinaryBlock() throws Exception {
@@ -741,10 +761,23 @@ public class JigsawStudioServiceCaptureTest {
                 layout.get("workcell/end"),
                 List.of(eastSource),
                 3);
-        assertThrows(IOException.class, () -> JigsawStudioService.requireWorkcellTopology(
-                layout.get("workcell/end"),
-                List.of(southDisplayed),
-                0));
+        JigsawStudioService.WorkcellTopologyException wrongDirection = assertThrows(
+                JigsawStudioService.WorkcellTopologyException.class,
+                () -> JigsawStudioService.requireWorkcellTopology(
+                        layout.get("workcell/end"),
+                        List.of(southDisplayed),
+                        0));
+        assertTrue(wrongDirection.getMessage().contains("south end (1 horizontal connector)"));
+        assertTrue(wrongDirection.getMessage().contains("Reset Connector Blocks"));
+
+        JigsawStudioService.WorkcellTopologyException missingTee = assertThrows(
+                JigsawStudioService.WorkcellTopologyException.class,
+                () -> JigsawStudioService.requireWorkcellTopology(
+                        layout.get("workcell/tee"),
+                        List.of(),
+                        0));
+        assertTrue(missingTee.getMessage().contains("north east west tee (3 horizontal connectors)"));
+        assertTrue(missingTee.getMessage().contains("blank (0 horizontal connectors)"));
     }
 
     @Test
@@ -1233,6 +1266,9 @@ public class JigsawStudioServiceCaptureTest {
         when(world.getUID()).thenReturn(worldId);
         JigsawStudioGenerator generator = mock(JigsawStudioGenerator.class);
         when(generator.getLayout()).thenReturn(layout);
+        JigsawStudioActivation.Request request = mock(JigsawStudioActivation.Request.class);
+        when(request.requestId()).thenReturn(UUID.randomUUID());
+        when(generator.getRequest()).thenReturn(request);
         when(generator.renderBay(any(JigsawStudioBay.class)))
                 .thenReturn(JigsawStudioGenerator.RenderedBay.empty(dimensions));
         Class<?> studioType = Class.forName(JigsawStudioService.class.getName() + "$ActiveStudio");

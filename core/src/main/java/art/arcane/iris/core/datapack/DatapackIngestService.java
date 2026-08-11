@@ -21,6 +21,7 @@ package art.arcane.iris.core.datapack;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
+import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.ModrinthResolver.ResolvedDatapack;
@@ -62,6 +63,7 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileStore;
+import java.nio.file.FileSystems;
 import java.nio.file.LinkOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -97,8 +99,10 @@ public final class DatapackIngestService {
     private static final String TRANSACTION_DIRECTORY = ".iris-datapack-transactions";
     private static final String TRANSACTION_JOURNAL = "journal.json";
     private static final String TRANSACTION_JOURNAL_NEXT = "journal.next.json";
+    private static final String STARTUP_VALIDATION_CACHE = "startup-validation.json";
     private static final int OWNERSHIP_SCHEMA = 1;
     private static final int TRANSACTION_SCHEMA = 2;
+    private static final int STARTUP_VALIDATION_SCHEMA = 1;
     private static final int STRUCTURE_IMPORT_FORMAT_REVISION = 3;
     private static final int MAX_REDIRECTS = 5;
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
@@ -113,9 +117,12 @@ public final class DatapackIngestService {
     private static final long MAX_METADATA_BYTES = 1024L * 1024L;
     private static final long MAX_OWNERSHIP_BYTES = 1024L * 1024L;
     private static final int MAX_TRANSACTION_COUNT = 1_024;
+    private static final int MAX_SCRATCH_DELETE_ATTEMPTS = 3;
+    private static final int WINDOWS_LEGACY_PATH_LIMIT = 247;
     private static final Set<String> RESERVED_IDS = Set.of("iris");
     private static final ReentrantLock TRANSACTION_LOCK = new ReentrantLock();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static volatile StartupValidationCache activeStartupValidation;
 
     private DatapackIngestService() {
     }
@@ -125,19 +132,367 @@ public final class DatapackIngestService {
     }
 
     public static void autoIngestOnStartup() {
-        boolean restarting = false;
-        if (IrisSettings.get().getGeneral().autoIngestDatapacks) {
-            KList<String> urls = collectConfiguredImports();
-            if (!urls.isEmpty()) {
-                IrisLogging.info("Auto-ingesting " + urls.size() + " external datapack import(s) from pack datapackImports...");
-                Report report = ingest(null, urls, true);
-                restarting = report.changed();
+        StartupValidationOutcome outcome = validateOnStartup();
+        if (outcome == StartupValidationOutcome.READY) {
+            runPostStartupTasks();
+        }
+    }
+
+    public static StartupValidationOutcome validateOnStartup() {
+        activeStartupValidation = null;
+        IrisStartupValidation.beginDatapackValidation();
+        KList<String> configured = collectConfiguredImports();
+        List<String> urls = configured.stream().sorted().toList();
+        boolean autoIngest = IrisSettings.get().getGeneral().autoIngestDatapacks;
+        boolean stripOverrides = resolveStripOverrides();
+        String mcVersion = serverMcVersion();
+        int irisVersion = IrisPlatforms.get().irisVersionNumber();
+        File root = IrisPlatforms.get().dataFolder("datapacks");
+        KList<File> worldFolders = ServerConfigurator.getDatapacksFolder();
+        Path cacheFile = new File(root, STARTUP_VALIDATION_CACHE).toPath();
+
+        try {
+            String localFingerprint = startupValidationFingerprint(root, worldFolders);
+            StartupValidationCache cached = readStartupValidationCache(cacheFile);
+            if (startupValidationCacheMatches(
+                    cached,
+                    mcVersion,
+                    irisVersion,
+                    autoIngest,
+                    stripOverrides,
+                    urls,
+                    localFingerprint)) {
+                activeStartupValidation = cached;
+                IrisLogging.info("External datapacks match the persisted startup validation; remote resolution and full revalidation were skipped.");
+                IrisStartupValidation.markDatapacksReady();
+                return StartupValidationOutcome.READY;
             }
+        } catch (IOException | RuntimeException exception) {
+            IrisLogging.warn("Persisted external datapack validation could not be reused: "
+                    + failureMessage(exception));
         }
-        if (!restarting) {
-            refreshWorkspaces();
-            autoImportDatapackStructures();
+
+        if (autoIngest && !configured.isEmpty()) {
+            IrisLogging.info("Validating " + configured.size()
+                    + " configured external datapack import(s) before player admission...");
+            Report report = ingest(null, configured, true);
+            if (!report.getFailed().isEmpty()) {
+                String failure = report.getFailed().getFirst();
+                IrisStartupValidation.markDatapacksInvalid(failure);
+                return StartupValidationOutcome.FAILED;
+            }
+            StartupValidationOutcome outcome = report.changed()
+                    ? StartupValidationOutcome.RESTART_REQUIRED
+                    : StartupValidationOutcome.READY;
+            activeStartupValidation = cacheStartupValidation(root, worldFolders, cacheFile, mcVersion, irisVersion,
+                    autoIngest, stripOverrides, urls);
+            if (outcome == StartupValidationOutcome.RESTART_REQUIRED) {
+                IrisStartupValidation.requireRestart(
+                        "Iris installed updated external datapacks; restart must complete before player admission or world creation.");
+            } else {
+                IrisStartupValidation.markDatapacksReady();
+            }
+            return outcome;
         }
+
+        ReapplyOutcome reapply = reapplyFromStaging(worldFolders);
+        if (!reapply.succeeded()) {
+            String failure = reapply.failure()
+                    .map(DatapackIngestService::failureMessage)
+                    .orElse("External datapack recovery failed.");
+            IrisStartupValidation.markDatapacksInvalid(failure);
+            return StartupValidationOutcome.FAILED;
+        }
+        activeStartupValidation = cacheStartupValidation(root, worldFolders, cacheFile, mcVersion, irisVersion,
+                autoIngest, stripOverrides, urls);
+        if (reapply.changed()) {
+            IrisStartupValidation.requireRestart(
+                    "Iris repaired external datapack files; restart must complete before player admission or world creation.");
+            return StartupValidationOutcome.RESTART_REQUIRED;
+        }
+        IrisStartupValidation.markDatapacksReady();
+        return StartupValidationOutcome.READY;
+    }
+
+    public static void runPostStartupTasks() {
+        refreshWorkspaces();
+        autoImportDatapackStructures();
+        refreshStartupValidationAfterMaintenance();
+    }
+
+    private static StartupValidationCache cacheStartupValidation(
+            File root,
+            KList<File> worldFolders,
+            Path cacheFile,
+            String mcVersion,
+            int irisVersion,
+            boolean autoIngest,
+            boolean stripOverrides,
+            List<String> urls
+    ) {
+        try {
+            StartupValidationCache cache = createStartupValidationCache(
+                    mcVersion,
+                    irisVersion,
+                    autoIngest,
+                    stripOverrides,
+                    urls,
+                    startupValidationFingerprint(root, worldFolders));
+            writeStartupValidationCache(cacheFile, cache);
+            return cache;
+        } catch (IOException | RuntimeException exception) {
+            IrisLogging.warn("Could not persist external datapack startup validation: "
+                    + failureMessage(exception));
+            return null;
+        }
+    }
+
+    private static void refreshStartupValidationAfterMaintenance() {
+        StartupValidationCache validated = activeStartupValidation;
+        if (validated == null || !IrisStartupValidation.isReady()) {
+            return;
+        }
+        KList<String> configured = collectConfiguredImports();
+        List<String> urls = configured.stream().sorted().toList();
+        boolean autoIngest = IrisSettings.get().getGeneral().autoIngestDatapacks;
+        boolean stripOverrides = resolveStripOverrides();
+        String mcVersion = serverMcVersion();
+        int irisVersion = IrisPlatforms.get().irisVersionNumber();
+        if (!startupValidationContextMatches(
+                validated, mcVersion, irisVersion, autoIngest, stripOverrides, urls)) {
+            return;
+        }
+        File root = IrisPlatforms.get().dataFolder("datapacks");
+        KList<File> worldFolders = ServerConfigurator.getDatapacksFolder();
+        Path cacheFile = new File(root, STARTUP_VALIDATION_CACHE).toPath();
+        TRANSACTION_LOCK.lock();
+        try {
+            recoverTransactions(root, worldFolders);
+            StartupValidationCache refreshed = refreshStartupValidationCache(
+                    validated, root, worldFolders);
+            writeStartupValidationCache(cacheFile, refreshed);
+            activeStartupValidation = refreshed;
+        } catch (IOException | RuntimeException exception) {
+            IrisLogging.warn("Could not refresh external datapack validation after startup maintenance: "
+                    + failureMessage(exception));
+        } finally {
+            TRANSACTION_LOCK.unlock();
+        }
+    }
+
+    static StartupValidationCache refreshStartupValidationCache(
+            StartupValidationCache validated,
+            File root,
+            KList<File> worldFolders
+    ) throws IOException {
+        Objects.requireNonNull(validated, "Validated external datapack startup state");
+        return createStartupValidationCache(
+                validated.minecraftVersion,
+                validated.irisVersion,
+                validated.autoIngest,
+                validated.stripOverrides,
+                validated.urls,
+                startupValidationFingerprint(root, worldFolders));
+    }
+
+    private static StartupValidationCache createStartupValidationCache(
+            String mcVersion,
+            int irisVersion,
+            boolean autoIngest,
+            boolean stripOverrides,
+            List<String> urls,
+            String localFingerprint
+    ) {
+        StartupValidationCache cache = new StartupValidationCache();
+        cache.schemaVersion = STARTUP_VALIDATION_SCHEMA;
+        cache.minecraftVersion = Objects.requireNonNullElse(mcVersion, "");
+        cache.irisVersion = irisVersion;
+        cache.autoIngest = autoIngest;
+        cache.stripOverrides = stripOverrides;
+        cache.urls = List.copyOf(urls);
+        cache.localFingerprint = localFingerprint;
+        return cache;
+    }
+
+    static boolean startupValidationContextMatches(
+            StartupValidationCache cache,
+            String mcVersion,
+            int irisVersion,
+            boolean autoIngest,
+            boolean stripOverrides,
+            List<String> urls
+    ) {
+        return cache != null
+                && cache.schemaVersion == STARTUP_VALIDATION_SCHEMA
+                && Objects.equals(cache.minecraftVersion, Objects.requireNonNullElse(mcVersion, ""))
+                && cache.irisVersion == irisVersion
+                && cache.autoIngest == autoIngest
+                && cache.stripOverrides == stripOverrides
+                && Objects.equals(cache.urls, urls);
+    }
+
+    static boolean startupValidationCacheMatches(
+            StartupValidationCache cache,
+            String mcVersion,
+            int irisVersion,
+            boolean autoIngest,
+            boolean stripOverrides,
+            List<String> urls,
+            String localFingerprint
+    ) {
+        return startupValidationContextMatches(
+                cache, mcVersion, irisVersion, autoIngest, stripOverrides, urls)
+                && localFingerprint != null && !localFingerprint.isBlank()
+                && Objects.equals(cache.localFingerprint, localFingerprint);
+    }
+
+    static StartupValidationCache readStartupValidationCache(Path cacheFile) {
+        if (cacheFile == null
+                || Files.isSymbolicLink(cacheFile)
+                || !Files.isRegularFile(cacheFile, LinkOption.NOFOLLOW_LINKS)) {
+            return null;
+        }
+        try {
+            if (Files.size(cacheFile) > MAX_METADATA_BYTES) {
+                return null;
+            }
+            StartupValidationCache cache = GSON.fromJson(
+                    readBoundedUtf8(cacheFile, MAX_METADATA_BYTES, "External datapack startup validation"),
+                    StartupValidationCache.class);
+            if (cache == null || cache.urls == null) {
+                return null;
+            }
+            List<String> sortedUrls = cache.urls.stream()
+                    .filter(Objects::nonNull)
+                    .sorted()
+                    .toList();
+            if (sortedUrls.size() != cache.urls.size()
+                    || new HashSet<>(sortedUrls).size() != sortedUrls.size()
+                    || !sortedUrls.equals(cache.urls)) {
+                return null;
+            }
+            cache.urls = sortedUrls;
+            return cache;
+        } catch (IOException | RuntimeException exception) {
+            return null;
+        }
+    }
+
+    private static void writeStartupValidationCache(Path cacheFile, StartupValidationCache cache) throws IOException {
+        Path absolute = cacheFile.toAbsolutePath().normalize();
+        Path parent = Objects.requireNonNull(absolute.getParent(), "External datapack startup validation parent");
+        Files.createDirectories(parent);
+        Path staged = Files.createTempFile(parent, ".startup-validation-", ".tmp");
+        try {
+            byte[] content = GSON.toJson(cache).getBytes(StandardCharsets.UTF_8);
+            if (content.length > MAX_METADATA_BYTES) {
+                throw new IOException("External datapack startup validation exceeds " + MAX_METADATA_BYTES + " bytes");
+            }
+            Files.write(staged, content, StandardOpenOption.TRUNCATE_EXISTING);
+            forceFile(staged);
+            try {
+                Files.move(staged, absolute, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(staged, absolute, StandardCopyOption.REPLACE_EXISTING);
+            }
+            forceDirectoryIfSupported(parent);
+        } finally {
+            Files.deleteIfExists(staged);
+        }
+    }
+
+    static String startupValidationFingerprint(File root, KList<File> worldFolders) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            Path manifestPath = new File(root, "manifest.json").toPath();
+            updateFingerprintValue(digest, "manifest");
+            if (Files.exists(manifestPath, LinkOption.NOFOLLOW_LINKS)) {
+                if (Files.isSymbolicLink(manifestPath)
+                        || !Files.isRegularFile(manifestPath, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IOException("Invalid datapack manifest path " + manifestPath);
+                }
+                byte[] manifest = readBoundedBytes(
+                        manifestPath, MAX_MANIFEST_BYTES, "Datapack manifest fingerprint");
+                updateDigestLong(digest, manifest.length);
+                digest.update(manifest);
+            } else if (Files.notExists(manifestPath, LinkOption.NOFOLLOW_LINKS)) {
+                updateDigestLong(digest, -1L);
+            } else {
+                throw new IOException("Cannot determine datapack manifest state at " + manifestPath);
+            }
+
+            Manifest manifest = readCommittedManifest(root);
+            updateDirectoryFingerprint(digest, "staging", new File(root, "staging"));
+            updateDirectoryFingerprint(digest, "transactions", new File(root, TRANSACTION_DIRECTORY));
+            updateDirectoryFingerprint(
+                    digest,
+                    "storage-install-scratch",
+                    installScratchRoot(new File(root, "staging")));
+
+            List<Entry> entries = new ArrayList<>(manifest.entries);
+            entries.sort(Comparator.comparing(entry -> entry.id));
+            List<File> targets = new ArrayList<>(worldFolders == null ? List.of() : worldFolders);
+            targets.sort(Comparator.comparing(file -> file.toPath().toAbsolutePath().normalize().toString()));
+            for (File worldFolder : targets) {
+                String worldIdentity = worldFolder.toPath().toAbsolutePath().normalize().toString();
+                updateFingerprintValue(digest, "world:" + worldIdentity);
+                updateDirectoryFingerprint(
+                        digest,
+                        "world-install-scratch:" + worldIdentity,
+                        installScratchRoot(worldFolder));
+                for (Entry entry : entries) {
+                    updateDirectoryFingerprint(
+                            digest,
+                            "world-pack:" + worldIdentity + ":" + entry.id,
+                            new File(worldFolder, entry.id));
+                }
+            }
+            return hex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IOException("SHA-256 algorithm unavailable", exception);
+        }
+    }
+
+    private static void updateDirectoryFingerprint(
+            MessageDigest digest,
+            String identity,
+            File directory
+    ) throws IOException {
+        updateFingerprintValue(digest, identity);
+        Path path = directory.toPath();
+        if (Files.notExists(path, LinkOption.NOFOLLOW_LINKS)) {
+            updateFingerprintValue(digest, "missing");
+            return;
+        }
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(path)
+                || !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Invalid external datapack validation directory " + path);
+        }
+        updateFingerprintValue(digest, directoryHash(directory));
+        Path ownership = new File(directory, OWNERSHIP_MARKER).toPath();
+        if (Files.isRegularFile(ownership, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(ownership)) {
+            byte[] marker = readBoundedBytes(
+                    ownership, MAX_OWNERSHIP_BYTES, "External datapack ownership fingerprint");
+            updateDigestLong(digest, marker.length);
+            digest.update(marker);
+        } else {
+            updateDigestLong(digest, -1L);
+        }
+    }
+
+    private static void updateFingerprintValue(MessageDigest digest, String value) {
+        byte[] bytes = Objects.requireNonNullElse(value, "").getBytes(StandardCharsets.UTF_8);
+        updateDigestInt(digest, bytes.length);
+        digest.update(bytes);
+    }
+
+    private static String failureMessage(Throwable exception) {
+        if (exception == null) {
+            return "unknown failure";
+        }
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
     public static void refreshWorkspaces() {
@@ -158,6 +513,7 @@ public final class DatapackIngestService {
     }
 
     public static Report ingest(VolmitSender sender, KList<String> urls, boolean restart) {
+        IrisStartupValidation.beginDatapackValidation();
         ServerConfigurator.LoadedDatapackRuntimeInvalidation invalidation =
                 ServerConfigurator.invalidateLoadedDatapackRuntime();
         Report report;
@@ -175,6 +531,11 @@ public final class DatapackIngestService {
             } else {
                 ServerConfigurator.requireDatapackRestart();
             }
+        }
+        if (!report.getFailed().isEmpty()) {
+            IrisStartupValidation.markDatapacksInvalid(report.getFailed().getFirst());
+        } else if (!report.changed()) {
+            IrisStartupValidation.markDatapacksReady();
         }
         return report;
     }
@@ -304,6 +665,10 @@ public final class DatapackIngestService {
             ServerConfigurator.restoreLoadedDatapackRuntimeIfUnchanged(invalidation);
         } else if (outcome.changed()) {
             ServerConfigurator.requireDatapackRestart();
+        } else {
+            IrisStartupValidation.markDatapacksInvalid(outcome.failure()
+                    .map(DatapackIngestService::failureMessage)
+                    .orElse("External datapack recovery failed."));
         }
         return outcome;
     }
@@ -1279,7 +1644,7 @@ public final class DatapackIngestService {
         verifyPendingExtractionName(normalizedSource.getFileName().toString(), entry.id);
         validateManagedDirectory(verifiedSource, entry.id);
         validateScratchTree(normalizedSource);
-        if (!Objects.equals(Files.getFileStore(normalizedSource), Files.getFileStore(normalizedStagingRoot))) {
+        if (!sameScratchVolume(normalizedSource, normalizedStagingRoot)) {
             throw new IOException("Verified datapack extraction crosses a filesystem boundary");
         }
         String desiredHash = directoryHash(verifiedSource);
@@ -1338,8 +1703,9 @@ public final class DatapackIngestService {
 
     private static Path requireDirectoryIdentity(File directory, String purpose) throws IOException {
         Path normalized = directory.toPath().toAbsolutePath().normalize();
-        if (Files.isSymbolicLink(normalized)
-                || !Files.isDirectory(normalized, LinkOption.NOFOLLOW_LINKS)) {
+        BasicFileAttributes attributes = Files.readAttributes(
+                normalized, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!isSupportedScratchDirectory(attributes)) {
             throw new IOException("Invalid " + purpose + " " + normalized);
         }
         normalized.toRealPath();
@@ -1350,8 +1716,16 @@ public final class DatapackIngestService {
         Path current = normalized.getRoot();
         for (Path component : normalized) {
             current = current == null ? component : current.resolve(component);
-            if (Files.isSymbolicLink(current)) {
+            BasicFileAttributes attributes = Files.readAttributes(
+                    current, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (attributes.isSymbolicLink()) {
                 throw new IOException("Refusing symbolic-link component in " + purpose + " " + normalized);
+            }
+            if (attributes.isOther()) {
+                throw new IOException("Refusing special filesystem component in " + purpose + " " + normalized);
+            }
+            if (!isSupportedScratchDirectory(attributes)) {
+                throw new IOException("Refusing unsupported component in " + purpose + " " + normalized);
             }
         }
     }
@@ -1677,7 +2051,7 @@ public final class DatapackIngestService {
 
     private static void validateInstallTree(File directory, File storeAnchor, String purpose) throws IOException {
         validateScratchTree(directory.toPath());
-        if (!Objects.equals(Files.getFileStore(directory.toPath()), Files.getFileStore(storeAnchor.toPath()))) {
+        if (!sameScratchVolume(directory.toPath(), storeAnchor.toPath())) {
             throw new IOException(purpose + " crosses a filesystem boundary at " + directory.getPath());
         }
     }
@@ -1990,21 +2364,26 @@ public final class DatapackIngestService {
         plan.pendingRoot.delete();
     }
 
-    private static void deleteInstallScratch(File scratch, String purpose) throws IOException {
-        if (Files.notExists(scratch.toPath(), LinkOption.NOFOLLOW_LINKS)) {
-            return;
-        }
-        if (!Files.exists(scratch.toPath(), LinkOption.NOFOLLOW_LINKS)
-                || Files.isSymbolicLink(scratch.toPath())
-                || !Files.isDirectory(scratch.toPath(), LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("Refusing to remove unsafe " + purpose + " " + scratch.getPath());
-        }
+    static void deleteInstallScratch(File scratch, String purpose) throws IOException {
+        Path scratchPath = scratch.toPath();
         File parent = Objects.requireNonNull(scratch.getParentFile(), "datapack scratch parent");
-        validateInstallTree(scratch, parent, purpose);
-        IO.delete(scratch);
-        if (Files.exists(scratch.toPath(), LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("Could not remove " + purpose + " " + scratch.getPath());
+        for (int attempt = 0; attempt < MAX_SCRATCH_DELETE_ATTEMPTS; attempt++) {
+            if (Files.notExists(scratchPath, LinkOption.NOFOLLOW_LINKS)) {
+                return;
+            }
+            if (!Files.exists(scratchPath, LinkOption.NOFOLLOW_LINKS)
+                    || Files.isSymbolicLink(scratchPath)
+                    || !Files.isDirectory(scratchPath, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Refusing to remove unsafe " + purpose + " " + scratch.getPath());
+            }
+            validateInstallTree(scratch, parent, purpose);
+            removeFinderMetadata(scratch);
+            IO.delete(scratch);
+            if (Files.notExists(scratchPath, LinkOption.NOFOLLOW_LINKS)) {
+                return;
+            }
         }
+        throw new IOException("Could not remove " + purpose + " " + scratch.getPath());
     }
 
     private static boolean resolveStripOverrides() {
@@ -2271,6 +2650,7 @@ public final class DatapackIngestService {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             Path rootPath = root.toPath().toAbsolutePath().normalize();
             Path rootMarker = rootPath.resolve(OWNERSHIP_MARKER);
+            FileStore rootStore = Files.getFileStore(rootPath);
             List<Path> entries = new ArrayList<>();
             try (Stream<Path> paths = Files.walk(rootPath)) {
                 Iterator<Path> iterator = paths.iterator();
@@ -2315,8 +2695,13 @@ public final class DatapackIngestService {
                         BasicFileAttributes.class,
                         LinkOption.NOFOLLOW_LINKS
                 );
-                if (!attributes.isDirectory() && !attributes.isRegularFile()) {
+                if (attributes.isSymbolicLink()
+                        || attributes.isOther()
+                        || !attributes.isDirectory() && !attributes.isRegularFile()) {
                     throw new IOException("Datapack entry changed while hashing: " + relative);
+                }
+                if (!sameScratchVolume(rootPath, rootStore, entry, Files.getFileStore(entry))) {
+                    throw new IOException("Datapack entry crosses a filesystem boundary: " + entry);
                 }
                 boolean directory = attributes.isDirectory();
                 digest.update((byte) (directory ? 1 : 2));
@@ -3809,14 +4194,76 @@ public final class DatapackIngestService {
                 BasicFileAttributes attributes = Files.readAttributes(
                         entry, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
                 if (attributes.isSymbolicLink()
+                        || attributes.isOther()
                         || (!attributes.isDirectory() && !attributes.isRegularFile())) {
                     throw new IOException("Datapack scratch contains an unsupported file: " + entry);
                 }
-                if (!Objects.equals(rootStore, Files.getFileStore(entry))) {
+                if (!sameScratchVolume(root, rootStore, entry, Files.getFileStore(entry))) {
                     throw new IOException("Datapack scratch crosses a filesystem boundary: " + entry);
                 }
             }
         }
+    }
+
+    private static boolean sameScratchVolume(Path first, Path second) throws IOException {
+        return sameScratchVolume(first, Files.getFileStore(first), second, Files.getFileStore(second));
+    }
+
+    static boolean sameScratchVolume(
+            Path first,
+            FileStore firstStore,
+            Path second,
+            FileStore secondStore
+    ) {
+        if (Objects.equals(firstStore, secondStore)) {
+            return true;
+        }
+        if (!isDefaultWindowsPath(first) || !isDefaultWindowsPath(second)) {
+            return false;
+        }
+        Path firstAbsolute = first.toAbsolutePath().normalize();
+        Path secondAbsolute = second.toAbsolutePath().normalize();
+        if ((firstAbsolute.toString().length() > WINDOWS_LEGACY_PATH_LIMIT)
+                == (secondAbsolute.toString().length() > WINDOWS_LEGACY_PATH_LIMIT)) {
+            return false;
+        }
+        Path firstRoot = firstAbsolute.getRoot();
+        Path secondRoot = secondAbsolute.getRoot();
+        if (firstRoot == null || secondRoot == null) {
+            return false;
+        }
+        return sameWindowsVolume(
+                firstStore, firstRoot.toString(), secondStore, secondRoot.toString());
+    }
+
+    static boolean sameWindowsVolume(
+            FileStore firstStore,
+            String firstRoot,
+            FileStore secondStore,
+            String secondRoot
+    ) {
+        if (firstRoot == null || secondRoot == null || !firstRoot.equalsIgnoreCase(secondRoot)) {
+            return false;
+        }
+        try {
+            Object firstSerial = firstStore.getAttribute("volume:vsn");
+            Object secondSerial = secondStore.getAttribute("volume:vsn");
+            return firstSerial != null && firstSerial.equals(secondSerial);
+        } catch (IOException | RuntimeException exception) {
+            return false;
+        }
+    }
+
+    static boolean isSupportedScratchDirectory(BasicFileAttributes attributes) {
+        return attributes != null
+                && attributes.isDirectory()
+                && !attributes.isSymbolicLink()
+                && !attributes.isOther();
+    }
+
+    private static boolean isDefaultWindowsPath(Path path) {
+        return File.separatorChar == '\\'
+                && path.getFileSystem().equals(FileSystems.getDefault());
     }
 
     private static Ownership verifyManagedScratchDirectory(File directory, String id) throws IOException {
@@ -4752,9 +5199,8 @@ public final class DatapackIngestService {
             if (!Objects.equals(legacyStagingSnapshot.normalizedTarget().getParent(), normalizedStagingRoot)
                     || !Files.isSameFile(
                     legacyStagingSnapshot.normalizedTarget().getParent(), normalizedStagingRoot)
-                    || !Objects.equals(
-                    Files.getFileStore(legacyStagingSnapshot.normalizedTarget()),
-                    Files.getFileStore(normalizedStagingRoot))) {
+                    || !sameScratchVolume(
+                    legacyStagingSnapshot.normalizedTarget(), normalizedStagingRoot)) {
                 throw new IOException("Changed or unsafe canonical legacy datapack staging target for " + id);
             }
             verifyDirectorySnapshot(
@@ -4829,6 +5275,22 @@ public final class DatapackIngestService {
         public Map<String, String> importedTargets = new HashMap<>();
         public Map<String, String> importAttempts = new HashMap<>();
         public Map<String, Map<String, String>> importedBundles = new HashMap<>();
+    }
+
+    static final class StartupValidationCache {
+        int schemaVersion;
+        String minecraftVersion;
+        int irisVersion;
+        boolean autoIngest;
+        boolean stripOverrides;
+        List<String> urls;
+        String localFingerprint;
+    }
+
+    public enum StartupValidationOutcome {
+        READY,
+        RESTART_REQUIRED,
+        FAILED
     }
 
     private static final class Manifest {

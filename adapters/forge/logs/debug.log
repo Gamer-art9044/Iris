@@ -1,12 +1,12 @@
-[10Aug2026 16:36:16.711] [Test worker/DEBUG] [io.netty.util.internal.logging.InternalLoggerFactory/]: Using SLF4J as the default logging framework
-[10Aug2026 16:36:16.713] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.level: simple
-[10Aug2026 16:36:16.713] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.targetRecords: 4
-[10Aug2026 16:36:18.446] [Test worker/WARN] [Iris/]: Iris cannot resolve the biome id for 'minecraft:plains' before the Minecraft server is available; using biome id 0
-[10Aug2026 16:36:18.447] [Test worker/WARN] [Iris/]: Iris cannot enumerate the biome registry before the Minecraft server is available; returning no biomes
-[10Aug2026 16:36:18.481] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_deferred_test'
-[10Aug2026 16:36:18.487] [Test worker/WARN] [Iris/]: Iris persistent dimension registry entry 1 in /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-partial10729038317795245166/iris-dimensions.json is invalid (entry 1 in /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-partial10729038317795245166/iris-dimensions.json has no dimension); kept verbatim: {"id":"iris:broken","pack":"overworld"}
-[10Aug2026 16:36:18.500] [Test worker/ERROR] [Iris/]: Iris persistent dimension registry at /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-corrupt-boot15013382090322814704/iris-dimensions.json is corrupt; quarantining it and continuing boot
-java.lang.IllegalStateException: Iris persistent dimension registry at /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-corrupt-boot15013382090322814704/iris-dimensions.json could not be read; refusing to discard persistent worlds
+[10Aug2026 23:16:24.848] [Test worker/DEBUG] [io.netty.util.internal.logging.InternalLoggerFactory/]: Using SLF4J as the default logging framework
+[10Aug2026 23:16:24.850] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.level: simple
+[10Aug2026 23:16:24.850] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.targetRecords: 4
+[10Aug2026 23:16:26.445] [Test worker/WARN] [Iris/]: Iris cannot resolve the biome id for 'minecraft:plains' before the Minecraft server is available; using biome id 0
+[10Aug2026 23:16:26.446] [Test worker/WARN] [Iris/]: Iris cannot enumerate the biome registry before the Minecraft server is available; returning no biomes
+[10Aug2026 23:16:26.477] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_deferred_test'
+[10Aug2026 23:16:26.483] [Test worker/WARN] [Iris/]: Iris persistent dimension registry entry 1 in /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-partial11065974536391059626/iris-dimensions.json is invalid (entry 1 in /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-partial11065974536391059626/iris-dimensions.json has no dimension); kept verbatim: {"id":"iris:broken","pack":"overworld"}
+[10Aug2026 23:16:26.496] [Test worker/ERROR] [Iris/]: Iris persistent dimension registry at /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-corrupt-boot1665584090438343711/iris-dimensions.json is corrupt; quarantining it and continuing boot
+java.lang.IllegalStateException: Iris persistent dimension registry at /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-corrupt-boot1665584090438343711/iris-dimensions.json could not be read; refusing to discard persistent worlds
 	at art.arcane.iris.modded.ModdedDimensionRegistryStore.contents(ModdedDimensionRegistryStore.java:150) ~[main/:?]
 	at art.arcane.iris.modded.ModdedDimensionRegistryStore.load(ModdedDimensionRegistryStore.java:56) ~[main/:?]
 	at art.arcane.iris.modded.ModdedDimensionRegistryStore.loadForStartup(ModdedDimensionRegistryStore.java:69) ~[main/:?]
@@ -63,9 +63,9 @@ Caused by: art.arcane.volmlib.util.json.JSONException: A JSONObject text must en
 	at art.arcane.volmlib.util.json.JSONObject.<init>(JSONObject.java:260) ~[shared-local-SNAPSHOT.jar:?]
 	at art.arcane.iris.modded.ModdedDimensionRegistryStore.contents(ModdedDimensionRegistryStore.java:117) ~[main/:?]
 	... 45 more
-[10Aug2026 16:36:18.506] [Test worker/ERROR] [Iris/]: Iris lost 1 persistent dimension(s) from the corrupt registry: iris:lost
-[10Aug2026 16:36:18.506] [Test worker/ERROR] [Iris/]: Iris moved the corrupt persistent dimension registry to /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-corrupt-boot15013382090322814704/iris-dimensions.json.broken-1786394178506
-[10Aug2026 16:36:18.552] [Test worker/ERROR] [Iris/]: Iris service onDisable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
+[10Aug2026 23:16:26.501] [Test worker/ERROR] [Iris/]: Iris lost 1 persistent dimension(s) from the corrupt registry: iris:lost
+[10Aug2026 23:16:26.502] [Test worker/ERROR] [Iris/]: Iris moved the corrupt persistent dimension registry to /var/folders/l1/g6lr3c5x26z_mdmtfzt9gjbr0000gn/T/iris-dimension-registry-corrupt-boot1665584090438343711/iris-dimensions.json.broken-1786418186502
+[10Aug2026 23:16:26.543] [Test worker/ERROR] [Iris/]: Iris service onDisable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
 java.lang.RuntimeException: second disable failed
 	at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndNeverRethrows(ModdedServiceManagerTest.java:55) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -110,7 +110,7 @@ java.lang.RuntimeException: second disable failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[10Aug2026 16:36:18.555] [Test worker/ERROR] [Iris/]: Iris service onDisable failed for art.arcane.iris.modded.ModdedServiceManagerTest$FirstService
+[10Aug2026 23:16:26.546] [Test worker/ERROR] [Iris/]: Iris service onDisable failed for art.arcane.iris.modded.ModdedServiceManagerTest$FirstService
 java.lang.RuntimeException: first disable failed
 	at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndNeverRethrows(ModdedServiceManagerTest.java:54) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -155,7 +155,7 @@ java.lang.RuntimeException: first disable failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[10Aug2026 16:36:18.557] [Test worker/ERROR] [Iris/]: Iris disabled all services with 2 failure(s)
+[10Aug2026 23:16:26.548] [Test worker/ERROR] [Iris/]: Iris disabled all services with 2 failure(s)
 java.lang.RuntimeException: second disable failed
 	at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndNeverRethrows(ModdedServiceManagerTest.java:55) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -203,7 +203,7 @@ java.lang.RuntimeException: second disable failed
 	Suppressed: java.lang.RuntimeException: first disable failed
 		at art.arcane.iris.modded.ModdedServiceManagerTest.disableAttemptsEveryServiceInReverseOrderAndNeverRethrows(ModdedServiceManagerTest.java:54) ~[test/:?]
 		... 42 more
-[10Aug2026 16:36:18.560] [Test worker/ERROR] [Iris/]: Iris service rollback failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
+[10Aug2026 23:16:26.551] [Test worker/ERROR] [Iris/]: Iris service rollback failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
 java.lang.RuntimeException: cleanup failed
 	at art.arcane.iris.modded.ModdedServiceManagerTest.rollsBackEnabledServicesAndPreservesCleanupFailures(ModdedServiceManagerTest.java:32) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -248,7 +248,7 @@ java.lang.RuntimeException: cleanup failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[10Aug2026 16:36:18.562] [Test worker/ERROR] [Iris/]: Iris service onEnable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
+[10Aug2026 23:16:26.553] [Test worker/ERROR] [Iris/]: Iris service onEnable failed for art.arcane.iris.modded.ModdedServiceManagerTest$SecondService
 java.lang.RuntimeException: enable failed
 	at art.arcane.iris.modded.ModdedServiceManagerTest.rollsBackEnabledServicesAndPreservesCleanupFailures(ModdedServiceManagerTest.java:31) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -296,7 +296,7 @@ java.lang.RuntimeException: enable failed
 	Suppressed: java.lang.RuntimeException: cleanup failed
 		at art.arcane.iris.modded.ModdedServiceManagerTest.rollsBackEnabledServicesAndPreservesCleanupFailures(ModdedServiceManagerTest.java:32) ~[test/:?]
 		... 42 more
-[10Aug2026 16:36:18.596] [Test worker/ERROR] [Iris/]: [worldcheck] server stop request failed
+[10Aug2026 23:16:26.588] [Test worker/ERROR] [Iris/]: [worldcheck] server stop request failed
 java.lang.IllegalStateException: stop request failed
 	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$stopRequestFailureForcesNonzeroResult$1(ModdedWorldCheckTest.java:238) ~[test/:?]
 	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:144) ~[main/:?]
@@ -343,7 +343,7 @@ java.lang.IllegalStateException: stop request failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[10Aug2026 16:36:18.598] [Test worker/ERROR] [Iris/]: [worldcheck] waiting for server shutdown failed
+[10Aug2026 23:16:26.590] [Test worker/ERROR] [Iris/]: [worldcheck] waiting for server shutdown failed
 java.lang.IllegalStateException: shutdown wait failed
 	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$shutdownWaitFailureForcesNonzeroExit$0(ModdedWorldCheckTest.java:264) ~[test/:?]
 	at art.arcane.iris.modded.ModdedWorldCheck.awaitStopAndExit(ModdedWorldCheck.java:159) ~[main/:?]
@@ -390,7 +390,7 @@ java.lang.IllegalStateException: shutdown wait failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[10Aug2026 16:36:18.602] [Test worker/ERROR] [Iris/]: [worldcheck] check failed
+[10Aug2026 23:16:26.593] [Test worker/ERROR] [Iris/]: [worldcheck] check failed
 java.lang.IllegalStateException: check failed
 	at art.arcane.iris.modded.ModdedWorldCheckTest.lambda$thrownCheckStillRequestsStop$0(ModdedWorldCheckTest.java:224) ~[test/:?]
 	at art.arcane.iris.modded.ModdedWorldCheck.runAndRequestStop(ModdedWorldCheck.java:139) ~[main/:?]
@@ -437,8 +437,8 @@ java.lang.IllegalStateException: check failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[10Aug2026 16:36:18.613] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_discovery_success'
-[10Aug2026 16:36:18.613] [Test worker/WARN] [Iris/]: Iris custom content provider discovery failed at provider 'iris_discovery_failure' (art.arcane.iris.modded.api.ModdedCustomContentRegistryTest$TestProvider)
+[10Aug2026 23:16:26.603] [Test worker/INFO] [Iris/]: Iris registered custom content provider 'iris_discovery_success'
+[10Aug2026 23:16:26.604] [Test worker/WARN] [Iris/]: Iris custom content provider discovery failed at provider 'iris_discovery_failure' (art.arcane.iris.modded.api.ModdedCustomContentRegistryTest$TestProvider)
 java.lang.RuntimeException: provider init failed
 	at art.arcane.iris.modded.api.ModdedCustomContentRegistryTest.failedDiscoveryPublishesNothingAndPreservesTheCause(ModdedCustomContentRegistryTest.java:39) ~[test/:?]
 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?]
@@ -483,4 +483,4 @@ java.lang.RuntimeException: provider init failed
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) [gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) [gradle-worker.jar:?]
-[10Aug2026 16:36:18.627] [Test worker/INFO] [Iris/]: Iris object undo service ready (bounded to 32 paste(s) per player)
+[10Aug2026 23:16:26.616] [Test worker/INFO] [Iris/]: Iris object undo service ready (bounded to 32 paste(s) per player)

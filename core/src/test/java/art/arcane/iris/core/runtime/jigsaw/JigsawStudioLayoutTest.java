@@ -96,20 +96,31 @@ public class JigsawStudioLayoutTest {
     }
 
     @Test
-    public void spatialLayoutHasOneActiveWorkcell() {
+    public void spatialVariantsReceiveDedicatedAdjacentWorkcells() {
         JigsawStudioVariant hall = spatialVariant("stronghold/hall");
+        JigsawStudioVariant stairs = spatialVariant("stronghold/stairs");
+        JigsawStudioVariant tower = spatialVariant("stronghold/tower");
         JigsawStudioLayout layout = JigsawStudioLayout.create(
                 JigsawStudioMode.SPATIAL_JIGSAW,
                 CELL,
-                new JigsawStudioVariantCatalog(List.of(hall)));
+                new JigsawStudioVariantCatalog(List.of(hall, stairs, tower)));
 
-        assertEquals(1, layout.bays().size());
+        assertEquals(3, layout.bays().size());
         JigsawStudioBay workcell = layout.bays().getFirst();
+        JigsawStudioBay second = layout.bays().get(1);
+        JigsawStudioBay third = layout.bays().get(2);
         assertEquals(JigsawStudioLayout.SPATIAL_WORKCELL_ID, workcell.stableId());
         assertEquals(JigsawStudioBayKind.SPATIAL_WORKCELL, workcell.kind());
         assertTrue(workcell.archetype().isEmpty());
         assertTrue(workcell.topology().isEmpty());
         assertSame(hall, layout.defaultVariant(workcell).orElseThrow());
+        assertSame(stairs, layout.defaultVariant(second).orElseThrow());
+        assertSame(tower, layout.defaultVariant(third).orElseThrow());
+        assertEquals(1, second.bounds().originX() - workcell.bounds().maxX() - 1);
+        assertEquals(1, third.bounds().originX() - second.bounds().maxX() - 1);
+        assertTrue(layout.accepts(second, stairs));
+        assertFalse(layout.accepts(second, hall));
+        assertSame(second, layout.workcellForVariant(stairs.pieceKey()).orElseThrow());
         assertNull(layout.findAt(-1, JigsawStudioLayout.FLOOR_Y + 1, -1));
     }
 

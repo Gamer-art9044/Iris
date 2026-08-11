@@ -24,6 +24,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
+import art.arcane.iris.core.pack.PackValidationCache;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
@@ -42,7 +43,11 @@ import org.bukkit.generator.ChunkGenerator;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
@@ -60,31 +65,73 @@ public final class IrisWorldGeneratorResolver {
         File packsRoot = plugin.getDataFolder("packs");
         List<File> packDirs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
         PackValidationRegistry.clear();
-        if (packDirs.isEmpty()) {
-            return;
+        List<String> packNames = packDirs.stream().map(File::getName).sorted().toList();
+        Path cacheFile = IrisPlatforms.get().dataFile("cache", "pack-validation.json").toPath();
+        String contentFingerprint = "";
+        String contextFingerprint = "";
+        Optional<List<PackValidationResult>> cached = Optional.empty();
+        try {
+            contentFingerprint = PackValidationCache.contentFingerprint(packsRoot);
+            contextFingerprint = PackValidationCache.contextFingerprint();
+            cached = PackValidationCache.load(
+                    cacheFile,
+                    contentFingerprint,
+                    contextFingerprint,
+                    packNames);
+        } catch (RuntimeException exception) {
+            Iris.reportError("Could not evaluate the persisted pack-validation cache", exception);
         }
-        for (File packDir : packDirs) {
-            try {
-                PackValidationResult result = PackValidator.validate(packDir);
-                PackValidationRegistry.publish(result);
-                if (!result.isLoadable()) {
-                    Iris.error("Pack '" + result.getPackName() + "' FAILED validation - world/studio creation will be refused. Reasons:");
-                    for (String reason : result.getBlockingErrors()) {
-                        Iris.error("  - " + reason);
+
+        List<PackValidationResult> results;
+        if (cached.isPresent()) {
+            results = cached.get();
+            Iris.info("Reused persisted validation for " + results.size()
+                    + " unchanged Iris pack(s); full pack parsing was skipped.");
+        } else {
+            results = new ArrayList<>(packDirs.size());
+            for (File packDir : packDirs) {
+                try {
+                    results.add(PackValidator.validate(packDir));
+                } catch (Throwable exception) {
+                    Iris.reportError("Pack validation failed for '" + packDir.getName() + "'", exception);
+                    String detail = exception.getMessage();
+                    if (detail == null || detail.isBlank()) {
+                        detail = exception.getClass().getSimpleName();
                     }
-                } else if (!result.getWarnings().isEmpty()) {
-                    Iris.info("Pack '" + result.getPackName() + "' validated ("
-                            + result.getWarnings().size() + " warning(s)).");
-                    for (String warning : result.getWarnings()) {
-                        Iris.warn("  [" + result.getPackName() + "] " + warning);
-                    }
-                } else {
-                    Iris.success("Pack '" + result.getPackName() + "' validated.");
+                    results.add(new PackValidationResult(
+                            packDir.getName(),
+                            List.of("Pack validation failed with " + exception.getClass().getSimpleName()
+                                    + ": " + detail),
+                            List.of(),
+                            System.currentTimeMillis()));
                 }
-            } catch (Throwable e) {
-                Iris.reportError("Pack validation failed for '" + packDir.getName() + "'", e);
+            }
+            try {
+                PackValidationCache.save(cacheFile, contentFingerprint, contextFingerprint, results);
+            } catch (IOException exception) {
+                Iris.reportError("Could not persist Iris pack-validation results", exception);
             }
         }
+
+        for (PackValidationResult result : results) {
+            PackValidationRegistry.publish(result);
+            if (!result.isLoadable()) {
+                Iris.error("Pack '" + result.getPackName()
+                        + "' FAILED validation - world and Studio creation with this pack will be refused. Reasons:");
+                for (String reason : result.getBlockingErrors()) {
+                    Iris.error("  - " + reason);
+                }
+            } else if (!result.getWarnings().isEmpty()) {
+                Iris.info("Pack '" + result.getPackName() + "' validated ("
+                        + result.getWarnings().size() + " warning(s)).");
+                for (String warning : result.getWarnings()) {
+                    Iris.warn("  [" + result.getPackName() + "] " + warning);
+                }
+            } else if (cached.isEmpty()) {
+                Iris.success("Pack '" + result.getPackName() + "' validated.");
+            }
+        }
+        IrisStartupValidation.markPacksReady();
     }
 
     @Nullable
@@ -127,6 +174,7 @@ public final class IrisWorldGeneratorResolver {
     }
 
     public ChunkGenerator resolveDefaultWorldGenerator(String worldName, String id) {
+        IrisStartupValidation.requireWorldCreationReady();
         ChunkGenerator stagedGenerator = WorldLifecycleStaging.consumeGenerator(worldName);
         if (stagedGenerator != null) {
             Iris.debug("Using staged runtime generator for " + worldName);
@@ -136,18 +184,19 @@ public final class IrisWorldGeneratorResolver {
         if (id == null || id.isEmpty()) id = IrisSettings.get().getGenerator().getDefaultWorldType();
         Iris.debug("Generator ID: " + id + " requested by bukkit/plugin");
 
-        PackValidationResult validation = PackValidationRegistry.get(id);
-        if (validation != null && !validation.isLoadable()) {
-            Iris.error("Refusing to create world '" + worldName + "' using broken pack '" + id + "':");
-            for (String reason : validation.getBlockingErrors()) {
-                Iris.error("  - " + reason);
-            }
-            throw new BrokenPackException(id, validation.getBlockingErrors());
-        }
-
         IrisDimension dim = loadDimension(worldName, id);
         if (dim == null) {
             throw new RuntimeException("Can't find dimension " + id + "!");
+        }
+        String packName = dim.getLoader().getDataFolder().getName();
+        try {
+            PackValidationRegistry.requireLoadable(packName);
+        } catch (BrokenPackException exception) {
+            Iris.error("Refusing to create world '" + worldName + "' using broken pack '" + packName + "':");
+            for (String reason : exception.getReasons()) {
+                Iris.error("  - " + reason);
+            }
+            throw exception;
         }
 
         Iris.debug("Assuming IrisDimension: " + dim.getName());

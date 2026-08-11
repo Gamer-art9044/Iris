@@ -161,6 +161,8 @@ public class ServerConfigurator {
             invalidateLoadedDatapackRuntime();
             loadedDatapackRestartRequired = true;
         }
+        IrisStartupValidation.requireRestart(
+                "Iris datapack changes require a restart before player admission or world creation.");
     }
 
     public static void restoreLoadedDatapackRuntimeIfUnchanged(

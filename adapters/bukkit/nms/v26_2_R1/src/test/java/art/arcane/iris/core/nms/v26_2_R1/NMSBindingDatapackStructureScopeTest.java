@@ -213,6 +213,27 @@ public class NMSBindingDatapackStructureScopeTest {
         assertFalse(method.contains("retained.fullState()"));
     }
 
+    @Test
+    public void injectionVerifiesTheCanonicalPaperGeneratorBeforeStructureRetargeting() throws IOException {
+        Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
+        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java"));
+        int methodStart = source.indexOf("public void inject(long seed, Engine engine, World world)");
+        int methodEnd = source.indexOf("\n    @Override\n    public DatapackStructureScopeResult", methodStart);
+
+        assertTrue(methodStart >= 0);
+        assertTrue(methodEnd > methodStart);
+        String method = source.substring(methodStart, methodEnd);
+        int publication = method.indexOf("worldGenContextField.set(chunkMap, newContext);");
+        int canonicalRead = method.indexOf("level.getChunkSource().getGenerator()", publication);
+        int identityGate = method.indexOf("activeGenerator != irisGenerator", canonicalRead);
+        int structureRetarget = method.indexOf("retargetStructureCheck(level, irisGenerator)", identityGate);
+
+        assertTrue(publication >= 0);
+        assertTrue(canonicalRead > publication);
+        assertTrue(identityGate > canonicalRead);
+        assertTrue(structureRetarget > identityGate);
+    }
+
     private static DatapackStructureScopeIndex index(
             List<String> structureKeys,
             List<String> structureSetKeys

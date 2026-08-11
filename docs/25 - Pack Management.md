@@ -60,7 +60,9 @@ Default overworld repository constant: `IrisDimensions/overworld`.
 | Command | Behavior |
 |---------|----------|
 | Bukkit: `/iris pack validate [pack=<key>]`; modded: `/iris pack validate [pack]` | Validate one pack or all visible packs; publish into `PackValidationRegistry` |
-| Bukkit: `/iris pack status [pack=<key>]`; modded: `/iris pack status [pack]` | Show cached registry results (run validate first) |
+| Bukkit: `/iris pack status [pack=<key>]`; modded: `/iris pack status [pack]` | Show the startup-published registry result, including a reused persisted result; run validate to refresh after edits |
+
+Bukkit persists successful and failed startup validation results and reuses them only when the exact visible pack set, pack-content fingerprint, validator schema, strict-content mode, platform/Minecraft/Iris context, and relevant live registries still match. Cached failures remain blocking; changed bytes, context, registry keys, missing/extra packs, malformed cache state, or a manual validation refresh prevents stale success from authorizing world or Studio creation.
 
 ### Checks performed (`PackValidator`)
 

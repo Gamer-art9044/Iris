@@ -293,7 +293,9 @@ Checksum-verified when Modrinth publishes a hash; size-capped.
 
 Installed datapacks are real Minecraft datapacks at `<level root>/datapacks/<id>/`, each with `.iris-managed.json`. Unmanaged datapacks are never touched; id `iris` is reserved. Cache/staging/manifest under `plugins/Iris/datapacks/`.
 
-Ingest runs shortly after plugin enable when `general.autoIngestDatapacks` is enabled (default true). Minecraft builds worldgen registries at server start, so a **newly installed** datapack is not registered on the boot that installed it — auto-ingest **restarts the server** when anything changed. After that restart, keys are live only in the per-world structure state of declaring Iris dimensions. A repair path reinstalls staged datapacks that went missing without re-downloading.
+Ingest and recovery run synchronously in Iris's startup admission gate when `general.autoIngestDatapacks` is enabled (default true); players and every Iris world/Studio creation path remain locked until that phase is valid. A persisted manifest/configuration/content fingerprint lets an unchanged boot skip remote resolution and full revalidation, and Iris refreshes that fingerprint after its own authorized post-start import maintenance; URL, Minecraft/Iris version, override policy, external manifest edits, staging, transaction, installed content, or cache corruption still invalidates reuse and runs the full fail-closed path. Minecraft builds worldgen registries at server start, so a **newly installed or repaired** datapack requires a clean restart before admission; after it returns, keys are live only in the per-world structure state of declaring Iris dimensions.
+
+Scratch validation rejects links, junction-like special files, and real cross-volume entries. On Windows/Java 25, Iris also verifies the drive root and volume serial when the JDK reports unequal `FileStore` identities only because a path crossed the legacy 247-character prefix boundary; unresolved cleanup, identity, transaction, or validation failures remain blocking and create no world artifacts.
 
 ### 2.3 Manual commands
 

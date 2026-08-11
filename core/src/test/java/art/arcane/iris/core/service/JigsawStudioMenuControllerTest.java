@@ -19,6 +19,7 @@ import org.junit.Test;
 import org.mockito.MockedStatic;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -30,9 +31,11 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -240,6 +243,87 @@ public class JigsawStudioMenuControllerTest {
     }
 
     @Test
+    public void stagesMultipleCellSizeEditsAndAppliesOneRelayoutWithoutClosing() throws Exception {
+        UUID playerId = UUID.fromString("55555555-5555-5555-5555-555555555555");
+        Player player = mock(Player.class);
+        JigsawStudioMenuController.Actions actions = mock(JigsawStudioMenuController.Actions.class);
+        JigsawStudioMenuState.Variant active = variant("pieces/corner", true, List.of(), List.of());
+        JigsawStudioMenuState.Workcell workcell = workcell(active);
+        JigsawStudioMenuState state = state(JigsawStudioMenuState.Evaluation.pending(), workcell);
+        JigsawStudioMenuController controller = new JigsawStudioMenuController(
+                mock(JavaPlugin.class),
+                actions);
+        Method resize = JigsawStudioMenuController.class.getDeclaredMethod(
+                "resizeWorkcell",
+                Player.class,
+                UUID.class,
+                String.class,
+                JigsawStudioMenuController.DimensionAxis.class,
+                int.class);
+        Method apply = JigsawStudioMenuController.class.getDeclaredMethod(
+                "applyWorkcellResize",
+                Player.class,
+                UUID.class,
+                String.class);
+        resize.setAccessible(true);
+        apply.setAccessible(true);
+        when(player.getUniqueId()).thenReturn(playerId);
+        when(actions.menuState(player)).thenReturn(Optional.of(state));
+        when(actions.updateWorkcellDimensions(
+                player,
+                workcell.stableId(),
+                new JigsawStudioCellDimensions(25, 20, 18))).thenReturn(true);
+
+        resize.invoke(
+                controller,
+                player,
+                REQUEST_ID,
+                workcell.stableId(),
+                JigsawStudioMenuController.DimensionAxis.WIDTH,
+                1);
+        resize.invoke(
+                controller,
+                player,
+                REQUEST_ID,
+                workcell.stableId(),
+                JigsawStudioMenuController.DimensionAxis.HEIGHT,
+                8);
+
+        verify(actions, never()).updateWorkcellDimensions(
+                player,
+                workcell.stableId(),
+                new JigsawStudioCellDimensions(25, 20, 18));
+        try (MockedStatic<J> scheduling = mockStatic(J.class)) {
+            scheduling.when(() -> J.runEntity(
+                    same(player),
+                    any(Runnable.class),
+                    eq(2))).thenReturn(true);
+
+            apply.invoke(controller, player, REQUEST_ID, workcell.stableId());
+
+            verify(actions).updateWorkcellDimensions(
+                    player,
+                    workcell.stableId(),
+                    new JigsawStudioCellDimensions(25, 20, 18));
+        }
+    }
+
+    @Test
+    public void stagedCapacityPreservesEveryOtherWorkcellProperty() {
+        JigsawStudioMenuState.Variant active = variant("pieces/corner", true, List.of(), List.of());
+        JigsawStudioMenuState.Workcell source = workcell(active);
+        JigsawStudioCellDimensions capacity = new JigsawStudioCellDimensions(31, 19, 27);
+
+        JigsawStudioMenuState.Workcell staged = JigsawStudioMenuController.withCapacity(source, capacity);
+
+        assertEquals(capacity, staged.capacity());
+        assertEquals(source.stableId(), staged.stableId());
+        assertEquals(source.enabled(), staged.enabled());
+        assertEquals(source.activeVariantKey(), staged.activeVariantKey());
+        assertEquals(source.variants(), staged.variants());
+    }
+
+    @Test
     public void allocatesNumberedThemeSetsAndAdjustsPositiveWeights() {
         List<JigsawStudioMenuState.ThemeSet> themeSets = List.of(
                 new JigsawStudioMenuState.ThemeSet("variant-1", 1),
@@ -252,6 +336,20 @@ public class JigsawStudioMenuControllerTest {
         assertTrue(JigsawStudioMenuController.adjustedPositiveValue(4, -8).isEmpty());
         assertThrows(IllegalArgumentException.class,
                 () -> JigsawStudioMenuController.adjustedPositiveValue(4, 0));
+    }
+
+    @Test
+    public void themeWeightsExposeWholeAssemblySelectionChance() {
+        List<JigsawStudioMenuState.ThemeSet> themes = List.of(
+                new JigsawStudioMenuState.ThemeSet("variant-1", 3),
+                new JigsawStudioMenuState.ThemeSet("variant-2", 1));
+
+        assertEquals("75.0%", JigsawStudioMenuController.themeSelectionPercent(
+                themes,
+                themes.getFirst()));
+        assertEquals("25.0%", JigsawStudioMenuController.themeSelectionPercent(
+                themes,
+                themes.getLast()));
     }
 
     @Test

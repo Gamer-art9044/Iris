@@ -213,6 +213,32 @@ public class JigsawStudioGeneratorTest {
     }
 
     @Test
+    public void paintsEveryWorkcellAsAWhiteConcreteEdgeCuboid() {
+        GeneratorFixture fixture = fixture(
+                JigsawStudioMode.PLANAR_JIGSAW,
+                new JigsawStudioCellDimensions(5, 4, 3),
+                JigsawStudioVariantCatalog.empty());
+        JigsawStudioBay workcell = fixture.layout().get("workcell/blank");
+        int minimumX = workcell.bounds().originX() - 1;
+        int maximumX = workcell.bounds().maxX() + 1;
+        int minimumZ = workcell.bounds().originZ() - 1;
+        int maximumZ = workcell.bounds().maxZ() + 1;
+        int bottomY = workcell.bounds().originY();
+        int topY = workcell.bounds().maxY() + 1;
+
+        assertSame(fixture.frame(), stateAt(fixture.generator(), minimumX, bottomY, minimumZ));
+        assertSame(fixture.frame(), stateAt(fixture.generator(), maximumX, bottomY, maximumZ));
+        assertSame(fixture.frame(), stateAt(fixture.generator(), minimumX, topY, maximumZ));
+        assertSame(fixture.frame(), stateAt(fixture.generator(), maximumX, topY, minimumZ));
+        assertSame(fixture.frame(), stateAt(fixture.generator(), minimumX, bottomY + 1, minimumZ));
+        assertFalse(fixture.frame() == stateAt(
+                fixture.generator(),
+                workcell.bounds().originX(),
+                bottomY + 1,
+                workcell.bounds().originZ()));
+    }
+
+    @Test
     public void glyphMathHandlesAllArchetypesAndSmallEvenAndOddCells() {
         int[] sizes = {1, 2, 3, 4, 7, 16};
         for (int size : sizes) {
@@ -521,6 +547,7 @@ public class JigsawStudioGeneratorTest {
         return new GeneratorFixture(
                 generator,
                 layout,
+                frame,
                 topologyBase,
                 topologyPath,
                 connectorCap,
@@ -559,6 +586,7 @@ public class JigsawStudioGeneratorTest {
     private record GeneratorFixture(
             JigsawStudioGenerator generator,
             JigsawStudioLayout layout,
+            PlatformBlockState frame,
             PlatformBlockState topologyBase,
             PlatformBlockState topologyPath,
             PlatformBlockState connectorCap,

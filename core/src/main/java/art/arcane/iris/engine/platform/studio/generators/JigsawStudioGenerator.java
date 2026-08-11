@@ -73,7 +73,7 @@ public final class JigsawStudioGenerator extends EnginedStudioGenerator {
                 session,
                 B.getState("minecraft:smooth_stone"),
                 B.getState("minecraft:polished_deepslate"),
-                B.getState("minecraft:smooth_quartz"),
+                B.getState("minecraft:white_concrete"),
                 B.getState("minecraft:light_gray_wool"),
                 B.getState("minecraft:red_wool"),
                 B.getState("minecraft:sea_lantern"),
@@ -289,41 +289,56 @@ public final class JigsawStudioGenerator extends EnginedStudioGenerator {
             int chunkWorldZ
     ) {
         JigsawStudioBounds bounds = workcell.bounds();
-        int minX = bounds.originX() - 1;
-        int maxX = bounds.maxX() + 1;
-        int minZ = bounds.originZ() - 1;
-        int maxZ = bounds.maxZ() + 1;
+        int minimumX = bounds.originX() - 1;
+        int maximumX = bounds.maxX() + 1;
+        int minimumZ = bounds.originZ() - 1;
+        int maximumZ = bounds.maxZ() + 1;
         int bottomY = bounds.originY();
         int topY = bounds.maxY() + 1;
 
-        paintRectangle(terrainChunk, minX, maxX, bottomY, minZ, maxZ, frame, chunkWorldX, chunkWorldZ);
-        paintRectangle(terrainChunk, minX, maxX, topY, minZ, maxZ, frame, chunkWorldX, chunkWorldZ);
+        paintRectangle(
+                terrainChunk,
+                minimumX,
+                maximumX,
+                bottomY,
+                minimumZ,
+                maximumZ,
+                chunkWorldX,
+                chunkWorldZ);
+        paintRectangle(
+                terrainChunk,
+                minimumX,
+                maximumX,
+                topY,
+                minimumZ,
+                maximumZ,
+                chunkWorldX,
+                chunkWorldZ);
         for (int y = bottomY + 1; y < topY; y++) {
-            setWorldBlock(terrainChunk, minX, y, minZ, frame, chunkWorldX, chunkWorldZ);
-            setWorldBlock(terrainChunk, maxX, y, minZ, frame, chunkWorldX, chunkWorldZ);
-            setWorldBlock(terrainChunk, minX, y, maxZ, frame, chunkWorldX, chunkWorldZ);
-            setWorldBlock(terrainChunk, maxX, y, maxZ, frame, chunkWorldX, chunkWorldZ);
+            setWorldBlock(terrainChunk, minimumX, y, minimumZ, frame, chunkWorldX, chunkWorldZ);
+            setWorldBlock(terrainChunk, maximumX, y, minimumZ, frame, chunkWorldX, chunkWorldZ);
+            setWorldBlock(terrainChunk, minimumX, y, maximumZ, frame, chunkWorldX, chunkWorldZ);
+            setWorldBlock(terrainChunk, maximumX, y, maximumZ, frame, chunkWorldX, chunkWorldZ);
         }
     }
 
     private void paintRectangle(
             TerrainChunk terrainChunk,
-            int minX,
-            int maxX,
+            int minimumX,
+            int maximumX,
             int y,
-            int minZ,
-            int maxZ,
-            PlatformBlockState block,
+            int minimumZ,
+            int maximumZ,
             int chunkWorldX,
             int chunkWorldZ
     ) {
-        for (int x = minX; x <= maxX; x++) {
-            setWorldBlock(terrainChunk, x, y, minZ, block, chunkWorldX, chunkWorldZ);
-            setWorldBlock(terrainChunk, x, y, maxZ, block, chunkWorldX, chunkWorldZ);
+        for (int x = minimumX; x <= maximumX; x++) {
+            setWorldBlock(terrainChunk, x, y, minimumZ, frame, chunkWorldX, chunkWorldZ);
+            setWorldBlock(terrainChunk, x, y, maximumZ, frame, chunkWorldX, chunkWorldZ);
         }
-        for (int z = minZ + 1; z < maxZ; z++) {
-            setWorldBlock(terrainChunk, minX, y, z, block, chunkWorldX, chunkWorldZ);
-            setWorldBlock(terrainChunk, maxX, y, z, block, chunkWorldX, chunkWorldZ);
+        for (int z = minimumZ + 1; z < maximumZ; z++) {
+            setWorldBlock(terrainChunk, minimumX, y, z, frame, chunkWorldX, chunkWorldZ);
+            setWorldBlock(terrainChunk, maximumX, y, z, frame, chunkWorldX, chunkWorldZ);
         }
     }
 

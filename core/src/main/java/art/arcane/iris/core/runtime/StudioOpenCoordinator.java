@@ -218,9 +218,7 @@ public final class StudioOpenCoordinator {
             if (request.openKind().openWorkspace() && request.project() != null) {
                 new IrisCodeWorkspace(request.project()).openVSCode(request.sender());
             }
-            if (request.onDone() != null) {
-                request.onDone().accept(world);
-            }
+            runOpenFinalizer(request.onDone(), world);
             t = logStudioPhase(request, "finalize_open", t, openStart);
 
             IrisLogging.info("Studio open: " + world.getName() + " ready in "
@@ -270,6 +268,20 @@ public final class StudioOpenCoordinator {
                 TimeUnit.NANOSECONDS.toMillis(now - t),
                 TimeUnit.NANOSECONDS.toMillis(now - openStart));
         return now;
+    }
+
+    private void runOpenFinalizer(Consumer<World> finalizer, World world)
+            throws InterruptedException, ExecutionException, TimeoutException {
+        if (finalizer == null) {
+            return;
+        }
+        if (J.isPrimaryThread()) {
+            finalizer.accept(world);
+            return;
+        }
+
+        CompletableFuture<Void> completion = J.sfut(() -> finalizer.accept(world));
+        completion.get(STUDIO_STRUCTURE_ACTIVATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 
     private long elapsedMillis(long startedAtNanos) {

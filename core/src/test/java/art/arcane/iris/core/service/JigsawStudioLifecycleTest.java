@@ -16,12 +16,16 @@ import art.arcane.iris.engine.platform.studio.generators.JigsawStudioGenerator;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KMap;
 import org.bukkit.World;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.junit.After;
 import org.junit.Test;
 import org.mockito.MockedStatic;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -71,6 +75,33 @@ public class JigsawStudioLifecycleTest {
     }
 
     @Test
+    public void studioRejectsNaturalCreatureSpawns() {
+        assertTrue(JigsawStudioService.isNaturalStudioSpawn(
+                CreatureSpawnEvent.SpawnReason.NATURAL));
+        assertFalse(JigsawStudioService.isNaturalStudioSpawn(
+                CreatureSpawnEvent.SpawnReason.CUSTOM));
+        assertFalse(JigsawStudioService.isNaturalStudioSpawn(
+                CreatureSpawnEvent.SpawnReason.SPAWNER));
+    }
+
+    @Test
+    public void committedStudioActivationDisablesNaturalMobSpawning() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/service/JigsawStudioService.java"));
+        int registerStart = source.indexOf("public void register(");
+        int commitStart = source.indexOf("public void activationCommitted(", registerStart);
+        int commitEnd = source.indexOf("public void markChunkGenerated(", commitStart);
+        int helperStart = source.indexOf("static void disableNaturalStudioSpawning(", commitEnd);
+        String register = source.substring(registerStart, commitStart);
+        String commit = source.substring(commitStart, commitEnd);
+        String helper = source.substring(helperStart);
+
+        assertFalse(register.contains("disableNaturalStudioSpawning(world)"));
+        assertTrue(commit.contains("disableNaturalStudioSpawning(world)"));
+        assertTrue(helper.contains("setGameRule(GameRules.SPAWN_MOBS, false)"));
+    }
+
+    @Test
     public void closeAuthorizationChecksOwnerDirtyStateAndSaveBarrierAtomically() {
         assertTrue(JigsawStudioActivation.tryBeginOpen(OWNER));
         JigsawStudioActivation.Request request = activateOwnedStudio();
@@ -91,10 +122,10 @@ public class JigsawStudioLifecycleTest {
                 service.tryBeginClose(request.requestId(), OWNER, false));
         assertTrue(service.closeProtectionFailure(request.requestId()).contains("autosave"));
 
-        JigsawStudioSession.VariantSwitchToken switchToken = session.beginVariantSwitch(
-                JigsawStudioLayout.SPATIAL_WORKCELL_ID,
-                "stronghold/tower",
-                true).token().orElseThrow();
+        String towerWorkcellId = session.layout().workcellForVariant("stronghold/tower")
+                .orElseThrow().stableId();
+        JigsawStudioSession.VariantSwitchToken switchToken = session.beginVariantReload(
+                towerWorkcellId).token().orElseThrow();
         assertEquals(
                 JigsawStudioService.CloseStart.OPERATION_IN_PROGRESS,
                 service.tryBeginClose(request.requestId(), OWNER, true));

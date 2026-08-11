@@ -157,7 +157,9 @@ public final class JigsawStudioGraphEditor {
         IrisStructure structure = readStructure(
                 resolveOwnedResource(graph.root(), structureResource),
                 structureResource);
-        Map<String, JigsawPlanarArchetype> expectedSources = expectedThemeSetSources(structure);
+        Map<String, JigsawPlanarArchetype> expectedSources = expectedThemeSetSources(
+                structure,
+                requestedSources.keySet());
         requireExactThemeSetSources(requestedSources, expectedSources.keySet());
 
         Map<String, byte[]> resources = readOwnedResources(graph);
@@ -200,7 +202,9 @@ public final class JigsawStudioGraphEditor {
                         + "' is not owned by this jigsaw project");
             }
             String variantFolder = expectedArchetype == null
+                    ? expectedSources.size() == 1
                     ? "spatial"
+                    : "spatial/" + sourcePieceKey
                     : expectedArchetype.name().toLowerCase(Locale.ROOT);
             String targetPieceKey = graph.manifest().structure().path()
                     + "/variants/" + variantFolder + "/" + themeKey;
@@ -686,11 +690,23 @@ public final class JigsawStudioGraphEditor {
     }
 
     private static Map<String, JigsawPlanarArchetype> expectedThemeSetSources(
-            IrisStructure structure
+            IrisStructure structure,
+            Set<String> requestedStableIds
     ) throws IOException {
         Map<String, JigsawPlanarArchetype> expected = new LinkedHashMap<>();
         if (structure.resolvedMode() == IrisJigsawMode.SPATIAL_JIGSAW) {
-            expected.put(JigsawStudioLayout.SPATIAL_WORKCELL_ID, null);
+            if (requestedStableIds.isEmpty()) {
+                throw new IOException("A spatial theme set requires at least one workcell source");
+            }
+            List<String> stableIds = new ArrayList<>(requestedStableIds);
+            stableIds.sort(Comparator.naturalOrder());
+            for (String stableId : stableIds) {
+                if (!stableId.equals(JigsawStudioLayout.SPATIAL_WORKCELL_ID)
+                        && !stableId.startsWith(JigsawStudioLayout.SPATIAL_WORKCELL_ID + "/")) {
+                    throw new IOException("Invalid spatial workcell source '" + stableId + "'");
+                }
+                expected.put(stableId, null);
+            }
             return expected;
         }
         Map<IrisJigsawWorkcellArchetype, PlanarJigsawWorkcellResolver.ResolvedWorkcell> workcells;

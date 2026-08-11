@@ -27,12 +27,15 @@ import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.EngineWorldManagerProvider;
 import art.arcane.iris.core.splash.IrisSplashComposer;
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.IrisStartupValidation;
+import art.arcane.iris.core.IrisStartupAdmissionListener;
 import art.arcane.iris.core.BukkitWorldReconciler;
 import art.arcane.iris.core.IrisWorldGeneratorResolver;
 import art.arcane.iris.core.PendingWorldDeleteQueue;
 import art.arcane.iris.core.SettingsHotloadWatch;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.DatapackIngestService;
+import art.arcane.iris.core.datapack.DatapackIngestService.StartupValidationOutcome;
 import art.arcane.iris.core.lifecycle.PaperLibBootstrap;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.runtime.BukkitEnginePlatformHooks;
@@ -558,7 +561,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisServices.register(IrisCompat.class, compat);
         ServerConfigurator.configure();
         IrisToolbelt.applyPregenPerformanceProfile();
-        generatorResolver.validateAllPacks();
+        StartupValidationOutcome datapackValidation = DatapackIngestService.validateOnStartup();
+        if (datapackValidation == StartupValidationOutcome.READY) {
+            generatorResolver.validateAllPacks();
+        }
         IrisSafeguard.execute();
         getSender().setTag(getTag());
         splash();
@@ -593,7 +599,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         WorldLifecycleService.get();
         WorldRuntimeControlService.get();
 
-        if (J.isFolia()) {
+        if (J.isFolia() && IrisStartupValidation.isReady()) {
             J.s(() -> worldReconciler.checkForBukkitWorlds(s -> true), 1);
         }
 
@@ -602,10 +608,11 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             J.ar(() -> settingsHotloadWatch.checkConfigHotload(configHotloadEngine), 60);
             J.sr(this::tickQueue, 0);
             J.s(this::setupPapi);
-            J.a(DatapackIngestService::autoIngestOnStartup, 60);
-
-            autoStartStudio();
-            if (!J.isFolia()) {
+            if (IrisStartupValidation.isReady()) {
+                J.a(DatapackIngestService::runPostStartupTasks, 60);
+                autoStartStudio();
+            }
+            if (!J.isFolia() && IrisStartupValidation.isReady()) {
                 worldReconciler.checkForBukkitWorlds(s -> true);
             }
             IrisToolbelt.retainMantleDataForSlice(String.class.getCanonicalName());
@@ -674,6 +681,8 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     public void onEnable() {
         IrisPlatforms.bind(new BukkitPlatform());
+        IrisStartupValidation.begin();
+        Bukkit.getPluginManager().registerEvents(new IrisStartupAdmissionListener(), this);
         enable();
         BukkitGuiHost.install();
         super.onEnable();

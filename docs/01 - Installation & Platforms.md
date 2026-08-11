@@ -49,6 +49,8 @@ Validate the plugin install from the server console:
 
 The first command must report the running Iris, platform, and Minecraft versions. The second must resolve the downloaded pack and finish without blocking validation errors. Then complete the disposable-world workflow in `02 - Getting Started.md`; a command response alone does not prove that the generator can create chunks.
 
+Iris denies player login until managed external datapacks and installed dimension packs complete startup validation. Unchanged validated datapacks and packs reuse their persisted content/context results; a failed external datapack state keeps login and all Iris world creation locked, while an install or repair that changes registry inputs requires the clean restart Iris reports. A dimension pack with blocking errors remains unavailable to world and Studio creation without preventing healthy validated packs from being used.
+
 Command root: `/iris` (aliases `/ir`, `/irs`). Explicit permission in the descriptor: `iris.treefeller` (default op). Command access uses the Director permission model rooted at `iris.all` (see `04 - Commands & Permissions.md`).
 
 Soft dependencies (optional, not bundled): PlaceholderAPI, CraftEngine, Nexo, ItemsAdder, SCore, ExecutableItems, MythicLib, MMOItems, eco, EcoItems, MythicMobs, MythicCrucible, KGenerators, WorldEdit. Multiverse-Core is ordered after Iris so Multiverse sees Iris generators after Iris is up.

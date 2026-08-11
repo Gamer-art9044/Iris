@@ -15,6 +15,7 @@ dependencies {
     }
     compileOnly(libs.paper.api)
     testImplementation('junit:junit:4.13.2')
+    testImplementation('org.mockito:mockito-core:5.23.0')
     testImplementation(libs.paper.api)
     testImplementation(libs.bstats)
     testImplementation(libs.sentry)
@@ -66,5 +67,6 @@ tasks.named('test').configure {
     systemProperty('iris.terrainSvcSource', file('src/main/java/art/arcane/iris/core/service/IrisTerrainSVC.java').absolutePath)
     systemProperty('iris.apiEventSvcSource', file('src/main/java/art/arcane/iris/core/service/IrisApiEventSVC.java').absolutePath)
     systemProperty('iris.worldInfoFactorySource', file('src/main/java/art/arcane/iris/core/service/terrain/IrisWorldInfoFactory.java').absolutePath)
+    systemProperty('iris.startupSource', file('src/main/java/art/arcane/iris/Iris.java').absolutePath)
     systemProperty('iris.readmeSource', rootProject.file('README.md').absolutePath)
 }

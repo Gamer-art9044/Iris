@@ -22,6 +22,7 @@ import com.google.gson.JsonSyntaxException;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.DatapackInstallResult;
@@ -33,6 +34,7 @@ import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
+import art.arcane.iris.core.pack.PackValidator;
 import art.arcane.iris.core.project.IrisProject;
 import art.arcane.iris.core.project.IrisPackageCompiler;
 import art.arcane.iris.core.project.IrisCodeWorkspace;
@@ -69,6 +71,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
@@ -471,12 +474,24 @@ public class StudioSVC implements IrisService {
     }
 
     private static boolean blockIfPackBroken(VolmitSender sender, String dimm) {
-        PackValidationResult validation = PackValidationRegistry.get(dimm);
-        if (validation == null || validation.isLoadable()) {
+        Optional<String> startupDenial = IrisStartupValidation.denialReason();
+        if (startupDenial.isPresent()) {
+            sender.sendMessage(startupDenial.get());
+            return true;
+        }
+        IrisDimension dimension = IrisToolbelt.getDimension(dimm);
+        String packName = dimension == null || dimension.getLoader() == null
+                ? dimm
+                : dimension.getLoader().getDataFolder().getName();
+        PackValidationResult validation = PackValidationRegistry.get(packName);
+        if (validation != null && validation.isLoadable()) {
             return false;
         }
         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_CANNOT_OPEN_STUDIO_PACK_HAS_BLOCKING_ERRORS, MessageArgument.untrusted("dimm", String.valueOf(dimm))));
-        for (String reason : validation.getBlockingErrors()) {
+        List<String> failures = validation == null
+                ? List.of("Required pack validation has not completed. Studio creation fails closed until validation succeeds.")
+                : validation.getBlockingErrors();
+        for (String reason : failures) {
             sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_MESSAGE, MessageArgument.untrusted("reason", String.valueOf(reason))));
         }
         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FIX_PACK_RUN_IRIS_PACK_VALIDATE_REVALIDATE, MessageArgument.untrusted("dimm", String.valueOf(dimm))));
@@ -829,6 +844,11 @@ public class StudioSVC implements IrisService {
     }
 
     private void createProject(VolmitSender sender, String requestedName, String requestedTemplate, File selectedTemplatePack) {
+        Optional<String> startupDenial = IrisStartupValidation.denialReason();
+        if (startupDenial.isPresent()) {
+            sender.sendMessage("Studio project creation refused: " + startupDenial.get());
+            return;
+        }
         String normalizedName;
         String templateName;
         File workspace;
@@ -881,11 +901,23 @@ public class StudioSVC implements IrisService {
                     sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_MISSING_IMPORTED_DIMENSION_FILE));
                     return;
                 }
+                PackValidationRegistry.requireLoadable(importPack.getName());
 
                 sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_IMPORTING_INTO_NEW_PROJECT, MessageArgument.untrusted("downloadable", String.valueOf(templateName)), MessageArgument.untrusted("s", String.valueOf(projectName))));
                 createFrom(importPack, templateName, projectName);
             }
             projectPublished = true;
+
+            PackValidationResult createdValidation = PackValidator.validate(newPack);
+            PackValidationRegistry.publish(createdValidation);
+            if (!createdValidation.isLoadable()) {
+                rollbackCreatedProject(sender, newPack,
+                        "Studio project validation failed; the new project was rolled back.");
+                for (String reason : createdValidation.getBlockingErrors()) {
+                    sender.sendMessage(reason);
+                }
+                return;
+            }
 
             DatapackInstallResult installResult = ServerConfigurator.installDataPacksIfChanged(true);
             CreationOutcome installOutcome = switch (installResult.status()) {

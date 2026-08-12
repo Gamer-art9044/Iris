@@ -114,8 +114,8 @@ public class ServerConfigurator {
             loadedDatapackRuntimeReady = result.succeeded()
                     && !result.restartRequired()
                     && pinLoadedDatapackCompilerInputs();
-            if (result.restartRequired() && IrisSettings.get().getAutoConfiguration().isAutoRestartOnCustomBiomeInstall()) {
-                restart();
+            if (result.restartRequired()) {
+                IrisLogging.warn("Iris datapack changes require another server restart before worlds can use them.");
             }
         }
     }

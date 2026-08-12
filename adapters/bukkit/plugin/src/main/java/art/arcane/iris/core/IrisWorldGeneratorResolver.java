@@ -34,9 +34,7 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.util.common.plugin.VolmitPlugin;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import lombok.NonNull;
-import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.generator.BiomeProvider;
 import org.bukkit.generator.ChunkGenerator;
@@ -177,13 +175,8 @@ public final class IrisWorldGeneratorResolver {
                         + " but its dimension failed to load; not redownloading. Fix or delete the pack folder.");
                 return null;
             }
-            Iris.warn("Unable to find dimension type " + id + " Looking for online packs...");
-            Iris.service(StudioSVC.class).downloadSearch(new VolmitSender(Bukkit.getConsoleSender()), id, false);
-            dimension = IrisData.loadAnyDimension(id, null);
-
-            if (dimension != null) {
-                Iris.info("Resolved missing dimension, proceeding.");
-            }
+            Iris.warn("Unable to find dimension type " + id + ". Install its pack with /iris download "
+                    + id + " and restart the server.");
         }
 
         return dimension;

@@ -32,6 +32,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -56,14 +57,14 @@ import java.util.zip.ZipInputStream;
 public final class PackDownloader {
     private static final String DEFAULT_OVERWORLD_PACK = "overworld";
     private static final String DEFAULT_OVERWORLD_REPOSITORY = "IrisDimensions/overworld";
-    private static final String DEFAULT_OVERWORLD_RELEASE_URL = "https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip";
+    private static final String DEFAULT_OVERWORLD_REF = "master";
     private static final String UNDERWORLD_PACK = "underworld";
     private static final String UNDERWORLD_REPOSITORY = "IrisDimensions/underworld";
-    private static final String UNDERWORLD_RELEASE_URL = "https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip";
-    private static final List<String> MANAGED_BETA_PACK_KEYS = List.of(DEFAULT_OVERWORLD_PACK, UNDERWORLD_PACK);
-    private static final Map<String, ManagedBetaPack> MANAGED_BETA_PACKS = Map.of(
-            DEFAULT_OVERWORLD_PACK, new ManagedBetaPack(DEFAULT_OVERWORLD_REPOSITORY, DEFAULT_OVERWORLD_RELEASE_URL),
-            UNDERWORLD_PACK, new ManagedBetaPack(UNDERWORLD_REPOSITORY, UNDERWORLD_RELEASE_URL)
+    private static final String UNDERWORLD_REF = "main";
+    private static final List<String> MANAGED_PACK_KEYS = List.of(DEFAULT_OVERWORLD_PACK, UNDERWORLD_PACK);
+    private static final Map<String, ManagedPack> MANAGED_PACKS = Map.of(
+            DEFAULT_OVERWORLD_PACK, new ManagedPack(DEFAULT_OVERWORLD_REPOSITORY, DEFAULT_OVERWORLD_REF),
+            UNDERWORLD_PACK, new ManagedPack(UNDERWORLD_REPOSITORY, UNDERWORLD_REF)
     );
     private static final Pattern GITHUB_REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
     private static final Pattern GITHUB_REF = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]*");
@@ -84,12 +85,30 @@ public final class PackDownloader {
         return DEFAULT_OVERWORLD_PACK.equals(pack);
     }
 
-    public static boolean isManagedBetaPack(String pack) {
-        return pack != null && MANAGED_BETA_PACKS.containsKey(pack);
+    public static boolean isManagedPack(String pack) {
+        return pack != null && MANAGED_PACKS.containsKey(pack);
     }
 
-    public static List<String> managedBetaPacks() {
-        return MANAGED_BETA_PACK_KEYS;
+    public static List<String> managedPacks() {
+        return MANAGED_PACK_KEYS;
+    }
+
+    public static boolean isDirectZipUrl(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(value.trim());
+            String scheme = uri.getScheme();
+            String path = uri.getPath();
+            return ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+                    && uri.getHost() != null
+                    && !uri.getHost().isBlank()
+                    && path != null
+                    && path.toLowerCase(Locale.ROOT).endsWith(".zip");
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
     }
 
     public static String defaultOverworldPack() {
@@ -133,8 +152,8 @@ public final class PackDownloader {
         }
     }
 
-    public static boolean isManagedBetaPackPresent(File packsFolder, String key) {
-        if (!isManagedBetaPack(key) || !isPackPresent(packsFolder, key)) {
+    public static boolean isManagedPackPresent(File packsFolder, String key) {
+        if (!isManagedPack(key) || !isPackPresent(packsFolder, key)) {
             return false;
         }
         File resolvedPack = PackDirectoryResolver.resolveExisting(packsFolder, key);
@@ -149,32 +168,46 @@ public final class PackDownloader {
     }
 
     public static PackInstallResult downloadDefaultOverworld(File packsFolder, boolean forceOverwrite, Consumer<String> feedback) throws IOException {
-        return downloadManagedBeta(packsFolder, DEFAULT_OVERWORLD_PACK, forceOverwrite, feedback);
+        return downloadManaged(packsFolder, DEFAULT_OVERWORLD_PACK, forceOverwrite, feedback);
     }
 
-    public static PackInstallResult downloadManagedBeta(File packsFolder, String pack, boolean forceOverwrite,
-                                                        Consumer<String> feedback) throws IOException {
-        ManagedBetaPack managed = pack == null ? null : MANAGED_BETA_PACKS.get(pack);
+    public static PackInstallResult downloadManaged(File packsFolder, String pack, boolean forceOverwrite,
+                                                    Consumer<String> feedback) throws IOException {
+        ManagedPack managed = pack == null ? null : MANAGED_PACKS.get(pack);
         if (managed == null) {
-            throw new IllegalArgumentException("Pack '" + pack + "' has no managed beta release");
+            throw new IllegalArgumentException("Pack '" + pack + "' has no managed Git source");
         }
         return download(
                 packsFolder,
                 managed.repository(),
-                managed.releaseUrl(),
+                managed.ref(),
+                forceOverwrite,
+                false,
+                pack,
+                feedback
+        );
+    }
+
+    public static PackInstallResult downloadUrl(File packsFolder, String url, boolean forceOverwrite,
+                                                Consumer<String> feedback) throws IOException {
+        if (!isDirectZipUrl(url)) {
+            throw new IllegalArgumentException("Pack URL must be an HTTP or HTTPS .zip link");
+        }
+        return download(
+                packsFolder,
+                "direct-url",
+                url.trim(),
                 forceOverwrite,
                 true,
-                pack,
+                null,
                 feedback
         );
     }
 
     /**
      * Downloads and imports a pack. {@code expectedKey} is the pack key the caller is trying to
-     * obtain (null when unknown, e.g. arbitrary repo/branch downloads); when the key is already
-     * present on disk and {@code forceOverwrite} is false, the network is never touched. The
-     * per-repo lock keeps concurrent startup triggers (async default-pack install racing world
-     * resolution) from downloading the same archive twice.
+     * obtain (null when unknown, e.g. arbitrary repo, branch, or URL downloads); when the key is
+     * already present on disk and {@code forceOverwrite} is false, the network is never touched.
      */
     public static PackInstallResult download(File packsFolder, String repo, String ref, boolean forceOverwrite, boolean directUrl, String expectedKey, Consumer<String> feedback) throws IOException {
         Objects.requireNonNull(packsFolder, "packsFolder");
@@ -185,8 +218,8 @@ public final class PackDownloader {
         }
         String lockKey = expectedKey != null && !expectedKey.isBlank() ? "key:" + expectedKey : "ref:" + repo + "|" + ref;
         return withDownloadLock(lockKey, () -> {
-            boolean present = isManagedBetaPack(expectedKey)
-                    ? isManagedBetaPackPresent(packsFolder, expectedKey)
+            boolean present = isManagedPack(expectedKey)
+                    ? isManagedPackPresent(packsFolder, expectedKey)
                     : isPackPresent(packsFolder, expectedKey);
             if (!forceOverwrite && present) {
                 sendFeedback(output, IrisLanguage.plain(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
@@ -224,14 +257,7 @@ public final class PackDownloader {
                 sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.NO_EXTRACTED_FILES));
                 return null;
             }
-            File directory;
-            try {
-                directory = zipFiles.length > 1 ? work : zipFiles[0].isDirectory() ? zipFiles[0] : null;
-            } catch (NullPointerException exception) {
-                IrisLogging.reportError(exception);
-                sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.HOME_DIRECTORY_ERROR));
-                return null;
-            }
+            File directory = findExtractedPackDirectory(work, zipFiles);
             if (directory == null) {
                 sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.INVALID_ARCHIVE_FORMAT));
                 return null;
@@ -240,6 +266,26 @@ public final class PackDownloader {
         } finally {
             deleteDirectory(work);
         }
+    }
+
+    private static File findExtractedPackDirectory(File work, File[] extractedFiles) {
+        if (new File(work, "dimensions").isDirectory()) {
+            return work;
+        }
+        File candidate = null;
+        for (File extracted : extractedFiles) {
+            if (!extracted.isDirectory() || !new File(extracted, "dimensions").isDirectory()) {
+                continue;
+            }
+            if (candidate != null) {
+                return work;
+            }
+            candidate = extracted;
+        }
+        if (candidate != null) {
+            return candidate;
+        }
+        return extractedFiles.length == 1 && extractedFiles[0].isDirectory() ? extractedFiles[0] : work;
     }
 
     static PackInstallResult installExtractedPack(File packsFolder, File extractedPack, boolean forceOverwrite,
@@ -311,7 +357,7 @@ public final class PackDownloader {
 
         PackValidationResult stagedValidation;
         try {
-            stagedValidation = PackValidator.validate(staging);
+            stagedValidation = PackValidator.validateForDatapackBootstrap(staging);
         } catch (RuntimeException exception) {
             throw new IOException("Pack validation failed before publication for '" + key + "'", exception);
         }
@@ -375,8 +421,8 @@ public final class PackDownloader {
             ));
             return null;
         }
-        boolean present = isManagedBetaPack(prepared.key())
-                ? isManagedBetaPackPresent(packsRoot.toFile(), prepared.key())
+        boolean present = isManagedPack(prepared.key())
+                ? isManagedPackPresent(packsRoot.toFile(), prepared.key())
                 : isPackPresent(packsRoot.toFile(), prepared.key());
         if (!forceOverwrite && present) {
             sendFeedback(feedback, IrisLanguage.plain(
@@ -418,7 +464,7 @@ public final class PackDownloader {
                 PackDownloadMessages.ACQUIRED,
                 MessageArgument.untrusted("name", prepared.name())
         ));
-        return new PackInstallResult(prepared.key(), true, false);
+        return new PackInstallResult(prepared.key(), true, true);
     }
 
     private static Path findConflictingPack(Path packsRoot, Path staging, Path target, String key) throws IOException {
@@ -648,12 +694,20 @@ public final class PackDownloader {
         return "https://codeload.github.com/" + repo + "/zip/" + qualifiedRef;
     }
 
-    static String defaultOverworldReleaseUrl() {
-        return DEFAULT_OVERWORLD_RELEASE_URL;
+    static String defaultOverworldRepository() {
+        return DEFAULT_OVERWORLD_REPOSITORY;
     }
 
-    static String underworldReleaseUrl() {
-        return UNDERWORLD_RELEASE_URL;
+    static String defaultOverworldRef() {
+        return DEFAULT_OVERWORLD_REF;
+    }
+
+    static String underworldRepository() {
+        return UNDERWORLD_REPOSITORY;
+    }
+
+    static String underworldRef() {
+        return UNDERWORLD_REF;
     }
 
     private static void validateGithubRef(String qualifiedRef) {
@@ -681,7 +735,7 @@ public final class PackDownloader {
     private record PreparedPack(String key, String name, PackValidationResult validation) {
     }
 
-    private record ManagedBetaPack(String repository, String releaseUrl) {
+    private record ManagedPack(String repository, String ref) {
     }
 
     public record PackInstallResult(String key, boolean changed, boolean restartRequired) {

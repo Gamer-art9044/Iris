@@ -37,23 +37,45 @@ import static org.junit.Assert.assertTrue;
 
 public class DefaultPackBootstrapProvisionerTest {
     @Test
-    public void defaultBetaSourcesArePinnedPerRequiredPack() {
-        Map<String, DefaultPackBootstrapProvisioner.PackSpec> packs = new LinkedHashMap<>();
-        for (DefaultPackBootstrapProvisioner.PackSpec pack : DefaultPackBootstrapProvisioner.defaultPacks()) {
-            packs.put(pack.key(), pack);
-        }
+    public void startupDoesNotRequireOrDownloadDefaultPacks() {
+        assertTrue(DefaultPackBootstrapProvisioner.defaultPacks().isEmpty());
+    }
 
-        assertEquals(2, packs.size());
-        assertEquals(
-                URI.create("https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip"),
-                packs.get("overworld").source()
-        );
-        assertEquals("overworld", packs.get("overworld").requiredDimension());
-        assertEquals(
-                URI.create("https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip"),
-                packs.get("underworld").source()
-        );
-        assertEquals("underworld", packs.get("underworld").requiredDimension());
+    @Test
+    public void emptyInstallPublishesValidDatapackWithoutNetworkRequests() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(packArchive("overworld", "unused"), requests);
+        Path root = Files.createTempDirectory("iris-bootstrap-empty");
+        try {
+            Path dataDirectory = root.resolve("plugins/Iris");
+            DefaultPackBootstrapProvisioner.ProvisionOptions options = new DefaultPackBootstrapProvisioner.ProvisionOptions(
+                    List.of(),
+                    HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                    Clock.fixed(Instant.parse("2026-07-12T12:00:00Z"), ZoneOffset.UTC),
+                    Duration.ofHours(1),
+                    Duration.ofSeconds(2),
+                    1,
+                    Duration.ZERO,
+                    8L * 1024L * 1024L,
+                    root
+            );
+
+            DefaultPackBootstrapProvisioner.ProvisionResult result = DefaultPackBootstrapProvisioner.provision(
+                    dataDirectory,
+                    ignored -> {
+                    },
+                    options
+            );
+
+            assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.INSTALLED, result.status());
+            assertTrue(result.packRoots().isEmpty());
+            assertEquals(0, requests.get());
+            assertTrue(Files.isRegularFile(result.datapackRoot().resolve("pack.mcmeta")));
+            assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, List.of()));
+        } finally {
+            server.stop(0);
+            delete(root);
+        }
     }
 
     @Test

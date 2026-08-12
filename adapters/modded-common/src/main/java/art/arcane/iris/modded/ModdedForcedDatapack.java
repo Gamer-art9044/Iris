@@ -253,8 +253,6 @@ public final class ModdedForcedDatapack {
     }
 
     private static Path write() throws IOException {
-        // No ensureDefaultPack() here: write() is reachable from loadPacks on the first boot, and loadPacks
-        // must never touch the network. ModdedStartup.prefetchDefaultPack covers the download at boot.
         String packsHash = packsHash();
         Path datapackRoot = datapackRoot();
         Files.createDirectories(datapackRoot);

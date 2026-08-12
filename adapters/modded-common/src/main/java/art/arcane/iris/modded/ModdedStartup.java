@@ -37,7 +37,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,7 +46,6 @@ public final class ModdedStartup {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final AtomicBoolean PREPARED = new AtomicBoolean(false);
     private static final AtomicBoolean STARTED = new AtomicBoolean(false);
-    private static final Object PACK_LOCK = new Object();
 
     private ModdedStartup() {
     }
@@ -69,14 +67,13 @@ public final class ModdedStartup {
      * ModdedEngineBootstrap.start clears the async queue at SERVER_STARTING, which would silently drop this
      * one-shot task, and the datapack must be regenerated before the level PackRepository reload if it can.
      */
-    public static void prefetchDefaultPack() {
-        Thread thread = new Thread(ModdedStartup::refreshPacksAndDatapack, "iris-modded-pack-prefetch");
+    public static void prefetchStartupDatapack() {
+        Thread thread = new Thread(ModdedStartup::refreshDatapack, "iris-modded-datapack-prefetch");
         thread.setDaemon(true);
         thread.start();
     }
 
-    private static void refreshPacksAndDatapack() {
-        ensureDefaultPack();
+    private static void refreshDatapack() {
         try {
             ModdedForcedDatapack.regenerateIfStale("boot");
         } catch (Throwable failure) {
@@ -98,10 +95,10 @@ public final class ModdedStartup {
 
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
         if (scheduler == null) {
-            refreshPacksAndDatapack();
+            refreshDatapack();
             return;
         }
-        scheduler.async(ModdedStartup::refreshPacksAndDatapack);
+        scheduler.async(ModdedStartup::refreshDatapack);
     }
 
     public static void validateAllPacks() {
@@ -248,45 +245,4 @@ public final class ModdedStartup {
         }
     }
 
-    public static void ensureDefaultPack() {
-        synchronized (PACK_LOCK) {
-            ModdedModConfig config = ModdedModConfig.get();
-            if (!config.autoDownloadDefaultPack()) {
-                return;
-            }
-            Path configDir = ModdedEngineBootstrap.loader().configDir();
-            File packsRoot = ModdedPackCommands.packsRoot();
-            for (String pack : startupPacks(config.defaultPack())) {
-                ensureStartupPack(configDir, packsRoot, pack);
-            }
-        }
-    }
-
-    static List<String> startupPacks(String configuredDefault) {
-        LinkedHashSet<String> packs = new LinkedHashSet<>(PackDownloader.managedBetaPacks());
-        if (configuredDefault != null && !configuredDefault.isBlank()) {
-            packs.add(configuredDefault);
-        }
-        return List.copyOf(packs);
-    }
-
-    private static void ensureStartupPack(Path configDir, File packsRoot, String pack) {
-        boolean present = PackDownloader.isManagedBetaPack(pack)
-                ? PackDownloader.isManagedBetaPackPresent(packsRoot, pack)
-                : PackDownloader.isPackPresent(packsRoot, pack);
-        if (present) {
-            return;
-        }
-        boolean managedBeta = PackDownloader.isManagedBetaPack(pack);
-        String branch = managedBeta ? "beta" : "master";
-        String source = managedBeta ? "beta release" : "master branch";
-        String role = managedBeta ? "managed beta pack" : "default pack";
-        LOGGER.info("Iris {} '{}' missing; downloading IrisDimensions/{} ({})", role, pack, pack, source);
-        boolean installed = ModdedPackInstaller.install(
-                configDir, pack, branch, false, false,
-                (String line) -> LOGGER.info("Iris: {}", line));
-        if (!installed) {
-            LOGGER.warn("Iris {} '{}' could not be downloaded; install it with /iris download {}", role, pack, pack);
-        }
-    }
 }

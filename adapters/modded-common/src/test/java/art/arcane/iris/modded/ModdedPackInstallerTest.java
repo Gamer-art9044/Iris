@@ -26,7 +26,7 @@ import static org.junit.Assert.assertTrue;
 
 public class ModdedPackInstallerTest {
     @Test
-    public void managedBetaPacksIgnoreTheRequestedBranch() {
+    public void managedPacksIgnoreTheRequestedBranch() {
         assertTrue(ModdedPackInstaller.acceptsBranch("overworld", null));
         assertTrue(ModdedPackInstaller.acceptsBranch("underworld", "feature/arbitrary"));
     }

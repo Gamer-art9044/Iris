@@ -33,17 +33,15 @@ public final class ModdedModConfig {
     private static volatile ModdedModConfig instance;
 
     private final String defaultPack;
-    private final boolean autoDownloadDefaultPack;
     private final String primaryWorld;
     private final boolean routePlayersToPrimaryWorld;
     private final String mainWorldPack;
     private final long mainWorldSeed;
     private final boolean mainWorldAutoRestart;
 
-    private ModdedModConfig(String defaultPack, boolean autoDownloadDefaultPack, String primaryWorld, boolean routePlayersToPrimaryWorld,
+    private ModdedModConfig(String defaultPack, String primaryWorld, boolean routePlayersToPrimaryWorld,
                            String mainWorldPack, long mainWorldSeed, boolean mainWorldAutoRestart) {
         this.defaultPack = defaultPack;
-        this.autoDownloadDefaultPack = autoDownloadDefaultPack;
         this.primaryWorld = primaryWorld == null ? "" : primaryWorld.trim();
         this.routePlayersToPrimaryWorld = routePlayersToPrimaryWorld;
         this.mainWorldPack = mainWorldPack == null ? "" : mainWorldPack.trim();
@@ -68,7 +66,7 @@ public final class ModdedModConfig {
     public static void setPrimaryWorld(String dimensionId) {
         synchronized (LOCK) {
             ModdedModConfig current = get();
-            ModdedModConfig updated = new ModdedModConfig(current.defaultPack, current.autoDownloadDefaultPack, dimensionId, current.routePlayersToPrimaryWorld,
+            ModdedModConfig updated = new ModdedModConfig(current.defaultPack, dimensionId, current.routePlayersToPrimaryWorld,
                     current.mainWorldPack, current.mainWorldSeed, current.mainWorldAutoRestart);
             instance = updated;
             write(configFile(), updated);
@@ -78,7 +76,7 @@ public final class ModdedModConfig {
     public static void setMainWorld(String packRef, long seed) {
         synchronized (LOCK) {
             ModdedModConfig current = get();
-            ModdedModConfig updated = new ModdedModConfig(current.defaultPack, current.autoDownloadDefaultPack, current.primaryWorld, current.routePlayersToPrimaryWorld,
+            ModdedModConfig updated = new ModdedModConfig(current.defaultPack, current.primaryWorld, current.routePlayersToPrimaryWorld,
                     packRef == null ? "" : packRef.trim(), seed, current.mainWorldAutoRestart);
             instance = updated;
             write(configFile(), updated);
@@ -87,10 +85,6 @@ public final class ModdedModConfig {
 
     public String defaultPack() {
         return defaultPack;
-    }
-
-    public boolean autoDownloadDefaultPack() {
-        return autoDownloadDefaultPack;
     }
 
     public String primaryWorld() {
@@ -119,7 +113,7 @@ public final class ModdedModConfig {
 
     private static ModdedModConfig load() {
         Path file = configFile();
-        ModdedModConfig defaults = new ModdedModConfig("overworld", true, "", true, "", 0L, false);
+        ModdedModConfig defaults = new ModdedModConfig("overworld", "", true, "", 0L, false);
         if (!Files.isRegularFile(file)) {
             write(file, defaults);
             return defaults;
@@ -128,7 +122,6 @@ public final class ModdedModConfig {
             JSONObject json = new JSONObject(Files.readString(file, StandardCharsets.UTF_8));
             return new ModdedModConfig(
                     json.optString("defaultPack", defaults.defaultPack),
-                    json.optBoolean("autoDownloadDefaultPack", defaults.autoDownloadDefaultPack),
                     json.optString("primaryWorld", defaults.primaryWorld),
                     json.optBoolean("routePlayersToPrimaryWorld", defaults.routePlayersToPrimaryWorld),
                     json.optString("mainWorldPack", defaults.mainWorldPack),
@@ -143,7 +136,6 @@ public final class ModdedModConfig {
     private static void write(Path file, ModdedModConfig config) {
         JSONObject json = new JSONObject();
         json.put("defaultPack", config.defaultPack);
-        json.put("autoDownloadDefaultPack", config.autoDownloadDefaultPack);
         json.put("primaryWorld", config.primaryWorld);
         json.put("routePlayersToPrimaryWorld", config.routePlayersToPrimaryWorld);
         json.put("mainWorldPack", config.mainWorldPack);

@@ -43,20 +43,9 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public final class DefaultPackBootstrapProvisioner {
-    private static final List<PackSpec> DEFAULT_PACKS = List.of(
-            new PackSpec(
-                    "overworld",
-                    URI.create("https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip"),
-                    "overworld"
-            ),
-            new PackSpec(
-                    "underworld",
-                    URI.create("https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip"),
-                    "underworld"
-            )
-    );
+    private static final List<PackSpec> DEFAULT_PACKS = List.of();
     private static final String WORLD_DATAPACK_DIRECTORY = "iris";
-    private static final int MARKER_SCHEMA = 4;
+    private static final int MARKER_SCHEMA = 5;
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_ARCHIVE_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_EXPANDED_BYTES = 2L * 1024L * 1024L * 1024L;
@@ -239,9 +228,6 @@ public final class DefaultPackBootstrapProvisioner {
             }
 
             List<File> packRoots = IrisDatapackCompiler.collectPackRoots(normalizedData, options.levelRoot());
-            if (packRoots.isEmpty()) {
-                throw new IOException("No Iris pack roots were available for bootstrap datapack compilation");
-            }
             IDataFixer fixer = DataVersion.getLatest().get();
             if (fixer == null) {
                 throw new IOException("Latest Iris datapack fixer is unavailable during bootstrap");
@@ -260,7 +246,7 @@ public final class DefaultPackBootstrapProvisioner {
                 Files.createDirectories(compileContainer);
                 KList<File> outputFolders = new KList<File>().qadd(compileContainer.toFile());
                 IrisDatapackCompiler.compile(packRoots, outputFolders, fixer, false);
-                if (!isDatapackRoot(compileContainer)) {
+                if (!isDatapackRoot(compileContainer, !packRoots.isEmpty())) {
                     throw new IOException("Canonical Iris datapack compiler produced incomplete output at " + compileContainer);
                 }
                 datapackBackup = replaceWithBackup(compileContainer, datapackRoot);
@@ -271,12 +257,12 @@ public final class DefaultPackBootstrapProvisioner {
             for (PackPlan plan : plans) {
                 validatePackRoot(plan.root(), plan.spec());
             }
-            if (!isDatapackRoot(datapackRoot)) {
-                throw new IOException("Bootstrap datapack output is incomplete at " + datapackRoot);
-            }
             List<File> finalPackRoots = IrisDatapackCompiler.collectPackRoots(
                     normalizedData,
                     options.levelRoot());
+            if (!isDatapackRoot(datapackRoot, !finalPackRoots.isEmpty())) {
+                throw new IOException("Bootstrap datapack output is incomplete at " + datapackRoot);
+            }
             String finalAggregateFingerprint = packRootsFingerprint(finalPackRoots);
             String finalCompilerInputFingerprint = IrisDatapackCompiler.computeInputFingerprint(
                     finalPackRoots,
@@ -316,7 +302,6 @@ public final class DefaultPackBootstrapProvisioner {
             } else {
                 status = ProvisionStatus.UNCHANGED;
             }
-            feedback.accept("Iris bootstrap packs are " + status.name().toLowerCase() + ".");
             Map<String, Path> provisionedPacks = new LinkedHashMap<>();
             for (PackPlan plan : plans) {
                 provisionedPacks.put(plan.spec().key(), plan.root());
@@ -605,9 +590,13 @@ public final class DefaultPackBootstrapProvisioner {
     }
 
     private static boolean isDatapackRoot(Path path) {
+        return isDatapackRoot(path, false);
+    }
+
+    private static boolean isDatapackRoot(Path path, boolean requiresGeneratedTypes) {
         return path != null
                 && Files.isRegularFile(path.resolve("pack.mcmeta"))
-                && Files.isDirectory(path.resolve("data/iris/dimension_type"));
+                && (!requiresGeneratedTypes || Files.isDirectory(path.resolve("data/iris/dimension_type")));
     }
 
     static Path worldDatapackRoot(Path levelRoot) {
@@ -908,7 +897,7 @@ public final class DefaultPackBootstrapProvisioner {
             Objects.requireNonNull(requestTimeout, "requestTimeout");
             Objects.requireNonNull(retryDelay, "retryDelay");
             Objects.requireNonNull(levelRoot, "levelRoot");
-            if (packs.isEmpty() || attempts < 1 || maxArchiveBytes < 1L) {
+            if (attempts < 1 || maxArchiveBytes < 1L) {
                 throw new IllegalArgumentException("Invalid bootstrap provisioning options");
             }
             Set<String> keys = new HashSet<>();

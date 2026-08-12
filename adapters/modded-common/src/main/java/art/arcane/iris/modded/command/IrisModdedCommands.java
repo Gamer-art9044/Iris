@@ -49,6 +49,8 @@ import net.minecraft.world.level.chunk.ChunkGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -258,8 +260,10 @@ public final class IrisModdedCommands {
 
     static int download(CommandSourceStack source, String pack,
                         String branch, boolean forceOverwrite) {
-        boolean managedBeta = PackDownloader.isManagedBetaPack(pack);
-        String baseDownloadSource = managedBeta ? "beta release" : "branch " + branch;
+        boolean managed = PackDownloader.isManagedPack(pack);
+        boolean directUrl = PackDownloader.isDirectZipUrl(pack);
+        String baseDownloadSource = directUrl ? "direct ZIP URL"
+                : managed ? "configured Git source" : "branch " + branch;
         String downloadSource = forceOverwrite
                 ? baseDownloadSource + IrisLanguage.plain(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX)
                 : baseDownloadSource;
@@ -273,11 +277,28 @@ public final class IrisModdedCommands {
             return 0;
         }
         scheduler.async(() -> {
-            boolean installed = ModdedPackInstaller.install(
-                    ModdedEngineBootstrap.loader().configDir(), pack, branch, forceOverwrite, true,
-                    (String message) -> scheduler.global(() -> ok(source, message)));
+            boolean installed;
+            if (directUrl) {
+                File packs = ModdedPackCommands.packsRoot();
+                try {
+                    PackDownloader.PackInstallResult result = PackDownloader.downloadUrl(
+                            packs,
+                            pack,
+                            forceOverwrite,
+                            (String message) -> scheduler.global(() -> ok(source, message))
+                    );
+                    installed = result != null;
+                } catch (IOException error) {
+                    LOGGER.error("Iris pack download failed for direct URL {}", pack, error);
+                    installed = false;
+                }
+            } else {
+                installed = ModdedPackInstaller.install(
+                        ModdedEngineBootstrap.loader().configDir(), pack, branch, forceOverwrite, false,
+                        (String message) -> scheduler.global(() -> ok(source, message)));
+            }
             if (installed) {
-                scheduler.global(() -> ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_INSTALLED_ITS_EXACT_DIMENSION_TYPES_CUSTOM_BIOMES_JOIN_FORCED, MessageArgument.untrusted("pack", pack))));
+                scheduler.global(() -> ok(source, "Pack installed on disk. Restart the server before using it."));
             } else {
                 scheduler.global(() -> fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("downloadSource", downloadSource))));
             }

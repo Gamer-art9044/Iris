@@ -62,12 +62,13 @@ content selecting on `#minecraft:is_overworld` and friends.
 ## Install
 
 **Plugin (Paper/Purpur/Leaf/Canvas/Folia/Spigot):** drop the plugin jar into `plugins/` and start
-the server. On first boot Iris downloads the managed `overworld` and `underworld` beta packs automatically.
+the server. First boot performs no pack download. Run `/iris download overworld`,
+`/iris download underworld`, or `/iris download https://host/path/pack.zip`, then restart manually.
 
 **Mod (Fabric/Forge/NeoForge):** drop the mod jar into `mods/` and start the server. The jar is
-self-contained (core, SPI, and required Fabric API modules are bundled). On first boot Iris
-prefetches the managed `overworld` and `underworld` beta packs and rebuilds the worldgen datapack;
-restart once if startup reports that registry-visible pack data was installed too late for that boot. Packs installed later register their custom dimension types
+self-contained (core, SPI, and required Fabric API modules are bundled). First boot compiles only
+packs already on disk and never accesses the network. `/iris download` installs a pack atomically
+without stopping the server; restart manually afterward. Packs register their custom dimension types
 (height ranges) and custom biomes through the forced datapack at server start - restart once after
 adding a pack so worlds get its full heights and biomes; worlds created before that restart run
 with fallback heights.

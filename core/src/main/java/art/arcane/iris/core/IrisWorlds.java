@@ -7,16 +7,13 @@ import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
-import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.util.common.misc.ServerProperties;
-import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.io.IO;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
-import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 
@@ -231,12 +228,8 @@ public class IrisWorlds {
                         + " but its dimension failed to load; not redownloading. Fix or delete the pack folder.");
                 return null;
             }
-            IrisLogging.warn("Unable to find dimension type " + id + " Looking for online packs...");
-            IrisServices.get(StudioSVC.class).downloadSearch(new VolmitSender(Bukkit.getConsoleSender()), id, false);
-            dimension = IrisData.loadAnyDimension(id, null);
-            if (dimension != null) {
-                IrisLogging.info("Resolved missing dimension, proceeding.");
-            }
+            IrisLogging.warn("Unable to find dimension type " + id + ". Install it with /iris download "
+                    + id + " and restart the server.");
         }
         return dimension;
     }

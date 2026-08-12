@@ -151,7 +151,6 @@ public class IrisSettings {
     public static class IrisSettingsAutoconfiguration {
         public boolean configureSpigotTimeoutTime = true;
         public boolean configurePaperWatchdogDelay = true;
-        public boolean autoRestartOnCustomBiomeInstall = true;
     }
 
     @Data

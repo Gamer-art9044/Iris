@@ -295,10 +295,6 @@ public final class BukkitCommandMessagesExtended {
             "iris.bukkit.commandiris.set_debug",
             C.GREEN + "Set debug to: " + "{to}"
     );
-    public static final TextKey COMMAND_IRIS_DOWNLOADING_PACK_BETA_RELEASE = TextKey.of(
-            "iris.bukkit.commandiris.downloading_pack_beta_release",
-            C.GREEN + "Downloading pack: " + "{pack}" + " (beta release)" + "{value}"
-    );
     public static final TextKey COMMAND_IRIS_DOWNLOADING_PACK = TextKey.of(
             "iris.bukkit.commandiris.downloading_pack",
             C.GREEN + "Downloading pack: " + "{pack}" + "/" + "{branch}" + "{value}"
@@ -916,7 +912,6 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_IRIS_LOOKS_LIKE_WORLD_WAS_ALREADY_REMOVED_FROM_BUKKIT_YML,
             COMMAND_IRIS_FAILED_SAVE_BUKKIT_YML_BECAUSE,
             COMMAND_IRIS_SET_DEBUG,
-            COMMAND_IRIS_DOWNLOADING_PACK_BETA_RELEASE,
             COMMAND_IRIS_DOWNLOADING_PACK,
             COMMAND_IRIS_YOU_MUST_BE_IRIS_WORLD,
             COMMAND_IRIS_SENDING_METRICS,

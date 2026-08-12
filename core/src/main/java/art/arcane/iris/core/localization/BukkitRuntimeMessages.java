@@ -446,10 +446,6 @@ public final class BukkitRuntimeMessages {
             "iris.bukkit.runtime.studiosvc.failed_download",
             "Failed to download '" + "{key}" + "'."
     );
-    public static final TextKey STUDIO_S_V_C_FAILED_DOWNLOAD_IRISDIMENSIONS_OVERWORLD_BETA_RELEASE = TextKey.of(
-            "iris.bukkit.runtime.studiosvc.failed_download_irisdimensions_overworld_beta_release",
-            "Failed to download the IrisDimensions/overworld beta release."
-    );
     public static final TextKey STUDIO_S_V_C_FAILED_DOWNLOAD_BRANCH = TextKey.of(
             "iris.bukkit.runtime.studiosvc.failed_download_branch",
             "Failed to download '" + "{repo}" + "' (branch " + "{branch}" + ")."
@@ -730,7 +726,6 @@ public final class BukkitRuntimeMessages {
             STUDIO_S_V_C_PACK_WAS_NOT_FOUND_PACK_LISTING,
             STUDIO_S_V_C_USE_IRIS_DOWNLOAD_PACK_BRANCH_BRANCH_DOWNLOAD_MANUALLY,
             STUDIO_S_V_C_FAILED_DOWNLOAD,
-            STUDIO_S_V_C_FAILED_DOWNLOAD_IRISDIMENSIONS_OVERWORLD_BETA_RELEASE,
             STUDIO_S_V_C_FAILED_DOWNLOAD_BRANCH,
             STUDIO_S_V_C_FAILED_OPEN_STUDIO_WORLD,
             STUDIO_S_V_C_CANNOT_OPEN_STUDIO_PACK_HAS_BLOCKING_ERRORS,

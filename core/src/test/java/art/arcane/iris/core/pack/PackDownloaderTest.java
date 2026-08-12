@@ -31,8 +31,10 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.mockito.Answers;
 
+import com.sun.net.httpserver.HttpServer;
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,6 +46,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -53,6 +56,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -71,6 +75,13 @@ public class PackDownloaderTest {
         IrisPlatform platform = mock(IrisPlatform.class, Answers.CALLS_REAL_METHODS);
         PlatformStructureHooks structureHooks = mock(PlatformStructureHooks.class, Answers.CALLS_REAL_METHODS);
         when(platform.dataFolder()).thenReturn(temp.getRoot());
+        when(platform.dataFile(any(String[].class))).thenAnswer(invocation -> {
+            File file = temp.getRoot();
+            for (Object argument : invocation.getArguments()) {
+                file = new File(file, String.valueOf(argument));
+            }
+            return file;
+        });
         when(platform.structureHooks()).thenReturn(structureHooks);
         when(structureHooks.structureKeys()).thenReturn(List.of("minecraft:village"));
         when(structureHooks.jigsawStructureKeys()).thenReturn(List.of("minecraft:village"));
@@ -90,23 +101,74 @@ public class PackDownloaderTest {
     }
 
     @Test
-    public void resolvesDefaultOverworldBetaRelease() {
-        assertEquals(
-                "https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip",
-                PackDownloader.defaultOverworldReleaseUrl()
-        );
+    public void resolvesDefaultOverworldGitSource() {
+        assertEquals("IrisDimensions/overworld", PackDownloader.defaultOverworldRepository());
+        assertEquals("master", PackDownloader.defaultOverworldRef());
         assertTrue(PackDownloader.isDefaultOverworld("overworld"));
-        assertTrue(PackDownloader.isManagedBetaPack("overworld"));
-        assertEquals(List.of("overworld", "underworld"), PackDownloader.managedBetaPacks());
+        assertTrue(PackDownloader.isManagedPack("overworld"));
+        assertEquals(List.of("overworld", "underworld"), PackDownloader.managedPacks());
     }
 
     @Test
-    public void resolvesUnderworldBetaRelease() {
-        assertEquals(
-                "https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip",
-                PackDownloader.underworldReleaseUrl()
-        );
-        assertTrue(PackDownloader.isManagedBetaPack("underworld"));
+    public void resolvesUnderworldGitSource() {
+        assertEquals("IrisDimensions/underworld", PackDownloader.underworldRepository());
+        assertEquals("main", PackDownloader.underworldRef());
+        assertTrue(PackDownloader.isManagedPack("underworld"));
+    }
+
+    @Test
+    public void recognizesOnlyHttpZipUrlsAsDirectSources() {
+        assertTrue(PackDownloader.isDirectZipUrl("https://packs.example.test/overworld.zip"));
+        assertTrue(PackDownloader.isDirectZipUrl("http://127.0.0.1/pack.ZIP?token=value"));
+        assertFalse(PackDownloader.isDirectZipUrl("https://packs.example.test/overworld.tar.gz"));
+        assertFalse(PackDownloader.isDirectZipUrl("file:///tmp/overworld.zip"));
+        assertFalse(PackDownloader.isDirectZipUrl("not-a-url"));
+    }
+
+    @Test
+    public void directZipUrlInstallsSingleDimensionPackAndRequiresRestart() throws Exception {
+        Path archive = temp.newFile("direct-pack.zip").toPath();
+        Map<String, String> entries = new LinkedHashMap<>();
+        entries.put("README.md", "Direct pack");
+        entries.put("wrapped/dimensions/direct_pack.json", "{\"name\":\"Direct\",\"regions\":[\"local\"],"
+                + "\"structures\":[{\"nativeStructures\":[{\"structure\":\"test:future_structure\"}]}],"
+                + "\"logicalHeight\":256,\"dimensionHeight\":{\"min\":-64,\"max\":320}}");
+        entries.put("wrapped/regions/local.json", "{\"name\":\"Local\",\"landBiomes\":[\"local\"]}");
+        entries.put("wrapped/biomes/local.json", "{\"name\":\"Local\",\"derivative\":\"minecraft:plains\"}");
+        writeArchive(archive, entries);
+        byte[] response = Files.readAllBytes(archive);
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/direct-pack.zip", exchange -> {
+            requests.incrementAndGet();
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            File packsFolder = temp.newFolder("direct-url-packs");
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/direct-pack.zip";
+
+            PackDownloader.PackInstallResult result = PackDownloader.downloadUrl(
+                    packsFolder,
+                    url,
+                    false,
+                    ignored -> {
+                    }
+            );
+
+            assertNotNull(result);
+            assertEquals("direct_pack", result.key());
+            assertTrue(result.changed());
+            assertTrue(result.restartRequired());
+            assertEquals(1, requests.get());
+            assertTrue(Files.isRegularFile(
+                    packsFolder.toPath().resolve("direct_pack/dimensions/direct_pack.json")
+            ));
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
@@ -118,11 +180,11 @@ public class PackDownloaderTest {
         writeDimension(packsFolder.toPath().resolve("underworld"), "underworld_roof");
 
         assertTrue(PackDownloader.isPackPresent(packsFolder, "underworld"));
-        assertFalse(PackDownloader.isManagedBetaPackPresent(packsFolder, "underworld"));
+        assertFalse(PackDownloader.isManagedPackPresent(packsFolder, "underworld"));
 
         writeDimension(packsFolder.toPath().resolve("underworld"), "underworld");
         assertTrue(Files.isDirectory(dimensions));
-        assertTrue(PackDownloader.isManagedBetaPackPresent(packsFolder, "underworld"));
+        assertTrue(PackDownloader.isManagedPackPresent(packsFolder, "underworld"));
     }
 
     @Test
@@ -146,6 +208,7 @@ public class PackDownloaderTest {
 
         assertNotNull(result);
         assertTrue(result.changed());
+        assertTrue(result.restartRequired());
         assertTrue(Files.isRegularFile(target.resolve("dimensions/underworld.json")));
         assertTrue(Files.isRegularFile(target.resolve("dimensions/underworld_roof.json")));
         assertFalse(Files.exists(target.resolve("partial.txt")));
@@ -157,9 +220,9 @@ public class PackDownloaderTest {
         assertFalse(PackDownloader.isDefaultOverworld("theend"));
         assertFalse(PackDownloader.isDefaultOverworld(""));
         assertFalse(PackDownloader.isDefaultOverworld(null));
-        assertFalse(PackDownloader.isManagedBetaPack("theend"));
-        assertFalse(PackDownloader.isManagedBetaPack(""));
-        assertFalse(PackDownloader.isManagedBetaPack(null));
+        assertFalse(PackDownloader.isManagedPack("theend"));
+        assertFalse(PackDownloader.isManagedPack(""));
+        assertFalse(PackDownloader.isManagedPack(null));
     }
 
     @Test
@@ -299,7 +362,7 @@ public class PackDownloaderTest {
 
         assertEquals(feedback.toString(), "replaceable", result.key());
         assertTrue(result.changed());
-        assertFalse(result.restartRequired());
+        assertTrue(result.restartRequired());
         assertEquals("new", Files.readString(target.toPath().resolve("state.txt"), StandardCharsets.UTF_8));
         assertFalse(Files.exists(target.toPath().resolve("old-only.txt")));
         assertTransactionStateClean(packsFolder);

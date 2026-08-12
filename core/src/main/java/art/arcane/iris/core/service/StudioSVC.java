@@ -98,14 +98,8 @@ public class StudioSVC implements IrisService {
 
     @Override
     public void onEnable() {
-        VolmitSender console = BukkitPlatform.console();
-        runPackMutation(console, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD,
-                "managed-beta-packs", () -> installMissingManagedBetaPacks(console),
-                "Failed to install Iris managed beta packs at startup.");
-
         String configuredPack = IrisSettings.get().getGenerator().getDefaultWorldType();
-        if (!PackDownloader.isManagedBetaPack(configuredPack)
-                && !PackDownloader.isPackPresent(getWorkspaceFolder(), configuredPack)) {
+        if (!PackDownloader.isPackPresent(getWorkspaceFolder(), configuredPack)) {
             IrisLogging.warn("Default pack '" + configuredPack
                     + "' is not installed. Please download it manually with /iris download " + configuredPack);
         }
@@ -342,25 +336,41 @@ public class StudioSVC implements IrisService {
     public void downloadSearch(VolmitSender sender, String key, boolean forceOverwrite) {
         runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, key, () -> {
             DownloadOutcome outcome = downloadSearchLocked(sender, key, forceOverwrite);
-            return finishStandalonePackMutation(sender, outcome);
+            return finishStandalonePackMutation(outcome);
         }, IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_DOWNLOAD, MessageArgument.untrusted("key", String.valueOf(key))));
     }
 
-    public void downloadManagedBeta(VolmitSender sender, String key, boolean forceOverwrite) {
-        if (!PackDownloader.isManagedBetaPack(key)) {
-            sender.sendMessage("Iris pack '" + key + "' does not have a managed beta release.");
+    public void downloadManaged(VolmitSender sender, String key, boolean forceOverwrite) {
+        if (!PackDownloader.isManagedPack(key)) {
+            sender.sendMessage("Iris pack '" + key + "' does not have a managed Git source.");
             return;
         }
         runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, key, () -> {
-            DownloadOutcome outcome = downloadManagedBetaLocked(sender, key, forceOverwrite);
-            return finishStandalonePackMutation(sender, outcome);
-        }, "Failed to download IrisDimensions/" + key + " beta release.");
+            DownloadOutcome outcome = downloadManagedLocked(sender, key, forceOverwrite);
+            return finishStandalonePackMutation(outcome);
+        }, "Failed to download managed Iris pack '" + key + "'.");
+    }
+
+    public void downloadUrl(VolmitSender sender, String url, boolean forceOverwrite) {
+        if (!PackDownloader.isDirectZipUrl(url)) {
+            sender.sendMessage("Iris requires a valid HTTP or HTTPS .zip URL.");
+            return;
+        }
+        runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, url, () -> {
+            DownloadOutcome outcome = DownloadOutcome.from(PackDownloader.downloadUrl(
+                    getWorkspaceFolder(),
+                    url,
+                    forceOverwrite,
+                    sender::sendMessage
+            ));
+            return finishStandalonePackMutation(outcome);
+        }, "Failed to download Iris pack from '" + url + "'.");
     }
 
     public void downloadBranch(VolmitSender sender, String repo, String branch, boolean forceOverwrite) {
         runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, repo + "/" + branch, () -> {
             DownloadOutcome outcome = downloadLocked(sender, repo, branch, forceOverwrite, false, null);
-            return finishStandalonePackMutation(sender, outcome);
+            return finishStandalonePackMutation(outcome);
         }, IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_DOWNLOAD_BRANCH, MessageArgument.untrusted("repo", String.valueOf(repo)), MessageArgument.untrusted("branch", String.valueOf(branch))));
     }
 
@@ -376,13 +386,13 @@ public class StudioSVC implements IrisService {
         String target = expectedKey == null ? repo + "/" + branch : expectedKey;
         runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, target, () -> {
             DownloadOutcome outcome = downloadLocked(sender, repo, branch, forceOverwrite, directUrl, expectedKey);
-            return finishStandalonePackMutation(sender, outcome);
+            return finishStandalonePackMutation(outcome);
         }, "Failed to download Iris pack '" + target + "'.");
     }
 
     private DownloadOutcome downloadSearchLocked(VolmitSender sender, String key, boolean forceOverwrite) throws IOException {
-        if (PackDownloader.isManagedBetaPack(key)) {
-            return downloadManagedBetaLocked(sender, key, forceOverwrite);
+        if (PackDownloader.isManagedPack(key)) {
+            return downloadManagedLocked(sender, key, forceOverwrite);
         }
 
         String descriptor = key.contains("/") ? key : getListing(false).get(key);
@@ -412,50 +422,23 @@ public class StudioSVC implements IrisService {
         return new PackListingReference(repository, ref, expectedKey);
     }
 
-    private DownloadOutcome downloadManagedBetaLocked(
+    private DownloadOutcome downloadManagedLocked(
             VolmitSender sender,
             String expectedKey,
             boolean forceOverwrite
     ) throws IOException {
-        if (!forceOverwrite && PackDownloader.isManagedBetaPackPresent(getWorkspaceFolder(), expectedKey)) {
+        if (!forceOverwrite && PackDownloader.isManagedPackPresent(getWorkspaceFolder(), expectedKey)) {
             sender.sendMessage(IrisLanguage.text(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
             return DownloadOutcome.notChanged();
         }
 
-        PackDownloader.PackInstallResult result = PackDownloader.downloadManagedBeta(
+        PackDownloader.PackInstallResult result = PackDownloader.downloadManaged(
                 getWorkspaceFolder(),
                 expectedKey,
                 forceOverwrite,
                 sender::sendMessage
         );
         return DownloadOutcome.from(result);
-    }
-
-    private boolean installMissingManagedBetaPacks(VolmitSender sender) {
-        boolean changed = false;
-        boolean restartRequired = false;
-        for (String key : missingManagedBetaPacks(getWorkspaceFolder())) {
-            IrisLogging.info("Downloading managed Iris pack " + key + " (beta release)");
-            try {
-                DownloadOutcome outcome = downloadManagedBetaLocked(sender, key, false);
-                changed |= outcome.changed();
-                restartRequired |= outcome.restartRequired();
-            } catch (Throwable failure) {
-                IrisLogging.reportError("Failed to download IrisDimensions/" + key + " beta release.", failure);
-                sender.sendMessage("Failed to download IrisDimensions/" + key + " beta release. " + errorDetail(failure));
-            }
-        }
-        return finishStandalonePackMutation(sender, new DownloadOutcome(changed, restartRequired));
-    }
-
-    static List<String> missingManagedBetaPacks(File workspaceFolder) {
-        List<String> missing = new ArrayList<>();
-        for (String key : PackDownloader.managedBetaPacks()) {
-            if (!PackDownloader.isManagedBetaPackPresent(workspaceFolder, key)) {
-                missing.add(key);
-            }
-        }
-        return List.copyOf(missing);
     }
 
     private DownloadOutcome downloadLocked(
@@ -1033,27 +1016,14 @@ public class StudioSVC implements IrisService {
             }
 
             if (restartRequired) {
-                sender.sendMessage("Iris must restart before the new pack data can be used.");
-                ServerConfigurator.restart();
+                sender.sendMessage("Restart the server before using the downloaded Iris pack.");
             }
         };
         runOffPrimaryThread(work);
     }
 
-    private boolean finishStandalonePackMutation(VolmitSender sender, DownloadOutcome outcome) {
-        if (!outcome.changed()) {
-            return false;
-        }
-
-        DatapackInstallResult installResult = ServerConfigurator.installDataPacksIfChanged(true);
-        return switch (installResult.status()) {
-            case FAILED -> {
-                sender.sendMessage("The pack was downloaded, but Iris could not install its datapack output.");
-                yield false;
-            }
-            case RESTART_REQUIRED -> true;
-            case READY, UNCHANGED -> outcome.restartRequired();
-        };
+    private boolean finishStandalonePackMutation(DownloadOutcome outcome) {
+        return outcome.changed() && outcome.restartRequired();
     }
 
     private void runOffPrimaryThread(Runnable work) {

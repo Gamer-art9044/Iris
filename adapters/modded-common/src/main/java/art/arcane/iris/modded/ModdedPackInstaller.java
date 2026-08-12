@@ -48,7 +48,7 @@ public final class ModdedPackInstaller {
             feedback.accept(IrisLanguage.plain(PackDownloadMessages.INVALID_PACK_NAME, MessageArgument.untrusted("pack", String.valueOf(pack))));
             return false;
         }
-        boolean managedBeta = PackDownloader.isManagedBetaPack(pack);
+        boolean managed = PackDownloader.isManagedPack(pack);
         if (!acceptsBranch(pack, branch)) {
             feedback.accept(IrisLanguage.plain(PackDownloadMessages.INVALID_BRANCH_NAME, MessageArgument.untrusted("branch", String.valueOf(branch))));
             return false;
@@ -58,8 +58,8 @@ public final class ModdedPackInstaller {
         synchronized (installLock) {
             File packs = configDir.resolve("irisworldgen").resolve("packs").toFile();
             try {
-                PackDownloader.PackInstallResult result = managedBeta
-                        ? PackDownloader.downloadManagedBeta(packs, pack, forceOverwrite, feedback)
+                PackDownloader.PackInstallResult result = managed
+                        ? PackDownloader.downloadManaged(packs, pack, forceOverwrite, feedback)
                         : PackDownloader.download(
                                 packs,
                                 "IrisDimensions/" + pack,
@@ -84,7 +84,7 @@ public final class ModdedPackInstaller {
                 }
                 return installed;
             } catch (IOException error) {
-                String source = managedBeta ? "beta release" : "branch " + branch;
+                String source = managed ? "configured Git source" : "branch " + branch;
                 LOGGER.error("Iris pack download failed for IrisDimensions/{} ({})", pack, source, error);
                 feedback.accept(IrisLanguage.plain(
                         PackDownloadMessages.DOWNLOAD_FAILED,
@@ -97,7 +97,7 @@ public final class ModdedPackInstaller {
     }
 
     static boolean acceptsBranch(String pack, String branch) {
-        return PackDownloader.isManagedBetaPack(pack)
+        return PackDownloader.isManagedPack(pack)
                 || (branch != null && BRANCH_NAME.matcher(branch).matches());
     }
 

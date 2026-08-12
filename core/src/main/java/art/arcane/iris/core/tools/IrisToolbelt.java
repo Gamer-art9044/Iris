@@ -75,12 +75,7 @@ public class IrisToolbelt {
     private static final Method BUKKIT_IS_STOPPING_METHOD = resolveBukkitIsStoppingMethod();
 
     /**
-     * Will find / download / search for the dimension or return null
-     * <p>
-     * - You can provide a dimenson in the packs folder by the folder name
-     * - You can provide a github repo by using (assumes branch is master unless specified)
-     * - GithubUsername/repository
-     * - GithubUsername/repository/branch
+     * Finds an installed dimension or returns null.
      *
      * @param dimension the dimension id such as overworld or flat
      * @return the IrisDimension or null
@@ -105,18 +100,9 @@ public class IrisToolbelt {
         }
 
         if (pack == null) {
-            IrisServices.get(StudioSVC.class).downloadSearch(new VolmitSender(Bukkit.getConsoleSender(), BukkitPlatform.volmitPlugin().getTag()), reference.pack(), false);
-            String installedPackName = installedPackName(reference.pack());
-            File found = PackDirectoryResolver.resolveExisting(packsFolder, installedPackName);
-            if (found == null) {
-                found = findCaseInsensitivePack(packsFolder, installedPackName);
-            }
-            if (found != null) {
-                pack = found;
-            }
-        }
-
-        if (pack == null) {
+            IrisLogging.warn("Iris pack '" + reference.pack()
+                    + "' is not installed. Install it with /iris download " + reference.pack()
+                    + " and restart the server.");
             return null;
         }
 

@@ -35,13 +35,18 @@ import java.util.Objects;
 @Accessors(chain = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Desc("Controls native vanilla, mod, and ingested datapack structure generation for this dimension (set as the dimension's 'importedStructures' field). Every registered structure generates through its native placement unless its key is explicitly listed in 'disabled' or a viable dimension-level Iris placement explicitly replaces its source. Family matching uses namespace, slash, or underscore boundaries, so 'minecraft:village' covers every village variant without matching unrelated names. Run '/iris structure list <dimension>' to dump every valid key. Only affects newly generated chunks and is separate from Iris structure placements.")
+@Desc("Controls native vanilla, mod, and ingested datapack structure generation for this dimension (set as the dimension's 'importedStructures' field). Every registered structure generates through its native placement unless its key matches 'disabled', equals a key in 'disabledExact', or a viable dimension-level Iris placement explicitly replaces its source. Family matching uses namespace, slash, or underscore boundaries, while exact matching compares normalized complete keys only. Run '/iris structure list <dimension>' to dump every valid key. Only affects newly generated chunks and is separate from Iris structure placements.")
 @Data
 public class IrisImportedStructureControl {
     @ArrayType(type = String.class, min = 1)
     @RegistryListVanillaStructure(prefixes = true)
     @Desc("Structure keys to deny explicitly, e.g. 'minecraft:stronghold'. A namespace:path prefix also matches, so 'minecraft:village' disables every village variant and 'minecraft:ruined_portal' disables every ruined portal. Every key not matched here remains enabled.")
     private KList<String> disabled = new KList<>();
+
+    @ArrayType(type = String.class, min = 1)
+    @RegistryListVanillaStructure(prefixes = false)
+    @Desc("Exact structure keys to deny after trimming and case normalization. Unlike 'disabled', entries never match key families, so 'minecraft:ruined_portal' does not disable 'minecraft:ruined_portal_nether'.")
+    private KList<String> disabledExact = new KList<>();
 
     @MinNumber(-512)
     @MaxNumber(512)
@@ -51,12 +56,18 @@ public class IrisImportedStructureControl {
     @Desc("Controls whether ingested datapacks may replace minecraft-namespaced structure definitions, sets, pools, and templates. When false, those overrides are stripped from installed datapack copies so vanilla definitions stay intact. Non-minecraft structures from datapacks and mods remain governed by disabled because namespace alone cannot identify their origin. Resolved globally across loaded packs: if any dimension sets this false, minecraft-namespaced overrides are stripped from every installed datapack copy.")
     private boolean datapackOverrides = true;
 
+    @ArrayType(type = IrisStructureSetFrequencyOverride.class, min = 1)
+    @Desc("Exact registered structure-set frequency overrides for native generation. The last entry for a normalized structure-set key wins. These do not convert native structures into Iris placements and affect only newly generated chunks.")
+    private KList<IrisStructureSetFrequencyOverride> frequencyOverrides = new KList<>();
+
     @ArrayType(type = IrisVanillaStructureAdjustment.class, min = 1)
     @Desc("Per-structure adjustments applied to vanilla, mod, and datapack structures that still generate natively. Vertical shifts from every matching entry stack. A matching preserveSourceY option disables Iris burial repositioning for that structure. The last matching entry with stilt settings controls foundation columns, and likewise for terrain and yBand settings. A structure suppressed by an Iris placement is unaffected.")
     private KList<IrisVanillaStructureAdjustment> adjustments = new KList<>();
 
     public boolean shouldGenerate(String key) {
-        return key != null && !key.isBlank() && !matches(disabled, key);
+        return key != null && !key.isBlank()
+                && !matches(disabled, key)
+                && !matchesExact(disabledExact, key);
     }
 
     public IrisNativeStructureDecision resolve(String key, boolean undergroundStep) {
@@ -86,11 +97,32 @@ public class IrisImportedStructureControl {
                 generationStatus(key), y, yBand, preserveSourceY, stilt, terrain);
     }
 
+    public double frequencyMultiplier(String structureSetKey) {
+        KList<IrisStructureSetFrequencyOverride> activeOverrides = Objects.requireNonNull(
+                frequencyOverrides, "importedStructures.frequencyOverrides must not be null");
+        String normalizedKey = normalizeKey(structureSetKey);
+        if (normalizedKey.isEmpty()) {
+            return 1D;
+        }
+        double multiplier = 1D;
+        for (IrisStructureSetFrequencyOverride override : activeOverrides) {
+            if (override != null && normalizeKey(override.getStructureSet()).equals(normalizedKey)) {
+                multiplier = override.getMultiplier();
+            }
+        }
+        return multiplier;
+    }
+
+    public boolean hasFrequencyOverrides() {
+        return !Objects.requireNonNull(
+                frequencyOverrides, "importedStructures.frequencyOverrides must not be null").isEmpty();
+    }
+
     private NativeStructureGenerationStatus generationStatus(String key) {
         if (key == null || key.isBlank()) {
             return NativeStructureGenerationStatus.INVALID_REGISTRY_KEY;
         }
-        if (matches(disabled, key)) {
+        if (matches(disabled, key) || matchesExact(disabledExact, key)) {
             return NativeStructureGenerationStatus.DISABLED_BY_PACK;
         }
         return NativeStructureGenerationStatus.GENERATE_NATIVE;
@@ -104,6 +136,19 @@ public class IrisImportedStructureControl {
                 list, "importedStructures.disabled must not be null");
         for (String entry : activeList) {
             if (matchesKey(entry, key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean matchesExact(KList<String> list, String key) {
+        KList<String> activeList = Objects.requireNonNull(
+                list, "importedStructures.disabledExact must not be null");
+        String normalizedKey = normalizeKey(key);
+        for (String entry : activeList) {
+            String normalizedEntry = normalizeKey(entry);
+            if (!normalizedEntry.isEmpty() && normalizedEntry.equals(normalizedKey)) {
                 return true;
             }
         }
@@ -128,5 +173,9 @@ public class IrisImportedStructureControl {
         }
         char boundary = normalizedKey.charAt(normalizedPattern.length());
         return boundary == '/' || boundary == '_';
+    }
+
+    private static String normalizeKey(String key) {
+        return key == null ? "" : key.trim().toLowerCase(Locale.ROOT);
     }
 }

@@ -132,16 +132,16 @@ public class IrisCaveProfile {
     @Desc("Maximum random column retries while searching a valid cave object anchor in the chunk.")
     private int anchorSearchAttempts = 6;
 
-    @Desc("Allow cave water placement below fluid level.")
-    private boolean allowWater = true;
+    @Desc("Allow cave fluid placement from the dimension fluid palette below fluid level.")
+    private boolean allowFluid = true;
 
     @MinNumber(0)
     @MaxNumber(64)
-    @Desc("Minimum depth below terrain surface required before cave water may be placed.")
-    private int waterMinDepthBelowSurface = 12;
+    @Desc("Minimum depth below terrain surface required before cave fluid may be placed.")
+    private int fluidMinDepthBelowSurface = 12;
 
-    @Desc("Require solid floor support below cave water to reduce cascading cave waterfalls.")
-    private boolean waterRequiresFloor = true;
+    @Desc("Require solid floor support below cave fluid to reduce unsupported fluid flows.")
+    private boolean fluidRequiresFloor = true;
 
     @Desc("Allow cave lava placement based on lava height.")
     private boolean allowLava = true;

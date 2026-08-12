@@ -224,6 +224,7 @@ public class StudioSVC implements IrisService {
             }
             publication = AtomicDirectoryPublisher.publish(stage, target);
             stage = null;
+            validatePublishedPack(target);
 
             IrisData installedData;
             boolean activeRuntime = previousData != null && !previousData.getEngines().isEmpty();
@@ -256,6 +257,9 @@ public class StudioSVC implements IrisService {
             return installedDimension;
         } catch (Throwable e) {
             rollbackFailedPublication(createdData, publication, e);
+            if (publication != null) {
+                invalidatePackValidation(target);
+            }
             if (refreshedPreviousData) {
                 try {
                     previousData.hotloaded();
@@ -275,6 +279,17 @@ public class StudioSVC implements IrisService {
                 }
             }
         }
+    }
+
+    static void invalidatePackValidation(Path packRoot) {
+        PackValidationRegistry.remove(packRoot);
+    }
+
+    static PackValidationResult validatePublishedPack(Path packRoot) {
+        invalidatePackValidation(packRoot);
+        PackValidationResult result = PackValidator.validate(packRoot.toFile());
+        PackValidationRegistry.publish(packRoot, result);
+        return PackValidationRegistry.requireLoadable(packRoot);
     }
 
     static void rollbackFailedPublication(

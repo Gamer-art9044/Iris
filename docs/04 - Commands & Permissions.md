@@ -9,6 +9,7 @@ Use these as entry points; follow the linked guide before running destructive or
 | Goal | Bukkit-family | Fabric / Forge / NeoForge | Success check | Detailed guide |
 |---|---|---|---|---|
 | Create and enter a disposable world | `/iris create tutorial type=overworld seed=1337`, then `/iris tp tutorial` | `/iris create tutorial overworld 1337`, then `/iris tp irisworldgen:tutorial` | World/dimension appears in `/iris worlds` or `/iris world status`; ordinary chunks generate | `02 - Getting Started.md` |
+| Replace the vanilla Nether slot | `/iris create world_nether type=underworld seed=1337 overwrite=true`, then restart | Not available | `minecraft:the_nether` loads through Iris and the retained old Nether is removed only after verification | `06 - Worlds & Lifecycle.md` |
 | Validate a pack before world creation | `/iris pack validate pack=overworld` | `/iris pack validate overworld` | No blocking validation errors | `25 - Pack Management.md` |
 | Open the live authoring pack | `/iris studio open overworld seed=1337` | `/iris studio open overworld 1337` | Transient Studio world opens and a valid save hotloads | `10 - Studio & VSCode Schemas.md` |
 | Create an in-game jigsaw project | `/iris jigsaw create overworld village/demo` | Not available; author on Bukkit and copy the saved pack | Owned planar, Iris-native graph is created atomically with six 15×15×15 workcells, one variant per archetype, and seed `1337`; edits then autosave | `21 - Jigsaw Structures.md` |
@@ -28,7 +29,7 @@ If a command fails before doing work, check in this order: platform syntax, perm
 - Subcommands and nested groups use method names (or `@Director(name=...)`) and aliases.
 - Required parameters appear as positionals; optional parameters with defaults accept `name=value` (or short aliases from `@Param`).
 - Help uses Director mini-menu: required shown as `<name>`, optional with default as `[name=default]`.
-- Example: `/iris create myworld type=overworld seed=42 main=false`
+- Example: `/iris create myworld type=overworld seed=42 main=false overwrite=false`
 - Example: `/iris pregen start 5000 world=world center=me gui=true serial=false`
 - Contextual params (world, dimension, location) often resolve from the sender’s current world or look target when omitted.
 
@@ -69,7 +70,7 @@ Tree feller on mod loaders uses platform permission APIs (`irisworldgen:treefell
 | (empty) / help | | Both | `[section]` (modded) | Open help; modded supports section path |
 | `version` | | Both | — | Print Iris/platform/Minecraft version and engine count |
 | `info` | | **Modded** (see `worlds`) | `[dimension]` | List Iris dimensions and pack details; seed only for gamemasters |
-| `create` | `c` | Both | **Bukkit:** `<name> [type=default] [seed=1337] [main=false]` (`type` aliases `dimension`,`pack`). **Modded:** `<name> [pack=overworld] [seed=1337]` | Create Iris world/dimension |
+| `create` | `c` | Both | **Bukkit:** `<name> [type=default] [seed=1337] [main=false] [overwrite=false]` (`type` aliases `dimension`,`pack`; `overwrite` alias `force`). **Modded:** `<name> [pack=overworld] [seed=1337]` | Create an Iris world/dimension; Bukkit `overwrite=true` stages an exact slot replacement for restart |
 | `teleport` | `tp` | Both | **Bukkit:** `<world> [player=<name>]`. **Modded:** `<dimension> [player]` | Teleport self or named player into Iris world/dimension |
 | `evacuate` | | Both | **Bukkit:** `<world>` (player origin). **Modded:** `[dimension]` | Move players out of Iris world to fallback/primary |
 | `height` | | Both | — | Print world height (player on Bukkit) |
@@ -98,6 +99,10 @@ Tree feller on mod loaders uses platform permission APIs (`irisworldgen:treefell
 | `datapack` | `datapacks`, `dp` | Both | see Datapack | Datapack helpers |
 | `developer` | `dev` | Both | see Developer | Diagnostics |
 | `world` | `w` | **Modded** | see World | Runtime dimension enable/disable |
+
+---
+
+On Bukkit, `overwrite=true` is deliberately restart-only. The name may resolve to a safe `iris:*` world or exactly the configured main, `_nether`, or `_the_end` alias; arbitrary `minecraft:*` and foreign namespaces are rejected. Iris stages and validates a fresh pack snapshot, compare-and-swaps only that world's `bukkit.yml` generator and seed, and retains the existing dimension folder as a rollback backup until the restarted world proves its Iris identity, pack, dimension, environment, and seed. Multiple distinct slots may be staged before one restart. `main=true` is valid with overwrite only when the name is the configured main-world name. Exact vanilla slots preserve the authoritative seed shared by the existing level, regardless of the supplied `seed`; this keeps Overworld/Nether/End coordinate generation aligned. Use ordinary new-main promotion when a new level seed is required.
 
 ---
 

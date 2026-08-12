@@ -282,12 +282,14 @@ Iris replaces the chunk generator. Vanilla/mod worldgen runs only if Iris runs i
 
 | System | Over Iris? | Notes |
 |---|---|---|
-| Structures (vanilla, datapack, mod) | **Yes**, on by default | Vertical fit, stilts, vegetation clear. Deny: `importedStructures.disabled` |
+| Structures (vanilla, datapack, mod) | **Yes**, on by default | Vertical fit, stilts, vegetation clear. Deny families with `importedStructures.disabled`, one complete key with `disabledExact`, or scale an exact structure set with `frequencyOverrides` |
 | Placed features (ores, trees, plants, …) | **Yes**, **off** by default | Dimension `importedFeatures.enabled` |
 | Carvers | **Never** | No noise router / aquifer for vanilla carvers |
 | Mod biomes as sources | Only as derivative / scatter targets | Iris chooses biomes from the pack |
 | Mob spawning (incl. mod mobs) | **Yes** | Merges pack biome table with vanilla derivative |
 | Surface builders / rules | **Never** | Pack palettes |
+
+`importedStructures.frequencyOverrides` has Bukkit parity on all three mod loaders. Entries use `{ "structureSet": "namespace:path", "multiplier": 0.01..16 }`; keys are exact registered structure-set keys, last duplicate wins, and changes affect new chunks only. Random-spread sets scale probability first and then derive the nearest legal integer spacing, while concentric rings can scale probability only. Custom placement types outside the affected override and exclusion-zone graph remain untouched; an unsupported placement that must be copied fails level binding rather than applying a partial override. Full semantics and the Nether `1.1` example are in `22 - Native Structures & Datapacks.md`.
 
 ### `importedFeatures`
 

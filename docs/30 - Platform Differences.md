@@ -41,10 +41,10 @@ Hotload: Bukkit file-watch engine; modded 3s poll. Same invalidate/reload/locale
 
 | Concern | Bukkit | Modded |
 |---------|--------|--------|
-| Create | `/iris create` → managed world name, generator Iris, optional main-world | `/iris create` or `/iris world enable` → dimension id + pack injection |
+| Create | `/iris create` → managed world name, generator Iris, optional main-world; `overwrite=true` stages exact Iris/vanilla-slot replacement for restart | `/iris create` or `/iris world enable` → dimension id + pack injection |
 | Load / unload | `/iris load` (`import`), `/iris unload` | `/iris world disable` unloads; no separate load command |
 | Remove / delete | `/iris remove` optional folder delete | `/iris world delete` wipes chunk/mantle data |
-| Primary / main world | create `main=true` and Bukkit yml registration paths | `modded.json` primary + `routePlayersToPrimaryWorld`; `/iris world mainworld`, `replace-overworld` |
+| Primary / main world | create `main=true` for a new level root, or name the configured main with `overwrite=true` for journaled in-place dimension replacement | `modded.json` primary + `routePlayersToPrimaryWorld`; `/iris world mainworld`, `replace-overworld` |
 | Evacuate | `/iris evacuate <world>` | `/iris evacuate [dimension]` → primary/overworld fallback |
 | Studio world | Transient studio world via StudioSVC; `/iris jigsaw` can select the Jigsaw Studio generator for one activation | Studio dimension under `irisworldgen:studio_*`; no Jigsaw Studio authoring command tree |
 | Folia | Regionized schedulers; pregen `runtimeSchedulerMode` forces `FOLIA` when regionized | N/A (not Bukkit Folia) |
@@ -76,6 +76,7 @@ Jigsaw pack resources are shared runtime data, but in-game Jigsaw Studio is not 
 | Jigsaw Studio create/grid/marker capture/rules/export | yes | no | no | no |
 | Saved planar/spatial Iris jigsaw runtime | yes | yes | yes | yes |
 | Pack validate / cleanup / download | yes | yes | yes | yes |
+| Exact restart replacement of configured Overworld/Nether/End slots | yes | no | no | no |
 | Pregen | yes (Paper-like / Folia modes) | yes (`moddedPregenInFlight`) | yes | yes |
 | Studio open/close/vscode/package | yes | yes | yes | yes |
 | Object wand / paste / save / undo | yes | yes | yes | yes |

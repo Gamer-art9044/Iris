@@ -76,6 +76,7 @@ public final class PackValidator {
         }
 
         PackDimensionValidator.validateDimensions(packFolder, dimensionFiles, blockingErrors, warnings);
+        blockingErrors.addAll(PackCaveProfileValidator.validateLegacyFields(packFolder));
         blockingErrors.addAll(PackLootValidator.validateLootGraph(packFolder));
         blockingErrors.addAll(PackObjectSurfaceValidator.validateRemovedWorldgenFields(packFolder));
         blockingErrors.addAll(PackObjectSurfaceValidator.validateObjectSurfaceSupport(packFolder));

@@ -20,6 +20,7 @@ package art.arcane.iris.core.nms.v1X;
 
 import art.arcane.iris.core.datapack.DatapackStructureScopeIndex;
 import art.arcane.iris.core.nms.DatapackStructureScopeResult;
+import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.nms.INMSBinding;
 import art.arcane.iris.core.nms.container.BiomeColor;
@@ -109,7 +110,8 @@ public class NMSBinding1X implements INMSBinding {
     public DatapackStructureScopeResult scopeDatapackStructures(
             World world,
             DatapackStructureScopeIndex scopeIndex,
-            Set<String> declaredSources
+            Set<String> declaredSources,
+            IrisImportedStructureControl importedStructures
     ) {
         throw new IllegalStateException("Iris-managed datapack structure isolation requires the supported NMS binding");
     }

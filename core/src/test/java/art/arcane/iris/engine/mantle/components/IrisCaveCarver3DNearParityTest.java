@@ -52,7 +52,7 @@ public class IrisCaveCarver3DNearParityTest {
     private static Field surfaceBreakDensityField;
     private static Field thresholdRngField;
     private static Field carveAirField;
-    private static Field carveWaterField;
+    private static Field carveFluidField;
     private static Field carveLavaField;
     private static Field carveForcedAirField;
 
@@ -74,12 +74,23 @@ public class IrisCaveCarver3DNearParityTest {
         thresholdRngField.setAccessible(true);
         carveAirField = IrisCaveCarver3D.class.getDeclaredField("carveAir");
         carveAirField.setAccessible(true);
-        carveWaterField = IrisCaveCarver3D.class.getDeclaredField("carveWater");
-        carveWaterField.setAccessible(true);
+        carveFluidField = IrisCaveCarver3D.class.getDeclaredField("carveFluid");
+        carveFluidField.setAccessible(true);
         carveLavaField = IrisCaveCarver3D.class.getDeclaredField("carveLava");
         carveLavaField.setAccessible(true);
         carveForcedAirField = IrisCaveCarver3D.class.getDeclaredField("carveForcedAir");
         carveForcedAirField.setAccessible(true);
+    }
+
+    @Test
+    public void genericFluidContractKeepsOverworldDefaults() {
+        IrisCaveProfile profile = new IrisCaveProfile();
+        IrisDimension dimension = new IrisDimension();
+
+        assertTrue(profile.isAllowFluid());
+        assertEquals(12, profile.getFluidMinDepthBelowSurface());
+        assertTrue(profile.isFluidRequiresFloor());
+        assertEquals("water", dimension.getFluidPalette().getPalette().get(0).getBlock());
     }
 
     @Test
@@ -194,12 +205,12 @@ public class IrisCaveCarver3DNearParityTest {
         double[] columnWeights = fullWeights();
         int[] precomputedSurfaceHeights = filledHeights(46);
 
-        IrisCaveProfile lavaProfile = createProfile(false, false).setAllowLava(true).setAllowWater(false);
+        IrisCaveProfile lavaProfile = createProfile(false, false).setAllowLava(true).setAllowFluid(false);
         IrisCaveCarver3D lavaCarver = new IrisCaveCarver3D(engine, lavaProfile);
         WriterCapture lavaCapture = createWriterCapture(48);
         lavaCarver.carve(lavaCapture.writer, 0, 0, columnWeights, 0D, 0D, new IrisRange(0D, 80D), precomputedSurfaceHeights);
 
-        IrisCaveProfile forcedAirProfile = createProfile(false, false).setAllowLava(false).setAllowWater(false);
+        IrisCaveProfile forcedAirProfile = createProfile(false, false).setAllowLava(false).setAllowFluid(false);
         IrisCaveCarver3D forcedAirCarver = new IrisCaveCarver3D(engine, forcedAirProfile);
         WriterCapture forcedAirCapture = createWriterCapture(48);
         forcedAirCarver.carve(forcedAirCapture.writer, 0, 0, columnWeights, 0D, 0D, new IrisRange(0D, 80D), precomputedSurfaceHeights);
@@ -211,22 +222,22 @@ public class IrisCaveCarver3DNearParityTest {
     }
 
     @Test
-    public void waterPrecedesForcedAirWhenLavaIsDisabled() {
+    public void fluidPrecedesForcedAirWhenLavaIsDisabled() {
         Engine engine = createEngine(48, 46);
         int[] surfaceHeights = filledHeights(46);
-        IrisCaveProfile wetProfile = createWaterProfile()
+        IrisCaveProfile wetProfile = createFluidProfile()
                 .setVerticalRange(new IrisRange(2D, 18D))
                 .setAllowLava(false)
-                .setWaterRequiresFloor(false);
+                .setFluidRequiresFloor(false);
         WriterCapture wetCapture = createWriterCapture(48);
         new IrisCaveCarver3D(engine, wetProfile).carve(
                 wetCapture.writer, 0, 0, fullWeights(), 0D, 0D, null, surfaceHeights);
 
-        IrisCaveProfile dryProfile = createWaterProfile()
+        IrisCaveProfile dryProfile = createFluidProfile()
                 .setVerticalRange(new IrisRange(2D, 18D))
-                .setAllowWater(false)
+                .setAllowFluid(false)
                 .setAllowLava(false)
-                .setWaterRequiresFloor(false);
+                .setFluidRequiresFloor(false);
         WriterCapture dryCapture = createWriterCapture(48);
         new IrisCaveCarver3D(engine, dryProfile).carve(
                 dryCapture.writer, 0, 0, fullWeights(), 0D, 0D, null, surfaceHeights);
@@ -239,16 +250,16 @@ public class IrisCaveCarver3DNearParityTest {
     }
 
     @Test
-    public void waterToggleAndMinimumDepthUseEachColumnsTerrainSurface() {
+    public void fluidToggleAndMinimumDepthUseEachColumnsTerrainSurface() {
         Engine engine = createEngine(80, 70);
         int[] surfaceHeights = splitSurfaceHeights(40, 70);
 
-        IrisCaveProfile enabledProfile = createWaterProfile().setAllowWater(true).setWaterMinDepthBelowSurface(10);
+        IrisCaveProfile enabledProfile = createFluidProfile().setAllowFluid(true).setFluidMinDepthBelowSurface(10);
         WriterCapture enabledCapture = createWriterCapture(80);
         new IrisCaveCarver3D(engine, enabledProfile).carve(
                 enabledCapture.writer, 0, 0, fullWeights(), 0D, 0D, null, surfaceHeights);
 
-        IrisCaveProfile disabledProfile = createWaterProfile().setAllowWater(false).setWaterMinDepthBelowSurface(10);
+        IrisCaveProfile disabledProfile = createFluidProfile().setAllowFluid(false).setFluidMinDepthBelowSurface(10);
         WriterCapture disabledCapture = createWriterCapture(80);
         new IrisCaveCarver3D(engine, disabledProfile).carve(
                 disabledCapture.writer, 0, 0, fullWeights(), 0D, 0D, null, surfaceHeights);
@@ -256,15 +267,15 @@ public class IrisCaveCarver3DNearParityTest {
         assertEquals(enabledCapture.carvedCells, disabledCapture.carvedCells);
         assertTrue(countLiquid(enabledCapture, (byte) 1) > 0);
         assertEquals(0, countLiquid(disabledCapture, (byte) 1));
-        assertWaterRespectsSplitCutoff(enabledCapture, 30, 60);
+        assertFluidRespectsSplitCutoff(enabledCapture, 30, 60);
         assertTrue(enabledCapture.carvedCells.contains(cellKey(0, 40, 0)));
         assertTrue(enabledCapture.carvedCells.contains(cellKey(15, 70, 0)));
     }
 
     @Test
-    public void dimensionFluidHeightCapsWaterIntent() {
+    public void dimensionFluidHeightCapsFluidIntent() {
         Engine engine = createEngine(80, 70);
-        IrisCaveProfile profile = createWaterProfile().setWaterMinDepthBelowSurface(0);
+        IrisCaveProfile profile = createFluidProfile().setFluidMinDepthBelowSurface(0);
         WriterCapture capture = createWriterCapture(80);
 
         new IrisCaveCarver3D(engine, profile).carve(
@@ -276,36 +287,36 @@ public class IrisCaveCarver3DNearParityTest {
     }
 
     @Test
-    public void floorRequiredWaterResolvesAfterTheCompleteCarveMask() {
+    public void floorRequiredFluidResolvesAfterTheCompleteCarveMask() {
         Engine engine = createEngine(80, 70);
         int[] surfaceHeights = filledHeights(70);
         int chunkX = -8;
         int chunkZ = -1;
 
         IrisStyledRange cupThreshold = new IrisStyledRange(0.15D, 0.15D, new IrisGeneratorStyle(NoiseStyle.FLAT));
-        IrisCaveProfile supportedProfile = createWaterProfile()
+        IrisCaveProfile supportedProfile = createFluidProfile()
                 .setDensityThreshold(cupThreshold)
-                .setWaterMinDepthBelowSurface(0)
-                .setWaterRequiresFloor(true);
+                .setFluidMinDepthBelowSurface(0)
+                .setFluidRequiresFloor(true);
         WriterCapture firstCapture = createWriterCapture(80);
-        CaveWaterSupportPlan supportPlan = new CaveWaterSupportPlan();
+        CaveFluidSupportPlan supportPlan = new CaveFluidSupportPlan();
         new IrisCaveCarver3D(engine, supportedProfile).carve(
                 firstCapture.writer, chunkX, chunkZ, fullWeights(), 0D, 0D, null, surfaceHeights, null, supportPlan);
         int candidateCount = countLiquid(firstCapture, (byte) 1);
         supportPlan.resolve(firstCapture.writer.acquireChunk(chunkX, chunkZ));
 
-        IrisCaveProfile repeatedProfile = createWaterProfile()
+        IrisCaveProfile repeatedProfile = createFluidProfile()
                 .setDensityThreshold(cupThreshold)
-                .setWaterMinDepthBelowSurface(0)
-                .setWaterRequiresFloor(true);
+                .setFluidMinDepthBelowSurface(0)
+                .setFluidRequiresFloor(true);
         WriterCapture secondCapture = createWriterCapture(80);
         new IrisCaveCarver3D(engine, repeatedProfile).carve(
                 secondCapture.writer, chunkX, chunkZ, fullWeights(), 0D, 0D, null, surfaceHeights);
 
-        IrisCaveProfile unrestrictedProfile = createWaterProfile()
+        IrisCaveProfile unrestrictedProfile = createFluidProfile()
                 .setDensityThreshold(cupThreshold)
-                .setWaterMinDepthBelowSurface(0)
-                .setWaterRequiresFloor(false);
+                .setFluidMinDepthBelowSurface(0)
+                .setFluidRequiresFloor(false);
         WriterCapture unrestrictedCapture = createWriterCapture(80);
         new IrisCaveCarver3D(engine, unrestrictedProfile).carve(
                 unrestrictedCapture.writer, chunkX, chunkZ, fullWeights(), 0D, 0D, null, surfaceHeights);
@@ -314,23 +325,23 @@ public class IrisCaveCarver3DNearParityTest {
         assertEquals(firstCapture.carvedLiquids, secondCapture.carvedLiquids);
         assertTrue(countLiquid(firstCapture, (byte) 1) > 0);
         assertTrue(countLiquid(firstCapture, (byte) 1) < countLiquid(unrestrictedCapture, (byte) 1));
-        assertWaterCellsHaveSolidSupport(firstCapture);
+        assertFluidCellsHaveSolidSupport(firstCapture);
     }
 
     @Test
-    public void finalWaterSupportRejectsUnknownNeighborChunkEdges() {
+    public void finalFluidSupportRejectsUnknownNeighborChunkEdges() {
         WriterCapture capture = createWriterCapture(80);
         MantleChunk<Matter> chunk = capture.writer.acquireChunk(0, 0);
         MatterSlice<MatterCavern> slice = chunk.getOrCreate(3).slice(MatterCavern.class);
-        MatterCavern water = new MatterCavern(true, "", (byte) 1);
+        MatterCavern fluid = new MatterCavern(true, "", (byte) 1);
         MatterCavern air = new MatterCavern(true, "", (byte) 0);
         int y = 56;
         int z = 8;
-        slice.set(0, y & 15, z, water);
-        slice.set(8, y & 15, z, water);
-        CaveWaterSupportPlan supportPlan = new CaveWaterSupportPlan();
-        supportPlan.add(0, y, z, water, air);
-        supportPlan.add(8, y, z, water, air);
+        slice.set(0, y & 15, z, fluid);
+        slice.set(8, y & 15, z, fluid);
+        CaveFluidSupportPlan supportPlan = new CaveFluidSupportPlan();
+        supportPlan.add(0, y, z, fluid, air);
+        supportPlan.add(8, y, z, fluid, air);
 
         supportPlan.resolve(chunk);
 
@@ -339,29 +350,29 @@ public class IrisCaveCarver3DNearParityTest {
     }
 
     @Test
-    public void floorRequiredWaterSeesLaterProfileCarvePasses() {
+    public void floorRequiredFluidSeesLaterProfileCarvePasses() {
         Engine engine = createEngine(80, 70);
         int[] surfaceHeights = filledHeights(70);
         WriterCapture capture = createWriterCapture(80);
-        CaveWaterSupportPlan waterSupportPlan = new CaveWaterSupportPlan();
-        IrisCaveProfile waterProfile = createWaterProfile()
+        CaveFluidSupportPlan fluidSupportPlan = new CaveFluidSupportPlan();
+        IrisCaveProfile fluidProfile = createFluidProfile()
                 .setDensityThreshold(new IrisStyledRange(0.15D, 0.15D, new IrisGeneratorStyle(NoiseStyle.FLAT)))
-                .setWaterRequiresFloor(true);
-        IrisCaveProfile airProfile = createWaterProfile().setAllowWater(false);
+                .setFluidRequiresFloor(true);
+        IrisCaveProfile airProfile = createFluidProfile().setAllowFluid(false);
 
-        new IrisCaveCarver3D(engine, waterProfile).carve(
+        new IrisCaveCarver3D(engine, fluidProfile).carve(
                 capture.writer, 0, 0, fullWeights(), 0D, 0D, null, surfaceHeights,
-                new IrisRange(20D, 64D), waterSupportPlan);
-        String waterCell = firstCellWithLiquid(capture, (byte) 1);
-        assertTrue(waterCell != null);
-        int waterY = coordinate(waterCell, 1);
+                new IrisRange(20D, 64D), fluidSupportPlan);
+        String fluidCell = firstCellWithLiquid(capture, (byte) 1);
+        assertTrue(fluidCell != null);
+        int fluidY = coordinate(fluidCell, 1);
         new IrisCaveCarver3D(engine, airProfile).carve(
                 capture.writer, 0, 0, fullWeights(), 0D, 0D, null, surfaceHeights,
-                new IrisRange(waterY - 1D, waterY - 1D), waterSupportPlan);
+                new IrisRange(fluidY - 1D, fluidY - 1D), fluidSupportPlan);
 
-        assertEquals(Byte.valueOf((byte) 1), capture.carvedLiquids.get(waterCell));
-        waterSupportPlan.resolve(capture.writer.acquireChunk(0, 0));
-        assertEquals(Byte.valueOf((byte) 0), capture.carvedLiquids.get(waterCell));
+        assertEquals(Byte.valueOf((byte) 1), capture.carvedLiquids.get(fluidCell));
+        fluidSupportPlan.resolve(capture.writer.acquireChunk(0, 0));
+        assertEquals(Byte.valueOf((byte) 0), capture.carvedLiquids.get(fluidCell));
     }
 
     @Test
@@ -474,7 +485,7 @@ public class IrisCaveCarver3DNearParityTest {
         CNG surfaceBreakDensity = (CNG) surfaceBreakDensityField.get(carver);
         RNG thresholdRng = (RNG) thresholdRngField.get(carver);
         MatterCavern carveAir = (MatterCavern) carveAirField.get(carver);
-        MatterCavern carveWater = (MatterCavern) carveWaterField.get(carver);
+        MatterCavern carveFluid = (MatterCavern) carveFluidField.get(carver);
         MatterCavern carveLava = (MatterCavern) carveLavaField.get(carver);
         MatterCavern carveForcedAir = (MatterCavern) carveForcedAirField.get(carver);
 
@@ -505,7 +516,7 @@ public class IrisCaveCarver3DNearParityTest {
         int[] columnTopY = new int[256];
         int[] surfaceBreakFloorY = new int[256];
         boolean[] surfaceBreakColumn = new boolean[256];
-        int[] waterMaxY = new int[256];
+        int[] fluidMaxY = new int[256];
         double[] passThreshold = new double[256];
         double[] verticalEdgeFade = computeVerticalEdgeFade(profile, minY, maxY);
         MatterCavern[] matterByY = computeMatterByY(engine, profile, carveAir, carveLava, carveForcedAir, minY, maxY);
@@ -528,8 +539,8 @@ public class IrisCaveCarver3DNearParityTest {
                 boolean breakColumn = allowSurfaceBreak && signed(surfaceBreakDensity.noiseFast2D(x, z)) >= surfaceBreakNoiseThreshold;
                 int resolvedTopY = breakColumn ? Math.min(maxY, Math.max(minY, columnSurfaceY)) : clearanceTopY;
                 columnTopY[columnIndex] = resolvedTopY;
-                waterMaxY[columnIndex] = profile.isAllowWater()
-                        ? Math.min(engine.getDimension().getFluidHeight(), columnSurfaceY - Math.max(0, profile.getWaterMinDepthBelowSurface()))
+                fluidMaxY[columnIndex] = profile.isAllowFluid()
+                        ? Math.min(engine.getDimension().getFluidHeight(), columnSurfaceY - Math.max(0, profile.getFluidMinDepthBelowSurface()))
                         : Integer.MIN_VALUE;
                 surfaceBreakFloorY[columnIndex] = Math.max(minY, columnSurfaceY - surfaceBreakDepth);
                 surfaceBreakColumn[columnIndex] = breakColumn;
@@ -576,9 +587,9 @@ public class IrisCaveCarver3DNearParityTest {
                     MatterSlice<MatterCavern> cavernSlice = sectionMatter.slice(MatterCavern.class);
                     MatterCavern verticalMatter = matterByY[y - minY];
                     boolean aquifer = verticalMatter == carveAir
-                            && y <= waterMaxY[columnIndex]
+                            && y <= fluidMaxY[columnIndex]
                             && (boolean) aquiferCandidateMethod.invoke(carver, x, y, z, localThreshold);
-                    MatterCavern matter = aquifer ? carveWater : verticalMatter;
+                    MatterCavern matter = aquifer ? carveFluid : verticalMatter;
                     cavernSlice.set(localX, y & 15, localZ, matter);
                     carved++;
                 }
@@ -678,9 +689,9 @@ public class IrisCaveCarver3DNearParityTest {
         profile.setSurfaceBreakNoiseThreshold(0.16D);
         profile.setSurfaceBreakDepth(12);
         profile.setSurfaceBreakThresholdBoost(0.17D);
-        profile.setAllowWater(true);
-        profile.setWaterMinDepthBelowSurface(8);
-        profile.setWaterRequiresFloor(false);
+        profile.setAllowFluid(true);
+        profile.setFluidMinDepthBelowSurface(8);
+        profile.setFluidRequiresFloor(false);
         profile.setAllowLava(true);
         if (modules) {
             KList<IrisCaveFieldModule> caveModules = new KList<>();
@@ -705,7 +716,7 @@ public class IrisCaveCarver3DNearParityTest {
         return profile;
     }
 
-    private IrisCaveProfile createWaterProfile() {
+    private IrisCaveProfile createFluidProfile() {
         return createProfile(false, false)
                 .setVerticalRange(new IrisRange(20D, 70D))
                 .setVerticalEdgeFade(0)
@@ -716,8 +727,8 @@ public class IrisCaveCarver3DNearParityTest {
                 .setAllowSurfaceBreak(true)
                 .setSurfaceBreakNoiseThreshold(-1D)
                 .setSurfaceBreakThresholdBoost(0D)
-                .setAllowWater(true)
-                .setWaterRequiresFloor(false)
+                .setAllowFluid(true)
+                .setFluidRequiresFloor(false)
                 .setAllowLava(true);
     }
 
@@ -803,7 +814,7 @@ public class IrisCaveCarver3DNearParityTest {
         return heights;
     }
 
-    private void assertWaterCellsHaveSolidSupport(WriterCapture capture) {
+    private void assertFluidCellsHaveSolidSupport(WriterCapture capture) {
         for (Map.Entry<String, Byte> entry : capture.carvedLiquids.entrySet()) {
             if (entry.getValue() != 1) {
                 continue;
@@ -835,9 +846,9 @@ public class IrisCaveCarver3DNearParityTest {
         }
     }
 
-    private void assertWaterRespectsSplitCutoff(WriterCapture capture, int lowCutoff, int highCutoff) {
-        boolean lowWater = false;
-        boolean highWater = false;
+    private void assertFluidRespectsSplitCutoff(WriterCapture capture, int lowCutoff, int highCutoff) {
+        boolean lowFluid = false;
+        boolean highFluid = false;
         for (Map.Entry<String, Byte> entry : capture.carvedLiquids.entrySet()) {
             if (entry.getValue() != 1) {
                 continue;
@@ -846,14 +857,14 @@ public class IrisCaveCarver3DNearParityTest {
             int y = coordinate(entry.getKey(), 1);
             if (x < 8) {
                 assertTrue(y <= lowCutoff);
-                lowWater = true;
+                lowFluid = true;
             } else {
                 assertTrue(y <= highCutoff);
-                highWater = true;
+                highFluid = true;
             }
         }
-        assertTrue(lowWater);
-        assertTrue(highWater);
+        assertTrue(lowFluid);
+        assertTrue(highFluid);
     }
 
     private void assertLiquidAtOrBelow(WriterCapture capture, byte liquid, int maxY) {

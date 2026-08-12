@@ -642,7 +642,7 @@ public final class DatapackIngestService {
         if (report.changed()) {
             message(sender, C.YELLOW + "New datapack structures were installed. A server restart is required for them to register and generate.");
             message(sender, C.GRAY + "After the restart they generate natively only in Iris dimensions that declare their source URL - no import needed. To get editable Iris copies (jigsaw pools, pieces & objects written into the pack) run /iris structure import <dimension>, or set general.autoImportDatapackStructures=true to do it on every ingest. Place any registered key directly with a 'structures' placement using nativeStructures.");
-            message(sender, C.GRAY + "Datapacks replace matching vanilla structure keys by default. Set 'importedStructures.datapackOverrides' to false to keep minecraft-namespaced structure definitions untouched; deny non-minecraft datapack and mod structures explicitly with importedStructures.disabled.");
+            message(sender, C.GRAY + "Datapacks replace matching vanilla structure keys by default. Set 'importedStructures.datapackOverrides' to false to keep minecraft-namespaced structure definitions untouched; deny non-minecraft datapack and mod structure families with importedStructures.disabled or complete keys with importedStructures.disabledExact.");
             if (!restart) {
                 message(sender, C.GRAY + "Run with restart=true to restart now, or restart manually. After restart, run /iris structure list <dimension> to see the new keys.");
             }
@@ -1491,7 +1491,8 @@ public final class DatapackIngestService {
                     stagedDir, worldFolders, existing, stripOverrides, cacheDir.getParentFile());
             installs.add(execution);
             InstallResult installResult = execution.result();
-            recordInstallResult(sender, report, existing, installResult, resolved.getVersionNumber());
+            recordInstallResult(
+                    sender, report, stagedDir, worldFolders, existing, installResult, resolved.getVersionNumber());
             return;
         }
 
@@ -1515,7 +1516,8 @@ public final class DatapackIngestService {
             installs.add(execution);
             InstallResult installResult = execution.result();
             manifest.put(updated);
-            recordInstallResult(sender, report, updated, installResult, resolved.getVersionNumber());
+            recordInstallResult(
+                    sender, report, stagedDir, worldFolders, updated, installResult, resolved.getVersionNumber());
             return;
         }
 
@@ -1536,7 +1538,8 @@ public final class DatapackIngestService {
             InstallResult installResult = execution.result();
             writeOwnership(stagedDir, updated);
             manifest.put(updated);
-            recordInstallResult(sender, report, updated, installResult, resolved.getVersionNumber());
+            recordInstallResult(
+                    sender, report, stagedDir, worldFolders, updated, installResult, resolved.getVersionNumber());
             return;
         }
 
@@ -1565,6 +1568,7 @@ public final class DatapackIngestService {
         }
         installs.add(execution);
         InstallResult installResult = execution.result();
+        recordInstallMetadata(stagedDir, worldFolders, entry);
         manifest.put(entry);
 
         report.updated.add(id + " (" + safe(resolved.getVersionNumber()) + ")");
@@ -1793,8 +1797,16 @@ public final class DatapackIngestService {
         requireDirectoryIdentity(directory, "datapack install root");
     }
 
-    private static void recordInstallResult(VolmitSender sender, Report report, Entry entry, InstallResult result, String versionNumber) {
-        forgetInstallMetadata(entry);
+    static void recordInstallResult(
+            VolmitSender sender,
+            Report report,
+            File stagedDir,
+            KList<File> worldFolders,
+            Entry entry,
+            InstallResult result,
+            String versionNumber
+    ) {
+        recordInstallMetadata(stagedDir, worldFolders, entry);
         if (result.changed()) {
             report.updated.add(entry.id + " (" + safe(versionNumber) + ")");
             report.requiresRestart = true;

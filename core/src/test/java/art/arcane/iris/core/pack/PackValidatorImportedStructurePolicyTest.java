@@ -15,11 +15,36 @@ public class PackValidatorImportedStructurePolicyTest {
     public void denyOnlyPolicyAcceptsDisabledKeysAndAdjustments() {
         JSONObject policy = new JSONObject()
                 .put("disabled", new JSONArray().put("minecraft:stronghold"))
+                .put("disabledExact", new JSONArray().put("minecraft:ruined_portal"))
+                .put("frequencyOverrides", new JSONArray().put(new JSONObject()
+                        .put("structureSet", "minecraft:nether_complexes")
+                        .put("multiplier", 1.1D)))
                 .put("adjustments", new JSONArray().put(new JSONObject()
                         .put("match", new JSONArray().put("minecraft:village"))));
         List<String> errors = validate(policy);
 
         assertTrue(errors.isEmpty());
+    }
+
+    @Test
+    public void malformedFrequencyOverridesAreRejected() {
+        JSONObject policy = new JSONObject()
+                .put("frequencyOverrides", new JSONArray()
+                        .put("minecraft:nether_complexes")
+                        .put(new JSONObject().put("structureSet", "nether_complexes"))
+                        .put(new JSONObject()
+                                .put("structureSet", "minecraft:ruined_portals")
+                                .put("multiplier", 0D))
+                        .put(new JSONObject()
+                                .put("structureSet", "minecraft:nether_fossils")
+                                .put("multiplier", "often")));
+        List<String> errors = validate(policy);
+
+        assertEquals(4, errors.size());
+        assertTrue(errors.stream().anyMatch(error -> error.contains("frequencyOverrides[0] must be an object")));
+        assertTrue(errors.stream().anyMatch(error -> error.contains("frequencyOverrides[1].structureSet")));
+        assertTrue(errors.stream().anyMatch(error -> error.contains("frequencyOverrides[2].multiplier must be at least")));
+        assertTrue(errors.stream().anyMatch(error -> error.contains("frequencyOverrides[3].multiplier must be a number")));
     }
 
     @Test
@@ -99,12 +124,27 @@ public class PackValidatorImportedStructurePolicyTest {
     public void explicitNullsAndWrongShapesAreRejected() {
         JSONObject policy = new JSONObject()
                 .put("disabled", JSONObject.NULL)
+                .put("disabledExact", new JSONObject())
+                .put("frequencyOverrides", JSONObject.NULL)
                 .put("adjustments", new JSONObject());
         List<String> errors = validate(policy);
 
-        assertEquals(2, errors.size());
+        assertEquals(4, errors.size());
         assertTrue(errors.stream().anyMatch(error -> error.contains("'disabled' must be an array")));
+        assertTrue(errors.stream().anyMatch(error -> error.contains("'disabledExact' must be an array")));
+        assertTrue(errors.stream().anyMatch(error -> error.contains("frequencyOverrides must be an array")));
         assertTrue(errors.stream().anyMatch(error -> error.contains("adjustments must be an array")));
+    }
+
+    @Test
+    public void blankOrNonStringExactKeysAreRejected() {
+        JSONObject policy = new JSONObject()
+                .put("disabledExact", new JSONArray().put(" ").put(4));
+        List<String> errors = validate(policy);
+
+        assertEquals(2, errors.size());
+        assertTrue(errors.get(0).contains("'disabledExact' has a blank or non-string entry at index 0"));
+        assertTrue(errors.get(1).contains("'disabledExact' has a blank or non-string entry at index 1"));
     }
 
     @Test

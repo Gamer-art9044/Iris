@@ -24,7 +24,7 @@ import art.arcane.volmlib.util.matter.MatterSlice;
 
 final class CaveCarveScratch {
     final int[] columnMaxY = new int[256];
-    final int[] waterMaxY = new int[256];
+    final int[] fluidMaxY = new int[256];
     final int[] surfaceBreakFloorY = new int[256];
     final boolean[] surfaceBreakColumn = new boolean[256];
     final double[] columnThreshold = new double[256];

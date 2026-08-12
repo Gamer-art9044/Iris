@@ -26,6 +26,7 @@ import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.nativegen.NativeStructureStartInjector;
 import art.arcane.iris.nativegen.NativeStructureReferenceRepair;
 import art.arcane.iris.nativegen.NativeStructureVanillaLocator;
@@ -284,8 +285,21 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
 
     @Override
     public ChunkGeneratorStructureState createState(HolderLookup<StructureSet> structureSets, RandomState randomState, long seed) {
-        return ChunkGeneratorStructureState.createForNormal(
+        ChunkGeneratorStructureState state = ChunkGeneratorStructureState.createForNormal(
                 randomState, seed, structureBiomeSource.forStructureState(structureSets), structureSets);
+        return ModdedStructureSetFrequencyOverrides.apply(state, configuredImportedStructures());
+    }
+
+    private IrisImportedStructureControl configuredImportedStructures() {
+        Engine current = engine;
+        if (current != null && !current.isClosed() && !current.isClosing()) {
+            IrisDimension dimension = current.getDimension();
+            if (dimension != null && dimension.getImportedStructures() != null) {
+                return dimension.getImportedStructures();
+            }
+        }
+        IrisImportedStructureControl importedStructures = configuredPack().dimension().getImportedStructures();
+        return importedStructures == null ? new IrisImportedStructureControl() : importedStructures;
     }
 
     @Override
@@ -444,10 +458,11 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             return;
         }
         String remedy = integratedEnvironment()
-                ? "enable 'Generate Structures' for this world; Iris requires it, and individual structures "
-                        + "are denied through importedStructures.disabled"
+                ? "enable 'Generate Structures' for this world; Iris requires it, then deny families through "
+                        + "importedStructures.disabled or complete keys through importedStructures.disabledExact"
                 : "set generate-structures=true in server.properties, restart the server, "
-                        + "and deny individual structures through importedStructures.disabled";
+                        + "then deny families through importedStructures.disabled or complete keys through "
+                        + "importedStructures.disabledExact";
         throw new IllegalStateException("Iris generator '" + dimensionKey
                 + "' cannot bind while generate-structures=false; " + remedy);
     }

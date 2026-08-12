@@ -32,6 +32,7 @@ import art.arcane.iris.core.IrisStartupAdmissionListener;
 import art.arcane.iris.core.BukkitWorldReconciler;
 import art.arcane.iris.core.IrisWorldGeneratorResolver;
 import art.arcane.iris.core.PendingWorldDeleteQueue;
+import art.arcane.iris.core.PendingWorldReplacementManager;
 import art.arcane.iris.core.SettingsHotloadWatch;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.DatapackIngestService;
@@ -167,6 +168,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     private final IrisWorldGeneratorResolver generatorResolver = new IrisWorldGeneratorResolver(this);
     private final BukkitWorldReconciler worldReconciler = new BukkitWorldReconciler(this);
     private final PendingWorldDeleteQueue pendingWorldDeletes = new PendingWorldDeleteQueue(this);
+    private final PendingWorldReplacementManager pendingWorldReplacements = new PendingWorldReplacementManager(this);
     private volatile SettingsHotloadWatch settingsHotloadWatch;
 
     public static VolmitSender getSender() {
@@ -595,6 +597,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         services.values().forEach(IrisService::onEnable);
         services.values().forEach(this::registerListener);
         addShutdownHook();
+        pendingWorldReplacements.processPendingStartupReplacements();
         pendingWorldDeletes.processPendingStartupWorldDeletes();
         WorldLifecycleService.get();
         WorldRuntimeControlService.get();
@@ -604,6 +607,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
 
         J.s(() -> {
+            pendingWorldReplacements.verifyLoadedPublishedWorlds();
             J.a(this::bstats);
             J.ar(() -> settingsHotloadWatch.checkConfigHotload(configHotloadEngine), 60);
             J.sr(this::tickQueue, 0);
@@ -640,6 +644,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     public BukkitWorldReconciler worldReconciler() {
         return worldReconciler;
+    }
+
+    public PendingWorldReplacementManager pendingWorldReplacements() {
+        return pendingWorldReplacements;
     }
 
     private void autoStartStudio() {
@@ -683,6 +691,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisPlatforms.bind(new BukkitPlatform());
         IrisStartupValidation.begin();
         Bukkit.getPluginManager().registerEvents(new IrisStartupAdmissionListener(), this);
+        Bukkit.getPluginManager().registerEvents(pendingWorldReplacements, this);
         enable();
         BukkitGuiHost.install();
         super.onEnable();

@@ -741,13 +741,19 @@ public final class BukkitWorldReconciler {
 
         @Override
         public void requireDimensionLoadable(NamespacedKey worldKey, String dimension) {
+            File snapshotRoot = IrisWorldStorage.packRoot(worldKey);
+            boolean snapshotPresent = snapshotRoot.isDirectory();
+            if (snapshotPresent) {
+                IrisWorldGeneratorResolver.requireSnapshotLoadable(snapshotRoot);
+            }
             String worldName = IrisWorldStorage.logicalName(worldKey);
             IrisDimension irisDimension = IrisWorldGeneratorResolver.loadDimension(worldName, dimension);
             if (irisDimension == null) {
                 throw new IllegalStateException("Could not resolve the Iris dimension \"" + dimension + "\".");
             }
-            PackValidationRegistry.requireLoadable(
-                    irisDimension.getLoader().getDataFolder().getName());
+            if (!snapshotPresent) {
+                PackValidationRegistry.requireLoadable(irisDimension.getLoader().getDataFolder().getName());
+            }
         }
     }
 }

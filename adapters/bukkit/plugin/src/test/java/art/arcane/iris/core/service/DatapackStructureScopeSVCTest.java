@@ -34,8 +34,9 @@ public class DatapackStructureScopeSVCTest {
 
     @Test
     public void emptyScopeStillAppliesToJigsawStudioBootstrap() {
-        assertTrue(DatapackStructureScopeSVC.shouldApplyScope(true, true));
-        assertFalse(DatapackStructureScopeSVC.shouldApplyScope(true, false));
-        assertTrue(DatapackStructureScopeSVC.shouldApplyScope(false, false));
+        assertTrue(DatapackStructureScopeSVC.shouldApplyScope(true, true, false));
+        assertFalse(DatapackStructureScopeSVC.shouldApplyScope(true, false, false));
+        assertTrue(DatapackStructureScopeSVC.shouldApplyScope(false, false, false));
+        assertTrue(DatapackStructureScopeSVC.shouldApplyScope(true, false, true));
     }
 }

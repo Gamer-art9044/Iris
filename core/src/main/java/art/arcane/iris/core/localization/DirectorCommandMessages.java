@@ -290,6 +290,10 @@ public final class DirectorCommandMessages {
             "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world",
             "Whether or not to automatically use this world as the main world"
     );
+    public static final TextKey COMMAND_IRIS_PARAM_REPLACE_EXACT_EXISTING_WORLD_SLOT_NEXT_RESTART = TextKey.of(
+            "iris.director.commandiris.param.replace_exact_existing_world_slot_next_restart",
+            "Replace the exact existing world slot on the next restart"
+    );
     public static final TextKey COMMAND_IRIS_DIRECTOR_TELEPORT_ANOTHER_WORLD = TextKey.of(
             "iris.director.commandiris.director.teleport_another_world",
             "Teleport to another world"
@@ -951,6 +955,7 @@ public final class DirectorCommandMessages {
             COMMAND_IRIS_PARAM_DIMENSION_PACK_CREATE_WORLD_WITH,
             COMMAND_IRIS_PARAM_SEED_GENERATE_WORLD_WITH,
             COMMAND_IRIS_PARAM_WHETHER_NOT_AUTOMATICALLY_USE_THIS_WORLD_AS_MAIN_WORLD,
+            COMMAND_IRIS_PARAM_REPLACE_EXACT_EXISTING_WORLD_SLOT_NEXT_RESTART,
             COMMAND_IRIS_DIRECTOR_TELEPORT_ANOTHER_WORLD,
             COMMAND_IRIS_PARAM_WORLD_TELEPORT,
             COMMAND_IRIS_PARAM_PLAYER_TELEPORT,

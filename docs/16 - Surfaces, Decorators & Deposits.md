@@ -97,7 +97,7 @@ Dimension defaults:
 | Field | Default | Role |
 |-------|---------|------|
 | `rockPalette` | stone | Fill below biome layers |
-| `fluidPalette` | water | Ocean/fluid column |
+| `fluidPalette` | water | Ocean/fluid columns and `allowFluid` cave aquifers |
 | `rockZoom` | `5` | Rock palette zoom |
 
 `IrisBlockData` entries use `block` (id), optional `weight`, optional `data` blockstate map. They can also reference reusable block aliases as described below.

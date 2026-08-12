@@ -105,13 +105,15 @@ final class PackDimensionValidator {
         }
         if (policy.has("mode")) {
             blockingErrors.add("Dimension '" + dimensionKey
-                    + "' importedStructures.mode is not supported. Native structures are enabled by default; list explicit denials in importedStructures.disabled.");
+                    + "' importedStructures.mode is not supported. Native structures are enabled by default; deny families in importedStructures.disabled or complete keys in importedStructures.disabledExact.");
         }
         if (policy.has("enabled")) {
             blockingErrors.add("Dimension '" + dimensionKey
-                    + "' importedStructures.enabled is not supported. Native structures are enabled by default; list explicit denials in importedStructures.disabled.");
+                    + "' importedStructures.enabled is not supported. Native structures are enabled by default; deny families in importedStructures.disabled or complete keys in importedStructures.disabledExact.");
         }
         validateStructureKeyList(dimensionKey, policy, "disabled", blockingErrors);
+        validateStructureKeyList(dimensionKey, policy, "disabledExact", blockingErrors);
+        validateFrequencyOverrides(dimensionKey, policy, blockingErrors);
         JSONArray adjustments = policy.optJSONArray("adjustments");
         if (adjustments == null) {
             if (policy.has("adjustments")) {
@@ -135,6 +137,36 @@ final class PackDimensionValidator {
             validateAdjustmentYBand(dimensionKey, adjustment, index, blockingErrors);
             PackStructurePlacementValidator.validateNativeTerrain("Dimension '" + dimensionKey
                     + "' importedStructures.adjustments[" + index + "]", adjustment, blockingErrors);
+        }
+    }
+
+    private static void validateFrequencyOverrides(String dimensionKey, JSONObject policy,
+                                                   List<String> blockingErrors) {
+        if (!policy.has("frequencyOverrides")) {
+            return;
+        }
+        JSONArray overrides = policy.optJSONArray("frequencyOverrides");
+        if (overrides == null) {
+            blockingErrors.add("Dimension '" + dimensionKey
+                    + "' importedStructures.frequencyOverrides must be an array.");
+            return;
+        }
+        for (int index = 0; index < overrides.length(); index++) {
+            JSONObject override = overrides.optJSONObject(index);
+            String path = "Dimension '" + dimensionKey
+                    + "' importedStructures.frequencyOverrides[" + index + "]";
+            if (override == null) {
+                blockingErrors.add(path + " must be an object.");
+                continue;
+            }
+            Object rawKey = override.opt("structureSet");
+            if (!(rawKey instanceof String key)
+                    || key.isBlank()
+                    || !PackValidator.RESOURCE_KEY_PATTERN.matcher(key.trim()).matches()) {
+                blockingErrors.add(path + ".structureSet must be a namespaced registry key.");
+            }
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    path, override, "multiplier", 0.01D, 16D, blockingErrors);
         }
     }
 

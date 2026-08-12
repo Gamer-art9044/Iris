@@ -59,7 +59,10 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -260,7 +263,7 @@ public class IrisDimension extends IrisRegistrant {
     private double rockZoom = 5;
     @Desc("The palette of blocks for 'stone'")
     private IrisMaterialPalette rockPalette = new IrisMaterialPalette().qclear().qadd("stone");
-    @Desc("The palette of blocks for 'water'")
+    @Desc("The dimension fluid block palette used for ocean columns and cave aquifers.")
     private IrisMaterialPalette fluidPalette = new IrisMaterialPalette().qclear().qadd("water");
     @Desc("Prevent cartographers to generate explorer maps (Iris worlds only)\nONLY TOUCH IF YOUR SERVER CRASHES WHILE GENERATING EXPLORER MAPS")
     private boolean disableExplorerMaps = false;
@@ -484,19 +487,90 @@ public class IrisDimension extends IrisRegistrant {
 
     public KList<IrisBiome> getReachableBiomes(DataProvider g) {
         KMap<String, IrisBiome> biomes = new KMap<>();
+        if (g == null) {
+            return biomes.v();
+        }
 
-        for (IrisRegion region : getAllRegions(g)) {
-            if (region == null) {
+        IrisData data = g.getData();
+        if (data == null || data.getRegionLoader() == null || data.getBiomeLoader() == null) {
+            return biomes.v();
+        }
+
+        Deque<String> pending = new ArrayDeque<>();
+        KList<String> regionKeys = getRegions();
+        if (regionKeys != null) {
+            for (String regionKey : regionKeys) {
+                IrisRegion region = data.getRegionLoader().load(regionKey);
+                if (region == null) {
+                    continue;
+                }
+                addReachableBiomeKeys(pending, region.getAllBiomeIds());
+            }
+        }
+
+        KList<IrisDimensionCarvingEntry> carvingEntries = getCarving();
+        if (carvingEntries != null) {
+            for (IrisDimensionCarvingEntry entry : carvingEntries) {
+                if (entry != null && entry.isEnabled()) {
+                    addReachableBiomeKey(pending, entry.getBiome());
+                }
+            }
+        }
+
+        Set<String> visited = new HashSet<>();
+        Map<String, IrisDimensionCarvingEntry> carvingEntryIndex = getCarvingEntryIndex();
+        while (!pending.isEmpty()) {
+            String biomeKey = pending.removeFirst();
+            if (!visited.add(biomeKey)) {
                 continue;
             }
-            for (IrisBiome biome : region.getAllBiomes(g)) {
-                if (biome != null) {
-                    biomes.put(biome.getLoadKey(), biome);
+
+            IrisBiome biome = data.getBiomeLoader().load(biomeKey);
+            if (biome == null) {
+                continue;
+            }
+
+            String loadKey = biome.getLoadKey();
+            if (loadKey == null || loadKey.isBlank() || biomes.containsKey(loadKey)) {
+                continue;
+            }
+
+            visited.add(loadKey);
+            biomes.put(loadKey, biome);
+            addReachableBiomeKeys(pending, biome.getChildren());
+            addReachableBiomeKey(pending, biome.getCarvingBiome());
+
+            KList<IrisFloatingChildBiomes> floatingChildren = biome.getFloatingChildBiomes();
+            if (floatingChildren == null) {
+                continue;
+            }
+            for (IrisFloatingChildBiomes floatingChild : floatingChildren) {
+                if (floatingChild != null) {
+                    addReachableBiomeKey(pending, floatingChild.getBiome());
+                    String carvingReference = floatingChild.getCarving();
+                    IrisDimensionCarvingEntry carvingEntry = carvingEntryIndex.get(carvingReference);
+                    addReachableBiomeKey(pending,
+                            carvingEntry == null ? carvingReference : carvingEntry.getBiome());
                 }
             }
         }
 
         return biomes.v();
+    }
+
+    private void addReachableBiomeKeys(Deque<String> pending, Iterable<String> biomeKeys) {
+        if (biomeKeys == null) {
+            return;
+        }
+        for (String biomeKey : biomeKeys) {
+            addReachableBiomeKey(pending, biomeKey);
+        }
+    }
+
+    private void addReachableBiomeKey(Deque<String> pending, String biomeKey) {
+        if (biomeKey != null && !biomeKey.isBlank()) {
+            pending.addLast(biomeKey);
+        }
     }
 
     public KList<IrisBiome> getAllAnyBiomes() {

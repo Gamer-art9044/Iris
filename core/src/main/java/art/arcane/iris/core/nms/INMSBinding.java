@@ -19,6 +19,7 @@
 package art.arcane.iris.core.nms;
 
 import art.arcane.iris.core.datapack.DatapackStructureScopeIndex;
+import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.core.lifecycle.WorldLifecycleCaller;
 import art.arcane.iris.core.lifecycle.WorldLifecycleRequest;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
@@ -231,7 +232,8 @@ public interface INMSBinding {
     DatapackStructureScopeResult scopeDatapackStructures(
             World world,
             DatapackStructureScopeIndex scopeIndex,
-            Set<String> declaredSources
+            Set<String> declaredSources,
+            IrisImportedStructureControl importedStructures
     ) throws NoSuchFieldException, IllegalAccessException;
 
     void completeStudioStructureBootstrap(World world) throws NoSuchFieldException, IllegalAccessException;

@@ -143,7 +143,7 @@ Implementation:
 1. Requires `confirm=true`.
 2. Optional `StudioSVC.downloadSearch` when `fresh-download`.
 3. Acquires `PACK_MUTATION` / `PACK_PUBLISH` lease.
-4. `StudioSVC.replaceIntoWorld` → install into `worldFolder/iris/pack` with `replaceExisting=true` (atomic stage/publish).
+4. `StudioSVC.replaceIntoWorld` → install into `worldFolder/iris/pack` with `replaceExisting=true` (atomic stage/publish), invalidate the previous exact-root validation result, and validate the final published snapshot; validation failure rolls the replacement back.
 5. If an engine still holds that pack data, Iris **restarts the server** after commit (`"An active Iris world pack was replaced."`).
 
 This is intentionally unsafe for production without backups: existing chunks keep old terrain; only future generation and pack-driven systems see new content. Prefer staging a new world when pack contracts change.

@@ -2,7 +2,11 @@ package art.arcane.iris.core.service;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
+import art.arcane.iris.core.pack.BrokenPackException;
+import art.arcane.iris.core.pack.PackValidationRegistry;
+import art.arcane.iris.core.pack.PackValidationResult;
 import org.junit.Assume;
+import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -25,6 +29,11 @@ import static org.junit.Assert.assertTrue;
 public class StudioSVCWorldPackPublishTest {
     @Rule
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+    @After
+    public void clearValidationRegistry() {
+        PackValidationRegistry.clear();
+    }
 
     @Test
     public void copiesToStageAndPublishesTheCompletePack() throws IOException {
@@ -123,6 +132,24 @@ public class StudioSVCWorldPackPublishTest {
     }
 
     @Test
+    public void finalPublishedSnapshotReplacesStalePathValidation() throws Exception {
+        Path packRoot = temporaryFolder.newFolder("published-snapshot", "iris", "pack").toPath();
+        writeValidPack(packRoot);
+        PackValidationResult staleFailure = new PackValidationResult(
+                "pack", List.of("stale failure"), List.of(), 1L);
+        PackValidationRegistry.publish(packRoot, staleFailure);
+
+        PackValidationResult validated = StudioSVC.validatePublishedPack(packRoot);
+
+        assertTrue(validated.isLoadable());
+        assertSame(validated, PackValidationRegistry.requireLoadable(packRoot));
+
+        Files.writeString(packRoot.resolve("dimensions/main.json"), "{");
+        assertThrows(BrokenPackException.class, () -> StudioSVC.validatePublishedPack(packRoot));
+        assertTrue(PackValidationRegistry.isBroken(packRoot));
+    }
+
+    @Test
     public void createdProjectRollbackEvictsOnlyItsCachedLoaderBeforeDeletion() throws IOException {
         Path root = temporaryFolder.newFolder("project-cache-rollback").toPath();
         Path project = root.resolve("created_project");
@@ -175,5 +202,14 @@ public class StudioSVCWorldPackPublishTest {
 
         secondGate.complete("second");
         assertEquals("second", second.join());
+    }
+
+    private static void writeValidPack(Path packRoot) throws Exception {
+        Files.createDirectories(packRoot.resolve("dimensions"));
+        Files.createDirectories(packRoot.resolve("regions"));
+        Files.createDirectories(packRoot.resolve("biomes"));
+        Files.writeString(packRoot.resolve("dimensions/main.json"), "{\"regions\":[\"region\"]}");
+        Files.writeString(packRoot.resolve("regions/region.json"), "{\"landBiomes\":[\"biome\"]}");
+        Files.writeString(packRoot.resolve("biomes/biome.json"), "{\"name\":\"Biome\"}");
     }
 }

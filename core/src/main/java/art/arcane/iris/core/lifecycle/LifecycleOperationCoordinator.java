@@ -179,6 +179,7 @@ public final class LifecycleOperationCoordinator {
         WORLD_LOAD,
         WORLD_UNLOAD,
         WORLD_REMOVE,
+        WORLD_REPLACE,
         WORLD_PROMOTE,
         STUDIO_OPEN,
         STUDIO_CLOSE,

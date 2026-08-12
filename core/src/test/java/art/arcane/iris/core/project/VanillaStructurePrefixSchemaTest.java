@@ -1,10 +1,12 @@
 package art.arcane.iris.core.project;
 
 import art.arcane.iris.engine.object.IrisImportedStructureControl;
+import art.arcane.iris.engine.object.IrisStructureSetFrequencyOverride;
 import art.arcane.iris.engine.object.IrisVanillaStructureAdjustment;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.RegistryListVanillaStructure;
+import art.arcane.iris.engine.object.annotations.RegistryListVanillaStructureSet;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
@@ -19,16 +21,20 @@ import static org.junit.Assert.assertTrue;
  * importedStructures.disabled and adjustments[].match accept family/namespace PREFIXES
  * ("minecraft:village", "nova_structures:") per IrisImportedStructureControl.matchesKey, so the
  * generated editor schema must not reject them with a strict registered-key enum. Prefix-capable
- * fields emit an anyOf of the registry enum plus a key/prefix pattern; exact-key fields (e.g.
- * nativeStructures[].structure) keep the strict enum.
+ * fields emit an anyOf of the registry enum plus a key/prefix pattern. Exact-key fields, including
+ * importedStructures.disabledExact and nativeStructures[].structure, keep the strict enum.
  */
 public class VanillaStructurePrefixSchemaTest {
     @Test
     public void prefixCapableFieldsDeclareThePrefixAnnotation() throws NoSuchFieldException {
         assertTrue(IrisImportedStructureControl.class.getDeclaredField("disabled")
                 .getAnnotation(RegistryListVanillaStructure.class).prefixes());
+        assertFalse(IrisImportedStructureControl.class.getDeclaredField("disabledExact")
+                .getAnnotation(RegistryListVanillaStructure.class).prefixes());
         assertTrue(IrisVanillaStructureAdjustment.class.getDeclaredField("match")
                 .getAnnotation(RegistryListVanillaStructure.class).prefixes());
+        assertTrue(IrisStructureSetFrequencyOverride.class.getDeclaredField("structureSet")
+                .isAnnotationPresent(RegistryListVanillaStructureSet.class));
     }
 
     @Test

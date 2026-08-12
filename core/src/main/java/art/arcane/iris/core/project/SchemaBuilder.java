@@ -197,7 +197,11 @@ public class SchemaBuilder {
     }
 
     private JSONArray vanillaStructureSets() {
-        return keysAsArray(IrisPlatforms.get().structureHooks().structureSetKeys());
+        if (IrisPlatforms.get().structureHooks() == null) {
+            return new JSONArray();
+        }
+        List<String> keys = IrisPlatforms.get().structureHooks().structureSetKeys();
+        return keysAsArray(keys == null ? List.of() : keys);
     }
 
     private JSONArray nativeJigsawPools() {

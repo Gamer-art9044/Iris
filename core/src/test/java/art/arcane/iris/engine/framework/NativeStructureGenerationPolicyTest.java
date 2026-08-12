@@ -53,12 +53,28 @@ public class NativeStructureGenerationPolicyTest {
         assertFalse(decision.generate());
     }
 
+    @Test
+    public void exactDisabledKeyDoesNotDisableSiblingVariant() {
+        IrisImportedStructureControl control = new IrisImportedStructureControl();
+        control.getDisabledExact().add("minecraft:ruined_portal");
+        Engine engine = engineWithControlAndRegionPlacement(control, "nova_structures:tavern_oak");
+
+        assertEquals(NativeStructureGenerationStatus.DISABLED_BY_PACK,
+                NativeStructureGenerationPolicy.resolve(engine, "minecraft:ruined_portal", false).status());
+        assertEquals(NativeStructureGenerationStatus.GENERATE_NATIVE,
+                NativeStructureGenerationPolicy.resolve(engine, "minecraft:ruined_portal_nether", false).status());
+    }
+
     private Engine engineWithDisabledNamespaceAndRegionPlacement(String placedKey) {
+        IrisImportedStructureControl control = new IrisImportedStructureControl();
+        control.getDisabled().add("nova_structures:");
+        return engineWithControlAndRegionPlacement(control, placedKey);
+    }
+
+    private Engine engineWithControlAndRegionPlacement(IrisImportedStructureControl control, String placedKey) {
         IrisData data = mock(IrisData.class);
         Engine engine = mock(Engine.class);
         IrisDimension dimension = mock(IrisDimension.class);
-        IrisImportedStructureControl control = new IrisImportedStructureControl();
-        control.getDisabled().add("nova_structures:");
 
         IrisStructurePlacement placement = new IrisStructurePlacement();
         placement.getNativeStructures().add(new IrisNativeStructure().setStructure(placedKey));

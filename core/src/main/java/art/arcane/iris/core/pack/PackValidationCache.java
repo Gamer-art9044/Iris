@@ -28,7 +28,7 @@ import java.util.Optional;
 import java.util.Set;
 
 public final class PackValidationCache {
-    private static final int SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
     private static final long MAX_CACHE_BYTES = 16L * 1024L * 1024L;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 

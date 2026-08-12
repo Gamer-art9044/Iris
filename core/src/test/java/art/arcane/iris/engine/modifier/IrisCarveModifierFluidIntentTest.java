@@ -15,7 +15,7 @@ public class IrisCarveModifierFluidIntentTest {
     @Test
     public void explicitCavernIntentsOverrideExistingFluid() {
         MatterCavern airIntent = new MatterCavern(true, "", (byte) 0);
-        MatterCavern waterIntent = new MatterCavern(true, "", (byte) 1);
+        MatterCavern fluidIntent = new MatterCavern(true, "", (byte) 1);
         MatterCavern lavaIntent = new MatterCavern(true, "", (byte) 2);
         MatterCavern forcedAirIntent = new MatterCavern(true, "", (byte) 3);
         PlatformBlockState existingFluid = mock(PlatformBlockState.class);
@@ -26,11 +26,12 @@ public class IrisCarveModifierFluidIntentTest {
 
         assertFalse(IrisCarveModifier.hasExplicitCarveIntent(null));
         assertTrue(IrisCarveModifier.shouldPreserveExistingFluid(airIntent, existingFluid));
-        assertFalse(IrisCarveModifier.shouldPreserveExistingFluid(waterIntent, existingFluid));
+        assertTrue(IrisCarveModifier.isFluidIntent(fluidIntent));
+        assertFalse(IrisCarveModifier.shouldPreserveExistingFluid(fluidIntent, existingFluid));
         assertFalse(IrisCarveModifier.shouldPreserveExistingFluid(lavaIntent, existingFluid));
         assertFalse(IrisCarveModifier.shouldPreserveExistingFluid(forcedAirIntent, existingFluid));
         assertNull(IrisCarveModifier.resolveExplicitCarveState(null, fluid, lava, air));
-        assertSame(fluid, IrisCarveModifier.resolveExplicitCarveState(waterIntent, fluid, lava, air));
+        assertSame(fluid, IrisCarveModifier.resolveExplicitCarveState(fluidIntent, fluid, lava, air));
         assertSame(lava, IrisCarveModifier.resolveExplicitCarveState(lavaIntent, fluid, lava, air));
         assertSame(air, IrisCarveModifier.resolveExplicitCarveState(forcedAirIntent, fluid, lava, air));
         assertNull(IrisCarveModifier.resolveExplicitCarveState(airIntent, fluid, lava, air));

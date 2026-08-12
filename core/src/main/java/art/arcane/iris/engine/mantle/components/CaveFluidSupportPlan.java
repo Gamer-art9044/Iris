@@ -28,11 +28,11 @@ import java.util.BitSet;
 import java.util.IdentityHashMap;
 import java.util.Map;
 
-final class CaveWaterSupportPlan {
-    private final IdentityHashMap<MatterCavern, WaterCandidateGroup> groups = new IdentityHashMap<>();
+final class CaveFluidSupportPlan {
+    private final IdentityHashMap<MatterCavern, FluidCandidateGroup> groups = new IdentityHashMap<>();
 
-    void add(int localX, int y, int localZ, MatterCavern water, MatterCavern air) {
-        WaterCandidateGroup group = groups.computeIfAbsent(water, key -> new WaterCandidateGroup(water, air));
+    void add(int localX, int y, int localZ, MatterCavern fluid, MatterCavern air) {
+        FluidCandidateGroup group = groups.computeIfAbsent(fluid, key -> new FluidCandidateGroup(fluid, air));
         int columnIndex = PowerOfTwoCoordinates.packLocal16(localX, localZ);
         group.positions.set((y << 8) | columnIndex);
     }
@@ -43,15 +43,15 @@ final class CaveWaterSupportPlan {
             return;
         }
 
-        for (Map.Entry<MatterCavern, WaterCandidateGroup> entry : groups.entrySet()) {
-            WaterCandidateGroup group = entry.getValue();
+        for (Map.Entry<MatterCavern, FluidCandidateGroup> entry : groups.entrySet()) {
+            FluidCandidateGroup group = entry.getValue();
             for (int position = group.positions.nextSetBit(0); position >= 0; position = group.positions.nextSetBit(position + 1)) {
                 int y = position >>> 8;
                 int columnIndex = position & 255;
                 int localX = PowerOfTwoCoordinates.unpackLocal16X(columnIndex);
                 int localZ = columnIndex & 15;
                 MatterCavern current = getCavern(chunk, localX, y, localZ);
-                if (current != group.water || hasCupSupport(chunk, localX, y, localZ)) {
+                if (current != group.fluid || hasCupSupport(chunk, localX, y, localZ)) {
                     continue;
                 }
 
@@ -107,13 +107,13 @@ final class CaveWaterSupportPlan {
         return cavernSlice == null ? null : cavernSlice.get(localX, y & 15, localZ);
     }
 
-    private static final class WaterCandidateGroup {
-        private final MatterCavern water;
+    private static final class FluidCandidateGroup {
+        private final MatterCavern fluid;
         private final MatterCavern air;
         private final BitSet positions = new BitSet();
 
-        private WaterCandidateGroup(MatterCavern water, MatterCavern air) {
-            this.water = water;
+        private FluidCandidateGroup(MatterCavern fluid, MatterCavern air) {
+            this.fluid = fluid;
             this.air = air;
         }
     }

@@ -82,7 +82,7 @@ If mode construction fails, the engine logs a warning and falls back to `OVERWOR
 | `dimensionHeight` | `IrisRange` | min `-64`, max `320` | World min/max Y. Iris generates internal height `max - min`, then shifts by min on output |
 | `fluidHeight` | int | `63` | Required; 0–1024. Fluid column top in **internal** Y (0 = bottom of dimension height). World Y ≈ `fluidHeight + dimensionHeight.min` |
 | `environment` | `IrisEnvironment` | `NORMAL` | `NORMAL`, `NETHER`, `THE_END`, `CUSTOM` — selects base datapack dimension template (overworld/nether/end) |
-| `fullbright` | boolean | `false` | Forces maximum ambient lighting when true |
+| `fullbright` | boolean | `false` | Forces maximum ambient lighting; on Minecraft 26.2 this emits a white ambient-light color as well as scalar ambient light |
 | `bedrock` | boolean | `true` | Places bedrock at internal Y 0 when true |
 | `caveLavaHeight` | int | `8` | Subterrain fluid layer height (0–318) |
 
@@ -127,7 +127,7 @@ If mode construction fails, the engine logs a warning and falls back to `OVERWOR
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `rockPalette` | `IrisMaterialPalette` | stone | Subsurface “stone” fill palette |
-| `fluidPalette` | `IrisMaterialPalette` | water | Fluid block palette |
+| `fluidPalette` | `IrisMaterialPalette` | water | Ocean columns and `allowFluid` cave aquifers; accepts any weighted block palette |
 | `rockZoom` | double | `5` | Rock palette noise zoom |
 | `ores` | `IrisOreGenerator[]` | empty | Dimension-wide ore generators (surface vs underground via generator flags) |
 | `deposits` | `IrisDepositGenerator[]` | empty | Global deposit blobs |
@@ -208,7 +208,7 @@ Tri-state fields use `DEFAULT` | `TRUE` | `FALSE` (follow base dimension when `D
 | `skylight` | `DEFAULT` | Has skylight |
 | `ceiling` | `DEFAULT` | Logical bedrock ceiling |
 | `coordinateScale` | `-1` (unset) | Portal scale |
-| `ambientLight` | `-1` (unset) | 0–1 ambient |
+| `ambientLight` | `-1` (unset) | 0–1 ambient; a resolved value of `1` emits white ambient-light color on Minecraft 26.2 |
 | `fixedTime` | `-1` sentinel | Fixed day time when set |
 | `cloudHeight` | `-1` sentinel | Cloud Y or null to disable |
 | `monsterSpawnBlockLightLimit` | `-1` (unset) | 0–15 |

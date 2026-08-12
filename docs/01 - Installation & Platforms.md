@@ -164,7 +164,7 @@ Iris replaces the chunk generator. Vanilla and mod worldgen only runs where Iris
 
 | Vanilla / mod worldgen | Over Iris terrain | Control |
 |---|---|---|
-| Structures (vanilla, datapack, mod) | Yes, on by default | `importedStructures.disabled` denies individual keys |
+| Structures (vanilla, datapack, mod) | Yes, on by default | `importedStructures.disabled` denies families; `disabledExact` denies one complete key |
 | Placed features: ores, trees, plants, springs, geodes | Yes, **off by default** | `importedFeatures.enabled` per dimension, with per-step and per-key filters |
 | Carvers (caves, canyons, mod carvers) | Never | No `NoiseGeneratorSettings` for a carver to sample; use pack `caves` / `carvings` |
 | Surface builders and surface rules | Never | Iris builds surfaces from pack palettes |

@@ -26,6 +26,7 @@ import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.DatapackInstallResult;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.IrisWorlds;
+import art.arcane.iris.core.PendingWorldReplacementManager;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
 import art.arcane.iris.core.lifecycle.IrisWorldRemovalService;
@@ -124,17 +125,27 @@ public class CommandIris implements DirectorExecutor {
             @Param(description = "The seed to generate the world with", descriptionKey = "iris.director.commandiris.param.seed_generate_world_with", defaultValue = "1337")
             long seed,
             @Param(aliases = "main-world", description = "Whether or not to automatically use this world as the main world", descriptionKey = "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world", defaultValue = "false")
-            boolean main
+            boolean main,
+            @Param(name = "overwrite", aliases = "force", description = "Replace the exact existing world slot on the next restart", descriptionKey = "iris.director.commandiris.param.replace_exact_existing_world_slot_next_restart", defaultValue = "false")
+            boolean overwrite
     ) {
         NamespacedKey worldKey;
         try {
-            worldKey = IrisWorldStorage.managedKeyFromName(name);
-            IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
+            if (overwrite) {
+                worldKey = Iris.instance.pendingWorldReplacements().resolveRequestedWorldKey(name);
+            } else {
+                worldKey = IrisWorldStorage.managedKeyFromName(name);
+                IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
+            }
         } catch (IllegalArgumentException e) {
             sender().sendMessage(C.RED + e.getMessage());
             return;
         }
         String worldName = IrisWorldStorage.logicalName(worldKey);
+        if (overwrite && main && !NamespacedKey.minecraft("overworld").equals(worldKey)) {
+            sender().sendMessage(C.RED + "overwrite=true with main=true must target the configured main-world name.");
+            return;
+        }
         if (worldName.equalsIgnoreCase("iris")) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_YOU_CANNOT_USE_WORLD_NAME_IRIS_CREATING_WORLDS_AS_IRIS));
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_MAY_WE_SUGGEST_NAME_IRISWORLD_INSTEAD));
@@ -147,7 +158,7 @@ public class CommandIris implements DirectorExecutor {
             return;
         }
 
-        if (IrisWorldStorage.dimensionRoot(worldName).exists()) {
+        if (!overwrite && IrisWorldStorage.dimensionRoot(worldName).exists()) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_THAT_FOLDER_ALREADY_EXISTS));
             return;
         }
@@ -161,6 +172,27 @@ public class CommandIris implements DirectorExecutor {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_COULD_NOT_FIND_DOWNLOAD_DIMENSION, MessageArgument.untrusted("resolvedType", resolvedType)));
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_TRY_ONE_OVERWORLD_VANILLA_FLAT_THEEND));
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_DOWNLOAD_MANUALLY_IRIS_DOWNLOAD, MessageArgument.untrusted("resolvedType", resolvedType)));
+            return;
+        }
+
+        if (overwrite) {
+            try {
+                PendingWorldReplacementManager.StagedReplacement staged = Iris.instance
+                        .pendingWorldReplacements()
+                        .stageReplacement(sender(), worldKey, dimension, seed);
+                if (staged.seed() != seed) {
+                    sender().sendMessage(C.YELLOW + "Exact vanilla slots preserve the shared level seed; using "
+                            + staged.seed() + " instead of " + seed + ".");
+                }
+                sender().sendMessage(C.GREEN + "Staged Iris replacement for " + staged.worldKey()
+                        + ". Restart once to publish it. The current dimension is retained until Iris verifies the replacement.");
+            } catch (Throwable failure) {
+                Iris.reportError("Failed to stage Iris world replacement for " + worldKey + ".", failure);
+                String detail = failure.getMessage() == null || failure.getMessage().isBlank()
+                        ? failure.getClass().getSimpleName()
+                        : failure.getMessage();
+                sender().sendMessage(C.RED + "Could not stage the world replacement: " + detail);
+            }
             return;
         }
 

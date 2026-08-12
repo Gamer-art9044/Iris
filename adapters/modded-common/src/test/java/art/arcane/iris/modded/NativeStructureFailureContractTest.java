@@ -53,6 +53,7 @@ public class NativeStructureFailureContractTest {
         assertTrue(error.getMessage().contains("overworld:overworld"));
         assertTrue(error.getMessage().contains("generate-structures=false"));
         assertTrue(error.getMessage().contains("importedStructures.disabled"));
+        assertTrue(error.getMessage().contains("importedStructures.disabledExact"));
     }
 
     @Test

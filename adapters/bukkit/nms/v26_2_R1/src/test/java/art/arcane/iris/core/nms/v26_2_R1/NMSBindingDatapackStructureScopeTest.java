@@ -2,6 +2,9 @@ package art.arcane.iris.core.nms.v26_2_R1;
 
 import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.datapack.DatapackStructureScopeIndex;
+import art.arcane.iris.engine.object.IrisImportedStructureControl;
+import art.arcane.iris.engine.object.IrisStructureSetFrequencyOverride;
+import art.arcane.volmlib.util.collection.KList;
 import com.mojang.datafixers.util.Either;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.Holder;
@@ -18,6 +21,7 @@ import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadType;
 import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
+import net.minecraft.world.level.levelgen.structure.placement.StructurePlacementType;
 import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import org.junit.Test;
 import org.junit.BeforeClass;
@@ -33,7 +37,9 @@ import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class NMSBindingDatapackStructureScopeTest {
@@ -124,6 +130,161 @@ public class NMSBindingDatapackStructureScopeTest {
 
         assertEquals("minecraft:villages",
                 DatapackStructureStateFilter.structureSetKey(Holder.direct(structureSet)));
+    }
+
+    @Test
+    public void exactFrequencyOverridesScaleOnlyTheNamedNativeStructureSet() {
+        Holder<StructureSet> complexes = structureSetHolder(
+                "minecraft:nether_complexes",
+                new RandomSpreadStructurePlacement(27, 4, RandomSpreadType.LINEAR, 30084232),
+                structureHolder("minecraft:fortress"));
+        Holder<StructureSet> fossils = structureSetHolder(
+                "minecraft:nether_fossils",
+                new RandomSpreadStructurePlacement(2, 1, RandomSpreadType.LINEAR, 14357921),
+                structureHolder("minecraft:nether_fossil"));
+        KList<IrisStructureSetFrequencyOverride> overrides = new KList<>();
+        overrides.add(new IrisStructureSetFrequencyOverride()
+                .setStructureSet("minecraft:nether_complexes")
+                .setMultiplier(1.1D));
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setFrequencyOverrides(overrides);
+
+        DatapackStructureStateFilter.Selection selection = DatapackStructureStateFilter.filter(
+                List.of(complexes, fossils), index(List.of(), List.of()), Set.of(), control);
+
+        RandomSpreadStructurePlacement scaledComplexes =
+                (RandomSpreadStructurePlacement) selection.structureSets().get(0).value().placement();
+        RandomSpreadStructurePlacement unchangedFossils =
+                (RandomSpreadStructurePlacement) selection.structureSets().get(1).value().placement();
+        assertEquals(26, scaledComplexes.spacing());
+        assertEquals(4, scaledComplexes.separation());
+        assertEquals(2, unchangedFossils.spacing());
+        assertSame(fossils, selection.structureSets().get(1));
+        assertEquals(27, ((RandomSpreadStructurePlacement) complexes.value().placement()).spacing());
+    }
+
+    @Test
+    public void frequencyOnlyPassLeavesUnrelatedCustomPlacementUntouched() {
+        Holder<StructureSet> exclusionTarget = structureSetHolder(
+                "example:target", structureHolder("example:target"));
+        Holder<StructureSet> custom = structureSetHolder(
+                "example:custom",
+                new UnsupportedPlacement(Optional.of(
+                        new StructurePlacement.ExclusionZone(exclusionTarget, 1))),
+                structureHolder("example:custom"));
+        KList<IrisStructureSetFrequencyOverride> overrides = new KList<>();
+        overrides.add(new IrisStructureSetFrequencyOverride()
+                .setStructureSet("minecraft:nether_complexes")
+                .setMultiplier(1.1D));
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setFrequencyOverrides(overrides);
+
+        DatapackStructureStateFilter.Selection selection = DatapackStructureStateFilter.filter(
+                List.of(custom), index(List.of(), List.of()), Set.of(), control);
+
+        assertSame(custom, selection.structureSets().getFirst());
+    }
+
+    @Test
+    public void frequencyOnlyPassRebindsDependentExclusionTarget() {
+        Holder<StructureSet> target = structureSetHolder(
+                "example:target",
+                new RandomSpreadStructurePlacement(27, 4, RandomSpreadType.LINEAR, 30084232),
+                structureHolder("example:target"));
+        RandomSpreadStructurePlacement dependentPlacement = new RandomSpreadStructurePlacement(
+                Vec3i.ZERO,
+                StructurePlacement.FrequencyReductionMethod.DEFAULT,
+                1.0F,
+                4567,
+                Optional.of(new StructurePlacement.ExclusionZone(target, 1)),
+                32,
+                8,
+                RandomSpreadType.LINEAR);
+        Holder<StructureSet> dependent = structureSetHolder(
+                "example:dependent",
+                dependentPlacement,
+                structureHolder("example:dependent"));
+        KList<IrisStructureSetFrequencyOverride> overrides = new KList<>();
+        overrides.add(new IrisStructureSetFrequencyOverride()
+                .setStructureSet("example:target")
+                .setMultiplier(1.1D));
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setFrequencyOverrides(overrides);
+
+        DatapackStructureStateFilter.Selection selection = DatapackStructureStateFilter.filter(
+                List.of(dependent, target), index(List.of(), List.of()), Set.of(), control);
+
+        Holder<StructureSet> scaledDependent = selection.structureSets().get(0);
+        Holder<StructureSet> scaledTarget = selection.structureSets().get(1);
+        assertNotSame(dependent, scaledDependent);
+        assertNotSame(target, scaledTarget);
+        assertSame(scaledTarget, DatapackStructureStateFilter.exclusionZone(
+                scaledDependent.value().placement()).orElseThrow().otherSet());
+        assertEquals(26, ((RandomSpreadStructurePlacement)
+                scaledTarget.value().placement()).spacing());
+    }
+
+    @Test
+    public void frequencyOnlyPassRebindsAffectedExclusionCycle() {
+        MutableStructureSetHolder first = new MutableStructureSetHolder("example:first");
+        MutableStructureSetHolder second = new MutableStructureSetHolder("example:second");
+        first.bind(structureSet(
+                new RandomSpreadStructurePlacement(
+                        Vec3i.ZERO,
+                        StructurePlacement.FrequencyReductionMethod.DEFAULT,
+                        1.0F,
+                        101,
+                        Optional.of(new StructurePlacement.ExclusionZone(second, 1)),
+                        32,
+                        8,
+                        RandomSpreadType.LINEAR),
+                "example:first"));
+        second.bind(structureSet(
+                new RandomSpreadStructurePlacement(
+                        Vec3i.ZERO,
+                        StructurePlacement.FrequencyReductionMethod.DEFAULT,
+                        1.0F,
+                        102,
+                        Optional.of(new StructurePlacement.ExclusionZone(first, 1)),
+                        27,
+                        4,
+                        RandomSpreadType.LINEAR),
+                "example:second"));
+        KList<IrisStructureSetFrequencyOverride> overrides = new KList<>();
+        overrides.add(new IrisStructureSetFrequencyOverride()
+                .setStructureSet("example:second")
+                .setMultiplier(1.1D));
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setFrequencyOverrides(overrides);
+
+        DatapackStructureStateFilter.Selection selection = DatapackStructureStateFilter.filter(
+                List.of(first, second), index(List.of(), List.of()), Set.of(), control);
+
+        Holder<StructureSet> scaledFirst = selection.structureSets().get(0);
+        Holder<StructureSet> scaledSecond = selection.structureSets().get(1);
+        assertSame(scaledSecond, DatapackStructureStateFilter.exclusionZone(
+                scaledFirst.value().placement()).orElseThrow().otherSet());
+        assertSame(scaledFirst, DatapackStructureStateFilter.exclusionZone(
+                scaledSecond.value().placement()).orElseThrow().otherSet());
+        assertEquals(26, ((RandomSpreadStructurePlacement)
+                scaledSecond.value().placement()).spacing());
+    }
+
+    @Test
+    public void affectedRandomSpreadSubclassFailsInsteadOfLosingSubtypeBehavior() {
+        Holder<StructureSet> custom = structureSetHolder(
+                "example:custom",
+                new CustomRandomSpreadPlacement(),
+                structureHolder("example:custom"));
+        KList<IrisStructureSetFrequencyOverride> overrides = new KList<>();
+        overrides.add(new IrisStructureSetFrequencyOverride()
+                .setStructureSet("example:custom")
+                .setMultiplier(1.1D));
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setFrequencyOverrides(overrides);
+
+        assertThrows(IllegalStateException.class, () -> DatapackStructureStateFilter.filter(
+                List.of(custom), index(List.of(), List.of()), Set.of(), control));
     }
 
     @Test
@@ -273,6 +434,13 @@ public class NMSBindingDatapackStructureScopeTest {
                 value);
     }
 
+    private static StructureSet structureSet(StructurePlacement placement, String structureKey) {
+        return new StructureSet(
+                List.of(new StructureSet.StructureSelectionEntry(
+                        structureHolder(structureKey), 1)),
+                placement);
+    }
+
     private static final class KeyedHolder<T> implements Holder<T> {
         private final ResourceKey<T> key;
         private final T value;
@@ -350,6 +518,39 @@ public class NMSBindingDatapackStructureScopeTest {
         @Override
         public boolean canSerializeIn(HolderOwner<T> owner) {
             return true;
+        }
+    }
+
+    private static final class UnsupportedPlacement extends StructurePlacement {
+        private UnsupportedPlacement(Optional<ExclusionZone> exclusionZone) {
+            super(Vec3i.ZERO, FrequencyReductionMethod.DEFAULT, 1F, 1, exclusionZone);
+        }
+
+        @Override
+        protected boolean isPlacementChunk(ChunkGeneratorStructureState state, int x, int z) {
+            return false;
+        }
+
+        @Override
+        public StructurePlacementType<?> type() {
+            return null;
+        }
+    }
+
+    private static final class MutableStructureSetHolder extends Holder.Reference<StructureSet> {
+        private MutableStructureSetHolder(String key) {
+            super(Type.STAND_ALONE, new HolderOwner<>() {
+            }, ResourceKey.create(Registries.STRUCTURE_SET, Identifier.parse(key)), null);
+        }
+
+        private void bind(StructureSet structureSet) {
+            bindValue(structureSet);
+        }
+    }
+
+    private static final class CustomRandomSpreadPlacement extends RandomSpreadStructurePlacement {
+        private CustomRandomSpreadPlacement() {
+            super(27, 4, RandomSpreadType.LINEAR, 30084232);
         }
     }
 }

@@ -148,9 +148,11 @@ A datapack structure whose filter lists only its own biomes never generates unti
 | Field | Default | Meaning |
 |---|---|---|
 | `disabled` | `[]` | Structure keys/prefixes to deny. |
+| `disabledExact` | `[]` | Complete structure keys to deny without matching related variants. |
 | `undergroundYShift` | `0` (-512..512) | Vertical offset for underground-step structures only. Surface structures never use it. |
 | `datapackOverrides` | `true` | Whether ingested datapacks may replace `minecraft:`-namespaced structure content (2.5). |
-| `adjustments` | `[]` | Per-structure adjustments for structures still generating natively (1.4). |
+| `frequencyOverrides` | `[]` | Exact structure-set placement-density multipliers (1.4). |
+| `adjustments` | `[]` | Per-structure adjustments for structures still generating natively (1.5). |
 
 #### Prefix matching
 
@@ -162,15 +164,38 @@ Used by `disabled` and `adjustments[].match`. Both sides trimmed and lowercased;
 
 `"minecraft:village"` matches village variants; `"nova_structures"` without trailing colon does **not** match the namespace.
 
+`disabledExact` trims and lowercases each complete key, then compares for equality only. For example, `"minecraft:ruined_portal"` there disables the Overworld variant while leaving `"minecraft:ruined_portal_nether"` enabled. Use `disabled` when the whole family should be denied.
+
 ```json
 {
 "importedStructures": {
-  "disabled": ["minecraft:village", "minecraft:pillager_outpost"]
+  "disabled": ["minecraft:village", "minecraft:pillager_outpost"],
+  "disabledExact": ["minecraft:ruined_portal"]
 }
 }
 ```
 
-### 1.4 `adjustments[]`
+### 1.4 `frequencyOverrides[]`
+
+Use this to make a registered native structure set more or less common without converting its structures to explicit Iris placements. Each entry is `{ "structureSet": "namespace:path", "multiplier": 0.01..16 }`; `structureSet` is an exact registered **structure-set key**, not a structure key, and the last normalized duplicate wins. Bukkit/Paper, Fabric, Forge, and NeoForge apply the same dimension-scoped contract to newly generated chunks.
+
+```json
+{
+  "importedStructures": {
+    "frequencyOverrides": [
+      { "structureSet": "minecraft:nether_complexes", "multiplier": 1.1 },
+      { "structureSet": "minecraft:ruined_portals", "multiplier": 1.1 },
+      { "structureSet": "minecraft:nether_fossils", "multiplier": 1.1 }
+    ]
+  }
+}
+```
+
+Iris retains the registered set entries, weights, biome eligibility, placement algorithm, salt, exclusion zones, structure start/Y logic, processors, entities, mobs, loot, and native locate path. For random-spread placement, it first scales Minecraft's placement probability up to `1`, then derives the nearest integer spacing with `round(oldSpacing / sqrt(remainingMultiplier))`, never below `separation + 1`. Integer rounding means the realized increase can be slightly lower or higher: at `1.1`, Nether complexes move from spacing `27` to `26` (about `7.8%` denser), ruined portals from `40` to `38` (about `10.8%` denser), and Nether fossils remain `2/1` because no smaller legal spacing exists.
+
+Concentric-ring sets can scale only their placement probability; a ring placement already at probability `1` cannot become denser through this field. Minecraft or modded custom placement types outside the affected override and exclusion-zone graph remain untouched. An exact override, or an exclusion dependency on an overridden set, that requires copying an unsupported placement fails world binding instead of silently leaving stale exclusion behavior. Existing chunks and existing starts are never rewritten.
+
+### 1.5 `adjustments[]`
 
 Each entry (`match` selects targets by the same prefix rule):
 
@@ -295,6 +320,8 @@ Installed datapacks are real Minecraft datapacks at `<level root>/datapacks/<id>
 
 Ingest and recovery run synchronously in Iris's startup admission gate when `general.autoIngestDatapacks` is enabled (default true); players and every Iris world/Studio creation path remain locked until that phase is valid. A persisted manifest/configuration/content fingerprint lets an unchanged boot skip remote resolution and full revalidation, and Iris refreshes that fingerprint after its own authorized post-start import maintenance; URL, Minecraft/Iris version, override policy, external manifest edits, staging, transaction, installed content, or cache corruption still invalidates reuse and runs the full fail-closed path. Minecraft builds worldgen registries at server start, so a **newly installed or repaired** datapack requires a clean restart before admission; after it returns, keys are live only in the per-world structure state of declaring Iris dimensions.
 
+Cache reuse is a local validation decision and does not poll remote sources; run `/iris datapack ingest` when you want an update check. Every successful ingest persists fresh staging and installed-target receipts, so unchanged bootstrap recovery leaves the manifest stable and the next startup can reuse the cached fingerprint.
+
 Scratch validation rejects links, junction-like special files, and real cross-volume entries. On Windows/Java 25, Iris also verifies the drive root and volume serial when the JDK reports unequal `FileStore` identities only because a path crossed the legacy 247-character prefix boundary; unresolved cleanup, identity, transaction, or validation failures remain blocking and create no world artifacts.
 
 ### 2.3 Manual commands
@@ -332,7 +359,7 @@ Scratch validation rejects links, junction-like special files, and real cross-vo
 }
 ```
 
-**(c) Manual placement only.** Disable the datapack namespace, then place specific keys with `nativeStructures` — see **`disabled` never blocks an explicit placement** below:
+**(c) Manual placement only.** Disable the datapack namespace, then place specific keys with `nativeStructures` — see **`disabled` and `disabledExact` never block an explicit placement** below:
 
 ```json
 {
@@ -377,9 +404,9 @@ Placement grid fields (`distribution`, `spacing`/`separation`/`salt`, `density`,
 
 Scoping matches Iris placements. Validation requires the structure's effective assembly span stay inside Minecraft's 128-block (8-chunk) structure reference range.
 
-### 3.2 `disabled` never blocks an explicit placement
+### 3.2 `disabled` and `disabledExact` never block an explicit placement
 
-The placement injector generates planned starts without consulting `disabled` and bypasses the structure's own biome filter. "Disable namespace, re-place explicitly" is supported.
+The placement injector generates planned starts without consulting either deny list and bypasses the structure's own biome filter. Both "disable namespace, re-place explicitly" and exact-key denial with explicit replacement are supported.
 
 ### 3.3 `nativeSuppression: REPLACE_SOURCE`
 

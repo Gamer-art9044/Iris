@@ -7,6 +7,7 @@ import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.plugin.IrisService;
 import org.bukkit.Bukkit;
@@ -31,11 +32,11 @@ public final class DatapackStructureScopeSVC implements IrisService {
             throw new IllegalStateException(
                     "Iris could not establish ownership for installed datapack structure sets", e);
         }
-        if (scopeIndex.isEmpty()) {
-            return;
-        }
         for (World world : Bukkit.getWorlds()) {
-            applyScope(world);
+            IrisImportedStructureControl importedStructures = importedStructures(world);
+            if (!scopeIndex.isEmpty() || importedStructures != null && importedStructures.hasFrequencyOverrides()) {
+                applyScope(world, importedStructures);
+            }
         }
     }
 
@@ -52,8 +53,10 @@ public final class DatapackStructureScopeSVC implements IrisService {
         boolean studioEntryBootstrap = event.getWorld().getGenerator()
                 instanceof BukkitChunkGenerator generator
                 && generator.isStudioEntryBootstrapActive();
-        if (shouldApplyScope(scopeIndex.isEmpty(), studioEntryBootstrap)) {
-            applyScope(event.getWorld());
+        IrisImportedStructureControl importedStructures = importedStructures(event.getWorld());
+        if (shouldApplyScope(scopeIndex.isEmpty(), studioEntryBootstrap,
+                importedStructures != null && importedStructures.hasFrequencyOverrides())) {
+            applyScope(event.getWorld(), importedStructures);
         }
     }
 
@@ -62,15 +65,19 @@ public final class DatapackStructureScopeSVC implements IrisService {
         INMS.get().abandonStudioStructureBootstrap(event.getWorld());
     }
 
-    static boolean shouldApplyScope(boolean scopeIndexEmpty, boolean studioEntryBootstrap) {
-        return !scopeIndexEmpty || studioEntryBootstrap;
+    static boolean shouldApplyScope(boolean scopeIndexEmpty, boolean studioEntryBootstrap,
+                                    boolean hasFrequencyOverrides) {
+        return !scopeIndexEmpty || studioEntryBootstrap || hasFrequencyOverrides;
     }
 
-    private void applyScope(World world) {
+    private void applyScope(World world, IrisImportedStructureControl importedStructures) {
         Set<String> declaredSources = declaredSources(world);
+        IrisImportedStructureControl activeControl = importedStructures == null
+                ? new IrisImportedStructureControl()
+                : importedStructures;
         try {
             DatapackStructureScopeResult result = INMS.get().scopeDatapackStructures(
-                    world, scopeIndex, declaredSources);
+                    world, scopeIndex, declaredSources, activeControl);
             IrisLogging.info("Scoped Iris-managed datapack structure sets for world '"
                     + world.getName() + "': " + result.retainedManagedSets() + " retained, "
                     + result.excludedManagedSets() + " excluded.");
@@ -78,6 +85,15 @@ public final class DatapackStructureScopeSVC implements IrisService {
             throw new IllegalStateException("Could not scope Iris-managed datapack structure sets for world '"
                     + world.getName() + "'", error);
         }
+    }
+
+    private IrisImportedStructureControl importedStructures(World world) {
+        PlatformChunkGenerator generator = IrisToolbelt.access(world);
+        if (generator == null || generator.getTarget() == null
+                || generator.getTarget().getDimension() == null) {
+            return null;
+        }
+        return generator.getTarget().getDimension().getImportedStructures();
     }
 
     private Set<String> declaredSources(World world) {

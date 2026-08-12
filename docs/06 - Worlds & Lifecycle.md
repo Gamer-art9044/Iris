@@ -1,6 +1,6 @@
 # 06 - Worlds & Lifecycle
 
-Iris manages world identity, storage paths, pack installation, creation, persistence, and removal across Bukkit-family servers and the three mod loaders. Bukkit-managed Iris worlds live under the level root as `dimensions/iris/<key>/` with namespace `iris`; modded dimensions persist through `iris-dimensions.json`. Non-Studio worlds carry a frozen pack at `iris/pack`, while Studio worlds bind the live packs directory.
+Iris manages world identity, storage paths, pack installation, creation, persistence, and removal across Bukkit-family servers and the three mod loaders. Bukkit-managed Iris worlds live under the level root as `dimensions/iris/<key>/` with namespace `iris`; modded dimensions persist through `iris-dimensions.json`. Non-Studio worlds carry a frozen pack at `iris/pack`, validated by its exact normalized root rather than the common `pack` folder name, while Studio worlds bind the live packs directory.
 
 See also: `04 - Commands & Permissions.md`, `02 - Getting Started.md`, `05 - Concepts & Pack Layout.md`, `07 - Pregeneration.md`, `10 - Studio & VSCode Schemas.md`, `30 - Platform Differences.md`.
 
@@ -77,7 +77,7 @@ If the whole registry cannot be parsed during startup, Iris moves it to `iris-di
 
 | Command | Effect |
 |---------|--------|
-| `/iris create <name> [type=default] [seed=1337] [main=false]` | Create or Folia-stage a managed world |
+| `/iris create <name> [type=default] [seed=1337] [main=false] [overwrite=false]` | Create/Folia-stage a managed world, or stage an exact restart replacement |
 | `/iris load <name>` / `/iris import <name>` | Load a disk Iris world via reconciler |
 | `/iris unload <world>` | Evacuate → unload → close generator |
 | `/iris remove <name> [delete=true]` | Unregister / delete managed world |
@@ -91,10 +91,11 @@ Full permission table: `04 - Commands & Permissions.md`.
 
 | Param | Default | Notes |
 |-------|---------|-------|
-| `name` | required | Becomes `iris:<logical>`; folder must not already exist |
+| `name` | required | Normally becomes `iris:<logical>`; with overwrite it may also be the exact configured main, `_nether`, or `_the_end` alias |
 | `type` | `default` | Pack/dimension selector: `default` → `settings.generator.defaultWorldType` (`overworld`); else pack name or `pack:dimensionKey` |
-| `seed` | `1337` | World seed |
+| `seed` | `1337` | World seed; exact vanilla-slot overwrite preserves the existing level's shared authoritative seed instead |
 | `main` | `false` | Schedule main-world promotion on JVM shutdown (Paper path) or promote during Folia staging |
+| `overwrite` (`force`) | `false` | Stage a validated exact-slot replacement for the next restart; never deletes a loaded world live |
 
 Create refuses the primary Bukkit thread. Startup datapack validation must be ready and the selected source pack must have a loadable validation result before the lifecycle lease, datapack preparation, dimension folder, pack snapshot, registration, or Bukkit/NMS create path is entered; lifecycle domain `WORLD_MUTATION` / kind `WORLD_CREATE` must then be free or create fails busy.
 
@@ -103,7 +104,7 @@ Create refuses the primary Bukkit thread. Startup datapack validation must be re
 1. Resolve the managed key and dimension without creating the dimension root.
 2. Require startup datapack readiness and a loadable validation result for the dimension's owning pack.
 3. Ensure datapacks for the dimension types are installed; queue restart if types not yet loaded.
-4. Copy the pack into `<world>/iris/pack` (`StudioSVC.installIntoWorld`) — atomic stage → publish; refuses primary thread.
+4. Copy the pack into `<world>/iris/pack` (`StudioSVC.installIntoWorld`) — atomic stage → publish; refuses primary thread. Iris invalidates any prior result for that exact root and validates the final published tree before generator creation; failure rolls the publication back.
 5. Build `WorldCreator` with Iris generator (`studio=false`).
 6. Create the world through `WorldLifecycleService` / NMS async create (timeout 120s; timeout triggers server restart).
 7. Register the world in `bukkit.yml` with generator `Iris` dimension key and seed; update the Multiverse link when present.
@@ -116,12 +117,20 @@ Runtime world creation is disabled on Folia. `/iris create` instead:
 1. Requires startup datapack readiness and a loadable validation result for the selected pack; refusal leaves no dimension folder or registration.
 2. Acquires the `WORLD_CREATE` lease.
 3. Installs datapacks if changed.
-4. Stages the pack into the managed dimension root via `installIntoWorld`.
+4. Stages the pack into the managed dimension root via `installIntoWorld`; the final published snapshot must pass exact-root validation before registration.
 5. Registers the world in `bukkit.yml` (`BukkitWorldConfiguration.register`).
 6. If `main=true`, promotes main-world files immediately under lease (failure rolls back bukkit.yml + deletes staged folder).
 7. Instructs the operator to restart; generation/load happens on next startup.
 
 `WorldLifecycleStaging` holds staged generators/biome providers for the backend that consumes them at load.
+
+## Exact world-slot replacement
+
+`overwrite=true` uses lifecycle kind `WORLD_REPLACE` and always stages for restart on Bukkit-family servers, including Paper and Folia. It accepts safe `iris:*` keys and only the three exact vanilla slots resolved from the configured level name: `minecraft:overworld`, `minecraft:the_nether`, and `minecraft:the_end`. A vanilla slot requires a matching pack environment (`NORMAL`, `NETHER`, or `THE_END`), and Nether/End replacement requires the server's matching allow setting to be enabled; foreign namespaces, other `minecraft:*` keys, path traversal, links, and special filesystem entries fail closed. `main=true` may accompany overwrite only for the configured main-world name. Minecraft stores one authoritative seed for the existing level, so all three exact vanilla slots preserve that loaded primary-world seed and report when it differs from the command's `seed`; changing the level seed remains the ordinary new-main promotion workflow.
+
+The transaction copies and validates a fresh frozen pack under a same-filesystem sibling stage, fingerprints it, journals the original target state and `bukkit.yml` generator/seed, then compare-and-swaps that one configuration entry. Distinct slots can be queued before one restart. During Iris `STARTUP`, before Bukkit loads worlds, each authorized transaction atomically moves the old exact dimension directory to a retained sibling backup and publishes its stage. There is no chunk merge: old region, entity, POI, and Iris data remain only in the backup, while the target starts with the staged pack snapshot.
+
+The backup is deleted only after `WorldLoad` proves the exact namespaced identity, Iris generator, selected dimension, seed, vanilla-slot environment, and unchanged pack fingerprint. A failed runtime check journals rollback, restores the prior `bukkit.yml` generator/seed with compare-and-swap semantics, requests another restart, and restores the retained directory before that restart loads worlds. A crash between either atomic move or journal write is retried idempotently. Conflicting manual configuration, changed staged bytes, unsafe storage, or corrupt journals block Iris world admission and preserve the stage/backup for operator recovery instead of guessing or deleting.
 
 ## Studio create
 
@@ -143,7 +152,7 @@ Studio uses `IrisCreator.studio(true)`:
 2. `BukkitWorldReconciler.loadWorld(bukkit.yml, worldKey)`.
 3. Reports success, busy, restart-required, or failure.
 
-Load does not re-download packs; the world must already have `iris/pack` content and registration data consistent with Iris. Reconciliation checks startup readiness and the resolved pack before touching `bukkit.yml` or calling a world backend.
+Load does not re-download packs; the world must already have `iris/pack` content and registration data consistent with Iris. Reconciliation checks startup readiness, then lazily validates that world's exact snapshot root before touching `bukkit.yml` or calling a world backend. Results are path-scoped, so separate worlds whose snapshot folders are both named `pack` cannot authorize or reject one another.
 
 ## Unload
 
@@ -188,6 +197,8 @@ When create sets `main=true` (non-Folia), a shutdown hook rewrites `server.prope
 
 Promotion requires absent target level folder and refuses symlink world data. Folia with `main=true` performs the same publish during staging instead of deferring to shutdown.
 
+To replace the currently configured main slot in place, name that exact main world and use `overwrite=true`; this keeps the top-level level root, shared datapacks, player data, and non-target dimensions intact. Ordinary `main=true` without overwrite remains the new-level-root promotion workflow above.
+
 ## Pack snapshot vs studio (lifecycle view)
 
 | Operation | Pack effect |
@@ -200,4 +211,4 @@ Promotion requires absent target level folder and refuses symlink world data. Fo
 
 ## Concurrent lifecycle guards
 
-`LifecycleOperationCoordinator` serializes domains including `WORLD_MUTATION` and `PACK_MUTATION`. Overlapping create/load/unload/remove/pack-publish returns busy to the operator. World create also refuses if the dimension root already exists or the world is already loaded.
+`LifecycleOperationCoordinator` serializes domains including `WORLD_MUTATION` and `PACK_MUTATION`. Overlapping create/load/unload/remove/replace/pack-publish returns busy to the operator. Ordinary world create refuses if the dimension root already exists or the world is already loaded; exact replacement uses a separately journaled restart transaction and never relaxes removal-path protection.

@@ -19,15 +19,25 @@
 package art.arcane.iris.core.pack;
 
 import org.junit.After;
+import org.junit.Assume;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class PackValidationRegistryTest {
+    @Rule
+    public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
     @Before
     public void setUp() {
         PackValidationRegistry.clear();
@@ -60,11 +70,73 @@ public class PackValidationRegistryTest {
         assertEquals(result, PackValidationRegistry.requireLoadable("overworld"));
     }
 
+    @Test
+    public void exactRootsWithTheSameBasenameRemainIndependent() throws Exception {
+        Path firstRoot = temporaryFolder.newFolder("first").toPath().resolve("pack");
+        Path secondRoot = temporaryFolder.newFolder("second").toPath().resolve("pack");
+        PackValidationResult loadable = new PackValidationResult(
+                "pack", List.of(), List.of(), 1L);
+        PackValidationResult broken = new PackValidationResult(
+                "pack", List.of("second snapshot is broken"), List.of(), 2L);
+
+        PackValidationRegistry.publish(firstRoot, loadable);
+        PackValidationRegistry.publish(secondRoot, broken);
+
+        assertEquals(loadable, PackValidationRegistry.requireLoadable(firstRoot));
+        assertEquals(broken, PackValidationRegistry.get(secondRoot));
+        assertTrue(PackValidationRegistry.isBroken(secondRoot));
+        assertNull(PackValidationRegistry.get("pack"));
+        assertBroken(secondRoot, "second snapshot is broken");
+    }
+
+    @Test
+    public void removingOneExactRootDoesNotEvictItsSameNamedSibling() throws Exception {
+        Path firstRoot = temporaryFolder.newFolder("remove-first").toPath().resolve("pack");
+        Path secondRoot = temporaryFolder.newFolder("keep-second").toPath().resolve("pack");
+        PackValidationResult first = new PackValidationResult("pack", List.of(), List.of(), 1L);
+        PackValidationResult second = new PackValidationResult("pack", List.of(), List.of(), 2L);
+        PackValidationRegistry.publish(firstRoot, first);
+        PackValidationRegistry.publish(secondRoot, second);
+
+        PackValidationRegistry.remove(firstRoot);
+
+        assertNull(PackValidationRegistry.get(firstRoot));
+        assertEquals(second, PackValidationRegistry.requireLoadable(secondRoot));
+    }
+
+    @Test
+    public void existingRootAliasesResolveToTheSameRealPath() throws Exception {
+        Path realRoot = temporaryFolder.newFolder("real-pack").toPath();
+        Path linkedRoot = realRoot.getParent().resolve("linked-pack");
+        try {
+            Files.createSymbolicLink(linkedRoot, realRoot);
+        } catch (IOException | UnsupportedOperationException exception) {
+            Assume.assumeNoException(exception);
+        }
+        PackValidationResult result = new PackValidationResult("pack", List.of(), List.of(), 1L);
+
+        PackValidationRegistry.publish(linkedRoot, result);
+
+        assertEquals(result, PackValidationRegistry.requireLoadable(realRoot));
+    }
+
     private void assertBroken(String pack, String expectedReason) {
         try {
             PackValidationRegistry.requireLoadable(pack);
         } catch (BrokenPackException e) {
             assertEquals(pack, e.getPackName());
+            assertTrue(e.getReasons().toString(), e.getReasons().stream().anyMatch(
+                    reason -> reason.contains(expectedReason)));
+            return;
+        }
+        throw new AssertionError("Expected pack validation to fail closed");
+    }
+
+    private void assertBroken(Path packRoot, String expectedReason) {
+        try {
+            PackValidationRegistry.requireLoadable(packRoot);
+        } catch (BrokenPackException e) {
+            assertEquals(packRoot.toAbsolutePath().normalize().toString(), e.getPackName());
             assertTrue(e.getReasons().toString(), e.getReasons().stream().anyMatch(
                     reason -> reason.contains(expectedReason)));
             return;

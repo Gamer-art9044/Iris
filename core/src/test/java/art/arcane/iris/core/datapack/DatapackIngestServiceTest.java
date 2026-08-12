@@ -13,6 +13,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.io.IO;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpServer;
@@ -2928,6 +2929,37 @@ public class DatapackIngestServiceTest {
     }
 
     @Test
+    public void successfulUnchangedIngestKeepsStartupFingerprintStableAcrossNextReapply() throws Exception {
+        ReapplyFixture fixture = reapplyFixture("reapply-ingest-cache");
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+        DatapackIngestService.Entry entry = new Gson().fromJson(
+                manifestEntry(fixture.root()), DatapackIngestService.Entry.class);
+        DatapackIngestService.Report report = new DatapackIngestService.Report();
+
+        DatapackIngestService.recordInstallResult(
+                null,
+                report,
+                fixture.staging(),
+                fixture.worlds(),
+                entry,
+                new DatapackIngestService.InstallResult(false),
+                entry.versionNumber
+        );
+        writePrettyManifest(fixture.root(), entry);
+        String cachedFingerprint = DatapackIngestService.startupValidationFingerprint(
+                fixture.root(), fixture.worlds());
+
+        assertFalse(entry.stagingMetadata.isBlank());
+        assertEquals(1, entry.installMetadata.size());
+        assertEquals(1, report.getUpToDate().size());
+        assertTrue(DatapackIngestService.reapplyStagedDirectories(
+                fixture.root(), fixture.stagingRoot(), fixture.worlds(), false));
+        assertEquals(cachedFingerprint, DatapackIngestService.startupValidationFingerprint(
+                fixture.root(), fixture.worlds()));
+    }
+
+    @Test
     public void reapplyOutcomeDistinguishesRepairFromAnUnchangedPass() throws Exception {
         ReapplyFixture fixture = reapplyFixture("reapply-outcome");
 
@@ -3181,6 +3213,16 @@ public class DatapackIngestServiceTest {
         manifest.put("entries", entry == null ? List.of() : List.of(entry));
         Files.writeString(new File(root, "manifest.json").toPath(), new Gson().toJson(manifest),
                 StandardCharsets.UTF_8);
+    }
+
+    private void writePrettyManifest(File root, DatapackIngestService.Entry entry) throws Exception {
+        Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("entries", List.of(entry));
+        Files.writeString(
+                new File(root, "manifest.json").toPath(),
+                new GsonBuilder().setPrettyPrinting().create().toJson(manifest),
+                StandardCharsets.UTF_8
+        );
     }
 
     private String ownershipHash(File directory) throws Exception {

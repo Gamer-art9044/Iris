@@ -1,6 +1,6 @@
 # 15 - Caves & Carving
 
-Iris carves caves itself during mantle generation via `MantleCarvingComponent` and `IrisCaveCarver3D`. Density fields from `IrisCaveProfile` decide solid vs air/water/lava. Cave biomes paint floors, ceilings, decorators, and objects inside carved space. Vanilla and mod noise carvers never run over Iris terrain.
+Iris carves caves itself during mantle generation via `MantleCarvingComponent` and `IrisCaveCarver3D`. Density fields from `IrisCaveProfile` decide solid vs air, the dimension's configured fluid palette, or deep lava. Cave biomes paint floors, ceilings, decorators, and objects inside carved space. Vanilla and mod noise carvers never run over Iris terrain.
 
 Related: `11 - Dimensions.md`, `12 - Regions.md`, `13 - Biomes.md`, `14 - Generators & Noise.md`, `16 - Surfaces, Decorators & Deposits.md`, `17 - Trees, Fungi, Coral, Crystals, Formations, Ruins.md`, `20 - Object Placement.md`, `22 - Native Structures & Datapacks.md`.
 
@@ -15,7 +15,7 @@ Start with a validating `OVERWORLD` pack whose surface and fluid height are alre
     "enabled": true,
     "verticalRange": { "min": 0, "max": 64 },
     "allowSurfaceBreak": false,
-    "allowWater": false,
+    "allowFluid": false,
     "allowLava": false
   }
 }
@@ -23,9 +23,9 @@ Start with a validating `OVERWORLD` pack whose surface and fluid height are alre
 
 1. Record seed `1337` and surface coordinates in a Studio world before enabling the profile.
 2. Add the fields above to the existing dimension JSON, validate the pack, and reopen Studio if the change is not accepted by the running engine.
-3. Generate new chunks and inspect below the surface. Success is carved air within the configured vertical range, an intact surface, and no water or lava placed by the cave profile.
+3. Generate new chunks and inspect below the surface. Success is carved air within the configured vertical range, an intact surface, and no fluid-palette blocks or deep lava placed by the cave profile.
 4. If no caves appear, confirm dimension `mode.type` is `OVERWORLD`, `useMantle` and `carvingEnabled` are true, and the effective biome or region profile is not overriding this dimension profile. Test only fresh chunks.
-5. Once the void shape is proven, add one biome key to a region's `caveBiomes`, then add cave layers and decorators. Enable water, lava, or surface breaks one setting at a time so each change remains observable.
+5. Once the void shape is proven, add one biome key to a region's `caveBiomes`, then add cave layers and decorators. Enable dimension fluid, deep lava, or surface breaks one setting at a time so each change remains observable.
 
 ## Architecture (author-relevant)
 
@@ -33,7 +33,9 @@ Start with a validating `OVERWORLD` pack whose surface and fluid height are alre
 2. Per column, Iris resolves a cave profile from biome → region → dimension (`enabled` profiles only).
 3. Profiles blend across neighbors; `IrisCaveCarver3D` samples 3D density and writes carve flags into the mantle.
 4. Cave biomes (region `caveBiomes`, dimension `carving` Y-band overrides, surface biome `carvingBiome`) supply materials and content for carved voxels.
-5. Fluid placement inside caves follows profile water/lava rules and surface-clearance guards.
+5. Aquifers sample the dimension `fluidPalette` below `fluidHeight`; deep lava remains a separate profile rule controlled by `allowLava` and `caveLavaHeight`.
+
+Enabled dimension `carving` biome graphs are included in the dimension's recursive reachable-biome closure even when no region lists them, so their custom biome identities and spawn mappings are available wherever the Y-band selects them.
 
 Empty pack folders such as `caves/` or `ravines/` are not separate registrant types. Carving is profile-driven JSON on dimensions/biomes/regions, not standalone cave files.
 
@@ -56,7 +58,7 @@ Iris does not implement Minecraft `NoiseGeneratorSettings` carver sampling. Gene
 
 ## Cave profile (`IrisCaveProfile`)
 
-Snippet key: `cave-profile`. Appears on **dimension**, **region**, and **biome**. Resolution prefers the most specific enabled profile in the mantle path (biome/region/dimension blend).
+Snippet key: `cave-profile`. Appears on **dimension**, **region**, and **biome**. Resolution prefers the most specific enabled profile in the mantle path (biome/region/dimension blend). The dimension-level `fluidPalette` supplies aquifer material and accepts any weighted block palette; its default is water. A lava `fluidPalette` therefore turns otherwise identical Overworld aquifers into lava without changing cave geometry.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
@@ -88,10 +90,12 @@ Snippet key: `cave-profile`. Appears on **dimension**, **region**, and **biome**
 | `defaultObjectPlaceMode` | `ObjectPlaceMode` | null | Prefer stilt modes for cave props |
 | `anchorScanStep` | int 1..8 | `1` | Vertical anchor search step |
 | `anchorSearchAttempts` | int 1..64 | `6` | Random column retries per chunk |
-| `allowWater` | boolean | `true` | Cave water below fluid height |
-| `waterMinDepthBelowSurface` | int 0..64 | `12` | Depth before cave water |
-| `waterRequiresFloor` | boolean | `true` | Solid floor under water |
-| `allowLava` | boolean | `true` | Cave lava by lava height rules |
+| `allowFluid` | boolean | `true` | Place dimension `fluidPalette` aquifers below fluid height |
+| `fluidMinDepthBelowSurface` | int 0..64 | `12` | Minimum surface burial before aquifer placement |
+| `fluidRequiresFloor` | boolean | `true` | Require a supported cup beneath aquifer blocks |
+| `allowLava` | boolean | `true` | Place vanilla lava at or below `caveLavaHeight` |
+
+`allowWater`, `waterMinDepthBelowSurface`, and `waterRequiresFloor` were removed. Pack validation rejects them with their replacement names so an old dry-cave setting cannot silently fall back to the new `allowFluid: true` default.
 
 ### Density module (`IrisCaveFieldModule`)
 
@@ -180,7 +184,7 @@ Editable Iris jigsaws can resolve starts against the carved-space mantle instead
 | `caveAnchorAttempts` | `8` | Deterministic unique X/Z columns tested inside the selected start chunk; runtime clamps to `1..64` |
 | `caveAnchorScanStep` | `1` | Vertical scan increment; runtime clamps to `1..16`; values above one can skip valid one-block anchors |
 | `caveMinimumClearance` | `3` | Required contiguous vertical carved run; runtime clamps to `1..64` |
-| `underwater` | `false` | For cave anchors, require a dry cavern cell: ordinary cavern air must be above `caveLavaHeight`, explicit water/lava is rejected, and forced-air cavern matter remains dry below that threshold; `true` permits fluid cavern cells |
+| `underwater` | `false` | For cave anchors, require a dry cavern cell: ordinary cavern air must be above `caveLavaHeight`, explicit palette-fluid/deep-lava cells are rejected, and forced-air cavern matter remains dry below that threshold; `true` permits fluid cavern cells |
 
 Geometry and alignment are exact:
 
@@ -193,7 +197,7 @@ Geometry and alignment are exact:
 
 Selection is deterministic for the world seed, placement identity, and start chunk. Iris visits at most 64 unique columns from the chunk's 256 columns, stops at the first column with matches, and chooses deterministically among every valid anchor found in that column. When no candidate passes, the placement is skipped; Iris does not fall back to a surface or height-band start.
 
-The cave-anchor `underwater` gate reads `MatterCavern` at the actual anchor, not ocean height at the surface. A null or non-cavern cell is never an anchor. With `underwater: false`, explicit cave water/lava and ordinary cavern air at or below the dimension's `caveLavaHeight` are rejected, while forced-air cavern matter is accepted even below that threshold. With `underwater: true`, fluid cavern cells are allowed but the cell must still be carved cavern matter.
+The cave-anchor `underwater` gate reads `MatterCavern` at the actual anchor, not ocean height at the surface. A null or non-cavern cell is never an anchor. With `underwater: false`, explicit palette-fluid/deep-lava cells and ordinary cavern air at or below the dimension's `caveLavaHeight` are rejected, while forced-air cavern matter is accepted even below that threshold. With `underwater: true`, fluid cavern cells are allowed but the cell must still be carved cavern matter.
 
 The test reads one vertical `MatterCavern` column. It proves local clearance only, not that the complete assembled footprint fits the cave. `SOURCE` and `PRESERVE` can therefore leave pieces intersecting surrounding walls. Use `BORE` or `FORCE_CARVE` when the structure must make room, or inspect the complete volume in gameplay when preserving the cavern.
 
@@ -236,9 +240,9 @@ Dimension switch and deepdark band (`dimensions/overworld.json`):
   "defaultObjectAnchor": "FLOOR",
   "defaultObjectPlaceMode": "ORGANIC_STILT",
   "anchorSearchAttempts": 12,
-  "allowWater": true,
-  "waterMinDepthBelowSurface": 20,
-  "waterRequiresFloor": true,
+  "allowFluid": true,
+  "fluidMinDepthBelowSurface": 20,
+  "fluidRequiresFloor": true,
   "allowLava": true,
   "modules": [
     {
@@ -283,7 +287,7 @@ Cave biome content (`biomes/carving/amethyst.json` excerpt): floor/wall amethyst
 
 1. Record a fixed seed and coordinates where the surface, fluid level, and bedrock are already correct.
 2. Enable the dimension `caveProfile` with a narrow vertical range inside playable Y and no cave-biome decoration yet.
-3. Add one tunnel or room module. Generate new chunks and verify void shape, surface clearance, water handling, and lava depth.
+3. Add one tunnel or room module. Generate new chunks and verify void shape, surface clearance, fluid-palette handling, and lava depth.
 4. Add modules for other shapes instead of raising `detailWeight` alone. Change one density or threshold value per comparison.
 5. List one themed biome under one region's `caveBiomes`; paint its floor, ceiling, and walls before adding objects.
 6. Add cave-only objects with `carvingSupport: CARVING_ONLY` and an appropriate stilt mode so props do not float.
@@ -298,7 +302,7 @@ Cave biome content (`biomes/carving/amethyst.json` excerpt): floor/wall amethyst
 | Thinner tunnels | Raise threshold, lower `detailWeight`, add inverted modules |
 | Fewer surface holes | Raise `surfaceBreakNoiseThreshold`, lower `surfaceBreakDepth`, or `allowSurfaceBreak: false` |
 | Safer cave props | Raise `objectMinDepthBelowSurface`, set place mode + anchor |
-| Dry caves | `allowWater: false` |
+| No aquifers | `allowFluid: false` |
 | Performance | Higher `sampleStep`, keep adaptive sampling on, simpler styles |
 
 ## Practical notes
@@ -306,4 +310,4 @@ Cave biome content (`biomes/carving/amethyst.json` excerpt): floor/wall amethyst
 - Profile `enabled: false` (the Java default) produces no profile carving even if cave biomes are listed.
 - Cave biome layers still need solid carve first; they do not create voids alone.
 - Upper-dimension carving is optional and off in overworld.
-- Pack JSON may contain unknown keys; only fields on `IrisCaveProfile` apply.
+- The three removed water-specific cave-profile keys are blocking pack errors in inline dimension, region, and biome profiles and in `snippet/cave-profile` files; other unknown keys remain subject to the normal pack validation rules.

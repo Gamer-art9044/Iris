@@ -45,6 +45,25 @@ public class IrisImportedStructureControlTest {
         assertTrue(control.shouldGenerate("minecraft:monument"));
         assertEquals(NativeStructureGenerationStatus.GENERATE_NATIVE,
                 control.resolve("minecraft:monument", false).status());
+        assertEquals(1D, control.frequencyMultiplier("minecraft:villages"), 0D);
+    }
+
+    @Test
+    public void frequencyOverrideUsesExactNormalizedSetKeyAndLastEntry() {
+        KList<IrisStructureSetFrequencyOverride> overrides = new KList<>();
+        overrides.add(new IrisStructureSetFrequencyOverride()
+                .setStructureSet("minecraft:nether_complexes")
+                .setMultiplier(1.05D));
+        overrides.add(new IrisStructureSetFrequencyOverride()
+                .setStructureSet(" MINECRAFT:NETHER_COMPLEXES ")
+                .setMultiplier(1.1D));
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setFrequencyOverrides(overrides);
+
+        assertTrue(control.hasFrequencyOverrides());
+        assertEquals(1.1D, control.frequencyMultiplier("minecraft:nether_complexes"), 0D);
+        assertEquals(1D, control.frequencyMultiplier("minecraft:nether_fossils"), 0D);
+        assertEquals(1D, control.frequencyMultiplier("minecraft:nether_complexes_extra"), 0D);
     }
 
     @Test
@@ -70,6 +89,30 @@ public class IrisImportedStructureControlTest {
         assertFalse(control.shouldGenerate("minecraft:village_taiga"));
         assertFalse(control.shouldGenerate("minecraft:village_snowy"));
         assertTrue(control.shouldGenerate("minecraft:stronghold"));
+    }
+
+    @Test
+    public void exactBlacklistDoesNotExpandToStructureFamilies() {
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setDisabledExact(keys("  MINECRAFT:RUINED_PORTAL  "));
+
+        assertFalse(control.shouldGenerate("minecraft:ruined_portal"));
+        assertEquals(NativeStructureGenerationStatus.DISABLED_BY_PACK,
+                control.resolve(" MINECRAFT:RUINED_PORTAL ", false).status());
+        assertTrue(control.shouldGenerate("minecraft:ruined_portal_nether"));
+        assertEquals(NativeStructureGenerationStatus.GENERATE_NATIVE,
+                control.resolve("minecraft:ruined_portal_nether", false).status());
+    }
+
+    @Test
+    public void familyBlacklistRetainsPrefixMatchingBesideExactBlacklist() {
+        IrisImportedStructureControl control = new IrisImportedStructureControl()
+                .setDisabled(keys("minecraft:village"))
+                .setDisabledExact(keys("minecraft:ruined_portal"));
+
+        assertFalse(control.shouldGenerate("minecraft:village_plains"));
+        assertFalse(control.shouldGenerate("minecraft:ruined_portal"));
+        assertTrue(control.shouldGenerate("minecraft:ruined_portal_nether"));
     }
 
     @Test
@@ -305,14 +348,23 @@ public class IrisImportedStructureControlTest {
     @Test
     public void malformedNullPolicyListsFailWithTheirExactField() {
         IrisImportedStructureControl nullDisabled = new IrisImportedStructureControl().setDisabled(null);
+        IrisImportedStructureControl nullDisabledExact = new IrisImportedStructureControl().setDisabledExact(null);
         IrisImportedStructureControl nullAdjustments = new IrisImportedStructureControl().setAdjustments(null);
+        IrisImportedStructureControl nullFrequencyOverrides = new IrisImportedStructureControl()
+                .setFrequencyOverrides(null);
 
         NullPointerException disabled = assertThrows(NullPointerException.class,
                 () -> nullDisabled.shouldGenerate("minecraft:monument"));
+        NullPointerException disabledExact = assertThrows(NullPointerException.class,
+                () -> nullDisabledExact.shouldGenerate("minecraft:monument"));
         NullPointerException adjustments = assertThrows(NullPointerException.class,
                 () -> nullAdjustments.resolve("minecraft:monument", false));
+        NullPointerException frequencyOverrides = assertThrows(NullPointerException.class,
+                () -> nullFrequencyOverrides.frequencyMultiplier("minecraft:villages"));
 
         assertTrue(disabled.getMessage().contains("importedStructures.disabled"));
+        assertTrue(disabledExact.getMessage().contains("importedStructures.disabledExact"));
         assertTrue(adjustments.getMessage().contains("importedStructures.adjustments"));
+        assertTrue(frequencyOverrides.getMessage().contains("importedStructures.frequencyOverrides"));
     }
 }

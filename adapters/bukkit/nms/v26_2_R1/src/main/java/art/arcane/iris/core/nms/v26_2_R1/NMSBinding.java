@@ -6,6 +6,7 @@ import ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import art.arcane.iris.core.datapack.DatapackStructureScopeIndex;
 import art.arcane.iris.core.nms.DatapackStructureScopeResult;
+import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.nms.INMSBinding;
 import art.arcane.iris.core.nms.MinecraftVersion;
@@ -1221,7 +1222,8 @@ public class NMSBinding implements INMSBinding {
     public DatapackStructureScopeResult scopeDatapackStructures(
             World world,
             DatapackStructureScopeIndex scopeIndex,
-            Set<String> declaredSources
+            Set<String> declaredSources,
+            IrisImportedStructureControl importedStructures
     ) throws NoSuchFieldException, IllegalAccessException {
         ServerLevel level = ((CraftWorld) world).getHandle();
         ChunkMap chunkMap = level.getChunkSource().chunkMap;
@@ -1229,7 +1231,7 @@ public class NMSBinding implements INMSBinding {
         net.minecraft.world.level.chunk.ChunkGenerator generator = level.getChunkSource().getGenerator();
         ChunkGeneratorStructureState scopedState = createStructureState(level, generator, currentState);
         DatapackStructureStateFilter.Selection selection = DatapackStructureStateFilter.filter(
-                scopedState.possibleStructureSets(), scopeIndex, declaredSources);
+                scopedState.possibleStructureSets(), scopeIndex, declaredSources, importedStructures);
 
         Field possibleSetsField = getField(scopedState.getClass(), List.class);
         possibleSetsField.setAccessible(true);

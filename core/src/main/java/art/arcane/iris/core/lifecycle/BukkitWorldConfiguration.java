@@ -12,8 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.Objects;
 import java.util.ArrayList;
+import java.util.Objects;
 import java.util.function.Predicate;
 
 public final class BukkitWorldConfiguration {
@@ -52,6 +52,60 @@ public final class BukkitWorldConfiguration {
             }
             saveAtomic(configurationFile.toPath(), configuration);
             return Registration.CREATED;
+        }
+    }
+
+    public static WorldGeneratorSnapshot snapshot(File configurationFile, String worldName) throws IOException {
+        Objects.requireNonNull(configurationFile, "configurationFile");
+        String requiredWorldName = requireWorldName(worldName);
+        synchronized (MUTATION_LOCK) {
+            return snapshot(load(configurationFile), requiredWorldName);
+        }
+    }
+
+    public static GeneratorReplacement replaceIfMatching(
+            File configurationFile,
+            String worldName,
+            WorldGeneratorSnapshot expected,
+            String dimension,
+            Long seed
+    ) throws IOException {
+        Objects.requireNonNull(configurationFile, "configurationFile");
+        String requiredWorldName = requireWorldName(worldName);
+        WorldGeneratorSnapshot requiredExpected = Objects.requireNonNull(expected, "expected");
+        String requiredDimension = requireName(dimension, "Dimension");
+        WorldGeneratorSnapshot replacement = WorldGeneratorSnapshot.configured(requiredDimension, seed);
+        synchronized (MUTATION_LOCK) {
+            YamlConfiguration configuration = load(configurationFile);
+            WorldGeneratorSnapshot current = snapshot(configuration, requiredWorldName);
+            if (!current.matchesGeneratorAndSeed(requiredExpected)) {
+                return new GeneratorReplacement(false, current, replacement);
+            }
+            apply(configuration, requiredWorldName, replacement);
+            saveAtomic(configurationFile.toPath(), configuration);
+            return new GeneratorReplacement(true, current, replacement);
+        }
+    }
+
+    public static boolean restoreIfMatching(
+            File configurationFile,
+            String worldName,
+            WorldGeneratorSnapshot expectedCurrent,
+            WorldGeneratorSnapshot restoration
+    ) throws IOException {
+        Objects.requireNonNull(configurationFile, "configurationFile");
+        String requiredWorldName = requireWorldName(worldName);
+        WorldGeneratorSnapshot requiredExpected = Objects.requireNonNull(expectedCurrent, "expectedCurrent");
+        WorldGeneratorSnapshot requiredRestoration = Objects.requireNonNull(restoration, "restoration");
+        synchronized (MUTATION_LOCK) {
+            YamlConfiguration configuration = load(configurationFile);
+            WorldGeneratorSnapshot current = snapshot(configuration, requiredWorldName);
+            if (!current.matchesGeneratorAndSeed(requiredExpected)) {
+                return false;
+            }
+            apply(configuration, requiredWorldName, requiredRestoration);
+            saveAtomic(configurationFile.toPath(), configuration);
+            return true;
         }
     }
 
@@ -172,6 +226,97 @@ public final class BukkitWorldConfiguration {
         }
     }
 
+    private static WorldGeneratorSnapshot snapshot(
+            YamlConfiguration configuration,
+            String worldName
+    ) throws IOException {
+        Object rawWorlds = configuration.get("worlds");
+        ConfigurationSection worlds = configuration.getConfigurationSection("worlds");
+        if (rawWorlds != null && worlds == null) {
+            throw new IOException("bukkit.yml worlds entry is not a section and was not changed.");
+        }
+        if (worlds == null) {
+            return WorldGeneratorSnapshot.absent();
+        }
+
+        Object rawWorld = worlds.get(worldName);
+        ConfigurationSection world = worlds.getConfigurationSection(worldName);
+        if (rawWorld != null && world == null) {
+            throw new IOException("bukkit.yml world entry \"" + worldName + "\" is not a section and was not changed.");
+        }
+        if (world == null) {
+            return WorldGeneratorSnapshot.absentWorld(true);
+        }
+
+        boolean generatorPresent = world.getKeys(false).contains("generator");
+        String generator = null;
+        if (generatorPresent) {
+            Object rawGenerator = world.get("generator");
+            if (!(rawGenerator instanceof String generatorValue)) {
+                throw new IOException("bukkit.yml generator for world \"" + worldName
+                        + "\" is not a string and was not changed.");
+            }
+            generator = generatorValue;
+        }
+
+        boolean seedPresent = world.getKeys(false).contains("seed");
+        Long seed = null;
+        if (seedPresent) {
+            Object rawSeed = world.get("seed");
+            if (!(rawSeed instanceof Byte
+                    || rawSeed instanceof Short
+                    || rawSeed instanceof Integer
+                    || rawSeed instanceof Long)) {
+                throw new IOException("bukkit.yml seed for world \"" + worldName
+                        + "\" is not an integer and was not changed.");
+            }
+            seed = ((Number) rawSeed).longValue();
+        }
+
+        return new WorldGeneratorSnapshot(
+                true,
+                true,
+                generatorPresent,
+                generator,
+                seedPresent,
+                seed
+        );
+    }
+
+    private static void apply(
+            YamlConfiguration configuration,
+            String worldName,
+            WorldGeneratorSnapshot snapshot
+    ) throws IOException {
+        ConfigurationSection worlds = configuration.getConfigurationSection("worlds");
+        if (worlds == null) {
+            Object rawWorlds = configuration.get("worlds");
+            if (rawWorlds != null) {
+                throw new IOException("bukkit.yml worlds entry is not a section and was not changed.");
+            }
+            worlds = configuration.createSection("worlds");
+        }
+
+        ConfigurationSection world = worlds.getConfigurationSection(worldName);
+        if (world == null) {
+            Object rawWorld = worlds.get(worldName);
+            if (rawWorld != null) {
+                throw new IOException("bukkit.yml world entry \"" + worldName
+                        + "\" is not a section and was not changed.");
+            }
+            world = worlds.createSection(worldName);
+        }
+
+        world.set("generator", snapshot.generatorPresent() ? snapshot.generator() : null);
+        world.set("seed", snapshot.seedPresent() ? snapshot.seed() : null);
+        if (!snapshot.worldSectionPresent() && world.getKeys(false).isEmpty()) {
+            worlds.set(worldName, null);
+        }
+        if (!snapshot.worldsSectionPresent() && worlds.getKeys(false).isEmpty()) {
+            configuration.set("worlds", null);
+        }
+    }
+
     private static String requireWorldName(String value) {
         String worldName = requireName(value, "World name");
         if (!worldName.matches("[a-z0-9_-]+")) {
@@ -190,5 +335,59 @@ public final class BukkitWorldConfiguration {
     public enum Registration {
         CREATED,
         UNCHANGED
+    }
+
+    public record WorldGeneratorSnapshot(
+            boolean worldsSectionPresent,
+            boolean worldSectionPresent,
+            boolean generatorPresent,
+            String generator,
+            boolean seedPresent,
+            Long seed
+    ) {
+        public WorldGeneratorSnapshot {
+            if (worldSectionPresent && !worldsSectionPresent) {
+                throw new IllegalArgumentException("A world section requires a worlds section.");
+            }
+            if (!worldSectionPresent && (generatorPresent || seedPresent)) {
+                throw new IllegalArgumentException("Generator and seed values require a world section.");
+            }
+            if (generatorPresent != (generator != null)) {
+                throw new IllegalArgumentException("Generator presence and value must agree.");
+            }
+            if (seedPresent != (seed != null)) {
+                throw new IllegalArgumentException("Seed presence and value must agree.");
+            }
+        }
+
+        private static WorldGeneratorSnapshot absent() {
+            return new WorldGeneratorSnapshot(false, false, false, null, false, null);
+        }
+
+        private static WorldGeneratorSnapshot absentWorld(boolean worldsSectionPresent) {
+            return new WorldGeneratorSnapshot(worldsSectionPresent, false, false, null, false, null);
+        }
+
+        private static WorldGeneratorSnapshot configured(String dimension, Long seed) {
+            return new WorldGeneratorSnapshot(true, true, true, "Iris:" + dimension, seed != null, seed);
+        }
+
+        public boolean matchesGeneratorAndSeed(WorldGeneratorSnapshot other) {
+            return generatorPresent == other.generatorPresent
+                    && Objects.equals(generator, other.generator)
+                    && seedPresent == other.seedPresent
+                    && Objects.equals(seed, other.seed);
+        }
+    }
+
+    public record GeneratorReplacement(
+            boolean applied,
+            WorldGeneratorSnapshot observed,
+            WorldGeneratorSnapshot replacement
+    ) {
+        public GeneratorReplacement {
+            Objects.requireNonNull(observed, "observed");
+            Objects.requireNonNull(replacement, "replacement");
+        }
     }
 }

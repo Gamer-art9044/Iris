@@ -77,12 +77,30 @@ public class PackValidationCacheTest {
         Path cache = new File(temporaryFolder.newFolder("duplicate"), "validation.json").toPath();
         Files.writeString(cache, """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "contentFingerprint": "content",
                   "contextFingerprint": "context",
                   "results": [
                     {"packName":"overworld","blockingErrors":[],"warnings":[],"validatedAtMillis":1},
                     {"packName":"overworld","blockingErrors":[],"warnings":[],"validatedAtMillis":2}
+                  ]
+                }
+                """, StandardCharsets.UTF_8);
+
+        assertTrue(PackValidationCache.load(
+                cache, "content", "context", List.of("overworld")).isEmpty());
+    }
+
+    @Test
+    public void previousValidationSchemaIsRejected() throws Exception {
+        Path cache = new File(temporaryFolder.newFolder("previous-schema"), "validation.json").toPath();
+        Files.writeString(cache, """
+                {
+                  "schemaVersion": 1,
+                  "contentFingerprint": "content",
+                  "contextFingerprint": "context",
+                  "results": [
+                    {"packName":"overworld","blockingErrors":[],"warnings":[],"validatedAtMillis":1}
                   ]
                 }
                 """, StandardCharsets.UTF_8);

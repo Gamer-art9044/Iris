@@ -55,6 +55,8 @@ import java.util.function.Supplier;
  * Bukkit plugin entry points delegate to.
  */
 public final class IrisWorldGeneratorResolver {
+    private static final Object SNAPSHOT_VALIDATION_LOCK = new Object();
+
     private final VolmitPlugin plugin;
 
     public IrisWorldGeneratorResolver(VolmitPlugin plugin) {
@@ -134,6 +136,35 @@ public final class IrisWorldGeneratorResolver {
         IrisStartupValidation.markPacksReady();
     }
 
+    static PackValidationResult requireSnapshotLoadable(File packRoot) {
+        Path normalizedRoot = packRoot.toPath().toAbsolutePath().normalize();
+        PackValidationResult result = PackValidationRegistry.get(normalizedRoot);
+        if (result == null) {
+            synchronized (SNAPSHOT_VALIDATION_LOCK) {
+                result = PackValidationRegistry.get(normalizedRoot);
+                if (result == null) {
+                    try {
+                        result = PackValidator.validate(normalizedRoot.toFile());
+                    } catch (Throwable exception) {
+                        Iris.reportError("Snapshot pack validation failed for '" + normalizedRoot + "'", exception);
+                        String detail = exception.getMessage();
+                        if (detail == null || detail.isBlank()) {
+                            detail = exception.getClass().getSimpleName();
+                        }
+                        result = new PackValidationResult(
+                                normalizedRoot.getFileName().toString(),
+                                List.of("Pack validation failed with " + exception.getClass().getSimpleName()
+                                        + ": " + detail),
+                                List.of(),
+                                System.currentTimeMillis());
+                    }
+                    PackValidationRegistry.publish(normalizedRoot, result);
+                }
+            }
+        }
+        return PackValidationRegistry.requireLoadable(normalizedRoot);
+    }
+
     @Nullable
     public static IrisDimension loadDimension(@NonNull String worldName, @NonNull String id) {
         File pack = IrisWorldStorage.packRoot(IrisWorldStorage.keyFromName(worldName));
@@ -188,9 +219,17 @@ public final class IrisWorldGeneratorResolver {
         if (dim == null) {
             throw new RuntimeException("Can't find dimension " + id + "!");
         }
-        String packName = dim.getLoader().getDataFolder().getName();
+        NamespacedKey worldKey = IrisWorldStorage.keyFromName(worldName);
+        File snapshotRoot = IrisWorldStorage.packRoot(worldKey);
+        File dimensionPackRoot = dim.getLoader().getDataFolder();
+        String packName = dimensionPackRoot.getName();
         try {
-            PackValidationRegistry.requireLoadable(packName);
+            if (snapshotRoot.toPath().toAbsolutePath().normalize()
+                    .equals(dimensionPackRoot.toPath().toAbsolutePath().normalize())) {
+                requireSnapshotLoadable(snapshotRoot);
+            } else {
+                PackValidationRegistry.requireLoadable(packName);
+            }
         } catch (BrokenPackException exception) {
             Iris.error("Refusing to create world '" + worldName + "' using broken pack '" + packName + "':");
             for (String reason : exception.getReasons()) {
@@ -200,7 +239,6 @@ public final class IrisWorldGeneratorResolver {
         }
 
         Iris.debug("Assuming IrisDimension: " + dim.getName());
-        NamespacedKey worldKey = IrisWorldStorage.keyFromName(worldName);
 
         IrisWorld w = IrisWorld.builder()
                 .platformIdentity(worldKey.toString())
@@ -225,6 +263,7 @@ public final class IrisWorldGeneratorResolver {
         } else {
             dim = installedDimension;
         }
+        requireSnapshotLoadable(ff);
 
         return new BukkitChunkGenerator(w, false, ff, dim.getLoadKey());
     }

@@ -36,6 +36,17 @@ GoldenHash details and file layout: `32 - Determinism & Goldenhash.md`.
 4. Join or teleport into the world. Confirm non-empty terrain, surface biomes, and no repeating console stack traces on first chunks.
 5. Gate: world is loaded as an Iris world; chunks generate without enable-time crash; console shows no fatal engine init failure.
 
+## A.1 Exact vanilla-slot replacement (Bukkit-family)
+
+Use a disposable server whose configured level name is `world`, with a valid `NETHER` Iris pack and a generated vanilla Nether containing a unique marker chunk. Record hashes of the old Nether `region`, `entities`, and `poi` files before staging.
+
+1. Run `/iris create world_nether type=<nether-pack> seed=1337 overwrite=true`. Gate: the command says the replacement is staged, the loaded Nether and its files remain unchanged, `bukkit.yml` now names `Iris:<dimension>`, and one pending replacement journal plus one sibling stage exists.
+2. Optionally stage the configured main name with a `NORMAL` pack and the End alias with a `THE_END` pack. Gate: each distinct slot gets its own transaction and no live dimension folder is moved.
+3. Restart normally. Gate: Iris publishes before Bukkit world loading; `minecraft:the_nether` loads with the Iris generator, requested dimension and seed; its frozen `iris/pack` exists; no old `region`, `entities`, or `poi` file was merged into the target; and the marker chunk is absent.
+4. Gate after `WorldLoad`: the retained sibling backup and journal disappear only after identity, environment, seed, dimension, and pack-fingerprint verification succeeds.
+5. Restart again and generate fresh Nether chunks. Gate: the exact vanilla identity and Iris generator persist, ordinary Nether portals still target `minecraft:the_nether`, and no pending stage/backup/journal returns.
+6. Repeat once with a deliberately changed staged pack or conflicting `bukkit.yml` value before restart. Gate: Iris refuses publication or world admission, preserves recoverable artifacts, and never guesses a target. For a post-publication verification failure, gate that Iris restores the prior configuration, requests the controlled rollback restart, and restores the retained original directory before world load.
+
 ## B. Fresh install and first world (Fabric / Forge / NeoForge)
 
 1. Install the matching mod jar into `mods/`. Fabric requires Loader ≥ declared floor; Forge/NeoForge require their declared floors. See `01 - Installation & Platforms.md` and `30 - Platform Differences.md`.
@@ -61,7 +72,7 @@ Or a single pack: `/iris pack validate pack=<pack>` on Bukkit, `/iris pack valid
 
 2. Review blocking errors vs warnings. Blocking errors must be fixed before treating the pack as production-ready.
 3. `/iris pack status` replays the startup-published result, including a persisted result reused for unchanged content.
-4. Restart without changing packs or registry context. Gate: startup logs persisted validation reuse instead of full parsing, player admission opens only after datapack and pack phases are ready, and the target remains loadable.
+4. Restart without changing packs or registry context. Gate: startup logs `External datapacks match the persisted startup validation` without logging another external-datapack `Validating` or `Ingesting` pass, pack validation reuses its persisted result instead of full parsing, player admission opens only after both phases are ready, and the target remains loadable.
 5. Change one pack byte and restart. Gate: the content fingerprint invalidates reuse and validation runs again; restore the pack before continuing. Cleanup/restore flows are separate and opt-in (`25 - Pack Management.md`).
 
 ## D. Bukkit datapack dimension-scope smoke
@@ -185,7 +196,7 @@ Use a disposable pack/structure key and the owning builder account. Bukkit has o
 
    Gate: every cell has one physical white-concrete edge cage, no workcell-bound display entity exists, and focused plus nearby particle trails outline the editable bounds inside those cages. Focused connectors draw 1.75-block direction lines when particles are enabled. The Iris scoreboard replaces the general Studio context with Structure, Workcell, Variant, State, and `Triple-sneak for controls`, without orientation/mask fields. All six untouched cells initially report **Autosaved**. Enter End Cap, triple-sneak, and confirm the menu selects End Cap rather than the previously selected cell.
 
-3. Open the same six-row controls three ways: right-click the protected chest, run `/iris jigsaw menu`, and start three sneaks within 1.5 seconds. Select Hallway and click **New Blank Variant**. Wait for its atomic graph result and load, then reopen the controls. Rename the loaded variant and Hallway workcell through their anvil inputs; confirm labels round-trip while the piece key, `straight` stable ID, and solver role stay unchanged. Load End Cap and use **Duplicate This Cell's Variant**, then load Cross Junction and duplicate it as well.
+3. Open the same six-row controls three ways: right-click the protected chest, run `/iris jigsaw menu`, and start three sneaks within 1.5 seconds. Gate: each path opens without an `InventoryView` linkage error on the target Paper-family runtime. Select Hallway and click **New Blank Variant**. Wait for its atomic graph result and load, then reopen the controls. Rename the loaded variant and Hallway workcell through their anvil inputs; confirm labels round-trip while the piece key, `straight` stable ID, and solver role stay unchanged. Load End Cap and use **Duplicate This Cell's Variant**, then load Cross Junction and duplicate it as well.
 
    Gate: the new key follows `smoke/jigsaw/variants/straight/variant-<n>` and loads into Hallway. It has the source piece's complete metadata and exact pool entries but an empty same-sized object. At the default 15×15×15, its two real markers occupy `(7,7,0)` and `(7,7,14)`, face north/south with top `UP_POSITIVE_Y`, show pool `iris:smoke/jigsaw/pieces`, use name/target `iris:planar`, `ALIGNED`, `minecraft:structure_void`, and signed priorities `0`. Mojang's UI is usable after hydration. Break one marker and click **Reset Connector Blocks** before autosave; both saved markers must return while another edited block remains unchanged. Each duplicate copies the active object's bytes, display label, and complete piece metadata. The End Cap duplicate has exact matching entries in both `smoke/jigsaw/pieces` and `smoke/jigsaw/caps`; the Cross Junction duplicate has exact matching entries in both `smoke/jigsaw/start` and `smoke/jigsaw/pieces`. An empty or unassigned workcell refuses both GUI actions and directs the operator to `/iris jigsaw piece create <poolKey> <pieceKey>` instead of choosing a fallback pool.
 

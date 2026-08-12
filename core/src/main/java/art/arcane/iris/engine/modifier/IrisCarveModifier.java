@@ -52,6 +52,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState> {
+    private static final byte LIQUID_FLUID = 1;
     private static final ThreadLocal<CarveScratch> SCRATCH = ThreadLocal.withInitial(CarveScratch::new);
     private static final int CAVE_BIOME_BLEND_RADIUS = 3;
     private static final int CAVE_BIOME_BLEND_CENTER_WEIGHT = 4;
@@ -141,9 +142,9 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 }
 
                 if (explicitCarveIntent) {
-                    // Only a water cavern consumes the fluid sample, and on the maintenance path that
+                    // Only a fluid cavern consumes the fluid sample, and on the maintenance path that
                     // sample is a full procedural stream evaluation, so never take it per voxel.
-                    PlatformBlockState fluid = c.isWater() ? context.getFluid().get(rx, rz) : null;
+                    PlatformBlockState fluid = isFluidIntent(c) ? context.getFluid().get(rx, rz) : null;
                     output.setRaw(rx, yy, rz, resolveExplicitCarveState(c, fluid, LAVA, AIR));
                 } else if (usesDefaultLava(caveLavaHeight, yy)) {
                     output.setRaw(rx, yy, rz, LAVA);
@@ -203,7 +204,11 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
     }
 
     static boolean hasExplicitCarveIntent(MatterCavern cavern) {
-        return cavern != null && (cavern.isWater() || cavern.isLava() || cavern.getLiquid() == 3);
+        return cavern != null && (isFluidIntent(cavern) || cavern.isLava() || cavern.getLiquid() == 3);
+    }
+
+    static boolean isFluidIntent(MatterCavern cavern) {
+        return cavern != null && cavern.getLiquid() == LIQUID_FLUID;
     }
 
     static boolean shouldPreserveExistingFluid(MatterCavern cavern, PlatformBlockState current) {
@@ -219,7 +224,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
         if (cavern == null) {
             return null;
         }
-        if (cavern.isWater()) {
+        if (isFluidIntent(cavern)) {
             return fluid;
         }
         if (cavern.isLava()) {

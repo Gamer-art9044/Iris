@@ -150,6 +150,8 @@ Type: `IrisBiomeCustom` (`@Snippet("custom-biome")`). Installed via datapack com
 | `grassColor` | hex string | `""` (omit if empty) | |
 | `foliageColor` | hex string | `""` | |
 
+On Minecraft 26.2, Iris publishes sky, fog, water-fog, and ambient-particle values through the biome environment-attribute registry. Water, grass, and foliage colors remain biome effects. This conversion is automatic; pack fields do not change.
+
 Tag inheritance: effective tags = authored `tags` plus non-structure tags of the vanilla derivative. Structure tags (`has_structure/*`) are **not** inherited so native structures are not double-placed.
 
 #### Custom spawn entry (`IrisBiomeCustomSpawn`)
@@ -201,6 +203,8 @@ A surface biome contributes all of its `structures[]` placements when it owns th
 ## Floating child biomes (`IrisFloatingChildBiomes`)
 
 `floatingChildBiomes` builds floating terrain above columns owned by the parent biome. Each entry can reuse the parent or reference another biome for its generators, layers, derivative, decorators, and surface objects. With `mergeFloatingChildBiomes: false` (default), `pickerStyle` and `rarity` select one entry per column; with it true, every entry samples independently and islands may overlap.
+
+Biome reachability follows configured region roots, enabled dimension-carving biomes, ordinary children and carving replacements, floating targets, and floating `carving` references recursively. Floating carving-entry ids resolve before direct biome keys, matching generation; cycles are deduplicated, and every generation-reachable biome participates in runtime spawn, placement, structure, and lookup indexes. Custom-biome datapack installation continues to scan the pack's complete authored biome set.
 
 ### Target, footprint, and altitude
 

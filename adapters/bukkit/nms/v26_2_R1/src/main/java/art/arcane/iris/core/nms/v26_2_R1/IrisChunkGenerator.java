@@ -788,7 +788,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             throw new IllegalStateException("Iris cannot generate native structures in chunk "
                     + disabledChunk.x() + "," + disabledChunk.z()
                     + " because structure generation is disabled outside the pack; enable native structure generation "
-                    + "and deny individual structures through importedStructures.disabled");
+                    + "and deny families through importedStructures.disabled or complete keys through importedStructures.disabledExact");
         }
         ChunkPos chunkPos = chunk.getPos();
         SectionPos sectionPos = SectionPos.of(chunkPos, world.getMinSectionY());

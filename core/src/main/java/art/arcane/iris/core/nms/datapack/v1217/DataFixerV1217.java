@@ -35,6 +35,7 @@ public class DataFixerV1217 extends DataFixerV1213 {
                             "sound": "minecraft:music.game"
                           }
                         },
+                        "minecraft:visual/ambient_light_color": "#0a0a0a",
                         "minecraft:visual/cloud_color": "#ccffffff",
                         "minecraft:visual/fog_color": "#c0d8ff",
                         "minecraft:visual/sky_color": "#78a7ff"
@@ -49,6 +50,7 @@ public class DataFixerV1217 extends DataFixerV1213 {
                       "attributes": {
                         "minecraft:gameplay/sky_light_level": 4.0,
                         "minecraft:gameplay/snow_golem_melts": true,
+                        "minecraft:visual/ambient_light_color": "#302821",
                         "minecraft:visual/fog_end_distance": 96.0,
                         "minecraft:visual/fog_start_distance": 10.0,
                         "minecraft:visual/sky_light_color": "#7a7aff",
@@ -81,6 +83,7 @@ public class DataFixerV1217 extends DataFixerV1213 {
                             "sound": "minecraft:music.end"
                           }
                         },
+                        "minecraft:visual/ambient_light_color": "#3f473f",
                         "minecraft:visual/fog_color": "#181318",
                         "minecraft:visual/sky_color": "#000000",
                         "minecraft:visual/sky_light_color": "#e580ff",
@@ -93,7 +96,28 @@ public class DataFixerV1217 extends DataFixerV1213 {
 
     @Override
     public JSONObject fixCustomBiome(IrisBiomeCustom biome, JSONObject json) {
-        return super.fixCustomBiome(biome, json);
+        JSONObject fixed = super.fixCustomBiome(biome, json);
+        JSONObject effects = fixed.getJSONObject("effects");
+        JSONObject attributes = fixed.optJSONObject("attributes");
+        if (attributes == null) {
+            attributes = new JSONObject();
+            fixed.put("attributes", attributes);
+        }
+
+        moveAttribute(effects, attributes, "sky_color", "minecraft:visual/sky_color");
+        moveAttribute(effects, attributes, "fog_color", "minecraft:visual/fog_color");
+        moveAttribute(effects, attributes, "water_fog_color", "minecraft:visual/water_fog_color");
+
+        JSONObject particle = effects.optJSONObject("particle");
+        if (particle != null) {
+            JSONObject ambientParticle = new JSONObject();
+            ambientParticle.put("particle", particle.remove("options"));
+            ambientParticle.put("probability", particle.remove("probability"));
+            attributes.put("minecraft:visual/ambient_particles", new JSONArray().put(ambientParticle));
+            effects.remove("particle");
+        }
+
+        return fixed;
     }
 
     @Override
@@ -144,6 +168,18 @@ public class DataFixerV1217 extends DataFixerV1213 {
         json.remove("effects");
         JSONObject defaults = new JSONObject(DIMENSIONS.get(dimension));
         merge(json, defaults);
+
+        Object ambientLight = json.opt("ambient_light");
+        if (ambientLight instanceof Number number && number.doubleValue() >= 1D) {
+            json.getJSONObject("attributes").put("minecraft:visual/ambient_light_color", "#ffffff");
+        }
+    }
+
+    private void moveAttribute(JSONObject source, JSONObject target, String sourceKey, String targetKey) {
+        Object value = source.remove(sourceKey);
+        if (value != null) {
+            target.put(targetKey, value);
+        }
     }
 
     private void merge(JSONObject base, JSONObject override) {

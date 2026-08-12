@@ -6,8 +6,12 @@ import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.GeneratorReplacement;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.WorldGeneratorSnapshot;
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
+import art.arcane.iris.core.lifecycle.WorldReplacementBootstrap;
 import art.arcane.iris.core.lifecycle.WorldReplacementFilesystem;
 import art.arcane.iris.core.lifecycle.WorldReplacementFilesystem.ReplacementPaths;
+import art.arcane.iris.core.lifecycle.WorldReplacementJournal;
+import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Phase;
+import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Transaction;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
@@ -25,25 +29,17 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.world.WorldLoadEvent;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -51,10 +47,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public final class PendingWorldReplacementManager implements Listener {
-    private static final String JOURNAL_DIRECTORY = "pending-world-replacements";
-    private static final String JOURNAL_SUFFIX = ".properties";
-
     private final Iris plugin;
+    private final Set<UUID> cleanupInFlight = new HashSet<>();
 
     public PendingWorldReplacementManager(Iris plugin) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
@@ -89,13 +83,6 @@ public final class PendingWorldReplacementManager implements Listener {
         IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
         IrisStartupValidation.requireWorldCreationReady();
         PackValidationRegistry.requireLoadable(requiredDimension.getLoader().getDataFolder().getName());
-        ExactWorldSlotPathPolicy.Target resolvedTarget = ExactWorldSlotPathPolicy.resolve(
-                IrisWorldStorage.levelRoot().toPath(),
-                requiredWorldKey
-        );
-        requireCompatibleEnvironment(resolvedTarget.slotKind(), requiredDimension.getEnvironment());
-        long effectiveSeed = resolveEffectiveSeed(resolvedTarget.slotKind(), seed);
-        String worldName = IrisWorldStorage.logicalName(requiredWorldKey);
         LifecycleOperationCoordinator coordinator = LifecycleOperationCoordinator.get();
         try (LifecycleOperationCoordinator.Lease ignored = coordinator.acquire(
                 LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
@@ -106,13 +93,16 @@ public final class PendingWorldReplacementManager implements Listener {
                 throw new IOException("A replacement is already pending for " + requiredWorldKey + ".");
             }
             ExactWorldSlotPathPolicy.Target target = prepareTarget(requiredWorldKey);
+            requireCompatibleEnvironment(target.slotKind(), requiredDimension.getEnvironment());
+            long effectiveSeed = resolveEffectiveSeed(target.slotKind(), seed);
+            String worldName = WorldReplacementJournal.logicalWorldName(target.levelRoot(), requiredWorldKey);
             DatapackInstallResult datapacks = ServerConfigurator.installDataPacksIfChanged(true);
             if (!datapacks.succeeded()) {
                 throw new IOException("Iris could not compile the dimension datapacks.");
             }
 
             UUID transactionId = UUID.randomUUID();
-            ReplacementPaths paths = replacementPaths(target, transactionId);
+            ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transactionId);
             boolean targetPresent = Files.exists(paths.target(), LinkOption.NOFOLLOW_LINKS);
             WorldGeneratorSnapshot originalConfiguration = BukkitWorldConfiguration.snapshot(
                     ServerProperties.BUKKIT_YML,
@@ -131,12 +121,15 @@ public final class PendingWorldReplacementManager implements Listener {
                 if (installed == null) {
                     throw new IOException("Iris could not stage the dimension pack.");
                 }
+                requireCompatibleEnvironment(target.slotKind(), installed.getEnvironment());
                 File stagedPack = paths.stage().resolve("iris/pack").toFile();
                 IrisWorldGeneratorResolver.requireSnapshotLoadable(stagedPack);
                 String packFingerprint = WorldReplacementFilesystem.fingerprintPack(stagedPack.toPath());
                 transaction = new Transaction(
                         transactionId,
                         requiredWorldKey,
+                        worldName,
+                        target.levelRoot(),
                         installed.getLoadKey(),
                         effectiveSeed,
                         packFingerprint,

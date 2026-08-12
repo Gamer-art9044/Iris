@@ -1,6 +1,7 @@
 package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.SnapshotDirectoryTreeDeleter;
+import art.arcane.iris.core.ExactWorldSlotPathPolicy;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,6 +21,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -30,6 +32,17 @@ public final class WorldReplacementFilesystem {
             "^\\.iris-replace-[a-z0-9_-]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.backup$");
 
     private WorldReplacementFilesystem() {
+    }
+
+    public static ReplacementPaths paths(ExactWorldSlotPathPolicy.Target target, UUID id) {
+        ExactWorldSlotPathPolicy.Target requiredTarget = Objects.requireNonNull(target, "target");
+        UUID requiredId = Objects.requireNonNull(id, "id");
+        String artifactBase = ".iris-replace-" + requiredTarget.worldKey().getKey() + "-" + requiredId;
+        return new ReplacementPaths(
+                requiredTarget.worldDirectory(),
+                requiredTarget.namespaceRoot().resolve(artifactBase + ".stage"),
+                requiredTarget.namespaceRoot().resolve(artifactBase + ".backup")
+        );
     }
 
     public static void publish(
@@ -94,7 +107,7 @@ public final class WorldReplacementFilesystem {
                 move(requiredPaths.backup(), requiredPaths.target());
                 state = inspect(requiredPaths);
             }
-            if (!state.targetPresent() || state.backupPresent()) {
+            if (!state.targetPresent() || !state.stagePresent() || state.backupPresent()) {
                 throw new IOException("Rollback could not restore the original world target.");
             }
         } else {
@@ -111,7 +124,23 @@ public final class WorldReplacementFilesystem {
             if (state.targetPresent()) {
                 throw new IOException("Rollback could not remove the replacement target.");
             }
+            if (!state.stagePresent()) {
+                throw new IOException("Rollback lost the quarantined replacement target.");
+            }
         }
+    }
+
+    public static void finishPreparedRollback(ReplacementPaths paths, boolean originalTargetPresent)
+            throws IOException {
+        ReplacementPaths requiredPaths = Objects.requireNonNull(paths, "paths");
+        State state = inspect(requiredPaths);
+        if (state.backupPresent()) {
+            throw new IOException("Rollback cleanup cannot continue while a retained backup is still published.");
+        }
+        if (originalTargetPresent != state.targetPresent()) {
+            throw new IOException("Rollback cleanup target state does not match the retained world state.");
+        }
+        discardStage(requiredPaths);
     }
 
     public static void discardStage(ReplacementPaths paths) throws IOException {
@@ -134,6 +163,18 @@ public final class WorldReplacementFilesystem {
         if (state.backupPresent()) {
             SnapshotDirectoryTreeDeleter.delete(requiredPaths.backup());
         }
+    }
+
+    public static void validateCommittedTarget(ReplacementPaths paths, String expectedPackFingerprint)
+            throws IOException {
+        ReplacementPaths requiredPaths = Objects.requireNonNull(paths, "paths");
+        String expectedFingerprint = requireFingerprint(expectedPackFingerprint);
+        State state = inspect(requiredPaths);
+        if (!state.targetPresent() || state.stagePresent()) {
+            throw new IOException("Committed replacement storage does not contain one exact target directory.");
+        }
+        requireSafeTree(requiredPaths.target(), "replacement target");
+        requireFingerprint(requiredPaths.target().resolve("iris/pack"), expectedFingerprint);
     }
 
     public static String fingerprintPack(Path packRoot) throws IOException {

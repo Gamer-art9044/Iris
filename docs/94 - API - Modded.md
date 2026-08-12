@@ -248,7 +248,7 @@ Paths relative to the loader config directory (`config/`):
 
 Pack install root is `config/irisworldgen/packs`, not `config/iris`. Missing pack at world open is a hard failure with the expected absolute path (no silent vanilla terrain).
 
-Async default-pack prefetch at boot when `autoDownloadDefaultPack` is set and `defaultPack` is missing (`IrisDimensions/<pack>` from `master`). Failures log a pointer to `/iris download <pack>`.
+When `autoDownloadDefaultPack` is enabled, startup asynchronously installs missing `overworld` and `underworld` managed beta releases, plus a distinct configured non-managed `defaultPack`. Failures log a pointer to `/iris download <pack>`; managed beta names always resolve to their release assets rather than the requested branch.
 
 Forced datapack contributes presets, dimension types, and biomes under `irisworldgen` (ids from pack/dimension names). Regenerated on pack change / studio hotload. Failure to inject (mixin/event not applied) logs once:
 

@@ -68,12 +68,13 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -97,20 +98,17 @@ public class StudioSVC implements IrisService {
 
     @Override
     public void onEnable() {
-        J.a(() -> {
-            String pack = IrisSettings.get().getGenerator().getDefaultWorldType();
+        VolmitSender console = BukkitPlatform.console();
+        runPackMutation(console, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD,
+                "managed-beta-packs", () -> installMissingManagedBetaPacks(console),
+                "Failed to install Iris managed beta packs at startup.");
 
-            // Presence means a non-empty pack folder: an empty leftover folder must still
-            // trigger the install instead of shadowing it forever.
-            if (!PackDownloader.isPackPresent(getWorkspaceFolder(), pack)) {
-                if (PackDownloader.isDefaultOverworld(pack)) {
-                    IrisLogging.info("Downloading Default Pack " + pack + " (beta release)");
-                    IrisServices.get(StudioSVC.class).downloadDefaultOverworld(BukkitPlatform.console(), false);
-                } else {
-                    IrisLogging.warn("Default pack '" + pack + "' is not installed. Please download it manually with /iris download " + pack);
-                }
-            }
-        });
+        String configuredPack = IrisSettings.get().getGenerator().getDefaultWorldType();
+        if (!PackDownloader.isManagedBetaPack(configuredPack)
+                && !PackDownloader.isPackPresent(getWorkspaceFolder(), configuredPack)) {
+            IrisLogging.warn("Default pack '" + configuredPack
+                    + "' is not installed. Please download it manually with /iris download " + configuredPack);
+        }
     }
 
     @Override
@@ -348,12 +346,15 @@ public class StudioSVC implements IrisService {
         }, IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_DOWNLOAD, MessageArgument.untrusted("key", String.valueOf(key))));
     }
 
-    public void downloadDefaultOverworld(VolmitSender sender, boolean forceOverwrite) {
-        String key = PackDownloader.defaultOverworldPack();
+    public void downloadManagedBeta(VolmitSender sender, String key, boolean forceOverwrite) {
+        if (!PackDownloader.isManagedBetaPack(key)) {
+            sender.sendMessage("Iris pack '" + key + "' does not have a managed beta release.");
+            return;
+        }
         runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, key, () -> {
-            DownloadOutcome outcome = downloadDefaultOverworldLocked(sender, forceOverwrite);
+            DownloadOutcome outcome = downloadManagedBetaLocked(sender, key, forceOverwrite);
             return finishStandalonePackMutation(sender, outcome);
-        }, IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_DOWNLOAD_IRISDIMENSIONS_OVERWORLD_BETA_RELEASE));
+        }, "Failed to download IrisDimensions/" + key + " beta release.");
     }
 
     public void downloadBranch(VolmitSender sender, String repo, String branch, boolean forceOverwrite) {
@@ -380,8 +381,8 @@ public class StudioSVC implements IrisService {
     }
 
     private DownloadOutcome downloadSearchLocked(VolmitSender sender, String key, boolean forceOverwrite) throws IOException {
-        if (PackDownloader.isDefaultOverworld(key)) {
-            return downloadDefaultOverworldLocked(sender, forceOverwrite);
+        if (PackDownloader.isManagedBetaPack(key)) {
+            return downloadManagedBetaLocked(sender, key, forceOverwrite);
         }
 
         String descriptor = key.contains("/") ? key : getListing(false).get(key);
@@ -411,19 +412,50 @@ public class StudioSVC implements IrisService {
         return new PackListingReference(repository, ref, expectedKey);
     }
 
-    private DownloadOutcome downloadDefaultOverworldLocked(VolmitSender sender, boolean forceOverwrite) throws IOException {
-        String expectedKey = PackDownloader.defaultOverworldPack();
-        if (!forceOverwrite && PackDownloader.isPackPresent(getWorkspaceFolder(), expectedKey)) {
+    private DownloadOutcome downloadManagedBetaLocked(
+            VolmitSender sender,
+            String expectedKey,
+            boolean forceOverwrite
+    ) throws IOException {
+        if (!forceOverwrite && PackDownloader.isManagedBetaPackPresent(getWorkspaceFolder(), expectedKey)) {
             sender.sendMessage(IrisLanguage.text(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
             return DownloadOutcome.notChanged();
         }
 
-        PackDownloader.PackInstallResult result = PackDownloader.downloadDefaultOverworld(
+        PackDownloader.PackInstallResult result = PackDownloader.downloadManagedBeta(
                 getWorkspaceFolder(),
+                expectedKey,
                 forceOverwrite,
                 sender::sendMessage
         );
         return DownloadOutcome.from(result);
+    }
+
+    private boolean installMissingManagedBetaPacks(VolmitSender sender) {
+        boolean changed = false;
+        boolean restartRequired = false;
+        for (String key : missingManagedBetaPacks(getWorkspaceFolder())) {
+            IrisLogging.info("Downloading managed Iris pack " + key + " (beta release)");
+            try {
+                DownloadOutcome outcome = downloadManagedBetaLocked(sender, key, false);
+                changed |= outcome.changed();
+                restartRequired |= outcome.restartRequired();
+            } catch (Throwable failure) {
+                IrisLogging.reportError("Failed to download IrisDimensions/" + key + " beta release.", failure);
+                sender.sendMessage("Failed to download IrisDimensions/" + key + " beta release. " + errorDetail(failure));
+            }
+        }
+        return finishStandalonePackMutation(sender, new DownloadOutcome(changed, restartRequired));
+    }
+
+    static List<String> missingManagedBetaPacks(File workspaceFolder) {
+        List<String> missing = new ArrayList<>();
+        for (String key : PackDownloader.managedBetaPacks()) {
+            if (!PackDownloader.isManagedBetaPackPresent(workspaceFolder, key)) {
+                missing.add(key);
+            }
+        }
+        return List.copyOf(missing);
     }
 
     private DownloadOutcome downloadLocked(

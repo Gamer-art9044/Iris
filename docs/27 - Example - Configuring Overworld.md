@@ -109,7 +109,7 @@ Worlds created from a pack store a **copy** at:
 
 `StudioSVC.installIntoWorld` and `replaceIntoWorld` copy the source pack tree into that directory. Runtime generation for a normal world reads the world copy, not the global `packs/` tree. Studio worlds hotload the pack under `packs/` directly.
 
-First install often downloads the default overworld release into `packs/` (`downloadDefaultOverworld` / `/iris download` flows — see `02 - Getting Started.md`, `25 - Pack Management.md`).
+First install downloads the managed Overworld and Underworld beta releases into `packs/`; `/iris download overworld` uses the same Overworld asset (see `02 - Getting Started.md`, `25 - Pack Management.md`).
 
 ## High-level layout (shipping overworld)
 

@@ -697,6 +697,7 @@
     "iris.director.commandiris.param.dimension_pack_create_world_with": "המימד / החבילה ליצירת העולם עם",
     "iris.director.commandiris.param.seed_generate_world_with": "הזרע ליצור את העולם עם",
     "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world": "בין אם להשתמש בעולם באופן אוטומטי כעולם הראשי",
+    "iris.director.commandiris.param.replace_exact_existing_world_slot_next_restart": "החלפת משבצת העולם הקיימת המדויקת בהפעלה מחדש הבאה",
     "iris.director.commandiris.director.teleport_another_world": "טלפורט לעולם אחר",
     "iris.director.commandiris.param.world_teleport": "העולם לטלפורט",
     "iris.director.commandiris.param.player_teleport": "שחקן לטלפורט",

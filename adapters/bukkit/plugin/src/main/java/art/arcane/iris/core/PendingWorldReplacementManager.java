@@ -7,6 +7,7 @@ import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.GeneratorReplacem
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.WorldGeneratorSnapshot;
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.lifecycle.WorldReplacementBootstrap;
+import art.arcane.iris.core.lifecycle.WorldReplacementBootstrapMarker;
 import art.arcane.iris.core.lifecycle.WorldReplacementFilesystem;
 import art.arcane.iris.core.lifecycle.WorldReplacementFilesystem.ReplacementPaths;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal;
@@ -68,7 +69,7 @@ public final class PendingWorldReplacementManager implements Listener {
         if (worldKey == null) {
             throw new IllegalArgumentException("World identifier is invalid: " + requestedName);
         }
-        ExactWorldSlotPathPolicy.resolve(IrisWorldStorage.levelRoot().toPath(), worldKey);
+        ExactWorldSlotPathPolicy.resolve(IrisWorldStorage.levelRoot().toPath(), toWorldSlotKey(worldKey));
         return worldKey;
     }
 
@@ -80,8 +81,12 @@ public final class PendingWorldReplacementManager implements Listener {
     ) throws IOException {
         VolmitSender requiredSender = Objects.requireNonNull(sender, "sender");
         NamespacedKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
+        WorldSlotKey requiredWorldSlotKey = toWorldSlotKey(requiredWorldKey);
         IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
         IrisStartupValidation.requireWorldCreationReady();
+        if (!WorldReplacementBootstrapMarker.wasBootstrappedThisProcess()) {
+            throw new IOException("Exact world replacement requires a full Paper-family startup bootstrap.");
+        }
         PackValidationRegistry.requireLoadable(requiredDimension.getLoader().getDataFolder().getName());
         LifecycleOperationCoordinator coordinator = LifecycleOperationCoordinator.get();
         try (LifecycleOperationCoordinator.Lease ignored = coordinator.acquire(
@@ -89,13 +94,13 @@ public final class PendingWorldReplacementManager implements Listener {
                 LifecycleOperationCoordinator.OperationKind.WORLD_REPLACE,
                 requiredWorldKey.toString()
         )) {
-            if (findTransaction(requiredWorldKey) != null) {
+            if (findTransaction(requiredWorldSlotKey) != null) {
                 throw new IOException("A replacement is already pending for " + requiredWorldKey + ".");
             }
-            ExactWorldSlotPathPolicy.Target target = prepareTarget(requiredWorldKey);
+            ExactWorldSlotPathPolicy.Target target = prepareTarget(requiredWorldSlotKey);
             requireCompatibleEnvironment(target.slotKind(), requiredDimension.getEnvironment());
             long effectiveSeed = resolveEffectiveSeed(target.slotKind(), seed);
-            String worldName = WorldReplacementJournal.logicalWorldName(target.levelRoot(), requiredWorldKey);
+            String worldName = WorldReplacementJournal.logicalWorldName(target.levelRoot(), requiredWorldSlotKey);
             DatapackInstallResult datapacks = ServerConfigurator.installDataPacksIfChanged(true);
             if (!datapacks.succeeded()) {
                 throw new IOException("Iris could not compile the dimension datapacks.");
@@ -103,7 +108,8 @@ public final class PendingWorldReplacementManager implements Listener {
 
             UUID transactionId = UUID.randomUUID();
             ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transactionId);
-            boolean targetPresent = Files.exists(paths.target(), LinkOption.NOFOLLOW_LINKS);
+            WorldReplacementFilesystem.requireExistingTarget(paths);
+            boolean targetPresent = true;
             WorldGeneratorSnapshot originalConfiguration = BukkitWorldConfiguration.snapshot(
                     ServerProperties.BUKKIT_YML,
                     worldName
@@ -127,7 +133,7 @@ public final class PendingWorldReplacementManager implements Listener {
                 String packFingerprint = WorldReplacementFilesystem.fingerprintPack(stagedPack.toPath());
                 transaction = new Transaction(
                         transactionId,
-                        requiredWorldKey,
+                        requiredWorldSlotKey,
                         worldName,
                         target.levelRoot(),
                         installed.getLoadKey(),
@@ -163,7 +169,7 @@ public final class PendingWorldReplacementManager implements Listener {
             } catch (Throwable failure) {
                 if (configurationApplied && transaction != null) {
                     try {
-                        WorldGeneratorSnapshot replacement = replacementSnapshot(transaction);
+                        WorldGeneratorSnapshot replacement = WorldReplacementBootstrap.replacementSnapshot(transaction);
                         if (!BukkitWorldConfiguration.restoreIfMatching(
                                 ServerProperties.BUKKIT_YML,
                                 worldName,
@@ -236,7 +242,7 @@ public final class PendingWorldReplacementManager implements Listener {
                 if (transaction.phase() == Phase.CLEANUP_PENDING) {
                     scheduleCommittedCleanup(transaction);
                 } else if (transaction.phase() == Phase.PUBLISHED) {
-                    WorldIdentity.resolve(transaction.worldKey())
+                    WorldIdentity.resolve(toNamespacedKey(transaction.worldKey()))
                             .ifPresent(world -> verifyPublishedWorld(world, transaction));
                 }
             }
@@ -266,7 +272,7 @@ public final class PendingWorldReplacementManager implements Listener {
 
     private void verifyPublishedWorld(World world, Transaction transaction) {
         try {
-            if (!transaction.worldKey().equals(WorldIdentity.key(world))) {
+            if (!transaction.worldKey().equals(toWorldSlotKey(WorldIdentity.key(world)))) {
                 throw new IOException("Loaded world identity does not match the replacement journal.");
             }
             if (!IrisToolbelt.isIrisWorld(world)) {
@@ -295,6 +301,13 @@ public final class PendingWorldReplacementManager implements Listener {
             if (!transaction.packFingerprint().equals(fingerprint)) {
                 throw new IOException("The replacement pack changed before runtime verification.");
             }
+            WorldGeneratorSnapshot configured = BukkitWorldConfiguration.snapshot(
+                    ServerProperties.BUKKIT_YML,
+                    transaction.worldName()
+            );
+            if (!configured.matchesGeneratorAndSeed(WorldReplacementBootstrap.replacementSnapshot(transaction))) {
+                throw new IOException("bukkit.yml changed before the replacement could be committed.");
+            }
         } catch (Throwable failure) {
             initiateRollback(transaction, failure);
             return;
@@ -317,13 +330,14 @@ public final class PendingWorldReplacementManager implements Listener {
         try {
             Transaction rollback = transaction.withPhase(Phase.ROLLBACK_PENDING);
             writeTransaction(rollback);
-            ServerConfigurator.restart("An Iris world replacement failed verification and will be rolled back.");
         } catch (Throwable rollbackFailure) {
             failure.addSuppressed(rollbackFailure);
             IrisStartupValidation.markPacksInvalid(List.of(
                     "Iris could not arm rollback for " + transaction.worldKey() + ": " + detail(rollbackFailure)));
             Iris.reportError("Failed to arm Iris world replacement rollback for "
                     + transaction.worldKey() + ". Stop the server and preserve the replacement artifacts.", rollbackFailure);
+        } finally {
+            ServerConfigurator.restart("An Iris world replacement failed verification and requires a cold restart.");
         }
     }
 
@@ -348,14 +362,14 @@ public final class PendingWorldReplacementManager implements Listener {
             throw new RestartBoundaryRequired("The world-storage transaction has not reached its cold bootstrap.");
         }
         if (transaction.phase() == Phase.PREPARED) {
-            if (current.matchesGeneratorAndSeed(replacement)) {
-                writeTransaction(transaction.withPhase(Phase.ARMED));
-                throw new RestartBoundaryRequired("The replacement was armed before its journal phase was durable.");
-            } else if (current.matchesGeneratorAndSeed(transaction.originalConfiguration())) {
+            if (current.matchesGeneratorAndSeed(transaction.originalConfiguration())) {
                 WorldReplacementFilesystem.discardStage(paths);
                 deleteJournal(transaction.id());
                 Iris.warn("Cancelled incomplete Iris world replacement for " + transaction.worldKey() + ".");
                 return;
+            } else if (current.matchesGeneratorAndSeed(replacement)) {
+                writeTransaction(transaction.withPhase(Phase.ARMED));
+                throw new RestartBoundaryRequired("The replacement was armed before its journal phase was durable.");
             } else {
                 throw new IOException("bukkit.yml does not match the prepared replacement or its original state.");
             }
@@ -376,16 +390,38 @@ public final class PendingWorldReplacementManager implements Listener {
         if (!cleanupInFlight.add(transaction.id())) {
             return;
         }
-        J.a(() -> cleanupCommittedReplacement(transaction));
+        try {
+            J.a(() -> cleanupCommittedReplacement(transaction));
+        } catch (Throwable failure) {
+            cleanupInFlight.remove(transaction.id());
+            Iris.reportError("Could not schedule retained-backup cleanup for " + transaction.worldKey()
+                    + "; cleanup will retry without rolling back the verified world.", failure);
+        }
     }
 
     private void cleanupCommittedReplacement(Transaction transaction) {
         try {
-            ExactWorldSlotPathPolicy.Target target = resolveTransactionTarget(transaction);
-            ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transaction.id());
-            WorldReplacementFilesystem.cleanupBackup(paths);
-            deleteJournal(transaction.id());
-            Iris.success("Removed the retained backup for " + transaction.worldKey() + ".");
+            synchronized (this) {
+                Transaction current = findTransaction(transaction.worldKey());
+                if (current == null
+                        || !current.id().equals(transaction.id())
+                        || current.phase() != Phase.CLEANUP_PENDING) {
+                    return;
+                }
+                WorldGeneratorSnapshot configured = BukkitWorldConfiguration.snapshot(
+                        ServerProperties.BUKKIT_YML,
+                        current.worldName()
+                );
+                if (!configured.matchesGeneratorAndSeed(WorldReplacementBootstrap.replacementSnapshot(current))) {
+                    throw new IOException("bukkit.yml changed before the retained backup could be removed.");
+                }
+                ExactWorldSlotPathPolicy.Target target = resolveTransactionTarget(current);
+                ReplacementPaths paths = WorldReplacementFilesystem.paths(target, current.id());
+                WorldReplacementFilesystem.validateCommittedTarget(paths, current.packFingerprint());
+                WorldReplacementFilesystem.cleanupBackup(paths);
+                deleteJournal(current.id());
+                Iris.success("Removed the retained backup for " + current.worldKey() + ".");
+            }
         } catch (Throwable failure) {
             Iris.reportError("Could not clean the retained backup for " + transaction.worldKey()
                     + "; cleanup will retry without rolling back the verified world.", failure);
@@ -396,7 +432,7 @@ public final class PendingWorldReplacementManager implements Listener {
         }
     }
 
-    private ExactWorldSlotPathPolicy.Target prepareTarget(NamespacedKey worldKey) throws IOException {
+    private ExactWorldSlotPathPolicy.Target prepareTarget(WorldSlotKey worldKey) throws IOException {
         Path levelRoot = IrisWorldStorage.levelRoot().toPath();
         ExactWorldSlotPathPolicy.Target target = ExactWorldSlotPathPolicy.resolve(levelRoot, worldKey);
         Path dimensions = target.levelRoot().resolve("dimensions");
@@ -416,6 +452,10 @@ public final class PendingWorldReplacementManager implements Listener {
     }
 
     private Transaction findTransaction(NamespacedKey worldKey) throws IOException {
+        return findTransaction(toWorldSlotKey(worldKey));
+    }
+
+    private Transaction findTransaction(WorldSlotKey worldKey) throws IOException {
         for (Transaction transaction : loadTransactions()) {
             if (transaction.worldKey().equals(worldKey)) {
                 return transaction;
@@ -425,159 +465,23 @@ public final class PendingWorldReplacementManager implements Listener {
     }
 
     private List<Transaction> loadTransactions() throws IOException {
-        Path directory = journalDirectory(false);
-        if (directory == null) {
-            return List.of();
-        }
-        ArrayList<Transaction> transactions = new ArrayList<>();
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(directory, "*" + JOURNAL_SUFFIX)) {
-            for (Path file : files) {
-                if (Files.isSymbolicLink(file) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new IOException("Replacement journal entry is unsafe: " + file);
-                }
-                transactions.add(readTransaction(file));
-            }
-        }
-        transactions.sort(Comparator.comparing(transaction -> transaction.id().toString()));
-        return List.copyOf(transactions);
-    }
-
-    private Transaction readTransaction(Path file) throws IOException {
-        Properties properties = new Properties();
-        try (InputStream input = Files.newInputStream(file)) {
-            properties.load(input);
-        }
-        UUID id = UUID.fromString(required(properties, "id"));
-        if (!file.getFileName().toString().equals(id + JOURNAL_SUFFIX)) {
-            throw new IOException("Replacement journal filename does not match its transaction id.");
-        }
-        NamespacedKey worldKey = NamespacedKey.fromString(required(properties, "worldKey"));
-        if (worldKey == null) {
-            throw new IOException("Replacement journal contains an invalid world key.");
-        }
-        ExactWorldSlotPathPolicy.resolve(IrisWorldStorage.levelRoot().toPath(), worldKey);
-        String dimension = required(properties, "dimension");
-        if (!safeDimension(dimension)) {
-            throw new IOException("Replacement journal contains an invalid dimension key.");
-        }
-        long seed = parseLong(properties, "seed");
-        String packFingerprint = required(properties, "packFingerprint");
-        if (!packFingerprint.matches("[0-9a-f]{64}")) {
-            throw new IOException("Replacement journal contains an invalid pack fingerprint.");
-        }
-        WorldGeneratorSnapshot original = readSnapshot(properties, "original.");
-        boolean originalTargetPresent = parseBoolean(properties, "originalTargetPresent");
-        Phase phase;
-        try {
-            phase = Phase.valueOf(required(properties, "phase"));
-        } catch (IllegalArgumentException failure) {
-            throw new IOException("Replacement journal contains an invalid phase.", failure);
-        }
-        return new Transaction(
-                id,
-                worldKey,
-                dimension,
-                seed,
-                packFingerprint,
-                original,
-                originalTargetPresent,
-                phase
-        );
+        return WorldReplacementJournal.load(dataDirectory(), IrisWorldStorage.levelRoot().toPath());
     }
 
     private void writeTransaction(Transaction transaction) throws IOException {
-        Path directory = Objects.requireNonNull(journalDirectory(true));
-        Path target = directory.resolve(transaction.id() + JOURNAL_SUFFIX);
-        Properties properties = new Properties();
-        properties.setProperty("id", transaction.id().toString());
-        properties.setProperty("worldKey", transaction.worldKey().toString());
-        properties.setProperty("dimension", transaction.dimension());
-        properties.setProperty("seed", Long.toString(transaction.seed()));
-        properties.setProperty("packFingerprint", transaction.packFingerprint());
-        properties.setProperty("originalTargetPresent", Boolean.toString(transaction.originalTargetPresent()));
-        properties.setProperty("phase", transaction.phase().name());
-        writeSnapshot(properties, "original.", transaction.originalConfiguration());
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        properties.store(output, null);
-        writeAtomic(target, output.toByteArray());
+        WorldReplacementJournal.write(dataDirectory(), transaction);
     }
 
     private void deleteJournal(UUID id) throws IOException {
-        Path directory = journalDirectory(false);
-        if (directory == null) {
-            return;
-        }
-        Files.deleteIfExists(directory.resolve(id + JOURNAL_SUFFIX));
-        forceDirectory(directory);
+        WorldReplacementJournal.delete(dataDirectory(), id);
     }
 
-    private Path journalDirectory(boolean create) throws IOException {
-        Path directory = plugin.getDataFile(JOURNAL_DIRECTORY).toPath().toAbsolutePath().normalize();
-        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
-            if (!create) {
-                return null;
-            }
-            Files.createDirectories(directory);
-        }
-        if (Files.isSymbolicLink(directory) || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("Replacement journal storage is unsafe: " + directory);
-        }
-        return directory;
+    private Path dataDirectory() {
+        return plugin.getDataFolder().toPath().toAbsolutePath().normalize();
     }
 
-    private static void writeAtomic(Path target, byte[] content) throws IOException {
-        Path parent = Objects.requireNonNull(target.getParent(), "journal parent");
-        Path temporary = parent.resolve("." + target.getFileName() + ".tmp-" + UUID.randomUUID());
-        try {
-            try (FileChannel channel = FileChannel.open(
-                    temporary,
-                    StandardOpenOption.CREATE_NEW,
-                    StandardOpenOption.WRITE
-            )) {
-                ByteBuffer buffer = ByteBuffer.wrap(content);
-                while (buffer.hasRemaining()) {
-                    channel.write(buffer);
-                }
-                channel.force(true);
-            }
-            try {
-                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException failure) {
-                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-            }
-            forceDirectory(parent);
-        } finally {
-            Files.deleteIfExists(temporary);
-        }
-    }
-
-    private static void forceDirectory(Path directory) throws IOException {
-        try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
-            channel.force(true);
-        }
-    }
-
-    private static ReplacementPaths replacementPaths(
-            ExactWorldSlotPathPolicy.Target target,
-            UUID id
-    ) {
-        String artifactBase = ".iris-replace-" + target.worldKey().getKey() + "-" + id;
-        return new ReplacementPaths(
-                target.worldDirectory(),
-                target.namespaceRoot().resolve(artifactBase + ".stage"),
-                target.namespaceRoot().resolve(artifactBase + ".backup")
-        );
-    }
-
-    private static WorldGeneratorSnapshot replacementSnapshot(Transaction transaction) {
-        return new WorldGeneratorSnapshot(
-                true,
-                true,
-                true,
-                "Iris:" + transaction.dimension(),
-                true,
-                transaction.seed()
-        );
+    private ExactWorldSlotPathPolicy.Target resolveTransactionTarget(Transaction transaction) throws IOException {
+        return WorldReplacementJournal.resolveTarget(transaction, IrisWorldStorage.levelRoot().toPath());
     }
 
     private static boolean configurationMatches(WorldGeneratorSnapshot expected, String worldName) {
@@ -633,91 +537,27 @@ public final class PendingWorldReplacementManager implements Listener {
         }
     }
 
-    private static World.Environment expectedEnvironment(NamespacedKey worldKey) {
-        if (NamespacedKey.minecraft("overworld").equals(worldKey)) {
+    private static World.Environment expectedEnvironment(WorldSlotKey worldKey) {
+        if (WorldSlotKey.minecraft("overworld").equals(worldKey)) {
             return World.Environment.NORMAL;
         }
-        if (NamespacedKey.minecraft("the_nether").equals(worldKey)) {
+        if (WorldSlotKey.minecraft("the_nether").equals(worldKey)) {
             return World.Environment.NETHER;
         }
-        if (NamespacedKey.minecraft("the_end").equals(worldKey)) {
+        if (WorldSlotKey.minecraft("the_end").equals(worldKey)) {
             return World.Environment.THE_END;
         }
         return null;
     }
 
-    private static void writeSnapshot(Properties properties, String prefix, WorldGeneratorSnapshot snapshot) {
-        properties.setProperty(prefix + "worldsSectionPresent", Boolean.toString(snapshot.worldsSectionPresent()));
-        properties.setProperty(prefix + "worldSectionPresent", Boolean.toString(snapshot.worldSectionPresent()));
-        properties.setProperty(prefix + "generatorPresent", Boolean.toString(snapshot.generatorPresent()));
-        if (snapshot.generatorPresent()) {
-            properties.setProperty(prefix + "generator", snapshot.generator());
-        }
-        properties.setProperty(prefix + "seedPresent", Boolean.toString(snapshot.seedPresent()));
-        if (snapshot.seedPresent()) {
-            properties.setProperty(prefix + "seed", Long.toString(snapshot.seed()));
-        }
+    private static WorldSlotKey toWorldSlotKey(NamespacedKey worldKey) {
+        NamespacedKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
+        return new WorldSlotKey(requiredWorldKey.getNamespace(), requiredWorldKey.getKey());
     }
 
-    private static WorldGeneratorSnapshot readSnapshot(Properties properties, String prefix) throws IOException {
-        boolean worldsPresent = parseBoolean(properties, prefix + "worldsSectionPresent");
-        boolean worldPresent = parseBoolean(properties, prefix + "worldSectionPresent");
-        boolean generatorPresent = parseBoolean(properties, prefix + "generatorPresent");
-        String generator = generatorPresent ? required(properties, prefix + "generator") : null;
-        boolean seedPresent = parseBoolean(properties, prefix + "seedPresent");
-        Long seed = seedPresent ? parseLong(properties, prefix + "seed") : null;
-        try {
-            return new WorldGeneratorSnapshot(
-                    worldsPresent,
-                    worldPresent,
-                    generatorPresent,
-                    generator,
-                    seedPresent,
-                    seed
-            );
-        } catch (IllegalArgumentException failure) {
-            throw new IOException("Replacement journal contains an invalid configuration snapshot.", failure);
-        }
-    }
-
-    private static boolean safeDimension(String value) {
-        if (value.isEmpty() || value.length() > 256 || value.startsWith(".") || value.contains("..")) {
-            return false;
-        }
-        String[] segments = value.split("/", -1);
-        if (segments.length > 16) {
-            return false;
-        }
-        for (String segment : segments) {
-            if (segment.isEmpty() || !segment.matches("[A-Za-z0-9_-]+")) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static String required(Properties properties, String key) throws IOException {
-        String value = properties.getProperty(key);
-        if (value == null || value.isBlank()) {
-            throw new IOException("Replacement journal is missing " + key + ".");
-        }
-        return value.trim();
-    }
-
-    private static boolean parseBoolean(Properties properties, String key) throws IOException {
-        String value = required(properties, key);
-        if (!"true".equals(value) && !"false".equals(value)) {
-            throw new IOException("Replacement journal contains an invalid boolean for " + key + ".");
-        }
-        return Boolean.parseBoolean(value);
-    }
-
-    private static long parseLong(Properties properties, String key) throws IOException {
-        try {
-            return Long.parseLong(required(properties, key));
-        } catch (NumberFormatException failure) {
-            throw new IOException("Replacement journal contains an invalid integer for " + key + ".", failure);
-        }
+    private static NamespacedKey toNamespacedKey(WorldSlotKey worldKey) {
+        WorldSlotKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
+        return new NamespacedKey(requiredWorldKey.namespace(), requiredWorldKey.key());
     }
 
     private static String detail(Throwable failure) {
@@ -740,50 +580,12 @@ public final class PendingWorldReplacementManager implements Listener {
         }
     }
 
-    private record Transaction(
-            UUID id,
-            NamespacedKey worldKey,
-            String dimension,
-            long seed,
-            String packFingerprint,
-            WorldGeneratorSnapshot originalConfiguration,
-            boolean originalTargetPresent,
-            Phase phase
-    ) {
-        private Transaction {
-            Objects.requireNonNull(id, "id");
-            Objects.requireNonNull(worldKey, "worldKey");
-            Objects.requireNonNull(dimension, "dimension");
-            Objects.requireNonNull(packFingerprint, "packFingerprint");
-            Objects.requireNonNull(originalConfiguration, "originalConfiguration");
-            Objects.requireNonNull(phase, "phase");
-        }
-
-        private String worldName() {
-            return IrisWorldStorage.logicalName(worldKey);
-        }
-
-        private Transaction withPhase(Phase nextPhase) {
-            return new Transaction(
-                    id,
-                    worldKey,
-                    dimension,
-                    seed,
-                    packFingerprint,
-                    originalConfiguration,
-                    originalTargetPresent,
-                    nextPhase
-            );
-        }
-    }
-
-    private enum Phase {
-        PREPARED,
-        ARMED,
-        PUBLISHED,
-        ROLLBACK_PENDING
-    }
-
     private record VanillaLevelContext(long seed, boolean allowNether, boolean allowEnd) {
+    }
+
+    private static final class RestartBoundaryRequired extends IOException {
+        private RestartBoundaryRequired(String message) {
+            super(message);
+        }
     }
 }

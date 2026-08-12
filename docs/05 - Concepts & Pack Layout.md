@@ -103,7 +103,7 @@ Live overworld also contains authoring-only or empty trees that loaders do not r
 2. `dimensions/` is missing.
 3. `dimensions/` has no `*.json` files.
 
-A downloaded archive is also rejected unless it contains exactly one loadable dimension (install key becomes that dimension’s load key). Presence of a pack on disk is defined as a safe pack directory with at least one non-symlink `dimensions/*.json` file.
+A downloaded archive without an expected key is rejected unless it contains exactly one loadable dimension, whose load key becomes the install key. Managed-release and listing downloads carry an exact expected primary key, so their archive may retain additional dimension resources; the expected dimension selects the folder key and the entire pack still validates before publication. Presence of a pack on disk is defined as a safe pack directory with at least one non-symlink `dimensions/*.json` file.
 
 ## Snippets
 

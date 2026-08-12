@@ -1,7 +1,5 @@
 package art.arcane.iris.core;
 
-import org.bukkit.NamespacedKey;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -17,13 +15,13 @@ public final class ExactWorldSlotPathPolicy {
     private ExactWorldSlotPathPolicy() {
     }
 
-    public static Target resolve(Path levelRoot, NamespacedKey worldKey) {
-        NamespacedKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
+    public static Target resolve(Path levelRoot, WorldSlotKey worldKey) {
+        WorldSlotKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
         Path canonicalLevelRoot = canonicalLevelRoot(levelRoot);
         SlotKind slotKind = classify(requiredWorldKey);
         Path dimensionsRoot = canonicalLevelRoot.resolve("dimensions");
-        Path namespaceRoot = dimensionsRoot.resolve(requiredWorldKey.getNamespace());
-        Path worldDirectory = namespaceRoot.resolve(requiredWorldKey.getKey()).normalize();
+        Path namespaceRoot = dimensionsRoot.resolve(requiredWorldKey.namespace());
+        Path worldDirectory = namespaceRoot.resolve(requiredWorldKey.key()).normalize();
         if (!Objects.equals(worldDirectory.getParent(), namespaceRoot)) {
             throw new Rejection(
                     RejectionReason.PATH_TRAVERSAL,
@@ -37,7 +35,7 @@ public final class ExactWorldSlotPathPolicy {
         return new Target(requiredWorldKey, slotKind, canonicalLevelRoot, namespaceRoot, worldDirectory);
     }
 
-    public static Target validate(Path levelRoot, NamespacedKey worldKey, Path candidate) {
+    public static Target validate(Path levelRoot, WorldSlotKey worldKey, Path candidate) {
         Path requiredCandidate = Objects.requireNonNull(candidate, "candidate");
         rejectTraversal(requiredCandidate, "World candidate");
         Target target = resolve(levelRoot, worldKey);
@@ -71,9 +69,9 @@ public final class ExactWorldSlotPathPolicy {
         }
     }
 
-    private static SlotKind classify(NamespacedKey worldKey) {
-        if ("iris".equals(worldKey.getNamespace())) {
-            if (!SAFE_IRIS_KEY.matcher(worldKey.getKey()).matches()) {
+    private static SlotKind classify(WorldSlotKey worldKey) {
+        if ("iris".equals(worldKey.namespace())) {
+            if (!SAFE_IRIS_KEY.matcher(worldKey.key()).matches()) {
                 throw new Rejection(
                         RejectionReason.INVALID_IRIS_KEY,
                         "Iris world keys must be safe single path segments."
@@ -81,13 +79,13 @@ public final class ExactWorldSlotPathPolicy {
             }
             return SlotKind.IRIS_MANAGED;
         }
-        if (!NamespacedKey.MINECRAFT.equals(worldKey.getNamespace())) {
+        if (!"minecraft".equals(worldKey.namespace())) {
             throw new Rejection(
                     RejectionReason.FOREIGN_NAMESPACE,
                     "Only Iris-managed and exact vanilla dimension slots can be replaced."
             );
         }
-        return switch (worldKey.getKey()) {
+        return switch (worldKey.key()) {
             case "overworld" -> SlotKind.VANILLA_OVERWORLD;
             case "the_nether" -> SlotKind.VANILLA_NETHER;
             case "the_end" -> SlotKind.VANILLA_END;
@@ -154,7 +152,7 @@ public final class ExactWorldSlotPathPolicy {
     }
 
     public record Target(
-            NamespacedKey worldKey,
+            WorldSlotKey worldKey,
             SlotKind slotKind,
             Path levelRoot,
             Path namespaceRoot,
@@ -167,8 +165,8 @@ public final class ExactWorldSlotPathPolicy {
             namespaceRoot = Objects.requireNonNull(namespaceRoot, "namespaceRoot").toAbsolutePath().normalize();
             worldDirectory = Objects.requireNonNull(worldDirectory, "worldDirectory").toAbsolutePath().normalize();
             SlotKind expectedSlotKind = classify(worldKey);
-            Path expectedNamespaceRoot = levelRoot.resolve("dimensions").resolve(worldKey.getNamespace());
-            Path expectedWorldDirectory = expectedNamespaceRoot.resolve(worldKey.getKey());
+            Path expectedNamespaceRoot = levelRoot.resolve("dimensions").resolve(worldKey.namespace());
+            Path expectedWorldDirectory = expectedNamespaceRoot.resolve(worldKey.key());
             if (slotKind != expectedSlotKind
                     || !namespaceRoot.equals(expectedNamespaceRoot)
                     || !worldDirectory.equals(expectedWorldDirectory)) {

@@ -1,6 +1,5 @@
 package art.arcane.iris.core;
 
-import org.bukkit.NamespacedKey;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -22,22 +21,22 @@ public class ExactWorldSlotPathPolicyTest {
         Path canonicalRoot = levelRoot.toRealPath();
         List<SlotExpectation> expectations = List.of(
                 new SlotExpectation(
-                        new NamespacedKey("iris", "underworld"),
+                        new WorldSlotKey("iris", "underworld"),
                         ExactWorldSlotPathPolicy.SlotKind.IRIS_MANAGED,
                         "dimensions/iris/underworld"
                 ),
                 new SlotExpectation(
-                        NamespacedKey.minecraft("overworld"),
+                        WorldSlotKey.minecraft("overworld"),
                         ExactWorldSlotPathPolicy.SlotKind.VANILLA_OVERWORLD,
                         "dimensions/minecraft/overworld"
                 ),
                 new SlotExpectation(
-                        NamespacedKey.minecraft("the_nether"),
+                        WorldSlotKey.minecraft("the_nether"),
                         ExactWorldSlotPathPolicy.SlotKind.VANILLA_NETHER,
                         "dimensions/minecraft/the_nether"
                 ),
                 new SlotExpectation(
-                        NamespacedKey.minecraft("the_end"),
+                        WorldSlotKey.minecraft("the_end"),
                         ExactWorldSlotPathPolicy.SlotKind.VANILLA_END,
                         "dimensions/minecraft/the_end"
                 )
@@ -63,7 +62,7 @@ public class ExactWorldSlotPathPolicyTest {
 
         ExactWorldSlotPathPolicy.Target target = ExactWorldSlotPathPolicy.resolve(
                 levelRoot,
-                NamespacedKey.minecraft("the_nether")
+                WorldSlotKey.minecraft("the_nether")
         );
 
         assertEquals(worldDirectory.toRealPath(), target.worldDirectory());
@@ -75,15 +74,15 @@ public class ExactWorldSlotPathPolicyTest {
 
         ExactWorldSlotPathPolicy.Rejection foreign = assertThrows(
                 ExactWorldSlotPathPolicy.Rejection.class,
-                () -> ExactWorldSlotPathPolicy.resolve(levelRoot, new NamespacedKey("foreign", "world"))
+                () -> ExactWorldSlotPathPolicy.resolve(levelRoot, new WorldSlotKey("foreign", "world"))
         );
         ExactWorldSlotPathPolicy.Rejection nestedIris = assertThrows(
                 ExactWorldSlotPathPolicy.Rejection.class,
-                () -> ExactWorldSlotPathPolicy.resolve(levelRoot, new NamespacedKey("iris", "nested/world"))
+                () -> ExactWorldSlotPathPolicy.resolve(levelRoot, new WorldSlotKey("iris", "nested/world"))
         );
         ExactWorldSlotPathPolicy.Rejection unsupportedMinecraft = assertThrows(
                 ExactWorldSlotPathPolicy.Rejection.class,
-                () -> ExactWorldSlotPathPolicy.resolve(levelRoot, NamespacedKey.minecraft("custom"))
+                () -> ExactWorldSlotPathPolicy.resolve(levelRoot, WorldSlotKey.minecraft("custom"))
         );
 
         assertEquals(ExactWorldSlotPathPolicy.RejectionReason.FOREIGN_NAMESPACE, foreign.reason());
@@ -97,7 +96,7 @@ public class ExactWorldSlotPathPolicyTest {
     @Test
     public void validatesOnlyTheExactExpectedCandidate() throws Exception {
         Path levelRoot = temporaryFolder.newFolder("candidate-policy").toPath();
-        NamespacedKey worldKey = NamespacedKey.minecraft("the_nether");
+        WorldSlotKey worldKey = WorldSlotKey.minecraft("the_nether");
         Path expected = levelRoot.toRealPath().resolve("dimensions/minecraft/the_nether");
 
         ExactWorldSlotPathPolicy.Target target = ExactWorldSlotPathPolicy.validate(
@@ -136,7 +135,7 @@ public class ExactWorldSlotPathPolicyTest {
                 ExactWorldSlotPathPolicy.Rejection.class,
                 () -> ExactWorldSlotPathPolicy.resolve(
                         levelRoot.resolve("child/.."),
-                        new NamespacedKey("iris", "underworld")
+                        new WorldSlotKey("iris", "underworld")
                 )
         );
 
@@ -148,41 +147,41 @@ public class ExactWorldSlotPathPolicyTest {
         Path linkedLevelTarget = temporaryFolder.newFolder("linked-level-target").toPath();
         Path levelLink = temporaryFolder.getRoot().toPath().resolve("linked-level");
         Files.createSymbolicLink(levelLink, linkedLevelTarget);
-        assertSymbolicLinkRejected(levelLink, new NamespacedKey("iris", "underworld"));
+        assertSymbolicLinkRejected(levelLink, new WorldSlotKey("iris", "underworld"));
 
         Path dimensionsLevel = temporaryFolder.newFolder("linked-dimensions").toPath();
         Path externalDimensions = temporaryFolder.newFolder("external-dimensions").toPath();
         Files.createSymbolicLink(dimensionsLevel.resolve("dimensions"), externalDimensions);
-        assertSymbolicLinkRejected(dimensionsLevel, new NamespacedKey("iris", "underworld"));
+        assertSymbolicLinkRejected(dimensionsLevel, new WorldSlotKey("iris", "underworld"));
 
         Path namespaceLevel = temporaryFolder.newFolder("linked-namespace").toPath();
         Path dimensions = Files.createDirectories(namespaceLevel.resolve("dimensions"));
         Path externalNamespace = temporaryFolder.newFolder("external-namespace").toPath();
         Files.createSymbolicLink(dimensions.resolve("minecraft"), externalNamespace);
-        assertSymbolicLinkRejected(namespaceLevel, NamespacedKey.minecraft("the_nether"));
+        assertSymbolicLinkRejected(namespaceLevel, WorldSlotKey.minecraft("the_nether"));
 
         Path targetLevel = temporaryFolder.newFolder("linked-target").toPath();
         Path namespace = Files.createDirectories(targetLevel.resolve("dimensions/minecraft"));
         Path externalTarget = temporaryFolder.newFolder("external-target").toPath();
         Files.createSymbolicLink(namespace.resolve("the_nether"), externalTarget);
-        assertSymbolicLinkRejected(targetLevel, NamespacedKey.minecraft("the_nether"));
+        assertSymbolicLinkRejected(targetLevel, WorldSlotKey.minecraft("the_nether"));
     }
 
     @Test
     public void rejectsNonDirectoryStorageEntries() throws Exception {
         Path dimensionsLevel = temporaryFolder.newFolder("file-dimensions").toPath();
         Files.writeString(dimensionsLevel.resolve("dimensions"), "not a directory");
-        assertUnsafeEntryRejected(dimensionsLevel, new NamespacedKey("iris", "underworld"));
+        assertUnsafeEntryRejected(dimensionsLevel, new WorldSlotKey("iris", "underworld"));
 
         Path namespaceLevel = temporaryFolder.newFolder("file-namespace").toPath();
         Path dimensions = Files.createDirectories(namespaceLevel.resolve("dimensions"));
         Files.writeString(dimensions.resolve("iris"), "not a directory");
-        assertUnsafeEntryRejected(namespaceLevel, new NamespacedKey("iris", "underworld"));
+        assertUnsafeEntryRejected(namespaceLevel, new WorldSlotKey("iris", "underworld"));
 
         Path targetLevel = temporaryFolder.newFolder("file-target").toPath();
         Path namespace = Files.createDirectories(targetLevel.resolve("dimensions/iris"));
         Files.writeString(namespace.resolve("underworld"), "not a directory");
-        assertUnsafeEntryRejected(targetLevel, new NamespacedKey("iris", "underworld"));
+        assertUnsafeEntryRejected(targetLevel, new WorldSlotKey("iris", "underworld"));
     }
 
     @Test
@@ -191,13 +190,13 @@ public class ExactWorldSlotPathPolicyTest {
 
         ExactWorldSlotPathPolicy.Rejection missingFailure = assertThrows(
                 ExactWorldSlotPathPolicy.Rejection.class,
-                () -> ExactWorldSlotPathPolicy.resolve(missing, new NamespacedKey("iris", "underworld"))
+                () -> ExactWorldSlotPathPolicy.resolve(missing, new WorldSlotKey("iris", "underworld"))
         );
         ExactWorldSlotPathPolicy.Rejection filesystemFailure = assertThrows(
                 ExactWorldSlotPathPolicy.Rejection.class,
                 () -> ExactWorldSlotPathPolicy.resolve(
                         missing.toAbsolutePath().getRoot(),
-                        new NamespacedKey("iris", "underworld")
+                        new WorldSlotKey("iris", "underworld")
                 )
         );
 
@@ -205,7 +204,7 @@ public class ExactWorldSlotPathPolicyTest {
         assertEquals(ExactWorldSlotPathPolicy.RejectionReason.UNSAFE_ENTRY, filesystemFailure.reason());
     }
 
-    private void assertSymbolicLinkRejected(Path levelRoot, NamespacedKey worldKey) {
+    private void assertSymbolicLinkRejected(Path levelRoot, WorldSlotKey worldKey) {
         ExactWorldSlotPathPolicy.Rejection failure = assertThrows(
                 ExactWorldSlotPathPolicy.Rejection.class,
                 () -> ExactWorldSlotPathPolicy.resolve(levelRoot, worldKey)
@@ -214,7 +213,7 @@ public class ExactWorldSlotPathPolicyTest {
         assertEquals(ExactWorldSlotPathPolicy.RejectionReason.SYMBOLIC_LINK, failure.reason());
     }
 
-    private void assertUnsafeEntryRejected(Path levelRoot, NamespacedKey worldKey) {
+    private void assertUnsafeEntryRejected(Path levelRoot, WorldSlotKey worldKey) {
         ExactWorldSlotPathPolicy.Rejection failure = assertThrows(
                 ExactWorldSlotPathPolicy.Rejection.class,
                 () -> ExactWorldSlotPathPolicy.resolve(levelRoot, worldKey)
@@ -224,7 +223,7 @@ public class ExactWorldSlotPathPolicyTest {
     }
 
     private record SlotExpectation(
-            NamespacedKey worldKey,
+            WorldSlotKey worldKey,
             ExactWorldSlotPathPolicy.SlotKind slotKind,
             String relativePath
     ) {

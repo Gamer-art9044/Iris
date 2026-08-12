@@ -177,7 +177,7 @@ public final class ModdedWorldCommands {
         }
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
         Thread thread = new Thread(() -> {
-            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master", false,
+            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master", false, true,
                     (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
             server.execute(() -> {
                 if (!installed || !packFolder.isDirectory()) {
@@ -280,7 +280,7 @@ public final class ModdedWorldCommands {
         }
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS_2, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
         Thread thread = new Thread(() -> {
-            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master", false,
+            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master", false, true,
                     (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
             server.execute(() -> {
                 if (!installed || !packFolder.isDirectory()) {

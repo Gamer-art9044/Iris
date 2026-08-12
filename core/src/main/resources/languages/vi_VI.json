@@ -697,6 +697,7 @@
     "iris.director.commandiris.param.dimension_pack_create_world_with": "Kích thước/ lốc tạo ra thế giới với",
     "iris.director.commandiris.param.seed_generate_world_with": "Hạt giống để tạo ra thế giới với",
     "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world": "Có nên tự động sử dụng thế giới này làm thế giới chính hay không",
+    "iris.director.commandiris.param.replace_exact_existing_world_slot_next_restart": "Thay thế đúng vị trí thế giới hiện có vào lần khởi động lại tiếp theo",
     "iris.director.commandiris.director.teleport_another_world": "Name",
     "iris.director.commandiris.param.world_teleport": "Thế giới có thể dịch chuyển",
     "iris.director.commandiris.param.player_teleport": "Người chơi cần dịch chuyển",

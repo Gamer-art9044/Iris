@@ -7,13 +7,20 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeNoException;
+import static org.junit.Assume.assumeTrue;
 
 public class BukkitWorldConfigurationTest {
     @Rule
@@ -316,5 +323,49 @@ public class BukkitWorldConfigurationTest {
 
         assertTrue(failure.getMessage().contains("generator"));
         assertEquals(malformed, Files.readString(configuration.toPath()));
+    }
+
+    @Test
+    public void replacementRejectsSymbolicConfigurationWithoutChangingLinkOrTarget() throws Exception {
+        Path target = temporaryFolder.newFile("shared-bukkit.yml").toPath();
+        String original = "settings:\n  allow-end: true\n";
+        Files.writeString(target, original);
+        Path link = temporaryFolder.getRoot().toPath().resolve("bukkit.yml");
+        try {
+            Files.createSymbolicLink(link, target.getFileName());
+        } catch (IOException | UnsupportedOperationException failure) {
+            assumeNoException(failure);
+        }
+        BukkitWorldConfiguration.WorldGeneratorSnapshot expected =
+                new BukkitWorldConfiguration.WorldGeneratorSnapshot(false, false, false, null, false, null);
+
+        assertThrows(IOException.class, () -> BukkitWorldConfiguration.replaceIfMatching(
+                link.toFile(),
+                "world_nether",
+                expected,
+                "underworld",
+                1337L
+        ));
+
+        assertTrue(Files.isSymbolicLink(link));
+        assertEquals(original, Files.readString(target));
+    }
+
+    @Test
+    public void snapshotRejectsSpecialConfigurationWithoutOpeningIt() throws Exception {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("unix"));
+        Path socket = temporaryFolder.getRoot().toPath().resolve("bukkit.yml");
+        try (ServerSocketChannel channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+            try {
+                channel.bind(UnixDomainSocketAddress.of(socket));
+            } catch (IOException | UnsupportedOperationException failure) {
+                assumeNoException(failure);
+            }
+
+            assertThrows(IOException.class, () -> BukkitWorldConfiguration.snapshot(
+                    socket.toFile(),
+                    "world_nether"
+            ));
+        }
     }
 }

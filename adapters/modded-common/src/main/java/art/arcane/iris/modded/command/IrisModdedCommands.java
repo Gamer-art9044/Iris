@@ -258,8 +258,8 @@ public final class IrisModdedCommands {
 
     static int download(CommandSourceStack source, String pack,
                         String branch, boolean forceOverwrite) {
-        boolean defaultOverworld = PackDownloader.isDefaultOverworld(pack);
-        String baseDownloadSource = defaultOverworld ? "beta release" : "branch " + branch;
+        boolean managedBeta = PackDownloader.isManagedBetaPack(pack);
+        String baseDownloadSource = managedBeta ? "beta release" : "branch " + branch;
         String downloadSource = forceOverwrite
                 ? baseDownloadSource + IrisLanguage.plain(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX)
                 : baseDownloadSource;
@@ -274,7 +274,7 @@ public final class IrisModdedCommands {
         }
         scheduler.async(() -> {
             boolean installed = ModdedPackInstaller.install(
-                    ModdedEngineBootstrap.loader().configDir(), pack, branch, forceOverwrite,
+                    ModdedEngineBootstrap.loader().configDir(), pack, branch, forceOverwrite, true,
                     (String message) -> scheduler.global(() -> ok(source, message)));
             if (installed) {
                 scheduler.global(() -> ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_INSTALLED_ITS_EXACT_DIMENSION_TYPES_CUSTOM_BIOMES_JOIN_FORCED, MessageArgument.untrusted("pack", pack))));

@@ -1,6 +1,7 @@
 package art.arcane.iris.core.pack;
 
 import art.arcane.iris.core.IrisDatapackCompiler;
+import art.arcane.iris.core.lifecycle.BukkitStartupPaths;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.volmlib.util.collection.KList;
@@ -27,7 +28,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
@@ -40,9 +43,20 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public final class DefaultPackBootstrapProvisioner {
-    private static final URI DEFAULT_SOURCE = URI.create("https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip");
+    private static final List<PackSpec> DEFAULT_PACKS = List.of(
+            new PackSpec(
+                    "overworld",
+                    URI.create("https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip"),
+                    "overworld"
+            ),
+            new PackSpec(
+                    "underworld",
+                    URI.create("https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip"),
+                    "underworld"
+            )
+    );
     private static final String WORLD_DATAPACK_DIRECTORY = "iris";
-    private static final int MARKER_SCHEMA = 3;
+    private static final int MARKER_SCHEMA = 4;
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_ARCHIVE_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_EXPANDED_BYTES = 2L * 1024L * 1024L * 1024L;
@@ -53,17 +67,28 @@ public final class DefaultPackBootstrapProvisioner {
     private DefaultPackBootstrapProvisioner() {
     }
 
+    static List<PackSpec> defaultPacks() {
+        return DEFAULT_PACKS;
+    }
+
     public static ProvisionResult provision(Path dataDirectory, Consumer<String> feedback) throws IOException {
+        return provision(dataDirectory, feedback, BukkitStartupPaths.resolveCurrent());
+    }
+
+    public static ProvisionResult provision(
+            Path dataDirectory,
+            Consumer<String> feedback,
+            BukkitStartupPaths startupPaths
+    ) throws IOException {
         Objects.requireNonNull(dataDirectory, "dataDirectory");
         Objects.requireNonNull(feedback, "feedback");
-        Path serverRoot = Path.of("").toAbsolutePath().normalize();
-        Path levelRoot = resolveLevelRoot(serverRoot);
+        Path levelRoot = Objects.requireNonNull(startupPaths, "startupPaths").levelRoot();
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.ALWAYS)
                 .build();
         ProvisionOptions options = new ProvisionOptions(
-                DEFAULT_SOURCE,
+                DEFAULT_PACKS,
                 client,
                 Clock.systemUTC(),
                 Duration.ofMinutes(30),
@@ -83,7 +108,7 @@ public final class DefaultPackBootstrapProvisioner {
         try {
             return isProvisioned(
                     dataDirectory,
-                    resolveLevelRoot(Path.of("").toAbsolutePath().normalize())
+                    BukkitStartupPaths.resolveCurrent().levelRoot()
             );
         } catch (IOException | RuntimeException exception) {
             return false;
@@ -91,14 +116,17 @@ public final class DefaultPackBootstrapProvisioner {
     }
 
     static boolean isProvisioned(Path dataDirectory, Path levelRoot) {
+        return isProvisioned(dataDirectory, levelRoot, DEFAULT_PACKS);
+    }
+
+    static boolean isProvisioned(Path dataDirectory, Path levelRoot, List<PackSpec> requiredPacks) {
         try {
             Path normalizedData = dataDirectory.toAbsolutePath().normalize();
             Path normalizedLevel = levelRoot.toAbsolutePath().normalize();
             Path bootstrapRoot = normalizedData.resolve("bootstrap");
             Path datapackRoot = worldDatapackRoot(normalizedLevel);
-            Path packRoot = normalizedData.resolve("packs/overworld");
             Path markerFile = bootstrapRoot.resolve("provisioned.properties");
-            if (!Files.isRegularFile(markerFile) || !isPackRoot(packRoot) || !isDatapackRoot(datapackRoot)) {
+            if (!Files.isRegularFile(markerFile) || !isDatapackRoot(datapackRoot)) {
                 return false;
             }
             Properties marker = loadProperties(markerFile);
@@ -111,8 +139,16 @@ public final class DefaultPackBootstrapProvisioner {
                     .equals(marker.getProperty("compilerIdentity"))) {
                 return false;
             }
-            return directoryFingerprint(packRoot).equals(marker.getProperty("defaultPackFingerprint"))
-                    && directoryFingerprint(datapackRoot).equals(marker.getProperty("datapackFingerprint"))
+            for (PackSpec spec : requiredPacks) {
+                Path packRoot = normalizedData.resolve("packs").resolve(spec.key());
+                if (!isPackRoot(packRoot, spec)
+                        || !spec.source().toString().equals(marker.getProperty(markerKey(spec, "source")))
+                        || !spec.requiredDimension().equals(marker.getProperty(markerKey(spec, "requiredDimension")))
+                        || !directoryFingerprint(packRoot).equals(marker.getProperty(markerKey(spec, "fingerprint")))) {
+                    return false;
+                }
+            }
+            return directoryFingerprint(datapackRoot).equals(marker.getProperty("datapackFingerprint"))
                     && datapackRoot.toString().equals(marker.getProperty("datapackPath"))
                     && packRootsFingerprint(IrisDatapackCompiler.collectPackRoots(
                             normalizedData,
@@ -136,7 +172,6 @@ public final class DefaultPackBootstrapProvisioner {
         PROVISIONED_COMPILER_INPUT_FINGERPRINT.set("");
         Path normalizedData = dataDirectory.toAbsolutePath().normalize();
         Path packsRoot = normalizedData.resolve("packs");
-        Path packRoot = packsRoot.resolve("overworld");
         Path bootstrapRoot = normalizedData.resolve("bootstrap");
         Path legacyDatapackRoot = bootstrapRoot.resolve("datapack");
         Path datapacksRoot = options.levelRoot().toAbsolutePath().normalize().resolve("datapacks");
@@ -149,40 +184,58 @@ public final class DefaultPackBootstrapProvisioner {
         Files.createDirectories(datapacksRoot);
 
         Properties previousMarker = Files.isRegularFile(markerFile) ? loadProperties(markerFile) : new Properties();
-        boolean existingPack = isPackRoot(packRoot);
         boolean existingDatapack = isDatapackRoot(datapackRoot);
-        String currentPackFingerprint = existingPack ? directoryFingerprint(packRoot) : "";
-        boolean markerOwned = "true".equals(previousMarker.getProperty("managedDefault"));
-        boolean unchangedManagedPack = markerOwned
-                && currentPackFingerprint.equals(previousMarker.getProperty("defaultPackFingerprint"));
-        boolean managedDefault = !existingPack || unchangedManagedPack;
-        if (Files.isSymbolicLink(packRoot)) {
-            managedDefault = false;
+        List<PackPlan> plans = new ArrayList<>(options.packs().size());
+        for (PackSpec spec : options.packs()) {
+            Path packRoot = packsRoot.resolve(spec.key()).normalize();
+            if (!Objects.equals(packRoot.getParent(), packsRoot)) {
+                throw new IOException("Bootstrap pack target escapes the packs directory: " + packRoot);
+            }
+            boolean existingPack = isPackRoot(packRoot, spec);
+            String currentFingerprint = existingPack ? directoryFingerprint(packRoot) : "";
+            boolean markerOwned = "true".equals(markerProperty(previousMarker, spec, "managed"));
+            boolean unchangedManagedPack = markerOwned
+                    && currentFingerprint.equals(markerProperty(previousMarker, spec, "fingerprint"));
+            boolean managed = !existingPack || unchangedManagedPack;
+            if (Files.isSymbolicLink(packRoot)) {
+                managed = false;
+            }
+            String retainedSourceSha = markerProperty(previousMarker, spec, "sourceSha256");
+            Archive archive = managed
+                    ? acquireArchive(cacheRoot, previousMarker, spec, feedback, options)
+                    : new Archive(null, retainedSourceSha == null || retainedSourceSha.isBlank()
+                    ? currentFingerprint
+                    : retainedSourceSha);
+            boolean replacePack = !existingPack || managed
+                    && (!archive.sha256().equals(markerProperty(previousMarker, spec, "sourceSha256"))
+                    || !currentFingerprint.equals(markerProperty(previousMarker, spec, "fingerprint")));
+            plans.add(new PackPlan(spec, packRoot, existingPack, managed, archive, replacePack));
         }
-        Archive archive = managedDefault
-                ? acquireArchive(cacheRoot, previousMarker, feedback, options)
-                : new Archive(null, currentPackFingerprint);
-        boolean replacePack = !existingPack || managedDefault
-                && (!archive.sha256().equals(previousMarker.getProperty("sourceSha256"))
-                || !currentPackFingerprint.equals(previousMarker.getProperty("defaultPackFingerprint")));
 
-        Path stagedPack = null;
-        Path extractionRoot = null;
+        Map<PackPlan, Path> stagedPacks = new LinkedHashMap<>();
+        List<Path> extractionRoots = new ArrayList<>();
         Path compileContainer = null;
-        Path packBackup = null;
         Path datapackBackup = null;
-        boolean packReplaced = false;
         boolean datapackReplaced = false;
+        List<PackPublication> packPublications = new ArrayList<>();
+        boolean committed = false;
         try {
-            if (replacePack) {
-                extractionRoot = cacheRoot.resolve(".extract-" + UUID.randomUUID());
+            for (PackPlan plan : plans) {
+                if (!plan.replace()) {
+                    continue;
+                }
+                Path extractionRoot = cacheRoot.resolve(".extract-" + plan.spec().key() + "-" + UUID.randomUUID());
+                extractionRoots.add(extractionRoot);
                 Files.createDirectories(extractionRoot);
-                Path extractedPack = extractArchive(archive.path(), extractionRoot);
-                stagedPack = packsRoot.resolve(".overworld-stage-" + UUID.randomUUID());
+                Path extractedPack = extractArchive(plan.archive().path(), extractionRoot, plan.spec());
+                Path stagedPack = packsRoot.resolve("." + plan.spec().key() + "-stage-" + UUID.randomUUID());
                 copyDirectory(extractedPack, stagedPack);
-                validatePackRoot(stagedPack);
-                packBackup = replaceWithBackup(stagedPack, packRoot);
-                packReplaced = true;
+                validatePackRoot(stagedPack, plan.spec());
+                stagedPacks.put(plan, stagedPack);
+            }
+            for (Map.Entry<PackPlan, Path> entry : stagedPacks.entrySet()) {
+                Path backup = replaceWithBackup(entry.getValue(), entry.getKey().root());
+                packPublications.add(new PackPublication(entry.getKey().root(), backup));
             }
 
             List<File> packRoots = IrisDatapackCompiler.collectPackRoots(normalizedData, options.levelRoot());
@@ -195,7 +248,8 @@ public final class DefaultPackBootstrapProvisioner {
             }
             String compilerIdentity = IrisDatapackCompiler.compilerIdentity(fixer);
             String aggregateFingerprint = packRootsFingerprint(packRoots);
-            boolean rebuildDatapack = replacePack
+            boolean anyPackReplaced = !packPublications.isEmpty();
+            boolean rebuildDatapack = anyPackReplaced
                     || !existingDatapack
                     || !aggregateFingerprint.equals(previousMarker.getProperty("aggregateFingerprint"))
                     || !compilerIdentity.equals(previousMarker.getProperty("compilerIdentity"))
@@ -214,11 +268,12 @@ public final class DefaultPackBootstrapProvisioner {
                 datapackReplaced = true;
             }
 
-            validatePackRoot(packRoot);
+            for (PackPlan plan : plans) {
+                validatePackRoot(plan.root(), plan.spec());
+            }
             if (!isDatapackRoot(datapackRoot)) {
                 throw new IOException("Bootstrap datapack output is incomplete at " + datapackRoot);
             }
-            String finalPackFingerprint = directoryFingerprint(packRoot);
             List<File> finalPackRoots = IrisDatapackCompiler.collectPackRoots(
                     normalizedData,
                     options.levelRoot());
@@ -230,47 +285,76 @@ public final class DefaultPackBootstrapProvisioner {
             String finalDatapackFingerprint = directoryFingerprint(datapackRoot);
             Properties marker = new Properties();
             marker.setProperty("schema", Integer.toString(MARKER_SCHEMA));
-            marker.setProperty("source", options.source().toString());
-            marker.setProperty("sourceSha256", archive.sha256());
-            marker.setProperty("managedDefault", Boolean.toString(managedDefault));
-            marker.setProperty("defaultPackFingerprint", finalPackFingerprint);
+            for (PackPlan plan : plans) {
+                marker.setProperty(markerKey(plan.spec(), "source"), plan.spec().source().toString());
+                marker.setProperty(markerKey(plan.spec(), "sourceSha256"), plan.archive().sha256());
+                marker.setProperty(markerKey(plan.spec(), "managed"), Boolean.toString(plan.managed()));
+                marker.setProperty(markerKey(plan.spec(), "fingerprint"), directoryFingerprint(plan.root()));
+                marker.setProperty(markerKey(plan.spec(), "requiredDimension"), plan.spec().requiredDimension());
+            }
             marker.setProperty("aggregateFingerprint", finalAggregateFingerprint);
             marker.setProperty("compilerIdentity", compilerIdentity);
             marker.setProperty("datapackFingerprint", finalDatapackFingerprint);
             marker.setProperty("datapackPath", datapackRoot.toString());
             marker.setProperty("completedAt", Long.toString(options.clock().millis()));
             storePropertiesAtomic(markerFile, marker);
+            committed = true;
             PROVISIONED_COMPILER_INPUT_FINGERPRINT.set(finalCompilerInputFingerprint);
             PROVISIONED_THIS_STARTUP.set(true);
-            deleteQuietly(packBackup, feedback);
+            for (PackPublication publication : packPublications) {
+                deleteQuietly(publication.backup(), feedback);
+            }
             deleteQuietly(datapackBackup, feedback);
             deleteQuietly(legacyDatapackRoot, feedback);
 
+            boolean everyPackMissing = plans.stream().noneMatch(PackPlan::existed);
             ProvisionStatus status;
-            if (!existingPack && !existingDatapack) {
+            if (everyPackMissing && !existingDatapack) {
                 status = ProvisionStatus.INSTALLED;
-            } else if (replacePack || rebuildDatapack) {
+            } else if (anyPackReplaced || rebuildDatapack) {
                 status = ProvisionStatus.UPDATED;
             } else {
                 status = ProvisionStatus.UNCHANGED;
             }
-            feedback.accept("Iris bootstrap pack is " + status.name().toLowerCase() + ".");
-            return new ProvisionResult(packRoot, datapackRoot, status);
+            feedback.accept("Iris bootstrap packs are " + status.name().toLowerCase() + ".");
+            Map<String, Path> provisionedPacks = new LinkedHashMap<>();
+            for (PackPlan plan : plans) {
+                provisionedPacks.put(plan.spec().key(), plan.root());
+            }
+            return new ProvisionResult(provisionedPacks, datapackRoot, status);
         } catch (IOException failure) {
-            IOException rollbackFailure = rollback(packRoot, packBackup, packReplaced, datapackRoot, datapackBackup, datapackReplaced);
-            if (rollbackFailure != null) {
-                failure.addSuppressed(rollbackFailure);
+            if (!committed) {
+                IOException rollbackFailure = rollback(
+                        packPublications,
+                        datapackRoot,
+                        datapackBackup,
+                        datapackReplaced
+                );
+                if (rollbackFailure != null) {
+                    failure.addSuppressed(rollbackFailure);
+                }
             }
             throw failure;
         } catch (RuntimeException | LinkageError failure) {
-            IOException rollbackFailure = rollback(packRoot, packBackup, packReplaced, datapackRoot, datapackBackup, datapackReplaced);
-            if (rollbackFailure != null) {
-                failure.addSuppressed(rollbackFailure);
+            if (!committed) {
+                IOException rollbackFailure = rollback(
+                        packPublications,
+                        datapackRoot,
+                        datapackBackup,
+                        datapackReplaced
+                );
+                if (rollbackFailure != null) {
+                    failure.addSuppressed(rollbackFailure);
+                }
             }
             throw new IOException("Iris bootstrap provisioning failed", failure);
         } finally {
-            deleteQuietly(stagedPack, feedback);
-            deleteQuietly(extractionRoot, feedback);
+            for (Path stagedPack : stagedPacks.values()) {
+                deleteQuietly(stagedPack, feedback);
+            }
+            for (Path extractionRoot : extractionRoots) {
+                deleteQuietly(extractionRoot, feedback);
+            }
             deleteQuietly(compileContainer, feedback);
         }
     }
@@ -278,35 +362,44 @@ public final class DefaultPackBootstrapProvisioner {
     private static Archive acquireArchive(
             Path cacheRoot,
             Properties marker,
+            PackSpec spec,
             Consumer<String> feedback,
             ProvisionOptions options
     ) throws IOException {
-        Path archivePath = cacheRoot.resolve("default-overworld.zip");
-        Path metadataPath = cacheRoot.resolve("default-overworld.properties");
+        Path archivePath = cacheRoot.resolve("default-" + spec.key() + ".zip");
+        Path metadataPath = cacheRoot.resolve("default-" + spec.key() + ".properties");
         Properties metadata = Files.isRegularFile(metadataPath) ? loadProperties(metadataPath) : new Properties();
         boolean validCache = false;
         if (Files.isRegularFile(archivePath)) {
             try {
-                validCache = validateArchive(archivePath);
+                validCache = validateArchive(archivePath, spec);
             } catch (IOException exception) {
-                feedback.accept("Cached default overworld archive is invalid; downloading a replacement.");
+                feedback.accept("Cached Iris " + spec.key() + " beta archive is invalid; downloading a replacement.");
             }
         }
+        String cachedSource = metadata.getProperty("source", "");
+        boolean cacheMatchesSource = validCache && (spec.source().toString().equals(cachedSource)
+                || cachedSource.isBlank() && "overworld".equals(spec.key()));
         long fetchedAt = parseLong(metadata.getProperty("fetchedAt"), 0L);
-        boolean fresh = validCache && options.clock().millis() - fetchedAt < options.refreshInterval().toMillis();
+        boolean fresh = cacheMatchesSource
+                && options.clock().millis() - fetchedAt < options.refreshInterval().toMillis();
         if (fresh) {
+            if (cachedSource.isBlank()) {
+                metadata.setProperty("source", spec.source().toString());
+                storePropertiesAtomic(metadataPath, metadata);
+            }
             return new Archive(archivePath, sha256(archivePath));
         }
 
         IOException networkFailure = null;
         for (int attempt = 1; attempt <= options.attempts(); attempt++) {
             try {
-                HttpRequest.Builder request = HttpRequest.newBuilder(options.source())
+                HttpRequest.Builder request = HttpRequest.newBuilder(spec.source())
                         .timeout(options.requestTimeout())
                         .header("Accept", "application/octet-stream")
                         .header("User-Agent", "Iris-Bootstrap")
                         .GET();
-                if (validCache) {
+                if (cacheMatchesSource) {
                     String etag = metadata.getProperty("etag");
                     String lastModified = metadata.getProperty("lastModified");
                     if (etag != null && !etag.isBlank()) {
@@ -318,8 +411,9 @@ public final class DefaultPackBootstrapProvisioner {
                 }
                 HttpResponse<InputStream> response = options.client().send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
-                if (status == 304 && validCache) {
+                if (status == 304 && cacheMatchesSource) {
                     close(response.body());
+                    metadata.setProperty("source", spec.source().toString());
                     metadata.setProperty("fetchedAt", Long.toString(options.clock().millis()));
                     storePropertiesAtomic(metadataPath, metadata);
                     return new Archive(archivePath, sha256(archivePath));
@@ -328,10 +422,10 @@ public final class DefaultPackBootstrapProvisioner {
                     Path temporary = cacheRoot.resolve(".download-" + UUID.randomUUID() + ".zip");
                     try {
                         try (InputStream input = response.body(); OutputStream output = Files.newOutputStream(temporary)) {
-                            copyLimited(input, output, options.maxArchiveBytes());
+                            copyLimited(input, output, options.maxArchiveBytes(), spec);
                         }
-                        if (!validateArchive(temporary)) {
-                            throw new IOException("Downloaded default overworld archive is invalid");
+                        if (!validateArchive(temporary, spec)) {
+                            throw new IOException("Downloaded Iris " + spec.key() + " beta archive is invalid");
                         }
                         move(temporary, archivePath, true);
                     } finally {
@@ -340,14 +434,15 @@ public final class DefaultPackBootstrapProvisioner {
                     Properties updated = new Properties();
                     response.headers().firstValue("etag").ifPresent(value -> updated.setProperty("etag", value));
                     response.headers().firstValue("last-modified").ifPresent(value -> updated.setProperty("lastModified", value));
+                    updated.setProperty("source", spec.source().toString());
                     updated.setProperty("fetchedAt", Long.toString(options.clock().millis()));
                     updated.setProperty("sha256", sha256(archivePath));
                     storePropertiesAtomic(metadataPath, updated);
-                    feedback.accept("Downloaded the Iris default overworld beta archive.");
+                    feedback.accept("Downloaded the Iris " + spec.key() + " beta archive.");
                     return new Archive(archivePath, updated.getProperty("sha256"));
                 }
                 close(response.body());
-                IOException statusFailure = new IOException("Default overworld download returned HTTP " + status);
+                IOException statusFailure = new IOException("Iris " + spec.key() + " beta download returned HTTP " + status);
                 if (!retryableStatus(status)) {
                     networkFailure = statusFailure;
                     break;
@@ -355,7 +450,7 @@ public final class DefaultPackBootstrapProvisioner {
                 networkFailure = statusFailure;
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
-                throw new IOException("Default overworld download was interrupted", exception);
+                throw new IOException("Iris " + spec.key() + " beta download was interrupted", exception);
             } catch (IOException exception) {
                 networkFailure = exception;
             }
@@ -364,79 +459,38 @@ public final class DefaultPackBootstrapProvisioner {
             }
         }
 
-        if (validCache) {
-            feedback.accept("Default overworld download failed; using the validated cached archive.");
+        if (cacheMatchesSource) {
+            feedback.accept("Iris " + spec.key() + " beta download failed; using the validated cached archive.");
             return new Archive(archivePath, sha256(archivePath));
         }
-        if (isManagedPackOutputUsable(marker, cacheRoot.getParent().getParent())) {
-            String sourceSha = marker.getProperty("sourceSha256");
+        if (isManagedPackOutputUsable(marker, cacheRoot.getParent().getParent(), spec)) {
+            String sourceSha = markerProperty(marker, spec, "sourceSha256");
             return new Archive(null, sourceSha);
         }
         throw networkFailure == null
-                ? new IOException("Default overworld archive is unavailable and no valid cache exists")
-                : new IOException("Default overworld archive is unavailable and no valid cache exists", networkFailure);
+                ? new IOException("Iris " + spec.key() + " beta archive is unavailable and no valid cache exists")
+                : new IOException("Iris " + spec.key() + " beta archive is unavailable and no valid cache exists", networkFailure);
     }
 
-    private static boolean isManagedPackOutputUsable(Properties marker, Path dataDirectory) {
-        String sourceSha = marker.getProperty("sourceSha256");
-        String expectedFingerprint = marker.getProperty("defaultPackFingerprint");
+    private static boolean isManagedPackOutputUsable(Properties marker, Path dataDirectory, PackSpec spec) {
+        String sourceSha = markerProperty(marker, spec, "sourceSha256");
+        String expectedFingerprint = markerProperty(marker, spec, "fingerprint");
         if (sourceSha == null || sourceSha.isBlank() || expectedFingerprint == null || expectedFingerprint.isBlank()) {
             return false;
         }
-        Path packRoot = dataDirectory.toAbsolutePath().normalize().resolve("packs/overworld");
+        Path packRoot = dataDirectory.toAbsolutePath().normalize().resolve("packs").resolve(spec.key());
         try {
-            return isPackRoot(packRoot) && directoryFingerprint(packRoot).equals(expectedFingerprint);
+            return isPackRoot(packRoot, spec) && directoryFingerprint(packRoot).equals(expectedFingerprint);
         } catch (IOException | RuntimeException exception) {
             return false;
         }
     }
 
-    static Path resolveLevelRoot(Path serverRoot) throws IOException {
-        Path normalizedServerRoot = serverRoot.toAbsolutePath().normalize();
-        String levelName = readConfiguredLevelName(normalizedServerRoot);
-        Path configured = Path.of(levelName);
-        return configured.isAbsolute()
-                ? configured.normalize()
-                : normalizedServerRoot.resolve(configured).normalize();
+    public static Path resolveLevelRoot(Path serverRoot) throws IOException {
+        return BukkitStartupPaths.resolve(serverRoot).levelRoot();
     }
 
-    private static String readConfiguredLevelName(Path serverRoot) throws IOException {
-        String levelName = "world";
-        Path propertiesFile = serverRoot.resolve("server.properties");
-        if (Files.isRegularFile(propertiesFile)) {
-            Properties properties = loadProperties(propertiesFile);
-            levelName = properties.getProperty("level-name", levelName);
-        }
-
-        String[] arguments = ProcessHandle.current().info().arguments().orElse(new String[0]);
-        for (int index = 0; index < arguments.length; index++) {
-            String argument = arguments[index];
-            String following = index + 1 < arguments.length ? arguments[index + 1] : null;
-            String parsed = parseLevelArgument(argument, following);
-            if (parsed != null) {
-                levelName = parsed;
-            }
-        }
-        if (levelName.isBlank()) {
-            throw new IOException("Configured level name is empty");
-        }
-        return levelName;
-    }
-
-    private static String parseLevelArgument(String argument, String following) {
-        for (String key : List.of("-w", "--level-name", "--world")) {
-            if (argument.equals(key) && following != null && !following.isBlank()) {
-                return following;
-            }
-            String prefix = key + "=";
-            if (argument.startsWith(prefix) && argument.length() > prefix.length()) {
-                return argument.substring(prefix.length());
-            }
-        }
-        return null;
-    }
-
-    private static boolean validateArchive(Path archive) throws IOException {
+    private static boolean validateArchive(Path archive, PackSpec spec) throws IOException {
         int entries = 0;
         long expanded = 0L;
         boolean dimensionFound = false;
@@ -446,13 +500,14 @@ public final class DefaultPackBootstrapProvisioner {
             while ((entry = zip.getNextEntry()) != null) {
                 entries++;
                 if (entries > MAX_ARCHIVE_ENTRIES) {
-                    throw new IOException("Default overworld archive contains too many entries");
+                    throw new IOException("Iris " + spec.key() + " beta archive contains too many entries");
                 }
                 String name = normalizedZipEntry(entry.getName());
                 if (!paths.add(name)) {
-                    throw new IOException("Default overworld archive contains duplicate path " + name);
+                    throw new IOException("Iris " + spec.key() + " beta archive contains duplicate path " + name);
                 }
-                if (name.equals("dimensions/overworld.json") || name.endsWith("/dimensions/overworld.json")) {
+                String requiredDimension = "dimensions/" + spec.requiredDimension() + ".json";
+                if (name.equals(requiredDimension) || name.endsWith("/" + requiredDimension)) {
                     dimensionFound = true;
                 }
                 if (!entry.isDirectory()) {
@@ -461,7 +516,7 @@ public final class DefaultPackBootstrapProvisioner {
                     while ((read = zip.read(buffer)) >= 0) {
                         expanded += read;
                         if (expanded > MAX_EXPANDED_BYTES) {
-                            throw new IOException("Default overworld archive expands beyond the safety limit");
+                            throw new IOException("Iris " + spec.key() + " beta archive expands beyond the safety limit");
                         }
                     }
                 }
@@ -471,9 +526,9 @@ public final class DefaultPackBootstrapProvisioner {
         return entries > 0 && dimensionFound;
     }
 
-    private static Path extractArchive(Path archive, Path extractionRoot) throws IOException {
+    private static Path extractArchive(Path archive, Path extractionRoot, PackSpec spec) throws IOException {
         if (archive == null) {
-            throw new IOException("Cached default pack archive is unavailable for required pack rebuild");
+            throw new IOException("Cached Iris " + spec.key() + " beta archive is unavailable for required pack rebuild");
         }
         long expanded = 0L;
         int entries = 0;
@@ -482,12 +537,12 @@ public final class DefaultPackBootstrapProvisioner {
             while ((entry = zip.getNextEntry()) != null) {
                 entries++;
                 if (entries > MAX_ARCHIVE_ENTRIES) {
-                    throw new IOException("Default overworld archive contains too many entries");
+                    throw new IOException("Iris " + spec.key() + " beta archive contains too many entries");
                 }
                 String name = normalizedZipEntry(entry.getName());
                 Path output = extractionRoot.resolve(name).normalize();
                 if (!output.startsWith(extractionRoot)) {
-                    throw new IOException("Unsafe path in default overworld archive: " + entry.getName());
+                    throw new IOException("Unsafe path in Iris " + spec.key() + " beta archive: " + entry.getName());
                 }
                 if (entry.isDirectory()) {
                     Files.createDirectories(output);
@@ -499,7 +554,7 @@ public final class DefaultPackBootstrapProvisioner {
                         while ((read = zip.read(buffer)) >= 0) {
                             expanded += read;
                             if (expanded > MAX_EXPANDED_BYTES) {
-                                throw new IOException("Default overworld archive expands beyond the safety limit");
+                                throw new IOException("Iris " + spec.key() + " beta archive expands beyond the safety limit");
                             }
                             file.write(buffer, 0, read);
                         }
@@ -508,42 +563,44 @@ public final class DefaultPackBootstrapProvisioner {
                 zip.closeEntry();
             }
         }
-        if (isPackRoot(extractionRoot)) {
+        if (isPackRoot(extractionRoot, spec)) {
             return extractionRoot;
         }
         List<Path> candidates = new ArrayList<>();
         try (DirectoryStream<Path> children = Files.newDirectoryStream(extractionRoot)) {
             for (Path child : children) {
-                if (Files.isDirectory(child) && isPackRoot(child)) {
+                if (Files.isDirectory(child) && isPackRoot(child, spec)) {
                     candidates.add(child);
                 }
             }
         }
         if (candidates.size() != 1) {
-            throw new IOException("Default overworld archive has an invalid root layout");
+            throw new IOException("Iris " + spec.key() + " beta archive has an invalid root layout");
         }
         return candidates.getFirst();
     }
 
     private static String normalizedZipEntry(String raw) throws IOException {
         if (raw == null || raw.isBlank() || raw.indexOf('\0') >= 0 || raw.startsWith("/") || raw.startsWith("\\")) {
-            throw new IOException("Invalid path in default overworld archive");
+            throw new IOException("Invalid path in Iris bootstrap pack archive");
         }
         String normalized = raw.replace('\\', '/');
         Path path = Path.of(normalized).normalize();
         if (path.isAbsolute() || path.startsWith("..") || normalized.matches("^[A-Za-z]:.*")) {
-            throw new IOException("Unsafe path in default overworld archive: " + raw);
+            throw new IOException("Unsafe path in Iris bootstrap pack archive: " + raw);
         }
         return path.toString().replace('\\', '/');
     }
 
-    private static boolean isPackRoot(Path path) {
-        return path != null && Files.isRegularFile(path.resolve("dimensions/overworld.json"));
+    private static boolean isPackRoot(Path path, PackSpec spec) {
+        return path != null
+                && Files.isRegularFile(path.resolve("dimensions").resolve(spec.requiredDimension() + ".json"));
     }
 
-    private static void validatePackRoot(Path path) throws IOException {
-        if (!isPackRoot(path)) {
-            throw new IOException("Default overworld pack is missing dimensions/overworld.json at " + path);
+    private static void validatePackRoot(Path path, PackSpec spec) throws IOException {
+        if (!isPackRoot(path, spec)) {
+            throw new IOException("Iris " + spec.key() + " beta pack is missing dimensions/"
+                    + spec.requiredDimension() + ".json at " + path);
         }
     }
 
@@ -636,26 +693,27 @@ public final class DefaultPackBootstrapProvisioner {
     }
 
     private static IOException rollback(
-            Path packRoot,
-            Path packBackup,
-            boolean packReplaced,
+            List<PackPublication> packPublications,
             Path datapackRoot,
             Path datapackBackup,
             boolean datapackReplaced
     ) {
         IOException failure = null;
         try {
-            restore(packRoot, packBackup, packReplaced);
+            restore(datapackRoot, datapackBackup, datapackReplaced);
         } catch (IOException exception) {
             failure = exception;
         }
-        try {
-            restore(datapackRoot, datapackBackup, datapackReplaced);
-        } catch (IOException exception) {
-            if (failure == null) {
-                failure = exception;
-            } else {
-                failure.addSuppressed(exception);
+        for (int index = packPublications.size() - 1; index >= 0; index--) {
+            PackPublication publication = packPublications.get(index);
+            try {
+                restore(publication.root(), publication.backup(), true);
+            } catch (IOException exception) {
+                if (failure == null) {
+                    failure = exception;
+                } else {
+                    failure.addSuppressed(exception);
+                }
             }
         }
         return failure;
@@ -726,14 +784,19 @@ public final class DefaultPackBootstrapProvisioner {
         }
     }
 
-    private static void copyLimited(InputStream input, OutputStream output, long limit) throws IOException {
+    private static void copyLimited(
+            InputStream input,
+            OutputStream output,
+            long limit,
+            PackSpec spec
+    ) throws IOException {
         byte[] buffer = new byte[8192];
         long total = 0L;
         int read;
         while ((read = input.read(buffer)) >= 0) {
             total += read;
             if (total > limit) {
-                throw new IOException("Default overworld archive exceeds the download size limit");
+                throw new IOException("Iris " + spec.key() + " beta archive exceeds the download size limit");
             }
             output.write(buffer, 0, read);
         }
@@ -772,7 +835,7 @@ public final class DefaultPackBootstrapProvisioner {
             Thread.sleep(duration.toMillis());
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new IOException("Default overworld retry wait was interrupted", exception);
+            throw new IOException("Iris bootstrap pack retry wait was interrupted", exception);
         }
     }
 
@@ -785,6 +848,24 @@ public final class DefaultPackBootstrapProvisioner {
         } catch (NumberFormatException exception) {
             return fallback;
         }
+    }
+
+    private static String markerKey(PackSpec spec, String property) {
+        return "pack." + spec.key() + "." + property;
+    }
+
+    private static String markerProperty(Properties marker, PackSpec spec, String property) {
+        String current = marker.getProperty(markerKey(spec, property));
+        if (current != null || !"overworld".equals(spec.key())) {
+            return current;
+        }
+        return switch (property) {
+            case "source" -> marker.getProperty("source");
+            case "sourceSha256" -> marker.getProperty("sourceSha256");
+            case "managed" -> marker.getProperty("managedDefault");
+            case "fingerprint" -> marker.getProperty("defaultPackFingerprint");
+            default -> null;
+        };
     }
 
     private static void close(InputStream input) {
@@ -800,16 +881,16 @@ public final class DefaultPackBootstrapProvisioner {
         UNCHANGED
     }
 
-    public record ProvisionResult(Path packRoot, Path datapackRoot, ProvisionStatus status) {
+    public record ProvisionResult(Map<String, Path> packRoots, Path datapackRoot, ProvisionStatus status) {
         public ProvisionResult {
-            Objects.requireNonNull(packRoot, "packRoot");
+            packRoots = Map.copyOf(Objects.requireNonNull(packRoots, "packRoots"));
             Objects.requireNonNull(datapackRoot, "datapackRoot");
             Objects.requireNonNull(status, "status");
         }
     }
 
     record ProvisionOptions(
-            URI source,
+            List<PackSpec> packs,
             HttpClient client,
             Clock clock,
             Duration refreshInterval,
@@ -820,17 +901,47 @@ public final class DefaultPackBootstrapProvisioner {
             Path levelRoot
     ) {
         ProvisionOptions {
-            Objects.requireNonNull(source, "source");
+            packs = List.copyOf(Objects.requireNonNull(packs, "packs"));
             Objects.requireNonNull(client, "client");
             Objects.requireNonNull(clock, "clock");
             Objects.requireNonNull(refreshInterval, "refreshInterval");
             Objects.requireNonNull(requestTimeout, "requestTimeout");
             Objects.requireNonNull(retryDelay, "retryDelay");
             Objects.requireNonNull(levelRoot, "levelRoot");
-            if (attempts < 1 || maxArchiveBytes < 1L) {
+            if (packs.isEmpty() || attempts < 1 || maxArchiveBytes < 1L) {
                 throw new IllegalArgumentException("Invalid bootstrap provisioning options");
             }
+            Set<String> keys = new HashSet<>();
+            for (PackSpec pack : packs) {
+                if (!keys.add(pack.key())) {
+                    throw new IllegalArgumentException("Duplicate bootstrap pack key '" + pack.key() + "'");
+                }
+            }
         }
+    }
+
+    record PackSpec(String key, URI source, String requiredDimension) {
+        PackSpec {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(source, "source");
+            Objects.requireNonNull(requiredDimension, "requiredDimension");
+            if (!key.matches("[a-z0-9_-]+") || !requiredDimension.matches("[a-z0-9_/-]+")) {
+                throw new IllegalArgumentException("Invalid bootstrap pack specification for '" + key + "'");
+            }
+        }
+    }
+
+    private record PackPlan(
+            PackSpec spec,
+            Path root,
+            boolean existed,
+            boolean managed,
+            Archive archive,
+            boolean replace
+    ) {
+    }
+
+    private record PackPublication(Path root, Path backup) {
     }
 
     private record Archive(Path path, String sha256) {

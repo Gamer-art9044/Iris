@@ -34,13 +34,13 @@ If validation reports a missing edge, restore or repair that resource before pac
 | Command | Behavior |
 |---------|----------|
 | Bukkit: `/iris download <pack> [branch=stable] [overwrite=false]`; modded: `/iris download <pack> [branch] [force]` | Download into packs root |
-| Default overworld special case | Pack name `overworld` uses IrisDimensions overworld **beta release zip** (`…/releases/download/beta/overworld.zip`), not an arbitrary branch zip |
+| Managed beta packs | Pack names `overworld` and `underworld` use their IrisDimensions **beta release ZIPs**, not arbitrary branch archives |
 | Other packs | `IrisDimensions/<pack>/<branch>` GitHub archive search via `StudioSVC.downloadSearch` |
 
 | Param | Default | Notes |
 |-------|---------|-------|
 | `pack` | required | Folder/key or repo short name |
-| `branch` | `stable` | GitHub ref when not default overworld |
+| `branch` | `stable` | GitHub ref when the pack is not a managed beta |
 | `overwrite` | `false` | Force replace existing present pack |
 
 ### Install pipeline (`PackDownloader`)
@@ -48,12 +48,12 @@ If validation reports a missing edge, restore or repair that resource before pac
 1. Per-key/ref download lock (concurrent startup and commands do not double-fetch).
 2. If pack present and not force → skip network.
 3. Download zip (size/entry limits: archive ≤512MiB, ≤100k entries, total uncompressed budget, per-file cap).
-4. Unpack to temp; require single pack home directory.
-5. Open as datapack-compiler `IrisData`; require **exactly one** dimension; key = that dimension load key.
+4. Unpack to temp; require a single pack home directory.
+5. Open as datapack-compiler `IrisData`. A normal download without an expected key requires exactly one dimension; a managed or listing download selects its exact expected dimension while retaining and validating any additional dimension resources in the same pack.
 6. Run `PackValidator.validate`; blocking errors abort install.
 7. Publish into `packs/<key>/` with conflict checks (refuses symlink targets; detects dimension-key conflicts with other folders).
 
-Default overworld repository constant: `IrisDimensions/overworld`.
+Managed beta sources are `IrisDimensions/overworld` (`overworld.zip`) and `IrisDimensions/underworld` (`underworld.zip`). Startup treats their ownership independently: an operator-edited or linked pack is preserved without preventing the other managed pack from updating.
 
 ## Validate
 

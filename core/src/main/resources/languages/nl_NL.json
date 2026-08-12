@@ -697,6 +697,7 @@
     "iris.director.commandiris.param.dimension_pack_create_world_with": "De dimensie/pack om de wereld te creëren met",
     "iris.director.commandiris.param.seed_generate_world_with": "Het zaad om de wereld te genereren met",
     "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world": "Of deze wereld automatisch gebruikt moet worden als de belangrijkste wereld",
+    "iris.director.commandiris.param.replace_exact_existing_world_slot_next_restart": "De exacte bestaande wereldsleuf bij de volgende herstart vervangen",
     "iris.director.commandiris.director.teleport_another_world": "Teleporteren naar een andere wereld",
     "iris.director.commandiris.param.world_teleport": "Wereld te teleporteren naar",
     "iris.director.commandiris.param.player_teleport": "Speler naar teleporteren",

@@ -31,13 +31,81 @@ public class WorldReplacementFilesystemTest {
     public void publishesReplacementAndRetainsOriginalBackup() throws Exception {
         WorldReplacementFilesystem.ReplacementPaths paths = paths("publish-existing", TRANSACTION_ID);
         writeOriginalTarget(paths, "original");
+        Files.createDirectories(paths.target().resolve("region"));
+        Files.createDirectories(paths.target().resolve("entities"));
+        Files.createDirectories(paths.target().resolve("poi"));
+        Files.writeString(paths.target().resolve("region/r.0.0.mca"), "old-region");
+        Files.writeString(paths.target().resolve("entities/r.0.0.mca"), "old-entities");
+        Files.writeString(paths.target().resolve("poi/r.0.0.mca"), "old-poi");
         String fingerprint = writeStage(paths, "replacement");
 
         WorldReplacementFilesystem.publish(paths, true, fingerprint);
 
         assertEquals("replacement", readPackContent(paths.target()));
         assertEquals("original", Files.readString(paths.backup().resolve("original.txt")));
+        assertEquals("metadata", Files.readString(paths.target().resolve("data/paper/metadata.dat")));
+        assertEquals("overrides", Files.readString(paths.target().resolve("data/paper/level_overrides.dat")));
+        assertEquals(
+                "generation",
+                Files.readString(paths.target().resolve("data/minecraft/world_gen_settings.dat"))
+        );
+        assertFalse(Files.exists(paths.target().resolve("region/r.0.0.mca")));
+        assertFalse(Files.exists(paths.target().resolve("entities/r.0.0.mca")));
+        assertFalse(Files.exists(paths.target().resolve("poi/r.0.0.mca")));
+        assertTrue(Files.exists(paths.backup().resolve("region/r.0.0.mca")));
+        assertTrue(Files.exists(paths.backup().resolve("entities/r.0.0.mca")));
+        assertTrue(Files.exists(paths.backup().resolve("poi/r.0.0.mca")));
         assertFalse(Files.exists(paths.stage()));
+    }
+
+    @Test
+    public void rejectsAbsentTargetForReplacementAdmission() throws Exception {
+        WorldReplacementFilesystem.ReplacementPaths paths = paths("admit-absent", TRANSACTION_ID);
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> WorldReplacementFilesystem.requireExistingTarget(paths)
+        );
+
+        assertTrue(failure.getMessage().contains("requires an existing exact world slot"));
+        assertFalse(Files.exists(paths.target()));
+        assertFalse(Files.exists(paths.stage()));
+        assertFalse(Files.exists(paths.backup()));
+    }
+
+    @Test
+    public void completesMetadataForAlreadyPublishedReplacement() throws Exception {
+        WorldReplacementFilesystem.ReplacementPaths paths = paths("published-metadata", TRANSACTION_ID);
+        writeOriginalTarget(paths, "original");
+        String fingerprint = writeStage(paths, "replacement");
+        Files.move(paths.target(), paths.backup());
+        Files.move(paths.stage(), paths.target());
+
+        WorldReplacementFilesystem.publish(paths, true, fingerprint);
+
+        assertEquals("metadata", Files.readString(paths.target().resolve("data/paper/metadata.dat")));
+        assertEquals("overrides", Files.readString(paths.target().resolve("data/paper/level_overrides.dat")));
+        assertEquals(
+                "generation",
+                Files.readString(paths.target().resolve("data/minecraft/world_gen_settings.dat"))
+        );
+    }
+
+    @Test
+    public void rejectsUnmigratedRetainedWorldBeforePublication() throws Exception {
+        WorldReplacementFilesystem.ReplacementPaths paths = paths("missing-paper-metadata", TRANSACTION_ID);
+        Files.createDirectories(paths.target());
+        Files.writeString(paths.target().resolve("original.txt"), "original");
+        String fingerprint = writeStage(paths, "replacement");
+
+        assertThrows(
+                IOException.class,
+                () -> WorldReplacementFilesystem.publish(paths, true, fingerprint)
+        );
+
+        assertTrue(Files.isDirectory(paths.target()));
+        assertTrue(Files.isDirectory(paths.stage()));
+        assertFalse(Files.exists(paths.backup()));
     }
 
     @Test
@@ -130,6 +198,37 @@ public class WorldReplacementFilesystemTest {
         Files.move(paths.target(), paths.backup());
 
         WorldReplacementFilesystem.rollback(paths, true);
+
+        assertEquals("original", Files.readString(paths.target().resolve("original.txt")));
+        assertFalse(Files.exists(paths.stage()));
+        assertFalse(Files.exists(paths.backup()));
+    }
+
+    @Test
+    public void preparedRollbackCanRepublishWhenConfigurationRestoreFails() throws Exception {
+        WorldReplacementFilesystem.ReplacementPaths paths = paths("rollback-republish", TRANSACTION_ID);
+        writeOriginalTarget(paths, "original");
+        String fingerprint = writeStage(paths, "replacement");
+        WorldReplacementFilesystem.publish(paths, true, fingerprint);
+
+        WorldReplacementFilesystem.prepareRollback(paths, true);
+        WorldReplacementFilesystem.publish(paths, true, fingerprint);
+
+        assertEquals("replacement", readPackContent(paths.target()));
+        assertEquals("original", Files.readString(paths.backup().resolve("original.txt")));
+        assertFalse(Files.exists(paths.stage()));
+    }
+
+    @Test
+    public void preparedRollbackCleanupIsRetryableAfterStageDeletion() throws Exception {
+        WorldReplacementFilesystem.ReplacementPaths paths = paths("rollback-cleanup-retry", TRANSACTION_ID);
+        writeOriginalTarget(paths, "original");
+        String fingerprint = writeStage(paths, "replacement");
+        WorldReplacementFilesystem.publish(paths, true, fingerprint);
+        WorldReplacementFilesystem.prepareRollback(paths, true);
+
+        WorldReplacementFilesystem.finishPreparedRollback(paths, true);
+        WorldReplacementFilesystem.finishPreparedRollback(paths, true);
 
         assertEquals("original", Files.readString(paths.target().resolve("original.txt")));
         assertFalse(Files.exists(paths.stage()));
@@ -289,6 +388,11 @@ public class WorldReplacementFilesystemTest {
     private void writeOriginalTarget(WorldReplacementFilesystem.ReplacementPaths paths, String content) throws Exception {
         Files.createDirectories(paths.target());
         Files.writeString(paths.target().resolve("original.txt"), content);
+        Files.createDirectories(paths.target().resolve("data/paper"));
+        Files.createDirectories(paths.target().resolve("data/minecraft"));
+        Files.writeString(paths.target().resolve("data/paper/metadata.dat"), "metadata");
+        Files.writeString(paths.target().resolve("data/paper/level_overrides.dat"), "overrides");
+        Files.writeString(paths.target().resolve("data/minecraft/world_gen_settings.dat"), "generation");
     }
 
     private String readPackContent(Path worldDirectory) throws Exception {

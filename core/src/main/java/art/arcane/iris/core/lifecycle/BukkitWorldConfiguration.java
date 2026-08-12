@@ -9,14 +9,17 @@ import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.function.Predicate;
 
 public final class BukkitWorldConfiguration {
+    private static final String DEFAULT_WORLD_CONTAINER = ".";
     private static final Object MUTATION_LOCK = new Object();
 
     private BukkitWorldConfiguration() {
@@ -63,6 +66,31 @@ public final class BukkitWorldConfiguration {
         }
     }
 
+    public static String readWorldContainer(File configurationFile) throws IOException {
+        File requiredConfigurationFile = Objects.requireNonNull(configurationFile, "configurationFile");
+        Path configurationPath = requiredConfigurationFile.toPath();
+        if (!Files.exists(configurationPath, LinkOption.NOFOLLOW_LINKS)) {
+            return DEFAULT_WORLD_CONTAINER;
+        }
+        if (!Files.isRegularFile(configurationPath)) {
+            throw new IOException("Configured Bukkit configuration is not a regular file: " + configurationPath);
+        }
+        synchronized (MUTATION_LOCK) {
+            YamlConfiguration configuration = load(requiredConfigurationFile);
+            Object configured = configuration.get("settings.world-container");
+            if (configured == null) {
+                return DEFAULT_WORLD_CONTAINER;
+            }
+            if (!(configured instanceof String value)) {
+                throw new IOException("Bukkit settings.world-container must be a path string");
+            }
+            if (value.isBlank()) {
+                throw new IOException("Configured world container is empty");
+            }
+            return value;
+        }
+    }
+
     public static GeneratorReplacement replaceIfMatching(
             File configurationFile,
             String worldName,
@@ -82,7 +110,7 @@ public final class BukkitWorldConfiguration {
                 return new GeneratorReplacement(false, current, replacement);
             }
             apply(configuration, requiredWorldName, replacement);
-            saveAtomic(configurationFile.toPath(), configuration);
+            saveAtomic(configurationFile.toPath(), configuration, true);
             return new GeneratorReplacement(true, current, replacement);
         }
     }
@@ -104,7 +132,7 @@ public final class BukkitWorldConfiguration {
                 return false;
             }
             apply(configuration, requiredWorldName, requiredRestoration);
-            saveAtomic(configurationFile.toPath(), configuration);
+            saveAtomic(configurationFile.toPath(), configuration, true);
             return true;
         }
     }
@@ -194,7 +222,16 @@ public final class BukkitWorldConfiguration {
     }
 
     static void saveAtomic(Path target, YamlConfiguration configuration) throws IOException {
+        saveAtomic(target, configuration, false);
+    }
+
+    private static void saveAtomic(
+            Path target,
+            YamlConfiguration configuration,
+            boolean requireAtomicReplacement
+    ) throws IOException {
         Path absoluteTarget = target.toAbsolutePath().normalize();
+        requireRegularConfigurationFile(absoluteTarget);
         Path parent = absoluteTarget.getParent();
         if (parent == null) {
             throw new IOException("bukkit.yml target has no parent: " + absoluteTarget);
@@ -206,9 +243,16 @@ public final class BukkitWorldConfiguration {
             try (FileChannel channel = FileChannel.open(staged, StandardOpenOption.WRITE)) {
                 channel.force(true);
             }
+            requireRegularConfigurationFile(absoluteTarget);
             try {
                 Files.move(staged, absoluteTarget, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException exception) {
+                if (requireAtomicReplacement) {
+                    throw new IOException(
+                            "Exact world replacement requires atomic bukkit.yml publication on this filesystem.",
+                            exception
+                    );
+                }
                 Files.move(staged, absoluteTarget, StandardCopyOption.REPLACE_EXISTING);
             }
         } finally {
@@ -217,12 +261,25 @@ public final class BukkitWorldConfiguration {
     }
 
     private static YamlConfiguration load(File configurationFile) throws IOException {
+        requireRegularConfigurationFile(configurationFile.toPath());
         YamlConfiguration configuration = new YamlConfiguration();
         try {
             configuration.load(configurationFile);
             return configuration;
         } catch (InvalidConfigurationException exception) {
             throw new IOException("bukkit.yml is invalid and was not changed.", exception);
+        }
+    }
+
+    private static void requireRegularConfigurationFile(Path configurationFile) throws IOException {
+        Path path = configurationFile.toAbsolutePath().normalize();
+        BasicFileAttributes attributes = Files.readAttributes(
+                path,
+                BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS
+        );
+        if (attributes.isSymbolicLink() || !attributes.isRegularFile()) {
+            throw new IOException("bukkit.yml must be an existing regular file and was not changed: " + path);
         }
     }
 

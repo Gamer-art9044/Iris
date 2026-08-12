@@ -25,7 +25,7 @@ GoldenHash details and file layout: `32 - Determinism & Goldenhash.md`.
 ## A. Fresh install and first world (Bukkit-family)
 
 1. Install the CraftBukkit-family jar into `plugins/` (Paper, Purpur, Folia, Spigot, Leaf, Canvas as advertised). Require Java 25. See `01 - Installation & Platforms.md`.
-2. Start the server once. Confirm Iris enables, default pack download completes when no pack is present, and `settings.json` is written under the Iris data directory.
+2. Start the server once. Confirm Iris enables, managed `overworld` and `underworld` beta downloads complete when absent, and `settings.json` is written under the Iris data directory.
 3. Create a world with a fixed seed and teleport into it:
 
 ```
@@ -36,21 +36,21 @@ GoldenHash details and file layout: `32 - Determinism & Goldenhash.md`.
 4. Join or teleport into the world. Confirm non-empty terrain, surface biomes, and no repeating console stack traces on first chunks.
 5. Gate: world is loaded as an Iris world; chunks generate without enable-time crash; console shows no fatal engine init failure.
 
-## A.1 Exact vanilla-slot replacement (Bukkit-family)
+## A.1 Exact vanilla-slot replacement (Paper-family)
 
-Use a disposable server whose configured level name is `world`, with a valid `NETHER` Iris pack and a generated vanilla Nether containing a unique marker chunk. Record hashes of the old Nether `region`, `entities`, and `poi` files before staging.
+Use a disposable server whose configured level name is `world`, with a valid `NETHER` Iris pack and a generated vanilla Nether containing a unique marker chunk. Record hashes of the old Nether `region`, `entities`, and `poi` files, and retain copies of `data/paper/metadata.dat`, `data/paper/level_overrides.dat`, and `data/minecraft/world_gen_settings.dat` for comparison before staging.
 
 1. Run `/iris create world_nether type=<nether-pack> seed=1337 overwrite=true`. Gate: the command says the replacement is staged, the loaded Nether and its files remain unchanged, `bukkit.yml` now names `Iris:<dimension>`, and one pending replacement journal plus one sibling stage exists.
 2. Optionally stage the configured main name with a `NORMAL` pack and the End alias with a `THE_END` pack. Gate: each distinct slot gets its own transaction and no live dimension folder is moved.
-3. Restart normally. Gate: Iris publishes before Bukkit world loading; `minecraft:the_nether` loads with the Iris generator, requested dimension and seed; its frozen `iris/pack` exists; no old `region`, `entities`, or `poi` file was merged into the target; and the marker chunk is absent.
-4. Gate after `WorldLoad`: the retained sibling backup and journal disappear only after identity, environment, seed, dimension, and pack-fingerprint verification succeeds.
+3. Restart normally. Gate: Iris publishes before aggregate-datapack compilation and Bukkit world loading; `minecraft:the_nether` loads with the selected Iris dimension, the prior Paper per-world metadata files, and the authoritative shared level seed; its frozen `iris/pack` exists; no old `region`, `entities`, or `poi` file was merged into the target; and the marker chunk is absent.
+4. Gate after `WorldLoad`: the journal advances to committed cleanup only after identity, environment, seed, dimension, and pack-fingerprint verification succeeds; asynchronous cleanup then removes the retained sibling backup and journal without stalling the world thread.
 5. Restart again and generate fresh Nether chunks. Gate: the exact vanilla identity and Iris generator persist, ordinary Nether portals still target `minecraft:the_nether`, and no pending stage/backup/journal returns.
-6. Repeat once with a deliberately changed staged pack or conflicting `bukkit.yml` value before restart. Gate: Iris refuses publication or world admission, preserves recoverable artifacts, and never guesses a target. For a post-publication verification failure, gate that Iris restores the prior configuration, requests the controlled rollback restart, and restores the retained original directory before world load.
+6. Repeat once with a deliberately changed staged pack or conflicting `bukkit.yml` value before restart. Gate: early Paper bootstrap aborts before registry/world loading, preserves recoverable artifacts, and never guesses a target. For a post-publication verification failure, gate that Iris journals rollback and requests the controlled restart, then restores the retained original directory and prior configuration before datapack compilation or world loading.
 
 ## B. Fresh install and first world (Fabric / Forge / NeoForge)
 
 1. Install the matching mod jar into `mods/`. Fabric requires Loader ≥ declared floor; Forge/NeoForge require their declared floors. See `01 - Installation & Platforms.md` and `30 - Platform Differences.md`.
-2. Start dedicated server (or integrated singleplayer for client-mod smoke). Confirm Iris boots, default pack installs, and datapack/biome registration completes.
+2. Start dedicated server (or integrated singleplayer for client-mod smoke). Confirm Iris boots, both managed beta packs install, and datapack/biome registration completes.
 3. Create a world with fixed seed (positional mod syntax):
 
 ```

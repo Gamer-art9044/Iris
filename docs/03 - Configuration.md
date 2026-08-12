@@ -244,8 +244,8 @@ Path: `<configDir>/irisworldgen/modded.json`. Written with defaults on first loa
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
-| `defaultPack` | string | `"overworld"` | Default pack for bootstrap download/install |
-| `autoDownloadDefaultPack` | boolean | `true` | Download default pack when missing |
+| `defaultPack` | string | `"overworld"` | Default create pack; a distinct non-managed value is also prefetched when enabled |
+| `autoDownloadDefaultPack` | boolean | `true` | Download missing managed Overworld/Underworld beta packs and any distinct configured default |
 | `primaryWorld` | string | `""` | Primary Iris dimension id for player routing |
 | `routePlayersToPrimaryWorld` | boolean | `true` | Route players to primary when set |
 | `mainWorldPack` | string | `""` | Pack (or `pack:dimensionKey`) for main-world preset |

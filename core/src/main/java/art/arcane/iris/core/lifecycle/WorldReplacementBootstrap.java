@@ -102,21 +102,28 @@ public final class WorldReplacementBootstrap {
             feedback.accept("Restored the retained world for " + transaction.worldKey() + ".");
             return ReconcileAction.ROLLED_BACK;
         }
-        if (current.matchesGeneratorAndSeed(transaction.originalConfiguration())) {
-            rollback(dataDirectory, bukkitConfiguration, transaction, paths, current, replacement);
-            feedback.accept("Cancelled or rolled back Iris world replacement for " + transaction.worldKey() + ".");
-            return ReconcileAction.ROLLED_BACK;
-        }
-        if (!current.matchesGeneratorAndSeed(replacement)) {
-            throw conflict(transaction, "bukkit.yml matches neither the replacement nor its retained original state.");
-        }
-
         Transaction active = transaction;
         if (active.phase() == Phase.PREPARED) {
+            if (current.matchesGeneratorAndSeed(active.originalConfiguration())) {
+                rollback(dataDirectory, bukkitConfiguration, active, paths, current, replacement);
+                feedback.accept("Cancelled incomplete Iris world replacement for " + active.worldKey() + ".");
+                return ReconcileAction.ROLLED_BACK;
+            }
+            if (!current.matchesGeneratorAndSeed(replacement)) {
+                throw conflict(active, "bukkit.yml matches neither the replacement nor its retained original state.");
+            }
             active = active.withPhase(Phase.ARMED);
             WorldReplacementJournal.write(dataDirectory, active);
         }
         if (active.phase() == Phase.ARMED) {
+            if (!current.matchesGeneratorAndSeed(replacement)) {
+                if (current.matchesGeneratorAndSeed(active.originalConfiguration())) {
+                    rollback(dataDirectory, bukkitConfiguration, active, paths, current, replacement);
+                    feedback.accept("Cancelled Iris world replacement for " + active.worldKey() + ".");
+                    return ReconcileAction.ROLLED_BACK;
+                }
+                throw conflict(active, "bukkit.yml matches neither the replacement nor its retained original state.");
+            }
             WorldReplacementFilesystem.publish(
                     paths,
                     active.originalTargetPresent(),
@@ -129,6 +136,14 @@ public final class WorldReplacementBootstrap {
             return ReconcileAction.PUBLISHED;
         }
         if (active.phase() == Phase.PUBLISHED) {
+            if (!current.matchesGeneratorAndSeed(replacement)) {
+                if (current.matchesGeneratorAndSeed(active.originalConfiguration())) {
+                    rollback(dataDirectory, bukkitConfiguration, active, paths, current, replacement);
+                    feedback.accept("Rolled back Iris world replacement for " + active.worldKey() + ".");
+                    return ReconcileAction.ROLLED_BACK;
+                }
+                throw conflict(active, "bukkit.yml matches neither the replacement nor its retained original state.");
+            }
             WorldReplacementFilesystem.publish(
                     paths,
                     active.originalTargetPresent(),
@@ -154,7 +169,7 @@ public final class WorldReplacementBootstrap {
         Transaction rollback = transaction.phase() == Phase.ROLLBACK_PENDING
                 ? transaction
                 : transaction.withPhase(Phase.ROLLBACK_PENDING);
-        if (rollback != transaction) {
+        if (transaction.phase() != Phase.ROLLBACK_PENDING) {
             WorldReplacementJournal.write(dataDirectory, rollback);
         }
         WorldReplacementFilesystem.prepareRollback(paths, rollback.originalTargetPresent());

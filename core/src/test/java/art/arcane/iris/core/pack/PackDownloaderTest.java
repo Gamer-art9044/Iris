@@ -49,6 +49,7 @@ import java.util.zip.ZipOutputStream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -95,6 +96,60 @@ public class PackDownloaderTest {
                 PackDownloader.defaultOverworldReleaseUrl()
         );
         assertTrue(PackDownloader.isDefaultOverworld("overworld"));
+        assertTrue(PackDownloader.isManagedBetaPack("overworld"));
+        assertEquals(List.of("overworld", "underworld"), PackDownloader.managedBetaPacks());
+    }
+
+    @Test
+    public void resolvesUnderworldBetaRelease() {
+        assertEquals(
+                "https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip",
+                PackDownloader.underworldReleaseUrl()
+        );
+        assertTrue(PackDownloader.isManagedBetaPack("underworld"));
+    }
+
+    @Test
+    public void managedPackPresenceRequiresItsPrimaryDimension() throws Exception {
+        File packsFolder = temp.newFolder("managed-presence");
+        Path dimensions = Files.createDirectories(
+                packsFolder.toPath().resolve("underworld/dimensions")
+        );
+        writeDimension(packsFolder.toPath().resolve("underworld"), "underworld_roof");
+
+        assertTrue(PackDownloader.isPackPresent(packsFolder, "underworld"));
+        assertFalse(PackDownloader.isManagedBetaPackPresent(packsFolder, "underworld"));
+
+        writeDimension(packsFolder.toPath().resolve("underworld"), "underworld");
+        assertTrue(Files.isDirectory(dimensions));
+        assertTrue(PackDownloader.isManagedBetaPackPresent(packsFolder, "underworld"));
+    }
+
+    @Test
+    public void repairsManagedFolderMissingItsPrimaryDimension() throws Exception {
+        File packsFolder = temp.newFolder("managed-repair-packs");
+        Path target = packsFolder.toPath().resolve("underworld");
+        Files.createDirectories(target.resolve("dimensions"));
+        writeDimension(target, "underworld_roof");
+        Files.writeString(target.resolve("partial.txt"), "partial", StandardCharsets.UTF_8);
+        File extracted = writePack(temp.newFolder("managed-repair-source").toPath(), "underworld", "new");
+        writeDimension(extracted.toPath(), "underworld_roof");
+
+        PackDownloader.PackInstallResult result = PackDownloader.installExtractedPack(
+                packsFolder,
+                extracted,
+                false,
+                "underworld",
+                ignored -> {
+                }
+        );
+
+        assertNotNull(result);
+        assertTrue(result.changed());
+        assertTrue(Files.isRegularFile(target.resolve("dimensions/underworld.json")));
+        assertTrue(Files.isRegularFile(target.resolve("dimensions/underworld_roof.json")));
+        assertFalse(Files.exists(target.resolve("partial.txt")));
+        assertTransactionStateClean(packsFolder);
     }
 
     @Test
@@ -102,6 +157,9 @@ public class PackDownloaderTest {
         assertFalse(PackDownloader.isDefaultOverworld("theend"));
         assertFalse(PackDownloader.isDefaultOverworld(""));
         assertFalse(PackDownloader.isDefaultOverworld(null));
+        assertFalse(PackDownloader.isManagedBetaPack("theend"));
+        assertFalse(PackDownloader.isManagedBetaPack(""));
+        assertFalse(PackDownloader.isManagedBetaPack(null));
     }
 
     @Test
@@ -346,6 +404,71 @@ public class PackDownloaderTest {
     }
 
     @Test
+    public void importsExpectedDimensionFromMultiDimensionPack() throws Exception {
+        File packsFolder = temp.newFolder("multi-dimension-packs");
+        File extracted = writePack(temp.newFolder("multi-dimension-source").toPath(), "underworld", "new");
+        writeDimension(extracted.toPath(), "underworld_roof");
+
+        PackDownloader.PackInstallResult result = PackDownloader.installExtractedPack(
+                packsFolder,
+                extracted,
+                false,
+                "underworld",
+                ignored -> {
+                }
+        );
+
+        assertEquals("underworld", result.key());
+        assertTrue(result.changed());
+        assertTrue(Files.isRegularFile(
+                packsFolder.toPath().resolve("underworld/dimensions/underworld_roof.json")
+        ));
+        assertTransactionStateClean(packsFolder);
+    }
+
+    @Test
+    public void rejectsMultiDimensionPackWithoutExpectedDimension() throws Exception {
+        File packsFolder = temp.newFolder("missing-dimension-packs");
+        File extracted = writePack(temp.newFolder("missing-dimension-source").toPath(), "underworld", "new");
+        writeDimension(extracted.toPath(), "underworld_roof");
+
+        IOException failure = assertThrows(IOException.class, () -> PackDownloader.installExtractedPack(
+                packsFolder,
+                extracted,
+                false,
+                "missing",
+                ignored -> {
+                }
+        ));
+
+        assertTrue(failure.getMessage().contains("missing"));
+        assertTrue(failure.getMessage().contains("underworld"));
+        assertFalse(new File(packsFolder, "missing").exists());
+        assertTransactionStateClean(packsFolder);
+    }
+
+    @Test
+    public void rejectsAmbiguousMultiDimensionPackWithoutExpectedKey() throws Exception {
+        File packsFolder = temp.newFolder("ambiguous-dimension-packs");
+        File extracted = writePack(temp.newFolder("ambiguous-dimension-source").toPath(), "underworld", "new");
+        writeDimension(extracted.toPath(), "underworld_roof");
+        List<String> feedback = new ArrayList<>();
+
+        PackDownloader.PackInstallResult result = PackDownloader.installExtractedPack(
+                packsFolder,
+                extracted,
+                false,
+                null,
+                feedback::add
+        );
+
+        assertNull(result);
+        assertFalse(feedback.isEmpty());
+        assertFalse(new File(packsFolder, "underworld").exists());
+        assertTransactionStateClean(packsFolder);
+    }
+
+    @Test
     public void concurrentImportsForSameKeyPublishOnlyOnePack() throws Exception {
         File packsFolder = temp.newFolder("concurrent-packs");
         File firstSource = writePack(temp.newFolder("concurrent-first").toPath(), "shared_pack", "first");
@@ -465,12 +588,7 @@ public class PackDownloaderTest {
         Files.createDirectories(root.resolve("dimensions"));
         Files.createDirectories(root.resolve("regions"));
         Files.createDirectories(root.resolve("biomes"));
-        Files.writeString(
-                root.resolve("dimensions/" + key + ".json"),
-                "{\"name\":\"" + key + "\",\"regions\":[\"local\"],\"logicalHeight\":256,"
-                        + "\"dimensionHeight\":{\"min\":-64,\"max\":320}}",
-                StandardCharsets.UTF_8
-        );
+        writeDimension(root, key);
         Files.writeString(
                 root.resolve("regions/local.json"),
                 "{\"name\":\"Local\",\"landBiomes\":[\"local\"]}",
@@ -483,6 +601,15 @@ public class PackDownloaderTest {
         );
         Files.writeString(root.resolve("state.txt"), state, StandardCharsets.UTF_8);
         return root.toFile();
+    }
+
+    private static void writeDimension(Path root, String key) throws IOException {
+        Files.writeString(
+                root.resolve("dimensions/" + key + ".json"),
+                "{\"name\":\"" + key + "\",\"regions\":[\"local\"],\"logicalHeight\":256,"
+                        + "\"dimensionHeight\":{\"min\":-64,\"max\":320}}",
+                StandardCharsets.UTF_8
+        );
     }
 
     private static void writeArchive(Path archive, Map<String, String> entries) throws IOException {

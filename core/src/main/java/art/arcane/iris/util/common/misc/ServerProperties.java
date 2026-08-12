@@ -1,7 +1,6 @@
 package art.arcane.iris.util.common.misc;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import art.arcane.iris.core.lifecycle.BukkitStartupPaths;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -16,48 +15,19 @@ public class ServerProperties {
     public static final String LEVEL_NAME;
 
     static {
-        String[] args = ProcessHandle.current()
-                .info()
-                .arguments()
-                .orElse(new String[0]);
-
-        String propertiesPath = "server.properties";
-        String bukkitYml = "bukkit.yml";
-        String levelName = null;
-
-        for (int i = 0; i < args.length; i++) {
-            String arg = args[i];
-            String next = i < args.length - 1 ? args[i + 1] : null;
-
-            propertiesPath = parse(arg, next, propertiesPath, "-c", "--config");
-            bukkitYml = parse(arg, next, bukkitYml, "-b", "--bukkit-settings");
-            levelName = parse(arg, next, levelName, "-w", "--level-name", "--world");
+        BukkitStartupPaths startupPaths;
+        try {
+            startupPaths = BukkitStartupPaths.resolveCurrent();
+        } catch (IOException exception) {
+            throw new RuntimeException(exception);
         }
-
-        SERVER_PROPERTIES = new File(propertiesPath);
-        BUKKIT_YML = new File(bukkitYml);
-        try (FileInputStream in = new FileInputStream(SERVER_PROPERTIES)){
+        SERVER_PROPERTIES = startupPaths.serverProperties().toFile();
+        BUKKIT_YML = startupPaths.bukkitConfiguration().toFile();
+        try (FileInputStream in = new FileInputStream(SERVER_PROPERTIES)) {
             DATA.load(in);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        } catch (IOException exception) {
+            throw new RuntimeException(exception);
         }
-
-        if (levelName != null) LEVEL_NAME = levelName;
-        else LEVEL_NAME = DATA.getProperty("level-name", "world");
-    }
-
-    private static String parse(
-            @NotNull String current,
-            @Nullable String next,
-            String fallback,
-            @NotNull String @NotNull ... keys
-    ) {
-        for (String k : keys) {
-            if (current.equals(k) && next != null)
-                return next;
-            if (current.startsWith(k + "=") && current.length() > k.length() + 1)
-                return current.substring(k.length() + 1);
-        }
-        return fallback;
+        LEVEL_NAME = startupPaths.levelName();
     }
 }

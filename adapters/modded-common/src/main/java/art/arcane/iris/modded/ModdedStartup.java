@@ -37,6 +37,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -253,20 +254,39 @@ public final class ModdedStartup {
             if (!config.autoDownloadDefaultPack()) {
                 return;
             }
-            String pack = config.defaultPack();
             Path configDir = ModdedEngineBootstrap.loader().configDir();
-            File packFolder = new File(ModdedPackCommands.packsRoot(), pack);
-            if (new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
-                return;
+            File packsRoot = ModdedPackCommands.packsRoot();
+            for (String pack : startupPacks(config.defaultPack())) {
+                ensureStartupPack(configDir, packsRoot, pack);
             }
-            String source = "master branch";
-            LOGGER.info("Iris default pack '{}' missing; downloading IrisDimensions/{} ({})", pack, pack, source);
-            boolean installed = ModdedPackInstaller.install(
-                    configDir, pack, "master", false,
-                    (String line) -> LOGGER.info("Iris: {}", line));
-            if (!installed) {
-                LOGGER.warn("Iris default pack '{}' could not be downloaded; install it with /iris download {}", pack, pack);
-            }
+        }
+    }
+
+    static List<String> startupPacks(String configuredDefault) {
+        LinkedHashSet<String> packs = new LinkedHashSet<>(PackDownloader.managedBetaPacks());
+        if (configuredDefault != null && !configuredDefault.isBlank()) {
+            packs.add(configuredDefault);
+        }
+        return List.copyOf(packs);
+    }
+
+    private static void ensureStartupPack(Path configDir, File packsRoot, String pack) {
+        boolean present = PackDownloader.isManagedBetaPack(pack)
+                ? PackDownloader.isManagedBetaPackPresent(packsRoot, pack)
+                : PackDownloader.isPackPresent(packsRoot, pack);
+        if (present) {
+            return;
+        }
+        boolean managedBeta = PackDownloader.isManagedBetaPack(pack);
+        String branch = managedBeta ? "beta" : "master";
+        String source = managedBeta ? "beta release" : "master branch";
+        String role = managedBeta ? "managed beta pack" : "default pack";
+        LOGGER.info("Iris {} '{}' missing; downloading IrisDimensions/{} ({})", role, pack, pack, source);
+        boolean installed = ModdedPackInstaller.install(
+                configDir, pack, branch, false, false,
+                (String line) -> LOGGER.info("Iris: {}", line));
+        if (!installed) {
+            LOGGER.warn("Iris {} '{}' could not be downloaded; install it with /iris download {}", role, pack, pack);
         }
     }
 }

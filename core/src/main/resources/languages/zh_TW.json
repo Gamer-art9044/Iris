@@ -697,6 +697,7 @@
     "iris.director.commandiris.param.dimension_pack_create_world_with": "用於建立世界的維度包",
     "iris.director.commandiris.param.seed_generate_world_with": "用於生成世界的種子",
     "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world": "是否自動將此世界設為主世界",
+    "iris.director.commandiris.param.replace_exact_existing_world_slot_next_restart": "在下次重新啟動時取代指定的現有世界槽位",
     "iris.director.commandiris.director.teleport_another_world": "傳送到另一個世界",
     "iris.director.commandiris.param.world_teleport": "要傳送到的世界",
     "iris.director.commandiris.param.player_teleport": "要傳送的玩家",

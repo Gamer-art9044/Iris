@@ -710,9 +710,9 @@ public class CommandIris implements DirectorExecutor {
             @Param(name = "overwrite", description = "Whether or not to overwrite the pack with the downloaded one", descriptionKey = "iris.director.commandiris.param.whether_not_overwrite_pack_with_downloaded_one", aliases = "force", defaultValue = "false")
             boolean overwrite
     ) {
-        if (PackDownloader.isDefaultOverworld(pack)) {
+        if (PackDownloader.isManagedBetaPack(pack)) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_DOWNLOADING_PACK_BETA_RELEASE, MessageArgument.untrusted("pack", pack), MessageArgument.trusted("value", overwrite ? IrisLanguage.text(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX) : "")));
-            Iris.service(StudioSVC.class).downloadDefaultOverworld(sender(), overwrite);
+            Iris.service(StudioSVC.class).downloadManagedBeta(sender(), pack, overwrite);
         } else {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_DOWNLOADING_PACK, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("branch", branch), MessageArgument.trusted("value", overwrite ? IrisLanguage.text(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX) : "")));
             Iris.service(StudioSVC.class).downloadSearch(sender(), "IrisDimensions/" + pack + "/" + branch, overwrite);

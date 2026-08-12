@@ -7,6 +7,7 @@ import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -17,10 +18,14 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -31,6 +36,26 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class DefaultPackBootstrapProvisionerTest {
+    @Test
+    public void defaultBetaSourcesArePinnedPerRequiredPack() {
+        Map<String, DefaultPackBootstrapProvisioner.PackSpec> packs = new LinkedHashMap<>();
+        for (DefaultPackBootstrapProvisioner.PackSpec pack : DefaultPackBootstrapProvisioner.defaultPacks()) {
+            packs.put(pack.key(), pack);
+        }
+
+        assertEquals(2, packs.size());
+        assertEquals(
+                URI.create("https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip"),
+                packs.get("overworld").source()
+        );
+        assertEquals("overworld", packs.get("overworld").requiredDimension());
+        assertEquals(
+                URI.create("https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip"),
+                packs.get("underworld").source()
+        );
+        assertEquals("underworld", packs.get("underworld").requiredDimension());
+    }
+
     @Test
     public void coldInstallUsesFreshCacheWithoutSecondRequest() throws Exception {
         byte[] archive = packArchive("overworld", "bootstrap_biome");
@@ -58,14 +83,23 @@ public class DefaultPackBootstrapProvisionerTest {
 
             assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.INSTALLED, installed.status());
             assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UNCHANGED, unchanged.status());
-            assertEquals(1, requests.get());
-            assertTrue(Files.isRegularFile(installed.packRoot().resolve("dimensions/overworld.json")));
+            assertEquals(2, requests.get());
+            assertTrue(Files.isRegularFile(installed.packRoots().get("overworld").resolve("dimensions/overworld.json")));
+            assertTrue(Files.isRegularFile(installed.packRoots().get("underworld").resolve("dimensions/underworld.json")));
+            assertTrue(Files.isRegularFile(installed.packRoots().get("underworld").resolve("dimensions/underworld_roof.json")));
             assertEquals(root.resolve("datapacks/iris"), installed.datapackRoot());
             assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("pack.mcmeta")));
             assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("data/overworld/worldgen/biome/bootstrap_biome.json")));
+            assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("data/underworld/worldgen/biome/underworld_biome.json")));
             assertFalse(Files.exists(dataDirectory.resolve("bootstrap/datapack")));
-            assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root));
+            assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, options.packs()));
             assertTrue(DefaultPackBootstrapProvisioner.wasProvisionedThisStartup());
+            Properties marker = loadProperties(dataDirectory.resolve("bootstrap/provisioned.properties"));
+            assertEquals("true", marker.getProperty("pack.overworld.managed"));
+            assertEquals("true", marker.getProperty("pack.underworld.managed"));
+            assertEquals("underworld", marker.getProperty("pack.underworld.requiredDimension"));
+            delete(installed.packRoots().get("underworld"));
+            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, options.packs()));
         } finally {
             server.stop(0);
             delete(root);
@@ -101,9 +135,10 @@ public class DefaultPackBootstrapProvisionerTest {
             );
 
             assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UPDATED, rebuilt.status());
-            assertEquals(1, requests.get());
+            assertEquals(2, requests.get());
             assertTrue(Files.isRegularFile(rebuilt.datapackRoot().resolve("pack.mcmeta")));
             assertTrue(Files.isRegularFile(rebuilt.datapackRoot().resolve("data/overworld/worldgen/biome/bootstrap_biome.json")));
+            assertTrue(Files.isRegularFile(rebuilt.datapackRoot().resolve("data/underworld/worldgen/biome/underworld_biome.json")));
         } finally {
             if (!serverStopped) {
                 server.stop(0);
@@ -138,9 +173,10 @@ public class DefaultPackBootstrapProvisionerTest {
             );
 
             assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.INSTALLED, installed.status());
-            assertEquals(1, requests.get());
+            assertEquals(2, requests.get());
             assertTrue(Files.isSymbolicLink(dataDirectory.resolve("packs")));
             assertTrue(Files.isRegularFile(sharedPacks.resolve("overworld/dimensions/overworld.json")));
+            assertTrue(Files.isRegularFile(sharedPacks.resolve("underworld/dimensions/underworld.json")));
             assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("pack.mcmeta")));
         } finally {
             server.stop(0);
@@ -165,7 +201,7 @@ public class DefaultPackBootstrapProvisionerTest {
             DefaultPackBootstrapProvisioner.provision(dataDirectory, ignored -> {
             }, options);
 
-            assertEquals(2, requests.get());
+            assertEquals(3, requests.get());
             try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(cache))) {
                 assertTrue(zip.getNextEntry() != null);
             }
@@ -245,13 +281,13 @@ public class DefaultPackBootstrapProvisionerTest {
                     options
             );
 
-            assertEquals(0, requests.get());
+            assertEquals(1, requests.get());
             assertTrue(Files.isSymbolicLink(link));
             assertEquals(target.toRealPath(), link.toRealPath());
             assertTrue(Files.isRegularFile(result.datapackRoot().resolve("data/overworld/worldgen/biome/local_biome.json")));
 
             Files.writeString(target.resolve("biomes/local.json"), biomeJson("changed_biome"), StandardCharsets.UTF_8);
-            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root));
+            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, options.packs()));
             DefaultPackBootstrapProvisioner.ProvisionResult updated = DefaultPackBootstrapProvisioner.provision(
                     dataDirectory,
                     ignored -> {
@@ -259,7 +295,7 @@ public class DefaultPackBootstrapProvisionerTest {
                     options
             );
             assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UPDATED, updated.status());
-            assertEquals(0, requests.get());
+            assertEquals(2, requests.get());
             assertTrue(Files.isSymbolicLink(link));
         } finally {
             server.stop(0);
@@ -280,7 +316,7 @@ public class DefaultPackBootstrapProvisionerTest {
             writePack(dataDirectory.resolve("packs/second"), "second", "second_biome");
             writePack(root.resolve("dimensions/example/world/iris/pack"), "world_local", "world_local_biome");
 
-            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root));
+            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, options.packs()));
             DefaultPackBootstrapProvisioner.ProvisionResult updated = DefaultPackBootstrapProvisioner.provision(
                     dataDirectory,
                     ignored -> {
@@ -289,7 +325,7 @@ public class DefaultPackBootstrapProvisionerTest {
             );
 
             assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UPDATED, updated.status());
-            assertEquals(1, requests.get());
+            assertEquals(2, requests.get());
             assertTrue(Files.isRegularFile(updated.datapackRoot().resolve("data/second/worldgen/biome/second_biome.json")));
             assertTrue(Files.isRegularFile(updated.datapackRoot().resolve("data/world_local/worldgen/biome/world_local_biome.json")));
         } finally {
@@ -319,14 +355,15 @@ public class DefaultPackBootstrapProvisionerTest {
                     refreshOptions
             );
 
-            assertEquals(1, requests.get());
+            assertEquals(3, requests.get());
             assertTrue(Files.readString(editedBiome).contains("locally_edited_biome"));
             assertTrue(Files.isRegularFile(updated.datapackRoot().resolve("data/overworld/worldgen/biome/locally_edited_biome.json")));
             Properties marker = new Properties();
-            try (java.io.InputStream input = Files.newInputStream(dataDirectory.resolve("bootstrap/provisioned.properties"))) {
+            try (InputStream input = Files.newInputStream(dataDirectory.resolve("bootstrap/provisioned.properties"))) {
                 marker.load(input);
             }
-            assertEquals("false", marker.getProperty("managedDefault"));
+            assertEquals("false", marker.getProperty("pack.overworld.managed"));
+            assertEquals("true", marker.getProperty("pack.underworld.managed"));
         } finally {
             server.stop(0);
             delete(root);
@@ -334,35 +371,181 @@ public class DefaultPackBootstrapProvisionerTest {
     }
 
     @Test
-    public void failedAggregateCompilationPreservesPreviousOutputAndMarker() throws Exception {
+    public void underworldLocalEditRelinquishesOnlyUnderworldOwnership() throws Exception {
         AtomicInteger requests = new AtomicInteger();
-        HttpServer server = server(packArchive("overworld", "first_biome"), requests);
-        Path root = Files.createTempDirectory("iris-bootstrap-rollback");
+        HttpServer server = server(packArchive("overworld", "overworld_managed"), requests);
+        Path root = Files.createTempDirectory("iris-bootstrap-underworld-edit");
         try {
             Path dataDirectory = root.resolve("plugins/Iris");
-            DefaultPackBootstrapProvisioner.ProvisionOptions options = options(server, root, Duration.ofHours(1));
-            DefaultPackBootstrapProvisioner.ProvisionResult first = DefaultPackBootstrapProvisioner.provision(
+            DefaultPackBootstrapProvisioner.ProvisionOptions initialOptions = options(
+                    server,
+                    root,
+                    Duration.ofHours(1)
+            );
+            DefaultPackBootstrapProvisioner.provision(dataDirectory, ignored -> {
+            }, initialOptions);
+            Path editedBiome = dataDirectory.resolve("packs/underworld/biomes/local.json");
+            Files.writeString(editedBiome, biomeJson("underworld_local_edit"), StandardCharsets.UTF_8);
+            DefaultPackBootstrapProvisioner.ProvisionOptions refreshOptions = options(server, root, Duration.ZERO);
+
+            DefaultPackBootstrapProvisioner.ProvisionResult updated = DefaultPackBootstrapProvisioner.provision(
                     dataDirectory,
                     ignored -> {
                     },
-                    options
+                    refreshOptions
             );
-            byte[] marker = Files.readAllBytes(dataDirectory.resolve("bootstrap/provisioned.properties"));
-            byte[] metadata = Files.readAllBytes(first.datapackRoot().resolve("pack.mcmeta"));
-            Path invalidPack = dataDirectory.resolve("packs/invalid");
-            Files.createDirectories(invalidPack.resolve("dimensions"));
-            Files.writeString(invalidPack.resolve("dimensions/broken.json"), "{", StandardCharsets.UTF_8);
+
+            assertEquals(3, requests.get());
+            assertTrue(Files.readString(editedBiome).contains("underworld_local_edit"));
+            assertTrue(Files.isRegularFile(updated.datapackRoot()
+                    .resolve("data/underworld/worldgen/biome/underworld_local_edit.json")));
+            Properties marker = loadProperties(dataDirectory.resolve("bootstrap/provisioned.properties"));
+            assertEquals("true", marker.getProperty("pack.overworld.managed"));
+            assertEquals("false", marker.getProperty("pack.underworld.managed"));
+        } finally {
+            server.stop(0);
+            delete(root);
+        }
+    }
+
+    @Test
+    public void betaPacksUpdateIndependentlyAndRecompileOneAggregateDatapack() throws Exception {
+        byte[] overworld = packArchive("overworld", "overworld_first");
+        byte[] underworldFirst = underworldArchive("underworld_first");
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer initialServer = server(overworld, underworldFirst, requests);
+        HttpServer updateServer = null;
+        Path root = Files.createTempDirectory("iris-bootstrap-independent-update");
+        try {
+            Path dataDirectory = root.resolve("plugins/Iris");
+            DefaultPackBootstrapProvisioner.provision(
+                    dataDirectory,
+                    ignored -> {
+                    },
+                    options(initialServer, root, Duration.ofHours(1))
+            );
+            initialServer.stop(0);
+            initialServer = null;
+
+            byte[] underworldSecond = underworldArchive("underworld_second");
+            updateServer = server(overworld, underworldSecond, requests);
+            DefaultPackBootstrapProvisioner.ProvisionResult updated = DefaultPackBootstrapProvisioner.provision(
+                    dataDirectory,
+                    ignored -> {
+                    },
+                    options(updateServer, root, Duration.ZERO)
+            );
+
+            assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UPDATED, updated.status());
+            assertEquals(4, requests.get());
+            assertTrue(Files.readString(dataDirectory.resolve("packs/overworld/biomes/local.json"))
+                    .contains("overworld_first"));
+            assertTrue(Files.readString(dataDirectory.resolve("packs/underworld/biomes/local.json"))
+                    .contains("underworld_second"));
+            assertTrue(Files.isRegularFile(updated.datapackRoot()
+                    .resolve("data/overworld/worldgen/biome/overworld_first.json")));
+            assertTrue(Files.isRegularFile(updated.datapackRoot()
+                    .resolve("data/underworld/worldgen/biome/underworld_second.json")));
+            assertFalse(Files.exists(updated.datapackRoot()
+                    .resolve("data/underworld/worldgen/biome/underworld_first.json")));
+        } finally {
+            if (initialServer != null) {
+                initialServer.stop(0);
+            }
+            if (updateServer != null) {
+                updateServer.stop(0);
+            }
+            delete(root);
+        }
+    }
+
+    @Test
+    public void invalidUnderworldArchivePublishesNeitherRequiredPack() throws Exception {
+        byte[] overworld = packArchive("overworld", "overworld_valid");
+        byte[] invalidUnderworld = packArchive("underworld_roof", "roof_only");
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(overworld, invalidUnderworld, requests);
+        Path root = Files.createTempDirectory("iris-bootstrap-underworld-invalid");
+        try {
+            Path dataDirectory = root.resolve("plugins/Iris");
 
             assertThrows(IOException.class, () -> DefaultPackBootstrapProvisioner.provision(
                     dataDirectory,
                     ignored -> {
                     },
-                    options
+                    options(server, root, Duration.ZERO)
             ));
-            assertTrue(java.util.Arrays.equals(marker, Files.readAllBytes(dataDirectory.resolve("bootstrap/provisioned.properties"))));
-            assertTrue(java.util.Arrays.equals(metadata, Files.readAllBytes(first.datapackRoot().resolve("pack.mcmeta"))));
+
+            assertEquals(2, requests.get());
+            assertFalse(Files.exists(dataDirectory.resolve("packs/overworld")));
+            assertFalse(Files.exists(dataDirectory.resolve("packs/underworld")));
+            assertFalse(Files.exists(dataDirectory.resolve("bootstrap/provisioned.properties")));
+            assertFalse(Files.exists(root.resolve("datapacks/iris")));
         } finally {
             server.stop(0);
+            delete(root);
+        }
+    }
+
+    @Test
+    public void failedAggregateCompilationRollsBackBothPackUpdatesAndDatapack() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer initialServer = server(
+                packArchive("overworld", "overworld_first"),
+                underworldArchive("underworld_first"),
+                requests
+        );
+        HttpServer updateServer = null;
+        Path root = Files.createTempDirectory("iris-bootstrap-rollback");
+        try {
+            Path dataDirectory = root.resolve("plugins/Iris");
+            DefaultPackBootstrapProvisioner.ProvisionResult first = DefaultPackBootstrapProvisioner.provision(
+                    dataDirectory,
+                    ignored -> {
+                    },
+                    options(initialServer, root, Duration.ofHours(1))
+            );
+            initialServer.stop(0);
+            initialServer = null;
+            byte[] marker = Files.readAllBytes(dataDirectory.resolve("bootstrap/provisioned.properties"));
+            byte[] metadata = Files.readAllBytes(first.datapackRoot().resolve("pack.mcmeta"));
+            byte[] originalOverworld = Files.readAllBytes(dataDirectory.resolve("packs/overworld/biomes/local.json"));
+            byte[] originalUnderworld = Files.readAllBytes(dataDirectory.resolve("packs/underworld/biomes/local.json"));
+            Path invalidPack = dataDirectory.resolve("packs/invalid");
+            Files.createDirectories(invalidPack.resolve("dimensions"));
+            Files.writeString(invalidPack.resolve("dimensions/broken.json"), "{", StandardCharsets.UTF_8);
+            updateServer = server(
+                    packArchive("overworld", "overworld_second"),
+                    underworldArchive("underworld_second"),
+                    requests
+            );
+            DefaultPackBootstrapProvisioner.ProvisionOptions updateOptions = options(
+                    updateServer,
+                    root,
+                    Duration.ZERO
+            );
+
+            assertThrows(IOException.class, () -> DefaultPackBootstrapProvisioner.provision(
+                    dataDirectory,
+                    ignored -> {
+                    },
+                    updateOptions
+            ));
+            assertTrue(Arrays.equals(marker, Files.readAllBytes(dataDirectory.resolve("bootstrap/provisioned.properties"))));
+            assertTrue(Arrays.equals(metadata, Files.readAllBytes(first.datapackRoot().resolve("pack.mcmeta"))));
+            assertTrue(Arrays.equals(originalOverworld,
+                    Files.readAllBytes(dataDirectory.resolve("packs/overworld/biomes/local.json"))));
+            assertTrue(Arrays.equals(originalUnderworld,
+                    Files.readAllBytes(dataDirectory.resolve("packs/underworld/biomes/local.json"))));
+            assertNoBootstrapTransactionPaths(dataDirectory.resolve("packs"));
+            assertNoBootstrapTransactionPaths(root.resolve("datapacks"));
+        } finally {
+            if (initialServer != null) {
+                initialServer.stop(0);
+            }
+            if (updateServer != null) {
+                updateServer.stop(0);
+            }
             delete(root);
         }
     }
@@ -378,7 +561,7 @@ public class DefaultPackBootstrapProvisionerTest {
             );
 
             assertEquals(
-                    serverRoot.resolve("levels/primary").normalize(),
+                    serverRoot.toRealPath().resolve("levels/primary").normalize(),
                     DefaultPackBootstrapProvisioner.resolveLevelRoot(serverRoot)
             );
         } finally {
@@ -391,9 +574,20 @@ public class DefaultPackBootstrapProvisionerTest {
             Path serverRoot,
             Duration refreshInterval
     ) {
-        URI source = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/overworld.zip");
+        String sourceRoot = "http://127.0.0.1:" + server.getAddress().getPort();
         return new DefaultPackBootstrapProvisioner.ProvisionOptions(
-                source,
+                List.of(
+                        new DefaultPackBootstrapProvisioner.PackSpec(
+                                "overworld",
+                                URI.create(sourceRoot + "/overworld.zip"),
+                                "overworld"
+                        ),
+                        new DefaultPackBootstrapProvisioner.PackSpec(
+                                "underworld",
+                                URI.create(sourceRoot + "/underworld.zip"),
+                                "underworld"
+                        )
+                ),
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
                 Clock.fixed(Instant.parse("2026-07-12T12:00:00Z"), ZoneOffset.UTC),
                 refreshInterval,
@@ -406,8 +600,17 @@ public class DefaultPackBootstrapProvisionerTest {
     }
 
     private static HttpServer server(byte[] response, AtomicInteger requests) throws IOException {
+        return server(response, underworldArchive("underworld_biome"), requests);
+    }
+
+    private static HttpServer server(
+            byte[] overworldResponse,
+            byte[] underworldResponse,
+            AtomicInteger requests
+    ) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/overworld.zip", exchange -> respond(exchange, response, requests));
+        server.createContext("/overworld.zip", exchange -> respond(exchange, overworldResponse, requests));
+        server.createContext("/underworld.zip", exchange -> respond(exchange, underworldResponse, requests));
         server.start();
         return server;
     }
@@ -426,6 +629,33 @@ public class DefaultPackBootstrapProvisionerTest {
         files.put("regions/local.json", "{\"name\":\"Local\",\"landBiomes\":[\"local\"]}");
         files.put("biomes/local.json", biomeJson(biomeId));
         return zip(files);
+    }
+
+    private static byte[] underworldArchive(String biomeId) throws IOException {
+        LinkedHashMap<String, String> files = new LinkedHashMap<>();
+        files.put("dimensions/underworld.json", dimensionJson("underworld"));
+        files.put("dimensions/underworld_roof.json", dimensionJson("underworld_roof"));
+        files.put("regions/local.json", "{\"name\":\"Local\",\"landBiomes\":[\"local\"]}");
+        files.put("biomes/local.json", biomeJson(biomeId));
+        return zip(files);
+    }
+
+    private static Properties loadProperties(Path path) throws IOException {
+        Properties properties = new Properties();
+        try (InputStream input = Files.newInputStream(path)) {
+            properties.load(input);
+        }
+        return properties;
+    }
+
+    private static void assertNoBootstrapTransactionPaths(Path root) throws IOException {
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        try (Stream<Path> stream = Files.list(root)) {
+            assertFalse(stream.anyMatch(path -> path.getFileName().toString().contains("-stage-")
+                    || path.getFileName().toString().contains("-backup-")));
+        }
     }
 
     private static void writePack(Path root, String dimensionKey, String biomeId) throws IOException {
@@ -462,8 +692,8 @@ public class DefaultPackBootstrapProvisionerTest {
         if (!Files.exists(root)) {
             return;
         }
-        try (java.util.stream.Stream<Path> stream = Files.walk(root)) {
-            for (Path path : stream.sorted(java.util.Comparator.reverseOrder()).toList()) {
+        try (Stream<Path> stream = Files.walk(root)) {
+            for (Path path : stream.sorted(Comparator.reverseOrder()).toList()) {
                 Files.deleteIfExists(path);
             }
         }

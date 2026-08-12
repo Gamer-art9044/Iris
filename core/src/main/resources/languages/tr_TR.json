@@ -697,6 +697,7 @@
     "iris.director.commandiris.param.dimension_pack_create_world_with": "Dünyayı yaratmak için boyut / paket",
     "iris.director.commandiris.param.seed_generate_world_with": "Dünyayı üretmek için tohum",
     "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world": "Bu dünyayı ana dünya olarak otomatik olarak kullanıp kullanmayalım",
+    "iris.director.commandiris.param.replace_exact_existing_world_slot_next_restart": "Bir sonraki yeniden başlatmada mevcut tam dünya yuvasını değiştir",
     "iris.director.commandiris.director.teleport_another_world": "Teleport başka bir dünyaya",
     "iris.director.commandiris.param.world_teleport": "Dünya teleport'a",
     "iris.director.commandiris.param.player_teleport": "Oyuncuya teleport",

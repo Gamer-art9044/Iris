@@ -1,13 +1,13 @@
 # 01 - Installation & Platforms
 
-Iris installs as either a Bukkit-family plugin jar or a self-contained Fabric, Forge, or NeoForge mod jar. Java 25 is required on every platform. On first boot the default `overworld` pack is downloaded when missing; packs live under each platform’s data directory.
+Iris installs as either a Bukkit-family plugin jar or a self-contained Fabric, Forge, or NeoForge mod jar. Java 25 is required on every platform. On first boot the managed `overworld` and `underworld` beta packs are downloaded when missing; packs live under each platform’s data directory.
 
 ## Installation outcome
 
 Complete one platform path below. A successful install has all three results:
 
 1. Iris reaches its enabled/ready state without an exception.
-2. The platform data directory contains `settings.json` and a loadable `packs/overworld/` directory.
+2. The platform data directory contains `settings.json` and loadable `packs/overworld/` and `packs/underworld/` directories.
 3. `/iris` prints help from the server console. On a modded client, the Iris keybind category is an additional client-side check, not a substitute for the server check.
 
 Keep the previous jar/mod and the entire Iris data directory until the new build passes these checks. Replacing the binary does not update pack snapshots already stored inside worlds.
@@ -22,7 +22,7 @@ Keep the previous jar/mod and the entire Iris data directory until the new build
 | Fabric Loader | 0.19.3+ |
 | Forge | 65.0.4+ |
 | NeoForge | 26.2.0.12-beta+ |
-| Network | Outbound HTTPS on first boot for default pack download (GitHub IrisDimensions overworld release / pack install) |
+| Network | Outbound HTTPS on first boot for the GitHub IrisDimensions Overworld and Underworld beta release assets |
 
 Before replacing an existing installation:
 
@@ -37,7 +37,7 @@ Do not copy multiple Iris platform jars into the same `plugins/` or `mods/` dire
 
 1. Place the CraftBukkit-labelled plugin jar into `plugins/`.
 2. Start the server. Iris loads at `STARTUP` (`plugin.yml` / `paper-plugin.yml`).
-3. On first boot Iris provisions the default `overworld` pack into `plugins/Iris/packs/overworld` when missing (source: IrisDimensions overworld `beta` release zip).
+3. On first boot Iris provisions `overworld` and `underworld` into `plugins/Iris/packs/` when missing from their IrisDimensions `beta` release ZIPs.
 4. Settings are written at `plugins/Iris/settings.json` if absent (`IrisSettings.read()`).
 
 Validate the plugin install from the server console:
@@ -45,6 +45,7 @@ Validate the plugin install from the server console:
 ```text
 /iris version
 /iris pack validate pack=overworld
+/iris pack validate pack=underworld
 ```
 
 The first command must report the running Iris, platform, and Minecraft versions. The second must resolve the downloaded pack and finish without blocking validation errors. Then complete the disposable-world workflow in `02 - Getting Started.md`; a command response alone does not prove that the generator can create chunks.
@@ -66,16 +67,17 @@ Before creating a real world, run the Bukkit fresh-install smoke in `31 - Operat
 1. Place the matching mod jar into `mods/`.
 2. Start the dedicated server (or a client for singleplayer; see below).
 3. The jar is self-contained: core, SPI, and required Fabric API modules are bundled where applicable. Mod id: `irisworldgen`.
-4. On first boot, if `config/irisworldgen/modded.json` has `autoDownloadDefaultPack` true (default) and `defaultPack` (default `overworld`) is missing, Iris downloads `IrisDimensions/<pack>` (branch `master` for the auto-prefetch path) into the packs folder before the forced worldgen datapack is written.
+4. On first boot, if `config/irisworldgen/modded.json` has `autoDownloadDefaultPack` true (default), Iris installs the managed `overworld` and `underworld` beta releases when missing, followed by a configured non-managed `defaultPack` when applicable, before the forced worldgen datapack is written.
 
 Validate the server-side mod install:
 
 ```text
 /iris version
 /iris pack validate overworld
+/iris pack validate underworld
 ```
 
-The install passes when Iris reports the expected loader/version, `config/irisworldgen/packs/overworld/dimensions/` contains a dimension JSON file, and validation has no blocking errors. Restart once before creating a world if the pack or its generated dimension-type datapack was installed during this boot.
+The install passes when Iris reports the expected loader/version, both managed pack directories contain their primary dimension JSON, and validation has no blocking errors. Restart once before creating a world if a pack or its generated dimension-type datapack was installed during this boot.
 
 Packs installed later register custom dimension types (height ranges) and custom biomes through the forced datapack at server start. **Restart once after adding a pack** so worlds get full heights and biomes. Worlds created before that restart run with fallback heights.
 
@@ -118,7 +120,7 @@ Pack resolution for engines, commands, and the forced datapack uses `config/iris
 | Key | Default | Effect |
 |---|---|---|
 | `defaultPack` | `overworld` | Pack auto-download and default create pack name |
-| `autoDownloadDefaultPack` | `true` | Async prefetch at boot when pack missing |
+| `autoDownloadDefaultPack` | `true` | Async prefetch of both managed beta packs and any configured non-managed default when missing |
 | `primaryWorld` | `""` | Primary-world router target dimension id |
 | `routePlayersToPrimaryWorld` | `true` | Route players from vanilla overworld when primary is set |
 | `mainWorldPack` | `""` | Main-world generator override pack ref |
@@ -142,17 +144,17 @@ Full key list: `03 - Configuration.md`.
 
 | Platform | Behavior |
 |---|---|
-| Plugin | `DefaultPackBootstrapProvisioner` downloads `https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip` into `packs/overworld` when not already provisioned |
-| Mod | If `autoDownloadDefaultPack` and pack missing, async install of configured `defaultPack` into `config/irisworldgen/packs` |
+| Plugin | `DefaultPackBootstrapProvisioner` independently manages the Overworld and Underworld beta assets under `packs/overworld` and `packs/underworld`, then compiles the aggregate datapack once |
+| Mod | If `autoDownloadDefaultPack` is enabled, async install of both managed beta packs plus any distinct configured default into `config/irisworldgen/packs` |
 
-Manual install: `/iris download <pack>` (alias `dl`). Default overworld uses the beta-release path; other packs use `IrisDimensions/<pack>/<branch>` (plugin default branch `stable` for non-default; mod download defaults branch `stable` unless auto-prefetch uses `master` — see `25 - Pack Management.md`).
+Manual install: `/iris download <pack>` (alias `dl`). `overworld` and `underworld` use their beta-release assets and ignore the branch argument; other packs use `IrisDimensions/<pack>/<branch>` (default branch `stable` — see `25 - Pack Management.md`).
 
 ## Installation recovery
 
 | Symptom | Check | Recovery |
 |---|---|---|
 | Iris does not appear in `/iris version` | Wrong directory, wrong platform jar, duplicate jar, Java mismatch, or an enable exception | Stop the server, keep only the matching artifact, confirm Java 25, and fix the first Iris exception in the startup log |
-| `settings.json` exists but `packs/overworld` does not | Default-pack download failed or is still incomplete | Restore outbound HTTPS or install a complete pack, then restart; do not create an empty `overworld` folder |
+| `settings.json` exists but a managed pack is absent | Managed beta download failed or is still incomplete | Restore outbound HTTPS or install the complete release pack, then restart; do not create an empty pack folder |
 | Pack validates but modded height/biomes use fallbacks | Forced datapack was generated after registries loaded | Restart once with the pack already installed, then create a new disposable world |
 | Bukkit command is denied for a non-op | `iris.all` is missing | Grant `iris.all`; `iris.treefeller` controls only survival tree felling |
 | Client HUD is absent but server commands work | Client mod missing, disabled keybind, or server capability not negotiated | Install the matching client mod, reconnect, and verify the Iris keybind category; server generation does not require the client HUD |

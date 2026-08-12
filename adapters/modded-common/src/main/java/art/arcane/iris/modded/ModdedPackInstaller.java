@@ -42,12 +42,14 @@ public final class ModdedPackInstaller {
     }
 
     public static boolean install(Path configDir, String pack, String branch,
-                                  boolean forceOverwrite, Consumer<String> feedback) {
+                                  boolean forceOverwrite, boolean refreshDatapack,
+                                  Consumer<String> feedback) {
         if (pack == null || !PACK_NAME.matcher(pack).matches()) {
             feedback.accept(IrisLanguage.plain(PackDownloadMessages.INVALID_PACK_NAME, MessageArgument.untrusted("pack", String.valueOf(pack))));
             return false;
         }
-        if (branch == null || !BRANCH_NAME.matcher(branch).matches()) {
+        boolean managedBeta = PackDownloader.isManagedBetaPack(pack);
+        if (!acceptsBranch(pack, branch)) {
             feedback.accept(IrisLanguage.plain(PackDownloadMessages.INVALID_BRANCH_NAME, MessageArgument.untrusted("branch", String.valueOf(branch))));
             return false;
         }
@@ -56,8 +58,8 @@ public final class ModdedPackInstaller {
         synchronized (installLock) {
             File packs = configDir.resolve("irisworldgen").resolve("packs").toFile();
             try {
-                PackDownloader.PackInstallResult result = PackDownloader.isDefaultOverworld(pack)
-                        ? PackDownloader.downloadDefaultOverworld(packs, forceOverwrite, feedback)
+                PackDownloader.PackInstallResult result = managedBeta
+                        ? PackDownloader.downloadManagedBeta(packs, pack, forceOverwrite, feedback)
                         : PackDownloader.download(
                                 packs,
                                 "IrisDimensions/" + pack,
@@ -67,7 +69,7 @@ public final class ModdedPackInstaller {
                                 pack,
                                 feedback);
                 boolean installed = result != null;
-                if (result != null && result.changed()) {
+                if (shouldRefreshDatapack(result, refreshDatapack)) {
                     // Pack-install completion is one of the four forced-datapack regeneration triggers; every
                     // install call site already runs off the server thread, so regenerate inline here. A
                     // regeneration failure must never turn a successful install into a failed one.
@@ -82,7 +84,8 @@ public final class ModdedPackInstaller {
                 }
                 return installed;
             } catch (IOException error) {
-                LOGGER.error("Iris pack download failed for IrisDimensions/{} ({})", pack, branch, error);
+                String source = managedBeta ? "beta release" : "branch " + branch;
+                LOGGER.error("Iris pack download failed for IrisDimensions/{} ({})", pack, source, error);
                 feedback.accept(IrisLanguage.plain(
                         PackDownloadMessages.DOWNLOAD_FAILED,
                         MessageArgument.untrusted("type", error.getClass().getSimpleName()),
@@ -91,5 +94,14 @@ public final class ModdedPackInstaller {
                 return false;
             }
         }
+    }
+
+    static boolean acceptsBranch(String pack, String branch) {
+        return PackDownloader.isManagedBetaPack(pack)
+                || (branch != null && BRANCH_NAME.matcher(branch).matches());
+    }
+
+    static boolean shouldRefreshDatapack(PackDownloader.PackInstallResult result, boolean refreshDatapack) {
+        return result != null && result.changed() && refreshDatapack;
     }
 }

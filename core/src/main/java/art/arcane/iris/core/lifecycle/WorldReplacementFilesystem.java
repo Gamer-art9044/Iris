@@ -1,8 +1,10 @@
 package art.arcane.iris.core.lifecycle;
 
-import art.arcane.iris.core.SnapshotDirectoryTreeDeleter;
 import art.arcane.iris.core.ExactWorldSlotPathPolicy;
+import art.arcane.iris.core.SnapshotDirectoryTreeDeleter;
+import art.arcane.iris.spi.IrisLogging;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -26,6 +28,11 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public final class WorldReplacementFilesystem {
+    private static final List<Path> PAPER_WORLD_METADATA = List.of(
+            Path.of("data/paper/metadata.dat"),
+            Path.of("data/paper/level_overrides.dat"),
+            Path.of("data/minecraft/world_gen_settings.dat")
+    );
     private static final Pattern STAGE_NAME = Pattern.compile(
             "^\\.iris-replace-[a-z0-9_-]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.stage$");
     private static final Pattern BACKUP_NAME = Pattern.compile(
@@ -37,12 +44,23 @@ public final class WorldReplacementFilesystem {
     public static ReplacementPaths paths(ExactWorldSlotPathPolicy.Target target, UUID id) {
         ExactWorldSlotPathPolicy.Target requiredTarget = Objects.requireNonNull(target, "target");
         UUID requiredId = Objects.requireNonNull(id, "id");
-        String artifactBase = ".iris-replace-" + requiredTarget.worldKey().getKey() + "-" + requiredId;
+        String artifactBase = ".iris-replace-" + requiredTarget.worldKey().key() + "-" + requiredId;
         return new ReplacementPaths(
                 requiredTarget.worldDirectory(),
                 requiredTarget.namespaceRoot().resolve(artifactBase + ".stage"),
                 requiredTarget.namespaceRoot().resolve(artifactBase + ".backup")
         );
+    }
+
+    public static void requireExistingTarget(ReplacementPaths paths) throws IOException {
+        ReplacementPaths requiredPaths = Objects.requireNonNull(paths, "paths");
+        State state = inspect(requiredPaths);
+        if (!state.targetPresent()) {
+            throw new IOException("overwrite=true requires an existing exact world slot; use ordinary create for a new world.");
+        }
+        if (state.stagePresent() || state.backupPresent()) {
+            throw new IOException("A replacement artifact already exists for this transaction.");
+        }
     }
 
     public static void publish(
@@ -56,6 +74,12 @@ public final class WorldReplacementFilesystem {
         if (state.stagePresent()) {
             requireSafeTree(requiredPaths.stage(), "replacement stage");
             requireFingerprint(requiredPaths.stage().resolve("iris/pack"), expectedFingerprint);
+            if (originalTargetPresent) {
+                Path retainedWorld = state.targetPresent()
+                        ? requiredPaths.target()
+                        : requiredPaths.backup();
+                preservePaperWorldMetadata(retainedWorld, requiredPaths.stage());
+            }
             if (state.targetPresent()) {
                 if (state.backupPresent()) {
                     throw new IOException("Replacement target, stage, and backup are all present.");
@@ -86,6 +110,11 @@ public final class WorldReplacementFilesystem {
         }
         requireSafeTree(requiredPaths.target(), "replacement target");
         requireFingerprint(requiredPaths.target().resolve("iris/pack"), expectedFingerprint);
+        if (originalTargetPresent) {
+            preservePaperWorldMetadata(requiredPaths.backup(), requiredPaths.target());
+            requireSafeTree(requiredPaths.target(), "replacement target");
+            requireFingerprint(requiredPaths.target().resolve("iris/pack"), expectedFingerprint);
+        }
     }
 
     public static void rollback(ReplacementPaths paths, boolean originalTargetPresent) throws IOException {
@@ -298,6 +327,71 @@ public final class WorldReplacementFilesystem {
         }
     }
 
+    private static void preservePaperWorldMetadata(Path retainedWorld, Path replacementWorld) throws IOException {
+        requireDirectory(retainedWorld, "retained world");
+        requireDirectory(replacementWorld, "replacement world");
+        requireDirectory(retainedWorld.resolve("data"), "retained world data");
+        requireDirectory(retainedWorld.resolve("data/paper"), "retained Paper data");
+        requireDirectory(retainedWorld.resolve("data/minecraft"), "retained Minecraft data");
+        for (Path relative : PAPER_WORLD_METADATA) {
+            BasicFileAttributes sourceAttributes = requireSafeEntry(retainedWorld.resolve(relative));
+            if (!sourceAttributes.isRegularFile()) {
+                throw new IOException("Retained Paper world metadata is not a regular file: " + relative);
+            }
+        }
+        ensureDirectory(replacementWorld.resolve("data"), "replacement world data");
+        ensureDirectory(replacementWorld.resolve("data/paper"), "replacement Paper data");
+        ensureDirectory(replacementWorld.resolve("data/minecraft"), "replacement Minecraft data");
+        for (Path relative : PAPER_WORLD_METADATA) {
+            Path destination = replacementWorld.resolve(relative);
+            if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+                BasicFileAttributes destinationAttributes = requireSafeEntry(destination);
+                if (!destinationAttributes.isRegularFile()) {
+                    throw new IOException("Replacement Paper world metadata is not a regular file: " + relative);
+                }
+                continue;
+            }
+            copyMetadataFile(retainedWorld.resolve(relative), destination);
+        }
+    }
+
+    private static void ensureDirectory(Path directory, String label) throws IOException {
+        if (Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
+            requireDirectory(directory, label);
+            return;
+        }
+        Files.createDirectory(directory);
+        forceDirectoryRequired(directory.getParent());
+    }
+
+    private static void copyMetadataFile(Path source, Path destination) throws IOException {
+        Path temporary = destination.resolveSibling("." + destination.getFileName() + ".iris-replace.tmp");
+        if (Files.exists(temporary, LinkOption.NOFOLLOW_LINKS)) {
+            BasicFileAttributes attributes = requireSafeEntry(temporary);
+            if (!attributes.isRegularFile()) {
+                throw new IOException("Replacement metadata staging path is unsafe: " + temporary);
+            }
+            Files.delete(temporary);
+        }
+        try {
+            Files.copy(source, temporary, StandardCopyOption.COPY_ATTRIBUTES);
+            try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+                channel.force(true);
+            }
+            try {
+                Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException exception) {
+                throw new IOException(
+                        "Exact world replacement requires atomic Paper metadata publication on this filesystem.",
+                        exception
+                );
+            }
+            forceDirectoryRequired(destination.getParent());
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
     private static void update(MessageDigest digest, String value) {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(bytes.length).array());
@@ -313,13 +407,37 @@ public final class WorldReplacementFilesystem {
     }
 
     private static void move(Path source, Path target) throws IOException {
+        forceDirectoryRequired(source.getParent());
         try {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException exception) {
-            Files.move(source, target);
+            throw new IOException(
+                    "Exact world replacement requires atomic directory moves on this filesystem.",
+                    exception
+            );
         }
-        try (FileChannel channel = FileChannel.open(source.getParent(), StandardOpenOption.READ)) {
+        forceDirectoryAfterCommit(source.getParent());
+    }
+
+    private static void forceDirectoryRequired(Path directory) throws IOException {
+        if (File.separatorChar == '\\') {
+            return;
+        }
+        try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
             channel.force(true);
+        } catch (UnsupportedOperationException failure) {
+            throw new IOException("Directory durability sync is unavailable for " + directory + ".", failure);
+        }
+    }
+
+    private static void forceDirectoryAfterCommit(Path directory) {
+        try {
+            forceDirectoryRequired(directory);
+        } catch (IOException failure) {
+            IrisLogging.reportError(
+                    "A world-replacement move completed, but its parent directory could not be durability-synced.",
+                    failure
+            );
         }
     }
 

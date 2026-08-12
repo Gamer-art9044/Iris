@@ -697,6 +697,7 @@
     "iris.director.commandiris.param.dimension_pack_create_world_with": "Размер/пакет для создания мира",
     "iris.director.commandiris.param.seed_generate_world_with": "Семя, чтобы создать мир с",
     "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world": "Использовать или не использовать этот мир как основной",
+    "iris.director.commandiris.param.replace_exact_existing_world_slot_next_restart": "Заменить точный существующий слот мира при следующем перезапуске",
     "iris.director.commandiris.director.teleport_another_world": "Телепорт в другой мир",
     "iris.director.commandiris.param.world_teleport": "Телепортироваться в мир",
     "iris.director.commandiris.param.player_teleport": "Игрок телепортируется",

@@ -1,10 +1,12 @@
 package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.ExactWorldSlotPathPolicy;
+import art.arcane.iris.core.WorldSlotKey;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.WorldGeneratorSnapshot;
-import org.bukkit.NamespacedKey;
+import art.arcane.iris.spi.IrisLogging;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -18,9 +20,11 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 
 public final class WorldReplacementJournal {
@@ -46,6 +50,12 @@ public final class WorldReplacementJournal {
             }
         }
         transactions.sort(Comparator.comparing(transaction -> transaction.id().toString()));
+        Set<WorldSlotKey> worldKeys = new HashSet<>();
+        for (Transaction transaction : transactions) {
+            if (!worldKeys.add(transaction.worldKey())) {
+                throw new IOException("Multiple replacement journals target " + transaction.worldKey() + ".");
+            }
+        }
         return List.copyOf(transactions);
     }
 
@@ -77,8 +87,9 @@ public final class WorldReplacementJournal {
         if (directory == null) {
             return;
         }
+        forceDirectoryRequired(directory);
         Files.deleteIfExists(directory.resolve(Objects.requireNonNull(id, "id") + JOURNAL_SUFFIX));
-        forceDirectory(directory);
+        forceDirectoryAfterCommit(directory);
     }
 
     public static ExactWorldSlotPathPolicy.Target resolveTarget(Transaction transaction, Path currentLevelRoot)
@@ -91,31 +102,44 @@ public final class WorldReplacementJournal {
         if (!target.levelRoot().equals(requiredTransaction.levelRoot())) {
             throw new IOException("The configured level root changed after the world replacement was staged.");
         }
-        String expectedWorldName = logicalWorldName(target.levelRoot(), requiredTransaction.worldKey());
+        String expectedWorldName;
+        try {
+            expectedWorldName = logicalWorldName(target.levelRoot(), requiredTransaction.worldKey());
+        } catch (IllegalArgumentException failure) {
+            throw new IOException("The replacement journal targets an ambiguous logical world name.", failure);
+        }
         if (!expectedWorldName.equals(requiredTransaction.worldName())) {
             throw new IOException("The logical world name changed after the world replacement was staged.");
         }
         return target;
     }
 
-    public static String logicalWorldName(Path levelRoot, NamespacedKey worldKey) {
+    public static String logicalWorldName(Path levelRoot, WorldSlotKey worldKey) {
         Path requiredLevelRoot = Objects.requireNonNull(levelRoot, "levelRoot").toAbsolutePath().normalize();
-        NamespacedKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
-        if ("iris".equals(requiredWorldKey.getNamespace())) {
-            return requiredWorldKey.getKey();
-        }
+        WorldSlotKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
         Path fileName = requiredLevelRoot.getFileName();
         if (fileName == null || fileName.toString().isBlank()) {
             throw new IllegalArgumentException("Level root must have a logical world name.");
         }
         String levelName = fileName.toString();
-        if (NamespacedKey.minecraft("overworld").equals(requiredWorldKey)) {
+        if ("iris".equals(requiredWorldKey.namespace())) {
+            String logicalName = requiredWorldKey.key();
+            if (logicalName.equals(levelName)
+                    || logicalName.equals(levelName + "_nether")
+                    || logicalName.equals(levelName + "_the_end")) {
+                throw new IllegalArgumentException(
+                        "An Iris-managed world cannot use a configured vanilla world alias."
+                );
+            }
+            return logicalName;
+        }
+        if (WorldSlotKey.minecraft("overworld").equals(requiredWorldKey)) {
             return levelName;
         }
-        if (NamespacedKey.minecraft("the_nether").equals(requiredWorldKey)) {
+        if (WorldSlotKey.minecraft("the_nether").equals(requiredWorldKey)) {
             return levelName + "_nether";
         }
-        if (NamespacedKey.minecraft("the_end").equals(requiredWorldKey)) {
+        if (WorldSlotKey.minecraft("the_end").equals(requiredWorldKey)) {
             return levelName + "_the_end";
         }
         throw new IllegalArgumentException("World key is not an exact replaceable world slot: " + requiredWorldKey);
@@ -135,9 +159,11 @@ public final class WorldReplacementJournal {
         if (!file.getFileName().toString().equals(id + JOURNAL_SUFFIX)) {
             throw new IOException("Replacement journal filename does not match its transaction id.");
         }
-        NamespacedKey worldKey = NamespacedKey.fromString(required(properties, "worldKey"));
-        if (worldKey == null) {
-            throw new IOException("Replacement journal contains an invalid world key.");
+        WorldSlotKey worldKey;
+        try {
+            worldKey = WorldSlotKey.parse(required(properties, "worldKey"));
+        } catch (IllegalArgumentException failure) {
+            throw new IOException("Replacement journal contains an invalid world key.", failure);
         }
         String worldName = exact(properties, "worldName");
         Path recordedLevelRoot = recordedLevelRoot(properties);
@@ -300,26 +326,46 @@ public final class WorldReplacementJournal {
                 }
                 channel.force(true);
             }
+            forceDirectoryRequired(parent);
             try {
                 Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException failure) {
-                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                throw new IOException(
+                        "Exact world replacement requires atomic journal publication on this filesystem.",
+                        failure
+                );
             }
-            forceDirectory(parent);
+            forceDirectoryAfterCommit(parent);
         } finally {
             Files.deleteIfExists(temporary);
         }
     }
 
-    private static void forceDirectory(Path directory) throws IOException {
+    private static void forceDirectoryRequired(Path directory) throws IOException {
+        if (File.separatorChar == '\\') {
+            return;
+        }
         try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
             channel.force(true);
+        } catch (UnsupportedOperationException failure) {
+            throw new IOException("Directory durability sync is unavailable for " + directory + ".", failure);
+        }
+    }
+
+    private static void forceDirectoryAfterCommit(Path directory) {
+        try {
+            forceDirectoryRequired(directory);
+        } catch (IOException failure) {
+            IrisLogging.reportError(
+                    "A world-replacement journal change completed, but its parent directory could not be durability-synced.",
+                    failure
+            );
         }
     }
 
     public record Transaction(
             UUID id,
-            NamespacedKey worldKey,
+            WorldSlotKey worldKey,
             String worldName,
             Path levelRoot,
             String dimension,

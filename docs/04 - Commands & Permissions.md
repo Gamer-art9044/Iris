@@ -79,7 +79,7 @@ Tree feller on mod loaders uses platform permission APIs (`irisworldgen:treefell
 | `load` | `import` | **Bukkit** | `<world>` | Load managed Iris world |
 | `unload` | | **Bukkit** | `<world>` | Unload Iris world |
 | `debug` | | Both | — | Toggle `general.debug` and save settings |
-| `download` | `dl` | Both | `<pack> [branch=stable] [overwrite=false]` (`overwrite` alias `force`) | Download pack project |
+| `download` | `dl` | Both | `<pack> [branch=stable] [overwrite=false]` (`overwrite` alias `force`) | Download a pack; `overworld` and `underworld` resolve to managed beta release ZIPs |
 | `metrics` | `measure` | Both | — | Generation metrics (player / current Iris level) |
 | `reload` | | Both | — | Reload `settings.json` and locale; modded also schedules forced datapack regeneration |
 | `seed` | | **Modded** | — | Print world/engine seeds (gamemaster) |
@@ -102,7 +102,7 @@ Tree feller on mod loaders uses platform permission APIs (`irisworldgen:treefell
 
 ---
 
-On Bukkit, `overwrite=true` is deliberately restart-only. The name may resolve to a safe `iris:*` world or exactly the configured main, `_nether`, or `_the_end` alias; arbitrary `minecraft:*` and foreign namespaces are rejected. Iris stages and validates a fresh pack snapshot, compare-and-swaps only that world's `bukkit.yml` generator and seed, and retains the existing dimension folder as a rollback backup until the restarted world proves its Iris identity, pack, dimension, environment, and seed. Multiple distinct slots may be staged before one restart. `main=true` is valid with overwrite only when the name is the configured main-world name. Exact vanilla slots preserve the authoritative seed shared by the existing level, regardless of the supplied `seed`; this keeps Overworld/Nether/End coordinate generation aligned. Use ordinary new-main promotion when a new level seed is required.
+On Paper-family servers, `overwrite=true` is deliberately restart-only; Spigot rejects it because it has no pre-registry plugin bootstrap. The exact target dimension folder must already exist; use ordinary `/iris create` for a new world. The name may resolve to a safe `iris:*` world or exactly the configured main, `_nether`, or `_the_end` alias; arbitrary `minecraft:*` and foreign namespaces are rejected. Iris stages and validates a fresh pack snapshot, compare-and-swaps only that world's `bukkit.yml` generator and seed, and retains the existing dimension folder as a rollback backup until the restarted world proves its Iris identity, pack, dimension, environment, and seed. Multiple distinct slots may be staged before one restart. `main=true` is valid with overwrite only when the name is the configured main-world name. Exact vanilla slots preserve the authoritative seed shared by the existing level, regardless of the supplied `seed`; this keeps Overworld/Nether/End coordinate generation aligned. Use ordinary new-main promotion when a new level seed is required.
 
 ---
 

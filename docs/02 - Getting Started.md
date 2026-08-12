@@ -15,7 +15,7 @@ Treat each numbered section as a gate. Confirm the world is loaded before telepo
 - Iris installed per `01 - Installation & Platforms.md`
 - Java 25 server or mod instance running
 - Operator / gamemaster access (`iris` commands; modded mutating commands require permission level 2 / gamemasters)
-- Default pack present (auto-downloaded on first boot) or an installed pack under the platform packs directory
+- Managed Overworld and Underworld packs present (auto-downloaded on first boot) or the required project pack installed under the platform packs directory
 
 ## Argument style
 
@@ -263,7 +263,7 @@ The session passes when the production world loads again after a clean restart a
 | Bukkit optional args without `key=` | Parse error | Use `seed=1337`, not a bare second number for optional params |
 | Mod pregen while another job runs | Start fails | `/iris pregen stop` then start again |
 | Studio closed mid-edit | World discarded | Edits on disk in `packs/` remain; reopen studio |
-| Default pack download blocked | Create/open fails missing pack | Allow HTTPS or `/iris download overworld` offline install of a pack tree |
+| Managed pack download blocked | Startup or create/open fails with a missing pack | Allow HTTPS or install with `/iris download overworld` and `/iris download underworld`; an offline install must contain each complete pack tree |
 | `type=default` vs pack key | Resolves via `generator.defaultWorldType` | Prefer explicit `type=overworld` or your pack key |
 
 ## Quick reference

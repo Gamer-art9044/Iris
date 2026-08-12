@@ -36,10 +36,12 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -55,6 +57,14 @@ public final class PackDownloader {
     private static final String DEFAULT_OVERWORLD_PACK = "overworld";
     private static final String DEFAULT_OVERWORLD_REPOSITORY = "IrisDimensions/overworld";
     private static final String DEFAULT_OVERWORLD_RELEASE_URL = "https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip";
+    private static final String UNDERWORLD_PACK = "underworld";
+    private static final String UNDERWORLD_REPOSITORY = "IrisDimensions/underworld";
+    private static final String UNDERWORLD_RELEASE_URL = "https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip";
+    private static final List<String> MANAGED_BETA_PACK_KEYS = List.of(DEFAULT_OVERWORLD_PACK, UNDERWORLD_PACK);
+    private static final Map<String, ManagedBetaPack> MANAGED_BETA_PACKS = Map.of(
+            DEFAULT_OVERWORLD_PACK, new ManagedBetaPack(DEFAULT_OVERWORLD_REPOSITORY, DEFAULT_OVERWORLD_RELEASE_URL),
+            UNDERWORLD_PACK, new ManagedBetaPack(UNDERWORLD_REPOSITORY, UNDERWORLD_RELEASE_URL)
+    );
     private static final Pattern GITHUB_REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
     private static final Pattern GITHUB_REF = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]*");
     private static final Pattern COMMIT_SHA = Pattern.compile("[0-9a-fA-F]{40}");
@@ -72,6 +82,14 @@ public final class PackDownloader {
 
     public static boolean isDefaultOverworld(String pack) {
         return DEFAULT_OVERWORLD_PACK.equals(pack);
+    }
+
+    public static boolean isManagedBetaPack(String pack) {
+        return pack != null && MANAGED_BETA_PACKS.containsKey(pack);
+    }
+
+    public static List<String> managedBetaPacks() {
+        return MANAGED_BETA_PACK_KEYS;
     }
 
     public static String defaultOverworldPack() {
@@ -115,8 +133,40 @@ public final class PackDownloader {
         }
     }
 
+    public static boolean isManagedBetaPackPresent(File packsFolder, String key) {
+        if (!isManagedBetaPack(key) || !isPackPresent(packsFolder, key)) {
+            return false;
+        }
+        File resolvedPack = PackDirectoryResolver.resolveExisting(packsFolder, key);
+        if (resolvedPack == null) {
+            return false;
+        }
+        Path primaryDimension = resolvedPack.toPath().toAbsolutePath().normalize()
+                .resolve("dimensions")
+                .resolve(key + ".json");
+        return !Files.isSymbolicLink(primaryDimension)
+                && Files.isRegularFile(primaryDimension, LinkOption.NOFOLLOW_LINKS);
+    }
+
     public static PackInstallResult downloadDefaultOverworld(File packsFolder, boolean forceOverwrite, Consumer<String> feedback) throws IOException {
-        return download(packsFolder, DEFAULT_OVERWORLD_REPOSITORY, defaultOverworldReleaseUrl(), forceOverwrite, true, DEFAULT_OVERWORLD_PACK, feedback);
+        return downloadManagedBeta(packsFolder, DEFAULT_OVERWORLD_PACK, forceOverwrite, feedback);
+    }
+
+    public static PackInstallResult downloadManagedBeta(File packsFolder, String pack, boolean forceOverwrite,
+                                                        Consumer<String> feedback) throws IOException {
+        ManagedBetaPack managed = pack == null ? null : MANAGED_BETA_PACKS.get(pack);
+        if (managed == null) {
+            throw new IllegalArgumentException("Pack '" + pack + "' has no managed beta release");
+        }
+        return download(
+                packsFolder,
+                managed.repository(),
+                managed.releaseUrl(),
+                forceOverwrite,
+                true,
+                pack,
+                feedback
+        );
     }
 
     /**
@@ -135,7 +185,10 @@ public final class PackDownloader {
         }
         String lockKey = expectedKey != null && !expectedKey.isBlank() ? "key:" + expectedKey : "ref:" + repo + "|" + ref;
         return withDownloadLock(lockKey, () -> {
-            if (!forceOverwrite && isPackPresent(packsFolder, expectedKey)) {
+            boolean present = isManagedBetaPack(expectedKey)
+                    ? isManagedBetaPackPresent(packsFolder, expectedKey)
+                    : isPackPresent(packsFolder, expectedKey);
+            if (!forceOverwrite && present) {
                 sendFeedback(output, IrisLanguage.plain(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
                 return new PackInstallResult(expectedKey, false, false);
             }
@@ -235,11 +288,11 @@ public final class PackDownloader {
                 sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.CHECK_GITHUB));
                 return null;
             }
-            if (dimensions.length != 1) {
-                sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.ONE_DIMENSION_REQUIRED));
+            String selectedDimension = selectDimensionKey(dimensions, expectedKey, feedback);
+            if (selectedDimension == null) {
                 return null;
             }
-            IrisDimension dimension = data.getDimensionLoader().load(dimensions[0]);
+            IrisDimension dimension = data.getDimensionLoader().load(selectedDimension);
             if (dimension == null) {
                 sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.INVALID_DIMENSION));
                 return null;
@@ -280,6 +333,29 @@ public final class PackDownloader {
         return new PreparedPack(key, name, validation);
     }
 
+    private static String selectDimensionKey(String[] dimensions, String expectedKey,
+                                             Consumer<String> feedback) throws IOException {
+        if (expectedKey == null || expectedKey.isBlank()) {
+            if (dimensions.length != 1) {
+                sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.ONE_DIMENSION_REQUIRED));
+                return null;
+            }
+            return dimensions[0];
+        }
+
+        int matches = 0;
+        for (String dimension : dimensions) {
+            if (expectedKey.equals(dimension)) {
+                matches++;
+            }
+        }
+        if (matches != 1) {
+            throw new IOException("Downloaded pack dimensions " + Arrays.toString(dimensions)
+                    + " do not contain exactly one requested key '" + expectedKey + "'");
+        }
+        return expectedKey;
+    }
+
     private static PackInstallResult publishPreparedPack(File packsFolder, Path packsRoot, Path staging, PreparedPack prepared,
                                                          boolean forceOverwrite, Consumer<String> feedback) throws IOException {
         Path target = packsRoot.resolve(prepared.key()).normalize();
@@ -299,15 +375,19 @@ public final class PackDownloader {
             ));
             return null;
         }
-        if (!forceOverwrite && isPackPresent(packsRoot.toFile(), prepared.key())) {
+        boolean present = isManagedBetaPack(prepared.key())
+                ? isManagedBetaPackPresent(packsRoot.toFile(), prepared.key())
+                : isPackPresent(packsRoot.toFile(), prepared.key());
+        if (!forceOverwrite && present) {
             sendFeedback(feedback, IrisLanguage.plain(
                     PackDownloadMessages.PACK_KEY_CONFLICT,
                     MessageArgument.untrusted("key", prepared.key())
             ));
             return null;
         }
-        if (!forceOverwrite && Files.exists(target) && !isPackPresent(packsRoot.toFile(), prepared.key())) {
-            IrisLogging.warn("Replacing partial pack folder " + target + " (no dimension files found).");
+        if (!forceOverwrite && Files.exists(target) && !present) {
+            IrisLogging.warn("Replacing partial pack folder " + target
+                    + " (required primary dimension is missing).");
         }
 
         Optional<IrisData> loadedData = IrisData.getLoaded(new File(packsFolder, prepared.key()));
@@ -572,6 +652,10 @@ public final class PackDownloader {
         return DEFAULT_OVERWORLD_RELEASE_URL;
     }
 
+    static String underworldReleaseUrl() {
+        return UNDERWORLD_RELEASE_URL;
+    }
+
     private static void validateGithubRef(String qualifiedRef) {
         String refPath = qualifiedRef.startsWith("refs/heads/")
                 ? qualifiedRef.substring("refs/heads/".length())
@@ -595,6 +679,9 @@ public final class PackDownloader {
     }
 
     private record PreparedPack(String key, String name, PackValidationResult validation) {
+    }
+
+    private record ManagedBetaPack(String repository, String releaseUrl) {
     }
 
     public record PackInstallResult(String key, boolean changed, boolean restartRequired) {

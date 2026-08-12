@@ -697,6 +697,7 @@
     "iris.director.commandiris.param.dimension_pack_create_world_with": "ワールドの作成に使用するディメンションまたはパック",
     "iris.director.commandiris.param.seed_generate_world_with": "ワールドの生成に使用するシード",
     "iris.director.commandiris.param.whether_not_automatically_use_this_world_as_main_world": "このワールドをメインワールドとして自動設定するかどうか",
+    "iris.director.commandiris.param.replace_exact_existing_world_slot_next_restart": "次回の再起動時に既存の正確なワールドスロットを置き換える",
     "iris.director.commandiris.director.teleport_another_world": "別のワールドへテレポートします",
     "iris.director.commandiris.param.world_teleport": "テレポート先のワールド",
     "iris.director.commandiris.param.player_teleport": "テレポートさせるプレイヤー",

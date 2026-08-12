@@ -6,9 +6,9 @@ studio authoring workflow. The same engine runs as a Bukkit-family plugin and as
 or NeoForge server mod. Cross-platform generation targets deterministic parity for identical
 artifacts, pack bytes, seeds, and test areas. The master branch targets Minecraft 26.2.
 
-# [Support](https://discord.gg/3xxPTpT) **|** [Documentation](docs/00%20-%20Overview.md) **|** [Git](https://github.com/IrisDimensions)
+# [Support](https://discord.gg/3xxPTpT) **|** [Documentation](https://github.com/VolmitSoftware/docs/blob/master/iris/00-overview.md) **|** [Git](https://github.com/IrisDimensions)
 
-Authoritative docs live in [`docs/`](docs/00%20-%20Overview.md) (flat numbered files). Hosted external docs are not authority.
+Authoritative docs live in the central [VolmitSoftware/docs](https://github.com/VolmitSoftware/docs/tree/master/iris) repository, which is the source for the hosted wiki.
 
 Consider supporting development by buying Iris on Spigot.
 
@@ -50,8 +50,8 @@ is identical on every platform.
 | Mob spawning, including mod mobs | Yes | Biome spawn tables are merged with the vanilla derivative's |
 
 With `importedFeatures` off - the default - chunk output is byte-for-byte what Iris has always
-produced. See [`docs/94 - API - Modded.md`](docs/94%20-%20API%20-%20Modded.md) and
-[`docs/01 - Installation & Platforms.md`](docs/01%20-%20Installation%20%26%20Platforms.md) for the full control reference, including
+produced. See [94 - API - Modded](https://github.com/VolmitSoftware/docs/blob/master/iris/94-api-modded.md) and
+[01 - Installation & Platforms](https://github.com/VolmitSoftware/docs/blob/master/iris/01-installation-platforms.md) for the full control reference, including
 which `pointed_dripstone` keys the 26.2 `speleothem` rename does and does not affect.
 
 Independently of that flag, Iris custom biomes now inherit the biome tags of their vanilla
@@ -270,12 +270,12 @@ composite cycle. The build and release paths do not need it.
 
 ## Documentation
 
-Full product docs are under [`docs/`](docs/00%20-%20Overview.md). Start with:
+Full product docs live in the central [VolmitSoftware/docs](https://github.com/VolmitSoftware/docs/tree/master/iris) repository. Start with:
 
-- [Overview and index](docs/00%20-%20Overview.md)
-- [Installation and platforms](docs/01%20-%20Installation%20%26%20Platforms.md)
-- [Getting started](docs/02%20-%20Getting%20Started.md)
-- [Structures overview](docs/18%20-%20Structures%20Overview.md)
-- [API — Getting Started](docs/90%20-%20API%20-%20Getting%20Started.md)
-- [Maintainer — MC version bump](docs/85%20-%20Maintainer%20-%20MC%20Version%20Bump.md)
-- [Maintainer — release checklist](docs/86%20-%20Maintainer%20-%20Release%20Checklist.md)
+- [Overview and index](https://github.com/VolmitSoftware/docs/blob/master/iris/00-overview.md)
+- [Installation and platforms](https://github.com/VolmitSoftware/docs/blob/master/iris/01-installation-platforms.md)
+- [Getting started](https://github.com/VolmitSoftware/docs/blob/master/iris/02-getting-started.md)
+- [Structures overview](https://github.com/VolmitSoftware/docs/blob/master/iris/18-structures-overview.md)
+- [API — Getting Started](https://github.com/VolmitSoftware/docs/blob/master/iris/90-api-getting-started.md)
+- [Maintainer — MC version bump](https://github.com/VolmitSoftware/docs/blob/master/iris/85-maintainer-mc-version-bump.md)
+- [Maintainer — release checklist](https://github.com/VolmitSoftware/docs/blob/master/iris/86-maintainer-release-checklist.md)

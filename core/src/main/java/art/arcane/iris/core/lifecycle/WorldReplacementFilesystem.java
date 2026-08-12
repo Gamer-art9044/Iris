@@ -177,6 +177,22 @@ public final class WorldReplacementFilesystem {
         requireFingerprint(requiredPaths.target().resolve("iris/pack"), expectedFingerprint);
     }
 
+    public static void validatePublishedTarget(
+            ReplacementPaths paths,
+            boolean originalTargetPresent,
+            String expectedPackFingerprint
+    ) throws IOException {
+        ReplacementPaths requiredPaths = Objects.requireNonNull(paths, "paths");
+        String expectedFingerprint = requireFingerprint(expectedPackFingerprint);
+        State state = inspect(requiredPaths);
+        if (!state.targetPresent() || state.stagePresent()
+                || originalTargetPresent != state.backupPresent()) {
+            throw new IOException("Published replacement storage does not match its retained-world contract.");
+        }
+        requireSafeTree(requiredPaths.target(), "replacement target");
+        requireFingerprint(requiredPaths.target().resolve("iris/pack"), expectedFingerprint);
+    }
+
     public static String fingerprintPack(Path packRoot) throws IOException {
         Path root = Objects.requireNonNull(packRoot, "packRoot").toAbsolutePath().normalize();
         requireDirectory(root, "pack root");

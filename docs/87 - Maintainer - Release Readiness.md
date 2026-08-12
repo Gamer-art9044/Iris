@@ -1,18 +1,18 @@
 # 87 - Maintainer — Release Readiness
 
-**Internal living tracker.** Engineering checklist for preparing Iris for a public release on Bukkit-family servers, Fabric, Forge, and NeoForge. Complete this checklist before running `86 - Maintainer - Release Checklist.md`. Checkbox state and historical evidence below are maintained as work proceeds; they are not a frozen product manual for operators.
+**Internal living tracker.** Engineering checklist for preparing Iris for a public release on Bukkit-family servers, Fabric, Forge, and NeoForge. Complete this checklist before running `86 - Maintainer - Release Checklist.md`. Checkbox state and the run history below are maintained as work proceeds; they are not a frozen product manual for operators.
 
 The goal is to correct confirmed defects without silently changing valid pack output, public behavior, or platform parity. A behavior change is acceptable when it fixes a documented defect, is covered by a regression test, and is recorded in `MasterChangelog.MD`.
 
 The current runtime pass prioritizes isolated world creation, deterministic generation, pregeneration, and profiling. Hotload, reload, and shutdown refinement remains in the later lifecycle gates. Automated release builds, tagged bundles, and publishing infrastructure are deferred; public-beta work uses manually built artifacts and focuses on plugin/mod correctness and stability.
 
-Cross-links: GoldenHash (`32 - Determinism & Goldenhash.md`), operator smokes (`31 - Operator Runbooks & Smoke Tests.md`), performance knobs (`33 - Performance Tuning.md`), MC bump (`85 - Maintainer - MC Version Bump.md`).
+Cross-links: GoldenHash (`32 - Determinism & Goldenhash.md`), operator runbooks (`31 - Operator Runbooks.md`), performance knobs (`33 - Performance Tuning.md`), MC bump (`85 - Maintainer - MC Version Bump.md`).
 
 ## How to maintain this tracker
 
 Work from the first incomplete blocking section. For each checked item, preserve the exact commit, platform artifact, input pack/seed, command or workload, and result outside this document; summarize only stable conclusions here. When a fix supersedes an earlier note, rewrite the note instead of stacking contradictory history.
 
-Automated tests, server startup, real-player gameplay, profiler captures, and publishing are distinct gates. Mark only the gate actually observed, and leave client-operated or cross-server checks open until that evidence exists.
+Automated tests, server startup, real-player gameplay, profiler captures, and publishing are distinct checks. Mark only what was actually observed, and leave client-operated or cross-server checks open until they have been run.
 
 ## Completion rules
 
@@ -24,7 +24,7 @@ Automated tests, server startup, real-player gameplay, profiler captures, and pu
 - [ ] Keep loader-specific behavior behind the platform boundary; reusable behavior belongs in core or SPI.
 - [ ] Do not add compatibility shims, temporary adapters, or swallowed failure paths.
 - [ ] Preserve full stack traces for engine, lifecycle, persistence, and operator-critical failures.
-- [ ] Update `MasterChangelog.MD` as operator-visible fixes become final; merge superseded entries.
+- [ ] Update `MasterChangelog.MD` (workspace root, `../MasterChangelog.MD` from this repo; section `## Plugin: Iris`) as operator-visible fixes become final; merge superseded entries.
 - [ ] Do not publish while any required release gate is failed, pending, or waived without an explicit reason.
 
 ## 0. Secure and freeze the release baseline
@@ -44,7 +44,7 @@ Automated tests, server startup, real-player gameplay, profiler captures, and pu
 - [x] Capture baseline golden hashes for the same pack, seed, radius, and thread counts on all platforms.
 - [ ] Preserve a copy of the baseline performance results described in section 8.
 
-Gate: the source, dependencies, generated terrain baseline, and test evidence are reproducible on a second clean checkout.
+Done when: the source, dependencies, generated terrain baseline, and test results are reproducible on a second clean checkout.
 
 ## 1. P0 - Make concurrent generation deterministic
 
@@ -64,7 +64,7 @@ Gate: the source, dependencies, generated terrain baseline, and test evidence ar
 - [ ] Run sequential and parallel generation for the same seed and assert identical hashes.
 - [ ] Run the test under high concurrency and with generation-session close/hotload activity.
 
-Gate: repeated concurrent generation is deterministic, context-isolated, and hash-identical to the single-threaded result.
+Done when: repeated concurrent generation is deterministic, context-isolated, and hash-identical to the single-threaded result.
 
 ## 2. P0 - Make hotload and shutdown transactional
 
@@ -83,7 +83,7 @@ This section is retained for the later lifecycle refinement pass and is not part
 - [ ] Restructure `IrisEngine.close()` so every cleanup stage runs even when lease draining times out.
 - [ ] Add startup, failed-hotload recovery, successful-hotload, close, and restart tests.
 
-Gate: no failed hotload can poison the live engine, admit generation into partial state, leak permits, or skip shutdown cleanup.
+Done when: no failed hotload can poison the live engine, admit generation into partial state, leak permits, or skip shutdown cleanup.
 
 ## 3. P0 - Make `.iris` packaging complete and lossless
 
@@ -100,7 +100,7 @@ Gate: no failed hotload can poison the live engine, admit generation into partia
 - [ ] Add modded export -> import -> export round-trip tests.
 - [ ] Compare normalized JSON, binary objects, dependency counts, and final resource hashes.
 
-Gate: a complete fixture survives round-trip packaging without missing resources, mutated source state, or unexplained byte/content changes.
+Done when: a complete fixture survives round-trip packaging without missing resources, mutated source state, or unexplained byte/content changes.
 
 ## 4. P0 - Make Object Studio Folia-safe and atomic
 
@@ -114,7 +114,7 @@ Gate: a complete fixture survives round-trip packaging without missing resources
 - [ ] Confirm a failed write is retried on the next save rather than reported as “no changes.”
 - [ ] Test empty cells, unchanged cells, partial chunk availability, failure recovery, and concurrent saves.
 
-Gate: Object Studio performs no cross-region Bukkit access, never exposes a partial file, and can always retry a failed save.
+Done when: Object Studio performs no cross-region Bukkit access, never exposes a partial file, and can always retry a failed save.
 
 ## 5. P1 - Make validation and schemas trustworthy
 
@@ -132,7 +132,7 @@ Gate: Object Studio performs no cross-region Bukkit access, never exposes a part
 - [ ] Add validator tests for nested resources, malformed dependencies, cleanup preview, and restore conflicts.
 - [ ] Add schema tests for vanilla shorthand and fully namespaced modded values.
 
-Gate: validation is read-only by default, rejects broken dependency graphs, accepts valid nested packs, and schema completion never changes registry identity.
+Done when: validation is read-only by default, rejects broken dependency graphs, accepts valid nested packs, and schema completion never changes registry identity.
 
 ## 6. P1 - Harden modded generation and lifecycle
 
@@ -149,7 +149,7 @@ Gate: validation is read-only by default, rejects broken dependency graphs, acce
 - [ ] Test dedicated-server start/stop, integrated-server start/stop/start, and world unload/reload.
 - [x] Modded entity spawners enforce time/weather gates and apply AI awareness, spawn effects, and raw commands; parity tests cover these paths and `23 - Loot, Entities, Spawners, Markers.md` documents them.
 
-Gate: modded shutdown/hotload cannot save blank chunks, strand futures, race maintenance, or retain stale world state across a second server lifecycle.
+Done when: modded shutdown/hotload cannot save blank chunks, strand futures, race maintenance, or retain stale world state across a second server lifecycle.
 
 ## 7. P1 - Harden pregeneration, Folia, and scheduling
 
@@ -166,13 +166,13 @@ Gate: modded shutdown/hotload cannot save blank chunks, strand futures, race mai
 - [ ] Stress cancellation, pause/resume, failure, shutdown, and restart under Paper and Folia.
 - [ ] Verify chunk tickets, regions, files, protocol sessions, and executor threads are released afterward.
 
-Gate: pregeneration remains thread-correct and bounded under saturation, cancellation, failure, and restart.
+Done when: pregeneration remains thread-correct and bounded under saturation, cancellation, failure, and restart.
 
 ## 8. Performance and regression proof
 
-### Current isolated smoke evidence
+### Current verification coverage
 
-This evidence validates packaged-artifact generation and establishes a profiling candidate. It is not the final 5,000-10,000-chunk performance baseline required by this section.
+These runs validate packaged-artifact generation and establish a profiling candidate. They are not the final 5,000-10,000-chunk performance baseline required by this section. They also predate the current `gradle.properties` loader pins on two platforms — captured against Forge `65.0.3` and NeoForge `26.2.0.8-beta`, while the tree now pins `forgeVersion=26.2-65.0.4` and `neoForgeVersion=26.2.0.12-beta` — so re-run those two loaders before treating any of it as valid for the shipping artifacts.
 
 - [x] Fixed inputs: Iris seed `1337`, GoldenHash radius `22`, one hash thread, and a 352-block serial/sync pregeneration radius covering exactly 2,025 chunks.
 - [x] Fixed host: Apple M3 Max, 128 GiB RAM, Temurin 25.0.2, 8 GiB instance heap.
@@ -189,7 +189,7 @@ This evidence validates packaged-artifact generation and establishes a profiling
 - [ ] Warm at least 256 chunks before measuring.
 - [ ] Run a 5,000-10,000 chunk pregeneration baseline on Paper.
 - [ ] Run the same workload on Fabric; repeat on Forge and NeoForge before final release.
-- [ ] Capture JProfiler CPU, allocation, GC, retained-object, thread, and executor-queue evidence.
+- [ ] Capture JProfiler CPU, allocation, GC, retained-object, thread, and executor-queue profiles.
 - [ ] Record chunks/second, total duration, p50/p95 chunk time, allocations/chunk, peak heap, and GC pause time.
 - [ ] Profile nested chunk prefill parallelism before changing it.
 - [ ] Profile modded block/biome buffer allocation before pooling or changing representation.
@@ -198,7 +198,7 @@ This evidence validates packaged-artifact generation and establishes a profiling
 - [ ] Reject or revise changes that regress median throughput by more than 5% or p95 latency/allocations by more than 10%, unless the correctness benefit and accepted tradeoff are documented.
 - [ ] Confirm optimized and baseline runs produce identical golden hashes where behavior should be unchanged.
 
-Gate: representative generation and pregen have repeatable baselines, no unexplained regression, and no unbounded queue, allocation, or retained-memory growth.
+Done when: representative generation and pregen have repeatable baselines, no unexplained regression, and no unbounded queue, allocation, or retained-memory growth.
 
 ## 9. CI and deterministic test infrastructure
 
@@ -206,7 +206,7 @@ Automated build and release-pipeline work in this section is deferred. The curre
 
 - [x] Add `:adapters:bukkit:plugin:test` to CI.
 - [x] Expand the broad classload probe across all top-level and nested core classfiles, with an exact reviewed class and dependency-category allowlist that rejects new classes, changed dependency namespaces, non-missing-class failures, and stale entries.
-- [ ] Move the core Bukkit purity ratchet below its current 182-file ceiling.
+- [ ] Move the core Bukkit purity ratchet below its current ceiling. `core/purity-allowlist.txt` holds 188 entries; `:core:bukkitPurityRatchet` (wired into `:core:check`) fails on any new `org.bukkit`-coupled file outside it and prints how far under the ceiling the tree sits.
 - [ ] Give `genProbe` a repository fixture or require an explicit portable pack path.
 - [ ] Add a deterministic fixed-seed Iris-world task for Fabric, Forge, and NeoForge.
 - [x] Make worldcheck return a failing process result when its internal result is FAIL.
@@ -214,13 +214,13 @@ Automated build and release-pipeline work in this section is deferred. The curre
 - [x] Verify nested adapter builds honor the selected VolmLib source/coordinate.
 - [x] Add packaged-jar server boots; manually assembled Bukkit, Fabric, Forge, and NeoForge artifacts all reached their runtime-ready state in isolated instances, including a real multi-mod classpath.
 
-Gate: a clean CI run proves tests, deterministic generation, packaging, and server startup from the actual release artifacts.
+Done when: a clean CI run proves tests, deterministic generation, packaging, and server startup from the actual release artifacts.
 
 ## 10. Full platform acceptance matrix
 
 Use the exact packaged release jars, not development classes.
 
-The current isolated smoke proves fresh non-empty generation, exact fixed-seed block-and-biome parity, and complete serial/sync 2,025-chunk pregeneration on Paper, Fabric, Forge, and NeoForge. A second real content-mod fixture also passes entity, item, block, structure loot, death loot, headless initial-spawn, and 2,025-chunk pregeneration gates on all three mod loaders. It does not yet satisfy the minimum/latest loader, complete Bukkit-family, client, lifecycle, or full pregen-control matrix below.
+The runs completed so far prove fresh non-empty generation, exact fixed-seed block-and-biome parity, and complete serial/sync 2,025-chunk pregeneration on Paper, Fabric, Forge, and NeoForge. A second real content-mod fixture also passes entity, item, block, structure loot, death loot, headless initial-spawn, and 2,025-chunk pregeneration gates on all three mod loaders. It does not yet satisfy the minimum/latest loader, complete Bukkit-family, client, lifecycle, or full pregen-control matrix below.
 
 - [ ] Bukkit-family server matrix:
   - [ ] Paper current target
@@ -252,7 +252,7 @@ The current isolated smoke proves fresh non-empty generation, exact fixed-seed b
   - [ ] Integrated singleplayer create, leave, and create/join again in the same client process
   - [ ] Pregen HUD, Vision map, cursor overlay, keybinds, and Studio toasts
 
-Gate: every advertised server, loader, client, and content path completes the same acceptance scenario or has a clearly documented intentional capability difference.
+Done when: every advertised server, loader, client, and content path completes the same acceptance scenario or has a clearly documented intentional capability difference.
 
 ## 11. Documentation and repository hygiene
 
@@ -279,14 +279,14 @@ Gate: every advertised server, loader, client, and content path completes the sa
 - [x] Add validated custom-biome tag opt-ins and put all five explicit overworld slime biomes in `minecraft:allows_surface_slime_spawns`, allowing Minecraft's native surface-slime checks to succeed.
 - [x] Add Minecraft 26.2 default-clock metadata to generated Iris overworld and End dimension types so `/time set`, `/time add`, time queries, and clock controls work in Iris overworld dimensions. An isolated Paper 26.2 runtime loaded a dimension using `iris:overworld`, reported the `minecraft:overworld` clock, accepted day and night time markers, and returned the clock time.
 - [x] Make synchronous modded pregen completion diagnostics report meaningful concurrency values. The successful runs reported `peakInFlight=0 finalLimit=32` despite a strict `inFlightCap=1` sync mode.
-- [ ] Pin or fix the isolated test harness behavior before treating it as release evidence: setting an instance isolated currently leaves consumer-content symlinks in place. This pass used a fresh, dedicated harness root, so those links pointed only to test-local content and did not contaminate the test, but the isolation flag alone is insufficient.
+- [ ] Pin or fix the isolated test harness behavior before trusting it for a release: setting an instance isolated currently leaves consumer-content symlinks in place. This pass used a fresh, dedicated harness root, so those links pointed only to test-local content and did not contaminate the test, but the isolation flag alone is insufficient.
 - [x] Resolve the fixed-seed order/state-dependent block generation and Paper-versus-modded biome-hash difference. The manually built candidate produced one exact full hash before and after 2,025-chunk pregeneration on Paper, Fabric, Forge, and NeoForge; Fabric also retained it after restart.
-- [ ] Re-run Folia when an upstream 26.2 server build becomes available. The official 26.2 build endpoint currently returns `version_not_found`; an incompatible 26.1.2 runtime is not acceptable beta evidence.
+- [ ] Re-run Folia when an upstream 26.2 server build becomes available. The official 26.2 build endpoint currently returns `version_not_found`; an incompatible 26.1.2 runtime does not count.
 - [ ] Nerospace beta.7's bundled `nerospace:guide/new_life` advancement uses the obsolete `minecraft:entity_sub_predicate_type`/`minecraft:type` shape and logs one datapack parse error on Fabric, Forge, and NeoForge 26.2. Iris's custom block, item, entity, chest loot, death loot, and pregeneration integration all pass despite that independent content-mod error; update Nerospace before using it as a clean-log beta recommendation.
 - [x] Preserve structure-level loot through placement persistence. Newly placed structure containers receive a versioned, delimiter-safe marker containing the piece object, deterministic placement id, and owning structure; `Engine.getObjectPlacement()` reconstructs authored loot in order at weight 1 for the existing Bukkit and modded application paths without overriding global loot. Legacy `object@id` markers remain readable, malformed and unknown-version markers fail safely, and marker writes are storage-container-only.
 - [x] Remove the unsupported `IrisStructurePlacement` `rotation`, `translate`, and `scale` fields from beta authoring and generated schemas. Read-only pack validation now blocks those keys specifically inside dimension, region, and biome `structures[]` entries instead of accepting settings with no runtime effect; ordinary object-placement transforms remain valid and are not inspected by this check.
 
-Gate: documentation and distribution metadata describe the behavior users will actually receive.
+Done when: documentation and distribution metadata describe the behavior users will actually receive.
 
 ## 12. Final GO/NO-GO gate
 
@@ -296,11 +296,11 @@ Gate: documentation and distribution metadata describe the behavior users will a
 - [ ] `perf-regression`: pass against the recorded baseline.
 - [ ] `release-dry-run`: pass using final packaged artifacts.
 - [ ] `changelog-ready`: pass.
-- [x] `manual-smoke`: pass.
+- [x] `manual-runbooks`: pass.
 - [ ] `docs-updated`: pass.
 - [ ] `known-issues-reviewed`: pass.
 - [ ] Working tree is clean on the exact release commit.
-- [ ] CI is green on that commit and all evidence artifacts are retained.
+- [ ] CI is green on that commit and all supporting artifacts are retained.
 - [ ] Complete every item in `86 - Maintainer - Release Checklist.md` without rebuilding from different source.
 
 Release decision:

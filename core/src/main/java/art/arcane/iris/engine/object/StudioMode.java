@@ -25,14 +25,31 @@ import art.arcane.iris.engine.platform.studio.generators.ObjectStudioGenerator;
 
 @Desc("Represents a studio mode")
 public enum StudioMode {
+    @Desc("Installs no studio generator; the dimension generates normally.")
     NORMAL,
+
+    @Desc("Debug layout: every biome in the dimension on a square grid, one chunk per biome cell, barrier floor past the last biome. Bukkit studio worlds only.")
     BIOME_BUFFET_1x1,
+
+    @Desc("Debug layout: every biome on a square grid with 3x3-chunk cells per biome, barrier floor past the last biome. Bukkit studio worlds only.")
     BIOME_BUFFET_3x3,
+
+    @Desc("Debug layout: every biome on a square grid with 5x5-chunk cells per biome, barrier floor past the last biome. Bukkit studio worlds only.")
     BIOME_BUFFET_5x5,
+
+    @Desc("Debug layout: every biome on a square grid with 9x9-chunk cells per biome, barrier floor past the last biome. Bukkit studio worlds only.")
     BIOME_BUFFET_9x9,
+
+    @Desc("Debug layout: every biome on a square grid with 18x18-chunk cells per biome, barrier floor past the last biome. Bukkit studio worlds only.")
     BIOME_BUFFET_18x18,
+
+    @Desc("Debug layout: every biome on a square grid with 36x36-chunk cells per biome, barrier floor past the last biome. Bukkit studio worlds only.")
     BIOME_BUFFET_36x36,
+
+    @Desc("Not implemented: currently generates exactly like NORMAL.")
     REGION_BUFFET,
+
+    @Desc("Replaces terrain with the object studio: a flat polished-deepslate floor laying every pack object out on framed, end-rod-marked grid plinths. Bukkit studio worlds only.")
     OBJECT_BUFFET;
 
     public void inject(BukkitChunkGenerator c) {

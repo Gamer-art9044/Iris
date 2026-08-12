@@ -25,6 +25,7 @@ import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.util.project.noise.CNG;
@@ -270,6 +271,7 @@ public class IrisFloatingChildBiomes implements IRare {
     private Integer localFluidHeight = null;
 
     @Desc("Block used for the internal water pool when localFluidHeight is positive.")
+    @RegistryListBlockType
     private String fluidBlock = "minecraft:water";
 
     @Desc("When true, the target biome's decorators apply to the island's top surface.")

@@ -21,7 +21,7 @@ public class IrisCaveProfile {
     @Desc("Enable profile-driven cave carving.")
     private boolean enabled = false;
 
-    @Desc("Global vertical bounds for profile cave carving.")
+    @Desc("Global vertical bounds for profile cave carving, in engine-local Y where 0 is the bottom of the dimension, not world Y.")
     private IrisRange verticalRange = new IrisRange(0, 384);
 
     @MinNumber(0)
@@ -73,7 +73,7 @@ public class IrisCaveProfile {
 
     @MinNumber(2)
     @MaxNumber(4)
-    @Desc("Horizontal adaptive predictor grid step used while classifying cave density planes.")
+    @Desc("Horizontal adaptive predictor tuning. The carver always samples the predictor grid at a fixed step of 8; values below 8 only widen the ambiguity margin slightly and do not tighten the grid.")
     private int adaptiveSampleStep = 2;
 
     @MinNumber(0)
@@ -119,7 +119,7 @@ public class IrisCaveProfile {
     @Desc("Default cave anchor mode for cave-only object placement.")
     private IrisCaveAnchorMode defaultObjectAnchor = IrisCaveAnchorMode.FLOOR;
 
-    @Desc("Default placement mode for cave objects. Stilt modes tile the object base block down to the cave floor surface. FAST_MIN_STILT is recommended for cave objects to prevent floating.")
+    @Desc("Default placement mode for cave objects. Only applies to placements that are still on the default CENTER_HEIGHT mode; an explicit mode on the placement always wins. Stilt modes tile the object base block down to the cave floor surface. FAST_MIN_STILT is recommended for cave objects to prevent floating.")
     private ObjectPlaceMode defaultObjectPlaceMode = null;
 
     @MinNumber(1)

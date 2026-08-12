@@ -21,6 +21,8 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.annotations.Desc;
+import art.arcane.iris.engine.object.annotations.MaxNumber;
+import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
 import lombok.AllArgsConstructor;
@@ -32,18 +34,20 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Desc("Ore Layer")
+@Desc("Scatters single ore blocks through terrain by sampling a noise field at every block in a vertical band. Defined on dimensions, regions, or biomes; the most specific level wins.")
 @Data
 public class IrisOreGenerator {
-    @Desc("The palette of 'ore' generated")
+    @Desc("The ore blocks to place. An empty palette generates nothing, so this must be set for the generator to have any effect.")
     private IrisMaterialPalette palette = new IrisMaterialPalette().qclear();
-    @Desc("The generator style for the 'ore'")
+    @Desc("The noise style sampled per block to decide where ore appears. STATIC gives independent random speckle; smoother styles give veiny clusters.")
     private IrisGeneratorStyle chanceStyle = new IrisGeneratorStyle(NoiseStyle.STATIC);
-    @Desc("Will ores generate on the surface of the terrain layer")
+    @Desc("When true this generator also replaces surface-layer blocks (it runs before layers and fluid); when false it only replaces underground rock.")
     private boolean generateSurface = false;
-    @Desc("Threshold for rate of generation")
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("Noise cutoff: a block becomes ore when the sampled noise is at or below this value, so higher means more ore. 0 disables, 1 replaces everything in range.")
     private double threshold = 0.5;
-    @Desc("Height limit (min, max)")
+    @Desc("Vertical band (min, max) this ore can generate in, in engine-local Y where 0 is the bottom of the dimension, not world Y.")
     private IrisRange range = new IrisRange(30, 80);
 
     private transient AtomicCache<CNG> chanceCache = new AtomicCache<>();

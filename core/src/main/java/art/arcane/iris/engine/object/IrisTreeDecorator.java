@@ -21,6 +21,7 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import lombok.AllArgsConstructor;
@@ -40,6 +41,7 @@ public class IrisTreeDecorator {
 
     @Required
     @Desc("The block id to place, e.g. minecraft:magma_block. Ignored when palette is set.")
+    @RegistryListBlockType
     private String block = "";
 
     @Desc("A noise-driven palette for this decorator. When set this overrides the single block.")

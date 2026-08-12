@@ -2,6 +2,8 @@
 
 `IrisWorldEngineEvent` reports when an Iris world's engine becomes usable, is rebuilt under you, or is about to stop being usable. `IrisPregenerationEvent` reports pregeneration job progress. Both are pure observation: not cancellable, and handlers cannot change Iris's next step. Prefer `IrisWorldEngineEvent` over `WorldLoadEvent` when you care about the **generator**: a world exists before its Iris engine can answer, and still exists after the engine is told to close.
 
+Reach for these when your plugin has per-world setup that must happen exactly when Iris can answer for that world — caching the dimension key, building a map layer, warming a spawn candidate list — or when you want to mirror pregeneration progress somewhere Iris does not draw it (a boss bar, a web panel, a Discord relay).
+
 Build setup: `90 - API - Getting Started.md`. No service lookup — register a `Listener` in `onEnable`; Bukkit unregisters on your disable.
 
 Each event has its own `HandlerList`. No shared base class. Neither implements `Cancellable`; `ignoreCancelled = true` does nothing useful.
@@ -39,6 +41,8 @@ Guarantees:
 ### What `ENGINE_CLOSING` does not promise
 
 Closing fires before the generator closes, but during full plugin shutdown the terrain service may already be withdrawn. **Do not run terrain queries in a closing handler.** Capture state at `ENGINE_READY`; use closing only to drop it. Queries during closing return absent without throwing.
+
+Closing is also not a crash guarantee. It is delivered on the normal plugin-disable path, where teardown runs on the main thread and the event is called inline. If the JVM exits without a clean plugin disable, Iris's shutdown hook still parks the generators, but nothing dispatches to your listener — persist anything you cannot rebuild as you go, not at closing.
 
 ---
 
@@ -87,7 +91,6 @@ package com.example.hud;
 
 import art.arcane.iris.api.terrain.IrisWorldInfo;
 import art.arcane.iris.api.world.IrisWorldEngineEvent;
-import art.arcane.iris.api.world.IrisWorldPhase;
 import org.bukkit.World;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -128,7 +131,15 @@ public final class IrisWorldRegistry implements Listener {
 }
 ```
 
+Register it from your `onEnable`:
+
+```java
+getServer().getPluginManager().registerEvents(new IrisWorldRegistry(), this);
+```
+
 `default` is required because enums can grow: `90 - API - Getting Started.md`. Map is concurrent because readers may be off the event thread.
+
+Iris also fires the internal `art.arcane.iris.core.events.IrisEngineHotloadEvent` alongside `ENGINE_HOTLOADED`. It exposes the internal `Engine` type, is not covered by the API purity test, and can change without notice — listen for `IrisWorldEngineEvent` instead.
 
 ---
 
@@ -228,7 +239,7 @@ Constructor sanitises:
 - null `worldName` → `worldIdentity`; null `method` → `""`
 - null `worldIdentity` throws `NullPointerException` at construction — delivered instances always identify a world
 
-`etaMillis` is `0` until enough chunks complete for an estimate. Non-zero `failedChunks` on `COMPLETED` means holes remain.
+`etaMillis` is `0` early in a job: below 1024 generated chunks it needs a non-zero rolling chunks/second average, and above that it extrapolates from elapsed time per generated chunk. Non-zero `failedChunks` on `COMPLETED` means holes remain.
 
 Operator pregen surface: `07 - Pregeneration.md`.
 
@@ -326,9 +337,10 @@ Do not set `ignoreCancelled = true`.
 | Iris cannot describe world for a phase | Logged; event still delivered with empty `getInfo()` |
 | Event dispatch itself throws | Logged with phase and world; registration/teardown proceeds |
 | Pregen sink not registered | No `IrisPregenerationEvent` (before enable completes / after disable starts) |
+| Pregen job has no bound world | No event for any phase of that job; a null `worldIdentity` is dropped at the source |
 | Pregen handler throws | Logged; job not slowed/paused/stopped |
-| Iris shuts down mid-pregen | Terminal phase `CANCELLED` |
-| Iris shuts down with worlds registered | Every announced world gets `ENGINE_CLOSING` before worker drain |
+| Iris shuts down mid-pregen | Terminal phase is `CANCELLED`, but delivery is not guaranteed — the event is scheduled onto the main thread and sync scheduling refuses once the plugin is disabled |
+| Iris shuts down with worlds registered | Every announced world gets `ENGINE_CLOSING` before worker drain, on the clean disable path |
 
 No listener quarantine. Iris never silently stalls a lifecycle step because a third party failed.
 

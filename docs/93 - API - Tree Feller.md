@@ -1,8 +1,10 @@
 # 93 - API - Tree Feller
 
-`art.arcane.iris.api.tree` lets another plugin **drive** the Iris tree feller and **charge** for it. The feller removes a whole Iris-generated tree when a sneaking survival player breaks one of its logs with an axe. Integrations can start a run Iris would not start, override durability rules, and reserve a cost per log with commit or refund. The feature is **off by default** (`treeFeller.enabled = false`); the standalone path also requires `iris.treefeller`. `INTEGRATION_OVERRIDE` bypasses both the enabled switch and the permission.
+`art.arcane.iris.api.tree` lets another plugin **drive** the Iris tree feller and **charge** for it. The feller removes a whole Iris-generated tree when a sneaking survival player breaks one of its logs with an axe. Reach for this package when a skill, class, or economy system should decide who may fell and what each log costs — the integration can start a run Iris would not start, override durability rules, and reserve a cost per log with commit or refund. The feature is **off by default** (`treeFeller.enabled = false`); the standalone path also requires `iris.treefeller`, and `INTEGRATION_OVERRIDE` bypasses both.
 
 Build and service acquisition: `90 - API - Getting Started.md`. Service: `IrisTreeFellerService` at `ServicePriority.Normal`.
+
+This package is Bukkit-only. Mod loaders run the same feller as a player-facing feature (settings plus the `irisworldgen:treefeller` node) but expose no integration API — see `30 - Platform Differences.md` and `94 - API - Modded.md`.
 
 | Goal | Use |
 |---|---|
@@ -73,7 +75,7 @@ Guarantees:
 - Exactly one of `commitLogCost` or `refundLogCost` follows a true reserve, except the miss cases under Failure policy.
 - **`commitLogCost` is final.** No later refund for that log.
 - `reserveLogCost` false ends the **whole** run immediately.
-- One tree, one run, server-wide. A second player on the same tree gets the break cancelled with drops suppressed; no hooks for them.
+- One tree, one run, server-wide. The claim is keyed by world plus tree marker: a second player on the same tree gets the break cancelled with drops suppressed and no hooks.
 - **No terminal callback.** Count commits/refunds against activation if you need end-of-run accounting.
 
 ---
@@ -86,9 +88,9 @@ Guarantees:
 | `isManagedBreak` | Any thread (set lookup) |
 | `isTreeBlock` | Region thread owning the block; can block on disk |
 | `onActivationAccepted` | Region thread of the broken block, inline in MONITOR |
-| `reserveLogCost` | Player entity path: entity scheduler on Folia; may run inline on Paper main when already primary |
-| `commitLogCost` | Same entity path (scheduled onto the player when not already inline) |
-| `refundLogCost` | Same entity path when a refund is delivered |
+| `reserveLogCost` | Player entity path: entity scheduler on Folia; runs inline on Paper when already on the main thread |
+| `commitLogCost` | Player entity path; inline when the caller already owns that thread, otherwise scheduled onto the player |
+| `refundLogCost` | Same as commit, when a refund is delivered |
 
 Cost hooks may touch the feller's inventory/XP/effects. Do **not** read/write blocks from cost hooks on Folia (entity thread ≠ region).
 
@@ -101,6 +103,37 @@ Cost hooks may touch the feller's inventory/XP/effects. Do **not** read/write bl
 Reads Iris mantle for tree provenance. Cold mantle regions load from disk **synchronously on your thread**. Also reads block type/data — chunk must be loaded; call from the owning region thread.
 
 Do not call per block in a loop, per tick, or over large areas. Use for blocks a player just interacted with.
+
+```java
+package com.example.woodcutting;
+
+import art.arcane.iris.api.tree.IrisTreeFellerService;
+import org.bukkit.block.Block;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerInteractEvent;
+
+public final class TreeProbeListener implements Listener {
+    @EventHandler(ignoreCancelled = true)
+    public void onInspect(PlayerInteractEvent event) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) {
+            return;
+        }
+
+        Block block = event.getClickedBlock();
+        IrisTreeFellerService feller = FellerAccess.service();
+
+        if (block == null || feller == null || !feller.isTreeBlock(block)) {
+            return;
+        }
+
+        event.getPlayer().sendMessage("Iris tree — sneak and break a log with an axe to fell it.");
+    }
+}
+```
+
+`isTreeBlock` answers provenance only. It does not check gamemode, sneak, or the held item, and it returns true for leaves as well as logs.
 
 ---
 
@@ -235,7 +268,7 @@ boolean tryFell(BlockBreakEvent event, TreeFellerOptions options);
 
 ### Pending request precedence
 
-Pending state is keyed by the `BlockBreakEvent` instance.
+Pending state is keyed by the `BlockBreakEvent` instance (identity, not `equals`).
 
 | Existing pending | New request | Result |
 |---|---|---|
@@ -275,7 +308,7 @@ Vanilla saplings and hand-placed logs never fell. Provenance clears when a block
 
 ## How a run comes apart
 
-Discovery walks mantle provenance outward from the broken block in 26 directions, BFS. Members remove in discovery order (trigger first; ties Y then X then Z).
+Discovery walks mantle provenance outward from the broken block in 26 directions, BFS, off the main thread. Members remove in discovery order (trigger first; ties Y then X then Z).
 
 Bounds — any hit marks discovery incomplete; Iris falls back to **only the trigger block**:
 
@@ -285,7 +318,9 @@ Bounds — any hit marks discovery incomplete; Iris falls back to **only the tri
 | Positions visited | 1 000 000 |
 | Distance from trigger on any axis | 256 blocks |
 
-Removal is paced in batches with tick yields. Batch size scales with tree size.
+Only a same-marker block found beyond the axis limit aborts discovery; neighbours outside world height are skipped without marking it incomplete. Discovery also falls back to the trigger block if a member's chunk is unloaded during preflight.
+
+Removal is paced in batches with tick yields: Iris targets about 60 pulses per run and clamps the batch to 4–64 blocks per pulse, so batch size scales with tree size.
 
 Run ends immediately (no further hooks) when the player:
 
@@ -296,7 +331,9 @@ Run ends immediately (no further hooks) when the player:
 - breaks the axe (after that log's commit),
 - or replaces the axe in that slot with a different item.
 
-Each removed block fires a `BlockBreakEvent` with `isManagedBreak == true`. Cancelled **log** probes refund that log's reservation and end the run; cancelled **leaf** probes continue. Drops use the axe as it was before that block's durability charge (Silk Touch / Fortune apply). The original break is cancelled with drops and XP suppressed; Iris delivers per block.
+Each removed block fires a `BlockBreakEvent` with `isManagedBreak == true`. Cancelled **log** probes refund that log's reservation and end the run; cancelled **leaf** probes continue. Drops use the axe as it was before that block's durability charge (Silk Touch / Fortune apply).
+
+The original break is cancelled with drops and XP suppressed. Iris collects per-block drops and XP instead, merges equal stacks, and delivers them at the feller's feet in batches; if the player logs out or leaves the world, delivery falls back to the location where the run started.
 
 ---
 
@@ -354,7 +391,7 @@ Iris never calls `equals`/`hashCode`/`toString` on hooks.
 | Two overrides for one break | First stored override's hooks stay; later override returns true without replacing |
 | Candidate resolve throws | Logged; false |
 | `isTreeBlock` throws | Logged; false |
-| Iris disabled mid-run | Active runs finish immediately; **no refund for outstanding reserves** |
+| Iris service disabled mid-run (plugin disable) | Active runs finish immediately; **no refund for outstanding reserves** |
 
 No integration quarantine.
 
@@ -376,6 +413,8 @@ Refunds schedule onto the feller's entity path. If scheduling fails (logout/remo
 | Permission | Default | Meaning |
 |---|---|---|
 | `iris.treefeller` | `op` | Standalone only. Override does not check it |
+
+Both keys are read per request, so `/iris reload` takes effect on the next break. Turning `treeFeller.enabled` off does not stop a run already in flight on Bukkit.
 
 Related operator surface: `28 - Integrations.md`, `04 - Commands & Permissions.md`.
 

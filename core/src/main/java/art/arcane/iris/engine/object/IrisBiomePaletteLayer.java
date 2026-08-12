@@ -60,7 +60,7 @@ public class IrisBiomePaletteLayer {
 
     @Desc("The max thickness of this layer")
     private int maxHeight = 1;
-    @Desc("If set, this layer will change size depending on the slope. If in bounds, the layer will get larger (taller) the closer to the center of this slope clip it is. If outside of the slipe's bounds, this layer will not show.")
+    @Desc("If set, this layer only shows where the terrain slope is within these bounds; outside them the layer is skipped entirely. Thickness is not scaled by slope.")
     private IrisSlopeClip slopeCondition = new IrisSlopeClip();
     @MinNumber(0.0001)
     @Desc("The terrain zoom mostly for zooming in on a wispy palette")

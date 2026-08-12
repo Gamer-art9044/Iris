@@ -55,12 +55,12 @@ public class IrisDepositGenerator {
     @Required
     @MinNumber(0)
     @MaxNumber(8192)
-    @Desc("The minimum height this deposit can generate at")
+    @Desc("The minimum height this deposit can generate at, in engine-local Y where 0 is the bottom of the dimension, not world Y.")
     private int minHeight = 1;
     @Required
     @MinNumber(0)
     @MaxNumber(8192)
-    @Desc("The maximum height this deposit can generate at")
+    @Desc("The maximum height this deposit can generate at, in engine-local Y where 0 is the bottom of the dimension, not world Y. Clump centers are additionally clamped to stay below the terrain surface.")
     private int maxHeight = 75;
     @Required
     @MinNumber(0)
@@ -84,15 +84,15 @@ public class IrisDepositGenerator {
     private int minPerChunk = 0;
     @MinNumber(0)
     @MaxNumber(1)
-    @Desc("The change of the deposit spawning in a chunk")
+    @Desc("The chance of the deposit spawning in a chunk")
     private double spawnChance = 1;
     @MinNumber(0)
     @MaxNumber(1)
-    @Desc("The change of the a clump spawning in a chunk")
+    @Desc("The chance of each individual clump spawning in a chunk")
     private double perClumpSpawnChance = 1;
     @Required
     @ArrayType(min = 1, type = IrisBlockData.class)
-    @Desc("The palette of blocks to be used in this deposit generator")
+    @Desc("The palette of blocks to be used in this deposit generator. Each entry is picked uniformly; the per-entry weight field is ignored here.")
     private KList<IrisBlockData> palette = new KList<>();
     @MinNumber(1)
     @MaxNumber(64)

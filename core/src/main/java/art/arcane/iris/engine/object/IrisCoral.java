@@ -23,6 +23,7 @@ import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.engine.object.coral.CoralGenerator;
@@ -94,12 +95,14 @@ public class IrisCoral implements IrisProceduralPlacement {
 
     @Required
     @Desc("The structural coral block (the living wood of the reef), e.g. minecraft:tube_coral_block. Ignored when blockPalette is set.")
+    @RegistryListBlockType
     private String block = "minecraft:tube_coral_block";
 
     @Desc("A noise-driven palette for the structural coral block. When set this overrides the single block, letting the reef mix tube/brain/bubble/fire/horn coral_block tones across its body.")
     private IrisMaterialPalette blockPalette = null;
 
     @Desc("Optional tip block placed at branch tips and at the very top of the structure, e.g. coral fans or minecraft:sea_pickle. Ignored when tipPalette is set. Null disables tips.")
+    @RegistryListBlockType
     private String tipBlock = null;
 
     @Desc("A noise-driven palette for the tip block. When set this overrides the single tipBlock, letting tips mix fan / pickle decorations.")

@@ -4,11 +4,22 @@ import art.arcane.iris.engine.object.annotations.Desc;
 
 @Desc("The orientation-independent connector shape represented by a planar jigsaw workcell.")
 public enum IrisJigsawWorkcellArchetype {
+    @Desc("Pieces with no horizontal connectors: sealed filler cells that terminate nothing and are excluded from the default piece pool.")
     BLANK(0),
+
+    @Desc("One-connector dead-end pieces; the Studio bay seeds a single north connector and new projects mark these as terminal caps.")
     END(1),
+
+    @Desc("Two-connector pass-through pieces with openings on opposite sides; the Studio bay seeds north and south connectors.")
     STRAIGHT(5),
+
+    @Desc("Two-connector right-angle pieces with openings on adjacent sides; the Studio bay seeds north and east connectors.")
     CORNER(3),
+
+    @Desc("Three-connector junction pieces; the Studio bay seeds north, east, and west connectors.")
     TEE(11),
+
+    @Desc("Four-connector pieces open on all sides; new projects use this archetype as the structure's start piece.")
     CROSS(15);
 
     private final int canonicalMask;

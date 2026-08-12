@@ -24,6 +24,7 @@ import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.engine.object.ruin.RuinGenerator;
@@ -89,6 +90,7 @@ public class IrisRuin implements IrisProceduralPlacement {
 
     @Required
     @Desc("The primary structural block, e.g. minecraft:cobblestone or minecraft:stone_bricks. Ignored when blockPalette is set. This is the bulk material of the ruin before weathering swaps some of it out.")
+    @RegistryListBlockType
     private String block = "minecraft:cobblestone";
 
     @Desc("A noise-driven palette for the primary block. When set this overrides the single block, letting the structure mix materials by noise. Palette wins over the block string via IrisProceduralBlocks.resolve.")
@@ -125,6 +127,7 @@ public class IrisRuin implements IrisProceduralPlacement {
     private IrisMaterialPalette weatheringPalette = null;
 
     @Desc("A single weathered block id used when weatheringPalette is not set, e.g. minecraft:mossy_cobblestone. Applied to a noise-selected fraction of the structure, biased toward the lower rows.")
+    @RegistryListBlockType
     private String weatheredBlock = "minecraft:mossy_cobblestone";
 
     @MinNumber(0)

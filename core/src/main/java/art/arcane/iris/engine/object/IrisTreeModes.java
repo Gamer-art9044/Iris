@@ -22,7 +22,7 @@ import art.arcane.iris.engine.object.annotations.Desc;
 
 @Desc("Sapling override object picking options")
 public enum IrisTreeModes {
-    @Desc("Check biome, then region, then dimension, pick the first one that has options")
+    @Desc("Check biome, then region, pick the first one that has options. Dimension placements are not consulted.")
     FIRST,
 
     @Desc("Check biome, regions, and dimensions, and pick any option from the total list")

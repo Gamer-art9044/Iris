@@ -43,4 +43,20 @@ public class IrisCarveModifierFluidIntentTest {
         assertTrue(IrisCarveModifier.usesDefaultLava(18, 18));
         assertFalse(IrisCarveModifier.usesDefaultLava(18, 19));
     }
+
+    @Test
+    public void unsupportedSurfaceOreIsRemovedOnlyOverCarvedAir() {
+        PlatformBlockState ore = mock(PlatformBlockState.class);
+        PlatformBlockState ordinarySurface = mock(PlatformBlockState.class);
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        PlatformBlockState solid = mock(PlatformBlockState.class);
+        when(ore.isOre()).thenReturn(true);
+        when(ordinarySurface.isOre()).thenReturn(false);
+        when(air.isSolid()).thenReturn(false);
+        when(solid.isSolid()).thenReturn(true);
+
+        assertTrue(IrisCarveModifier.isUnsupportedSurfaceOre(ore, air));
+        assertFalse(IrisCarveModifier.isUnsupportedSurfaceOre(ore, solid));
+        assertFalse(IrisCarveModifier.isUnsupportedSurfaceOre(ordinarySurface, air));
+    }
 }

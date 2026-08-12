@@ -41,7 +41,7 @@ public class IrisTree {
     @ArrayType(min = 1, type = String.class)
     private KList<String> treeTypes = new KList<>();
 
-    @Desc("If enabled, overrides any TreeType")
+    @Desc("Unused. This flag is not read by the tree matcher; use treeTypes to control which TreeTypes match.")
     private boolean anyTree = false;
 
     @Required
@@ -49,7 +49,7 @@ public class IrisTree {
     @ArrayType(min = 1, type = IrisTreeSize.class)
     private KList<IrisTreeSize> sizes = new KList<>();
 
-    @Desc("If enabled, overrides trees of any size")
+    @Desc("Unused. This flag is not read by the tree matcher; use sizes to control which sapling sizes match.")
     private boolean anySize;
 
     public boolean matches(IrisTreeSize size, TreeType type) {

@@ -58,7 +58,7 @@ public class IrisGeneratorStyle {
             new ConcurrentLinkedHashMap.Builder<GeneratorCacheKey, CNG>()
                     .maximumWeightedCapacity(GENERATOR_CACHE_SIZE)
                     .build();
-    @Desc("The chance is 1 in CHANCE per interval")
+    @Desc("The base noise style. Used when neither expression nor imageMap is set; a failed expression also falls back to this style.")
     private NoiseStyle style = NoiseStyle.FLAT;
 
     @Desc("If set above 0, this style will be cellularized")

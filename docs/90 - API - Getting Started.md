@@ -1,6 +1,8 @@
 # 90 - API - Getting Started
 
-`art.arcane.iris.api` is the Bukkit plugin surface another plugin compiles against: terrain reads, world-engine and pregen observation, and tree-feller integration. It is built from Bukkit types, `java.*`, and its own types only — no VolmLib, Adventure, or shaded types — so it links against a plain Spigot or Paper compile classpath. A build test walks every class in the package and fails if any exported signature mentions anything else. PlaceholderAPI keys are operator-facing, not compile-time: see `09 - PlaceholderAPI.md`.
+`art.arcane.iris.api` is the Bukkit plugin surface another plugin compiles against: terrain reads, world-engine and pregen observation, and tree-feller integration. It is built from `java.*`/`javax.*`, Bukkit types, and its own types only — no VolmLib, Adventure, or shaded types — so it links against a plain Spigot or Paper compile classpath. A build test walks every class in the package and fails if any exported signature mentions anything else. PlaceholderAPI keys are operator-facing, not compile-time: see `09 - PlaceholderAPI.md`.
+
+Reach for this API when your plugin needs to know what Iris *will* generate before the server generates it — a map renderer, a spawn or settlement picker, a pregen planner, a HUD that names the pack biome — or when you need to act at the moment an Iris world's generator becomes usable or goes away. Everything here is read-only except the tree feller, which you can drive and charge.
 
 | Package | Purpose | Document |
 |---|---|---|
@@ -79,26 +81,49 @@ Iris declares `load: STARTUP` and registers its services during `onEnable`. Do n
 
 Two services are registered with Bukkit `ServicesManager` at `ServicePriority.Normal`: `IrisTerrainService` and `IrisTreeFellerService`. Both are unregistered on Iris shutdown. Iris also registers the same instances in an internal `IrisServices` registry that its own code (including PlaceholderAPI expansion) uses.
 
+A complete integration — resolve lazily, handle `null`, answer:
+
 ```java
 package com.example.integration;
 
 import art.arcane.iris.api.terrain.IrisTerrainService;
-import org.bukkit.Bukkit;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.RegisteredServiceProvider;
+import org.bukkit.plugin.java.JavaPlugin;
 
-public final class IrisLookup {
-    private IrisLookup() {
+public final class ExamplePlugin extends JavaPlugin {
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("Players only.");
+            return true;
+        }
+
+        IrisTerrainService terrain = terrain();
+
+        if (terrain == null) {
+            player.sendMessage("Iris is not installed or not enabled.");
+            return true;
+        }
+
+        player.sendMessage(terrain.surfaceBiomeName(
+                player.getWorld(),
+                player.getLocation().getBlockX(),
+                player.getLocation().getBlockZ()).orElse("not an Iris world"));
+        return true;
     }
 
-    public static IrisTerrainService terrain() {
+    private IrisTerrainService terrain() {
         RegisteredServiceProvider<IrisTerrainService> provider =
-                Bukkit.getServicesManager().getRegistration(IrisTerrainService.class);
+                getServer().getServicesManager().getRegistration(IrisTerrainService.class);
         return provider == null ? null : provider.getProvider();
     }
 }
 ```
 
-Resolve on every use, or cache and invalidate on `PluginDisableEvent`. A cached reference after Iris disables does not throw — terrain queries answer absent and tree-feller calls return `false` — but it never becomes useful again, and a later enable registers a different object.
+Resolve on every use, as above, or cache and invalidate on `PluginDisableEvent`. A cached reference after Iris disables does not throw — terrain queries answer absent and tree-feller calls return `false` — but it never becomes useful again, and a later enable registers a different object.
 
 Neither service is a functional interface and neither is meant for third-party implementation. `ServicesManager#getRegistration` returns the highest-priority registration; registering your own `IrisTerrainService` above `Normal` shadows Iris for every other plugin. It does not shadow Iris for Iris itself (internal registry), so PlaceholderAPI would still read the real service while other plugins would not.
 

@@ -23,6 +23,7 @@ import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.engine.object.fungi.FungusGenerator;
@@ -88,6 +89,7 @@ public class IrisFungus implements IrisProceduralPlacement {
 
     @Required
     @Desc("The stem block, e.g. minecraft:mushroom_stem. Ignored when stemPalette is set.")
+    @RegistryListBlockType
     private String stem = "minecraft:mushroom_stem";
 
     @Desc("A noise-driven palette for the stem. When set this overrides the single stem block, letting the stem mix blocks by noise.")
@@ -95,6 +97,7 @@ public class IrisFungus implements IrisProceduralPlacement {
 
     @Required
     @Desc("The cap block, e.g. minecraft:red_mushroom_block. Ignored when capPalette is set.")
+    @RegistryListBlockType
     private String cap = "minecraft:red_mushroom_block";
 
     @Desc("A noise-driven palette for the cap. When set this overrides the single cap block, letting the cap mix blocks by noise.")
@@ -157,6 +160,7 @@ public class IrisFungus implements IrisProceduralPlacement {
     private double capOverhang = 2;
 
     @Desc("Optional block forming the gill layer on the underside of the cap (gills or a glow layer), e.g. minecraft:brown_mushroom_block or minecraft:shroomlight. Ignored when gillPalette is set or left null.")
+    @RegistryListBlockType
     private String gillBlock = null;
 
     @Desc("A noise-driven palette for the underside gill layer. When set this overrides the single gillBlock.")
@@ -168,6 +172,7 @@ public class IrisFungus implements IrisProceduralPlacement {
     private double gillChance = 0.85;
 
     @Desc("Optional block speckled across the top of the cap by noise (white toadstool dots, warts, glowing spots), e.g. minecraft:bone_block or minecraft:white_concrete. Ignored when spotPalette is set or left null.")
+    @RegistryListBlockType
     private String spotBlock = null;
 
     @Desc("A noise-driven palette for the cap top spots. When set this overrides the single spotBlock.")

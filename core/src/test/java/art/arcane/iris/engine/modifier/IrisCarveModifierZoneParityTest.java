@@ -1,10 +1,7 @@
 package art.arcane.iris.engine.modifier;
 
-import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -15,32 +12,14 @@ import java.util.Set;
 import static org.junit.Assert.assertEquals;
 
 public class IrisCarveModifierZoneParityTest {
-    private static Constructor<?> columnMaskConstructor;
-    private static Method addMethod;
-    private static Method nextSetBitMethod;
-    private static Method clearMethod;
-
-    @BeforeClass
-    public static void setup() throws Exception {
-        Class<?> columnMaskClass = Class.forName("art.arcane.iris.engine.modifier.IrisCarveModifier$ColumnMask");
-        columnMaskConstructor = columnMaskClass.getDeclaredConstructor();
-        addMethod = columnMaskClass.getDeclaredMethod("add", int.class);
-        nextSetBitMethod = columnMaskClass.getDeclaredMethod("nextSetBit", int.class);
-        clearMethod = columnMaskClass.getDeclaredMethod("clear");
-        columnMaskConstructor.setAccessible(true);
-        addMethod.setAccessible(true);
-        nextSetBitMethod.setAccessible(true);
-        clearMethod.setAccessible(true);
-    }
-
     @Test
-    public void randomColumnZonesMatchLegacySortedResolver() throws Exception {
-        Object columnMask = columnMaskConstructor.newInstance();
+    public void randomColumnZonesMatchLegacySortedResolver() {
+        CarveColumnMask columnMask = new CarveColumnMask();
         Random random = new Random(913_447L);
         int maxHeight = 320;
 
         for (int scenario = 0; scenario < 400; scenario++) {
-            clearMethod.invoke(columnMask);
+            columnMask.clear();
 
             int sampleSize = 1 + random.nextInt(180);
             Set<Integer> uniqueHeights = new HashSet<>();
@@ -50,7 +29,7 @@ public class IrisCarveModifierZoneParityTest {
 
             int[] heights = toIntArray(uniqueHeights);
             for (int index = 0; index < heights.length; index++) {
-                addMethod.invoke(columnMask, heights[index]);
+                columnMask.add(heights[index]);
             }
 
             List<String> expectedZones = legacyZones(heights, maxHeight);
@@ -60,8 +39,8 @@ public class IrisCarveModifierZoneParityTest {
     }
 
     @Test
-    public void edgeColumnsMatchLegacySortedResolver() throws Exception {
-        Object columnMask = columnMaskConstructor.newInstance();
+    public void edgeColumnsMatchLegacySortedResolver() {
+        CarveColumnMask columnMask = new CarveColumnMask();
         int maxHeight = 320;
         int[][] scenarios = new int[][]{
                 {-10, -1, 0, 1, 2, 5, 6, 9, 10, 11, 12, 200, 201, 205},
@@ -71,10 +50,10 @@ public class IrisCarveModifierZoneParityTest {
         };
 
         for (int scenario = 0; scenario < scenarios.length; scenario++) {
-            clearMethod.invoke(columnMask);
+            columnMask.clear();
             int[] heights = Arrays.copyOf(scenarios[scenario], scenarios[scenario].length);
             for (int index = 0; index < heights.length; index++) {
-                addMethod.invoke(columnMask, heights[index]);
+                columnMask.add(heights[index]);
             }
 
             List<String> expectedZones = legacyZones(heights, maxHeight);
@@ -131,9 +110,9 @@ public class IrisCarveModifierZoneParityTest {
         return zones;
     }
 
-    private List<String> bitsetZones(Object columnMask, int maxHeight) throws Exception {
+    private List<String> bitsetZones(CarveColumnMask columnMask, int maxHeight) {
         List<String> zones = new ArrayList<>();
-        int firstHeight = nextSetBit(columnMask, 0);
+        int firstHeight = columnMask.nextSetBit(0);
         if (firstHeight < 0) {
             return zones;
         }
@@ -159,7 +138,7 @@ public class IrisCarveModifierZoneParityTest {
                 }
             }
 
-            y = nextSetBit(columnMask, y + 1);
+            y = columnMask.nextSetBit(y + 1);
         }
 
         if (isValidZone(floor, ceiling, maxHeight)) {
@@ -167,10 +146,6 @@ public class IrisCarveModifierZoneParityTest {
         }
 
         return zones;
-    }
-
-    private int nextSetBit(Object columnMask, int fromBit) throws Exception {
-        return (Integer) nextSetBitMethod.invoke(columnMask, fromBit);
     }
 
     private boolean isValidZone(int floor, int ceiling, int maxHeight) {

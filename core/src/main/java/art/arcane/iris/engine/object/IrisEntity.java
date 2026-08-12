@@ -149,7 +149,7 @@ public class IrisEntity extends IrisRegistrant {
     @ArrayType(min = 1, type = IrisAttributeModifier.class)
     private KList<IrisAttributeModifier> attributes = new KList<>();
 
-    @Desc("Loot tables for drops")
+    @Desc("Loot tables for drops. Only the tables list is honored for entities; mode and multiplier are ignored, and the tables replace vanilla drops entirely.")
     private IrisLootReference loot = new IrisLootReference();
 
     @Desc("If specified, this entity will be leashed by this entity. I.e. THIS ENTITY Leashed by SPECIFIED. This has no effect on EnderDragons, Withers, Players, or Bats.Non-living entities excluding leashes will not persist as leashholders.")

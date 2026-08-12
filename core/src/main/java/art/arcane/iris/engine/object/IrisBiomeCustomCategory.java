@@ -22,21 +22,54 @@ import art.arcane.iris.engine.object.annotations.Desc;
 
 @Desc("The custom biome category. Vanilla asks for this, basically what represents your biome closest?")
 public enum IrisBiomeCustomCategory {
+    @Desc("Tags the generated datapack biome as vanilla category 'beach' (shoreline biomes).")
     beach,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'desert' (hot, dry sand biomes).")
     desert,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'extreme_hills' (mountain biomes).")
     extreme_hills,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'forest' (tree-dense temperate biomes).")
     forest,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'icy' (snow and ice biomes).")
     icy,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'jungle'.")
     jungle,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'mesa' (badlands).")
     mesa,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'mushroom' (mushroom fields).")
     mushroom,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'nether'.")
     nether,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'none' (no classification).")
     none,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'ocean'.")
     ocean,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'plains'. This is the default when category is omitted.")
     plains,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'river'.")
     river,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'savanna'.")
     savanna,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'swamp'.")
     swamp,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'taiga'.")
     taiga,
+
+    @Desc("Tags the generated datapack biome as vanilla category 'the_end'.")
     the_end
 }

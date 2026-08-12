@@ -101,7 +101,7 @@ public class IrisDimension extends IrisRegistrant {
     private int logicalHeight = 256;
     @Desc("If set to true, Iris will remove chunks to allow visualizing cross sections of chunks easily")
     private boolean debugChunkCrossSections = false;
-    @Desc("Vertically split up the biome palettes with 3 air blocks in between to visualize them")
+    @Desc("Vertically split up the biome palettes with barrier blocks in between to visualize them. The gap size comes from explodeBiomePaletteSize.")
     private boolean explodeBiomePalettes = false;
     @Desc("Studio Mode for testing different parts of the world")
     private StudioMode studioMode = StudioMode.NORMAL;
@@ -137,13 +137,13 @@ public class IrisDimension extends IrisRegistrant {
     private IrisGeneratorStyle regionStyle = NoiseStyle.CELLULAR_IRIS_DOUBLE.style();
     @Desc("The placement style of land/sea")
     private IrisGeneratorStyle continentalStyle = NoiseStyle.CELLULAR_IRIS_DOUBLE.style();
-    @Desc("The placement style of biomes")
+    @Desc("The noise style used to select land biomes within a region")
     private IrisGeneratorStyle landBiomeStyle = NoiseStyle.CELLULAR_IRIS_DOUBLE.style();
-    @Desc("The placement style of biomes")
+    @Desc("The noise style used to select shore biomes within a region")
     private IrisGeneratorStyle shoreBiomeStyle = NoiseStyle.CELLULAR_IRIS_DOUBLE.style();
-    @Desc("The placement style of biomes")
+    @Desc("The noise style used to select sea biomes within a region")
     private IrisGeneratorStyle seaBiomeStyle = NoiseStyle.CELLULAR_IRIS_DOUBLE.style();
-    @Desc("The placement style of biomes")
+    @Desc("The noise style used to select cave biomes within a region")
     private IrisGeneratorStyle caveBiomeStyle = NoiseStyle.CELLULAR_IRIS_DOUBLE.style();
     @Desc("Instead of filling objects with air, fills them with cobweb so you can see them")
     private boolean debugSmartBore = false;
@@ -170,7 +170,7 @@ public class IrisDimension extends IrisRegistrant {
     @MaxNumber(16)
     @Desc("Minimum surface-support buffer, in blocks, applied to every surface object placement in this dimension. A placement may ask for more but never less.")
     private int objectSurfaceSupportBuffer = 2;
-    @Desc("forceConvertTo320Height")
+    @Desc("Unused. This field is not read by the engine.")
     private Boolean forceConvertTo320Height = false;
     @Desc("The world environment")
     private IrisEnvironment environment = IrisEnvironment.NORMAL;
@@ -182,9 +182,9 @@ public class IrisDimension extends IrisRegistrant {
     @Required
     @MinNumber(0)
     @MaxNumber(1024)
-    @Desc("The fluid height for this dimension")
+    @Desc("The fluid (sea level) height for this dimension, in world Y. Water fills every sea column up to this height, so 63 puts the water surface at world Y 63.")
     private int fluidHeight = 63;
-    @Desc("Define the min and max Y bounds of this dimension. Please keep in mind that Iris internally generates from 0 to (max - min). \n\nFor example at -64 to 320, Iris is internally generating to 0 to 384, then on outputting chunks, it shifts it down by the min height (64 blocks). The default is -64 to 320. \n\nThe fluid height is placed at (fluid height + min height). So a fluid height of 63 would actually show up in the world at 1.")
+    @Desc("Define the min and max Y bounds of this dimension. Please keep in mind that Iris internally generates from 0 to (max - min). \n\nFor example at -64 to 320, Iris is internally generating to 0 to 384, then on outputting chunks, it shifts it down by the min height (64 blocks). The default is -64 to 320. \n\nfluidHeight stays in world Y: the engine converts it internally by subtracting the min height, so a fluid height of 63 shows up in the world at Y 63.")
     private IrisRange dimensionHeight = new IrisRange(-64, 320);
     @Desc("Define options for this dimension")
     private IrisDimensionTypeOptions dimensionOptions = new IrisDimensionTypeOptions();
@@ -259,13 +259,13 @@ public class IrisDimension extends IrisRegistrant {
     private KList<IrisShapedGeneratorStyle> overlayNoise = new KList<>();
     @MinNumber(0.0001)
     @MaxNumber(512)
-    @Desc("The rock zoom mostly for zooming in on a wispy palette")
+    @Desc("Unused. This field is not read by the engine; rock palette styling comes from rockPalette itself.")
     private double rockZoom = 5;
     @Desc("The palette of blocks for 'stone'")
     private IrisMaterialPalette rockPalette = new IrisMaterialPalette().qclear().qadd("stone");
     @Desc("The dimension fluid block palette used for ocean columns and cave aquifers.")
     private IrisMaterialPalette fluidPalette = new IrisMaterialPalette().qclear().qadd("water");
-    @Desc("Prevent cartographers to generate explorer maps (Iris worlds only)\nONLY TOUCH IF YOUR SERVER CRASHES WHILE GENERATING EXPLORER MAPS")
+    @Desc("Unused. This field is not read by the engine and no longer affects explorer maps.")
     private boolean disableExplorerMaps = false;
     @Desc("Collection of ores to be generated")
     @ArrayType(type = IrisOreGenerator.class, min = 1)
@@ -282,7 +282,7 @@ public class IrisDimension extends IrisRegistrant {
     private KList<String> datapackImports = new KList<>();
     @MinNumber(0)
     @MaxNumber(318)
-    @Desc("The Subterrain Fluid Layer Height")
+    @Desc("The subterranean fluid (cave lava) layer height, in engine-local Y where 0 is the bottom of the dimension, not world Y. With the default -64..320 height, 8 means world Y -56.")
     private int caveLavaHeight = 8;
     @RegistryListFunction(ComponentFlagFunction.class)
     @ArrayType(type = String.class)

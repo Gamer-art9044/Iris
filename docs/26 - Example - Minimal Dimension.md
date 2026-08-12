@@ -1,23 +1,21 @@
 # 26 - Example - Minimal Dimension
 
-This walkthrough builds a loadable pack with one dimension, one region, one biome, and one generator using real field names from `IrisDimension`, `IrisRegion`, `IrisBiome`, and `IrisGenerator`. The skeleton matches `StudioSVC.createStarterProject` and is expanded with required mode and fluid height for explicit authoring.
+This is a guided build of the smallest pack Iris will actually generate: one dimension, one region, one biome, one generator. You will write four files, validate them, prove them in Studio on a fixed seed, and then prove them again in a real world across a server restart. Keep this four-file state as a rollback point before adding anything else.
 
 Related: `05 - Concepts & Pack Layout.md`, `02 - Getting Started.md`, `10 - Studio & VSCode Schemas.md`, `11 - Dimensions.md`, `12 - Regions.md`, `13 - Biomes.md`, `14 - Generators & Noise.md`, `25 - Pack Management.md`, `04 - Commands & Permissions.md`.
 
-## Tutorial result
-
-You will create four files under `packs/minimal/`, validate them, open them in Studio on seed `1337`, and create a disposable production world. Do not add objects, caves, structures, custom biomes, or datapacks until this exact baseline generates and reloads.
-
 Prerequisites:
 
-- Iris is running and its default data folders exist.
-- You have operator access on Bukkit or gamemaster access on a mod loader.
+- Iris is running and its data folders exist.
+- Operator access on Bukkit, or gamemaster access on a mod loader.
 - No pack or world already uses the keys `minimal` or `minimal-test`.
-- You can inspect the server console while validation, Studio open, world create, and restart run.
+- You can watch the server console while validation, Studio open, world create, and restart run.
+
+Do not add objects, caves, structures, custom biomes, or datapacks until this baseline generates and reloads cleanly. Every one of those introduces its own failure mode, and they are far easier to diagnose one at a time.
 
 ## 1. Create the pack root
 
-Create this tree relative to the platform packs root:
+**What you do.** Make this tree under the platform packs root:
 
 ```
 minimal/
@@ -27,28 +25,27 @@ minimal/
   generators/flat.json
 ```
 
-The pack folder name is the pack key. The dimension file name without `.json` is the dimension load key (`minimal`).
+- Bukkit-family packs root: `plugins/Iris/packs/`
+- Fabric / Forge / NeoForge packs root: `config/irisworldgen/packs/`
 
-### Creation methods
+**Why.** The folder name is the pack key. The dimension file name without `.json` is the dimension load key — here both are `minimal`, which is the convention worth keeping because commands take the key, not the path. Iris resolves every other resource by its path under its type folder, so `biomes/starter.json` is biome key `starter` and `biomes/plains/dry.json` would be key `plains/dry`.
+
+**What you should see.** Nothing yet; Iris does not notice new folders until something loads the pack.
+
+You can also have Iris write the skeleton for you:
 
 | Platform / method | Command or action |
 |-------------------|-------------------|
-| Bukkit Studio starter | `/iris studio create name=minimal` |
-| Modded default-template copy | `/iris studio create minimal` — copies the `example` template |
+| Bukkit starter (no template) | `/iris studio create name=minimal` |
 | Bukkit template copy | `/iris studio create name=minimal template=overworld` |
+| Modded (always uses a template; `example` by default) | `/iris studio create minimal` |
 | Modded template copy | `/iris studio create minimal overworld` |
-| Manual | Create the four folders and JSON files under the platform packs root |
 
-On Bukkit, Studio create without a template writes a starter project with the same four resource types. Modded Studio create defaults to the installed or downloadable `example` template. Create the tree manually when you need the exact four-file baseline on every platform; use the create commands when extra template content is acceptable.
+The Bukkit starter writes the same four resource types described below. Modded studio create always copies a template, so create the tree by hand when you want exactly this four-file baseline on a mod loader.
 
-Platform packs roots (same layout):
+## 2. Write the dimension
 
-- Bukkit-family: `plugins/Iris/packs/`
-- Fabric / Forge / NeoForge: `config/irisworldgen/packs/`
-
-## 2. Write the four resources
-
-### `dimensions/minimal.json`
+**What you do.** Save `dimensions/minimal.json`:
 
 ```json
 {
@@ -56,26 +53,33 @@ Platform packs roots (same layout):
   "version": 1,
   "mode": { "type": "OVERWORLD" },
   "regions": ["starter"],
-  "fluidHeight": 63,
+  "environment": "NORMAL",
+  "dimensionHeight": { "min": -64, "max": 320 },
   "logicalHeight": 384,
-  "dimensionHeight": { "min": -64, "max": 320 }
+  "fluidHeight": 63
 }
 ```
 
-Required / load-bearing fields:
+**Why each field is here:**
 
 | Field | Why |
 |-------|-----|
-| `name` | Human-readable name (`@Required`, min length 2) |
-| `regions` | At least one region load key |
-| `mode` | `IrisDimensionMode` (`type`: `OVERWORLD`, `SUPERFLAT`, `ENCLOSURE`, `ISLANDS`) |
-| `fluidHeight` | Sea level relative to dimension min (default 63 if omitted) |
-| `dimensionHeight` | World Y bounds; default `-64`..`320` if omitted |
-| `version` | Pack version stamp; change to discourage accidental upgrades |
+| `name` | Display name used by commands and the studio scoreboard. Marked required in the schema; the file name is what actually identifies the dimension |
+| `regions` | The only mandatory content link. Without at least one loadable region key, no biome can ever be selected |
+| `mode` | `OVERWORLD` is the only mode that registers caves, objects, decoration and deposits. The other three register terrain and biome only. Omitting the field also yields `OVERWORLD`, but writing it out makes the choice visible |
+| `environment` | Picks the vanilla dimension template the generated dimension type is built from — sky, fog and gameplay attributes, not terrain |
+| `dimensionHeight` | Build floor -64, ceiling 320. The span (384) and the minimum (-64) are both multiples of 16, which Minecraft requires for the generated dimension type |
+| `logicalHeight` | 384, equal to the total height. It must not exceed the total height or dimension-type construction throws |
+| `fluidHeight` | World Y of sea level — 63, the vanilla value. Biome generator heights are measured from here |
+| `version` | A stamp you control so pack generations are distinguishable. Iris never acts on it |
 
-Optional but useful for testing: `"focus": "starter"` forces a single biome; `"focusRegion": "starter"` forces one region.
+`dimensionHeight`, `logicalHeight`, `environment`, and the file name are the world contract. Once a world exists on this pack, changing any of them means recreating the world; Studio hotload refuses them outright. Everything else in this guide is safe to iterate on.
 
-### `regions/starter.json`
+Useful while testing, and removed before shipping: `"focus": "starter"` forces a single biome and `"focusRegion": "starter"` forces a single region.
+
+## 3. Write the region
+
+**What you do.** Save `regions/starter.json`:
 
 ```json
 {
@@ -86,16 +90,22 @@ Optional but useful for testing: `"focus": "starter"` forces a single biome; `"f
 }
 ```
 
+**Why.** A region is the biome pool for one area of the world. Iris decides land versus sea first, then picks from the matching list, so a region with an empty `seaBiomes` cannot fill an ocean column. Listing the same biome in all three lists means every column resolves no matter which category the terrain lands in — exactly what you want for a first test world.
+
 | Field | Why |
 |-------|-----|
-| `name` | Required region name |
-| `landBiomes` | Required root land biome keys |
-| `seaBiomes` / `shoreBiomes` | Optional for land-only packs; starter includes them for full land/sea/shore coverage |
-| `caveBiomes` | Optional list for cave biomes |
+| `name` | Required display name |
+| `landBiomes` | Required. Root-level biome keys only |
+| `seaBiomes` / `shoreBiomes` | Optional for genuinely land-only packs; included here so no column can fail to resolve |
+| `caveBiomes` | Optional; not needed until caves are enabled |
 
-Do not list child biomes here — only root parents.
+List only root parents here. Child biomes are declared on their parent biome's `children`, not on the region.
 
-### `biomes/starter.json`
+**What you should see.** Nothing yet — but if you validate now, an unresolvable biome key is reported as a blocking error, which is the fastest way to catch a typo.
+
+## 4. Write the biome
+
+**What you do.** Save `biomes/starter.json`:
 
 ```json
 {
@@ -117,17 +127,21 @@ Do not list child biomes here — only root parents.
 }
 ```
 
+**Why.** The biome supplies two things: a height, from its generator links, and a surface material stack, from its layers.
+
 | Field | Why |
 |-------|-----|
-| `name` | Required display name |
-| `derivative` | Required vanilla biome key for coloring / vanilla structure eligibility |
-| `vanillaDerivative` | Structure selection derivative; falls back to `derivative` when null |
-| `layers` | Surface material stack; remaining depth fills with stone |
-| `generators` | Links to `generators/<key>.json` with height relative to fluid height |
+| `name` | Required display name; `/iris what biome` prints it |
+| `derivative` | Required. The vanilla biome this maps to for client-side coloring, mob spawning tables and vanilla feature eligibility. The engine default is `minecraft:the_void`, which generates nothing useful, so always set it |
+| `vanillaDerivative` | The derivative used for native structure selection. When left undefined it falls back to `derivative`; set it explicitly when a biome should look like one thing and attract another thing's structures |
+| `layers` | Required. The surface stack from the top down. Each layer's `minHeight`/`maxHeight` are **thickness in blocks**, not Y coordinates, and default to 1. Everything below the declared layers is filled with the dimension's rock palette |
+| `generators` | Links to `generators/<key>.json` with a height band. `min` and `max` are offsets **from `fluidHeight`**, not absolute Y |
 
-`min`/`max` of 96 with fluid height 63 produce high flat land. For near-sea plains use smaller values (overworld plains use roughly `min` 4 / `max` 10 on generator `plain`).
+With `fluidHeight` 63 and `min` = `max` = 96, every column resolves to exactly 96 above sea level, so the surface lands at world Y 159 — a high flat plateau with the ocean far below it. That is deliberate: it makes the terrain obviously generated rather than accidentally matching vanilla. For plains near sea level use small values instead; the shipping overworld's plains biome uses `min` 4 / `max` 10 on generator `plain`.
 
-### `generators/flat.json`
+## 5. Write the generator
+
+**What you do.** Save `generators/flat.json`:
 
 ```json
 {
@@ -142,73 +156,89 @@ Do not list child biomes here — only root parents.
 }
 ```
 
+**Why.** A generator turns coordinates into a 0-to-1 noise value, which the biome's `min`/`max` band then maps into a height. `FLAT` returns a constant, and because `min` equals `max` the mapping is constant anyway, so the result is a perfectly level surface. The interpolator controls how neighbouring biomes blend their heights together; `NONE` gives hard edges, which is what you want while proving the plumbing. This file matches the shipping overworld's `generators/flat.json` and the studio starter byte for byte.
+
 | Field | Why |
 |-------|-----|
-| `seed` | Required generator seed |
-| `interpolator` | Cross-biome height blend; `NONE` for hard flat |
-| `composite` | Noise layers; `FLAT` style yields constant mid-value height |
+| `seed` | Required. Changing it re-rolls this generator's noise independently of the world seed |
+| `interpolator` | Required. `NONE` for a hard flat baseline; swap to a bilinear or starcast function once real terrain matters |
+| `composite` | The noise layers that are summed into the final value. One `FLAT` layer here |
 
-This matches shipping overworld `generators/flat.json` and the studio starter.
+## 6. Validate
 
-## Studio create vs this skeleton
+**What you do.**
 
-`StudioSVC.createStarterProject` writes the same four files with pack name substituted for the dimension file/name. It omits explicit `mode` and `fluidHeight` (code defaults: mode `OVERWORLD`, fluid height `63`). The JSON above adds those fields so authors see the required contract.
+- Bukkit: `/iris pack validate pack=minimal`
+- Modded: `/iris pack validate minimal`
 
-## 3. Validate and open Studio
+**Why.** Studio refuses to open a pack whose validation result is not loadable, and fails closed if validation never ran. Catching a broken key here costs seconds; catching it after a world exists costs a world.
 
-1. Ensure the pack sits under `minimal/` in the platform packs root with `dimensions/minimal.json`.
-2. Validate with Bukkit `/iris pack validate pack=minimal` or modded `/iris pack validate minimal`. Do not open the pack while validation reports a blocking error.
-3. Open Studio with Bukkit `/iris studio open minimal seed=1337` or modded `/iris studio open minimal 1337`.
-4. Generate fresh chunks and run `/iris what region` and `/iris what biome`. The expected result is the `starter` region and biome over a uniform grass surface, with no missing-resource or parse errors in the console.
-5. Close Studio, reopen it with the same seed, and generate another new area. The terrain height and surface must reproduce.
+**What you should see.** No blocking errors. If validation reports a missing region or biome, the key in the parent file and the file path under the type folder disagree — compare them character for character, including the folder prefix.
 
-World create copies the pack into the world folder at `iris/pack/` (see `06 - Worlds & Lifecycle.md`). Studio worlds hotload the live pack under `packs/` — prefer studio for authoring.
+Validation checks that the dimension load key resolves, that every region key in `regions` loads, that every biome key on a region loads, and that structure placements fit inside the declared height range. It does **not** check the multiple-of-16 rule on `dimensionHeight`; a bad height passes here and fails later when Iris compiles the dimension type.
 
-## 4. Create and restart-test a disposable world
+## 7. Prove it in Studio
 
-1. Create the world with Bukkit `/iris create minimal-test type=minimal seed=1337` or modded `/iris create minimal-test minimal 1337`. On Folia, creation stages the world and requires the instructed server restart before it can be entered.
-2. Teleport with Bukkit `/iris tp minimal-test` or modded `/iris tp irisworldgen:minimal-test`.
-3. Generate ordinary new chunks and confirm the same flat grass result seen in Studio.
+**What you do.**
+
+1. Open: Bukkit `/iris studio open minimal seed=1337`, modded `/iris studio open minimal 1337`.
+2. Walk into chunks that have never generated.
+3. Run `/iris what region` and `/iris what biome`.
+4. Close Studio, reopen it on the same seed, and generate another new area.
+
+**Why.** Studio runs directly off `packs/minimal/`, so it is the only place where an edit is visible without recreating anything. The fixed seed is what makes step 4 meaningful.
+
+**What you should see.** A uniform grass surface at world Y 159, region `Starter`, biome `Starter Plains`, and no missing-resource or parse errors in console. After the reopen, the terrain in a fresh area must be identical to what the same coordinates produced before — if it is not, something in the pack is reading a non-deterministic input.
+
+## 8. Prove it in a real world
+
+**What you do.**
+
+1. Create: Bukkit `/iris create minimal-test type=minimal seed=1337`, modded `/iris create minimal-test minimal 1337`. On Folia, creation stages the world and requires the instructed restart before you can enter it.
+2. Teleport: Bukkit `/iris tp minimal-test`, modded `/iris tp irisworldgen:minimal-test`.
+3. Generate ordinary new chunks and confirm the same flat grass result you saw in Studio.
 4. Stop the server cleanly, start it again, teleport back, and generate another new area.
-5. Confirm `<world>/iris/pack/` contains the four-file snapshot. Production generation reads this copy, so later authoring changes under `packs/minimal/` do not change the existing world automatically.
+5. Confirm `<world>/iris/pack/` contains the four-file snapshot.
 
-The tutorial passes only when validation, Studio reopen, production create, teleport, and server restart all succeed. Keep this four-file version as a rollback checkpoint before extending the pack.
+**Why.** World creation copies the pack into the world folder. From then on that world generates from its own copy, so later edits under `packs/minimal/` do not reach it. The restart in step 4 is what proves the generated dimension type survives a registry reload, which is the most common way a height or environment mistake surfaces.
 
-## 5. Extend without breaking the minimal set
+**What you should see.** Identical terrain in Studio and in the world, no pack or registry errors on the restart, and a real `iris/pack/` directory inside the world folder.
+
+The walkthrough passes only when validation, the Studio reopen, world creation, teleport, and the server restart all succeed.
+
+## 9. Extend without breaking the baseline
+
+Add one thing at a time and re-validate after each, so a broken key is always attributable to the last edit.
 
 | Add | Where |
 |-----|-------|
-| Second biome | New `biomes/*.json`, append key to `regions/starter.json` `landBiomes` |
-| Sea variety | Distinct biome keys on `seaBiomes` / `shoreBiomes` |
-| Loot | `loot/*.json` + dimension/region/biome `loot` reference (`23 - Loot, Entities, Spawners, Markers.md`) |
-| Decorators | Biome `decorators` array (inline or `snippet/decorator/...`) |
-| Objects | Biome/region `objects` placements + `objects/*.iob` (`19 - Objects.md`, `20 - Object Placement.md`) |
-| Entity spawn | `entities/`, `spawners/`, then `entitySpawners` on dim/region/biome |
+| Second biome | New `biomes/*.json`, then append its key to `regions/starter.json` → `landBiomes` |
+| Sea and shore variety | Distinct biome keys on `seaBiomes` / `shoreBiomes` |
+| Real terrain | Replace `generators/flat.json` with a composite noise generator, or add a second generator and give the biome a wider `min`/`max` band (`14 - Generators & Noise.md`) |
+| Caves | `caveProfile` on the dimension, plus cave biomes on the region's `caveBiomes` (`15 - Caves & Carving.md`) |
+| Decorators | Biome `decorators` array, inline or `snippet/decorator/...` (`16 - Surfaces, Decorators & Deposits.md`) |
+| Loot | `loot/*.json` plus a `loot` reference on the dimension, region or biome (`23 - Loot, Entities, Spawners, Markers.md`) |
+| Objects | Biome or region `objects` placements plus `objects/*.iob` (`19 - Objects.md`, `20 - Object Placement.md`) |
+| Entity spawning | `entities/`, `spawners/`, then `entitySpawners` on the dimension, region or biome |
 
-## Troubleshooting and recovery
+## Troubleshooting
 
-| Symptom | Check / recovery |
-|---------|------------------|
-| Pack is not listed | Confirm the platform packs root, `minimal/` folder, and `dimensions/minimal.json` |
-| Validation reports a missing region | `dimensions/minimal.json` must reference `starter`, and `regions/starter.json` must exist |
-| Validation reports a missing biome | Every region list entry must match a file under `biomes/` without `.json` |
-| Terrain is empty or at the wrong height | Confirm the biome generator key is `flat`, the generator parses, and biome `min` / `max` remain `96` |
-| Studio shows old terrain | Generate untouched chunks; close and reopen Studio after contract changes |
-| Production world ignores edits | It uses `<world>/iris/pack/`; create a new world or follow the backed-up update procedure in `25 - Pack Management.md` |
-| Baseline no longer works | Restore the four exact files in this guide and validate before reintroducing extensions |
+| Symptom | Check |
+|---------|-------|
+| Pack is not listed | Platform packs root, the `minimal/` folder name, and `dimensions/minimal.json` |
+| Validation reports a missing region | `dimensions/minimal.json` must reference `starter` and `regions/starter.json` must exist |
+| Validation reports a missing biome | Every region list entry must match a file under `biomes/` with the `.json` removed, including any folder prefix |
+| Terrain is empty or at the wrong height | Confirm the biome's generator key is `flat`, that `generators/flat.json` parses, and that `min`/`max` are the offsets from `fluidHeight` you intended |
+| The world is all void | `derivative` is probably still the `minecraft:the_void` default on some biome |
+| Studio shows old terrain | Move to untouched chunks; close and reopen after a contract change |
+| Dimension type fails to compile | `dimensionHeight` span or minimum is not a multiple of 16, or `logicalHeight` exceeds the span |
+| Production world ignores your edits | It runs from `<world>/iris/pack/`; create a new world, or follow the backed-up update procedure in `25 - Pack Management.md` |
+| Baseline stops working | Restore these exact four files and validate before reintroducing extensions |
 
-Validation invariants:
+## Next steps
 
-- Dimension load key must match a file under `dimensions/`.
-- Every region key in `regions` must load.
-- Every biome key listed on a region must load.
-- Every `generators[].generator` key must load or the engine falls back to an empty default generator.
-- `derivative` must be a known biome registry key such as `minecraft:plains`.
-
-## Cross-links for next steps
-
-- Full dimension options: `11 - Dimensions.md`
+- Full dimension field reference: `11 - Dimensions.md`
 - Region zooms, deposits, caves: `12 - Regions.md`
-- Layers, decorators, structures: `13 - Biomes.md`
-- Noise composite detail: `14 - Generators & Noise.md`
-- Editing the full overworld pack: `27 - Example - Configuring Overworld.md`
+- Layers, decorators, children: `13 - Biomes.md`
+- Noise composites and interpolators: `14 - Generators & Noise.md`
+- Editing the full shipping overworld: `27 - Example - Configuring Overworld.md`

@@ -71,7 +71,7 @@ public class IrisLoot {
     public static final int MAX_AMOUNT = 64;
 
     private final transient AtomicCache<DyeColor> dyeColorResolved = new AtomicCache<>();
-    @Desc("The target inventory slot types to fill this loot with")
+    @Desc("The target inventory slot types to fill this loot with. World generation only ever fills STORAGE; the other values are inert during worldgen.")
     private InventorySlotType slotTypes = InventorySlotType.STORAGE;
     @MinNumber(1)
     @Desc("The sub rarity of this loot. Calculated after this loot table has been picked.")

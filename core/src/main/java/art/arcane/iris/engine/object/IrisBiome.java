@@ -161,10 +161,10 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     private IrisGeneratorStyle childStyle = NoiseStyle.CELLULAR_IRIS_DOUBLE.style();
     @RegistryListResource(IrisBiome.class)
     @ArrayType(min = 1, type = String.class)
-    @Desc("List any biome names (file names without.json) here as children. Portions of this biome can sometimes morph into their children. Iris supports cyclic relationships such as A > B > A > B. Iris will stop checking 9 biomes down the tree.")
+    @Desc("List any biome names (file names without.json) here as children. Portions of this biome can sometimes morph into their children. Iris supports cyclic relationships such as A > B > A > B. Iris will stop checking 4 biomes down the tree.")
     private KList<String> children = new KList<>();
     @RegistryListResource(IrisBiome.class)
-    @Desc("The carving biome. If specified the biome will be used when under a carving instead of this current biome.")
+    @Desc("Registers the referenced biome with this pack's reachable biome set. It is NOT applied as a substitute under carvings; cave biomes come from the region's caveBiomes list.")
     private String carvingBiome = "";
     @MinNumber(0)
     @MaxNumber(256)
@@ -179,10 +179,10 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     @Desc("This defines the layers of materials in this biome. Each layer has a palette and min/max height and some other properties. Usually a grassy/sandy layer then a dirt layer then a stone layer. Iris will fill in the remaining blocks below your layers with stone.")
     private KList<IrisBiomePaletteLayer> layers = new KList<IrisBiomePaletteLayer>().qadd(new IrisBiomePaletteLayer());
     @ArrayType(type = IrisBiomePaletteLayer.class)
-    @Desc("This defines the layers of materials in this biome. Each layer has a palette and min/max height and some other properties. Usually a grassy/sandy layer then a dirt layer then a stone layer. Iris will fill in the remaining blocks below your layers with stone.")
+    @Desc("Layers of materials placed on cave ceilings in this biome, indexed upward from the ceiling surface. Must not have more entries than layers, whose height generators it reuses.")
     private KList<IrisBiomePaletteLayer> caveCeilingLayers = new KList<IrisBiomePaletteLayer>().qadd(new IrisBiomePaletteLayer());
     @ArrayType(type = IrisBiomePaletteLayer.class)
-    @Desc("This defines the layers of materials in this biome. Each layer has a palette and min/max height and some other properties. Usually a grassy/sandy layer then a dirt layer then a stone layer. Iris will fill in the remaining blocks below your layers with stone.")
+    @Desc("Layers of materials filling the water column of sea biomes, indexed downward from the water surface. Anything below the last layer is filled with the dimension fluid palette, not stone.")
     private KList<IrisBiomePaletteLayer> seaLayers = new KList<>();
     @ArrayType(min = 1, type = IrisDecorator.class)
     @Desc("Decorators are used for things like tall grass, bisected flowers, and even kelp or cactus (random heights)")

@@ -20,6 +20,7 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import lombok.AllArgsConstructor;
@@ -36,6 +37,7 @@ import lombok.experimental.Accessors;
 public class IrisTreeSecondaryLeaf {
     @Required
     @Desc("The block id to scatter, e.g. minecraft:shroomlight")
+    @RegistryListBlockType
     private String block = "";
 
     @MinNumber(0)

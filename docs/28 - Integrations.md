@@ -1,145 +1,166 @@
 # 28 - Integrations
 
-Iris integrates with selected Bukkit plugins for world management, selections, external blocks/items/entities, Mythic skill conditions, PlaceholderAPI, and tree felling. Soft-depends declare load order only; Iris still checks `isPluginEnabled` / readiness before use. Integrations are Bukkit-family unless noted. See also `04 - Commands & Permissions.md`, `06 - Worlds & Lifecycle.md`, `09 - PlaceholderAPI.md`, `19 - Objects.md`, and `93 - API - Tree Feller.md`.
+Iris hooks into a handful of Bukkit plugins: WorldEdit for selections, Multiverse-Core for world management, nine item/block/entity plugins so packs can place their content, MythicMobs for skill conditions, and PlaceholderAPI for scoreboard values. All of them are optional, and Iris checks whether the plugin is actually enabled before touching it — a soft-depend only fixes load order, it never guarantees anything is there. Tree felling is a separate feature that ships on both Bukkit and the mod loaders. See also `04 - Commands & Permissions.md`, `06 - Worlds & Lifecycle.md`, `09 - PlaceholderAPI.md`, `19 - Objects.md`, and `93 - API - Tree Feller.md`.
 
-## Tutorial: prove an integration boundary
+## Confirm an integration is actually live
 
-Choose one boundary and one observable result:
+Add integrations one at a time and prove each one before adding the next. Iris failing to link a plugin is usually silent by design, so absence of an error is not evidence of success.
+
+1. Start from a server where Iris alone generates a fresh world cleanly.
+2. Install one integration and its own dependencies, then do a **full restart**. A plugin-manager reload does not reproduce real enable order and will give you a false result either way.
+3. Watch the startup log. Each external data provider logs `<Plugin> found, loading <Provider>...` followed by `Enabled ExternalDataProvider for <Plugin>.` The other links log nothing on success.
+4. Run the positive proof for that boundary from the table below, then the negative control. The negative control is the part people skip and the part that tells you whether Iris is really gating on the plugin or just happening to work.
 
 | Boundary | Positive proof | Negative control |
 |---|---|---|
-| WorldEdit | Make a cuboid selection, run `/iris object we`, and save a disposable object | Clear the selection; Iris must report that no area is selected |
-| Multiverse-Core | Create or update a disposable Iris world and confirm generator `Iris:<pack>` in Multiverse | In a separate disposable test copy, restart without Multiverse installed; Iris must skip the link without failing its own world lifecycle |
-| External item/block/entity provider | Validate one exact namespaced key and generate one consumer in a new chunk | An invalid key logs and resolves empty without crashing generation |
-| MythicMobs conditions | `irisbiome` or `irisregion` passes inside the named Iris resource | The same condition returns false outside Iris or with engine access unavailable |
-| PlaceholderAPI | Complete the direct parse sequence in `09 - PlaceholderAPI.md` | A player outside Iris receives the documented unavailable values |
-| Tree feller | A sneaking survival player with permission and an axe fells a provenanced Iris tree | A player-planted or hand-built tree remains intact |
+| WorldEdit | Make a cuboid selection with the WorldEdit wand, run `/iris object we`, and save a disposable object | Clear the selection and run `/iris object we` again — Iris must say you have no WorldEdit selection in this world |
+| Multiverse-Core | Create a disposable Iris world and confirm Multiverse lists it with generator `Iris:<pack>` | On a separate disposable copy, restart without Multiverse installed. Iris world creation must still succeed |
+| Item/block/entity provider | Reference one exact namespaced key from a pack and generate a fresh chunk containing it | Reference a key that does not exist. Iris must log `No matching Provider found` or a missing-resource error and keep generating |
+| MythicMobs conditions | `irisbiome{b=<load key>}` returns true inside that biome | The same condition returns false in a vanilla world |
+| PlaceholderAPI | Run the parse sequence in `09 - PlaceholderAPI.md` | A player outside an Iris world gets `world.available` = `false` |
+| Tree feller | A sneaking survival player with the permission and an axe fells an Iris-generated tree | A tree the player grew from a sapling stays intact — only the broken log drops |
 
-1. Start from a server where Iris alone passes its fresh-world smoke.
-2. Install one integration and its required dependencies; perform a full restart rather than a plugin reload.
-3. Confirm enable order and that both plugins report ready without a linkage or missing-class exception.
-4. Exercise the smallest read-only path listed in that integration section, then one controlled mutation such as a selection conversion, external item resolution, or managed-world import.
-5. Restart and repeat the same path. Test one unavailable/invalid external key so failure behavior is also known.
-6. Add the next integration only after the current boundary passes.
+5. Restart and repeat the positive proof once. Some link failures only appear on the second boot, when caches are warm and enable order shifts.
 
-Soft-depend presence is not proof that an external provider is ready. Diagnose integration failures with both plugins' versions and startup order before changing an Iris pack.
+When something misbehaves, collect both plugin versions and the enable order from the log before you start editing pack JSON. Most integration failures are version or ordering problems, not pack problems.
 
-## Soft-depends and load order (`plugin.yml`)
+## Load order declarations
 
-| Plugin | Relation | Role |
+Iris ships both a legacy `plugin.yml` and a Paper `paper-plugin.yml`; Paper servers use the latter. The two declare the same relationships in different syntax.
+
+| Plugin | Relation | Role in Iris |
 |---|---|---|
-| PlaceholderAPI | softdepend | `%iris_...%` expansion |
-| CraftEngine | softdepend | External blocks/items |
-| Nexo | softdepend | External blocks/items |
-| ItemsAdder | softdepend | External blocks/items |
-| SCore | softdepend | Dependency of ExecutableItems ecosystems; no Iris provider class |
+| PlaceholderAPI | softdepend | The `%iris_...%` expansion |
+| CraftEngine | softdepend | External blocks and items |
+| Nexo | softdepend | External blocks and items |
+| ItemsAdder | softdepend | External blocks and items |
+| SCore | softdepend | Runtime dependency of the ExecutableItems ecosystem. Iris has no provider class for it |
 | ExecutableItems | softdepend | External items |
-| MythicLib | softdepend | Dependency of MMOItems ecosystems; no Iris provider class |
-| MMOItems | softdepend | External blocks/items |
-| eco | softdepend | Dependency of EcoItems; no Iris provider class |
+| MythicLib | softdepend | Runtime dependency of the MMOItems ecosystem. Iris has no provider class for it |
+| MMOItems | softdepend | External blocks and items |
+| eco | softdepend | Runtime dependency of EcoItems. Iris has no provider class for it |
 | EcoItems | softdepend | External items |
-| MythicMobs | softdepend | External entities + skill conditions |
-| MythicCrucible | softdepend | External blocks/items |
-| KGenerators | softdepend | External blocks/items |
-| WorldEdit | softdepend | Selection for object/wand workflows |
-| Multiverse-Core | `loadbefore` (Iris loads first) | World import/generator sync and remove |
+| MythicMobs | softdepend | External entities, plus the two skill conditions |
+| MythicCrucible | softdepend | External blocks and items |
+| KGenerators | softdepend | External blocks and items |
+| WorldEdit | softdepend | Selection reading for the object and wand workflows |
+| Multiverse-Core | `loadbefore` | Iris enables *before* Multiverse so Multiverse can see Iris as a registered generator plugin |
 
-Multiverse is listed under `loadbefore`, not softdepend: Iris enables before Multiverse-Core so Multiverse can see Iris as a generator plugin.
+In `paper-plugin.yml` the softdepends appear as `load: BEFORE, required: false` and Multiverse-Core as `load: AFTER`. Every entry joins the classpath except ExecutableItems, which does not.
 
 ## WorldEdit
 
-`WorldEditLink` reflects into WorldEdit when the plugin is enabled.
+`WorldEditLink` reaches into WorldEdit entirely by reflection, so Iris compiles and runs without it on the classpath.
 
 | Use | Behavior |
 |---|---|
-| Selection read | Returns an Iris `Cuboid` for the player's current WorldEdit selection in their world, or `null` if none |
-| Wand / object tools | With `world.worldEditWandCUI` default `true`, a WorldEdit selection is accepted where Iris wants a selection without holding the Iris wand |
-| `/iris object we` | Converts the current WorldEdit selection into a real Iris wand selection |
-| Limit | `position2` does not work on a WorldEdit-only selection until `/iris object we` runs |
+| Reading a selection | Returns an Iris `Cuboid` for the player's current WorldEdit selection **in the world they are standing in**. Returns `null` if WorldEdit is absent, the player has no session, or there is no selection in that world |
+| Accepting a selection | With `world.worldEditWandCUI` (default `true`), a WorldEdit selection satisfies Iris anywhere Iris asks for one, without holding the Iris wand |
+| `/iris object we` | Checks WorldEdit is enabled, reads your current selection, and puts a **new Iris object wand into your inventory** already carrying those two corners |
+| Limitation | `position2` will not operate on a WorldEdit-only selection. Run `/iris object we` first so a real Iris wand exists |
 
-WorldEdit is not required for `.schem` import: Iris parses schematic NBT itself. See `19 - Objects.md`.
+Two behaviors worth knowing. First, whether WorldEdit is present is cached the first time Iris asks, so a WorldEdit installed or enabled after that point is not picked up until restart. Second, if a reflective call throws, Iris logs `Could not get selection`, reports the error, and latches the cached answer to "no WorldEdit" for the rest of the process — a stack trace of that shape means the whole link is now off, not just that one call.
+
+WorldEdit is not needed to import `.schem` files. Iris parses schematic NBT itself. See `19 - Objects.md`.
 
 ## Multiverse-Core
 
-`MultiverseCoreLink` uses the Multiverse Core API when Multiverse-Core is enabled.
+`MultiverseCoreLink` calls the Multiverse Core API directly, guarded by `isPluginEnabled("Multiverse-Core")`.
 
 | Operation | Behavior |
 |---|---|
-| World create/update | Imports or updates the Multiverse world with generator `Iris:<pack>`, `autoLoad=false`, environment from the Bukkit world, spawn adjust off |
-| World remove | Removes the Multiverse world config entry and saves worlds config; throws if Multiverse refuses removal |
-| Inactive Multiverse | Calls no-op / return `false` |
+| World create or update | If Multiverse does not know the world, imports it with generator `Iris:<pack>`, the Bukkit world's environment, and spawn-adjust off. Then sets `autoLoad = false`, forces the generator string if it drifted, and saves the worlds config |
+| World remove | Looks the world up, removes it through Multiverse, and saves the worlds config. Throws `IllegalStateException` naming Multiverse's refusal reason if the removal fails |
+| Multiverse absent or disabled | Create/update returns without doing anything; remove returns `false` |
 
-Studio open/close and world lifecycle paths use the same link when Multiverse is present. See `06 - Worlds & Lifecycle.md`.
+`autoLoad = false` is deliberate: Iris owns the load lifecycle of its worlds, and letting Multiverse also load them at startup produces a double-load race.
 
-## External data providers (item / block / entity plugins)
+Correcting a drifted generator string is done by reflection into Multiverse's world config, because the public API has no setter for it. If a Multiverse update breaks that, the symptom is a world that keeps its old generator string rather than a crash.
 
-`ExternalDataSVC` activates built-in providers when their plugins are ready, including late enable via `PluginEnableEvent`. Packs reference external content by namespaced ids resolved through the active provider for that namespace and `DataType` (`ITEM`, `BLOCK`, `ENTITY`).
+World creation, removal, and Studio open/close all route through this same link. See `06 - Worlds & Lifecycle.md`.
 
-| Plugin id | Provider | Namespaces / match | Types |
+## External item, block, and entity plugins
+
+`ExternalDataSVC` instantiates a provider for each supported plugin that is enabled, and also listens for `PluginEnableEvent` so a plugin that enables after Iris is still picked up. Packs then reference external content by namespaced id, and Iris routes each lookup to the first active provider that claims that namespace for that data type (`ITEM`, `BLOCK`, or `ENTITY`).
+
+| Plugin id | Provider class | Claims | Types |
 |---|---|---|---|
-| CraftEngine | `CraftEngineDataProvider` | Any CraftEngine item/block/furniture key that exists | ITEM, BLOCK |
-| Nexo | `NexoDataProvider` | `nexo` | ITEM, BLOCK |
-| ItemsAdder | `ItemAdderDataProvider` | Namespaces reported by ItemsAdder for items/blocks | ITEM, BLOCK |
-| ExecutableItems | `ExecutableItemsDataProvider` | `executable_items` | ITEM |
-| MMOItems | `MMOItemsDataProvider` | Blocks: `mmoitems`; items: two-part type namespace (`type_subtype:id`) | ITEM, BLOCK |
-| EcoItems | `EcoItemsDataProvider` | `ecoitems` | ITEM |
-| MythicMobs | `MythicMobsDataProvider` | `mythicmobs` | ENTITY |
-| MythicCrucible | `MythicCrucibleDataProvider` | `crucible` | ITEM, BLOCK |
-| KGenerators | `KGeneratorsDataProvider` | `kgenerators` | ITEM, BLOCK |
+| CraftEngine | `CraftEngineDataProvider` | Any namespace, but only if CraftEngine actually has an item, block, or furniture with that exact key | ITEM, BLOCK |
+| Nexo | `NexoDataProvider` | Namespace `nexo` | ITEM, BLOCK |
+| ItemsAdder | `ItemAdderDataProvider` | The item and block namespaces ItemsAdder reports at init, tracked separately | ITEM, BLOCK |
+| ExecutableItems | `ExecutableItemsDataProvider` | Namespace `executable_items` | ITEM |
+| MMOItems | `MMOItemsDataProvider` | Blocks: namespace `mmoitems`. Items: any namespace containing one `_`, read as `<type>_<subtype>` | ITEM, BLOCK |
+| EcoItems | `EcoItemsDataProvider` | Namespace `ecoitems` | ITEM |
+| MythicMobs | `MythicMobsDataProvider` | Namespace `mythicmobs` | ENTITY |
+| MythicCrucible | `MythicCrucibleDataProvider` | Namespace `crucible` | ITEM, BLOCK |
+| KGenerators | `KGeneratorsDataProvider` | Namespace `kgenerators` | ITEM, BLOCK |
 
-Third parties may register additional providers with `ExternalDataSVC#registerProvider` if the plugin id is not already taken. Missing resources log and resolve empty rather than crashing generation.
+Block ids may carry a vanilla-style state suffix, `namespace:key[facing=north,waterlogged=true]`. A malformed state entry logs and resolves to nothing rather than throwing into generation.
+
+Failures are contained. An unresolvable key logs `No matching Provider found for modded material "<key>"` or a missing-resource error naming the namespace and key, and the caller gets an empty result. Generation continues. A provider that throws during activation is logged and skipped; the rest still load.
+
+Third parties can add their own with `ExternalDataSVC#registerProvider`. It throws `IllegalArgumentException` if the plugin id belongs to a built-in provider or one already registered, so you cannot silently displace an existing one. A provider that also implements `Listener` is registered as one automatically.
 
 ## MythicMobs skill conditions
 
-When MythicMobs is active, Iris registers location conditions:
+When MythicMobs is active, its `MythicConditionLoadEvent` gives Iris two location conditions.
 
-| Condition | Fields | Check |
+| Condition | Fields | What it checks |
 |---|---|---|
-| `irisbiome` | `biome`/`b` (comma list of load keys), `surface`/`s` (boolean, default false) | Surface biome or full column biome via Iris engine |
-| `irisregion` | `region`/`r` (comma list of load keys) | Region load key at X/Z |
+| `irisbiome` | `biome` / `b` — comma-separated biome load keys. `surface` / `s` — boolean, default `false` | With `s=true`, the surface biome at the target's X/Z. With the default `s=false`, the biome at the target's actual Y, which includes cave and mantle biomes |
+| `irisregion` | `region` / `r` — comma-separated region load keys | The region load key at the target's X/Z |
 
-Both return false outside Iris worlds or when engine access is missing.
+Both compare against **load keys**, not display names, and both return `false` when the target world is not an Iris world or its engine is unavailable. That means a condition can quietly fail while a world is still booting, so avoid making a mob's only spawn gate an Iris condition during startup.
 
 ## PlaceholderAPI
 
-Soft-depend + expansion id `iris`. Full key list and migration: `09 - PlaceholderAPI.md`.
+Expansion id `iris`, soft-depended. Registration timing, all sixteen keys, and the pre-2.0 migration table are in `09 - PlaceholderAPI.md`.
 
-## Tree feller (operator)
+## Tree feller
 
-Standalone tree felling is Bukkit-only. It removes whole Iris-generated trees when a sneaking survival player breaks a provenanced log with an axe.
+Breaking one log of an Iris-generated tree while sneaking with an axe removes the whole tree. This runs on Bukkit-family **and** on Fabric/Forge/NeoForge, from the same settings and the same traversal code — only the permission plumbing differs.
 
 ### Settings (`settings.json`)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `treeFeller.enabled` | `false` | Master switch for the **standalone** path only |
-| `treeFeller.durabilityPreservationChance` | `0` | Percent chance a log costs no axe durability (standalone path); clamped `0..100` on read |
+| `treeFeller.enabled` | `false` | Turns the player-facing feature on. Does not affect other plugins driving the feller through the API |
+| `treeFeller.durabilityPreservationChance` | `0` | Percent chance that felling a log costs no axe durability. Clamped to `0..100` when read, so an out-of-range value in the file is harmless |
 
 ### Permission
 
-| Node | Default | Meaning |
+| Platform | Node | Default |
 |---|---|---|
-| `iris.treefeller` | `op` | Required for standalone felling |
+| Bukkit-family | `iris.treefeller` | `op` |
+| Fabric | `irisworldgen:treefeller` | Permission level GAMEMASTERS (op level 2) |
+| Forge / NeoForge | `irisworldgen:treefeller` (Forge `PermissionNode`) | Permission level GAMEMASTERS (op level 2) |
 
-### Standalone requirements (all required)
+### What has to be true to fell a tree
+
+All of these, on every platform:
 
 - `treeFeller.enabled` is `true`
-- Player has `iris.treefeller`
-- `GameMode.SURVIVAL`
-- Player is sneaking
-- Broken block is tagged as a log
-- Main-hand item is an axe
-- Block has Iris tree provenance in the mantle (Iris-placed tree, not player-planted saplings or hand-placed logs)
+- The player has the platform's tree-feller permission
+- The player is in survival mode
+- The player is sneaking
+- The broken block is in the vanilla logs tag
+- The main-hand item is in the axes tag
+- The block carries Iris tree provenance in the mantle, and that provenance is not part of a structure
 
-Iris listens at `EventPriority.HIGHEST` for its own standalone request. Other plugins can drive felling with `INTEGRATION_OVERRIDE` (bypasses enabled switch and permission only) through `IrisTreeFellerService`; that API is documented in `93 - API - Tree Feller.md`.
+That last condition is what separates a generated tree from a player-planted one. Iris stamps trees it places and clears the stamp when a player places a block, so saplings grown by players and hand-built trunks are never felled.
+
+On Bukkit, Iris listens for `BlockBreakEvent` at `EventPriority.HIGHEST` to register the request and finalizes at `MONITOR`, where it cancels the vanilla break, suppresses its drops and XP, and starts its own paced run instead.
+
+On Bukkit, other plugins can drive a fell with `TreeFellerAccess.INTEGRATION_OVERRIDE` through `IrisTreeFellerService`. That bypasses the `enabled` switch and the permission check only — every provenance and block-state requirement still applies, and an override request supersedes a standalone one on the same event. That API is Bukkit-only. See `93 - API - Tree Feller.md`.
 
 ### Runtime notes for operators
 
-- Discovery walks mantle provenance (bounds: 131072 members, 1e6 visits, 256-block axis distance); oversize trees fall back to removing only the broken block
-- Removal is paced across ticks
-- Run ends if the player stops sneaking, changes hotbar slot/hand, leaves survival/world, breaks the axe, or swaps the axe item
-- Leaves never cost durability/cost hooks; logs do
+- Discovery is a flood fill over matching mantle provenance markers, bounded at 131,072 members, 1,000,000 visited positions, and 256 blocks on any axis from the broken block. If a tree exceeds any bound, the run degrades to removing only the block the player broke — an unusually large custom tree quietly behaving like vanilla is this, not a bug.
+- Removal is paced across ticks and dispatched per region, so it is Folia-safe and does not stall the main thread on a large tree.
+- A run ends early if the player stops sneaking, changes hotbar slot, swaps hands, leaves survival or the world, breaks the axe, or swaps to a different axe item.
+- Logs consume axe durability, one point each, subject to the preservation chance and to unbreakable items. Leaves cost nothing and skip the durability path entirely.
+- A tree already being felled cannot be claimed twice. A second player breaking into the same tree has their break cancelled with no drops rather than starting a competing run.
 
 ## Platforms
 
-WorldEdit, Multiverse, external data providers, Mythic conditions, PlaceholderAPI, and the tree feller are Bukkit-family. Modded loaders do not use these plugin soft-depends. See `30 - Platform Differences.md`.
+WorldEdit, Multiverse-Core, the external data providers, the Mythic conditions, and PlaceholderAPI are Bukkit-family only; mod loaders do not use these plugin declarations. The tree feller is the exception — it runs on every platform. See `30 - Platform Differences.md`.

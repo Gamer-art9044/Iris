@@ -90,7 +90,6 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     @ArrayType(min = 1, type = IrisBlockDrops.class)
     @Desc("Define custom block drops for this region")
     private KList<IrisBlockDrops> blockDrops = new KList<>();
-    @RegistryListResource(IrisSpawner.class)
     @ArrayType(min = 1, type = IrisObjectPlacement.class)
     @Desc("Objects define what schematics (iob files) iris will place in this region")
     private KList<IrisObjectPlacement> objects = new KList<>();
@@ -139,7 +138,7 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     private KList<String> shoreBiomes = new KList<>();
     @RegistryListResource(IrisBiome.class)
     @ArrayType(min = 1, type = String.class)
-    @Desc("A list of root-level biomes in this region. Don't specify child biomes of other biomes here. Just the root parents.")
+    @Desc("A list of root-level cave biomes in this region, used for carved cave interiors. Don't specify child biomes of other biomes here. Just the root parents.")
     private KList<String> caveBiomes = new KList<>();
     @ArrayType(min = 1, type = IrisDepositGenerator.class)
     @Desc("Define regional deposit generators that add onto the global deposit generators")
@@ -147,9 +146,9 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     @ArrayType(min = 1, type = IrisDepositVariant.class)
     @Desc("Deposit ore remap rules scoped to this region. Each entry declares a vertical band and a source->replacement block id map. Applied after biome rules but before dimension rules; first matching region rule wins.")
     private KList<IrisDepositVariant> depositVariants = new KList<>();
-    @Desc("The style of rivers")
+    @Desc("Unused. This field is not read by the engine; rivers are not generated from it.")
     private IrisGeneratorStyle riverStyle = NoiseStyle.VASCULAR_THIN.style().zoomed(7.77);
-    @Desc("The style of lakes")
+    @Desc("Unused. This field is not read by the engine; lakes are not generated from it.")
     private IrisGeneratorStyle lakeStyle = NoiseStyle.CELLULAR_IRIS_THICK.style();
     @Desc("A color for visualizing this region with a color. I.e. #F13AF5. This will show up on the map.")
     private String color = null;

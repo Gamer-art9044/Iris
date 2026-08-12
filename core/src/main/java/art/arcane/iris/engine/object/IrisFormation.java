@@ -23,6 +23,7 @@ import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.engine.object.formation.FormationGenerator;
@@ -96,12 +97,14 @@ public class IrisFormation implements IrisProceduralPlacement {
 
     @Required
     @Desc("The main rock block, e.g. minecraft:stone. Ignored when blockPalette is set.")
+    @RegistryListBlockType
     private String block = "minecraft:stone";
 
     @Desc("A noise-driven palette for the main rock body. When set this overrides the single block, letting the body mix blocks by noise.")
     private IrisMaterialPalette blockPalette = null;
 
     @Desc("Optional caprock block placed on the top crown of the formation (and the wide overhanging cap for HOODOO). Ignored when capPalette is set. When null and capPalette is unset, the formation uses its main rock everywhere.")
+    @RegistryListBlockType
     private String capBlock = null;
 
     @Desc("A noise-driven palette for the caprock. When set this overrides the single capBlock.")

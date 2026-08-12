@@ -28,7 +28,7 @@ public class IrisCaveFieldModule {
     @Desc("Threshold offset applied to this layer before blending.")
     private double threshold = 0;
 
-    @Desc("Vertical bounds where this module can contribute.")
+    @Desc("Vertical bounds where this module can contribute, in engine-local Y where 0 is the bottom of the dimension, not world Y.")
     private IrisRange verticalRange = new IrisRange(0, 384);
 
     @Desc("Invert this module before weighting.")

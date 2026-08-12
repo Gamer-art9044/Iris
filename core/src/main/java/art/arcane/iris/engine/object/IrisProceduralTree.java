@@ -24,6 +24,7 @@ import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.engine.object.tree.ProceduralTreeGenerator;
@@ -93,6 +94,7 @@ public class IrisProceduralTree implements IrisProceduralPlacement {
 
     @Required
     @Desc("The trunk (log) block, e.g. minecraft:oak_log. Ignored when trunkPalette is set.")
+    @RegistryListBlockType
     private String trunk = "minecraft:oak_log";
 
     @Desc("A noise-driven palette for the trunk. When set this overrides the single trunk block, letting the trunk mix blocks by noise.")
@@ -100,6 +102,7 @@ public class IrisProceduralTree implements IrisProceduralPlacement {
 
     @Required
     @Desc("The leaf block, e.g. minecraft:oak_leaves. Ignored when leavesPalette is set.")
+    @RegistryListBlockType
     private String leaves = "minecraft:oak_leaves";
 
     @Desc("A noise-driven palette for the leaves. When set this overrides the single leaf block, letting the canopy mix leaf (or other) blocks by noise. Only blocks that are actually leaves get vanilla decay distances.")
@@ -188,6 +191,7 @@ public class IrisProceduralTree implements IrisProceduralPlacement {
     private int azimuthWhorlCount = 5;
 
     @Desc("Optional accent leaf block scattered through the canopy (blossoms, shroomlight).")
+    @RegistryListBlockType
     private String secondaryLeaves = null;
 
     @MinNumber(0)
@@ -203,6 +207,7 @@ public class IrisProceduralTree implements IrisProceduralPlacement {
     private IrisMaterialPalette secondaryLeavesPalette = null;
 
     @Desc("Optional secondary trunk block used over a height band (for color-banded trunks). Ignored when secondaryTrunkPalette is set.")
+    @RegistryListBlockType
     private String secondaryTrunk = null;
 
     @Desc("A noise-driven palette for the secondary trunk band. When set this overrides the single secondaryTrunk block.")

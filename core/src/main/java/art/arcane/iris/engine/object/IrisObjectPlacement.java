@@ -151,7 +151,7 @@ public class IrisObjectPlacement {
     private boolean bore = false;
     @Desc("Use a generator to warp the field of coordinates. Using simplex for example would make a square placement warp like a flag")
     private IrisGeneratorStyle warp = new IrisGeneratorStyle(NoiseStyle.FLAT);
-    @Desc("If the place mode is set to CENTER_HEIGHT_RIGID and you have an X/Z translation, Turning on translate center will also translate the center height check.")
+    @Desc("Unused. This field is not read by the placement engine.")
     private boolean translateCenter = false;
     @Desc("The placement mode")
     private ObjectPlaceMode mode = ObjectPlaceMode.CENTER_HEIGHT;

@@ -42,7 +42,7 @@ public class IrisLootReference {
     public static final double MAX_MULTIPLIER = 16D;
 
     private final transient AtomicCache<KList<IrisLootTable>> tt = new AtomicCache<>();
-    @Desc("Add = add on top of parent tables, Replace = clear first then add these. Clear = Remove all and dont add loot from this or parent.")
+    @Desc("ADD = add on top of parent tables. REPLACE and CLEAR both clear parent tables first, then add these. FALLBACK = only used when nothing else defined a table.")
     private IrisLootMode mode = IrisLootMode.ADD;
     @RegistryListResource(IrisLootTable.class)
     @ArrayType(min = 1, type = String.class)

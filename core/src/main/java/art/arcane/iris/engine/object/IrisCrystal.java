@@ -23,6 +23,7 @@ import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.RegistryListBlockType;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.engine.object.crystal.CrystalGenerator;
@@ -91,12 +92,14 @@ public class IrisCrystal implements IrisProceduralPlacement {
 
     @Required
     @Desc("The primary crystal shard block, e.g. minecraft:amethyst_block. Ignored when blockPalette is set.")
+    @RegistryListBlockType
     private String block = "minecraft:amethyst_block";
 
     @Desc("A noise-driven palette for the crystal shards (a prismatic mix, e.g. amethyst_block, calcite, tinted_glass). When set this overrides the single block, letting the shards mix blocks by noise. Palette wins.")
     private IrisMaterialPalette blockPalette = null;
 
     @Desc("Optional block placed at the very tip of each shard for a different colored or sparkling point (e.g. minecraft:amethyst_cluster or glowstone). Ignored when tipPalette is set. If unset and glow is true, a light-emitting block is sprinkled among the tips instead.")
+    @RegistryListBlockType
     private String tipBlock = null;
 
     @Desc("A noise-driven palette for the shard tips. When set this overrides the single tipBlock. Palette wins.")
@@ -111,9 +114,11 @@ public class IrisCrystal implements IrisProceduralPlacement {
     private boolean glow = false;
 
     @Desc("The light-emitting block sprinkled among the tips when glow is true and no tip block is configured.")
+    @RegistryListBlockType
     private String glowBlock = "minecraft:glowstone";
 
     @Desc("Optional block for the budding base blob the shards grow from, e.g. minecraft:budding_amethyst or calcite. Ignored when basePalette is set. If unset, the base is built from the primary shard block.")
+    @RegistryListBlockType
     private String baseBlock = "minecraft:budding_amethyst";
 
     @Desc("A noise-driven palette for the budding base blob. When set this overrides the single baseBlock. Palette wins.")

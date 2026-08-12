@@ -54,7 +54,7 @@ public class IrisSpawner extends IrisRegistrant {
     @Desc("The block of 24 hour time to contain this spawn in.")
     private IrisTimeBlock timeBlock = new IrisTimeBlock();
 
-    @Desc("The block of 24 hour time to contain this spawn in.")
+    @Desc("The weather condition required for this spawner to fire.")
     private IrisWeather weather = IrisWeather.ANY;
 
     @Desc("The maximum rate this spawner can fire")

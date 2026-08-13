@@ -26,8 +26,9 @@ public class CustomBiomeSourceStructureContractTest {
 
         assertTrue(source.contains("tryAcquireGenerationLease(\"bukkit_possible_biomes\")"));
         assertTrue(source.contains("tryAcquireGenerationLease(\"bukkit_spawn_biome\")"));
-        assertTrue(source.contains("Iris spawn biome lookup was rejected during an engine transition"));
-        assertTrue(source.contains("Iris spawn biome lookup has no active engine runtime"));
+        assertFalse(source.contains("Iris spawn biome lookup was rejected during an engine transition"));
+        assertFalse(source.contains("Iris spawn biome lookup has no active engine runtime"));
+        assertTrue(source.contains("vanillaSpawnBiomes.get(biome.value())"));
         assertTrue(source.contains("tryAcquireGenerationLease(\"bukkit_structure_biome\")"));
         assertTrue(source.contains("tryAcquireGenerationLease(\"bukkit_biomes_within\")"));
         assertTrue(source.contains("tryAcquireGenerationLease(\"bukkit_visible_biome\")"));

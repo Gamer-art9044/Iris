@@ -232,6 +232,8 @@
     "iris.bukkit.commandobject.no_area_selected_4": "No hay ningún área seleccionada.",
     "iris.bukkit.commandobject.auto_select_complete_2": "§a¡Selección automática completada!",
     "iris.bukkit.commandpregen.pregen_radius_must_be_greater_than_zero_blocks": "§cEl radio de pregen debe ser mayor que cero bloques.",
+    "iris.bukkit.commandstudio.regions_radius_out_of_range": "§cEl radio debe estar entre 1 y 2048 chunks.",
+    "iris.bukkit.commandstudio.regions_scan_failed": "§cError al escanear regiones: {value}",
     "iris.bukkit.commandpregen.strict_serial_pregeneration_requires_paper_paper_compatible_server": "§cLa pregeneración estrictamente secuencial requiere Paper o un servidor compatible con Paper.",
     "iris.bukkit.commandpregen.engine_access_this_world_is_null": "§c¡El acceso al motor de este mundo es nulo!",
     "iris.bukkit.commandpregen.please_make_sure_world_is_loaded_engine_is_initialized_generate": "§cAsegúrate de que el mundo esté cargado y el motor inicializado. Por ejemplo, genera un chunk nuevo.",

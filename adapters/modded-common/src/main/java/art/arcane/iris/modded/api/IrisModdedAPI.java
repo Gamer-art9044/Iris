@@ -20,6 +20,7 @@ package art.arcane.iris.modded.api;
 
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.EngineLifecycleTasks;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.command.ModdedPregenJob;
 import net.minecraft.server.level.ServerLevel;
@@ -130,14 +131,17 @@ public final class IrisModdedAPI {
      * never create or load one - or nothing of {@code type} is stored there. A {@code y} outside the engine's
      * height range reads as null rather than throwing.
      *
-     * @throws IllegalStateException if the engine's mantle has already been closed
+     * A closing or closed engine refuses the operation quietly (null / no-op) instead of racing its shutdown.
      */
     public static <T> T getMantleData(ServerLevel level, int x, int y, int z, Class<T> type) {
         Engine engine = getEngine(level);
         if (engine == null) {
             return null;
         }
-        return engine.getMantle().getMantle().get(x, y - engine.getMinHeight(), z, type);
+        // Lease-gated so the engine shutdown drain covers this public accessor; a mantle
+        // mid-close refuses the lease instead of racing the region flush.
+        return EngineLifecycleTasks.call(engine, "modded_api_mantle_get",
+                () -> engine.getMantle().getMantle().get(x, y - engine.getMinHeight(), z, type), null);
     }
 
     /**
@@ -151,28 +155,30 @@ public final class IrisModdedAPI {
      * Values written under a custom type are discarded when Iris trims a mantle region unless the type is
      * declared with {@link #retainMantleDataForSlice(Class)}.
      *
-     * @throws IllegalStateException if the engine's mantle has already been closed
+     * A closing or closed engine refuses the operation quietly (null / no-op) instead of racing its shutdown.
      */
     public static <T> void setMantleData(ServerLevel level, int x, int y, int z, T data) {
         Engine engine = getEngine(level);
         if (engine == null || data == null) {
             return;
         }
-        engine.getMantle().getMantle().set(x, y - engine.getMinHeight(), z, data);
+        EngineLifecycleTasks.run(engine, "modded_api_mantle_set",
+                () -> engine.getMantle().getMantle().set(x, y - engine.getMinHeight(), z, data));
     }
 
     /**
      * Removes any mantle value of {@code type} at world coordinates. A non-Iris level or an out-of-range
      * {@code y} is a silent no-op. Like a write, this creates the mantle region if it is absent.
      *
-     * @throws IllegalStateException if the engine's mantle has already been closed
+     * A closing or closed engine refuses the operation quietly (null / no-op) instead of racing its shutdown.
      */
     public static <T> void deleteMantleData(ServerLevel level, int x, int y, int z, Class<T> type) {
         Engine engine = getEngine(level);
         if (engine == null) {
             return;
         }
-        engine.getMantle().getMantle().remove(x, y - engine.getMinHeight(), z, type);
+        EngineLifecycleTasks.run(engine, "modded_api_mantle_delete",
+                () -> engine.getMantle().getMantle().remove(x, y - engine.getMinHeight(), z, type));
     }
 
     /**

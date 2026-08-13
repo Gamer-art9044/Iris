@@ -263,6 +263,10 @@ public class CommandPack implements DirectorExecutor {
         for (File packDirectory : packDirectories) {
             PackValidationResult result = PackValidationRegistry.get(packDirectory.getName());
             if (result == null) {
+                // The boot cache only loads when it covers every pack, so a partial write is
+                // pointless - but say so instead of silently skipping the persist forever.
+                Iris.warn("Pack validation cache not written: \"" + packDirectory.getName()
+                        + "\" has no registered result. Run /iris pack validate all to repopulate it.");
                 return;
             }
             results.add(result);

@@ -482,9 +482,10 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             if (throwable == null) {
                 future.complete(null);
             } else {
+                // The close body already ran and tore the engine down; unlike the pre-dispatch
+                // failure above, resetting the gate here would advertise a healthy generator
+                // over a CLOSED or FAILED engine. Stay latched and surface the failure.
                 future.completeExceptionally(throwable);
-                closeFuture.compareAndSet(future, null);
-                closing = false;
             }
         });
         return future;

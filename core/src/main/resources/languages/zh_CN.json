@@ -232,6 +232,8 @@
     "iris.bukkit.commandobject.no_area_selected_4": "未选择区域 。",
     "iris.bukkit.commandobject.auto_select_complete_2": "§a自动选择完成!",
     "iris.bukkit.commandpregen.pregen_radius_must_be_greater_than_zero_blocks": "§cPregen半径必须大于零块.",
+    "iris.bukkit.commandstudio.regions_radius_out_of_range": "§c半径必须在 1 到 2048 区块之间。",
+    "iris.bukkit.commandstudio.regions_scan_failed": "§c区域扫描失败: {value}",
     "iris.bukkit.commandpregen.strict_serial_pregeneration_requires_paper_paper_compatible_server": "§c严格的序列预生成要求 Paper 或一个 Paper- 兼容服务器。",
     "iris.bukkit.commandpregen.engine_access_this_world_is_null": "§c这个世界的引擎是无效的!",
     "iris.bukkit.commandpregen.please_make_sure_world_is_loaded_engine_is_initialized_generate": "§c请确保世界充满 & 引擎已经初始化。  例如, 生成一个新的块 。",

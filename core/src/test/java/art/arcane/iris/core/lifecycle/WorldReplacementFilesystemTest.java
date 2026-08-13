@@ -109,6 +109,23 @@ public class WorldReplacementFilesystemTest {
     }
 
     @Test
+    public void rejectsUnmigratedRetainedWorldAtAdmission() throws Exception {
+        WorldReplacementFilesystem.ReplacementPaths paths = paths("admit-missing-paper-metadata", TRANSACTION_ID);
+        Files.createDirectories(paths.target());
+        Files.writeString(paths.target().resolve("original.txt"), "original");
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> WorldReplacementFilesystem.requireExistingTarget(paths)
+        );
+
+        assertTrue(failure.getMessage().contains("missing Paper world metadata"));
+        assertTrue(failure.getMessage().contains("load the world once on this server"));
+        assertFalse(Files.exists(paths.stage()));
+        assertFalse(Files.exists(paths.backup()));
+    }
+
+    @Test
     public void publishesReplacementWithoutCreatingBackupForAbsentTarget() throws Exception {
         WorldReplacementFilesystem.ReplacementPaths paths = paths("publish-absent", TRANSACTION_ID);
         String fingerprint = writeStage(paths, "replacement");

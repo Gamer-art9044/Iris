@@ -69,6 +69,9 @@ final class ModdedCommandSuggestions {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int TAB_FAILURE_KEYS_MAX = 256;
     private static final Set<String> REPORTED_TAB_FAILURES = ConcurrentHashMap.newKeySet();
+    private static final long PACK_NAME_CACHE_TTL_MS = 3_000L;
+    private static volatile Set<String> cachedPackNames;
+    private static volatile long cachedPackNamesAt;
 
     private ModdedCommandSuggestions() {
     }
@@ -228,6 +231,13 @@ final class ModdedCommandSuggestions {
 
     private static CompletableFuture<Suggestions> suggestPackNames(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
         ModdedCommandFeedback.tab(context.getSource());
+        // Suggestion packets arrive per keystroke; a short-lived snapshot keeps the directory
+        // walk off the hot path without ever serving stale names for more than a few seconds.
+        long now = System.currentTimeMillis();
+        Set<String> cached = cachedPackNames;
+        if (cached != null && now - cachedPackNamesAt < PACK_NAME_CACHE_TTL_MS) {
+            return SharedSuggestionProvider.suggest(cached, builder);
+        }
         Set<String> names = new TreeSet<>();
         names.add("overworld");
         try {
@@ -249,6 +259,8 @@ final class ModdedCommandSuggestions {
         } catch (Throwable e) {
             warnTabFailure("pack names", context.getSource(), e);
         }
+        cachedPackNames = names;
+        cachedPackNamesAt = now;
         return SharedSuggestionProvider.suggest(names, builder);
     }
 

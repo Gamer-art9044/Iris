@@ -198,6 +198,9 @@ public class IrisConverter {
                 sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_CONVERTER_SOME_SCHEMATICS_FAILED_CONVERT_CHECK_CONSOLE_DETAILS));
             }
         });
+        // Single-use pool: retire the worker once the queued conversion finishes instead of
+        // leaking a non-daemon thread per invocation.
+        executorService.shutdown();
     }
 
     private static int resolveVersion(CompoundTag compound) throws Exception {

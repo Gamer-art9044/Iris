@@ -613,29 +613,22 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         // (listeners, shutdown hook, replacement journals) are the safety-critical ones.
         // Only services that actually enabled get listeners and a later onDisable.
         enabledServices.clear();
-        IrisService firstFailedService = null;
         for (IrisService service : orderedServices) {
             try {
                 service.onEnable();
                 enabledServices.add(service);
             } catch (Throwable e) {
-                if (firstFailedService == null) {
-                    firstFailedService = service;
-                }
+                // A service failure is NOT a datapack validation failure: the admission gate
+                // must never lock every login over a broken cosmetic service. Log loudly,
+                // continue degraded, and clean up whatever the partial onEnable started
+                // (a failed service is excluded from the teardown loop).
                 Iris.reportError("Failed to enable " + service.getClass().getSimpleName() + "; continuing with a degraded runtime.", e);
-                // A failed service is excluded from the teardown loop, so clean up whatever
-                // its partial onEnable started right here, best-effort.
                 try {
                     service.onDisable();
                 } catch (Throwable cleanup) {
                     Iris.reportError("Failed to clean up partially enabled " + service.getClass().getSimpleName() + ".", cleanup);
                 }
             }
-        }
-        if (firstFailedService != null) {
-            IrisStartupValidation.markDatapacksInvalid("Iris service "
-                    + firstFailedService.getClass().getSimpleName()
-                    + " failed to enable; world creation and player admission are locked. Check the log above.");
         }
         for (IrisService service : enabledServices) {
             try {

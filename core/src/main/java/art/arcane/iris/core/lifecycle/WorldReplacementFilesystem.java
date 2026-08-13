@@ -2,9 +2,7 @@ package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.ExactWorldSlotPathPolicy;
 import art.arcane.iris.core.SnapshotDirectoryTreeDeleter;
-import art.arcane.iris.spi.IrisLogging;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -13,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
@@ -60,6 +59,26 @@ public final class WorldReplacementFilesystem {
         }
         if (state.stagePresent() || state.backupPresent()) {
             throw new IOException("A replacement artifact already exists for this transaction.");
+        }
+        requireMigratedRetainedWorld(requiredPaths.target());
+    }
+
+    public static void requireMigratedRetainedWorld(Path retainedWorld) throws IOException {
+        try {
+            requireDirectory(retainedWorld, "retained world");
+            requireDirectory(retainedWorld.resolve("data"), "retained world data");
+            requireDirectory(retainedWorld.resolve("data/paper"), "retained Paper data");
+            requireDirectory(retainedWorld.resolve("data/minecraft"), "retained Minecraft data");
+            for (Path relative : PAPER_WORLD_METADATA) {
+                BasicFileAttributes sourceAttributes = requireSafeEntry(retainedWorld.resolve(relative));
+                if (!sourceAttributes.isRegularFile()) {
+                    throw new IOException("Retained Paper world metadata is not a regular file: " + relative);
+                }
+            }
+        } catch (NoSuchFileException e) {
+            throw new IOException("World slot " + retainedWorld.getFileName()
+                    + " is missing Paper world metadata (" + e.getFile()
+                    + "); load the world once on this server before replacing it.", e);
         }
     }
 
@@ -328,17 +347,8 @@ public final class WorldReplacementFilesystem {
     }
 
     private static void preservePaperWorldMetadata(Path retainedWorld, Path replacementWorld) throws IOException {
-        requireDirectory(retainedWorld, "retained world");
+        requireMigratedRetainedWorld(retainedWorld);
         requireDirectory(replacementWorld, "replacement world");
-        requireDirectory(retainedWorld.resolve("data"), "retained world data");
-        requireDirectory(retainedWorld.resolve("data/paper"), "retained Paper data");
-        requireDirectory(retainedWorld.resolve("data/minecraft"), "retained Minecraft data");
-        for (Path relative : PAPER_WORLD_METADATA) {
-            BasicFileAttributes sourceAttributes = requireSafeEntry(retainedWorld.resolve(relative));
-            if (!sourceAttributes.isRegularFile()) {
-                throw new IOException("Retained Paper world metadata is not a regular file: " + relative);
-            }
-        }
         ensureDirectory(replacementWorld.resolve("data"), "replacement world data");
         ensureDirectory(replacementWorld.resolve("data/paper"), "replacement Paper data");
         ensureDirectory(replacementWorld.resolve("data/minecraft"), "replacement Minecraft data");
@@ -420,25 +430,11 @@ public final class WorldReplacementFilesystem {
     }
 
     private static void forceDirectoryRequired(Path directory) throws IOException {
-        if (File.separatorChar == '\\') {
-            return;
-        }
-        try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
-            channel.force(true);
-        } catch (UnsupportedOperationException failure) {
-            throw new IOException("Directory durability sync is unavailable for " + directory + ".", failure);
-        }
+        DirectoryDurability.forceDirectoryRequired(directory);
     }
 
     private static void forceDirectoryAfterCommit(Path directory) {
-        try {
-            forceDirectoryRequired(directory);
-        } catch (IOException failure) {
-            IrisLogging.reportError(
-                    "A world-replacement move completed, but its parent directory could not be durability-synced.",
-                    failure
-            );
-        }
+        DirectoryDurability.forceDirectoryAfterCommit(directory, "A world-replacement move");
     }
 
     public record ReplacementPaths(Path target, Path stage, Path backup) {

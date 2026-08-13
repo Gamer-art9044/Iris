@@ -236,6 +236,19 @@ public final class ModdedPlatform implements IrisPlatform {
      */
     @Override
     public void reportError(Throwable error) {
+        reportThrottled("Iris reported error", error);
+    }
+
+    /**
+     * Contextual reports run the same throttle and emit exactly one trace through the modded
+     * log; the SPI default's raw stderr copy would bypass the per-signature suppression.
+     */
+    @Override
+    public void reportError(String context, Throwable error) {
+        reportThrottled(context == null || context.isBlank() ? "Iris reported error" : context, error);
+    }
+
+    private void reportThrottled(String message, Throwable error) {
         if (error == null) {
             return;
         }
@@ -247,7 +260,7 @@ public final class ModdedPlatform implements IrisPlatform {
             sink.accept(error);
             return;
         }
-        ModdedIrisLog.error("Iris reported error", error);
+        ModdedIrisLog.error(message, error);
         Consumer<Throwable> capture = CAPTURE_SINK;
         if (capture != null) {
             try {

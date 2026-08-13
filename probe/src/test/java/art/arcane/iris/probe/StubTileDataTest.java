@@ -33,6 +33,24 @@ public class StubTileDataTest {
     }
 
     @Test
+    public void modernIntegralPropertiesReencodeByteIdentical() throws Exception {
+        KMap<String, Object> properties = new KMap<>();
+        properties.put("LootTable", "minecraft:chests/ancient_city");
+        properties.put("LootTableSeed", -7205759403792793599L);
+        StubTileData original = StubTileData.fromProperties(
+                StubPlatform.blockStateForTest("minecraft:chest[facing=north]"), properties);
+        byte[] encoded = encode(original::toBinary);
+
+        StubTileData decoded;
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(encoded))) {
+            decoded = StubTileData.read(input);
+        }
+
+        assertArrayEquals(encoded, encode(decoded::toBinary));
+        assertEquals(-7205759403792793599L, decoded.getProperties().get("LootTableSeed"));
+    }
+
+    @Test
     public void legacyLootablePayloadPreservesItsCompleteFrame() throws Exception {
         byte[] payload = encode(output -> {
             output.writeShort(3);

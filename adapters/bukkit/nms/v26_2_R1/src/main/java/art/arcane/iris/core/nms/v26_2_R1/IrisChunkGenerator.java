@@ -128,6 +128,8 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     private final int runtimeHeight;
     private final int runtimeSeaLevel;
     private final ConcurrentHashMap<SpawnTableKey, WeightedList<MobSpawnSettings.SpawnerData>> mergedSpawnTables = new ConcurrentHashMap<>();
+    private volatile IrisDimension spawnTableDimension;
+    private volatile int spawnTableRuntimeId;
     private final ImportedFeatureStage importedFeatures;
     private final AtomicReference<StudioStructureState> retainedStudioStructureState = new AtomicReference<>();
     private volatile ReachableStructureCache reachableStructureCache;
@@ -310,18 +312,19 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     private Set<String> reachableStructureKeys(ServerLevel level) {
         IrisDimension dimension = engine.getDimension();
+        int runtimeId = engine.getCacheID();
         ReachableStructureCache cached = reachableStructureCache;
-        if (cached != null && cached.dimension() == dimension) {
+        if (cached != null && cached.dimension() == dimension && cached.runtimeId() == runtimeId) {
             return cached.keys();
         }
         synchronized (this) {
             cached = reachableStructureCache;
-            if (cached != null && cached.dimension() == dimension) {
+            if (cached != null && cached.dimension() == dimension && cached.runtimeId() == runtimeId) {
                 return cached.keys();
             }
             Set<String> reachable = Set.copyOf(
                     VanillaStructureBiomes.reachableStructureKeys(level, customBiomeSource));
-            reachableStructureCache = new ReachableStructureCache(dimension, reachable);
+            reachableStructureCache = new ReachableStructureCache(dimension, runtimeId, reachable);
             return reachable;
         }
     }
@@ -738,6 +741,17 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             return explicitSpawns;
         }
 
+        IrisDimension spawnDimension = engine.getDimension();
+        int spawnRuntimeId = engine.getCacheID();
+        if (spawnTableDimension != spawnDimension || spawnTableRuntimeId != spawnRuntimeId) {
+            synchronized (mergedSpawnTables) {
+                if (spawnTableDimension != spawnDimension || spawnTableRuntimeId != spawnRuntimeId) {
+                    mergedSpawnTables.clear();
+                    spawnTableDimension = spawnDimension;
+                    spawnTableRuntimeId = spawnRuntimeId;
+                }
+            }
+        }
         SpawnTableKey key = new SpawnTableKey(holder.value(), enumcreaturetype);
         return mergedSpawnTables.computeIfAbsent(key, ignored -> mergeSpawnTables(vanillaSpawns, explicitSpawns));
     }
@@ -1160,7 +1174,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     private record SpawnTableKey(Biome biome, MobCategory category) {
     }
 
-    private record ReachableStructureCache(IrisDimension dimension, Set<String> keys) {
+    private record ReachableStructureCache(IrisDimension dimension, int runtimeId, Set<String> keys) {
     }
 
     private record StructureStepCache(Registry<Structure> registry, List<List<Structure>> structures) {

@@ -39,11 +39,13 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemp
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -73,8 +75,11 @@ public final class NativeStructureTerrainIntegrator {
             Blocks.SOUL_SOIL, Blocks.END_STONE, Blocks.GRAVEL, Blocks.CLAY,
             Blocks.CALCITE, Blocks.DRIPSTONE_BLOCK, Blocks.SANDSTONE,
             Blocks.RED_SANDSTONE, Blocks.SCULK);
-    private static final Map<CarveFootprintKey, CachedCarveFootprint> CARVE_FOOTPRINTS =
-            new LinkedHashMap<>(16, 0.75F, true);
+    // Weakly keyed on the StructureStart so retired starts (world unload, generation done)
+    // are collectable instead of pinned forever by a process-wide static; values hold only
+    // primitives, so there is no value-to-key cycle defeating the weak keys.
+    private static final Map<StructureStart, Map<Integer, CachedCarveFootprint>> CARVE_FOOTPRINTS =
+            new WeakHashMap<>(16);
     private static final ConcurrentHashMap<CarveFootprintKey, CompletableFuture<StructureCarvingFootprint>>
             CARVE_FOOTPRINT_BUILDS = new ConcurrentHashMap<>();
     private static int cachedCarveCells;
@@ -531,6 +536,15 @@ public final class NativeStructureTerrainIntegrator {
         if (active != null) {
             return awaitCarveFootprint(active);
         }
+        // Close the check-then-claim window: a racer whose cache check missed before the
+        // previous builder cached can claim the build slot after that builder retired it,
+        // and would rebuild a second instance without this re-check.
+        StructureCarvingFootprint published = cachedCarveFootprint(key);
+        if (published != null) {
+            build.complete(published);
+            CARVE_FOOTPRINT_BUILDS.remove(key, build);
+            return published;
+        }
         try {
             StructureCarvingFootprint footprint = StructureCarvingFootprint.fromColumns(
                     sink -> emitCarveColumns(start, templates, sink), horizontalPadding, MAX_CARVE_COLUMNS);
@@ -551,8 +565,19 @@ public final class NativeStructureTerrainIntegrator {
 
     static int cachedCarveFootprintCells() {
         synchronized (CARVE_FOOTPRINTS) {
+            cachedCarveCells = liveCarveCells();
             return cachedCarveCells;
         }
+    }
+
+    private static int liveCarveCells() {
+        int total = 0;
+        for (Map<Integer, CachedCarveFootprint> perStart : CARVE_FOOTPRINTS.values()) {
+            for (CachedCarveFootprint cached : perStart.values()) {
+                total += cached.cells();
+            }
+        }
+        return total;
     }
 
     static int maximumCachedCarveFootprintCells() {
@@ -561,43 +586,43 @@ public final class NativeStructureTerrainIntegrator {
 
     private static StructureCarvingFootprint cachedCarveFootprint(CarveFootprintKey key) {
         synchronized (CARVE_FOOTPRINTS) {
-            CachedCarveFootprint cached = CARVE_FOOTPRINTS.get(key);
+            Map<Integer, CachedCarveFootprint> perStart = CARVE_FOOTPRINTS.get(key.start());
+            CachedCarveFootprint cached = perStart == null ? null : perStart.get(key.padding());
             return cached == null ? null : cached.footprint();
         }
     }
 
     private static StructureCarvingFootprint awaitCarveFootprint(
             CompletableFuture<StructureCarvingFootprint> future) {
-        try {
-            return future.join();
-        } catch (CompletionException error) {
-            Throwable cause = error.getCause();
-            if (cause instanceof RuntimeException runtime) {
-                throw runtime;
-            }
-            if (cause instanceof Error fatal) {
-                throw fatal;
-            }
-            throw new IllegalStateException("Native structure carve footprint build failed", cause);
-        }
+        return NativeBuildFutures.awaitBuild(future, "Native structure carve footprint build");
     }
 
     private static void cacheCarveFootprint(CarveFootprintKey key,
                                             StructureCarvingFootprint footprint) {
         int cells = Math.multiplyExact(footprint.width(), footprint.depth());
         synchronized (CARVE_FOOTPRINTS) {
-            CachedCarveFootprint previous = CARVE_FOOTPRINTS.remove(key);
+            // Weak keys expunge silently as the GC drops retired starts; re-derive the live
+            // total so the cell budget tracks reality instead of drifting.
+            cachedCarveCells = liveCarveCells();
+            Map<Integer, CachedCarveFootprint> perStart =
+                    CARVE_FOOTPRINTS.computeIfAbsent(key.start(), ignored -> new LinkedHashMap<>(4));
+            CachedCarveFootprint previous = perStart.remove(key.padding());
             if (previous != null) {
                 cachedCarveCells -= previous.cells();
             }
-            while (!CARVE_FOOTPRINTS.isEmpty()
-                    && cachedCarveCells + cells > MAX_CACHED_CARVE_CELLS) {
-                Map.Entry<CarveFootprintKey, CachedCarveFootprint> eldest =
-                        CARVE_FOOTPRINTS.entrySet().iterator().next();
-                cachedCarveCells -= eldest.getValue().cells();
-                CARVE_FOOTPRINTS.remove(eldest.getKey());
+            Iterator<Map.Entry<StructureStart, Map<Integer, CachedCarveFootprint>>> eviction =
+                    CARVE_FOOTPRINTS.entrySet().iterator();
+            while (cachedCarveCells + cells > MAX_CACHED_CARVE_CELLS && eviction.hasNext()) {
+                Map.Entry<StructureStart, Map<Integer, CachedCarveFootprint>> victim = eviction.next();
+                if (victim.getKey() == key.start()) {
+                    continue;
+                }
+                for (CachedCarveFootprint evicted : victim.getValue().values()) {
+                    cachedCarveCells -= evicted.cells();
+                }
+                eviction.remove();
             }
-            CARVE_FOOTPRINTS.put(key, new CachedCarveFootprint(footprint, cells));
+            perStart.put(key.padding(), new CachedCarveFootprint(footprint, cells));
             cachedCarveCells += cells;
         }
     }

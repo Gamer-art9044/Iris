@@ -232,6 +232,8 @@
     "iris.bukkit.commandobject.no_area_selected_4": "선택 없음.",
     "iris.bukkit.commandobject.auto_select_complete_2": "§a자동 선택 완료!",
     "iris.bukkit.commandpregen.pregen_radius_must_be_greater_than_zero_blocks": "§cPregen 반경은 0 개 이상의 블록이 있어야합니다.",
+    "iris.bukkit.commandstudio.regions_radius_out_of_range": "§c반경은 1~2048 청크 사이여야 합니다.",
+    "iris.bukkit.commandstudio.regions_scan_failed": "§c지역 스캔에 실패했습니다: {value}",
     "iris.bukkit.commandpregen.strict_serial_pregeneration_requires_paper_paper_compatible_server": "§c엄격한 순차 사전 생성에는 Paper 또는 Paper 호환 서버가 필요합니다.",
     "iris.bukkit.commandpregen.engine_access_this_world_is_null": "§c이 세상의 엔진 접근은 null입니다!",
     "iris.bukkit.commandpregen.please_make_sure_world_is_loaded_engine_is_initialized_generate": "§c세상이 로드되었는지 확인하십시오. & 엔진은 초기화됩니다.  새로운 청크 생성, 예를 들어.",

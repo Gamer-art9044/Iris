@@ -19,6 +19,7 @@ public final class StubTileData extends TileData {
     private static final Gson GSON = new GsonBuilder()
             .disableHtmlEscaping()
             .setStrictness(Strictness.LENIENT)
+            .setObjectToNumberStrategy(com.google.gson.ToNumberPolicy.LONG_OR_DOUBLE)
             .create();
 
     private final String blockKey;

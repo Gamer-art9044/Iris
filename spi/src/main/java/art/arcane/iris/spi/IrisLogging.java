@@ -97,6 +97,11 @@ public final class IrisLogging {
             inner.printStackTrace(System.err);
         }
 
+        if (IrisPlatforms.isBound()) {
+            IrisPlatforms.get().reportError(message, cause);
+            return;
+        }
+
         reportError(cause);
         cause.printStackTrace(System.err);
     }

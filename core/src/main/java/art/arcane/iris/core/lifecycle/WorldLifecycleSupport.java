@@ -15,6 +15,7 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.generator.ChunkGenerator;
 
 import java.io.File;
@@ -479,6 +480,10 @@ final class WorldLifecycleSupport {
                 }
             }
 
+            if (!announceManualWorldUnload(world)) {
+                return CompletableFuture.completedFuture(false);
+            }
+
             if (save) {
                 world.save();
             }
@@ -494,6 +499,12 @@ final class WorldLifecycleSupport {
                     unwrap(e)
             ));
         }
+    }
+
+    static boolean announceManualWorldUnload(World world) {
+        WorldUnloadEvent unloadEvent = new WorldUnloadEvent(world);
+        Bukkit.getPluginManager().callEvent(unloadEvent);
+        return !unloadEvent.isCancelled();
     }
 
     private static CompletableFuture<Boolean> unloadWorldViaAsyncApi(CapabilitySnapshot capabilities, World world, boolean save) {
@@ -597,9 +608,11 @@ final class WorldLifecycleSupport {
         Field worldsField = CapabilityResolution.resolveField(bukkitServer.getClass(), "worlds");
         Object rawWorlds = worldsField.get(bukkitServer);
         if (rawWorlds instanceof Map map) {
-            map.remove(WorldIdentity.key(world));
-            map.remove(WorldIdentity.serialize(world));
-            map.remove(world.getName());
+            boolean removed = map.values().removeIf(candidate -> candidate == world);
+            if (!removed) {
+                throw new IllegalStateException(
+                        "CraftServer world registry did not contain \"" + world.getName() + "\".");
+            }
         }
     }
 

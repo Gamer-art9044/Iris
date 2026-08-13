@@ -232,6 +232,8 @@
     "iris.bukkit.commandobject.no_area_selected_4": "範囲が選択されていません。",
     "iris.bukkit.commandobject.auto_select_complete_2": "§a自動選択完了!",
     "iris.bukkit.commandpregen.pregen_radius_must_be_greater_than_zero_blocks": "§c事前生成の半径は 0 ブロックより大きくなければなりません。",
+    "iris.bukkit.commandstudio.regions_radius_out_of_range": "§c半径は1から2048チャンクの範囲で指定してください。",
+    "iris.bukkit.commandstudio.regions_scan_failed": "§cリージョンスキャンに失敗しました: {value}",
     "iris.bukkit.commandpregen.strict_serial_pregeneration_requires_paper_paper_compatible_server": "§c厳密な直列事前生成には Paper または Paper 互換サーバーが必要です。",
     "iris.bukkit.commandpregen.engine_access_this_world_is_null": "§cこのワールドのエンジンにアクセスできません!",
     "iris.bukkit.commandpregen.please_make_sure_world_is_loaded_engine_is_initialized_generate": "§cワールドが読み込まれ、エンジンが初期化されていることを確認してください。たとえば、新しいチャンクを生成してください。",

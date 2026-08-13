@@ -97,7 +97,11 @@ public class LinkedTerrainChunk implements TerrainChunk {
 
     @Override
     public synchronized void setRegion(int xMin, int yMin, int zMin, int xMax, int yMax, int zMax, PlatformBlockState state) {
-        rawChunkData.setRegion(xMin, yMin, zMin, xMax, yMax, zMax, (BlockData) state.nativeHandle());
+        BlockData blockData = (BlockData) state.nativeHandle();
+        if (blockData instanceof IrisCustomData data) {
+            blockData = data.getBase();
+        }
+        rawChunkData.setRegion(xMin, yMin, zMin, xMax, yMax, zMax, blockData);
     }
 
     @Override

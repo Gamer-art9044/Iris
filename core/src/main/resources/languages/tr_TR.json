@@ -232,6 +232,8 @@
     "iris.bukkit.commandobject.no_area_selected_4": "Hiçbir alan seçilmiş değildir.",
     "iris.bukkit.commandobject.auto_select_complete_2": "§aotomatik seçim tamamen!",
     "iris.bukkit.commandpregen.pregen_radius_must_be_greater_than_zero_blocks": "§cPregen radius sıfır bloklardan daha büyük olmalıdır.",
+    "iris.bukkit.commandstudio.regions_radius_out_of_range": "§cYarıçap 1 ile 2048 chunk arasında olmalıdır.",
+    "iris.bukkit.commandstudio.regions_scan_failed": "§cBölge taraması başarısız oldu: {value}",
     "iris.bukkit.commandpregen.strict_serial_pregeneration_requires_paper_paper_compatible_server": "§cKesin sıralı ön oluşturma Paper veya Paper uyumlu bir sunucu gerektirir.",
     "iris.bukkit.commandpregen.engine_access_this_world_is_null": "§cBu dünya için motor erişimi çıplak!",
     "iris.bukkit.commandpregen.please_make_sure_world_is_loaded_engine_is_initialized_generate": "§cLütfen dünyanın yüklendiğinden emin olun & Motor başlangıçlı.  Örneğin yeni bir chunk.",

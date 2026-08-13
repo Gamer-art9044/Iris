@@ -72,7 +72,7 @@ public class MultiBurst extends MultiBurstSupport {
 
     @Override
     public BurstExecutor burst(int estimate) {
-        return new BurstExecutor(service(), estimate);
+        return new BurstExecutor(this::service, estimate);
     }
 
     @Override

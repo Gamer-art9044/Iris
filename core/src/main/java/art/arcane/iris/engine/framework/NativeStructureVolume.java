@@ -33,7 +33,44 @@ public record NativeStructureVolume(
         int maxY,
         int maxZ
 ) {
-    public static final KList<NativeStructureVolume> NONE = new KList<>();
+    // Shared empty sentinel handed to every engine and memoized by the volume caches; a silent
+    // add()/clear() here would corrupt them all globally, so mutation fails loudly instead.
+    public static final KList<NativeStructureVolume> NONE = new KList<>() {
+        @Override
+        public boolean add(NativeStructureVolume volume) {
+            throw new UnsupportedOperationException("NativeStructureVolume.NONE is immutable");
+        }
+
+        @Override
+        public void add(int index, NativeStructureVolume volume) {
+            throw new UnsupportedOperationException("NativeStructureVolume.NONE is immutable");
+        }
+
+        @Override
+        public boolean addAll(java.util.Collection<? extends NativeStructureVolume> volumes) {
+            throw new UnsupportedOperationException("NativeStructureVolume.NONE is immutable");
+        }
+
+        @Override
+        public boolean addAll(int index, java.util.Collection<? extends NativeStructureVolume> volumes) {
+            throw new UnsupportedOperationException("NativeStructureVolume.NONE is immutable");
+        }
+
+        @Override
+        public void clear() {
+            throw new UnsupportedOperationException("NativeStructureVolume.NONE is immutable");
+        }
+
+        @Override
+        public NativeStructureVolume remove(int index) {
+            throw new UnsupportedOperationException("NativeStructureVolume.NONE is immutable");
+        }
+
+        @Override
+        public boolean remove(Object volume) {
+            throw new UnsupportedOperationException("NativeStructureVolume.NONE is immutable");
+        }
+    };
 
     public static NativeStructureVolume of(String structure, int aX, int aY, int aZ, int bX, int bY, int bZ) {
         return new NativeStructureVolume(

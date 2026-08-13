@@ -3,10 +3,8 @@ package art.arcane.iris.core.lifecycle;
 import art.arcane.iris.core.ExactWorldSlotPathPolicy;
 import art.arcane.iris.core.WorldSlotKey;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.WorldGeneratorSnapshot;
-import art.arcane.iris.spi.IrisLogging;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -46,17 +44,48 @@ public final class WorldReplacementJournal {
                 if (Files.isSymbolicLink(file) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
                     throw new IOException("Replacement journal entry is unsafe: " + file);
                 }
-                transactions.add(read(file, currentLevelRoot));
+                try {
+                    transactions.add(read(file));
+                } catch (IOException failure) {
+                    throw new IOException("Invalid replacement journal " + file + ": " + failure.getMessage(), failure);
+                }
             }
         }
         transactions.sort(Comparator.comparing(transaction -> transaction.id().toString()));
+        // Only transactions that target the current level root compete for a slot; a stale
+        // journal recorded against another level root must not collide with a live one.
         Set<WorldSlotKey> worldKeys = new HashSet<>();
         for (Transaction transaction : transactions) {
-            if (!worldKeys.add(transaction.worldKey())) {
+            if (appliesTo(transaction, currentLevelRoot) && !worldKeys.add(transaction.worldKey())) {
                 throw new IOException("Multiple replacement journals target " + transaction.worldKey() + ".");
             }
         }
         return List.copyOf(transactions);
+    }
+
+    /**
+     * Whether this journal entry targets the current level root and logical world name. A
+     * mismatch means the operator changed level-name or world container after the replacement
+     * was staged; such entries are skipped at bootstrap instead of aborting the whole boot.
+     */
+    public static boolean appliesTo(Transaction transaction, Path currentLevelRoot) {
+        Transaction requiredTransaction = Objects.requireNonNull(transaction, "transaction");
+        ExactWorldSlotPathPolicy.Target target;
+        try {
+            target = ExactWorldSlotPathPolicy.resolve(currentLevelRoot, requiredTransaction.worldKey());
+        } catch (RuntimeException failure) {
+            return false;
+        }
+        if (!target.levelRoot().equals(requiredTransaction.levelRoot())) {
+            return false;
+        }
+        String expectedWorldName;
+        try {
+            expectedWorldName = logicalWorldName(target.levelRoot(), requiredTransaction.worldKey());
+        } catch (IllegalArgumentException failure) {
+            return false;
+        }
+        return expectedWorldName.equals(requiredTransaction.worldName());
     }
 
     public static void write(Path dataDirectory, Transaction transaction) throws IOException {
@@ -145,7 +174,7 @@ public final class WorldReplacementJournal {
         throw new IllegalArgumentException("World key is not an exact replaceable world slot: " + requiredWorldKey);
     }
 
-    private static Transaction read(Path file, Path currentLevelRoot) throws IOException {
+    private static Transaction read(Path file) throws IOException {
         Properties properties = new Properties();
         try (InputStream input = Files.newInputStream(file)) {
             properties.load(input);
@@ -196,7 +225,6 @@ public final class WorldReplacementJournal {
                 originalTargetPresent,
                 phase
         );
-        resolveTarget(transaction, currentLevelRoot);
         return transaction;
     }
 
@@ -342,25 +370,11 @@ public final class WorldReplacementJournal {
     }
 
     private static void forceDirectoryRequired(Path directory) throws IOException {
-        if (File.separatorChar == '\\') {
-            return;
-        }
-        try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
-            channel.force(true);
-        } catch (UnsupportedOperationException failure) {
-            throw new IOException("Directory durability sync is unavailable for " + directory + ".", failure);
-        }
+        DirectoryDurability.forceDirectoryRequired(directory);
     }
 
     private static void forceDirectoryAfterCommit(Path directory) {
-        try {
-            forceDirectoryRequired(directory);
-        } catch (IOException failure) {
-            IrisLogging.reportError(
-                    "A world-replacement journal change completed, but its parent directory could not be durability-synced.",
-                    failure
-            );
-        }
+        DirectoryDurability.forceDirectoryAfterCommit(directory, "A world-replacement journal change");
     }
 
     public record Transaction(

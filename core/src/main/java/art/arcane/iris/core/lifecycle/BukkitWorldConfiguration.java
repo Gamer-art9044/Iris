@@ -255,6 +255,13 @@ public final class BukkitWorldConfiguration {
                 }
                 Files.move(staged, absoluteTarget, StandardCopyOption.REPLACE_EXISTING);
             }
+            // bukkit.yml is the commit record the bootstrap reconciles against; its rename
+            // needs the same directory-durability barrier the journal and world moves get.
+            if (requireAtomicReplacement) {
+                DirectoryDurability.forceDirectoryRequired(parent);
+            } else {
+                DirectoryDurability.forceDirectoryAfterCommit(parent, "A bukkit.yml world configuration change");
+            }
         } finally {
             Files.deleteIfExists(staged);
         }

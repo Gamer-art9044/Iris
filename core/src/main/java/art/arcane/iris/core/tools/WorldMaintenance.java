@@ -24,9 +24,9 @@ public final class WorldMaintenance {
             return;
         }
 
-        int depth = worldMaintenanceDepth.computeIfAbsent(worldName, k -> new AtomicInteger()).incrementAndGet();
+        int depth = incrementDepth(worldMaintenanceDepth, worldName);
         if (bypassMantleStages) {
-            worldMaintenanceMantleBypassDepth.computeIfAbsent(worldName, k -> new AtomicInteger()).incrementAndGet();
+            incrementDepth(worldMaintenanceMantleBypassDepth, worldName);
         }
         if (IrisSettings.get().getGeneral().isDebug()) {
             IrisLogging.info("World maintenance enter: " + worldName + " reason=" + reason + " depth=" + depth + " bypassMantle=" + bypassMantleStages);
@@ -44,29 +44,17 @@ public final class WorldMaintenance {
             return;
         }
 
-        AtomicInteger depthCounter = worldMaintenanceDepth.get(worldName);
-        if (depthCounter == null) {
+        if (!worldMaintenanceDepth.containsKey(worldName)) {
             return;
         }
 
-        int depth = depthCounter.decrementAndGet();
-        if (depth <= 0) {
-            worldMaintenanceDepth.remove(worldName, depthCounter);
-            depth = 0;
-        }
+        int depth = decrementDepth(worldMaintenanceDepth, worldName);
 
         // Only a bypass-begin's paired end releases bypass credit: a plain end overlapping a
         // bypassing operation stole its credit and re-enabled mantle stages under it.
         int bypassDepth = 0;
         if (bypassMantleStages) {
-            AtomicInteger bypassCounter = worldMaintenanceMantleBypassDepth.get(worldName);
-            if (bypassCounter != null) {
-                bypassDepth = bypassCounter.decrementAndGet();
-                if (bypassDepth <= 0) {
-                    worldMaintenanceMantleBypassDepth.remove(worldName, bypassCounter);
-                    bypassDepth = 0;
-                }
-            }
+            bypassDepth = decrementDepth(worldMaintenanceMantleBypassDepth, worldName);
         }
 
         if (IrisSettings.get().getGeneral().isDebug()) {
@@ -74,6 +62,22 @@ public final class WorldMaintenance {
         } else {
             IrisLogging.debug("World maintenance exit: " + worldName + " reason=" + reason + " depth=" + depth + " bypassMantleDepth=" + bypassDepth);
         }
+    }
+
+    // Depth mutations run inside compute() so an identity-based remove can never clear a
+    // registration a concurrent begin just re-incremented.
+    private static int incrementDepth(Map<String, AtomicInteger> depths, String worldName) {
+        return depths.compute(worldName, (key, current) -> {
+            AtomicInteger counter = current == null ? new AtomicInteger() : current;
+            counter.incrementAndGet();
+            return counter;
+        }).get();
+    }
+
+    private static int decrementDepth(Map<String, AtomicInteger> depths, String worldName) {
+        AtomicInteger remaining = depths.computeIfPresent(
+                worldName, (key, current) -> current.decrementAndGet() <= 0 ? null : current);
+        return remaining == null ? 0 : Math.max(0, remaining.get());
     }
 
     public static boolean isWorldMaintenanceActive(String worldName) {

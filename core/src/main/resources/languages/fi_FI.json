@@ -232,6 +232,8 @@
     "iris.bukkit.commandobject.no_area_selected_4": "Aluetta ei ole valittu.",
     "iris.bukkit.commandobject.auto_select_complete_2": "§aAutomaattivalinta valmis!",
     "iris.bukkit.commandpregen.pregen_radius_must_be_greater_than_zero_blocks": "§cPregen-säteen on oltava suurempi kuin nolla lohkoa.",
+    "iris.bukkit.commandstudio.regions_radius_out_of_range": "§cSäteen on oltava 1 ja 2048 chunkin välillä.",
+    "iris.bukkit.commandstudio.regions_scan_failed": "§cAlueskannaus epäonnistui: {value}",
     "iris.bukkit.commandpregen.strict_serial_pregeneration_requires_paper_paper_compatible_server": "§cTiukasti sarjallinen esigenerointi vaatii Paperin tai Paper-yhteensopivan palvelimen.",
     "iris.bukkit.commandpregen.engine_access_this_world_is_null": "§cTämän maailman moottorit eivät toimi!",
     "iris.bukkit.commandpregen.please_make_sure_world_is_loaded_engine_is_initialized_generate": "§cVarmista, että maailma on ladattu. & Moottori on alustettu.  Luo esimerkiksi uusi pala.",

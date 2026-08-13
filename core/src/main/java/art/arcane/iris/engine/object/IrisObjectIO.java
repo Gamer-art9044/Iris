@@ -231,6 +231,10 @@ public final class IrisObjectIO {
 
     static void write(IrisObject self, OutputStream o) throws IOException {
         validateWritable(self);
+        writeValidated(self, o);
+    }
+
+    private static void writeValidated(IrisObject self, OutputStream o) throws IOException {
         DataOutputStream dos = new DataOutputStream(o);
         dos.writeInt(self.w);
         dos.writeInt(self.h);
@@ -270,6 +274,10 @@ public final class IrisObjectIO {
 
     static void write(IrisObject self, OutputStream o, VolmitSender sender) throws IOException {
         validateWritable(self);
+        writeValidated(self, o, sender);
+    }
+
+    private static void writeValidated(IrisObject self, OutputStream o, VolmitSender sender) throws IOException {
         AtomicReference<IOException> ref = new AtomicReference<>();
         CountDownLatch latch = new CountDownLatch(1);
         new Job() {
@@ -365,7 +373,7 @@ public final class IrisObjectIO {
         // object must leave the existing .iob untouched.
         validateWritable(self);
         try (FileOutputStream out = new FileOutputStream(file)) {
-            write(self, out);
+            writeValidated(self, out);
         }
     }
 
@@ -376,7 +384,7 @@ public final class IrisObjectIO {
 
         validateWritable(self);
         try (FileOutputStream out = new FileOutputStream(file)) {
-            write(self, out, sender);
+            writeValidated(self, out, sender);
         }
     }
 

@@ -38,7 +38,20 @@ public final class WorldReplacementBootstrap {
         int published = 0;
         int rolledBack = 0;
         int retained = 0;
+        int skipped = 0;
         for (Transaction transaction : transactions) {
+            // A journal recorded against another level root or logical world name is not this
+            // boot's transaction; skip it with a pointer instead of aborting the whole startup.
+            if (!WorldReplacementJournal.appliesTo(transaction, requiredLevelRoot)) {
+                skipped++;
+                requiredFeedback.accept("Skipping pending world replacement " + transaction.id()
+                        + " for " + transaction.worldKey() + ": it was staged against level root "
+                        + transaction.levelRoot() + " but this server now uses " + requiredLevelRoot
+                        + ". Remove " + requiredDataDirectory.resolve(WorldReplacementJournal.DIRECTORY_NAME)
+                        .resolve(transaction.id() + ".properties")
+                        + " or restore the previous level-name to resolve it.");
+                continue;
+            }
             ReconcileAction action = reconcileTransaction(
                     requiredDataDirectory,
                     requiredLevelRoot,
@@ -52,7 +65,7 @@ public final class WorldReplacementBootstrap {
                 case RETAINED -> retained++;
             }
         }
-        return new ReconcileResult(transactions.size(), published, rolledBack, retained);
+        return new ReconcileResult(transactions.size(), published, rolledBack, retained, skipped);
     }
 
     public static WorldGeneratorSnapshot replacementSnapshot(Transaction transaction) {
@@ -124,11 +137,20 @@ public final class WorldReplacementBootstrap {
                 }
                 throw conflict(active, "bukkit.yml matches neither the replacement nor its retained original state.");
             }
-            WorldReplacementFilesystem.publish(
-                    paths,
-                    active.originalTargetPresent(),
-                    active.packFingerprint()
-            );
+            try {
+                WorldReplacementFilesystem.publish(
+                        paths,
+                        active.originalTargetPresent(),
+                        active.packFingerprint()
+                );
+            } catch (IOException publishFailure) {
+                throw new IOException("Pending replacement for " + active.worldKey()
+                        + " cannot be published: " + publishFailure.getMessage()
+                        + " To recover, restore the original generator entry for \"" + active.worldName()
+                        + "\" in bukkit.yml (the next boot rolls the replacement back), or delete the journal at "
+                        + dataDirectory.resolve(WorldReplacementJournal.DIRECTORY_NAME).resolve(active.id() + ".properties")
+                        + ".", publishFailure);
+            }
             active = active.withPhase(Phase.PUBLISHED);
             WorldReplacementJournal.write(dataDirectory, active);
             feedback.accept("Published Iris world replacement for " + active.worldKey()
@@ -227,7 +249,7 @@ public final class WorldReplacementBootstrap {
         return new IOException("Pending replacement for " + transaction.worldKey() + " is blocked: " + detail);
     }
 
-    public record ReconcileResult(int transactions, int published, int rolledBack, int retained) {
+    public record ReconcileResult(int transactions, int published, int rolledBack, int retained, int skipped) {
     }
 
     private enum ReconcileAction {

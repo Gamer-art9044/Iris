@@ -192,22 +192,22 @@ public class WorldReplacementBootstrapTest {
     }
 
     @Test
-    public void rejectsChangedLevelRootBeforeTouchingStagedStorage() throws Exception {
+    public void skipsChangedLevelRootWithoutTouchingStagedStorage() throws Exception {
         Transaction transaction = stagedTransaction(Phase.ARMED, true, "original");
         configureReplacement(transaction);
         Path otherLevelRoot = Files.createDirectories(serverRoot.resolve("renamed-world"));
 
-        assertThrows(
-                IOException.class,
-                () -> WorldReplacementBootstrap.reconcile(
-                        dataDirectory,
-                        otherLevelRoot,
-                        bukkitConfiguration,
-                        ignored -> {
-                        }
-                )
+        WorldReplacementBootstrap.ReconcileResult result = WorldReplacementBootstrap.reconcile(
+                dataDirectory,
+                otherLevelRoot,
+                bukkitConfiguration,
+                ignored -> {
+                }
         );
 
+        assertEquals(1, result.skipped());
+        assertEquals(0, result.published());
+        assertEquals(0, result.rolledBack());
         assertEquals("original", Files.readString(target.worldDirectory().resolve("original.txt")));
         assertTrue(Files.isDirectory(paths(transaction).stage()));
         assertFalse(Files.exists(paths(transaction).backup()));
@@ -278,6 +278,28 @@ public class WorldReplacementBootstrapTest {
 
             assertThrows(IOException.class, () -> WorldReplacementJournal.resolveTarget(transaction, levelRoot));
         }
+    }
+
+    @Test
+    public void skipsJournalStagedAgainstAnotherLevelRootInsteadOfAborting() throws Exception {
+        Transaction transaction = stagedTransaction(Phase.CLEANUP_PENDING, true, "original");
+        Path otherLevelRoot = Files.createDirectories(serverRoot.resolve("renamed-world"));
+
+        WorldReplacementBootstrap.ReconcileResult result = WorldReplacementBootstrap.reconcile(
+                dataDirectory,
+                otherLevelRoot,
+                bukkitConfiguration,
+                ignored -> {
+                }
+        );
+
+        assertEquals(1, result.skipped());
+        assertEquals(0, result.published());
+        assertEquals(0, result.rolledBack());
+        assertEquals(0, result.retained());
+        assertTrue(Files.exists(dataDirectory
+                .resolve(WorldReplacementJournal.DIRECTORY_NAME)
+                .resolve(transaction.id() + ".properties")));
     }
 
     private WorldReplacementBootstrap.ReconcileResult reconcile() throws Exception {

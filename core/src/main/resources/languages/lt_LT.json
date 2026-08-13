@@ -232,6 +232,8 @@
     "iris.bukkit.commandobject.no_area_selected_4": "Nepasirinkta sritis.",
     "iris.bukkit.commandobject.auto_select_complete_2": "§aAuto-pasirinkite baigtas!",
     "iris.bukkit.commandpregen.pregen_radius_must_be_greater_than_zero_blocks": "§cPregen spindulys turi būti didesnis nei nulis blokų.",
+    "iris.bukkit.commandstudio.regions_radius_out_of_range": "§cSpindulys turi būti nuo 1 iki 2048 gabalų.",
+    "iris.bukkit.commandstudio.regions_scan_failed": "§cRegionų nuskaitymas nepavyko: {value}",
     "iris.bukkit.commandpregen.strict_serial_pregeneration_requires_paper_paper_compatible_server": "§cGriežtai nuosekliam išankstiniam generavimui reikia Paper arba su Paper suderinamo serverio.",
     "iris.bukkit.commandpregen.engine_access_this_world_is_null": "§cVariklio pasiekiamumas šiam pasauliui nulinis!",
     "iris.bukkit.commandpregen.please_make_sure_world_is_loaded_engine_is_initialized_generate": "§cĮsitikinkite, kad pasaulis įkeltas & variklis įjungiamas.  Pavyzdžiui, generuoti naują gabalą.",

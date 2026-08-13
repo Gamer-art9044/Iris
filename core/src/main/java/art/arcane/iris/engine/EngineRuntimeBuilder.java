@@ -40,10 +40,10 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.math.M;
-import art.arcane.volmlib.util.math.RNG;
 
 import java.io.File;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static art.arcane.iris.engine.EngineShutdownSequence.propagate;
 
@@ -65,7 +65,7 @@ final class EngineRuntimeBuilder {
     }
 
     EngineRuntime buildRuntime(EngineTarget runtimeTarget) {
-        RuntimeAssembly assembly = new RuntimeAssembly(RNG.r.nextInt(), runtimeTarget);
+        RuntimeAssembly assembly = new RuntimeAssembly(RuntimeAssembly.nextRuntimeId(), runtimeTarget);
         engine.runtimeAssembly.set(assembly);
         try (IrisContext.Scope ignored = IrisContext.open(engine, engine.getGenerationSessions().currentSessionId(), null)) {
             IrisLogging.debug("Setup Engine " + assembly.cacheId);
@@ -279,8 +279,14 @@ final class EngineRuntimeBuilder {
     }
 
     static final class RuntimeAssembly {
+        private static final AtomicInteger RUNTIME_IDS = new AtomicInteger();
+
         final int cacheId;
         final EngineTarget target;
+
+        static int nextRuntimeId() {
+            return RUNTIME_IDS.incrementAndGet();
+        }
         IrisComplex complex;
         UpperDimensionContext upperContext;
         EngineEffects effects;

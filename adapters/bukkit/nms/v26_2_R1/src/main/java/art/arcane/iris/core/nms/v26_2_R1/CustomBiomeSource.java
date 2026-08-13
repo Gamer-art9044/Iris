@@ -57,6 +57,7 @@ public class CustomBiomeSource extends BiomeSource {
     private volatile KMap<String, Holder<Biome>> customBiomes;
     private volatile Map<Biome, Holder<Biome>> vanillaSpawnBiomes;
     private volatile IrisDimension cacheDimension;
+    private volatile int cacheRuntimeId;
 
     public CustomBiomeSource(long seed, Engine engine, World world) {
         this.engine = engine;
@@ -67,6 +68,7 @@ public class CustomBiomeSource extends BiomeSource {
         this.customBiomes = fillCustomBiomes(this.biomeCustomRegistry, engine, this.fallbackBiome);
         this.vanillaSpawnBiomes = fillVanillaSpawnBiomes(this.biomeCustomRegistry, this.biomeRegistry, engine);
         this.cacheDimension = engine.getDimension();
+        this.cacheRuntimeId = engine.getCacheID();
     }
 
     private static List<Holder<Biome>> getAllBiomes(Registry<Biome> customRegistry, Registry<Biome> registry, Engine engine) {
@@ -246,11 +248,11 @@ public class CustomBiomeSource extends BiomeSource {
         }
         GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_spawn_biome");
         if (lease == null) {
-            throw new IllegalStateException("Iris spawn biome lookup was rejected during an engine transition");
+            return null;
         }
         try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             if (!isRuntimeAvailable()) {
-                throw new IllegalStateException("Iris spawn biome lookup has no active engine runtime");
+                return null;
             }
             ensureCachesCurrent();
             return vanillaSpawnBiomes.get(biome.value());
@@ -434,11 +436,12 @@ public class CustomBiomeSource extends BiomeSource {
 
     private void ensureCachesCurrent() {
         IrisDimension dimension = engine.getDimension();
-        if (cacheDimension == dimension) {
+        int runtimeId = engine.getCacheID();
+        if (cacheDimension == dimension && cacheRuntimeId == runtimeId) {
             return;
         }
         synchronized (this) {
-            if (cacheDimension == dimension) {
+            if (cacheDimension == dimension && cacheRuntimeId == runtimeId) {
                 return;
             }
             KMap<String, Holder<Biome>> refreshedCustomBiomes = fillCustomBiomes(
@@ -451,6 +454,7 @@ public class CustomBiomeSource extends BiomeSource {
             customBiomes = refreshedCustomBiomes;
             vanillaSpawnBiomes = refreshedSpawnBiomes;
             cacheDimension = dimension;
+            cacheRuntimeId = runtimeId;
         }
     }
 

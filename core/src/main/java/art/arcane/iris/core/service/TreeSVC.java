@@ -23,6 +23,7 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.EngineLifecycleTasks;
 import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -270,13 +271,17 @@ public class TreeSVC implements IrisService {
                         IrisServices.get(ExternalDataSVC.class).processUpdate(engine, block, data.getCustom());
                     } else block.setBlockData(d, false);
                     int mantleY = block.getY() - event.getWorld().getMinHeight();
-                    engine.getMantle().getMantle().set(block.getX(), mantleY, block.getZ(), treeMarker);
-                    engine.getMantle().getMantle().set(
-                            block.getX(),
-                            mantleY,
-                            block.getZ(),
-                            TreeBlockMaterial.of(block.getBlockData().getAsString())
-                    );
+                    // Lease-gated: the grow task can land after the engine started closing, and
+                    // an unleased mantle write would race the region flush.
+                    EngineLifecycleTasks.run(engine, "tree_grow_mantle", () -> {
+                        engine.getMantle().getMantle().set(block.getX(), mantleY, block.getZ(), treeMarker);
+                        engine.getMantle().getMantle().set(
+                                block.getX(),
+                                mantleY,
+                                block.getZ(),
+                                TreeBlockMaterial.of(block.getBlockData().getAsString())
+                        );
+                    });
                 }
             }
         };

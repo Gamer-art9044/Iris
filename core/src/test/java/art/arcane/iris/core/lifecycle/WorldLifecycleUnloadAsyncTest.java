@@ -1,9 +1,13 @@
 package art.arcane.iris.core.lifecycle;
 
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
+import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
+import org.bukkit.event.world.WorldUnloadEvent;
+import org.bukkit.plugin.PluginManager;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 
 import java.lang.reflect.Method;
 import java.util.concurrent.CompletableFuture;
@@ -16,10 +20,43 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class WorldLifecycleUnloadAsyncTest {
+    @Test
+    public void manualUnloadFallbackDispatchesWorldUnloadEvent() {
+        World world = mock(World.class);
+        PluginManager pluginManager = mock(PluginManager.class);
+
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+            bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+            assertTrue(WorldLifecycleSupport.announceManualWorldUnload(world));
+        }
+
+        verify(pluginManager).callEvent(any(WorldUnloadEvent.class));
+    }
+
+    @Test
+    public void manualUnloadFallbackHonorsCancelledWorldUnloadEvent() {
+        World world = mock(World.class);
+        PluginManager pluginManager = mock(PluginManager.class);
+        doAnswer(invocation -> {
+            WorldUnloadEvent event = invocation.getArgument(0);
+            event.setCancelled(true);
+            return null;
+        }).when(pluginManager).callEvent(any(WorldUnloadEvent.class));
+
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+            bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+            assertFalse(WorldLifecycleSupport.announceManualWorldUnload(world));
+        }
+    }
+
     @Test
     public void reflectedAsyncUnloadWaitsForTrueCallback() throws Exception {
         CallbackServer server = new CallbackServer();

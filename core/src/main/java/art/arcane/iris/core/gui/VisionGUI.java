@@ -528,14 +528,16 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
             });
             return;
         }
+        double frameMs = 0;
         try {
-            paintBody(gx);
+            frameMs = paintBody(gx);
         } catch (Throwable e) {
             IrisLogging.debug("Vision paint failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         } finally {
             // The repaint loop is entirely self-driven from here; it must survive any render
-            // exception or the window freezes on a stale frame permanently.
-            long sleepMs = eco ? 32 : 16;
+            // exception or the window freezes on a stale frame permanently. Frame-time
+            // compensated so a slow frame does not stack a full sleep on top of itself.
+            long sleepMs = Math.max(1, (eco ? 32 : 16) - (long) frameMs);
             J.a(() -> {
                 J.sleep(sleepMs);
                 repaint();
@@ -543,7 +545,7 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
         }
     }
 
-    private void paintBody(Graphics gx) {
+    private double paintBody(Graphics gx) {
 
         velocity = Math.abs(ox - oxp) * 0.36 + Math.abs(oz - ozp) * 0.36;
         oxp = lerp(oxp, ox, 0.36);
@@ -630,11 +632,7 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
 
         handleFollow();
         renderOverlays(g, p.getMilliseconds());
-
-        if (!isVisible() || !getParent().isVisible()) {
-            return;
-        }
-
+        return p.getMilliseconds();
     }
 
     private void renderGrid(Graphics2D g, int tileSize, double offsetX, double offsetZ) {

@@ -329,8 +329,7 @@ public class CommandStudio implements DirectorExecutor {
             return;
         }
         if (radius <= 0 || radius > 2048) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_ONLY_WORKS_IRIS_WORLD));
-            sender().sendMessage("Radius must be between 1 and 2048 chunks.");
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_REGIONS_RADIUS_OUT_OF_RANGE));
             return;
         }
         var sender = sender();
@@ -393,7 +392,8 @@ public class CommandStudio implements DirectorExecutor {
                     data.forEach((k, v) -> sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_STUDIO_MESSAGE, MessageArgument.untrusted("k", k), MessageArgument.untrusted("value", loader.load(k).getRarity()), MessageArgument.untrusted("value2", Form.f((double) v.get() / totalTasks * 100, 2)))));
                     } catch (Throwable e) {
                         Iris.reportError(e);
-                        sender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_ONLY_WORKS_IRIS_WORLD));
+                        sender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_REGIONS_SCAN_FAILED,
+                                MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
                     } finally {
                         if (c != -1) {
                             J.car(c);
@@ -712,7 +712,7 @@ public class CommandStudio implements DirectorExecutor {
         }
     }
 
-    @Director(aliases = "find-objects", description = "Capture an IGenData chunk report for nearby chunks", descriptionKey = "iris.director.commandstudio.director.capture_igendata_chunk_report_nearby_chunks")
+    @Director(aliases = "find-objects", description = "Capture an IGenData chunk report for nearby chunks", descriptionKey = "iris.director.commandstudio.director.capture_igendata_chunk_report_nearby_chunks", origin = DirectorOrigin.PLAYER)
     public void objects() {
         if (!IrisToolbelt.isIrisWorld(player().getWorld())) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_YOU_MUST_BE_IRIS_WORLD));

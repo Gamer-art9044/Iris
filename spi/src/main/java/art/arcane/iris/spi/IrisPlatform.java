@@ -195,4 +195,17 @@ public interface IrisPlatform {
      * Hands a throwable to the host's error reporting. Safe from any thread; must not rethrow.
      */
     void reportError(Throwable error);
+
+    /**
+     * Contextual variant of {@link #reportError(Throwable)}. The platform owns trace emission so
+     * each adapter prints exactly one copy and its own suppression (throttles, debug gates) is
+     * honored; the default preserves the historical behavior of reporting plus an unconditional
+     * stack trace on stderr.
+     */
+    default void reportError(String context, Throwable error) {
+        reportError(error);
+        if (error != null) {
+            error.printStackTrace(System.err);
+        }
+    }
 }

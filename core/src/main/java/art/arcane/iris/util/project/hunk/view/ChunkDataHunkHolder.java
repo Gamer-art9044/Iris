@@ -21,6 +21,7 @@ package art.arcane.iris.util.project.hunk.view;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.B;
+import art.arcane.iris.util.common.data.IrisCustomData;
 import art.arcane.iris.util.project.hunk.storage.AtomicHunk;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.generator.ChunkGenerator.ChunkData;
@@ -88,6 +89,11 @@ public class ChunkDataHunkHolder extends AtomicHunk<PlatformBlockState> {
                 for (int y = 0; y < height; y++) {
                     PlatformBlockState state = super.getRaw(x, y, z);
                     BlockData block = state == null ? null : (BlockData) state.nativeHandle();
+                    // Custom wrappers are not real Bukkit data; write the vanilla base like the
+                    // NMS fast path (NMSBinding.applyChunkDataBlocks) does.
+                    if (block instanceof IrisCustomData custom) {
+                        block = custom.getBase();
+                    }
                     if (block == null) {
                         flushRun(x, z, runStart, y, activeBlock);
                         activeBlock = null;

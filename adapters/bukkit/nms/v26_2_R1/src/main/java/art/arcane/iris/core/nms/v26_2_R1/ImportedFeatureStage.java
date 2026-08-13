@@ -57,6 +57,7 @@ final class ImportedFeatureStage {
     private final Engine engine;
     private volatile FeatureTable featureTable;
     private volatile IrisDimension inertDimension;
+    private volatile int settledRuntimeId;
 
     ImportedFeatureStage(Engine engine) {
         this.engine = engine;
@@ -86,18 +87,23 @@ final class ImportedFeatureStage {
      */
     void prepare(WorldGenLevel level) {
         IrisDimension dimension = engine.getDimension();
-        if (settled(dimension)) {
+        int runtimeId = engine.getCacheID();
+        if (settled(dimension, runtimeId)) {
             return;
         }
         synchronized (this) {
-            if (settled(dimension)) {
+            if (settled(dimension, runtimeId)) {
                 return;
             }
             build(level, dimension);
+            settledRuntimeId = runtimeId;
         }
     }
 
-    private boolean settled(IrisDimension dimension) {
+    private boolean settled(IrisDimension dimension, int runtimeId) {
+        if (settledRuntimeId != runtimeId) {
+            return false;
+        }
         FeatureTable current = featureTable;
         if (current != null && current.dimension() == dimension) {
             return true;

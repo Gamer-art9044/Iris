@@ -507,6 +507,14 @@ public final class BukkitCommandMessagesExtended {
             "iris.bukkit.commandpregen.pregen_radius_must_be_greater_than_zero_blocks",
             C.RED + "Pregen radius must be greater than zero blocks."
     );
+    public static final TextKey COMMAND_STUDIO_REGIONS_RADIUS_OUT_OF_RANGE = TextKey.of(
+            "iris.bukkit.commandstudio.regions_radius_out_of_range",
+            C.RED + "Radius must be between 1 and 2048 chunks."
+    );
+    public static final TextKey COMMAND_STUDIO_REGIONS_SCAN_FAILED = TextKey.of(
+            "iris.bukkit.commandstudio.regions_scan_failed",
+            C.RED + "Region scan failed: {value}"
+    );
     public static final TextKey COMMAND_PREGEN_STRICT_SERIAL_PREGENERATION_REQUIRES_PAPER_PAPER_COMPATIBLE_SERVER = TextKey.of(
             "iris.bukkit.commandpregen.strict_serial_pregeneration_requires_paper_paper_compatible_server",
             C.RED + "Strict serial pregeneration requires Paper or a Paper-compatible server."
@@ -965,6 +973,8 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_OBJECT_NO_AREA_SELECTED_4,
             COMMAND_OBJECT_AUTO_SELECT_COMPLETE_2,
             COMMAND_PREGEN_PREGEN_RADIUS_MUST_BE_GREATER_THAN_ZERO_BLOCKS,
+            COMMAND_STUDIO_REGIONS_RADIUS_OUT_OF_RANGE,
+            COMMAND_STUDIO_REGIONS_SCAN_FAILED,
             COMMAND_PREGEN_STRICT_SERIAL_PREGENERATION_REQUIRES_PAPER_PAPER_COMPATIBLE_SERVER,
             COMMAND_PREGEN_ENGINE_ACCESS_THIS_WORLD_IS_NULL,
             COMMAND_PREGEN_PLEASE_MAKE_SURE_WORLD_IS_LOADED_ENGINE_IS_INITIALIZED_GENERATE,

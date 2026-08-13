@@ -124,7 +124,16 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
             service.shutdown();
             throw new IllegalStateException("An Iris pregeneration job is already running; stop it first.");
         }
-        worker.start();
+        try {
+            worker.start();
+        } catch (Throwable startFailure) {
+            // Un-publish: a worker that never started can never run onClose(), so nothing
+            // else would ever clear this instance via the normal path.
+            instance.compareAndSet(this, null);
+            monitor.close();
+            service.shutdown();
+            throw startFailure;
+        }
     }
 
     private void computeBounds() {

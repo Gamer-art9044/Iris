@@ -85,13 +85,16 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
         ExecutorService active = warmupExecutor;
         warmupExecutor = null;
         if (active != null) {
-            // Drop queued warm-ups (pure prefetch) and AWAIT: the very next shutdown stage
-            // closes every Mantle, and an in-flight mantle.getChunk would fault a plate back
-            // in after the close-time flush.
-            active.shutdownNow();
+            // NEVER interrupt first: an interrupt inside a FileChannel plate read closes the
+            // channel (ClosedByInterruptException) and the read-failure fallback installs an
+            // EMPTY plate that the very next shutdown stage flushes over real data. Queued
+            // warm-ups self-cancel (warmupExecutor is already null), so shutdown() + await
+            // only waits on the single in-flight load; escalate only on timeout.
+            active.shutdown();
             try {
                 if (!active.awaitTermination(5L, TimeUnit.SECONDS)) {
-                    IrisLogging.warn("Iris mantle warm-up did not stop before engine close");
+                    IrisLogging.warn("Iris mantle warm-up did not stop before engine close; forcing interrupt");
+                    active.shutdownNow();
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -279,6 +282,12 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
         }
         try {
             active.execute(() -> {
+                // Self-cancel on shutdown: warmupExecutor is nulled first in onDisable, so
+                // queued prefetches no-op instantly and only an in-flight load is awaited.
+                if (warmupExecutor == null || mantle.isClosed()) {
+                    warmupQueue.remove(key);
+                    return;
+                }
                 try {
                     mantle.getChunk(chunkX, chunkZ);
                 } catch (Throwable e) {

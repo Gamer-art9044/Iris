@@ -492,7 +492,9 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
         }
 
         long sleepMs = Math.max(1, 16 - (long) p.getMilliseconds());
-        EventQueue.invokeLater(() -> {
+        // Pace on a worker, not the EDT: a sleep queued on the event thread blocks painting
+        // and input for the whole frame budget. repaint() marshals itself back.
+        J.a(() -> {
             J.sleep(sleepMs);
             repaint();
         });

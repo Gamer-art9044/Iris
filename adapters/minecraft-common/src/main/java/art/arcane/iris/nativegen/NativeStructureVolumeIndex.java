@@ -329,7 +329,18 @@ public final class NativeStructureVolumeIndex {
         CompletableFuture<KList<NativeStructureVolume>> future = new CompletableFuture<>();
         CompletableFuture<KList<NativeStructureVolume>> existing = builds.putIfAbsent(key, future);
         if (existing != null) {
-            return existing.join();
+            return NativeBuildFutures.awaitBuild(existing, "Native structure volume build");
+        }
+
+        // Close the check-then-claim window: a racer whose cache check missed before the
+        // previous builder cached could claim the build slot after it retired and rebuild.
+        synchronized (cache) {
+            KList<NativeStructureVolume> published = cache.get(key);
+            if (published != null) {
+                future.complete(published);
+                builds.remove(key, future);
+                return published;
+            }
         }
 
         try {

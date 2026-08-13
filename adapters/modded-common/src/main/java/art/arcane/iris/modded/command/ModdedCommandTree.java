@@ -70,9 +70,10 @@ final class ModdedCommandTree {
                 .then(Commands.argument("dimension", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.DIMENSION_NAMES)
                         .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), StringArgumentType.getString(context, "dimension")))));
 
-        // ModdedWhatCommands.tree() gates itself at LEVEL_GAMEMASTERS; the /iris what overlays are read-only,
-        // so the root builder relaxes the whole subtree here instead of forking that file.
-        root.then(ModdedWhatCommands.tree().requires(READ_ONLY));
+        // ModdedWhatCommands.tree() gates itself at LEVEL_GAMEMASTERS and keeps that gate:
+        // "what markers" drives lease-gated 9x9 mantle scans, and the Bukkit twin puts the
+        // whole tree behind an op-default permission. requires() would overwrite, not AND.
+        root.then(ModdedWhatCommands.tree());
 
         root.then(teleportTree("teleport"));
         root.then(teleportTree("tp"));

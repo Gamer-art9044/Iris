@@ -285,7 +285,20 @@ public final class ModdedObjectCommands {
             return 0;
         }
         File file = new File(engine.getData().getDataFolder(), "objects" + File.separator + name.replace('/', File.separatorChar) + ".iob");
-        if (file.exists() && !overwrite) {
+        // Atomic path claim ON the server thread: the async write below turned a plain
+        // exists() check into a TOCTOU where two rapid saves interleaved into one file.
+        File parent = file.getParentFile();
+        if (parent != null) {
+            parent.mkdirs();
+        }
+        boolean claimed;
+        try {
+            claimed = file.createNewFile();
+        } catch (IOException e) {
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_FAILED_SAVE_OBJECT, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
+            return 0;
+        }
+        if (!claimed && !overwrite) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_FILE_ALREADY_EXISTS_USE_IRIS_OBJECT_SAVE_OVERWRITE, MessageArgument.untrusted("name", name)));
             return 0;
         }
@@ -295,15 +308,16 @@ public final class ModdedObjectCommands {
         // async-safe), but the disk write of a local, unshared object is not tick work.
         IrisObject object = capture(level, min, max, w, h, d, tilesSkipped, tilesSaved);
         MinecraftServer server = source.getServer();
+        boolean finalClaimed = claimed;
         J.a(() -> {
-            File parent = file.getParentFile();
-            if (parent != null) {
-                parent.mkdirs();
-            }
             try {
                 object.write(file);
             } catch (IOException e) {
                 LOGGER.error("Iris object save failed for {}", file.getAbsolutePath(), e);
+                if (finalClaimed) {
+                    // Never leave a 0-byte claim file permanently blocking non-overwrite saves.
+                    file.delete();
+                }
                 server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_FAILED_SAVE_OBJECT, MessageArgument.untrusted("value", String.valueOf(e.getMessage())))));
                 return;
             }

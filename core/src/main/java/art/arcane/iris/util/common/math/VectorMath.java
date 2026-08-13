@@ -75,19 +75,4 @@ public class VectorMath extends art.arcane.volmlib.util.math.VectorMath {
         return v;
     }
 
-    public static Vector getAxis(Direction current, Direction to) {
-        if (current.equals(Direction.U) || current.equals(Direction.D)) {
-            if (to.equals(Direction.U) || to.equals(Direction.D)) {
-                return new Vector(1, 0, 0);
-            } else {
-                if (current.equals(Direction.N) || current.equals(Direction.S)) {
-                    return Direction.E.toVector();
-                } else {
-                    return Direction.S.toVector();
-                }
-            }
-        }
-
-        return new Vector(0, 1, 0);
-    }
 }

@@ -39,6 +39,7 @@ import art.arcane.iris.core.pregenerator.methods.HybridPregenMethod;
 import art.arcane.iris.core.service.GlobalCacheSVC;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.EngineLifecycleTasks;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
@@ -643,7 +644,10 @@ public class IrisToolbelt {
         if (e == null) {
             return null;
         }
-        return e.getEngine().getMantle().getMantle().get(x, y - world.getMinHeight(), z, of);
+        // Lease-gated so the engine shutdown drain covers these public accessors; a mantle
+        // mid-close refuses the lease instead of racing the region flush.
+        return EngineLifecycleTasks.call(e.getEngine(), "api_mantle_get",
+                () -> e.getEngine().getMantle().getMantle().get(x, y - world.getMinHeight(), z, of), null);
     }
 
     public static <T> void deleteMantleData(World world, int x, int y, int z, Class<T> of) {
@@ -651,7 +655,8 @@ public class IrisToolbelt {
         if (e == null) {
             return;
         }
-        e.getEngine().getMantle().getMantle().remove(x, y - world.getMinHeight(), z, of);
+        EngineLifecycleTasks.run(e.getEngine(), "api_mantle_delete",
+                () -> e.getEngine().getMantle().getMantle().remove(x, y - world.getMinHeight(), z, of));
     }
 
     public static <T> void setMantleData(World world, int x, int y, int z, T data) {
@@ -659,7 +664,8 @@ public class IrisToolbelt {
         if (e == null || data == null) {
             return;
         }
-        e.getEngine().getMantle().getMantle().set(x, y - world.getMinHeight(), z, data);
+        EngineLifecycleTasks.run(e.getEngine(), "api_mantle_set",
+                () -> e.getEngine().getMantle().getMantle().set(x, y - world.getMinHeight(), z, data));
     }
 
     public static boolean removeWorld(World world) throws IOException {

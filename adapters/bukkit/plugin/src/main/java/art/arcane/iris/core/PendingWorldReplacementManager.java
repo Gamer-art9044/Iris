@@ -468,7 +468,21 @@ public final class PendingWorldReplacementManager implements Listener {
     }
 
     private List<Transaction> loadTransactions() throws IOException {
-        return WorldReplacementJournal.load(dataDirectory(), IrisWorldStorage.levelRoot().toPath());
+        Path levelRoot = IrisWorldStorage.levelRoot().toPath();
+        List<Transaction> transactions = WorldReplacementJournal.load(dataDirectory(), levelRoot);
+        List<Transaction> applicable = new ArrayList<>(transactions.size());
+        for (Transaction transaction : transactions) {
+            // A journal staged against another level root is not this server's transaction;
+            // skip it (the bootstrap already told the operator how to resolve it).
+            if (WorldReplacementJournal.appliesTo(transaction, levelRoot)) {
+                applicable.add(transaction);
+            } else {
+                Iris.warn("Ignoring pending world replacement " + transaction.id() + " for "
+                        + transaction.worldKey() + "; it was staged against level root "
+                        + transaction.levelRoot() + ".");
+            }
+        }
+        return applicable;
     }
 
     private void writeTransaction(Transaction transaction) throws IOException {

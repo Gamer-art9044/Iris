@@ -34,7 +34,6 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.protocol.IrisMessage;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.localization.MessageArgument;
-import art.arcane.volmlib.util.math.RNG;
 
 import static art.arcane.iris.engine.EngineShutdownSequence.runCleanup;
 
@@ -64,7 +63,7 @@ final class EngineHotloader {
             IrisComplex nextComplex = null;
             try {
                 engine.sealForTransition("complex hotload", false);
-                RuntimeAssembly assembly = new RuntimeAssembly(RNG.r.nextInt(), previous.target());
+                RuntimeAssembly assembly = new RuntimeAssembly(RuntimeAssembly.nextRuntimeId(), previous.target());
                 engine.runtimeAssembly.set(assembly);
                 EngineRuntime next;
                 try (IrisContext.Scope ignored = IrisContext.open(engine, engine.getGenerationSessions().currentSessionId(), null)) {

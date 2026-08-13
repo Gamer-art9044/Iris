@@ -800,6 +800,18 @@ public final class ModdedWorldManager implements EngineWorldManager {
         }
         if (!mantleWarmupExecutorStopped) {
             try {
+                // Drain, don't interrupt: an interrupt inside a FileChannel plate read closes
+                // the channel and the read-failure fallback installs an empty plate that a
+                // later flush persists over real data. Queued tasks no-op on the closed flag,
+                // so the await only covers a single in-flight load; escalate on timeout only.
+                mantleWarmupExecutor.shutdown();
+                if (!mantleWarmupExecutor.awaitTermination(5L, java.util.concurrent.TimeUnit.SECONDS)) {
+                    IrisLogging.warn("Iris mantle warm-up did not stop before world manager close; forcing interrupt");
+                    mantleWarmupExecutor.shutdownNow();
+                }
+                mantleWarmupExecutorStopped = true;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
                 mantleWarmupExecutor.shutdownNow();
                 mantleWarmupExecutorStopped = true;
             } catch (Throwable e) {

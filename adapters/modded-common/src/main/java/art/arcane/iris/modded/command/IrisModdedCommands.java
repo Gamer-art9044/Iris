@@ -27,7 +27,6 @@ import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
 import art.arcane.iris.modded.ModdedForcedDatapack;
 import art.arcane.iris.modded.ModdedLoader;
-import art.arcane.iris.modded.ModdedPackInstaller;
 import art.arcane.iris.modded.ModdedScheduler;
 import art.arcane.iris.modded.ModdedServerLevels;
 import art.arcane.iris.modded.ModdedWorldgenIds;
@@ -53,6 +52,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
@@ -258,52 +258,66 @@ public final class IrisModdedCommands {
         return 1;
     }
 
-    static int download(CommandSourceStack source, String pack,
-                        String branch, boolean forceOverwrite) {
-        boolean managed = PackDownloader.isManagedPack(pack);
-        boolean directUrl = PackDownloader.isDirectZipUrl(pack);
-        String baseDownloadSource = directUrl ? "direct ZIP URL"
-                : managed ? "configured Git source" : "branch " + branch;
-        String downloadSource = forceOverwrite
-                ? baseDownloadSource + IrisLanguage.plain(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX)
-                : baseDownloadSource;
-        ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("downloadSource", downloadSource)));
+    static int download(CommandSourceStack source, String rawRequest) {
+        DownloadRequest request = parseDownloadRequest(rawRequest);
+        if (request == null) {
+            fail(source, "Use /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>.");
+            return 0;
+        }
+        String target = request.pack() == null ? request.url() : request.pack();
+        String downloadSource = request.pack() == null ? "direct ZIP URL" : "built-in beta release";
+        ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", target), MessageArgument.untrusted("downloadSource", downloadSource)));
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
         if (scheduler == null) {
             fail(source, IrisLanguage.plain(
                     ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
-                    MessageArgument.untrusted("pack", pack),
+                    MessageArgument.untrusted("pack", target),
                     MessageArgument.untrusted("downloadSource", downloadSource)));
             return 0;
         }
         scheduler.async(() -> {
-            boolean installed;
-            if (directUrl) {
-                File packs = ModdedPackCommands.packsRoot();
-                try {
-                    PackDownloader.PackInstallResult result = PackDownloader.downloadUrl(
-                            packs,
-                            pack,
-                            forceOverwrite,
-                            (String message) -> scheduler.global(() -> ok(source, message))
-                    );
-                    installed = result != null;
-                } catch (IOException error) {
-                    LOGGER.error("Iris pack download failed for direct URL {}", pack, error);
-                    installed = false;
-                }
-            } else {
-                installed = ModdedPackInstaller.install(
-                        ModdedEngineBootstrap.loader().configDir(), pack, branch, forceOverwrite, false,
-                        (String message) -> scheduler.global(() -> ok(source, message)));
+            boolean installed = false;
+            File packs = ModdedPackCommands.packsRoot();
+            try {
+                PackDownloader.PackInstallResult result = request.pack() == null
+                        ? PackDownloader.downloadUrl(
+                                packs,
+                                request.url(),
+                                false,
+                                (String message) -> scheduler.global(() -> ok(source, message))
+                        )
+                        : PackDownloader.downloadBuiltIn(
+                                packs,
+                                request.pack(),
+                                false,
+                                (String message) -> scheduler.global(() -> ok(source, message))
+                        );
+                installed = result != null;
+            } catch (IOException | RuntimeException error) {
+                LOGGER.error("Iris pack download failed for {}", target, error);
             }
             if (installed) {
                 scheduler.global(() -> ok(source, "Pack installed on disk. Restart the server before using it."));
             } else {
-                scheduler.global(() -> fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("downloadSource", downloadSource))));
+                scheduler.global(() -> fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE, MessageArgument.untrusted("pack", target), MessageArgument.untrusted("downloadSource", downloadSource))));
             }
         });
         return 1;
+    }
+
+    static DownloadRequest parseDownloadRequest(String rawRequest) {
+        if (rawRequest == null || rawRequest.isBlank()) {
+            return null;
+        }
+        if (rawRequest.startsWith("pack=")) {
+            String pack = rawRequest.substring("pack=".length()).trim().toLowerCase(Locale.ROOT);
+            return PackDownloader.isBuiltInPack(pack) ? new DownloadRequest(pack, null) : null;
+        }
+        if (rawRequest.startsWith("link=")) {
+            String url = rawRequest.substring("link=".length()).trim();
+            return PackDownloader.isDirectZipUrl(url) ? new DownloadRequest(null, url) : null;
+        }
+        return null;
     }
 
     static int metrics(CommandSourceStack source) {
@@ -370,5 +384,8 @@ public final class IrisModdedCommands {
 
     static void fail(CommandSourceStack source, String message) {
         ModdedCommandFeedback.fail(source, message);
+    }
+
+    record DownloadRequest(String pack, String url) {
     }
 }

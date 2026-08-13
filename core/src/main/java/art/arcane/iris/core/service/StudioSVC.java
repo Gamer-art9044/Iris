@@ -18,7 +18,6 @@
 
 package art.arcane.iris.core.service;
 
-import com.google.gson.JsonSyntaxException;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.IrisSettings;
@@ -48,7 +47,6 @@ import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
-import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.volmlib.util.io.IO;
@@ -87,11 +85,9 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.PackDownloadMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public class StudioSVC implements IrisService {
-    public static final String LISTING = "https://raw.githubusercontent.com/IrisDimensions/_listing/main/listing-v2.json";
     public static final String WORKSPACE_NAME = "packs";
     private static final Pattern PROJECT_NAME = Pattern.compile("[a-z0-9_-]+");
     private static final AtomicCache<Integer> counter = new AtomicCache<>();
-    private final KMap<String, String> cacheListing = null;
     private final StudioTransitionQueue studioTransitions = new StudioTransitionQueue();
     private volatile IrisProject activeProject;
     private volatile CompletableFuture<StudioOpenCoordinator.StudioOpenResult> activeOpen;
@@ -101,7 +97,7 @@ public class StudioSVC implements IrisService {
         String configuredPack = IrisSettings.get().getGenerator().getDefaultWorldType();
         if (!PackDownloader.isPackPresent(getWorkspaceFolder(), configuredPack)) {
             IrisLogging.warn("Default pack '" + configuredPack
-                    + "' is not installed. Please download it manually with /iris download " + configuredPack);
+                    + "' is not installed. Install a built-in pack with /iris download pack=overworld or provide /iris download link=<zip-url>.");
         }
     }
 
@@ -332,29 +328,18 @@ public class StudioSVC implements IrisService {
         return replaceIntoPackDirectory(sender, dimension, folder);
     }
 
-    public void downloadSearch(VolmitSender sender, String key) {
-        downloadSearch(sender, key, false);
-    }
-
-    public void downloadSearch(VolmitSender sender, String key, boolean forceOverwrite) {
-        runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, key, () -> {
-            DownloadOutcome outcome = downloadSearchLocked(sender, key, forceOverwrite);
-            return finishStandalonePackMutation(outcome);
-        }, IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_DOWNLOAD, MessageArgument.untrusted("key", String.valueOf(key))));
-    }
-
-    public void downloadManaged(VolmitSender sender, String key, boolean forceOverwrite) {
-        if (!PackDownloader.isManagedPack(key)) {
-            sender.sendMessage("Iris pack '" + key + "' does not have a managed Git source.");
+    public void downloadBuiltIn(VolmitSender sender, String key) {
+        if (!PackDownloader.isBuiltInPack(key)) {
+            sender.sendMessage("Iris only provides built-in downloads for 'overworld' and 'underworld'.");
             return;
         }
         runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, key, () -> {
-            DownloadOutcome outcome = downloadManagedLocked(sender, key, forceOverwrite);
+            DownloadOutcome outcome = downloadBuiltInLocked(sender, key);
             return finishStandalonePackMutation(outcome);
-        }, "Failed to download managed Iris pack '" + key + "'.");
+        }, "Failed to download built-in Iris pack '" + key + "'.");
     }
 
-    public void downloadUrl(VolmitSender sender, String url, boolean forceOverwrite) {
+    public void downloadUrl(VolmitSender sender, String url) {
         if (!PackDownloader.isDirectZipUrl(url)) {
             sender.sendMessage("Iris requires a valid HTTP or HTTPS .zip URL.");
             return;
@@ -363,129 +348,26 @@ public class StudioSVC implements IrisService {
             DownloadOutcome outcome = DownloadOutcome.from(PackDownloader.downloadUrl(
                     getWorkspaceFolder(),
                     url,
-                    forceOverwrite,
+                    false,
                     sender::sendMessage
             ));
             return finishStandalonePackMutation(outcome);
         }, "Failed to download Iris pack from '" + url + "'.");
     }
 
-    public void downloadBranch(VolmitSender sender, String repo, String branch, boolean forceOverwrite) {
-        runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, repo + "/" + branch, () -> {
-            DownloadOutcome outcome = downloadLocked(sender, repo, branch, forceOverwrite, false, null);
-            return finishStandalonePackMutation(outcome);
-        }, IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FAILED_DOWNLOAD_BRANCH, MessageArgument.untrusted("repo", String.valueOf(repo)), MessageArgument.untrusted("branch", String.valueOf(branch))));
-    }
-
-    public void download(VolmitSender sender, String repo, String branch) throws JsonSyntaxException, IOException {
-        download(sender, repo, branch, false, false);
-    }
-
-    public void download(VolmitSender sender, String repo, String branch, boolean forceOverwrite, boolean directUrl) throws JsonSyntaxException, IOException {
-        download(sender, repo, branch, forceOverwrite, directUrl, null);
-    }
-
-    public void download(VolmitSender sender, String repo, String branch, boolean forceOverwrite, boolean directUrl, String expectedKey) throws JsonSyntaxException, IOException {
-        String target = expectedKey == null ? repo + "/" + branch : expectedKey;
-        runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, target, () -> {
-            DownloadOutcome outcome = downloadLocked(sender, repo, branch, forceOverwrite, directUrl, expectedKey);
-            return finishStandalonePackMutation(outcome);
-        }, "Failed to download Iris pack '" + target + "'.");
-    }
-
-    private DownloadOutcome downloadSearchLocked(VolmitSender sender, String key, boolean forceOverwrite) throws IOException {
-        if (PackDownloader.isManagedPack(key)) {
-            return downloadManagedLocked(sender, key, forceOverwrite);
-        }
-
-        String descriptor = key.contains("/") ? key : getListing(false).get(key);
-        if (descriptor == null) {
-            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_PACK_WAS_NOT_FOUND_PACK_LISTING, MessageArgument.untrusted("key", String.valueOf(key))));
-            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_USE_IRIS_DOWNLOAD_PACK_BRANCH_BRANCH_DOWNLOAD_MANUALLY));
+    private DownloadOutcome downloadBuiltInLocked(VolmitSender sender, String expectedKey) throws IOException {
+        if (PackDownloader.isBuiltInPackPresent(getWorkspaceFolder(), expectedKey)) {
+            sender.sendMessage(IrisLanguage.text(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
             return DownloadOutcome.notChanged();
         }
 
-        PackListingReference reference = resolvePackListingReference(key, descriptor);
-        IrisLogging.info("Resolved pack '" + key + "' to " + reference.repository() + "/" + reference.ref());
-        return downloadLocked(
-                sender,
-                reference.repository(),
-                reference.ref(),
-                forceOverwrite,
+        PackDownloader.PackInstallResult result = PackDownloader.downloadBuiltIn(
+                getWorkspaceFolder(),
+                expectedKey,
                 false,
-                reference.expectedKey()
-        );
-    }
-
-    static PackListingReference resolvePackListingReference(String key, String descriptor) {
-        String[] nodes = descriptor.split("\\Q/\\E");
-        String repository = nodes.length == 1 ? "IrisDimensions/" + nodes[0] : nodes[0] + "/" + nodes[1];
-        String ref = nodes.length > 2 ? nodes[2] : "HEAD";
-        String expectedKey = key.contains("/") && nodes.length > 1 ? nodes[1] : key;
-        return new PackListingReference(repository, ref, expectedKey);
-    }
-
-    private DownloadOutcome downloadManagedLocked(
-            VolmitSender sender,
-            String expectedKey,
-            boolean forceOverwrite
-    ) throws IOException {
-        if (!forceOverwrite && PackDownloader.isManagedPackPresent(getWorkspaceFolder(), expectedKey)) {
-            sender.sendMessage(IrisLanguage.text(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
-            return DownloadOutcome.notChanged();
-        }
-
-        PackDownloader.PackInstallResult result = PackDownloader.downloadManaged(
-                getWorkspaceFolder(),
-                expectedKey,
-                forceOverwrite,
                 sender::sendMessage
         );
         return DownloadOutcome.from(result);
-    }
-
-    private DownloadOutcome downloadLocked(
-            VolmitSender sender,
-            String repo,
-            String branch,
-            boolean forceOverwrite,
-            boolean directUrl,
-            String expectedKey
-    ) throws IOException {
-        if (!forceOverwrite && PackDownloader.isPackPresent(getWorkspaceFolder(), expectedKey)) {
-            sender.sendMessage(IrisLanguage.text(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
-            return DownloadOutcome.notChanged();
-        }
-
-        PackDownloader.PackInstallResult result = PackDownloader.download(
-                getWorkspaceFolder(),
-                repo,
-                branch,
-                forceOverwrite,
-                directUrl,
-                expectedKey,
-                sender::sendMessage
-        );
-        return DownloadOutcome.from(result);
-    }
-
-    public KMap<String, String> getListing(boolean cached) {
-        JSONObject a;
-
-        if (cached) {
-            a = new JSONObject(art.arcane.iris.util.common.misc.WebCache.getCached("cachedlisting", LISTING));
-        } else {
-            a = new JSONObject(art.arcane.iris.util.common.misc.WebCache.getNonCached(true + "listing", LISTING));
-        }
-
-        KMap<String, String> l = new KMap<>();
-
-        for (String i : a.keySet()) {
-            if (a.get(i) instanceof String)
-                l.put(i, a.getString(i));
-        }
-
-        return l;
     }
 
     public boolean isProjectOpen() {
@@ -926,9 +808,6 @@ public class StudioSVC implements IrisService {
                 createStarterProject(workspace, projectName);
             } else {
                 File importPack = selectedTemplatePack == null ? new File(workspace, templateName) : selectedTemplatePack;
-                if (selectedTemplatePack == null && !hasLoadableDimensionFile(importPack, templateName)) {
-                    downloadSearchLocked(sender, templateName, false);
-                }
                 if (!hasLoadableDimensionFile(importPack, templateName)) {
                     sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_COULDN_T_FIND_PACK_CREATE_NEW_DIMENSION_FROM));
                     sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_MISSING_IMPORTED_DIMENSION_FILE));
@@ -1335,9 +1214,6 @@ public class StudioSVC implements IrisService {
         FAILED,
         OPEN,
         RESTART
-    }
-
-    record PackListingReference(String repository, String ref, String expectedKey) {
     }
 
     public IrisProject getActiveProject() {

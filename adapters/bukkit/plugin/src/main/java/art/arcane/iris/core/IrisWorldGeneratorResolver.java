@@ -175,8 +175,8 @@ public final class IrisWorldGeneratorResolver {
                         + " but its dimension failed to load; not redownloading. Fix or delete the pack folder.");
                 return null;
             }
-            Iris.warn("Unable to find dimension type " + id + ". Install its pack with /iris download "
-                    + id + " and restart the server.");
+            Iris.warn("Unable to find dimension type " + id + ". Install its pack with "
+                    + PackDownloader.downloadCommandFor(id) + " and restart the server.");
         }
 
         return dimension;

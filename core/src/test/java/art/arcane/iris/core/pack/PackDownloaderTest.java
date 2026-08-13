@@ -101,19 +101,23 @@ public class PackDownloaderTest {
     }
 
     @Test
-    public void resolvesDefaultOverworldGitSource() {
-        assertEquals("IrisDimensions/overworld", PackDownloader.defaultOverworldRepository());
-        assertEquals("master", PackDownloader.defaultOverworldRef());
+    public void resolvesDefaultOverworldBetaRelease() {
+        assertEquals(
+                "https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip",
+                PackDownloader.builtInPackUrl("overworld")
+        );
         assertTrue(PackDownloader.isDefaultOverworld("overworld"));
-        assertTrue(PackDownloader.isManagedPack("overworld"));
-        assertEquals(List.of("overworld", "underworld"), PackDownloader.managedPacks());
+        assertTrue(PackDownloader.isBuiltInPack("overworld"));
+        assertEquals(List.of("overworld", "underworld"), PackDownloader.builtInPacks());
     }
 
     @Test
-    public void resolvesUnderworldGitSource() {
-        assertEquals("IrisDimensions/underworld", PackDownloader.underworldRepository());
-        assertEquals("main", PackDownloader.underworldRef());
-        assertTrue(PackDownloader.isManagedPack("underworld"));
+    public void resolvesUnderworldBetaRelease() {
+        assertEquals(
+                "https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip",
+                PackDownloader.builtInPackUrl("underworld")
+        );
+        assertTrue(PackDownloader.isBuiltInPack("underworld"));
     }
 
     @Test
@@ -132,6 +136,8 @@ public class PackDownloaderTest {
         entries.put("README.md", "Direct pack");
         entries.put("wrapped/dimensions/direct_pack.json", "{\"name\":\"Direct\",\"regions\":[\"local\"],"
                 + "\"structures\":[{\"nativeStructures\":[{\"structure\":\"test:future_structure\"}]}],"
+                + "\"logicalHeight\":256,\"dimensionHeight\":{\"min\":-64,\"max\":320}}");
+        entries.put("wrapped/dimensions/direct_pack_supporting.json", "{\"name\":\"Supporting\",\"regions\":[\"local\"],"
                 + "\"logicalHeight\":256,\"dimensionHeight\":{\"min\":-64,\"max\":320}}");
         entries.put("wrapped/regions/local.json", "{\"name\":\"Local\",\"landBiomes\":[\"local\"]}");
         entries.put("wrapped/biomes/local.json", "{\"name\":\"Local\",\"derivative\":\"minecraft:plains\"}");
@@ -166,13 +172,16 @@ public class PackDownloaderTest {
             assertTrue(Files.isRegularFile(
                     packsFolder.toPath().resolve("direct_pack/dimensions/direct_pack.json")
             ));
+            assertTrue(Files.isRegularFile(
+                    packsFolder.toPath().resolve("direct_pack/dimensions/direct_pack_supporting.json")
+            ));
         } finally {
             server.stop(0);
         }
     }
 
     @Test
-    public void managedPackPresenceRequiresItsPrimaryDimension() throws Exception {
+    public void builtInPackPresenceRequiresItsPrimaryDimension() throws Exception {
         File packsFolder = temp.newFolder("managed-presence");
         Path dimensions = Files.createDirectories(
                 packsFolder.toPath().resolve("underworld/dimensions")
@@ -180,11 +189,11 @@ public class PackDownloaderTest {
         writeDimension(packsFolder.toPath().resolve("underworld"), "underworld_roof");
 
         assertTrue(PackDownloader.isPackPresent(packsFolder, "underworld"));
-        assertFalse(PackDownloader.isManagedPackPresent(packsFolder, "underworld"));
+        assertFalse(PackDownloader.isBuiltInPackPresent(packsFolder, "underworld"));
 
         writeDimension(packsFolder.toPath().resolve("underworld"), "underworld");
         assertTrue(Files.isDirectory(dimensions));
-        assertTrue(PackDownloader.isManagedPackPresent(packsFolder, "underworld"));
+        assertTrue(PackDownloader.isBuiltInPackPresent(packsFolder, "underworld"));
     }
 
     @Test
@@ -220,49 +229,9 @@ public class PackDownloaderTest {
         assertFalse(PackDownloader.isDefaultOverworld("theend"));
         assertFalse(PackDownloader.isDefaultOverworld(""));
         assertFalse(PackDownloader.isDefaultOverworld(null));
-        assertFalse(PackDownloader.isManagedPack("theend"));
-        assertFalse(PackDownloader.isManagedPack(""));
-        assertFalse(PackDownloader.isManagedPack(null));
-    }
-
-    @Test
-    public void resolvesBranchReference() {
-        assertEquals(
-                "https://codeload.github.com/IrisDimensions/overworld/zip/refs/heads/feature/release",
-                PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "feature/release")
-        );
-    }
-
-    @Test
-    public void resolvesRepositoryDefaultBranchReference() {
-        assertEquals(
-                "https://github.com/IrisDimensions/example/archive/HEAD.zip",
-                PackDownloader.resolveGithubArchiveUrl("IrisDimensions/example", "HEAD")
-        );
-    }
-
-    @Test
-    public void resolvesQualifiedHeadReference() {
-        assertEquals(
-                "https://codeload.github.com/IrisDimensions/overworld/zip/refs/heads/master",
-                PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "refs/heads/master")
-        );
-    }
-
-    @Test
-    public void resolvesTagReference() {
-        assertEquals(
-                "https://codeload.github.com/IrisDimensions/overworld/zip/refs/tags/v4.0.0",
-                PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "refs/tags/v4.0.0")
-        );
-    }
-
-    @Test
-    public void resolvesCommitReference() {
-        assertEquals(
-                "https://github.com/IrisDimensions/overworld/archive/8e32852ee6ecd039fae27a36f701f57cdc02e83f.zip",
-                PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "8e32852ee6ecd039fae27a36f701f57cdc02e83f")
-        );
+        assertFalse(PackDownloader.isBuiltInPack("theend"));
+        assertFalse(PackDownloader.isBuiltInPack(""));
+        assertFalse(PackDownloader.isBuiltInPack(null));
     }
 
     @Test
@@ -320,28 +289,16 @@ public class PackDownloaderTest {
         List<String> feedback = new ArrayList<>();
         // The URL is unreachable on purpose: reaching the network would fail the download and
         // return null, so a non-null key proves the presence check ran before any fetch.
-        PackDownloader.PackInstallResult result = PackDownloader.download(
+        PackDownloader.PackInstallResult result = PackDownloader.downloadBuiltIn(
                 packsFolder,
-                "IrisDimensions/overworld",
-                "http://127.0.0.1:9/unreachable.zip",
-                false,
-                true,
                 "overworld",
+                false,
                 feedback::add
         );
 
         assertEquals("overworld", result.key());
         assertFalse(result.changed());
         assertFalse(feedback.isEmpty());
-    }
-
-    @Test
-    public void rejectsUnsafeRepositoryAndReference() {
-        assertThrows(IllegalArgumentException.class, () -> PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld?raw=1", "master"));
-        assertThrows(IllegalArgumentException.class, () -> PackDownloader.resolveGithubArchiveUrl("../overworld", "master"));
-        assertThrows(IllegalArgumentException.class, () -> PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "refs/heads/../master"));
-        assertThrows(IllegalArgumentException.class, () -> PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", "refs/pull/123/head"));
-        assertThrows(IllegalArgumentException.class, () -> PackDownloader.resolveGithubArchiveUrl("IrisDimensions/overworld", ""));
     }
 
     @Test
@@ -544,7 +501,7 @@ public class PackDownloaderTest {
     }
 
     @Test
-    public void rejectsAmbiguousMultiDimensionPackWithoutExpectedKey() throws Exception {
+    public void selectsShortestDimensionKeyWhenDirectPackContainsMultipleDimensions() throws Exception {
         File packsFolder = temp.newFolder("ambiguous-dimension-packs");
         File extracted = writePack(temp.newFolder("ambiguous-dimension-source").toPath(), "underworld", "new");
         writeDimension(extracted.toPath(), "underworld_roof");
@@ -558,9 +515,12 @@ public class PackDownloaderTest {
                 feedback::add
         );
 
-        assertNull(result);
-        assertFalse(feedback.isEmpty());
-        assertFalse(new File(packsFolder, "underworld").exists());
+        assertNotNull(result);
+        assertEquals("underworld", result.key());
+        assertTrue(result.changed());
+        assertTrue(Files.isRegularFile(
+                packsFolder.toPath().resolve("underworld/dimensions/underworld_roof.json")
+        ));
         assertTransactionStateClean(packsFolder);
     }
 
@@ -613,14 +573,9 @@ public class PackDownloaderTest {
     public void rejectsUnsafeExpectedKeyBeforeDownload() throws IOException {
         File packsFolder = temp.newFolder("unsafe-key-packs");
 
-        assertThrows(IllegalArgumentException.class, () -> PackDownloader.download(
-                packsFolder,
-                "IrisDimensions/overworld",
-                "http://127.0.0.1:9/unreachable.zip",
-                true,
-                true,
-                "../outside",
-                ignored -> {
+        File extracted = writePack(temp.newFolder("unsafe-key-source").toPath(), "safe", "state");
+        assertThrows(IllegalArgumentException.class, () -> PackDownloader.installExtractedPack(
+                packsFolder, extracted, true, "../outside", ignored -> {
                 }
         ));
         assertEquals(0, PackDownloader.downloadLockCount());

@@ -20,7 +20,6 @@ package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.BrokenPackException;
-import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
@@ -28,7 +27,6 @@ import art.arcane.iris.modded.MainWorldService;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
 import art.arcane.iris.modded.ModdedModConfig;
-import art.arcane.iris.modded.ModdedPackInstaller;
 import art.arcane.iris.modded.ModdedPrimaryWorldRouter;
 import art.arcane.iris.modded.ModdedServerLevels;
 import art.arcane.iris.modded.ModdedStartup;
@@ -176,21 +174,9 @@ public final class ModdedWorldCommands {
         if (packFolder.isDirectory()) {
             return enableInstalled(source, server, dimensionId, pack, packDimension, seed);
         }
-        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
-        Thread thread = new Thread(() -> {
-            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, PackDownloader.DEFAULT_BRANCH, false, true,
-                    (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
-            server.execute(() -> {
-                if (!installed || !packFolder.isDirectory()) {
-                    IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_INSTALL_IT_WITH, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
-                    return;
-                }
-                enableInstalled(source, server, dimensionId, pack, packDimension, seed);
-            });
-        }, "Iris World Pack Download");
-        thread.setDaemon(true);
-        thread.start();
-        return 1;
+        IrisModdedCommands.fail(source, "Pack '" + pack
+                + "' is not installed. Use /iris download pack=overworld or pack=underworld, then restart.");
+        return 0;
     }
 
     private static int enableInstalled(CommandSourceStack source, MinecraftServer server, String dimensionId, String pack, String packDimension, long seed) {
@@ -279,21 +265,9 @@ public final class ModdedWorldCommands {
         if (packFolder.isDirectory()) {
             return applyMainWorld(source, pack, packDimension, packRaw, seed);
         }
-        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS_2, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
-        Thread thread = new Thread(() -> {
-            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, PackDownloader.DEFAULT_BRANCH, false, true,
-                    (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
-            server.execute(() -> {
-                if (!installed || !packFolder.isDirectory()) {
-                    IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_INSTALL_IT_WITH_2, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
-                    return;
-                }
-                applyMainWorld(source, pack, packDimension, packRaw, seed);
-            });
-        }, "Iris Main World Pack Download");
-        thread.setDaemon(true);
-        thread.start();
-        return 1;
+        IrisModdedCommands.fail(source, "Pack '" + pack
+                + "' is not installed. Use /iris download pack=overworld or pack=underworld, then restart.");
+        return 0;
     }
 
     private static int applyMainWorld(CommandSourceStack source, String pack, String packDimension, String packRef, long seed) {

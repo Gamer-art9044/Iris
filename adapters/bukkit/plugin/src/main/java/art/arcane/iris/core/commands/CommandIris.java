@@ -95,6 +95,7 @@ import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 @Director(name = "iris", aliases = {"ir", "irs"}, description = "Basic Command", descriptionKey = "iris.director.commandiris.director.basic_command")
 public class CommandIris implements DirectorExecutor {
+    private static final String NO_DOWNLOAD_SOURCE = "__none__";
     private static final long WORLD_UNLOAD_TIMEOUT_SECONDS = 150L;
 
     private CommandStudio studio;
@@ -169,9 +170,10 @@ public class CommandIris implements DirectorExecutor {
 
         IrisDimension dimension = IrisToolbelt.getDimension(resolvedType);
         if (dimension == null) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_COULD_NOT_FIND_DOWNLOAD_DIMENSION, MessageArgument.untrusted("resolvedType", resolvedType)));
+            sender().sendMessage("Could not find dimension '" + resolvedType + "'.");
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_TRY_ONE_OVERWORLD_VANILLA_FLAT_THEEND));
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_DOWNLOAD_MANUALLY_IRIS_DOWNLOAD, MessageArgument.untrusted("resolvedType", resolvedType)));
+            sender().sendMessage("Install its pack with " + PackDownloader.downloadCommandFor(resolvedType)
+                    + " and restart the server.");
             return;
         }
 
@@ -703,25 +705,28 @@ public class CommandIris implements DirectorExecutor {
 
     @Director(description = "Download a project.", descriptionKey = "iris.director.commandiris.director.download_project", aliases = "dl")
     public void download(
-            @Param(name = "pack", description = "The pack to download", descriptionKey = "iris.director.commandiris.param.pack_download", aliases = "project")
+            @Param(name = "pack", description = "The built-in pack to download", descriptionKey = "iris.director.commandiris.param.pack_download", defaultValue = NO_DOWNLOAD_SOURCE, customHandler = DownloadPackHandler.class)
             String pack,
-            @Param(name = "branch", description = "The branch to download from", descriptionKey = "iris.director.commandiris.param.branch_download_from", defaultValue = PackDownloader.DEFAULT_BRANCH)
-            String branch,
-            @Param(name = "overwrite", description = "Whether or not to overwrite the pack with the downloaded one", descriptionKey = "iris.director.commandiris.param.whether_not_overwrite_pack_with_downloaded_one", aliases = "force", defaultValue = "false")
-            boolean overwrite
+            @Param(name = "link", description = "A direct HTTP or HTTPS zip link", defaultValue = NO_DOWNLOAD_SOURCE)
+            String link
     ) {
-        if (PackDownloader.isDirectZipUrl(pack)) {
-            sender().sendMessage("Downloading Iris pack from " + pack
-                    + (overwrite ? IrisLanguage.text(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX) : "") + ".");
-            Iris.service(StudioSVC.class).downloadUrl(sender(), pack, overwrite);
-        } else if (PackDownloader.isManagedPack(pack)) {
-            sender().sendMessage("Downloading managed Iris pack '" + pack + "' from its configured Git source"
-                    + (overwrite ? IrisLanguage.text(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX) : "") + ".");
-            Iris.service(StudioSVC.class).downloadManaged(sender(), pack, overwrite);
-        } else {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_DOWNLOADING_PACK, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("branch", branch), MessageArgument.trusted("value", overwrite ? IrisLanguage.text(RuntimeUiMessages.DOWNLOAD_OVERWRITE_SUFFIX) : "")));
-            Iris.service(StudioSVC.class).downloadSearch(sender(), "IrisDimensions/" + pack + "/" + branch, overwrite);
+        String builtInPack = NO_DOWNLOAD_SOURCE.equals(pack) ? null : pack;
+        String directLink = NO_DOWNLOAD_SOURCE.equals(link) ? null : link;
+        if ((builtInPack == null) == (directLink == null)) {
+            sender().sendMessage("Use exactly one source: /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>.");
+            return;
         }
+        if (builtInPack != null) {
+            sender().sendMessage("Downloading built-in Iris pack '" + builtInPack + "' from its beta release.");
+            Iris.service(StudioSVC.class).downloadBuiltIn(sender(), builtInPack);
+            return;
+        }
+        if (!PackDownloader.isDirectZipUrl(directLink)) {
+            sender().sendMessage("Iris requires link= to contain a valid HTTP or HTTPS .zip URL.");
+            return;
+        }
+        sender().sendMessage("Downloading Iris pack from " + directLink + ".");
+        Iris.service(StudioSVC.class).downloadUrl(sender(), directLink);
     }
 
     @Director(description = "Get metrics for your world", descriptionKey = "iris.director.commandiris.director.get_metrics_your_world", aliases = "measure", origin = DirectorOrigin.PLAYER)
@@ -1055,6 +1060,35 @@ public class CommandIris implements DirectorExecutor {
             }
 
             return in.trim();
+        }
+
+        @Override
+        public boolean supports(Class<?> type) {
+            return type == String.class;
+        }
+    }
+
+    public static class DownloadPackHandler implements DirectorParameterHandler<String> {
+        @Override
+        public KList<String> getPossibilities() {
+            return new KList<>(PackDownloader.builtInPacks());
+        }
+
+        @Override
+        public String toString(String value) {
+            return value == null ? "" : value;
+        }
+
+        @Override
+        public String parse(String in, boolean force) throws DirectorParsingException {
+            if (NO_DOWNLOAD_SOURCE.equals(in)) {
+                return null;
+            }
+            String pack = in == null ? "" : in.trim().toLowerCase(Locale.ROOT);
+            if (!PackDownloader.isBuiltInPack(pack)) {
+                throw new DirectorParsingException("Pack must be 'overworld' or 'underworld'");
+            }
+            return pack;
         }
 
         @Override

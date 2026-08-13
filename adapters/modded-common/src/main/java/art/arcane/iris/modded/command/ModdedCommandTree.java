@@ -18,8 +18,6 @@
 
 package art.arcane.iris.modded.command;
 
-import art.arcane.iris.core.pack.PackDownloader;
-import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -27,15 +25,24 @@ import com.mojang.brigadier.builder.ArgumentBuilder;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.DimensionArgument;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.resources.Identifier;
 
+import java.util.List;
 import java.util.function.Predicate;
 
 final class ModdedCommandTree {
+    private static final SuggestionProvider<CommandSourceStack> DOWNLOAD_SOURCES =
+            (context, builder) ->
+                    SharedSuggestionProvider.suggest(
+                            List.of("pack=overworld", "pack=underworld", "link="),
+                            builder
+                    );
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
     /**
      * SP-4: read-only inspection must work for an unopped player in a no-cheats singleplayer world, where the
@@ -189,35 +196,11 @@ final class ModdedCommandTree {
 
     private static LiteralArgumentBuilder<CommandSourceStack> downloadTree(String name) {
         return Commands.literal(name).requires(GATE)
-                .then(Commands.argument("pack", StringArgumentType.word()).suggests(ModdedCommandSuggestions.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                IrisModdedCommands.download(context.getSource(),
-                                        StringArgumentType.getString(context, "pack"), PackDownloader.DEFAULT_BRANCH, false))
-                        .then(Commands.literal("force")
-                                .executes((CommandContext<CommandSourceStack> context) ->
-                                        IrisModdedCommands.download(context.getSource(),
-                                                StringArgumentType.getString(context, "pack"), PackDownloader.DEFAULT_BRANCH, true)))
-                        .then(Commands.argument("overwrite", BoolArgumentType.bool())
-                                .executes((CommandContext<CommandSourceStack> context) ->
-                                        IrisModdedCommands.download(context.getSource(),
-                                                StringArgumentType.getString(context, "pack"), PackDownloader.DEFAULT_BRANCH,
-                                                BoolArgumentType.getBool(context, "overwrite"))))
-                        .then(Commands.argument("branch", StringArgumentType.word())
-                                .executes((CommandContext<CommandSourceStack> context) ->
-                                        IrisModdedCommands.download(context.getSource(),
-                                                StringArgumentType.getString(context, "pack"),
-                                                StringArgumentType.getString(context, "branch"), false))
-                                .then(Commands.literal("force")
-                                        .executes((CommandContext<CommandSourceStack> context) ->
-                                                IrisModdedCommands.download(context.getSource(),
-                                                        StringArgumentType.getString(context, "pack"),
-                                                        StringArgumentType.getString(context, "branch"), true)))
-                                .then(Commands.argument("overwrite", BoolArgumentType.bool())
-                                        .executes((CommandContext<CommandSourceStack> context) ->
-                                                IrisModdedCommands.download(context.getSource(),
-                                                        StringArgumentType.getString(context, "pack"),
-                                                        StringArgumentType.getString(context, "branch"),
-                                                        BoolArgumentType.getBool(context, "overwrite"))))));
+                .then(Commands.argument("source", StringArgumentType.greedyString()).suggests(DOWNLOAD_SOURCES)
+                        .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.download(
+                                context.getSource(),
+                                StringArgumentType.getString(context, "source")
+                        )));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> metricsTree(String name) {

@@ -228,8 +228,8 @@ public class IrisWorlds {
                         + " but its dimension failed to load; not redownloading. Fix or delete the pack folder.");
                 return null;
             }
-            IrisLogging.warn("Unable to find dimension type " + id + ". Install it with /iris download "
-                    + id + " and restart the server.");
+            IrisLogging.warn("Unable to find dimension type " + id + ". Install it with "
+                    + PackDownloader.downloadCommandFor(id) + " and restart the server.");
         }
         return dimension;
     }

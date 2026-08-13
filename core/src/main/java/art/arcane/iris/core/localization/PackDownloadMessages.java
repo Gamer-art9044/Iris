@@ -9,18 +9,6 @@ import java.util.List;
 import java.util.Map;
 
 public final class PackDownloadMessages {
-    public static final TextKey INVALID_PACK_NAME = TextKey.of(
-            "iris.runtime.pack_download.invalid_pack_name",
-            "Invalid pack name '{pack}' (allowed: a-z, 0-9, _ and -)"
-    );
-    public static final TextKey INVALID_BRANCH_NAME = TextKey.of(
-            "iris.runtime.pack_download.invalid_branch_name",
-            "Invalid branch name '{branch}' (allowed: letters, digits, . _ and -)"
-    );
-    public static final TextKey DOWNLOAD_FAILED = TextKey.of(
-            "iris.runtime.pack_download.failed",
-            "Pack download failed: {type}{errorMessage}"
-    );
     public static final TextKey DOWNLOADING = TextKey.of(
             "iris.runtime.pack_download.downloading",
             "Downloading {url}"
@@ -28,14 +16,6 @@ public final class PackDownloadMessages {
     public static final TextKey FAILED_TO_FIND = TextKey.of(
             "iris.runtime.pack_download.failed_to_find",
             "Failed to find pack at {url}"
-    );
-    public static final TextKey CHECK_REPOSITORY_AND_BRANCH = TextKey.of(
-            "iris.runtime.pack_download.check_repository_and_branch",
-            "Make sure you specified the correct repo and branch!"
-    );
-    public static final TextKey EXAMPLE_COMMAND = TextKey.of(
-            "iris.runtime.pack_download.example_command",
-            "For example: /iris download overworld branch=stable"
     );
     public static final TextKey UNPACKING = TextKey.of(
             "iris.runtime.pack_download.unpacking",
@@ -69,10 +49,6 @@ public final class PackDownloadMessages {
     public static final TextKey CHECK_GITHUB = TextKey.of(
             "iris.runtime.pack_download.check_github",
             "Check that it is present on GitHub and report this to staff!"
-    );
-    public static final TextKey ONE_DIMENSION_REQUIRED = TextKey.of(
-            "iris.runtime.pack_download.one_dimension_required",
-            "The dimensions folder must contain exactly one file."
     );
     public static final TextKey INVALID_DIMENSION = TextKey.of(
             "iris.runtime.pack_download.invalid_dimension",
@@ -120,13 +96,8 @@ public final class PackDownloadMessages {
     );
 
     private static final List<MessageKey> KEYS = List.of(
-            INVALID_PACK_NAME,
-            INVALID_BRANCH_NAME,
-            DOWNLOAD_FAILED,
             DOWNLOADING,
             FAILED_TO_FIND,
-            CHECK_REPOSITORY_AND_BRANCH,
-            EXAMPLE_COMMAND,
             UNPACKING,
             UNPACK_FAILED,
             NO_EXTRACTED_FILES,
@@ -134,7 +105,6 @@ public final class PackDownloadMessages {
             INVALID_ARCHIVE_FORMAT,
             NO_DIMENSION_FILE,
             CHECK_GITHUB,
-            ONE_DIMENSION_REQUIRED,
             INVALID_DIMENSION,
             IMPORTING,
             DIMENSION_KEY_CONFLICT,

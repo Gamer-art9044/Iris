@@ -23,7 +23,6 @@ import art.arcane.iris.core.gui.GuiHost;
 import art.arcane.iris.core.gui.NoiseExplorerGUI;
 import art.arcane.iris.core.gui.VisionGUI;
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.StructurePackageClosure;
 import art.arcane.iris.core.project.IrisProjectCopier;
 import art.arcane.iris.engine.framework.Engine;
@@ -40,7 +39,6 @@ import art.arcane.iris.engine.object.IrisSpawner;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
-import art.arcane.iris.modded.ModdedPackInstaller;
 import art.arcane.iris.modded.ModdedWorkspaceGenerator;
 import art.arcane.iris.util.common.parallel.BurstExecutor;
 import art.arcane.iris.util.common.parallel.MultiBurst;
@@ -385,13 +383,9 @@ public final class ModdedStudioCommands {
         try {
             File packFolder = new File(ModdedPackCommands.packsRoot(), pack);
             if (!new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
-                server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACK_MISSING_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack))));
-                boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, PackDownloader.DEFAULT_BRANCH, false, true,
-                        (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
-                if (!installed || !new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
-                    server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_TRY_IRIS_DOWNLOAD, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack))));
-                    return;
-                }
+                server.execute(() -> IrisModdedCommands.fail(source, "Pack '" + pack
+                        + "' is not installed. Use /iris download pack=overworld or pack=underworld, then restart."));
+                return;
             }
             IrisData data = IrisData.get(packFolder);
             IrisDimension dimension = data.getDimensionLoader().load(pack);
@@ -593,13 +587,9 @@ public final class ModdedStudioCommands {
             try {
                 File templateFolder = new File(packsRoot, template);
                 if (!new File(templateFolder, "dimensions/" + template + ".json").isFile()) {
-                    server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_TEMPLATE_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("template", template), MessageArgument.untrusted("template2", template))));
-                    boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), template, PackDownloader.DEFAULT_BRANCH, false, true,
-                            (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
-                    if (!installed || !new File(templateFolder, "dimensions/" + template + ".json").isFile()) {
-                        server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_TEMPLATE_COULD_NOT_BE_DOWNLOADED_INSTALL_PACK_WITH_DIMENSIONS_JSON, MessageArgument.untrusted("template", template), MessageArgument.untrusted("template2", template))));
-                        return;
-                    }
+                    server.execute(() -> IrisModdedCommands.fail(source, "Template pack '" + template
+                            + "' is not installed. Install its zip with /iris download link=<zip-url>, then restart."));
+                    return;
                 }
                 IrisProjectCopier.copyProject(templateFolder, target, template, name);
                 try {

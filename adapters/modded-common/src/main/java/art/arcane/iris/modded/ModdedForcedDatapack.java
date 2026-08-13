@@ -414,7 +414,7 @@ public final class ModdedForcedDatapack {
         }
         LOGGER.info("Iris forced startup datapack staged: {} pack(s), {} world preset(s), {} custom biome(s) at {}", packCount, presetIds.size(), countBiomes(seenBiomes), stagingDirectory);
         if (packCount == 0) {
-            LOGGER.warn("Iris installed NO worldgen packs into the forced datapack - custom biomes and their colors will NOT generate. Install a pack (e.g. /iris download overworld) and restart the server before creating an Iris world.");
+            LOGGER.warn("Iris installed NO worldgen packs into the forced datapack - custom biomes and their colors will NOT generate. Install a pack with /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>, then restart before creating an Iris world.");
         }
     }
 

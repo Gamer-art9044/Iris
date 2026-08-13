@@ -62,8 +62,8 @@ content selecting on `#minecraft:is_overworld` and friends.
 ## Install
 
 **Plugin (Paper/Purpur/Leaf/Canvas/Folia/Spigot):** drop the plugin jar into `plugins/` and start
-the server. First boot performs no pack download. Run `/iris download overworld`,
-`/iris download underworld`, or `/iris download https://host/path/pack.zip`, then restart manually.
+the server. First boot performs no pack download. Run `/iris download pack=overworld`,
+`/iris download pack=underworld`, or `/iris download link=https://host/path/pack.zip`, then restart manually.
 
 **Mod (Fabric/Forge/NeoForge):** drop the mod jar into `mods/` and start the server. The jar is
 self-contained (core, SPI, and required Fabric API modules are bundled). First boot compiles only

@@ -434,22 +434,6 @@ public final class BukkitRuntimeMessages {
             "iris.bukkit.runtime.studiosvc.type_installed",
             "{name}" + " type installed. "
     );
-    public static final TextKey STUDIO_S_V_C_PACK_WAS_NOT_FOUND_PACK_LISTING = TextKey.of(
-            "iris.bukkit.runtime.studiosvc.pack_was_not_found_pack_listing",
-            "Pack '" + "{key}" + "' was not found in the pack listing."
-    );
-    public static final TextKey STUDIO_S_V_C_USE_IRIS_DOWNLOAD_PACK_BRANCH_BRANCH_DOWNLOAD_MANUALLY = TextKey.of(
-            "iris.bukkit.runtime.studiosvc.use_iris_download_pack_branch_branch_download_manually",
-            "Use /iris download <pack> branch=<branch> to download manually."
-    );
-    public static final TextKey STUDIO_S_V_C_FAILED_DOWNLOAD = TextKey.of(
-            "iris.bukkit.runtime.studiosvc.failed_download",
-            "Failed to download '" + "{key}" + "'."
-    );
-    public static final TextKey STUDIO_S_V_C_FAILED_DOWNLOAD_BRANCH = TextKey.of(
-            "iris.bukkit.runtime.studiosvc.failed_download_branch",
-            "Failed to download '" + "{repo}" + "' (branch " + "{branch}" + ")."
-    );
     public static final TextKey STUDIO_S_V_C_FAILED_OPEN_STUDIO_WORLD = TextKey.of(
             "iris.bukkit.runtime.studiosvc.failed_open_studio_world",
             "Failed to open studio world: " + "{error}"
@@ -723,10 +707,6 @@ public final class BukkitRuntimeMessages {
             STUDIO_S_V_C_CAN_T_FIND_DIMENSIONS_FOLDER_THIS_PACK_FAILED,
             STUDIO_S_V_C_CAN_T_LOAD_DIMENSION_FAILED,
             STUDIO_S_V_C_TYPE_INSTALLED,
-            STUDIO_S_V_C_PACK_WAS_NOT_FOUND_PACK_LISTING,
-            STUDIO_S_V_C_USE_IRIS_DOWNLOAD_PACK_BRANCH_BRANCH_DOWNLOAD_MANUALLY,
-            STUDIO_S_V_C_FAILED_DOWNLOAD,
-            STUDIO_S_V_C_FAILED_DOWNLOAD_BRANCH,
             STUDIO_S_V_C_FAILED_OPEN_STUDIO_WORLD,
             STUDIO_S_V_C_CANNOT_OPEN_STUDIO_PACK_HAS_BLOCKING_ERRORS,
             STUDIO_S_V_C_MESSAGE,

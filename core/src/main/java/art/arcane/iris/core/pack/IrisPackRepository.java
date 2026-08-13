@@ -40,6 +40,8 @@ import java.util.UUID;
 @Data
 @Builder
 public class IrisPackRepository {
+    private static final String DEFAULT_BRANCH = "stable";
+
     @Builder.Default
     private String user = "IrisDimensions";
 
@@ -47,7 +49,7 @@ public class IrisPackRepository {
     private String repo = "overworld";
 
     @Builder.Default
-    private String branch = PackDownloader.DEFAULT_BRANCH;
+    private String branch = DEFAULT_BRANCH;
 
     @Builder.Default
     private String tag = "";
@@ -96,7 +98,7 @@ public class IrisPackRepository {
             return IrisPackRepository.builder()
                     .user("IrisDimensions")
                     .repo(g)
-                    .branch(PackDownloader.DEFAULT_BRANCH)
+                    .branch(DEFAULT_BRANCH)
                     .build();
         }
 

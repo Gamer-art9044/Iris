@@ -33,6 +33,7 @@ import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
 import art.arcane.iris.core.pregenerator.cache.PregenCache;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
+import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.project.IrisProject;
 import art.arcane.iris.core.pregenerator.methods.CachedPregenMethod;
 import art.arcane.iris.core.pregenerator.methods.HybridPregenMethod;
@@ -102,7 +103,7 @@ public class IrisToolbelt {
 
         if (pack == null) {
             IrisLogging.warn("Iris pack '" + reference.pack()
-                    + "' is not installed. Install it with /iris download " + reference.pack()
+                    + "' is not installed. Install it with " + PackDownloader.downloadCommandFor(reference.pack())
                     + " and restart the server.");
             return null;
         }

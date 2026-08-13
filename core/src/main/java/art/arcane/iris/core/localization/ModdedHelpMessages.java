@@ -280,7 +280,7 @@ public final class ModdedHelpMessages {
     );
     public static final TextKey COMMAND_ENABLE_CREATE_AND_INJECT_A_PERSISTENT_IRIS_DIMENSION_AT_RUNTIME_DOWNLOADS_THE_PACK = TextKey.of(
             "iris.modded.help.entry.command.enable",
-            "Create and inject a persistent Iris dimension at runtime; downloads the pack if missing, quote pack:dimensionKey to pick a specific pack dimension"
+            "Create and inject a persistent Iris dimension at runtime; refuses if the pack is missing, quote pack:dimensionKey to pick a specific pack dimension"
     );
     public static final TextKey COMMAND_REPLACE_OVERWORLD_INJECT_AN_IRIS_PRIMARY_WORLD_AND_ROUTE_PLAYERS_THERE_INSTEAD_OF_THE = TextKey.of(
             "iris.modded.help.entry.command.replace_overworld",

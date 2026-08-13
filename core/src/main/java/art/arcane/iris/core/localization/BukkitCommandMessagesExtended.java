@@ -171,17 +171,9 @@ public final class BukkitCommandMessagesExtended {
             "iris.bukkit.commandiris.that_folder_already_exists",
             C.RED + "That folder already exists!"
     );
-    public static final TextKey COMMAND_IRIS_COULD_NOT_FIND_DOWNLOAD_DIMENSION = TextKey.of(
-            "iris.bukkit.commandiris.could_not_find_download_dimension",
-            C.RED + "Could not find or download dimension \"" + "{resolvedType}" + "\"."
-    );
     public static final TextKey COMMAND_IRIS_TRY_ONE_OVERWORLD_VANILLA_FLAT_THEEND = TextKey.of(
             "iris.bukkit.commandiris.try_one_overworld_vanilla_flat_theend",
             C.YELLOW + "Try one of: overworld, vanilla, flat, theend"
-    );
-    public static final TextKey COMMAND_IRIS_DOWNLOAD_MANUALLY_IRIS_DOWNLOAD = TextKey.of(
-            "iris.bukkit.commandiris.download_manually_iris_download",
-            C.YELLOW + "Or download manually: /iris download " + "{resolvedType}"
     );
     public static final TextKey COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTART_SERVER_GENERATE_LOAD = TextKey.of(
             "iris.bukkit.commandiris.world_staging_completed_restart_server_generate_load",
@@ -294,10 +286,6 @@ public final class BukkitCommandMessagesExtended {
     public static final TextKey COMMAND_IRIS_SET_DEBUG = TextKey.of(
             "iris.bukkit.commandiris.set_debug",
             C.GREEN + "Set debug to: " + "{to}"
-    );
-    public static final TextKey COMMAND_IRIS_DOWNLOADING_PACK = TextKey.of(
-            "iris.bukkit.commandiris.downloading_pack",
-            C.GREEN + "Downloading pack: " + "{pack}" + "/" + "{branch}" + "{value}"
     );
     public static final TextKey COMMAND_IRIS_YOU_MUST_BE_IRIS_WORLD = TextKey.of(
             "iris.bukkit.commandiris.you_must_be_iris_world",
@@ -889,9 +877,7 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_IRIS_YOU_CANNOT_USE_WORLD_NAME_BENCHMARK_CREATING_WORLDS_AS_IRIS,
             COMMAND_IRIS_MAY_WE_SUGGEST_NAME_IRISWORLD_INSTEAD_2,
             COMMAND_IRIS_THAT_FOLDER_ALREADY_EXISTS,
-            COMMAND_IRIS_COULD_NOT_FIND_DOWNLOAD_DIMENSION,
             COMMAND_IRIS_TRY_ONE_OVERWORLD_VANILLA_FLAT_THEEND,
-            COMMAND_IRIS_DOWNLOAD_MANUALLY_IRIS_DOWNLOAD,
             COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTART_SERVER_GENERATE_LOAD,
             COMMAND_IRIS_EXCEPTION_RAISED_DURING_CREATION_SEE_CONSOLE_MORE_DETAILS,
             COMMAND_IRIS_SUCCESSFULLY_CREATED_YOUR_WORLD,
@@ -920,7 +906,6 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_IRIS_LOOKS_LIKE_WORLD_WAS_ALREADY_REMOVED_FROM_BUKKIT_YML,
             COMMAND_IRIS_FAILED_SAVE_BUKKIT_YML_BECAUSE,
             COMMAND_IRIS_SET_DEBUG,
-            COMMAND_IRIS_DOWNLOADING_PACK,
             COMMAND_IRIS_YOU_MUST_BE_IRIS_WORLD,
             COMMAND_IRIS_SENDING_METRICS,
             COMMAND_IRIS_THIS_IS_NOT_IRIS_WORLD_IRIS_WORLDS_2,

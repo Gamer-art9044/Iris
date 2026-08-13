@@ -197,9 +197,7 @@ public class CommandDeveloper implements DirectorExecutor {
             @Param(description = "The pack to install into the world", descriptionKey = "iris.director.commanddeveloper.param.pack_install_into_world", contextual = true, aliases = "dimension")
             IrisDimension pack,
             @Param(description = "Make sure to make a backup & read the warnings first!", descriptionKey = "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first", defaultValue = "false", aliases = "c")
-            boolean confirm,
-            @Param(description = "Should Iris download the pack again for you", descriptionKey = "iris.director.commanddeveloper.param.should_iris_download_pack_again_you", defaultValue = "false", name = "fresh-download", aliases = {"fresh", "new"})
-            boolean freshDownload
+            boolean confirm
     ) {
         if (!confirm) {
             sender().sendMessage(IrisLanguage.text(
@@ -212,10 +210,6 @@ public class CommandDeveloper implements DirectorExecutor {
 
         File folder = world.getWorldFolder();
         folder.mkdirs();
-
-        if (freshDownload) {
-            Iris.service(StudioSVC.class).downloadSearch(sender(), pack.getLoadKey(), true);
-        }
 
         try (LifecycleOperationCoordinator.Lease lease = LifecycleOperationCoordinator.get().acquire(
                 LifecycleOperationCoordinator.Domain.PACK_MUTATION,

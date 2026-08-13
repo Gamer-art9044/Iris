@@ -10,7 +10,9 @@ import org.junit.Test;
 import java.util.List;
 
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class IrisModdedCommandParityTest {
@@ -50,15 +52,32 @@ public class IrisModdedCommandParityTest {
         child(studio, "pkg");
 
         CommandNode<CommandSourceStack> download = child(iris, "download");
-        CommandNode<CommandSourceStack> pack = child(download, "pack");
-        child(pack, "force");
-        child(pack, "overwrite");
-        CommandNode<CommandSourceStack> branch = child(pack, "branch");
-        child(branch, "force");
-        child(branch, "overwrite");
+        CommandNode<CommandSourceStack> source = child(download, "source");
+        assertTrue(source.getChildren().isEmpty());
 
         assertSame(iris, child(dispatcher.getRoot(), "ir").getRedirect());
         assertSame(iris, child(dispatcher.getRoot(), "irs").getRedirect());
+    }
+
+    @Test
+    public void downloadRequestAcceptsOnlyBuiltInsAndZipLinks() {
+        IrisModdedCommands.DownloadRequest overworld = IrisModdedCommands.parseDownloadRequest("pack=overworld");
+        IrisModdedCommands.DownloadRequest underworld = IrisModdedCommands.parseDownloadRequest("pack=UNDERWORLD");
+        IrisModdedCommands.DownloadRequest link = IrisModdedCommands.parseDownloadRequest(
+                "link=https://packs.example.test/custom.zip?token=a=b"
+        );
+
+        assertNotNull(overworld);
+        assertEquals("overworld", overworld.pack());
+        assertNotNull(underworld);
+        assertEquals("underworld", underworld.pack());
+        assertNotNull(link);
+        assertEquals("https://packs.example.test/custom.zip?token=a=b", link.url());
+        assertNull(IrisModdedCommands.parseDownloadRequest("overworld"));
+        assertNull(IrisModdedCommands.parseDownloadRequest("pack=custom"));
+        assertNull(IrisModdedCommands.parseDownloadRequest("link=https://packs.example.test/custom.tar.gz"));
+        assertNull(IrisModdedCommands.parseDownloadRequest("pack=underworld branch=stable"));
+        assertNull(IrisModdedCommands.parseDownloadRequest("pack=underworld overwrite=true"));
     }
 
     @Test

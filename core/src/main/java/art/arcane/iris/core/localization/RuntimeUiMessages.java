@@ -23,7 +23,6 @@ public final class RuntimeUiMessages {
     public static final TextKey STATUS_TRUE = TextKey.of("iris.runtime.status.true", "true");
     public static final TextKey STATUS_FALSE = TextKey.of("iris.runtime.status.false", "false");
     public static final TextKey ERROR_DETAIL_SUFFIX = TextKey.of("iris.runtime.error.detail_suffix", " - {error}");
-    public static final TextKey DOWNLOAD_OVERWRITE_SUFFIX = TextKey.of("iris.runtime.download.overwrite_suffix", " overwriting");
     public static final TextKey DATAPACK_OVERRIDE_SUFFIX = TextKey.of("iris.runtime.datapack.override_suffix", " (world datapack override installed)");
     public static final TextKey PRIMARY_PLAYERS_ROUTED_SUFFIX = TextKey.of("iris.runtime.primary_world.players_routed_suffix", " (players routed there)");
     public static final TextKey PRIMARY_ROUTING_DISABLED_SUFFIX = TextKey.of("iris.runtime.primary_world.routing_disabled_suffix", " (routing disabled)");
@@ -154,7 +153,6 @@ public final class RuntimeUiMessages {
             STATUS_TRUE,
             STATUS_FALSE,
             ERROR_DETAIL_SUFFIX,
-            DOWNLOAD_OVERWRITE_SUFFIX,
             DATAPACK_OVERRIDE_SUFFIX,
             PRIMARY_PLAYERS_ROUTED_SUFFIX,
             PRIMARY_ROUTING_DISABLED_SUFFIX,

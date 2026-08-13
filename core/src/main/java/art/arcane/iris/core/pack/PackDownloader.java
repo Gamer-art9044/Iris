@@ -55,26 +55,17 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public final class PackDownloader {
-    /**
-     * The branch every download path falls back to when the caller did not name one. Compile-time
-     * constant so Director {@code @Param(defaultValue = ...)} annotations can reference it.
-     */
-    public static final String DEFAULT_BRANCH = "stable";
-    private static final String HEAD_REF = "HEAD";
     private static final String DEFAULT_OVERWORLD_PACK = "overworld";
-    private static final String DEFAULT_OVERWORLD_REPOSITORY = "IrisDimensions/overworld";
-    private static final String DEFAULT_OVERWORLD_REF = "master";
+    private static final String DEFAULT_OVERWORLD_URL =
+            "https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip";
     private static final String UNDERWORLD_PACK = "underworld";
-    private static final String UNDERWORLD_REPOSITORY = "IrisDimensions/underworld";
-    private static final String UNDERWORLD_REF = "main";
-    private static final List<String> MANAGED_PACK_KEYS = List.of(DEFAULT_OVERWORLD_PACK, UNDERWORLD_PACK);
-    private static final Map<String, ManagedPack> MANAGED_PACKS = Map.of(
-            DEFAULT_OVERWORLD_PACK, new ManagedPack(DEFAULT_OVERWORLD_REPOSITORY, DEFAULT_OVERWORLD_REF),
-            UNDERWORLD_PACK, new ManagedPack(UNDERWORLD_REPOSITORY, UNDERWORLD_REF)
+    private static final String UNDERWORLD_URL =
+            "https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip";
+    private static final List<String> BUILT_IN_PACK_KEYS = List.of(DEFAULT_OVERWORLD_PACK, UNDERWORLD_PACK);
+    private static final Map<String, String> BUILT_IN_PACK_URLS = Map.of(
+            DEFAULT_OVERWORLD_PACK, DEFAULT_OVERWORLD_URL,
+            UNDERWORLD_PACK, UNDERWORLD_URL
     );
-    private static final Pattern GITHUB_REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
-    private static final Pattern GITHUB_REF = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]*");
-    private static final Pattern COMMIT_SHA = Pattern.compile("[0-9a-fA-F]{40}");
     private static final Pattern PACK_KEY = Pattern.compile("[a-z0-9_-]+");
     private static final ArchiveLimits ARCHIVE_LIMITS = new ArchiveLimits(
             512L * 1024L * 1024L,
@@ -91,12 +82,18 @@ public final class PackDownloader {
         return DEFAULT_OVERWORLD_PACK.equals(pack);
     }
 
-    public static boolean isManagedPack(String pack) {
-        return pack != null && MANAGED_PACKS.containsKey(pack);
+    public static boolean isBuiltInPack(String pack) {
+        return pack != null && BUILT_IN_PACK_URLS.containsKey(pack);
     }
 
-    public static List<String> managedPacks() {
-        return MANAGED_PACK_KEYS;
+    public static List<String> builtInPacks() {
+        return BUILT_IN_PACK_KEYS;
+    }
+
+    public static String downloadCommandFor(String pack) {
+        return isBuiltInPack(pack)
+                ? "/iris download pack=" + pack
+                : "/iris download link=<zip-url>";
     }
 
     public static boolean isDirectZipUrl(String value) {
@@ -158,8 +155,8 @@ public final class PackDownloader {
         }
     }
 
-    public static boolean isManagedPackPresent(File packsFolder, String key) {
-        if (!isManagedPack(key) || !isPackPresent(packsFolder, key)) {
+    public static boolean isBuiltInPackPresent(File packsFolder, String key) {
+        if (!isBuiltInPack(key) || !isPackPresent(packsFolder, key)) {
             return false;
         }
         File resolvedPack = PackDirectoryResolver.resolveExisting(packsFolder, key);
@@ -174,21 +171,19 @@ public final class PackDownloader {
     }
 
     public static PackInstallResult downloadDefaultOverworld(File packsFolder, boolean forceOverwrite, Consumer<String> feedback) throws IOException {
-        return downloadManaged(packsFolder, DEFAULT_OVERWORLD_PACK, forceOverwrite, feedback);
+        return downloadBuiltIn(packsFolder, DEFAULT_OVERWORLD_PACK, forceOverwrite, feedback);
     }
 
-    public static PackInstallResult downloadManaged(File packsFolder, String pack, boolean forceOverwrite,
+    public static PackInstallResult downloadBuiltIn(File packsFolder, String pack, boolean forceOverwrite,
                                                     Consumer<String> feedback) throws IOException {
-        ManagedPack managed = pack == null ? null : MANAGED_PACKS.get(pack);
-        if (managed == null) {
-            throw new IllegalArgumentException("Pack '" + pack + "' has no managed Git source");
+        String url = pack == null ? null : BUILT_IN_PACK_URLS.get(pack);
+        if (url == null) {
+            throw new IllegalArgumentException("Pack '" + pack + "' is not a built-in Iris download");
         }
-        return download(
+        return downloadArchive(
                 packsFolder,
-                managed.repository(),
-                managed.ref(),
+                url,
                 forceOverwrite,
-                false,
                 pack,
                 feedback
         );
@@ -199,65 +194,49 @@ public final class PackDownloader {
         if (!isDirectZipUrl(url)) {
             throw new IllegalArgumentException("Pack URL must be an HTTP or HTTPS .zip link");
         }
-        return download(
+        return downloadArchive(
                 packsFolder,
-                "direct-url",
                 url.trim(),
                 forceOverwrite,
-                true,
                 null,
                 feedback
         );
     }
 
-    /**
-     * Downloads and imports a pack. {@code expectedKey} is the pack key the caller is trying to
-     * obtain (null when unknown, e.g. arbitrary repo, branch, or URL downloads); when the key is
-     * already present on disk and {@code forceOverwrite} is false, the network is never touched.
-     */
-    public static PackInstallResult download(File packsFolder, String repo, String ref, boolean forceOverwrite, boolean directUrl, String expectedKey, Consumer<String> feedback) throws IOException {
+    private static PackInstallResult downloadArchive(File packsFolder, String url, boolean forceOverwrite,
+                                                     String expectedKey, Consumer<String> feedback) throws IOException {
         Objects.requireNonNull(packsFolder, "packsFolder");
         Consumer<String> output = feedback == null ? ignored -> {
         } : feedback;
         if (expectedKey != null && !expectedKey.isBlank() && !isSafePackKey(expectedKey)) {
             throw new IllegalArgumentException("Invalid expected pack key '" + expectedKey + "'");
         }
-        String lockKey = expectedKey != null && !expectedKey.isBlank() ? "key:" + expectedKey : "ref:" + repo + "|" + ref;
+        String lockKey = expectedKey != null && !expectedKey.isBlank() ? "key:" + expectedKey : "url:" + url;
         return withDownloadLock(lockKey, () -> {
-            boolean present = isManagedPack(expectedKey)
-                    ? isManagedPackPresent(packsFolder, expectedKey)
+            boolean present = isBuiltInPack(expectedKey)
+                    ? isBuiltInPackPresent(packsFolder, expectedKey)
                     : isPackPresent(packsFolder, expectedKey);
             if (!forceOverwrite && present) {
                 sendFeedback(output, IrisLanguage.plain(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
                 return new PackInstallResult(expectedKey, false, false);
             }
-            return downloadLocked(packsFolder, repo, ref, forceOverwrite, directUrl, expectedKey, lockKey, output);
+            return downloadLocked(packsFolder, url, forceOverwrite, expectedKey, lockKey, output);
         });
     }
 
-    private static PackInstallResult downloadLocked(File packsFolder, String repo, String ref, boolean forceOverwrite, boolean directUrl,
+    private static PackInstallResult downloadLocked(File packsFolder, String url, boolean forceOverwrite,
                                                     String expectedKey, String heldLockKey, Consumer<String> feedback) throws IOException {
-        String url = directUrl ? ref : resolveGithubArchiveUrl(repo, ref);
         sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.DOWNLOADING, MessageArgument.untrusted("url", url)) + " ");
-        File zip = WebCache.getNonCachedFile("pack-" + repo, url, ARCHIVE_LIMITS.maxArchiveBytes());
-        if ((zip == null || !zip.exists()) && !directUrl && DEFAULT_BRANCH.equals(ref)) {
-            // A repo without the shared default branch still resolves via its HEAD; one retry, never recursive.
-            String headUrl = resolveGithubArchiveUrl(repo, HEAD_REF);
-            sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.DOWNLOADING, MessageArgument.untrusted("url", headUrl)) + " ");
-            zip = WebCache.getNonCachedFile("pack-" + repo, headUrl, ARCHIVE_LIMITS.maxArchiveBytes());
-            url = headUrl;
-        }
+        File zip = WebCache.getNonCachedFile("pack-archive", url, ARCHIVE_LIMITS.maxArchiveBytes());
         File temp = WebCache.getTemp();
         File work = new File(temp, "dl-" + UUID.randomUUID());
 
         try {
             if (zip == null || !zip.exists()) {
                 sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.FAILED_TO_FIND, MessageArgument.untrusted("url", url)));
-                sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.CHECK_REPOSITORY_AND_BRANCH));
-                sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.EXAMPLE_COMMAND));
                 return null;
             }
-            sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.UNPACKING, MessageArgument.untrusted("repository", repo)));
+            sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.UNPACKING, MessageArgument.untrusted("repository", url)));
             try {
                 unpackArchive(zip.toPath(), work.toPath(), ARCHIVE_LIMITS);
             } catch (IOException exception) {
@@ -395,11 +374,12 @@ public final class PackDownloader {
     private static String selectDimensionKey(String[] dimensions, String expectedKey,
                                              Consumer<String> feedback) throws IOException {
         if (expectedKey == null || expectedKey.isBlank()) {
-            if (dimensions.length != 1) {
-                sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.ONE_DIMENSION_REQUIRED));
-                return null;
-            }
-            return dimensions[0];
+            return Arrays.stream(dimensions)
+                    .min((left, right) -> {
+                        int lengthComparison = Integer.compare(left.length(), right.length());
+                        return lengthComparison == 0 ? left.compareTo(right) : lengthComparison;
+                    })
+                    .orElseThrow(() -> new IOException("Downloaded pack contains no dimensions"));
         }
 
         int matches = 0;
@@ -434,8 +414,8 @@ public final class PackDownloader {
             ));
             return null;
         }
-        boolean present = isManagedPack(prepared.key())
-                ? isManagedPackPresent(packsRoot.toFile(), prepared.key())
+        boolean present = isBuiltInPack(prepared.key())
+                ? isBuiltInPackPresent(packsRoot.toFile(), prepared.key())
                 : isPackPresent(packsRoot.toFile(), prepared.key());
         if (!forceOverwrite && present) {
             sendFeedback(feedback, IrisLanguage.plain(
@@ -679,80 +659,11 @@ public final class PackDownloader {
         ));
     }
 
-    static String resolveGithubArchiveUrl(String repo, String ref) {
-        if (repo == null || !GITHUB_REPOSITORY.matcher(repo).matches()) {
-            throw new IllegalArgumentException("Invalid GitHub repository '" + repo + "'");
-        }
-        String[] repositoryParts = repo.split("/", -1);
-        if (repositoryParts[0].equals(".") || repositoryParts[0].equals("..")
-                || repositoryParts[1].equals(".") || repositoryParts[1].equals("..")) {
-            throw new IllegalArgumentException("Invalid GitHub repository '" + repo + "'");
-        }
-        if (ref == null || ref.isBlank()) {
-            throw new IllegalArgumentException("GitHub reference cannot be empty");
-        }
-        if (COMMIT_SHA.matcher(ref).matches()) {
-            return "https://github.com/" + repo + "/archive/" + ref + ".zip";
-        }
-        if ("HEAD".equals(ref)) {
-            return "https://github.com/" + repo + "/archive/HEAD.zip";
-        }
-        if (ref.startsWith("refs/") && !ref.startsWith("refs/heads/") && !ref.startsWith("refs/tags/")) {
-            throw new IllegalArgumentException("Unsupported GitHub reference '" + ref + "'");
-        }
-
-        String qualifiedRef;
-        if (ref.startsWith("refs/heads/") || ref.startsWith("refs/tags/")) {
-            qualifiedRef = ref;
-        } else {
-            qualifiedRef = "refs/heads/" + ref;
-        }
-        validateGithubRef(qualifiedRef);
-        return "https://codeload.github.com/" + repo + "/zip/" + qualifiedRef;
-    }
-
-    static String defaultOverworldRepository() {
-        return DEFAULT_OVERWORLD_REPOSITORY;
-    }
-
-    static String defaultOverworldRef() {
-        return DEFAULT_OVERWORLD_REF;
-    }
-
-    static String underworldRepository() {
-        return UNDERWORLD_REPOSITORY;
-    }
-
-    static String underworldRef() {
-        return UNDERWORLD_REF;
-    }
-
-    private static void validateGithubRef(String qualifiedRef) {
-        String refPath = qualifiedRef.startsWith("refs/heads/")
-                ? qualifiedRef.substring("refs/heads/".length())
-                : qualifiedRef.substring("refs/tags/".length());
-        if (!GITHUB_REF.matcher(refPath).matches()
-                || refPath.contains("..")
-                || refPath.contains("//")
-                || refPath.contains("@{")
-                || refPath.endsWith("/")
-                || refPath.endsWith(".")
-                || refPath.endsWith(".lock")) {
-            throw new IllegalArgumentException("Invalid GitHub reference '" + qualifiedRef + "'");
-        }
-
-        String[] segments = refPath.split("/");
-        for (String segment : segments) {
-            if (segment.startsWith(".") || segment.endsWith(".lock")) {
-                throw new IllegalArgumentException("Invalid GitHub reference '" + qualifiedRef + "'");
-            }
-        }
+    static String builtInPackUrl(String pack) {
+        return BUILT_IN_PACK_URLS.get(pack);
     }
 
     private record PreparedPack(String key, String name, PackValidationResult validation) {
-    }
-
-    private record ManagedPack(String repository, String ref) {
     }
 
     public record PackInstallResult(String key, boolean changed, boolean restartRequired) {

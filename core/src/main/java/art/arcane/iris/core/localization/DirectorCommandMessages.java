@@ -78,10 +78,6 @@ public final class DirectorCommandMessages {
             "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first",
             "Make sure to make a backup & read the warnings first!"
     );
-    public static final TextKey COMMAND_DEVELOPER_PARAM_SHOULD_IRIS_DOWNLOAD_PACK_AGAIN_YOU = TextKey.of(
-            "iris.director.commanddeveloper.param.should_iris_download_pack_again_you",
-            "Should Iris download the pack again for you"
-    );
     public static final TextKey COMMAND_DEVELOPER_DIRECTOR_TEST = TextKey.of(
             "iris.director.commanddeveloper.director.test",
             "Test"
@@ -349,14 +345,6 @@ public final class DirectorCommandMessages {
     public static final TextKey COMMAND_IRIS_PARAM_PACK_DOWNLOAD = TextKey.of(
             "iris.director.commandiris.param.pack_download",
             "The pack to download"
-    );
-    public static final TextKey COMMAND_IRIS_PARAM_BRANCH_DOWNLOAD_FROM = TextKey.of(
-            "iris.director.commandiris.param.branch_download_from",
-            "The branch to download from"
-    );
-    public static final TextKey COMMAND_IRIS_PARAM_WHETHER_NOT_OVERWRITE_PACK_WITH_DOWNLOADED_ONE = TextKey.of(
-            "iris.director.commandiris.param.whether_not_overwrite_pack_with_downloaded_one",
-            "Whether or not to overwrite the pack with the downloaded one"
     );
     public static final TextKey COMMAND_IRIS_DIRECTOR_GET_METRICS_YOUR_WORLD = TextKey.of(
             "iris.director.commandiris.director.get_metrics_your_world",
@@ -902,7 +890,6 @@ public final class DirectorCommandMessages {
             COMMAND_DEVELOPER_PARAM_WORLD_UPDATE,
             COMMAND_DEVELOPER_PARAM_PACK_INSTALL_INTO_WORLD,
             COMMAND_DEVELOPER_PARAM_MAKE_SURE_MAKE_BACKUP_READ_WARNINGS_FIRST,
-            COMMAND_DEVELOPER_PARAM_SHOULD_IRIS_DOWNLOAD_PACK_AGAIN_YOU,
             COMMAND_DEVELOPER_DIRECTOR_TEST,
             COMMAND_DEVELOPER_PARAM_DUMP_WHOLE_TECTONIC_PLATE_INSTEAD_SINGLE_SECTION,
             COMMAND_DEVELOPER_PARAM_DUMP_FILE_ID_UNDER_PLUGINS_IRIS_DUMP_PV_ID,
@@ -970,8 +957,6 @@ public final class DirectorCommandMessages {
             COMMAND_IRIS_DIRECTOR_TOGGLE_DEBUG,
             COMMAND_IRIS_DIRECTOR_DOWNLOAD_PROJECT,
             COMMAND_IRIS_PARAM_PACK_DOWNLOAD,
-            COMMAND_IRIS_PARAM_BRANCH_DOWNLOAD_FROM,
-            COMMAND_IRIS_PARAM_WHETHER_NOT_OVERWRITE_PACK_WITH_DOWNLOADED_ONE,
             COMMAND_IRIS_DIRECTOR_GET_METRICS_YOUR_WORLD,
             COMMAND_IRIS_DIRECTOR_RELOAD_CONFIGURATION_FILE_THIS_IS_ALSO_DONE_AUTOMATICALLY,
             COMMAND_IRIS_DIRECTOR_UNLOAD_IRIS_WORLD,

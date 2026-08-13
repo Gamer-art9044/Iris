@@ -19,18 +19,6 @@ import static org.junit.Assert.assertThrows;
 
 public class StudioSVCProjectSafetyTest {
     @Test
-    public void listingWithoutBranchUsesRepositoryDefault() {
-        StudioSVC.PackListingReference reference = StudioSVC.resolvePackListingReference(
-                "example",
-                "IrisDimensions/example"
-        );
-
-        assertEquals("IrisDimensions/example", reference.repository());
-        assertEquals("HEAD", reference.ref());
-        assertEquals("example", reference.expectedKey());
-    }
-
-    @Test
     public void createsLocalStarterWithoutARepositoryDownload() throws IOException {
         File workspace = temporaryFolder.newFolder("starter-workspace");
 

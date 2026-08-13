@@ -291,14 +291,6 @@ public class IrisLanguageTest {
     }
 
     @Test
-    public void plainRenderingPreservesCommandSyntaxPlaceholders() {
-        assertEquals(
-                "Use /iris download <pack> branch=<branch> to download manually.",
-                IrisLanguage.plain(BukkitRuntimeMessages.STUDIO_S_V_C_USE_IRIS_DOWNLOAD_PACK_BRANCH_BRANCH_DOWNLOAD_MANUALLY)
-        );
-    }
-
-    @Test
     public void appliesLineAndPluralOverlayShapes() throws Exception {
         writeOverride("de_DE", """
                 {

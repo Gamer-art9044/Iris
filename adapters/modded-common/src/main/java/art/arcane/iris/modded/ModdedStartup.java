@@ -133,7 +133,7 @@ public final class ModdedStartup {
         List<File> packDirs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
         PackValidationRegistry.clear();
         if (packDirs.isEmpty()) {
-            LOGGER.info("Iris found no packs to validate under {}; install one with /iris download <pack>",
+            LOGGER.info("Iris found no packs to validate under {}; install one with /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>",
                     packsRoot.getAbsolutePath());
             return;
         }

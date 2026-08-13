@@ -48,10 +48,8 @@ import org.bukkit.plugin.Plugin;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Represents a volume sender. A command sender with extra crap in it
@@ -316,10 +314,12 @@ public class VolmitSender implements CommandSender {
     }
 
     public <T> void showWaiting(String passive, CompletableFuture<T> f) {
-        AtomicInteger v = new AtomicInteger();
-        AtomicReference<T> g = new AtomicReference<>();
+        // isDone() alone is the completion signal: it covers normal, exceptional AND
+        // cancelled completion, where the old null-value gate spun forever on a
+        // CompletableFuture<Void> or a failed future.
+        AtomicInteger v = new AtomicInteger(-1);
         v.set(J.ar(() -> {
-            if (f.isDone() && g.get() != null) {
+            if (f.isDone()) {
                 J.car(v.get());
                 sendAction(" ");
                 return;
@@ -327,16 +327,6 @@ public class VolmitSender implements CommandSender {
 
             sendProgress(-1, passive, HudSurface.TITLE, HudSurface.ACTION_BAR);
         }, 0));
-        J.a(() -> {
-            try {
-                g.set(f.get());
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            } catch (ExecutionException e) {
-                e.printStackTrace();
-            }
-        });
-
     }
 
     @Override

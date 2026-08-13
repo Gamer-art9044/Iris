@@ -20,11 +20,8 @@ package art.arcane.iris.engine.object;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class FloatingObjectFootprint {
-    private static final ConcurrentHashMap<String, FloatingObjectFootprint> CACHE = new ConcurrentHashMap<>();
-
     private final int lowestSolidKeyY;
     private final int highestSolidKeyY;
     private final int centerX;
@@ -49,12 +46,17 @@ public class FloatingObjectFootprint {
         this.footprintXZ = footprintXZ;
     }
 
+    /**
+     * Memoized per object instance, never in a global map: loadKey + declared dimensions is
+     * not unique across packs or across hotloads (a block edit keeps the header W/H/D), so a
+     * shared key space served stale or foreign footprints. A reload builds a new IrisObject,
+     * which drops the memo for free.
+     */
     public static FloatingObjectFootprint compute(IrisObject obj) {
-        String cacheKey = obj.getLoadKey() + "@" + obj.getW() + "x" + obj.getH() + "x" + obj.getD();
-        return CACHE.computeIfAbsent(cacheKey, k -> doCompute(obj, k));
+        return obj.floatingFootprint.aquire(() -> doCompute(obj));
     }
 
-    private static FloatingObjectFootprint doCompute(IrisObject obj, String cacheKey) {
+    private static FloatingObjectFootprint doCompute(IrisObject obj) {
         int cx = obj.getCenter().getBlockX();
         int cy = obj.getCenter().getBlockY();
         int cz = obj.getCenter().getBlockZ();

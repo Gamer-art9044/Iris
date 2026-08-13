@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.IrisEngine;
@@ -26,6 +27,7 @@ import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.object.IrisWorld;
+import art.arcane.iris.modded.command.ModdedGuiHost;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.storage.LevelResource;
@@ -76,6 +78,8 @@ public final class ModdedWorldEngines {
         if (removed[0] == null) {
             return;
         }
+        // The GUI host holds strong Engine/ServerLevel references with no other remove path.
+        ModdedGuiHost.unbind(removed[0]);
         LOGGER.info("Iris engine evicted for {}", level.dimension().identifier());
     }
 
@@ -89,6 +93,7 @@ public final class ModdedWorldEngines {
         ENGINES.compute(activeLevel, (ServerLevel ignored, Engine current) -> {
             if (current != null && current != activeReplacement) {
                 close(current);
+                ModdedGuiHost.unbind(current);
             }
             return activeReplacement;
         });
@@ -96,6 +101,7 @@ public final class ModdedWorldEngines {
 
     static void closeUnregistered(Engine engine) {
         close(engine);
+        ModdedGuiHost.unbind(engine);
     }
 
     private static Engine create(ServerLevel level, String pack, String dimensionKey, long seedOverride) {
@@ -167,11 +173,7 @@ public final class ModdedWorldEngines {
     }
 
     public static File packFolder(String pack) {
-        return ModdedEngineBootstrap.loader().configDir()
-                .resolve("irisworldgen")
-                .resolve("packs")
-                .resolve(pack)
-                .toFile();
+        return IrisPlatforms.get().packsFolderNoCreate(pack);
     }
 
     static File resolvePack(String pack, String dimensionKey) {
@@ -200,10 +202,18 @@ public final class ModdedWorldEngines {
             ServerLevel level = entry.getKey();
             Engine engine = entry.getValue();
             try {
-                close(engine);
-                if (!ENGINES.remove(level, engine) && ENGINES.containsKey(level)) {
-                    throw new IllegalStateException("Iris engine mapping changed during shutdown for "
-                            + level.dimension().identifier());
+                // Latch the generator's unloading flag BEFORE closing (unbindEngine sets it,
+                // then evicts): chunk-system drain work running after this stage would
+                // otherwise see a closed engine and silently rebuild a fresh engine + Mantle
+                // that no teardown stage ever closes, writing plates after the final save.
+                if (level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator) {
+                    generator.unbindEngine(level);
+                } else {
+                    close(engine);
+                    if (!ENGINES.remove(level, engine) && ENGINES.containsKey(level)) {
+                        throw new IllegalStateException("Iris engine mapping changed during shutdown for "
+                                + level.dimension().identifier());
+                    }
                 }
                 LOGGER.info("Iris engine closed for {}", level.dimension().identifier());
             } catch (Throwable e) {

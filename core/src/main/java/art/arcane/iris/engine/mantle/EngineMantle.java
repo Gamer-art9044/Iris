@@ -258,13 +258,13 @@ public interface EngineMantle extends MatterGenerator {
         MantleChunk<Matter> chunk = getMantle().getChunk(x, z).use();
         try {
             chunk.raiseFlagUnchecked(MantleFlag.CLEANED, () -> {
-                chunk.deleteSlices(PlatformBlockState.class);
-                chunk.deleteSlices(String.class);
-                chunk.deleteSlices(UpdateMatter.class);
-                chunk.deleteSlices(MatterCavern.class);
-                chunk.deleteSlices(MatterFluidBody.class);
-                chunk.deleteSlices(MatterMarker.class);
-                chunk.deleteSlices(TreeBlockMaterial.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, PlatformBlockState.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, String.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, UpdateMatter.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, MatterCavern.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, MatterFluidBody.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, MatterMarker.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, TreeBlockMaterial.class);
                 chunk.trimSlices();
             });
         } finally {
@@ -276,10 +276,10 @@ public interface EngineMantle extends MatterGenerator {
         MantleChunk<Matter> chunk = getMantle().getChunk(x, z).use();
         try {
             chunk.raiseFlagUnchecked(MantleFlag.CLEANED, () -> {
-                chunk.deleteSlices(PlatformBlockState.class);
-                chunk.deleteSlices(UpdateMatter.class);
-                chunk.deleteSlices(MatterCavern.class);
-                chunk.deleteSlices(MatterFluidBody.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, PlatformBlockState.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, UpdateMatter.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, MatterCavern.class);
+                MantleSliceRetention.deleteUnlessRetained(chunk, MatterFluidBody.class);
                 chunk.trimSlices();
             });
         } finally {

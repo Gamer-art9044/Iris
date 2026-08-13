@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
@@ -734,7 +735,7 @@ public final class ModdedForcedDatapack {
     }
 
     private static Path packsRoot() {
-        return ModdedEngineBootstrap.loader().configDir().resolve("irisworldgen").resolve("packs");
+        return IrisPlatforms.get().packsFolderNoCreate().toPath();
     }
 
     private record PublishedState(Path directory, String packsHash) {

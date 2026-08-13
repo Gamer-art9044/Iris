@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
@@ -230,7 +231,7 @@ final class ModdedCommandSuggestions {
         Set<String> names = new TreeSet<>();
         names.add("overworld");
         try {
-            File packs = ModdedEngineBootstrap.loader().configDir().resolve("irisworldgen").resolve("packs").toFile();
+            File packs = IrisPlatforms.get().packsFolderNoCreate();
             for (File child : PackDirectoryResolver.listVisiblePackDirectories(packs)) {
                 String packName = child.getName();
                 names.add(packName);

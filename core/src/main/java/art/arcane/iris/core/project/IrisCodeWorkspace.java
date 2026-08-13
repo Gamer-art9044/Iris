@@ -131,16 +131,28 @@ public class IrisCodeWorkspace {
         project.getPath().mkdirs();
         File ws = getCodeWorkspaceFile();
 
+        // Render before touching the file: a config-generation failure has nothing to do with
+        // the existing workspace file, and deleting it before a rethrowing rebuild silently
+        // destroyed the author's workspace on every boot.
+        String rendered;
         try {
-            writeIfChanged(ws, createCodeWorkspaceConfig().toString(4));
+            rendered = createCodeWorkspaceConfig().toString(4);
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            IrisLogging.warn("Could not generate the code workspace config for " + ws.getAbsolutePath() + "; leaving the existing workspace file untouched.");
+            return false;
+        }
+
+        try {
+            writeIfChanged(ws, rendered);
             return true;
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             IrisLogging.warn("Project invalid: " + ws.getAbsolutePath() + " Re-creating. You may loose some vs-code workspace settings! But not your actual project!");
             ws.delete();
             try {
-                IO.writeAll(ws, createCodeWorkspaceConfig());
-            } catch (IOException e1) {
+                IO.writeAll(ws, rendered);
+            } catch (Throwable e1) {
                 IrisLogging.reportError(e1);
                 e1.printStackTrace();
             }

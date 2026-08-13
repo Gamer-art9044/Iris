@@ -151,8 +151,6 @@ public class IrisObjectPlacement {
     private boolean bore = false;
     @Desc("Use a generator to warp the field of coordinates. Using simplex for example would make a square placement warp like a flag")
     private IrisGeneratorStyle warp = new IrisGeneratorStyle(NoiseStyle.FLAT);
-    @Desc("Unused. This field is not read by the placement engine.")
-    private boolean translateCenter = false;
     @Desc("The placement mode")
     private ObjectPlaceMode mode = ObjectPlaceMode.CENTER_HEIGHT;
     @ArrayType(min = 1, type = IrisObjectReplace.class)
@@ -189,7 +187,6 @@ public class IrisObjectPlacement {
     public IrisObjectPlacement toPlacement(String... place) {
         IrisObjectPlacement p = new IrisObjectPlacement();
         p.setPlace(new KList<>(place));
-        p.setTranslateCenter(translateCenter);
         p.setMode(mode);
         p.setEdit(edit);
         p.setTranslate(translate);

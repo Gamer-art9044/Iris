@@ -148,7 +148,7 @@ public final class DirectorCommandMessages {
     );
     public static final TextKey COMMAND_DEVELOPER_DIRECTOR_GENERATE_CHUNKS_INTO_BUFFERS_NO_WORLD_WRITES_HASH_BLOCKS_BIOMES_CAPTURES_GOLDEN = TextKey.of(
             "iris.director.commanddeveloper.director.generate_chunks_into_buffers_no_world_writes_hash_blocks_biomes_captures_golden",
-            "Generate chunks into buffers (no world writes) and hash blocks+biomes; captures a golden file or verifies against an existing one. Resets mantle in the scanned area - use on disposable test worlds."
+            "Generate chunks into buffers (no world writes) and hash blocks+biomes; captures a golden file or verifies against an existing one. Deletes the world's entire mantle - use on disposable test worlds."
     );
     public static final TextKey COMMAND_DEVELOPER_PARAM_WORLD_SCAN = TextKey.of(
             "iris.director.commanddeveloper.param.world_scan",
@@ -168,7 +168,7 @@ public final class DirectorCommandMessages {
     );
     public static final TextKey COMMAND_DEVELOPER_PARAM_DELETE_MANTLE_DATA_SCAN_AREA_FIRST_FULL_REGENERATION_FROM_SCRATCH = TextKey.of(
             "iris.director.commanddeveloper.param.delete_mantle_data_scan_area_first_full_regeneration_from_scratch",
-            "Delete mantle data in the scan area first for full regeneration from scratch"
+            "Delete the world's entire mantle folder first for full regeneration from scratch"
     );
     public static final TextKey COMMAND_DEVELOPER_PARAM_CONCURRENT_CHUNK_GENERATIONS_1_STRICTLY_SERIAL_ORDER_DEPENDENCE_TESTING = TextKey.of(
             "iris.director.commanddeveloper.param.concurrent_chunk_generations_1_strictly_serial_order_dependence_testing",

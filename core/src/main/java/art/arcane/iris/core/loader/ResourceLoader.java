@@ -63,8 +63,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -79,14 +79,8 @@ import java.util.zip.GZIPOutputStream;
 public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
     public static final AtomicDouble tlt = new AtomicDouble(0);
     private static final int CACHE_SIZE = 100000;
-    private static final ExecutorService schemaBuildExecutor = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "Iris-Schema-Builder");
-        thread.setDaemon(true);
-        thread.setPriority(Thread.MIN_PRIORITY);
-        return thread;
-    });
+    private static volatile ExecutorService schemaBuildExecutor;
     private static final Set<String> schemaBuildQueue = ConcurrentHashMap.newKeySet();
-    private static final AtomicBoolean schemaBuildExecutorRegistered = new AtomicBoolean();
     protected final AtomicCache<KList<File>> folderCache;
     protected volatile KSet<String> firstAccess;
     protected File root;
@@ -124,11 +118,32 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
         IrisLogging.debug("Loader<" + C.GREEN + resourceTypeName + C.LIGHT_PURPLE + "> created in " + C.RED + "IDM/" + manager.getId() + C.LIGHT_PURPLE + " on " + C.GRAY + manager.getDataFolder().getPath());
         if (options.registerPreservation()) {
             IrisServices.get(PreservationRegistry.class).registerCache(this);
+        }
+    }
+
+    /**
+     * Lazily (re)creates the schema-build pool. PreservationSVC shutdownNow()s every
+     * registered executor on plugin disable; a static final pool registered once was dead for
+     * the rest of the JVM after a hot reload, breaking every studio workspace refresh. Each
+     * created pool is registered with the CURRENT cycle's preservation registry.
+     */
+    private static synchronized ExecutorService schemaBuildExecutor() {
+        ExecutorService current = schemaBuildExecutor;
+        if (current == null || current.isShutdown()) {
+            schemaBuildQueue.clear();
+            current = Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "Iris-Schema-Builder");
+                thread.setDaemon(true);
+                thread.setPriority(Thread.MIN_PRIORITY);
+                return thread;
+            });
+            schemaBuildExecutor = current;
             PreservationRegistry preservation = IrisServices.getOrNull(PreservationRegistry.class);
-            if (preservation != null && schemaBuildExecutorRegistered.compareAndSet(false, true)) {
-                preservation.register(schemaBuildExecutor);
+            if (preservation != null) {
+                preservation.register(current);
             }
         }
+        return current;
     }
 
     public JSONObject buildSchema() {
@@ -145,15 +160,22 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
         File a = new File(getManager().getDataFolder(), ".iris/schema/" + getFolderName() + "-schema.json");
         String schemaPath = a.getAbsolutePath();
         if (schemaBuildQueue.add(schemaPath)) {
-            schemaBuildExecutor.execute(() -> {
-                try {
-                    IO.writeAll(a, new SchemaBuilder(objectClass, manager).construct().toString(4));
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
-                } finally {
-                    schemaBuildQueue.remove(schemaPath);
-                }
-            });
+            try {
+                schemaBuildExecutor().execute(() -> {
+                    try {
+                        IO.writeAll(a, new SchemaBuilder(objectClass, manager).construct().toString(4));
+                    } catch (Throwable e) {
+                        IrisLogging.reportError(e);
+                    } finally {
+                        schemaBuildQueue.remove(schemaPath);
+                    }
+                });
+            } catch (RejectedExecutionException rejected) {
+                // Never let a dead pool leak the queue entry or escape into workspace
+                // generation (which would delete the user's .code-workspace on the way out).
+                schemaBuildQueue.remove(schemaPath);
+                IrisLogging.warn("Schema build skipped (executor unavailable): " + schemaPath);
+            }
         }
 
         return o;
@@ -475,7 +497,9 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
         }
 
         KSet<String> set = firstAccess;
-        if (set != null) set.add(name);
+        // contains-first: CHM.add takes the bin monitor even when the key is present, and
+        // every generation thread hammers the same few keys through this line.
+        if (set != null && !set.contains(name)) set.add(name);
         return loadCache.get(name);
     }
 

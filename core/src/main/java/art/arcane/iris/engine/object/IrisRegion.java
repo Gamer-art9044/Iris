@@ -59,14 +59,9 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     private final transient AtomicCache<KList<String>> cacheSpot = new AtomicCache<>();
     private final transient AtomicCache<CNG> shoreHeightGenerator = new AtomicCache<>();
     private final transient AtomicCache<KList<IrisBiome>> realLandBiomes = new AtomicCache<>();
-    private final transient AtomicCache<KList<IrisBiome>> realLakeBiomes = new AtomicCache<>();
-    private final transient AtomicCache<KList<IrisBiome>> realRiverBiomes = new AtomicCache<>();
     private final transient AtomicCache<KList<IrisBiome>> realSeaBiomes = new AtomicCache<>();
     private final transient AtomicCache<KList<IrisBiome>> realShoreBiomes = new AtomicCache<>();
     private final transient AtomicCache<KList<IrisBiome>> realCaveBiomes = new AtomicCache<>();
-    private final transient AtomicCache<CNG> lakeGen = new AtomicCache<>();
-    private final transient AtomicCache<CNG> riverGen = new AtomicCache<>();
-    private final transient AtomicCache<CNG> riverChanceGen = new AtomicCache<>();
     private final transient AtomicCache<Color> cacheColor = new AtomicCache<>();
     private final transient AtomicCache<KList<IrisOreGenerator>> surfaceOreCache = new AtomicCache<>();
     private final transient AtomicCache<KList<IrisOreGenerator>> undergroundOreCache = new AtomicCache<>();
@@ -146,10 +141,6 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     @ArrayType(min = 1, type = IrisDepositVariant.class)
     @Desc("Deposit ore remap rules scoped to this region. Each entry declares a vertical band and a source->replacement block id map. Applied after biome rules but before dimension rules; first matching region rule wins.")
     private KList<IrisDepositVariant> depositVariants = new KList<>();
-    @Desc("Unused. This field is not read by the engine; rivers are not generated from it.")
-    private IrisGeneratorStyle riverStyle = NoiseStyle.VASCULAR_THIN.style().zoomed(7.77);
-    @Desc("Unused. This field is not read by the engine; lakes are not generated from it.")
-    private IrisGeneratorStyle lakeStyle = NoiseStyle.CELLULAR_IRIS_THICK.style();
     @Desc("A color for visualizing this region with a color. I.e. #F13AF5. This will show up on the map.")
     private String color = null;
     @Desc("Collection of ores to be generated")
@@ -274,23 +265,6 @@ public class IrisRegion extends IrisRegistrant implements IRare {
 
             return o;
         });
-    }
-
-    public double getBiomeZoom(InferredType t) {
-        switch (t) {
-            case CAVE:
-                return caveBiomeZoom;
-            case LAND:
-                return landBiomeZoom;
-            case SEA:
-                return seaBiomeZoom;
-            case SHORE:
-                return shoreBiomeZoom;
-            default:
-                break;
-        }
-
-        return 1;
     }
 
     public CNG getShoreHeightGenerator() {

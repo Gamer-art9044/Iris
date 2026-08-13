@@ -451,6 +451,9 @@ public final class ModdedWhatCommands {
                                           ModdedScheduler scheduler, MarkerRun run,
                                           List<BlockPos> hits, int from) {
         if (!active(run)) {
+            // Drop the registry entry on abort too, or the run record pins the player, level
+            // and engine until server stop. No-op if a newer run already replaced it.
+            ACTIVE_MARKER_RUNS.remove(run.playerId(), run);
             return;
         }
         int to = Math.min(hits.size(), from + MARKER_BATCH_SIZE);

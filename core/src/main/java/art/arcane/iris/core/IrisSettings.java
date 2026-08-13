@@ -41,7 +41,7 @@ public class IrisSettings {
     private IrisSettingsGUI gui = new IrisSettingsGUI();
     private IrisSettingsAutoconfiguration autoConfiguration = new IrisSettingsAutoconfiguration();
     private IrisSettingsGenerator generator = new IrisSettingsGenerator();
-    private IrisSettingsConcurrency concurrency = new IrisSettingsConcurrency();
+    private transient IrisSettingsConcurrency concurrency = new IrisSettingsConcurrency();
     private IrisSettingsStudio studio = new IrisSettingsStudio();
     private IrisSettingsPerformance performance = new IrisSettingsPerformance();
     private IrisSettingsPregen pregen = new IrisSettingsPregen();

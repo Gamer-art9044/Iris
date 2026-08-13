@@ -1,5 +1,6 @@
 package art.arcane.iris.core.service;
 
+import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.datapack.DatapackStructureScopeIndex;
 import art.arcane.iris.core.nms.DatapackStructureScopeResult;
@@ -29,13 +30,26 @@ public final class DatapackStructureScopeSVC implements IrisService {
             scopeIndex = DatapackStructureScopeIndex.create(
                     DatapackIngestService.installedStructureScopeResources());
         } catch (IOException e) {
-            throw new IllegalStateException(
-                    "Iris could not establish ownership for installed datapack structure sets", e);
+            // A missing manifest entry is the condition validateOnStartup already classified as
+            // non-fatal; degrade to an empty scope and lock world creation instead of aborting
+            // the whole plugin bootstrap (which would skip listeners and journal reconciliation).
+            scopeIndex = DatapackStructureScopeIndex.create(null);
+            IrisLogging.error("Could not establish ownership for installed datapack structure sets; "
+                    + "datapack structure scoping is disabled until the manifest is repaired: " + e.getMessage());
+            IrisStartupValidation.markDatapacksInvalid(
+                    "Iris could not establish ownership for installed datapack structure sets: " + e.getMessage());
         }
         for (World world : Bukkit.getWorlds()) {
-            IrisImportedStructureControl importedStructures = importedStructures(world);
-            if (!scopeIndex.isEmpty() || importedStructures != null && importedStructures.hasFrequencyOverrides()) {
-                applyScope(world, importedStructures);
+            try {
+                IrisImportedStructureControl importedStructures = importedStructures(world);
+                if (!scopeIndex.isEmpty() || importedStructures != null && importedStructures.hasFrequencyOverrides()) {
+                    applyScope(world, importedStructures);
+                }
+            } catch (Throwable e) {
+                // Per-world containment: one world's scoping failure must not abort the
+                // service enable (and with it the whole bootstrap's containment contract).
+                IrisLogging.error("Could not scope datapack structures for world '" + world.getName() + "'.");
+                IrisLogging.reportError(e);
             }
         }
     }

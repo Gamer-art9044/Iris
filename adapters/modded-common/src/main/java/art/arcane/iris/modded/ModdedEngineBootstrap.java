@@ -47,6 +47,7 @@ import art.arcane.iris.modded.service.ModdedTreeFellerService;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisServices;
+import art.arcane.iris.util.common.parallel.MultiBurst;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -99,6 +100,11 @@ public final class ModdedEngineBootstrap {
         captureInitialSpawn(server);
         currentServer = server;
         bind();
+        // Pair of the stop() burst-pools stage. Load-bearing on integrated servers: once
+        // closed, MultiBurst falls back to a same-thread executor, so a second world load
+        // without reopen() would silently run every burst inline.
+        MultiBurst.burst.reopen();
+        MultiBurst.ioBurst.reopen();
         ModdedScheduler scheduler = schedulerOrNull();
         if (scheduler != null) {
             scheduler.reset();
@@ -170,6 +176,7 @@ public final class ModdedEngineBootstrap {
         failure = runStopStage(failure, "wand service", ModdedWandService::clearAll);
         failure = runStopStage(failure, "block break handler", ModdedBlockBreakHandler::clear);
         failure = runStopStage(failure, "studio commands", ModdedStudioCommands::clear);
+        failure = runStopStage(failure, "gui host", ModdedGuiHost::clear);
         failure = runStopStage(failure, "services", () -> services().disableAll());
         failure = runStopStage(failure, "world engines", ModdedWorldEngines::shutdown);
         failure = runStopStage(failure, "primary world router", ModdedPrimaryWorldRouter::clear);
@@ -183,6 +190,10 @@ public final class ModdedEngineBootstrap {
             failure = runStopStage(failure, "level snapshot", ModdedServerLevels::forget);
         }
         failure = runStopStage(failure, "generation pool", IrisModdedChunkGenerator::shutdownGenPool);
+        failure = runStopStage(failure, "burst pools", () -> {
+            MultiBurst.burst.close();
+            MultiBurst.ioBurst.close();
+        });
         failure = runStopStage(failure, "sentry", ModdedSentry::flush);
         failure = runStopStage(failure, "startup state", ModdedStartup::reset);
         failure = runStopStage(failure, "server state", () -> {
@@ -386,7 +397,12 @@ public final class ModdedEngineBootstrap {
                 ModdedCustomContentRegistry.Discovery customContentDiscovery =
                         ModdedCustomContentRegistry.discover();
                 rollback.add(customContentDiscovery::rollback);
-                ModdedIrisSplash.print(boundLoader);
+                try {
+                    ModdedIrisSplash.print(boundLoader);
+                } catch (Throwable splashFailure) {
+                    // A cosmetic banner must never roll back the platform bind.
+                    LOGGER.warn("Iris splash could not be printed", splashFailure);
+                }
                 createdServices.enableAll();
                 runtime = new BoundRuntime(created, createdServices);
                 rollback.clear();

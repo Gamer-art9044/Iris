@@ -40,6 +40,14 @@ public final class ModdedBlockBuffer implements Hunk<PlatformBlockState> {
         return data[index(x, y, z)] == null;
     }
 
+    /**
+     * Direct slot read, null when unset — lets writeBlocks pay one index + one array load per
+     * block instead of the isAir + getRaw pair.
+     */
+    public PlatformBlockState rawOrNull(int x, int y, int z) {
+        return data[index(x, y, z)];
+    }
+
     @Override
     public int getWidth() {
         return 16;

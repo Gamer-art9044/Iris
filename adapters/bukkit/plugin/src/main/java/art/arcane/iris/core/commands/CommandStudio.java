@@ -328,35 +328,50 @@ public class CommandStudio implements DirectorExecutor {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_ONLY_WORKS_IRIS_WORLD));
             return;
         }
+        if (radius <= 0 || radius > 2048) {
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_ONLY_WORKS_IRIS_WORLD));
+            sender().sendMessage("Radius must be between 1 and 2048 chunks.");
+            return;
+        }
         var sender = sender();
         var player = player();
         Thread.ofVirtual()
                 .start(() -> {
                     int d = radius * 2;
                     KMap<String, AtomicInteger> data = new KMap<>();
+                    // Everything acquired below is released in the finally: a throw mid-scan
+                    // previously leaked the whole sampler ForkJoinPool, the self-rescheduling
+                    // progress task and both HUD claims for the rest of the server's uptime.
+                    MultiBurst multiBurst = null;
+                    HudSlotClaim titleClaim = null;
+                    HudSlotClaim barClaim = null;
+                    int c = -1;
+                    try {
                     engine.getDimension().getRegions().forEach(key -> data.put(key, new AtomicInteger(0)));
-                    var multiBurst = new MultiBurst("Region Sampler");
-                    var executor = multiBurst.burst(radius * radius);
+                    multiBurst = new MultiBurst("Region Sampler");
+                    var executor = multiBurst.burst(Math.min(radius * radius, 1 << 20));
                     sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_STUDIO_GENERATING_DATA));
                     var loc = player.getLocation();
                     int totalTasks = d * d;
                     AtomicInteger completedTasks = new AtomicInteger(0);
-                    HudSlotClaim titleClaim = BukkitPlatform.hudSlots().open(player, new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.TITLE)));
-                    HudSlotClaim barClaim = BukkitPlatform.hudSlots().open(player, new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)));
+                    titleClaim = BukkitPlatform.hudSlots().open(player, new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.TITLE)));
+                    barClaim = BukkitPlatform.hudSlots().open(player, new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)));
+                    HudSlotClaim finalTitleClaim = titleClaim;
+                    HudSlotClaim finalBarClaim = barClaim;
                     AtomicLong lastResolveMs = new AtomicLong(0L);
-                    int c = J.ar(() -> {
+                    c = J.ar(() -> {
                         long now = System.currentTimeMillis();
                         if (now - lastResolveMs.get() >= 250L) {
                             lastResolveMs.set(now);
-                            titleClaim.resolve();
-                            barClaim.resolve();
+                            finalTitleClaim.resolve();
+                            finalBarClaim.resolve();
                         }
                         double jobProgress = (double) completedTasks.get() / totalTasks;
-                        HudSurface barSurface = barClaim.granted();
+                        HudSurface barSurface = finalBarClaim.granted();
                         sender.sendProgress(
                                 jobProgress,
                                 IrisLanguage.text(RuntimeUiMessages.FINDING_REGIONS),
-                                titleClaim.granted(),
+                                finalTitleClaim.granted(),
                                 barSurface
                         );
                         if (barSurface == HudSurface.BOSS_BAR) {
@@ -372,15 +387,28 @@ public class CommandStudio implements DirectorExecutor {
                         completedTasks.incrementAndGet();
                     })).setOffset(loc.getBlockX(), loc.getBlockZ()).drain();
                     executor.complete();
-                    multiBurst.close();
-                    J.car(c);
-                    titleClaim.release();
-                    barClaim.release();
-                    BukkitPlatform.hudLanes().hide(player, "iris:job");
 
                     sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_STUDIO_DONE));
                     var loader = engine.getData().getRegionLoader();
                     data.forEach((k, v) -> sender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_STUDIO_MESSAGE, MessageArgument.untrusted("k", k), MessageArgument.untrusted("value", loader.load(k).getRarity()), MessageArgument.untrusted("value2", Form.f((double) v.get() / totalTasks * 100, 2)))));
+                    } catch (Throwable e) {
+                        Iris.reportError(e);
+                        sender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_ONLY_WORKS_IRIS_WORLD));
+                    } finally {
+                        if (c != -1) {
+                            J.car(c);
+                        }
+                        if (titleClaim != null) {
+                            titleClaim.release();
+                        }
+                        if (barClaim != null) {
+                            barClaim.release();
+                            BukkitPlatform.hudLanes().hide(player, "iris:job");
+                        }
+                        if (multiBurst != null) {
+                            multiBurst.close();
+                        }
+                    }
                 });
     }
 
@@ -437,7 +465,6 @@ public class CommandStudio implements DirectorExecutor {
         KMap<InterpolationMethod, Double> interpolatorTimings = new KMap<>();
         KMap<String, Double> generatorTimings = new KMap<>();
         KMap<String, Double> biomeTimings = new KMap<>();
-        KMap<String, Double> regionTimings = new KMap<>();
 
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_CALCULATING_PERFORMANCE_METRICS_NOISE_GENERATORS));
 
@@ -561,23 +588,6 @@ public class CommandStudio implements DirectorExecutor {
 
         fileText.add("");
 
-        for (String i : data.getRegionLoader().getPossibleKeys()) {
-            IrisRegion b = data.getRegionLoader().load(i);
-            double score = 0;
-
-            score += styleTimings.get(b.getLakeStyle().getStyle());
-            score += styleTimings.get(b.getRiverStyle().getStyle());
-            regionTimings.put(i, score);
-        }
-
-        fileText.add("Project Region Performance Impacts: ");
-
-        for (String i : regionTimings.sortKNumber()) {
-            fileText.add(i + ": " + regionTimings.get(i));
-        }
-
-        fileText.add("");
-
         double m = 0;
         for (double i : biomeTimings.v()) {
             m += i;
@@ -589,12 +599,6 @@ public class CommandStudio implements DirectorExecutor {
         }
         mm /= generatorTimings.size();
         m += mm;
-        double mmm = 0;
-        for (double i : regionTimings.v()) {
-            mmm += i;
-        }
-        mmm /= regionTimings.size();
-        m += mmm;
 
         fileText.add("Average Score: " + m);
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_SCORE, MessageArgument.untrusted("value", Form.duration(m, 0))));
@@ -763,9 +767,8 @@ public class CommandStudio implements DirectorExecutor {
         }
 
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_CAPTURING_IGENDATA_FROM_NEARBY_CHUNKS, MessageArgument.untrusted("value", chunks.size())));
-        try {
-            File ff = Iris.instance.getDataFile("reports/" + M.ms() + ".txt");
-            PrintWriter pw = new PrintWriter(ff);
+        File ff = Iris.instance.getDataFile("reports/" + M.ms() + ".txt");
+        try (PrintWriter pw = new PrintWriter(ff)) {
             pw.println("=== Iris Chunk Report ===");
             pw.println("== General Info ==");
             pw.println("Iris Version: " + Iris.instance.getDescription().getVersion());
@@ -820,7 +823,8 @@ public class CommandStudio implements DirectorExecutor {
                 }
             }
 
-            regions = Objects.requireNonNull(new File(world.getWorldFolder().getPath() + "/region").list()).length;
+            String[] regionFiles = new File(world.getWorldFolder(), "region").list();
+            regions = regionFiles == null ? 0 : regionFiles.length;
 
             pw.println();
             pw.println("== World Info ==");
@@ -854,10 +858,9 @@ public class CommandStudio implements DirectorExecutor {
             }
 
             pw.println();
-            pw.close();
 
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_REPORTED, MessageArgument.untrusted("value", ff.getPath())));
-        } catch (FileNotFoundException e) {
+        } catch (Throwable e) {
             e.printStackTrace();
             Iris.reportError(e);
         }

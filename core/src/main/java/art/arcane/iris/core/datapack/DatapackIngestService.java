@@ -175,7 +175,7 @@ public final class DatapackIngestService {
         if (autoIngest && !configured.isEmpty()) {
             IrisLogging.info("Validating " + configured.size()
                     + " configured external datapack import(s) before player admission...");
-            Report report = ingest(null, configured, true);
+            Report report = ingest(null, configured, true, true);
             if (!report.getFailed().isEmpty()) {
                 String failure = report.getFailed().getFirst();
                 IrisStartupValidation.markDatapacksInvalid(failure);
@@ -513,15 +513,35 @@ public final class DatapackIngestService {
     }
 
     public static Report ingest(VolmitSender sender, KList<String> urls, boolean restart) {
-        IrisStartupValidation.beginDatapackValidation();
+        return ingest(sender, urls, restart, false);
+    }
+
+    /**
+     * Only startup validation owns the global player-admission gate (gateAdmission=true). The
+     * runtime admin command must never flip it: a transient download failure there would lock
+     * every login until restart, and the PENDING window would close logins for the whole
+     * (potentially very slow) download. World-creation safety on the ungated path is carried
+     * by the loaded-runtime invalidation plus requireDatapackRestart when files change.
+     */
+    private static Report ingest(VolmitSender sender, KList<String> urls, boolean restart, boolean gateAdmission) {
+        if (gateAdmission) {
+            IrisStartupValidation.beginDatapackValidation();
+        }
         ServerConfigurator.LoadedDatapackRuntimeInvalidation invalidation =
                 ServerConfigurator.invalidateLoadedDatapackRuntime();
         Report report;
+        boolean settled = false;
         TRANSACTION_LOCK.lock();
         try {
             report = ingestLocked(sender, urls, restart);
+            settled = true;
         } finally {
             TRANSACTION_LOCK.unlock();
+            if (!settled && gateAdmission) {
+                // Never strand the admission gate at PENDING on an unexpected throw.
+                IrisStartupValidation.markDatapacksInvalid(
+                        "External datapack ingest failed unexpectedly; check the log above.");
+            }
         }
         if (!report.changed() && report.getFailed().isEmpty()) {
             ServerConfigurator.restoreLoadedDatapackRuntimeIfUnchanged(invalidation);
@@ -532,10 +552,12 @@ public final class DatapackIngestService {
                 ServerConfigurator.requireDatapackRestart();
             }
         }
-        if (!report.getFailed().isEmpty()) {
-            IrisStartupValidation.markDatapacksInvalid(report.getFailed().getFirst());
-        } else if (!report.changed()) {
-            IrisStartupValidation.markDatapacksReady();
+        if (gateAdmission) {
+            if (!report.getFailed().isEmpty()) {
+                IrisStartupValidation.markDatapacksInvalid(report.getFailed().getFirst());
+            } else if (!report.changed()) {
+                IrisStartupValidation.markDatapacksReady();
+            }
         }
         return report;
     }
@@ -944,45 +966,61 @@ public final class DatapackIngestService {
         }
     }
 
+    enum RemoveOutcome {
+        REMOVED,
+        REJECTED,
+        FAILED_AFTER_MUTATION
+    }
+
     public static boolean remove(VolmitSender sender, String id) {
-        ServerConfigurator.invalidateLoadedDatapackRuntime();
-        boolean removed;
+        ServerConfigurator.LoadedDatapackRuntimeInvalidation invalidation =
+                ServerConfigurator.invalidateLoadedDatapackRuntime();
+        RemoveOutcome outcome;
         TRANSACTION_LOCK.lock();
         try {
-            removed = removeLocked(sender, id);
+            outcome = removeOutcomeLocked(sender, id);
         } finally {
             TRANSACTION_LOCK.unlock();
         }
-        if (removed) {
+        if (outcome == RemoveOutcome.REMOVED) {
             ServerConfigurator.requireDatapackRestart();
+        } else if (outcome == RemoveOutcome.REJECTED) {
+            // Rejected before any mutation: nothing on disk changed, so the loaded runtime is
+            // still valid. Leaving it invalidated forced a full datapack reinstall on every
+            // later world creation for the rest of the session.
+            ServerConfigurator.restoreLoadedDatapackRuntimeIfUnchanged(invalidation);
         }
-        return removed;
+        return outcome == RemoveOutcome.REMOVED;
     }
 
-    private static boolean removeLocked(VolmitSender sender, String id) {
+    private static RemoveOutcome removeOutcomeLocked(VolmitSender sender, String id) {
         File root = IrisPlatforms.get().dataFolder("datapacks");
-        return removeLocked(sender, id, root, ServerConfigurator.getDatapacksFolder());
+        return removeOutcomeLocked(sender, id, root, ServerConfigurator.getDatapacksFolder());
     }
 
     static boolean removeLocked(VolmitSender sender, String id, File root, List<File> worldFolders) {
+        return removeOutcomeLocked(sender, id, root, worldFolders) == RemoveOutcome.REMOVED;
+    }
+
+    static RemoveOutcome removeOutcomeLocked(VolmitSender sender, String id, File root, List<File> worldFolders) {
         String requested = id == null ? "" : id.trim().toLowerCase(Locale.ROOT);
         String cleaned = sanitizeId(id);
         if (requested.isBlank() || !requested.equals(cleaned) || RESERVED_IDS.contains(cleaned)) {
             message(sender, C.RED + "Invalid Iris-managed datapack id '" + requested + "'. Run /iris datapack list and use the exact listed id.");
-            return false;
+            return RemoveOutcome.REJECTED;
         }
         try {
             recoverTransactions(root, worldFolders);
         } catch (IOException e) {
             message(sender, C.RED + "Datapack removal blocked by incomplete transaction recovery: " + e.getMessage());
             IrisLogging.reportError(e);
-            return false;
+            return RemoveOutcome.REJECTED;
         }
         Manifest manifest = readManifest(root);
         Entry ownedEntry = manifest.findById(cleaned);
         if (ownedEntry == null) {
             message(sender, C.YELLOW + "No Iris-managed datapack named '" + cleaned + "'. Unmanaged world datapacks are never removed by Iris.");
-            return false;
+            return RemoveOutcome.REJECTED;
         }
 
         List<File> targets;
@@ -991,7 +1029,7 @@ public final class DatapackIngestService {
         } catch (IOException e) {
             message(sender, C.RED + "Refused to remove datapack '" + cleaned + "': " + e.getMessage());
             IrisLogging.reportError(e);
-            return false;
+            return RemoveOutcome.REJECTED;
         }
 
         EditableImportRemoval editableRemoval = null;
@@ -1017,7 +1055,7 @@ public final class DatapackIngestService {
                         removalFailure);
                 message(sender, C.GREEN + "Removed datapack '" + C.WHITE + cleaned + C.GREEN
                         + "'. Restart for it to stop generating, and delete its URL from the pack's datapackImports to keep it gone.");
-                return true;
+                return RemoveOutcome.REMOVED;
             }
             boolean restored = rollbackRemoval(manifestWrite, directoryRemoval, editableRemoval, removalFailure);
             if (restored && coordinator != null) {
@@ -1030,12 +1068,14 @@ public final class DatapackIngestService {
             message(sender, C.RED + "Failed to remove datapack '" + cleaned
                     + "'; Iris attempted to restore every prior location: " + removalFailure.getMessage());
             IrisLogging.reportError(removalFailure);
-            return false;
+            // A mutation was attempted; even a successful rollback is not provably identical
+            // (the fingerprint does not cover datapacks/), so stay conservatively invalidated.
+            return RemoveOutcome.FAILED_AFTER_MUTATION;
         }
         finishCommittedRemoval(cleaned, manifestWrite, directoryRemoval, editableRemoval, coordinator, null);
         message(sender, C.GREEN + "Removed datapack '" + C.WHITE + cleaned + C.GREEN
                 + "'. Restart for it to stop generating, and delete its URL from the pack's datapackImports to keep it gone.");
-        return true;
+        return RemoveOutcome.REMOVED;
     }
 
     private static void finishCommittedRemoval(

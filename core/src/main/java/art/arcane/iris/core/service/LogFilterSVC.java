@@ -1,6 +1,5 @@
 package art.arcane.iris.core.service;
 
-import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.plugin.IrisService;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -10,17 +9,26 @@ import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.Logger;
 import org.apache.logging.log4j.message.Message;
 
+import java.util.List;
+
 public class LogFilterSVC implements IrisService, Filter {
 
     private static final String HEIGHTMAP_MISMATCH = "Ignoring heightmap data for chunk";
     private static final String RAID_PERSISTENCE = "Could not save data net.minecraft.world.entity.raid.PersistentRaid";
     private static final String DUPLICATE_ENTITY_UUID = "UUID of added entity already exists";
 
-    private static final KList<String> FILTERS = new KList<>();
+    // Immutable: check() runs on arbitrary logger threads, and the root logger is JVM-global,
+    // so a mutable static here was both a CME hazard and grew by three entries per enable.
+    private static final List<String> FILTERS = List.of(HEIGHTMAP_MISMATCH, RAID_PERSISTENCE, DUPLICATE_ENTITY_UUID);
+
+    private boolean installed = false;
 
     public void onEnable() {
-        FILTERS.add(HEIGHTMAP_MISMATCH, RAID_PERSISTENCE, DUPLICATE_ENTITY_UUID);
+        if (installed) {
+            return;
+        }
         ((Logger) LogManager.getRootLogger()).addFilter(this);
+        installed = true;
     }
 
     public void initialize() {
@@ -33,6 +41,11 @@ public class LogFilterSVC implements IrisService, Filter {
     }
 
     public void onDisable() {
+        if (!installed) {
+            return;
+        }
+        ((Logger) LogManager.getRootLogger()).get().removeFilter(this);
+        installed = false;
     }
 
     public boolean isStarted() {
@@ -116,8 +129,14 @@ public class LogFilterSVC implements IrisService, Filter {
     }
 
     private Result check(String string) {
-        if (FILTERS.stream().anyMatch(string::contains))
-            return Result.DENY;
+        if (string == null) {
+            return Result.NEUTRAL;
+        }
+        for (String filter : FILTERS) {
+            if (string.contains(filter)) {
+                return Result.DENY;
+            }
+        }
         return Result.NEUTRAL;
     }
 }

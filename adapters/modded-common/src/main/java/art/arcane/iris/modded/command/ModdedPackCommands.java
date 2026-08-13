@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackResourceCleanup;
 import art.arcane.iris.core.pack.PackValidationRegistry;
@@ -98,7 +99,7 @@ public final class ModdedPackCommands {
     }
 
     public static File packsRoot() {
-        return ModdedEngineBootstrap.loader().configDir().resolve("irisworldgen").resolve("packs").toFile();
+        return IrisPlatforms.get().packsFolderNoCreate();
     }
 
     private static int validate(CommandSourceStack source, String pack) {

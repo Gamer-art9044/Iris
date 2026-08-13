@@ -20,6 +20,7 @@ package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.BrokenPackException;
+import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
@@ -177,7 +178,7 @@ public final class ModdedWorldCommands {
         }
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
         Thread thread = new Thread(() -> {
-            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master", false, true,
+            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, PackDownloader.DEFAULT_BRANCH, false, true,
                     (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
             server.execute(() -> {
                 if (!installed || !packFolder.isDirectory()) {
@@ -280,7 +281,7 @@ public final class ModdedWorldCommands {
         }
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS_2, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack)));
         Thread thread = new Thread(() -> {
-            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master", false, true,
+            boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, PackDownloader.DEFAULT_BRANCH, false, true,
                     (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
             server.execute(() -> {
                 if (!installed || !packFolder.isDirectory()) {

@@ -38,7 +38,6 @@ import art.arcane.volmlib.util.function.Consumer2;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.math.Position2;
-import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import art.arcane.iris.util.common.scheduling.J;
 
 import java.awt.Color;
@@ -46,12 +45,14 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 public class PregeneratorJob implements PregenListener, PregenRenderSource {
-    private static final long WORLD_SHUTDOWN_TIMEOUT_MILLIS = 15_000L;
+    // Must exceed the worker's own worst-case teardown budget (AsyncPregenMethod close:
+    // 60s permit drain + 120s flush + plate reclaim), or a routine drain trips the deadline
+    // and aborts the engine shutdown sequence mid-teardown.
+    private static final long WORLD_SHUTDOWN_TIMEOUT_MILLIS = 200_000L;
     private static final Color COLOR_EXISTS = parseColor("#4d7d5b");
     private static final Color COLOR_BLACK = parseColor("#4d7d5b");
     private static final Color COLOR_MANTLE = parseColor("#3c2773");
@@ -69,14 +70,12 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     private final IrisPregenerator pregenerator;
     private final Position2 min;
     private final Position2 max;
-    private final ChronoLatch cl = new ChronoLatch(TimeUnit.MINUTES.toMillis(1));
     private final Engine engine;
     private final ExecutorService service;
     private final Thread worker;
     private final PregenPhaseTracker apiPhases = new PregenPhaseTracker();
     private PregenRenderer renderer;
     private Consumer2<Position2, Color> drawFunction;
-    private int rgc = 0;
     private String[] info;
     private volatile double lastChunksPerSecond = 0D;
     private volatile long lastChunksRemaining = 0L;
@@ -87,14 +86,6 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     private volatile String lastMethod = IrisLanguage.plain(DesktopUiMessages.PREGEN_METHOD_PENDING);
 
     public PregeneratorJob(PregenTask task, PregeneratorMethod method, Engine engine) {
-        instance.updateAndGet(old -> {
-            if (old != null) {
-                old.pregenerator.close();
-                old.worker.interrupt();
-                old.close();
-            }
-            return this;
-        });
         this.engine = engine;
         monitor = new MemoryMonitor(50);
         saving = false;
@@ -120,6 +111,19 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         worker.setPriority(Thread.MIN_PRIORITY);
         worker.setDaemon(true);
         worker.setUncaughtExceptionHandler((thread, ex) -> IrisLogging.reportError(ex));
+
+        // Publish into the static only after every field is assigned (the volatile swap is
+        // what makes them visible to metrics/shutdown readers), and start the worker after
+        // publication so it also sees a complete object.
+        // CAS-or-throw: updateAndGet must be side-effect free (it can re-apply on
+        // contention), and silently killing the previous job overlapped its 60s+120s
+        // teardown with the new job's generation. Replacement goes through
+        // shutdownAndWait first, matching the modded adapter's rejection contract.
+        if (!instance.compareAndSet(null, this)) {
+            monitor.close();
+            service.shutdown();
+            throw new IllegalStateException("An Iris pregeneration job is already running; stop it first.");
+        }
         worker.start();
     }
 
@@ -135,6 +139,14 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     public static boolean shutdownInstance() {
         PregeneratorJob inst = instance.get();
         if (inst == null) {
+            return false;
+        }
+
+        if (!inst.worker.isAlive() && inst.worker.getState() != Thread.State.NEW) {
+            // The worker died without running onClose (early abort); clear the phantom job so
+            // it stops suppressing entity spawns and blocking future pregens. A NEW worker is
+            // a job mid-construction, not a dead one.
+            instance.compareAndSet(inst, null);
             return false;
         }
 
@@ -432,15 +444,9 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
 
     @Override
     public void onRegionGenerated(int x, int z) {
-        shouldGc();
-        rgc++;
+        // No forced System.gc() here: a wall-clock full STW collection mid-generation stalled
+        // everything; MantleHeapPressure's 96% panic reclaim already owns heap pressure.
         broadcastRegionDelta(x, z, IrisMessage.PregenRegionDelta.STATE_DONE);
-    }
-
-    private void shouldGc() {
-        if (cl.flip() && rgc > 16) {
-            System.gc();
-        }
     }
 
     private void broadcastRegionDelta(int regionX, int regionZ, int state) {

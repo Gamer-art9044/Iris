@@ -50,6 +50,11 @@ final class ModdedSpawnTableMerger {
     }
 
     void initializeVanillaSpawnBiomes(Registry<Biome> registry) {
+        // Volatile fast path BEFORE the monitor: this runs per mob category per spawn attempt
+        // on the server thread, and the generator monitor is contended by binds/hotloads.
+        if (vanillaSpawnBiomesInitialized) {
+            return;
+        }
         synchronized (generator) {
             if (vanillaSpawnBiomesInitialized) {
                 return;

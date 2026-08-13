@@ -55,6 +55,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 
 public final class ModdedChunkUpdateService implements ModdedTickableService {
     private static final long PASS_PERIOD_MILLIS = 3_000L;
@@ -84,7 +85,17 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
         ExecutorService active = warmupExecutor;
         warmupExecutor = null;
         if (active != null) {
-            active.shutdown();
+            // Drop queued warm-ups (pure prefetch) and AWAIT: the very next shutdown stage
+            // closes every Mantle, and an in-flight mantle.getChunk would fault a plate back
+            // in after the close-time flush.
+            active.shutdownNow();
+            try {
+                if (!active.awaitTermination(5L, TimeUnit.SECONDS)) {
+                    IrisLogging.warn("Iris mantle warm-up did not stop before engine close");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
         warmupQueue.clear();
     }

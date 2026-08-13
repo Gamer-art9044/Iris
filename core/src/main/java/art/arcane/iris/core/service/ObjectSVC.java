@@ -24,15 +24,17 @@ import lombok.Getter;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 
-import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.Iterator;
 import java.util.Map;
 
 public class ObjectSVC implements IrisService {
 
     @Getter
-    private final Deque<Map<Block, BlockData>> undos = new ArrayDeque<>();
+    // Concurrent + global-thread pipeline: pastes publish via J.runGlobal while the undo
+    // command arrives on an async pool thread; a plain ArrayDeque was mutated from both.
+    private final Deque<Map<Block, BlockData>> undos = new ConcurrentLinkedDeque<>();
 
 
     @Override
@@ -50,7 +52,9 @@ public class ObjectSVC implements IrisService {
     }
 
     public void revertChanges(int amount) {
-        loopChange(amount);
+        if (!J.runGlobal(() -> loopChange(amount))) {
+            loopChange(amount);
+        }
     }
 
     private void loopChange(int amount) {
@@ -68,21 +72,25 @@ public class ObjectSVC implements IrisService {
      * @param blocks The blocks to remove
      */
     private void revert(Map<Block, BlockData> blocks) {
-        Iterator<Map.Entry<Block, BlockData>> it = blocks.entrySet().iterator();
+        if (blocks == null || blocks.isEmpty()) {
+            return;
+        }
+
         J.s(() -> {
+            Iterator<Map.Entry<Block, BlockData>> it = blocks.entrySet().iterator();
             int amount = 0;
             while (it.hasNext()) {
                 Map.Entry<Block, BlockData> entry = it.next();
-                BlockData data = entry.getValue();
-                entry.getKey().setBlockData(data, false);
-
+                entry.getKey().setBlockData(entry.getValue(), false);
                 it.remove();
 
-                amount++;
-
-                if (amount > 200) {
-                    J.s(() -> revert(blocks), 1);
+                if (++amount >= 200) {
+                    break;
                 }
+            }
+
+            if (!blocks.isEmpty()) {
+                J.s(() -> revert(blocks), 1);
             }
         });
     }

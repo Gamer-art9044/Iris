@@ -35,7 +35,6 @@ import org.bukkit.event.world.WorldUnloadEvent;
 public class EditSVC implements IrisService, BlockEditAccess<World, BlockData, Biome> {
     private KMap<World, BlockEditor> editors;
     private int updateTaskId = -1;
-    public static boolean deletingWorld = false;
 
     @Override
     public void onEnable() {
@@ -84,7 +83,7 @@ public class EditSVC implements IrisService, BlockEditAccess<World, BlockData, B
         if (editors == null) {
             return;
         }
-        if (editors.containsKey(e.getWorld()) && !deletingWorld) {
+        if (editors.containsKey(e.getWorld())) {
             editors.remove(e.getWorld()).close();
         }
     }

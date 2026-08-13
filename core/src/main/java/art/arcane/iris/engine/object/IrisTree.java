@@ -41,16 +41,12 @@ public class IrisTree {
     @ArrayType(min = 1, type = String.class)
     private KList<String> treeTypes = new KList<>();
 
-    @Desc("Unused. This flag is not read by the tree matcher; use treeTypes to control which TreeTypes match.")
-    private boolean anyTree = false;
 
     @Required
     @Desc("The size of the square of saplings this applies to (2 means a 2 * 2 sapling area)")
     @ArrayType(min = 1, type = IrisTreeSize.class)
     private KList<IrisTreeSize> sizes = new KList<>();
 
-    @Desc("Unused. This flag is not read by the tree matcher; use sizes to control which sapling sizes match.")
-    private boolean anySize;
 
     public boolean matches(IrisTreeSize size, TreeType type) {
         if (!matchesSize(size)) {

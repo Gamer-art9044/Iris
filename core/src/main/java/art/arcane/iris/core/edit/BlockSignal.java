@@ -36,9 +36,17 @@ public class BlockSignal {
     public static final AtomicInteger active = new AtomicInteger(0);
 
     public BlockSignal(Block block, int ticks) {
-        active.incrementAndGet();
+        // Count only after the entity actually exists, and release unconditionally: a refused
+        // Folia schedule or a spawn failure must not inflate the throttle counter forever.
         Location tg = block.getLocation().clone().add(0.5, 0, 0.5);
-        FallingBlock e = block.getWorld().spawnFallingBlock(tg, block.getBlockData());
+        FallingBlock e;
+        try {
+            e = block.getWorld().spawnFallingBlock(tg, block.getBlockData());
+        } catch (Throwable spawnFailure) {
+            sendBlockRefresh(block);
+            throw spawnFailure;
+        }
+        active.incrementAndGet();
         e.setGravity(false);
         e.setInvulnerable(true);
         e.setGlowing(true);
@@ -55,10 +63,11 @@ public class BlockSignal {
             active.decrementAndGet();
             sendBlockRefresh(block);
         };
-        if (!J.runAt(blockLocation, removeTask, ticks)) {
-            if (!J.isFolia()) {
-                J.s(removeTask, ticks);
-            }
+        boolean scheduled = J.runAt(blockLocation, removeTask, ticks);
+        if (!scheduled && !J.isFolia()) {
+            J.s(removeTask, ticks);
+        } else if (!scheduled) {
+            removeTask.run();
         }
     }
 

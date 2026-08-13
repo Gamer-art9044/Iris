@@ -51,9 +51,27 @@ import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.gui.BukkitGuiHost;
 import art.arcane.iris.core.gui.PregeneratorJob;
+import art.arcane.iris.core.service.BoardSVC;
+import art.arcane.iris.core.service.CommandSVC;
+import art.arcane.iris.core.service.DatapackStructureScopeSVC;
 import art.arcane.iris.core.service.EditSVC;
+import art.arcane.iris.core.service.EntityRiseSVC;
+import art.arcane.iris.core.service.ExternalDataSVC;
+import art.arcane.iris.core.service.GlobalCacheSVC;
+import art.arcane.iris.core.service.IrisApiEventSVC;
+import art.arcane.iris.core.service.IrisEngineSVC;
+import art.arcane.iris.core.service.IrisIntegrationService;
+import art.arcane.iris.core.service.IrisProtocolService;
+import art.arcane.iris.core.service.IrisTerrainSVC;
+import art.arcane.iris.core.service.JigsawStudioService;
+import art.arcane.iris.core.service.LogFilterSVC;
+import art.arcane.iris.core.service.ObjectSVC;
+import art.arcane.iris.core.service.ObjectStudioSaveService;
 import art.arcane.iris.core.service.PreservationSVC;
 import art.arcane.iris.core.service.StudioSVC;
+import art.arcane.iris.core.service.TreeFellerSVC;
+import art.arcane.iris.core.service.TreeSVC;
+import art.arcane.iris.core.service.WandSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.EnginePanic;
 import art.arcane.iris.engine.framework.BlockEditAccess;
@@ -80,7 +98,6 @@ import art.arcane.volmlib.util.hud.HudBossBarLane;
 import art.arcane.volmlib.util.hud.HudSlotService;
 import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.io.InstanceState;
-import art.arcane.volmlib.util.io.JarScanner;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.common.misc.Bindings;
@@ -98,7 +115,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.World;
-import org.bukkit.block.data.BlockData;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -115,9 +131,9 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.PrintWriter;
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -165,6 +181,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     private volatile IrisPapiListener papiListener;
     private volatile IrisPapiState papiState;
     private KMap<Class<? extends IrisService>, IrisService> services;
+    // Copy-on-write: mutated on the main thread during enable() and iterated by the JVM
+    // shutdown-hook thread during teardown; a plain list would CME and abort the teardown.
+    private final List<IrisService> enabledServices = new CopyOnWriteArrayList<>();
     private final IrisWorldGeneratorResolver generatorResolver = new IrisWorldGeneratorResolver(this);
     private final BukkitWorldReconciler worldReconciler = new BukkitWorldReconciler(this);
     private final PendingWorldDeleteQueue pendingWorldDeletes = new PendingWorldDeleteQueue(this);
@@ -206,54 +225,11 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
     }
 
-    private static <T> KList<T> initialize(String s, Class<T> requiredType) {
-        JarScanner js = new JarScanner(instance.getJarFile(), s);
-        KList<T> v = new KList<>();
-        J.attempt(js::scan);
-        for (Class<?> i : js.getClasses()) {
-            if (!isConcreteImplementation(i, requiredType)) {
-                continue;
-            }
-            try {
-                v.add(requiredType.cast(i.getDeclaredConstructor().newInstance()));
-            } catch (Throwable ex) {
-                Iris.warn("Skipped class initialization for %s: %s%s",
-                        i.getName(),
-                        ex.getClass().getSimpleName(),
-                        ex.getMessage() == null ? "" : " - " + ex.getMessage());
-                Iris.reportError(ex);
-            }
-        }
-
-        return v;
-    }
-
     static boolean isConcreteImplementation(Class<?> candidate, Class<?> requiredType) {
         int modifiers = candidate.getModifiers();
         return requiredType.isAssignableFrom(candidate)
                 && !candidate.isInterface()
                 && !Modifier.isAbstract(modifiers);
-    }
-
-    public static KList<Class<?>> getClasses(String s, Class<? extends Annotation> slicedClass) {
-        JarScanner js = new JarScanner(instance.getJarFile(), s);
-        KList<Class<?>> v = new KList<>();
-        J.attempt(js::scan);
-        for (Class<?> i : js.getClasses()) {
-            if (slicedClass == null || i.isAnnotationPresent(slicedClass)) {
-                try {
-                    v.add(i);
-                } catch (Throwable ex) {
-                    Iris.warn("Skipped class discovery entry for %s: %s%s",
-                            i.getName(),
-                            ex.getClass().getSimpleName(),
-                            ex.getMessage() == null ? "" : " - " + ex.getMessage());
-                    Iris.reportError(ex);
-                }
-            }
-        }
-
-        return v;
     }
 
     public static void sq(Runnable r) {
@@ -538,7 +514,21 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
     }
 
-    private void enable() {
+    /**
+     * @return false when the bootstrap was aborted (unsupported server version); the caller
+     * must bail out of onEnable without touching any further setup.
+     */
+    private boolean enable() {
+        if (!INMS.isBound()) {
+            Throwable bindFailure = INMS.bindFailure();
+            Iris.error("Iris cannot start: " + (bindFailure == null
+                    ? "no NMS binding is available for this server version."
+                    : bindFailure.getMessage()));
+            // Deferred one tick: disablePlugin from inside onEnable re-enters onDisable
+            // synchronously and the loader then continues registering the half-enabled plugin.
+            J.s(() -> Bukkit.getPluginManager().disablePlugin(this), 1);
+            return false;
+        }
         alreadyDrained.set(false);
         servicesDisabled.set(false);
         sharedRuntimeClosed.set(false);
@@ -551,25 +541,50 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         setupAudience();
         BukkitPlatform.hostHud(new HudSlotService(this), new HudBossBarLane());
         Bindings.setupSentry();
-        initialize("art.arcane.iris.core.service", IrisService.class).forEach((i) -> {
+        // Explicit, ordered service list: the previous reflective jar scan gave hash-ordered
+        // enable/disable and paid a full-jar class sweep at boot. Infrastructure first,
+        // engine/world services next, commands last.
+        List<IrisService> orderedServices = List.of(
+                new PreservationSVC(),
+                new GlobalCacheSVC(),
+                new LogFilterSVC(),
+                new ExternalDataSVC(),
+                new EditSVC(),
+                new ObjectSVC(),
+                new ObjectStudioSaveService(),
+                new JigsawStudioService(),
+                new StudioSVC(),
+                new DatapackStructureScopeSVC(),
+                new IrisEngineSVC(),
+                new IrisTerrainSVC(),
+                new TreeSVC(),
+                new TreeFellerSVC(),
+                new EntityRiseSVC(),
+                new WandSVC(),
+                new BoardSVC(),
+                new IrisIntegrationService(),
+                new IrisProtocolService(),
+                new IrisApiEventSVC(),
+                new CommandSVC()
+        );
+        for (IrisService i : orderedServices) {
             Class<? extends IrisService> serviceType = i.getClass().asSubclass(IrisService.class);
             services.put(serviceType, i);
             IrisServices.register(serviceType, i);
-        });
+        }
         IrisServices.register(BlockEditAccess.class, services.get(EditSVC.class));
         IrisServices.register(PreservationRegistry.class, services.get(PreservationSVC.class));
-        IO.delete(new File("iris"));
         compat = IrisCompat.configured(getDataFile("compat.json"));
         IrisServices.register(IrisCompat.class, compat);
         ServerConfigurator.configure();
-        IrisToolbelt.applyPregenPerformanceProfile();
         StartupValidationOutcome datapackValidation = DatapackIngestService.validateOnStartup();
         if (datapackValidation == StartupValidationOutcome.READY) {
             generatorResolver.validateAllPacks();
         }
         IrisSafeguard.execute();
         getSender().setTag(getTag());
-        splash();
+        // A cosmetic banner must never abort the bootstrap.
+        J.attempt(this::splash);
         IrisSafeguard.printReports();
         IrisSafeguard.printFooter();
         tickets = new ChunkTickets();
@@ -594,20 +609,54 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         // packs through cache/temp on an async thread, and a concurrent delete of that folder
         // truncated pack imports mid-copy (partial packs/<key> without dimensions/).
         IO.delete(getTemp());
-        services.values().forEach(IrisService::onEnable);
-        services.values().forEach(this::registerListener);
+        // One throwing service must not abort the bootstrap: the steps after this loop
+        // (listeners, shutdown hook, replacement journals) are the safety-critical ones.
+        // Only services that actually enabled get listeners and a later onDisable.
+        enabledServices.clear();
+        IrisService firstFailedService = null;
+        for (IrisService service : orderedServices) {
+            try {
+                service.onEnable();
+                enabledServices.add(service);
+            } catch (Throwable e) {
+                if (firstFailedService == null) {
+                    firstFailedService = service;
+                }
+                Iris.reportError("Failed to enable " + service.getClass().getSimpleName() + "; continuing with a degraded runtime.", e);
+                // A failed service is excluded from the teardown loop, so clean up whatever
+                // its partial onEnable started right here, best-effort.
+                try {
+                    service.onDisable();
+                } catch (Throwable cleanup) {
+                    Iris.reportError("Failed to clean up partially enabled " + service.getClass().getSimpleName() + ".", cleanup);
+                }
+            }
+        }
+        if (firstFailedService != null) {
+            IrisStartupValidation.markDatapacksInvalid("Iris service "
+                    + firstFailedService.getClass().getSimpleName()
+                    + " failed to enable; world creation and player admission are locked. Check the log above.");
+        }
+        for (IrisService service : enabledServices) {
+            try {
+                registerListener(service);
+            } catch (Throwable e) {
+                Iris.reportError("Failed to register listener for " + service.getClass().getSimpleName() + ".", e);
+            }
+        }
         addShutdownHook();
         pendingWorldReplacements.processPendingStartupReplacements();
         pendingWorldDeletes.processPendingStartupWorldDeletes();
-        WorldLifecycleService.get();
-        WorldRuntimeControlService.get();
 
         if (J.isFolia() && IrisStartupValidation.isReady()) {
             J.s(() -> worldReconciler.checkForBukkitWorlds(s -> true), 1);
         }
 
         J.s(() -> {
-            pendingWorldReplacements.verifyLoadedPublishedWorlds();
+            pendingWorldReplacements.captureVanillaLevelContext();
+            // Off-main: the verify body takes the replacement-manager monitor and SHA-hashes
+            // whole pack trees; neither belongs on the tick thread.
+            J.a(pendingWorldReplacements::verifyLoadedPublishedWorlds);
             J.a(this::bstats);
             J.ar(() -> settingsHotloadWatch.checkConfigHotload(configHotloadEngine), 60);
             J.sr(this::tickQueue, 0);
@@ -620,25 +669,38 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 worldReconciler.checkForBukkitWorlds(s -> true);
             }
             IrisToolbelt.retainMantleDataForSlice(String.class.getCanonicalName());
-            IrisToolbelt.retainMantleDataForSlice(BlockData.class.getCanonicalName());
+            // The mantle stores block values as PlatformBlockState, so a BlockData retention can never
+            // match a slice type; the block-state slice is deliberately never retainable (regenerable, huge).
             IrisToolbelt.retainMantleDataForSlice(TreeBlockMaterial.class.getCanonicalName());
         });
+        return true;
     }
 
     public void addShutdownHook() {
-        if (shutdownHook != null) {
-            try {
-                Runtime.getRuntime().removeShutdownHook(shutdownHook);
-            } catch (IllegalStateException ex) {
-                Iris.debug("Skipping shutdown hook replacement because JVM shutdown is already in progress.");
-                return;
-            }
-        }
+        removeShutdownHook();
         shutdownHook = new Thread(() -> teardownRuntime("shutdown-hook", 30L), "Iris-ShutdownHook");
         try {
             Runtime.getRuntime().addShutdownHook(shutdownHook);
         } catch (IllegalStateException ex) {
             Iris.debug("Skipping shutdown hook registration because JVM shutdown is already in progress.");
+        }
+    }
+
+    /**
+     * The static-field guard in addShutdownHook is dead across a plugin reload (fresh
+     * classloader, fresh static), so onDisable must deregister the hook explicitly or each
+     * reload stacks another hook pinning the previous plugin classloader for the JVM's life.
+     */
+    public void removeShutdownHook() {
+        Thread hook = shutdownHook;
+        shutdownHook = null;
+        if (hook == null) {
+            return;
+        }
+        try {
+            Runtime.getRuntime().removeShutdownHook(hook);
+        } catch (IllegalStateException ignored) {
+            Iris.debug("Skipping shutdown hook removal because JVM shutdown is already in progress.");
         }
     }
 
@@ -692,16 +754,20 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisStartupValidation.begin();
         Bukkit.getPluginManager().registerEvents(new IrisStartupAdmissionListener(), this);
         Bukkit.getPluginManager().registerEvents(pendingWorldReplacements, this);
-        enable();
+        boolean enabled = enable();
+        if (!enabled) {
+            return;
+        }
         BukkitGuiHost.install();
+        // super.onEnable() already registers this instance as a listener.
         super.onEnable();
-        Bukkit.getPluginManager().registerEvents(this, this);
     }
 
     public void onDisable() {
         teardownPapi();
-        if (IrisSafeguard.isForceShutdown()) return;
         teardownRuntime("onDisable", 30L);
+        removeShutdownHook();
+        J.attempt(() -> INMS.get().uninjectBukkit());
         if (BukkitPlatform.hasHud()) {
             BukkitPlatform.hudSlots().shutdown();
             BukkitPlatform.hudLanes().shutdown();
@@ -710,12 +776,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             configHotloadEngine.clear();
             configHotloadEngine = null;
         }
-        J.cancelPluginTasks();
-        HandlerList.unregisterAll((Plugin) this);
         runPostShutdown();
+        // super.onDisable() cancels plugin tasks and unregisters every listener.
         super.onDisable();
-
-        J.attempt(new JarScanner(instance.getJarFile(), "", false)::scanAll);
         IrisPlatforms.unbind();
     }
 
@@ -753,7 +816,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             }
 
             if (services != null && servicesDisabled.compareAndSet(false, true)) {
-                for (IrisService service : services.values()) {
+                // Only services whose onEnable actually completed; disabling a service that
+                // never initialized runs teardown against uninitialized state.
+                for (IrisService service : enabledServices) {
                     try {
                         service.onDisable();
                     } catch (Throwable e) {
@@ -768,6 +833,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
             J.attempt(MultiBurst.burst::close);
             J.attempt(MultiBurst.ioBurst::close);
+            clearQueues();
             IrisServices.clear();
         }
     }

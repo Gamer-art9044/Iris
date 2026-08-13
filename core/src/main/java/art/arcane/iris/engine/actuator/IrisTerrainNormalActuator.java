@@ -102,6 +102,12 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         ChunkedDataCache<PlatformBlockState> rockCache = context.getRock();
         int realX = xf + x;
         UpperDimensionContext upperContext = getEngine().getUpperContext();
+        // Dimension-level ore lookups are chunk-invariant; resolving them per column paid
+        // four accessor chains times 256 per chunk for constants.
+        KList<IrisOreGenerator> dimensionSurfaceOres = hideOres ? null : dimension.getSurfaceOreGenerators();
+        KList<IrisOreGenerator> dimensionUndergroundOres = hideOres ? null : dimension.getUndergroundOreGenerators();
+        IrisOreGeneratorBounds dimensionSurfaceOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getSurfaceOreGeneratorBounds();
+        IrisOreGeneratorBounds dimensionUndergroundOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getUndergroundOreGeneratorBounds();
 
         for (int zf = 0; zf < chunkDepth; zf++) {
             int realZ = zf + z;
@@ -118,16 +124,12 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
             PlatformBlockState rock = rockCache.get(xf, zf);
             KList<IrisOreGenerator> biomeSurfaceOres = hideOres ? null : biome.getSurfaceOreGenerators();
             KList<IrisOreGenerator> regionSurfaceOres = hideOres ? null : region.getSurfaceOreGenerators();
-            KList<IrisOreGenerator> dimensionSurfaceOres = hideOres ? null : dimension.getSurfaceOreGenerators();
             KList<IrisOreGenerator> biomeUndergroundOres = hideOres ? null : biome.getUndergroundOreGenerators();
             KList<IrisOreGenerator> regionUndergroundOres = hideOres ? null : region.getUndergroundOreGenerators();
-            KList<IrisOreGenerator> dimensionUndergroundOres = hideOres ? null : dimension.getUndergroundOreGenerators();
             IrisOreGeneratorBounds biomeSurfaceOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : biome.getSurfaceOreGeneratorBounds();
             IrisOreGeneratorBounds regionSurfaceOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : region.getSurfaceOreGeneratorBounds();
-            IrisOreGeneratorBounds dimensionSurfaceOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getSurfaceOreGeneratorBounds();
             IrisOreGeneratorBounds biomeUndergroundOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : biome.getUndergroundOreGeneratorBounds();
             IrisOreGeneratorBounds regionUndergroundOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : region.getUndergroundOreGeneratorBounds();
-            IrisOreGeneratorBounds dimensionUndergroundOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getUndergroundOreGeneratorBounds();
             boolean hasSurfaceOres = biomeSurfaceOreBounds.hasOres() || regionSurfaceOreBounds.hasOres() || dimensionSurfaceOreBounds.hasOres();
             boolean hasUndergroundOres = biomeUndergroundOreBounds.hasOres() || regionUndergroundOreBounds.hasOres() || dimensionUndergroundOreBounds.hasOres();
             KList<PlatformBlockState> blocks = null;

@@ -49,8 +49,14 @@ public class ChunkDataHunkHolder extends AtomicHunk<PlatformBlockState> {
     }
 
     @Override
-    public int getHeight() {
-        return chunk.getMaxHeight() - chunk.getMinHeight();
+    public void setRaw(int x, int y, int z, PlatformBlockState t) {
+        // Block-hunk contract: null means "no write", never "erase" — ChunkDataHunkView and
+        // the modded ModdedBlockBuffer already discard nulls, and storing one here made the
+        // Bukkit output diverge from the modded loaders for the same engine emission.
+        if (t == null) {
+            return;
+        }
+        super.setRaw(x, y, z, t);
     }
 
     @Override

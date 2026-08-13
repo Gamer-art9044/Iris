@@ -46,6 +46,16 @@ public class IrisObjectScale {
             .concurrencyLevel(32)
             .build();
 
+    /**
+     * Coarse flush wired into IrisData dump/hotload: keys hold strong IrisObject references
+     * (and through them the owning IrisData), so without this every hotload or world unload
+     * pinned the previous pack graph for the process lifetime. Entries are pure derived data,
+     * so a flushed still-live entry just recomputes.
+     */
+    public static void invalidate() {
+        cache.clear();
+    }
+
     @MinNumber(0.01)
     @MaxNumber(50)
     @Desc("Fixed scale multiplier for this object. 0.5 shrinks to half size, 2.0 doubles the size. When set to anything other than 1, this overrides minimumScale and maximumScale. Leave at 1 to use the minimumScale/maximumScale range.")

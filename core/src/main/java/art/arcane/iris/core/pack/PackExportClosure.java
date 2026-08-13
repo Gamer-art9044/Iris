@@ -1,0 +1,72 @@
+/*
+ * Iris is a World Generator for Minecraft Servers
+ * Copyright (c) 2026 Arcane Arts (Volmit Software)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package art.arcane.iris.core.pack;
+
+import art.arcane.iris.engine.object.IrisObjectMarker;
+import art.arcane.iris.engine.object.IrisObjectPlacement;
+import art.arcane.volmlib.util.collection.KSet;
+
+/**
+ * Shared key collection for the pack packagers. Both the Bukkit re-serializing compiler and the
+ * modded verbatim-copy compiler must export the complete ambient-spawning graph: object placements
+ * carry markers, markers carry spawners, spawners carry entities, entities carry loot. These
+ * helpers keep the two packagers walking placements identically.
+ */
+public final class PackExportClosure {
+    private PackExportClosure() {
+    }
+
+    public static KSet<String> collectMarkerKeys(Iterable<IrisObjectPlacement> placements) {
+        KSet<String> markerKeys = new KSet<>();
+        if (placements == null) {
+            return markerKeys;
+        }
+        for (IrisObjectPlacement placement : placements) {
+            if (placement == null || placement.getMarkers() == null) {
+                continue;
+            }
+            for (IrisObjectMarker marker : placement.getMarkers()) {
+                if (marker == null || marker.getMarker() == null || marker.getMarker().isBlank()) {
+                    continue;
+                }
+                markerKeys.add(marker.getMarker());
+            }
+        }
+        return markerKeys;
+    }
+
+    public static KSet<String> collectObjectKeys(Iterable<IrisObjectPlacement> placements) {
+        KSet<String> objectKeys = new KSet<>();
+        if (placements == null) {
+            return objectKeys;
+        }
+        for (IrisObjectPlacement placement : placements) {
+            if (placement == null || placement.getPlace() == null) {
+                continue;
+            }
+            for (String key : placement.getPlace()) {
+                if (key == null || key.isBlank()) {
+                    continue;
+                }
+                objectKeys.add(key);
+            }
+        }
+        return objectKeys;
+    }
+}

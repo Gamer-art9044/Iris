@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.core.pack.PackDownloader;
 import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.LongArgumentType;
@@ -190,15 +191,15 @@ final class ModdedCommandTree {
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(ModdedCommandSuggestions.PACK_NAMES)
                         .executes((CommandContext<CommandSourceStack> context) ->
                                 IrisModdedCommands.download(context.getSource(),
-                                        StringArgumentType.getString(context, "pack"), "stable", false))
+                                        StringArgumentType.getString(context, "pack"), PackDownloader.DEFAULT_BRANCH, false))
                         .then(Commands.literal("force")
                                 .executes((CommandContext<CommandSourceStack> context) ->
                                         IrisModdedCommands.download(context.getSource(),
-                                                StringArgumentType.getString(context, "pack"), "stable", true)))
+                                                StringArgumentType.getString(context, "pack"), PackDownloader.DEFAULT_BRANCH, true)))
                         .then(Commands.argument("overwrite", BoolArgumentType.bool())
                                 .executes((CommandContext<CommandSourceStack> context) ->
                                         IrisModdedCommands.download(context.getSource(),
-                                                StringArgumentType.getString(context, "pack"), "stable",
+                                                StringArgumentType.getString(context, "pack"), PackDownloader.DEFAULT_BRANCH,
                                                 BoolArgumentType.getBool(context, "overwrite"))))
                         .then(Commands.argument("branch", StringArgumentType.word())
                                 .executes((CommandContext<CommandSourceStack> context) ->

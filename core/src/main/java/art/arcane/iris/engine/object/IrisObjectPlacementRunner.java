@@ -29,6 +29,7 @@ import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.common.data.VectorMap;
 import art.arcane.iris.util.common.math.IrisBlockVector;
+import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.noise.SimplexNoise;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.collection.KList;
@@ -111,6 +112,13 @@ final class IrisObjectPlacementRunner {
         }
 
         boolean warped = !config.getWarp().isFlat();
+        // Placement-invariant hoists off the per-voxel loop: the warp CNG resolution went
+        // through a keyed cache probe per block, and the two boolean gates below cut per-block
+        // property scans that can never match for this placement.
+        CNG surfaceWarp = warped ? config.getSurfaceWarp(rng, self.getLoader()) : null;
+        double warpHalf = warped ? config.getWarp().getMultiplier() / 2D : 0D;
+        boolean preventingDecay = placer.isPreventingDecay();
+        boolean waterlogCandidate = config.isWaterloggable() || config.isUnderwater();
         boolean rawStructurePiece = config.getMode() == ObjectPlaceMode.STRUCTURE_PIECE;
         boolean organicFloor = config.getMode() == ObjectPlaceMode.ORGANIC_STILT;
         boolean ceilingHang = config.getMode() == ObjectPlaceMode.CEILING_HANG;
@@ -401,16 +409,23 @@ final class IrisObjectPlacementRunner {
                 markers = new KMap<>();
                 var list = StreamSupport.stream(blocks.keys().spliterator(), false)
                         .collect(KList.collector());
+                // Marker selection persists into the mantle, so it must be seed-deterministic.
+                // Derive a side stream keyed on the placement position instead of consuming the
+                // caller's rng: consuming draws there would shift every later placement in the
+                // chunk and invalidate existing worlds/goldenhashes.
+                RNG markerRng = rng.nextParallelRNG(((((long) x) << 32) | (z & 0xFFFFFFFFL)) * 31L + yv);
 
+                int markerIndex = 0;
                 for (IrisObjectMarker j : config.getMarkers()) {
                     IrisMarker marker = self.getLoader().getMarkerLoader().load(j.getMarker());
+                    int markerSalt = markerIndex++;
 
                     if (marker == null) {
                         continue;
                     }
 
                     int max = j.getMaximumMarkers();
-                    for (IrisBlockVector i : list.shuffle()) {
+                    for (IrisBlockVector i : list.shuffleCopy(markerRng.nextParallelRNG(markerSalt))) {
                         if (max <= 0) {
                             break;
                         }
@@ -480,7 +495,7 @@ final class IrisObjectPlacementRunner {
                     }
                 }
 
-                if (placer.isPreventingDecay() && IrisProceduralBlocks.hasProperty(data, "distance") && "false".equals(IrisProceduralBlocks.propertyValue(data, "persistent"))) {
+                if (preventingDecay && IrisProceduralBlocks.hasProperty(data, "distance") && "false".equals(IrisProceduralBlocks.propertyValue(data, "persistent"))) {
                     data = data.withProperty("persistent", "true");
                 }
 
@@ -513,8 +528,8 @@ final class IrisObjectPlacementRunner {
                 zz = z + (int) Math.round(i.getZ());
 
                 if (warped) {
-                    xx += config.warp(rng, i.getX() + x, i.getY() + y, i.getZ() + z, self.getLoader());
-                    zz += config.warp(rng, i.getZ() + z, i.getY() + y, i.getX() + x, self.getLoader());
+                    xx += surfaceWarp.fitDouble(-warpHalf, warpHalf, i.getX() + x, i.getY() + y, i.getZ() + z);
+                    zz += surfaceWarp.fitDouble(-warpHalf, warpHalf, i.getZ() + z, i.getY() + y, i.getX() + x);
                 }
 
                 if (yv < 0 && (config.getMode().equals(ObjectPlaceMode.PAINT)) && !B.isVineBlock(data)) {
@@ -537,7 +552,7 @@ final class IrisObjectPlacementRunner {
                     continue;
                 }
 
-                if (IrisProceduralBlocks.hasProperty(data, "waterlogged") && shouldAutoWaterlogBlock(placer, config, yv, xx, yy, zz)) {
+                if (waterlogCandidate && IrisProceduralBlocks.hasProperty(data, "waterlogged") && shouldAutoWaterlogBlock(placer, config, yv, xx, yy, zz)) {
                     data = data.withProperty("waterlogged", "true");
                 }
 
@@ -545,8 +560,9 @@ final class IrisObjectPlacementRunner {
                     data = attachVineFaces(placer, data, xx, yy, zz);
                 }
 
-                PlatformBlockState existingState = placer.get(xx, yy, zz);
-                boolean wouldReplace = B.isSolid(existingState) && B.isVineBlock(data);
+                // Short-circuit order matters for cost only: the mantle read is paid solely
+                // for vine blocks. Both operands are pure, so the value is unchanged.
+                boolean wouldReplace = B.isVineBlock(data) && B.isSolid(placer.get(xx, yy, zz));
                 String material = IrisObjectShaping.materialKey(data);
                 boolean air = material.equals("minecraft:air") || material.equals("minecraft:cave_air");
                 boolean place = shouldPlaceObjectBlock(rawStructurePiece, air, wouldReplace);
@@ -702,8 +718,8 @@ final class IrisObjectPlacementRunner {
                     zz = z + (int) Math.round(i.getZ());
 
                     if (warped) {
-                        xx += config.warp(rng, i.getX() + x, i.getY() + y, i.getZ() + z, self.getLoader());
-                        zz += config.warp(rng, i.getZ() + z, i.getY() + y, i.getX() + x, self.getLoader());
+                        xx += surfaceWarp.fitDouble(-warpHalf, warpHalf, i.getX() + x, i.getY() + y, i.getZ() + z);
+                        zz += surfaceWarp.fitDouble(-warpHalf, warpHalf, i.getZ() + z, i.getY() + y, i.getX() + x);
                     }
 
                     if (organic) {

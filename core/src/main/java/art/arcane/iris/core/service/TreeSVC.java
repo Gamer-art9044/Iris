@@ -64,7 +64,10 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Predicate;
 
 public class TreeSVC implements IrisService {
-    private boolean block = false;
+    // Re-entrancy guard for the synthetic StructureGrowEvent this service fires from inside
+    // its own handler. callEvent dispatches inline on the calling thread, so a ThreadLocal
+    // is exact; a shared boolean let one region's growth suppress another's on Folia.
+    private static final ThreadLocal<Boolean> REENTRANT = ThreadLocal.withInitial(() -> false);
 
     @Override
     public void onEnable() {
@@ -88,7 +91,7 @@ public class TreeSVC implements IrisService {
      */
     @EventHandler(priority = EventPriority.HIGHEST)
     public void on(StructureGrowEvent event) {
-        if (block || event.isCancelled()) {
+        if (REENTRANT.get() || event.isCancelled()) {
             return;
         }
         IrisLogging.debug(this.getClass().getName() + " received a structure grow event");
@@ -161,11 +164,13 @@ public class TreeSVC implements IrisService {
             public void set(int x, int y, int z, PlatformBlockState s) {
                 BlockData d = (BlockData) s.nativeHandle();
                 Block b = event.getWorld().getBlockAt(x, y, z);
+                // Listeners get the post-growth tree, per the StructureGrowEvent contract;
+                // a fresh snapshot here handed every plugin an all-air "tree".
                 BlockState state = b.getState();
                 if (d instanceof IrisCustomData data)
                     state.setBlockData(data.getBase());
                 else state.setBlockData(d);
-                blockStateList.add(b.getState());
+                blockStateList.add(state);
                 dataCache.put(new Location(event.getWorld(), x, y, z), d);
             }
 
@@ -245,9 +250,12 @@ public class TreeSVC implements IrisService {
         Runnable growTask = () -> {
 
             StructureGrowEvent iGrow = new StructureGrowEvent(event.getLocation(), event.getSpecies(), event.isFromBonemeal(), event.getPlayer(), blockStateList);
-            block = true;
-            Bukkit.getServer().getPluginManager().callEvent(iGrow);
-            block = false;
+            REENTRANT.set(true);
+            try {
+                Bukkit.getServer().getPluginManager().callEvent(iGrow);
+            } finally {
+                REENTRANT.set(false);
+            }
 
             if (!iGrow.isCancelled()) {
                 for (BlockState state : iGrow.getBlocks()) {
@@ -338,6 +346,11 @@ public class TreeSVC implements IrisService {
     public Cuboid getSaplings(Location at, Predicate<BlockData> valid, World world) {
         KList<BlockPosition> blockPositions = new KList<>();
         grow(at.getWorld(), new BlockPosition(at.getBlockX(), at.getBlockY(), at.getBlockZ()), valid, blockPositions);
+        if (blockPositions.isEmpty()) {
+            // No matching saplings (e.g. a giant-mushroom grow event): a 1x1 plane at the
+            // event location, never the MIN/MAX sentinel cuboid below.
+            return new Cuboid(at, at);
+        }
         BlockPosition a = new BlockPosition(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE);
         BlockPosition b = new BlockPosition(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
 

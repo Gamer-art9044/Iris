@@ -358,15 +358,18 @@ public final class ModrinthResolver {
         connection.setReadTimeout(20000);
         connection.setInstanceFollowRedirects(true);
 
-        int code = connection.getResponseCode();
-        if (code != 200) {
-            connection.disconnect();
-            throw new IOException("HTTP " + code + " from " + url);
-        }
+        // Everything past openConnection under one finally: a timeout/DNS/TLS throw inside
+        // getResponseCode abandoned the connection undisconnected.
+        try {
+            int code = connection.getResponseCode();
+            if (code != 200) {
+                throw new IOException("HTTP " + code + " from " + url);
+            }
 
-        try (InputStream input = connection.getInputStream();
-             InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8)) {
-            return readBoundedApiResponse(reader, url, MAX_API_RESPONSE_CHARS);
+            try (InputStream input = connection.getInputStream();
+                 InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8)) {
+                return readBoundedApiResponse(reader, url, MAX_API_RESPONSE_CHARS);
+            }
         } finally {
             connection.disconnect();
         }

@@ -63,10 +63,20 @@ final class IrisBiomeOres {
     }
 
     static IrisOreGeneratorBounds getSurfaceOreGeneratorBounds(IrisBiome biome) {
+        // getIfPresent fast path: aquire allocates a capturing lambda even on a hit, and this
+        // runs per column on the terrain hot path.
+        IrisOreGeneratorBounds cached = biome.getSurfaceOreBoundsCache().getIfPresent();
+        if (cached != null) {
+            return cached;
+        }
         return biome.getSurfaceOreBoundsCache().aquire(() -> IrisOreGeneratorBounds.of(getSurfaceOres(biome)));
     }
 
     static IrisOreGeneratorBounds getUndergroundOreGeneratorBounds(IrisBiome biome) {
+        IrisOreGeneratorBounds cached = biome.getUndergroundOreBoundsCache().getIfPresent();
+        if (cached != null) {
+            return cached;
+        }
         return biome.getUndergroundOreBoundsCache().aquire(() -> IrisOreGeneratorBounds.of(getUndergroundOres(biome)));
     }
 

@@ -77,9 +77,14 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                 long finalSeed = seed * ++mask;
                 burst.queue(() -> generate(k, chunk, terrain, rng.nextParallelRNG(finalSeed), x, z, false, context));
             }
-            burst.complete();
         } finally {
-            chunk.release();
+            // complete() must run before release() even when queueing throws — already
+            // submitted burst tasks must never write into a released chunk.
+            try {
+                burst.complete();
+            } finally {
+                chunk.release();
+            }
         }
     }
 

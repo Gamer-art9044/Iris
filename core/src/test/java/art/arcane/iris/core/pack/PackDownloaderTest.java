@@ -420,7 +420,9 @@ public class PackDownloaderTest {
     }
 
     @Test
-    public void forceOverwriteRefusesLoadedPackData() throws Exception {
+    public void forceOverwriteReplacesEnginelessLoadedPackData() throws Exception {
+        // A registered loader with no engines is a stale catalog registration (startup
+        // validation registers one per visible pack); it must not block a forced update.
         File packsFolder = temp.newFolder("loaded-packs");
         File target = writePack(packsFolder.toPath().resolve("active_pack"), "active_pack", "old");
         File extracted = writePack(temp.newFolder("loaded-update").toPath(), "active_pack", "new");
@@ -435,10 +437,41 @@ public class PackDownloaderTest {
                     }
             );
 
+            assertNotNull(result);
+            assertEquals("new", Files.readString(target.toPath().resolve("state.txt"), StandardCharsets.UTF_8));
+            assertTransactionStateClean(packsFolder);
+        } finally {
+            loaded.close();
+        }
+    }
+
+    @Test
+    public void forceOverwriteRefusesPackWithLiveEngines() throws Exception {
+        File packsFolder = temp.newFolder("engine-packs");
+        File target = writePack(packsFolder.toPath().resolve("active_pack"), "active_pack", "old");
+        File extracted = writePack(temp.newFolder("engine-update").toPath(), "active_pack", "new");
+        // Engines attach to detached openRuntime loaders in production, never to the cached
+        // IrisData.get instance; the refusal gate must see this registration through the
+        // engine index.
+        IrisData loaded = IrisData.openRuntime(target);
+        art.arcane.iris.engine.framework.Engine engine =
+                org.mockito.Mockito.mock(art.arcane.iris.engine.framework.Engine.class);
+        loaded.registerEngine(engine);
+        try {
+            PackDownloader.PackInstallResult result = PackDownloader.installExtractedPack(
+                    packsFolder,
+                    extracted,
+                    true,
+                    "active_pack",
+                    ignored -> {
+                    }
+            );
+
             assertNull(result);
             assertEquals("old", Files.readString(target.toPath().resolve("state.txt"), StandardCharsets.UTF_8));
             assertTransactionStateClean(packsFolder);
         } finally {
+            loaded.unregisterEngine(engine);
             loaded.close();
         }
     }

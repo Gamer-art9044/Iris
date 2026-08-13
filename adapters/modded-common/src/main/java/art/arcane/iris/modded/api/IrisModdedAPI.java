@@ -178,10 +178,16 @@ public final class IrisModdedAPI {
     /**
      * Declares that mantle slices of {@code sliceType} must be kept rather than discarded.
      * <p>
-     * Iris drops slices it does not need once a region's generation data has served its purpose. Any type a mod
-     * writes with {@link #setMantleData(ServerLevel, int, int, int, Object)} and expects to read back later must be
+     * Iris drops slices it does not need once a region's generation data has served its purpose - both the
+     * normal per-chunk trim and pregeneration's forced cleanup honor this registry. Any type a mod writes
+     * with {@link #setMantleData(ServerLevel, int, int, int, Object)} and expects to read back later must be
      * declared here first. Registration is by canonical class name, process-wide across every Iris world, and
-     * cannot be undone - declare it once during mod setup. A null {@code sliceType} is ignored.
+     * cannot be undone - declare it once during mod setup. A null {@code sliceType} is ignored, and the
+     * block-state slice can never be retained.
+     * <p>
+     * Retained data lives for the world's lifetime: it persists into the mantle region files and unloads
+     * with them, so region files grow with everything you retain. The mod owns the cleanup - call
+     * {@code deleteMantleData} when a value is no longer needed.
      */
     public static void retainMantleDataForSlice(Class<?> sliceType) {
         if (sliceType == null) {

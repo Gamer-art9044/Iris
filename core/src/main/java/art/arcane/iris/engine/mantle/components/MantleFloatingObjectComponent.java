@@ -85,23 +85,33 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
             }
         }
 
+        // The IdentityHashMaps are lookup indices only. Iteration MUST follow the encounter
+        // order of the deterministic 0..255 column scan: identity-hash order changes per JVM
+        // run, and the shared chunkRng makes placement output depend on iteration order.
         IdentityHashMap<IrisFloatingChildBiomes, KList<Integer>> entryColumns = new IdentityHashMap<>();
         IdentityHashMap<IrisFloatingChildBiomes, KList<Integer>> bottomEntryColumns = new IdentityHashMap<>();
+        KList<IrisFloatingChildBiomes> entryOrder = new KList<>();
+        KList<IrisFloatingChildBiomes> bottomEntryOrder = new KList<>();
         for (int i = 0; i < 256; i++) {
             FloatingIslandSample s = samples[i];
             if (s == null || s.entry == null) {
                 continue;
             }
-            entryColumns.computeIfAbsent(s.entry, e -> new KList<>()).add(i);
+            entryColumns.computeIfAbsent(s.entry, e -> {
+                entryOrder.add(e);
+                return new KList<>();
+            }).add(i);
             IrisFloatingChildBiomes bottomEntry = s.bottomEntry();
             if (bottomEntry != null) {
-                bottomEntryColumns.computeIfAbsent(bottomEntry, e -> new KList<>()).add(i);
+                bottomEntryColumns.computeIfAbsent(bottomEntry, e -> {
+                    bottomEntryOrder.add(e);
+                    return new KList<>();
+                }).add(i);
             }
         }
 
-        for (Map.Entry<IrisFloatingChildBiomes, KList<Integer>> ec : entryColumns.entrySet()) {
-            IrisFloatingChildBiomes entry = ec.getKey();
-            KList<Integer> columns = ec.getValue();
+        for (IrisFloatingChildBiomes entry : entryOrder) {
+            KList<Integer> columns = entryColumns.get(entry);
             if (columns.isEmpty()) {
                 continue;
             }
@@ -137,9 +147,8 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
             }
         }
 
-        for (Map.Entry<IrisFloatingChildBiomes, KList<Integer>> ec : bottomEntryColumns.entrySet()) {
-            IrisFloatingChildBiomes entry = ec.getKey();
-            KList<Integer> columns = ec.getValue();
+        for (IrisFloatingChildBiomes entry : bottomEntryOrder) {
+            KList<Integer> columns = bottomEntryColumns.get(entry);
             if (columns.isEmpty()) {
                 continue;
             }

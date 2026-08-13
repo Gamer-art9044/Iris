@@ -42,9 +42,18 @@ import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 @Director(name = "pack", aliases = {"pk"}, description = "Pack validation and maintenance", descriptionKey = "iris.director.commandpack.director.pack_validation_maintenance")
 public class CommandPack implements DirectorExecutor {
+    /**
+     * Director treats a blank defaultValue as "required", which made the all-packs branch
+     * unreachable from chat. The "*" sentinel keeps the parameter genuinely optional; a blank
+     * value (the documented "pack=" escape hatch) still means every pack.
+     */
+    static boolean wantsAllPacks(String pack) {
+        return pack == null || pack.isBlank() || "*".equals(pack.trim());
+    }
+
     @Director(description = "Validate a pack (or all packs) and re-publish results", descriptionKey = "iris.director.commandpack.director.validate_pack_all_packs_re_publish_results", aliases = {"v"})
     public void validate(
-            @Param(description = "The pack folder name to validate (leave empty for all)", descriptionKey = "iris.director.commandpack.param.pack_folder_name_validate_leave_empty_all", defaultValue = "")
+            @Param(description = "The pack folder name to validate, or * for every pack", descriptionKey = "iris.director.commandpack.param.pack_folder_name_validate_leave_empty_all", defaultValue = "*")
             String pack
     ) {
         VolmitSender s = sender();
@@ -54,7 +63,7 @@ public class CommandPack implements DirectorExecutor {
             return;
         }
 
-        if (pack == null || pack.isBlank()) {
+        if (wantsAllPacks(pack)) {
             List<File> dirs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
             if (dirs.isEmpty()) {
                 s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_NO_PACKS_VALIDATE));
@@ -196,11 +205,11 @@ public class CommandPack implements DirectorExecutor {
 
     @Director(description = "Show cached validation status for a pack", descriptionKey = "iris.director.commandpack.director.show_cached_validation_status_pack", aliases = {"s"})
     public void status(
-            @Param(description = "The pack folder name", descriptionKey = "iris.director.commandpack.param.pack_folder_name", defaultValue = "")
+            @Param(description = "The pack folder name, or * for every pack", descriptionKey = "iris.director.commandpack.param.pack_folder_name", defaultValue = "*")
             String pack
     ) {
         VolmitSender s = sender();
-        if (pack == null || pack.isBlank()) {
+        if (wantsAllPacks(pack)) {
             if (PackValidationRegistry.snapshot().isEmpty()) {
                 s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_NO_VALIDATION_RESULTS_RECORDED_RUN_IRIS_PACK_VALIDATE_FIRST));
                 return;

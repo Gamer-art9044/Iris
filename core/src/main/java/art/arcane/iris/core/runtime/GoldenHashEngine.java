@@ -149,7 +149,10 @@ public final class GoldenHashEngine {
 
             if (request.resetMantle()) {
                 progress.stage(IrisLanguage.plain(RuntimeProgressMessages.CHUNK_STAGE_RESETTING_MANTLE));
-                resetMantleFull();
+                if (!resetMantleFull()) {
+                    // A partial reset silently invalidates the capture; never scan over it.
+                    return false;
+                }
             }
 
             List<int[]> targets = ChunkSpiral.centerOut(request.centerChunkX(), request.centerChunkZ(), radius);
@@ -184,29 +187,24 @@ public final class GoldenHashEngine {
         }
     }
 
-    private void resetMantleFull() {
+    private boolean resetMantleFull() {
+        Mantle mantle = engine.getMantle().getMantle();
         try {
-            Mantle mantle = engine.getMantle().getMantle();
-            mantle.saveAll();
-            File folder = mantle.getDataFolder();
-            File[] files = folder.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    if (file.isFile()) {
-                        file.delete();
-                    }
-                }
-            }
+            // resetStorage invalidates the IOWorker channel cache before unlinking; deleting
+            // behind cached channels sent every post-reset plate write to an unlinked inode.
+            mantle.resetStorage();
             feedback.ok(IrisLanguage.plain(
                     RuntimeProgressMessages.GOLDEN_MANTLE_RESET,
-                    MessageArgument.untrusted("path", folder.getAbsolutePath())
+                    MessageArgument.untrusted("path", mantle.getDataFolder().getAbsolutePath())
             ));
+            return true;
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             feedback.warn(IrisLanguage.plain(
                     RuntimeProgressMessages.GOLDEN_MANTLE_RESET_FAILED,
                     MessageArgument.untrusted("type", e.getClass().getSimpleName())
             ));
+            return false;
         }
     }
 
@@ -345,11 +343,18 @@ public final class GoldenHashEngine {
 
         List<String> body = orderedBody(lines);
         List<String> mismatches = new ArrayList<>();
+        // Display strings and diagnosis input are different shapes: diagnose() parses a bare
+        // "<x> <z>" key, and feeding it a localized sentence aborted the diagnosis whenever
+        // the FIRST mismatch was a chunk missing from the golden capture.
+        String firstMismatchKey = null;
         for (String line : body) {
             int second = line.indexOf(' ', line.indexOf(' ') + 1);
             String key = line.substring(0, second);
             String golden = goldenChunks.get(key);
             if (!line.equals(golden)) {
+                if (firstMismatchKey == null) {
+                    firstMismatchKey = key;
+                }
                 mismatches.add(golden == null
                         ? IrisLanguage.plain(
                                 RuntimeProgressMessages.GOLDEN_MISSING_IN_GOLDEN,
@@ -400,7 +405,7 @@ public final class GoldenHashEngine {
         IrisLogging.info("goldenhash MISMATCH: " + mismatches.size() + "/" + body.size() + " -> " + current.getAbsolutePath());
 
         progress.stage(IrisLanguage.plain(RuntimeProgressMessages.CHUNK_STAGE_DIAGNOSING));
-        diagnose(mismatches.getFirst());
+        diagnose(firstMismatchKey);
         return false;
     }
 

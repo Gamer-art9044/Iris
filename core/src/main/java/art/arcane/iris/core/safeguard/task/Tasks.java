@@ -7,6 +7,7 @@ import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.nms.v1X.NMSBinding1X;
 import art.arcane.iris.core.safeguard.Mode;
+import art.arcane.iris.core.splash.IrisSplashComposer;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.util.common.misc.getHardware;
 import art.arcane.iris.util.project.agent.Agent;
@@ -99,13 +100,21 @@ public final class Tasks {
             supportedVersions = BuildConstants.MINECRAFT_VERSION;
         }
 
+        if (!INMS.isBound()) {
+            String cause = INMS.bindFailure() == null ? "Unknown NMS bind failure" : INMS.bindFailure().getMessage();
+            return withDiagnostics(Mode.UNSTABLE,
+                    Diagnostic.Logger.ERROR.create("Server Version"),
+                    Diagnostic.Logger.ERROR.create("- " + cause),
+                    Diagnostic.Logger.ERROR.create("- Iris only supports " + supportedVersions));
+        }
+
         if (!(INMS.get() instanceof NMSBinding1X)) {
             return withDiagnostics(Mode.STABLE);
         }
 
         return withDiagnostics(Mode.UNSTABLE,
-                Diagnostic.Logger.ERROR.create("Server Version"),
-                Diagnostic.Logger.ERROR.create("- Iris only supports " + supportedVersions));
+                Diagnostic.Logger.ERROR.create("NMS Disabled"),
+                Diagnostic.Logger.ERROR.create("- NMS support is disabled (general.disableNMS); Iris world creation is unavailable."));
     });
 
     private static final Task INJECTION = Task.of("injection", () -> {
@@ -149,7 +158,13 @@ public final class Tasks {
     });
 
     private static final Task JAVA = Task.of("java", () -> {
-        int version = javaVersion();
+        int version = IrisSplashComposer.javaVersion();
+        if (version < 0) {
+            return withDiagnostics(Mode.WARNING,
+                    Diagnostic.Logger.WARN.create("Java Runtime"),
+                    Diagnostic.Logger.WARN.create("- Java version could not be determined (java.version="
+                            + System.getProperty("java.version") + ")."));
+        }
         if (version == 25) {
             return withDiagnostics(Mode.STABLE);
         }
@@ -211,16 +226,4 @@ public final class Tasks {
         return new ValueWithDiagnostics<>(mode, diagnostics);
     }
 
-    private static int javaVersion() {
-        String version = System.getProperty("java.version");
-        if (version.startsWith("1.")) {
-            version = version.substring(2, 3);
-        } else {
-            int dot = version.indexOf(".");
-            if (dot != -1) {
-                version = version.substring(0, dot);
-            }
-        }
-        return Integer.parseInt(version);
-    }
 }

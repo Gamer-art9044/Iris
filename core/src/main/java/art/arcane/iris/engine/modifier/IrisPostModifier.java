@@ -48,7 +48,9 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
     @Override
     public void onModify(int x, int z, Hunk<PlatformBlockState> output, boolean multicore, ChunkContext context) {
         PrecisionStopwatch p = PrecisionStopwatch.start();
-        Hunk<PlatformBlockState> sync = output.synchronize();
+        // The post stage runs sequentially on production (multicore false); an uncontended
+        // monitor per probe is still a monitor times ~10k probes per chunk.
+        Hunk<PlatformBlockState> sync = multicore ? output.synchronize() : output;
         int width = output.getWidth();
         int depth = output.getDepth();
         int planeWidth = width + 2;

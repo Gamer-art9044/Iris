@@ -602,15 +602,25 @@ public class IrisInterpolation {
     }
 
     public static double getNoise(InterpolationMethod method, int x, int z, double h, NoiseProvider noise) {
-        final NoiseProvider n;
         if (usesSampleCache(method)) {
             NoiseSampleCache2D cache = NOISE_SAMPLE_CACHE_2D.get();
-            cache.clear();
-            n = (x1, z1) -> cache.getOrSample(x1 - x, z1 - z, x1, z1, noise);
-        } else {
-            n = noise;
+            if (!cache.isInUse()) {
+                cache.beginUse();
+                try {
+                    return dispatch(method, x, z, h, (x1, z1) -> cache.getOrSample(x1 - x, z1 - z, x1, z1, noise));
+                } finally {
+                    cache.endUse();
+                }
+            }
+            // Nested interpolation on this thread (image maps, interpolated noise styles):
+            // run unmemoized. Sharing the outer table would clear it mid-flight and serve
+            // this provider's samples to the outer pass. Providers are pure, so the
+            // unmemoized result is bit-identical.
         }
+        return dispatch(method, x, z, h, noise);
+    }
 
+    private static double dispatch(InterpolationMethod method, int x, int z, double h, NoiseProvider n) {
         return switch (method) {
             case BILINEAR -> getBilinearNoise(x, z, h, n);
             case STARCAST_3 -> Starcast.starcast(x, z, h, 3D, n);
@@ -652,7 +662,12 @@ public class IrisInterpolation {
 
     public static NoiseBounds getNoiseBounds(InterpolationMethod method, int x, int z, double h, NoiseBoundsProvider noise) {
         NoiseBoundsSampleCache2D cache = NOISE_BOUNDS_SAMPLE_CACHE_2D.get();
-        cache.clear();
+        if (cache.isInUse()) {
+            // Nested bounds interpolation: a fresh table on the rare nested path, never the
+            // outer pass's table — its entries belong to a different bound provider.
+            cache = new NoiseBoundsSampleCache2D(64);
+        }
+        cache.beginUse();
         NoiseBoundsProvider previous = cache.bindProvider(noise);
         try {
             double min = getNoise(method, x, z, h, cache.minView());
@@ -660,6 +675,7 @@ public class IrisInterpolation {
             return new NoiseBounds(min, max);
         } finally {
             cache.bindProvider(previous);
+            cache.endUse();
         }
     }
 

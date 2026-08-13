@@ -68,6 +68,34 @@ public class AtomicCache<T> {
         });
     }
 
+    /**
+     * Like {@link #aquire(Supplier)} but propagates a supplier failure to the caller instead
+     * of swallowing it into a null return. For values that are mandatory: a caller of a
+     * "@NotNull" accessor should see the supplier's real exception, not a downstream NPE.
+     */
+    public T aquireOrThrow(Supplier<T> t) {
+        Object v = value;
+
+        if (v != null) {
+            return unwrap(v);
+        }
+
+        synchronized (initLock) {
+            v = value;
+
+            if (v != null) {
+                return unwrap(v);
+            }
+
+            T computed = t.get();
+            if (computed == null) {
+                throw new IllegalStateException("Atomic cache supplier produced null");
+            }
+            value = computed;
+            return computed;
+        }
+    }
+
     public T aquire(Supplier<T> t) {
         Object v = value;
 

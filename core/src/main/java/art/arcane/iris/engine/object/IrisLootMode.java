@@ -20,13 +20,13 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.engine.object.annotations.Desc;
 
-@Desc("A loot mode is used to describe what to do with the existing loot layers before adding this loot. Using ADD will simply add this table to the building list of tables (i.e. add dimension tables, region tables then biome tables). By using clear or replace, you remove the parent tables before and add just your tables.")
+@Desc("A loot mode is used to describe what to do with the existing loot layers before adding this loot. ADD appends to the building list of tables (dimension tables, then region tables, then biome tables). REPLACE swaps the parent tables for this reference's tables. CLEAR suppresses loot entirely at this point.")
 public enum IrisLootMode {
     @Desc("Add to the existing parent loot tables")
     ADD,
-    @Desc("Clear all loot tables then add this table")
+    @Desc("Clear all parent loot tables and contribute nothing at this level. Any tables listed here are ignored.")
     CLEAR,
-    @Desc("Replace all loot tables with this table (same as clear)")
+    @Desc("Replace all parent loot tables with this reference's tables")
     REPLACE,
     @Desc("Only use when there was no loot table defined by an object")
     FALLBACK

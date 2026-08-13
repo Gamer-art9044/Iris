@@ -94,6 +94,7 @@ public final class IrisObjectIO {
 
     static void readLegacy(IrisObject self, InputStream in) throws IOException {
         self.surfaceSupportOffsets.reset();
+        self.floatingFootprint.reset();
         DataInputStream din = new DataInputStream(in);
         self.w = din.readInt();
         self.h = din.readInt();
@@ -126,6 +127,7 @@ public final class IrisObjectIO {
 
     static void read(IrisObject self, InputStream in) throws Throwable {
         self.surfaceSupportOffsets.reset();
+        self.floatingFootprint.reset();
         DataInputStream din = new DataInputStream(in);
         self.w = din.readInt();
         self.h = din.readInt();
@@ -142,11 +144,18 @@ public final class IrisObjectIO {
             palette.add(din.readUTF());
         }
 
+        // Resolve the palette once: B.getState per BLOCK was a registry lookup times the
+        // block count (tens of thousands) instead of times the palette size (hundreds).
+        PlatformBlockState[] resolved = new PlatformBlockState[palette.size()];
+        for (i = 0; i < resolved.length; i++) {
+            resolved[i] = B.getState(palette.get(i));
+        }
+
         s = din.readInt();
 
         for (i = 0; i < s; i++) {
             IrisBlockVector pos = new IrisBlockVector(din.readShort(), din.readShort(), din.readShort());
-            PlatformBlockState data = B.getState(palette.get(din.readShort()));
+            PlatformBlockState data = resolved[din.readShort()];
             if (isStructureMarker(data)) {
                 continue;
             }
@@ -166,6 +175,10 @@ public final class IrisObjectIO {
         } catch (Throwable e) {
             if (!(e instanceof HeaderException))
                 IrisLogging.reportError(e);
+            // The V2 parse populates blocks/states incrementally; a mid-file failure must not
+            // leave those entries to be merged with the legacy parse of the same file.
+            self.blocks.clear();
+            self.states.clear();
             try (var fin = new BufferedInputStream(new FileInputStream(file))) {
                 readLegacy(self, fin);
             }
@@ -180,7 +193,44 @@ public final class IrisObjectIO {
         return material.equals("minecraft:jigsaw") || material.equals("minecraft:structure_block") || material.equals("minecraft:structure_void");
     }
 
+    /**
+     * The .iob V2 format stores the palette count, palette indices, and block coordinates as
+     * shorts. Values beyond the short range used to wrap silently and corrupt the object; every
+     * write path now rejects them with a descriptive error before any byte is written.
+     */
+    static void validateWritable(IrisObject self) throws IOException {
+        KList<String> palette = new KList<>();
+        for (PlatformBlockState i : self.blocks.values()) {
+            palette.addIfMissing(i.key());
+        }
+        if (palette.size() > MAX_PALETTE_ENTRIES) {
+            throw new IOException("Object '" + self.getLoadKey() + "' has " + palette.size()
+                    + " distinct block states; the .iob format supports at most " + MAX_PALETTE_ENTRIES + ".");
+        }
+        for (var entry : self.blocks) {
+            requireShortCoordinates(self, "block", entry.getKey());
+        }
+        for (var entry : self.states) {
+            requireShortCoordinates(self, "tile", entry.getKey());
+        }
+    }
+
+    private static void requireShortCoordinates(IrisObject self, String kind, IrisBlockVector position) throws IOException {
+        requireShort(self, kind, "x", position.getBlockX(), position);
+        requireShort(self, kind, "y", position.getBlockY(), position);
+        requireShort(self, kind, "z", position.getBlockZ(), position);
+    }
+
+    private static void requireShort(IrisObject self, String kind, String axis, int value, IrisBlockVector position) throws IOException {
+        if (value < Short.MIN_VALUE || value > Short.MAX_VALUE) {
+            throw new IOException("Object '" + self.getLoadKey() + "' " + kind + " at (" + position.getBlockX()
+                    + "," + position.getBlockY() + "," + position.getBlockZ()
+                    + ") exceeds the .iob coordinate range of ±32767 on the " + axis + " axis (" + value + ").");
+        }
+    }
+
     static void write(IrisObject self, OutputStream o) throws IOException {
+        validateWritable(self);
         DataOutputStream dos = new DataOutputStream(o);
         dos.writeInt(self.w);
         dos.writeInt(self.h);
@@ -219,6 +269,7 @@ public final class IrisObjectIO {
     }
 
     static void write(IrisObject self, OutputStream o, VolmitSender sender) throws IOException {
+        validateWritable(self);
         AtomicReference<IOException> ref = new AtomicReference<>();
         CountDownLatch latch = new CountDownLatch(1);
         new Job() {
@@ -310,6 +361,9 @@ public final class IrisObjectIO {
             return;
         }
 
+        // Validate before opening the stream: FileOutputStream truncates, and a rejected
+        // object must leave the existing .iob untouched.
+        validateWritable(self);
         try (FileOutputStream out = new FileOutputStream(file)) {
             write(self, out);
         }
@@ -320,6 +374,7 @@ public final class IrisObjectIO {
             return;
         }
 
+        validateWritable(self);
         try (FileOutputStream out = new FileOutputStream(file)) {
             write(self, out, sender);
         }

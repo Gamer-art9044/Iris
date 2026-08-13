@@ -207,18 +207,28 @@ public class MedievalPregenMethod implements PregeneratorMethod {
         }
 
         listener.onChunkGenerating(x, z);
-        if (J.isFolia()) {
-            futures.add(PaperLib.getChunkAtAsync(world, x, z, true).thenAccept(c -> {
-                if (c != null) {
-                    lastUse.put(c, M.ms());
-                }
-                listener.onChunkGenerated(x, z);
-                listener.onChunkCleaned(x, z);
-            }));
-            return;
-        }
-
-        futures.add(scheduleChunkLoad(x, z, listener));
+        // Single choke point for failure accounting: without onChunkFailed a lossy run can
+        // never satisfy allVisitsComplete, so a finished pregen reports as aborted forever.
+        CompletableFuture<?> chunkFuture = J.isFolia()
+                ? PaperLib.getChunkAtAsync(world, x, z, true).thenAccept(c -> {
+                    if (c != null) {
+                        lastUse.put(c, M.ms());
+                    }
+                    listener.onChunkGenerated(x, z);
+                    try {
+                        listener.onChunkCleaned(x, z);
+                    } catch (Throwable e) {
+                        // Already counted as generated; a throw here must not also count the
+                        // chunk failed through the whenComplete choke point below.
+                        IrisLogging.reportError(e);
+                    }
+                })
+                : scheduleChunkLoad(x, z, listener);
+        futures.add(chunkFuture.whenComplete((r, err) -> {
+            if (err != null) {
+                listener.onChunkFailed(x, z);
+            }
+        }));
     }
 
     private CompletableFuture<?> scheduleChunkLoad(int x, int z, PregenListener listener) {
@@ -294,12 +304,15 @@ public class MedievalPregenMethod implements PregeneratorMethod {
                     IrisLogging.reportError(error);
                 }
 
-                try {
-                    generateChunkSync(x, z, listener).get(CHUNK_WAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                    future.complete(null);
-                } catch (Throwable fallbackError) {
-                    future.completeExceptionally(fallbackError);
-                }
+                // Chain instead of blocking: parking this MultiBurst worker on a 60s get()
+                // pinned a shared pool thread per failing chunk.
+                generateChunkSync(x, z, listener).whenComplete((r, fallbackError) -> {
+                    if (fallbackError != null) {
+                        future.completeExceptionally(fallbackError);
+                    } else {
+                        future.complete(null);
+                    }
+                });
             }
         });
 
@@ -314,7 +327,13 @@ public class MedievalPregenMethod implements PregeneratorMethod {
         Chunk chunk = world.getChunkAt(x, z);
         lastUse.put(chunk, M.ms());
         listener.onChunkGenerated(x, z);
-        listener.onChunkCleaned(x, z);
+        try {
+            listener.onChunkCleaned(x, z);
+        } catch (Throwable e) {
+            // The chunk already counted as generated; a throw here must not also count it
+            // as failed through the whenComplete choke point.
+            IrisLogging.reportError(e);
+        }
     }
 
     @Override

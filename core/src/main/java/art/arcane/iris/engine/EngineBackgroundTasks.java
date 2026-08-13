@@ -18,10 +18,14 @@
 
 package art.arcane.iris.engine;
 
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.scheduling.J;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -46,8 +50,10 @@ final class EngineBackgroundTasks {
 
     boolean scheduleTrackedTask(Runnable task) {
         synchronized (backgroundTaskLock) {
-            backgroundTasks.removeIf(tracked -> tracked.completion.isDone()
-                    && !tracked.completion.isCompletedExceptionally());
+            // A finished task is not outstanding work, however it finished. Retaining failed
+            // entries made the NEXT transition's drain re-report a long-settled failure and
+            // blocked close() from ever marking the engine closed.
+            backgroundTasks.removeIf(tracked -> tracked.completion.isDone());
             if (!backgroundTaskAdmission) {
                 return false;
             }
@@ -60,6 +66,10 @@ final class EngineBackgroundTasks {
                     return null;
                 } catch (Throwable exception) {
                     tracked.completion.completeExceptionally(exception);
+                    // J.a(Callable) routes through a future nobody reads; report here or the
+                    // failure is invisible.
+                    IrisLogging.reportError(exception);
+                    IrisLogging.error("Iris background task failed.");
                     throw propagate(exception);
                 }
             });
@@ -79,6 +89,15 @@ final class EngineBackgroundTasks {
         }
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(BACKGROUND_TASK_TIMEOUT_MILLIS);
         Throwable failure = null;
+        // Settled-set snapshot taken ONCE at drain entry: a per-iteration isDone() sample
+        // would also suppress tasks that failed while the drain was blocked on an earlier
+        // task, letting a real in-flight failure pass the transition unreported.
+        Set<TrackedBackgroundTask> settledAtEntry = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (TrackedBackgroundTask task : tasks) {
+            if (task.completion.isDone()) {
+                settledAtEntry.add(task);
+            }
+        }
         for (TrackedBackgroundTask task : tasks) {
             long remaining = deadline - System.nanoTime();
             if (remaining <= 0L) {
@@ -86,6 +105,7 @@ final class EngineBackgroundTasks {
                 failure = appendFailure(failure, new TimeoutException("Timed out waiting for Iris background tasks during " + reason + "."));
                 continue;
             }
+            boolean alreadyDone = settledAtEntry.contains(task);
             try {
                 task.completion.get(remaining, TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
@@ -94,7 +114,13 @@ final class EngineBackgroundTasks {
                 failure = appendFailure(failure, e);
             } catch (ExecutionException | TimeoutException e) {
                 cancelBackgroundTask(task, reason);
-                failure = appendFailure(failure, e);
+                // A task that had settled before this drain began was already reported when it
+                // failed; only genuinely in-flight failures may poison this transition.
+                if (!alreadyDone) {
+                    failure = appendFailure(failure, e);
+                } else {
+                    IrisLogging.debug("Ignoring pre-settled background task failure during " + reason + ".");
+                }
             }
         }
         boolean complete;

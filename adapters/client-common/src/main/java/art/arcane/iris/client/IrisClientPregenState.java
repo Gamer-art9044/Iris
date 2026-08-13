@@ -46,7 +46,10 @@ public final class IrisClientPregenState {
         jobs.remove(jobId);
         Long current = activeJobId;
         if (current != null && current == jobId) {
-            activeJobId = jobs.keySet().stream().findFirst().orElse(null);
+            // Promote nothing: the server runs a single live job, so any remaining entry is
+            // dead or orphaned — and the access-ordered map's head is the STALEST entry,
+            // which is what the HUD used to promote.
+            activeJobId = null;
         }
     }
 

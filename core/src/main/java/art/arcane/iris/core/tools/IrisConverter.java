@@ -90,6 +90,9 @@ public class IrisConverter {
                     HudSlotClaim barClaim = reportProgress
                             ? BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)))
                             : null;
+                    // try/finally over the whole decode: a throw must never leak the
+                    // self-rescheduling progress task or the HUD claims.
+                    try {
                     if (mv > 2_000_000) {
                         largeObject = true;
                         IrisLogging.info(C.GRAY + "Converting.. " + schem.getName() + " -> " + schem.getName().replace(".schem", ".iob"));
@@ -149,13 +152,15 @@ public class IrisConverter {
                         }
                     }
 
-                    if (i != -1) J.car(i);
-                    if (titleClaim != null) {
-                        titleClaim.release();
-                    }
-                    if (barClaim != null) {
-                        barClaim.release();
-                        BukkitPlatform.hudLanes().hide(sender.player(), "iris:job");
+                    } finally {
+                        if (i != -1) J.car(i);
+                        if (titleClaim != null) {
+                            titleClaim.release();
+                        }
+                        if (barClaim != null) {
+                            barClaim.release();
+                            BukkitPlatform.hudLanes().hide(sender.player(), "iris:job");
+                        }
                     }
                     try {
                         object.shrinkwrap();

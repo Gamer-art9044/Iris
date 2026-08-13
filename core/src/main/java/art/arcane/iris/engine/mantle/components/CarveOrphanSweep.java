@@ -38,6 +38,15 @@ public final class CarveOrphanSweep {
         boolean isCarved(int localX, int y, int localZ);
 
         void markCarved(int localX, int y, int localZ);
+
+        /**
+         * Cheap pre-check: may any block in [minY, maxY] be carved at all? Default true keeps
+         * every implementor correct; the mantle-backed access answers from section slice
+         * presence so an uncarved chunk skips the full band fill + scan.
+         */
+        default boolean mayContainCarvedCells(int minY, int maxY) {
+            return true;
+        }
     }
 
     private CarveOrphanSweep() {
@@ -71,6 +80,12 @@ public final class CarveOrphanSweep {
         int bandTop = Math.min(worldCeilingY, maxSurfaceY);
         int bandFloor = Math.max(worldFloorY + 1, minSurfaceY - Math.max(0, maxSurfaceBreakDepth) - BAND_FLOOR_MARGIN);
         if (bandTop < bandFloor) {
+            return 0;
+        }
+
+        if (!access.mayContainCarvedCells(bandFloor, bandTop)) {
+            // Same early return the carvedPresent check reaches, without zero-filling and
+            // scanning the whole band first.
             return 0;
         }
 
@@ -223,6 +238,19 @@ public final class CarveOrphanSweep {
             chunk.getOrCreate(y >> 4).slice(MatterCavern.class).set(localX, y & 15, localZ, ORPHAN_CAVERN);
             cachedSectionIndex = -1;
             cachedSlice = null;
+        }
+
+        @Override
+        public boolean mayContainCarvedCells(int minY, int maxY) {
+            int minSection = Math.max(0, minY >> 4);
+            int maxSection = Math.min(chunk.sectionCount() - 1, maxY >> 4);
+            for (int sectionIndex = minSection; sectionIndex <= maxSection; sectionIndex++) {
+                Matter section = chunk.get(sectionIndex);
+                if (section != null && section.getSlice(MatterCavern.class) != null) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private MatterSlice<MatterCavern> resolveSlice(int sectionIndex) {

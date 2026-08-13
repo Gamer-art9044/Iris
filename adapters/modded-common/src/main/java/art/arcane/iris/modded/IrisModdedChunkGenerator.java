@@ -815,10 +815,10 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
                     int localY = blockY & 15;
                     for (int z = 0; z < 16; z++) {
                         for (int x = 0; x < 16; x++) {
-                            if (blocks.isAir(x, bufferY, z)) {
+                            PlatformBlockState state = blocks.rawOrNull(x, bufferY, z);
+                            if (state == null) {
                                 continue;
                             }
-                            PlatformBlockState state = blocks.getRaw(x, bufferY, z);
                             BlockState blockState = (BlockState) state.nativeHandle();
                             section.setBlockState(x, localY, z, blockState, false);
                             if (blockState.hasBlockEntity()) {

@@ -36,16 +36,11 @@ public final class VectorSimdKernels implements SimdKernels {
 
     @Override
     public double sum(double[] values, int length) {
-        int lanes = DOUBLE_SPECIES.length();
-        int bound = DOUBLE_SPECIES.loopBound(length);
-        DoubleVector accumulator = DoubleVector.zero(DOUBLE_SPECIES);
-        int index = 0;
-        for (; index < bound; index += lanes) {
-            accumulator = accumulator.add(DoubleVector.fromArray(DOUBLE_SPECIES, values, index));
-        }
-
-        double total = accumulator.reduceLanes(VectorOperators.ADD);
-        for (; index < length; index++) {
+        // Deliberately scalar: lane-wise accumulation reassociates FP addition, so the vector
+        // and scalar kernels returned different low bits for the same input. Generation-path
+        // reductions must be bit-exact regardless of which kernel set is installed.
+        double total = 0D;
+        for (int index = 0; index < length; index++) {
             total += values[index];
         }
 

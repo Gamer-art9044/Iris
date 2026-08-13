@@ -389,12 +389,21 @@ public class IrisEngineMantle implements EngineMantle {
                     return worker.read(name, (regionName, in) ->
                             TectonicPlate.read(worldHeight, in, regionName.startsWith("pv."), adapter, hooks));
                 } finally {
-                    if (TectonicPlate.hasError() && IrisSettings.get().getGeneral().isDumpMantleOnError()) {
-                        File dump = IrisPlatforms.get().dataFile("dump", name + ".bin");
-                        worker.dumpDecoded(name, dump.toPath());
-                    } else {
-                        IrisLogging.debug("Read Tectonic Plate " + C.DARK_GREEN + name + C.RED + " in " + Form.duration(stopwatch.getMilliseconds(), 2));
+                    // hasError() is a consuming ThreadLocal read: evaluate exactly once. The
+                    // dump must never throw out of this finally — that would replace the
+                    // successfully parsed plate with the dump failure, and the caller would
+                    // overwrite 1024 good chunks with a fresh empty plate.
+                    boolean errored = TectonicPlate.hasError();
+                    if (errored && IrisSettings.get().getGeneral().isDumpMantleOnError()) {
+                        try {
+                            File dump = IrisPlatforms.get().dataFile("dump", name + ".bin");
+                            worker.dumpDecoded(name, dump.toPath());
+                        } catch (Throwable dumpFailure) {
+                            IrisLogging.warn("Failed to dump mantle region " + name + " for diagnostics");
+                            IrisLogging.reportError(dumpFailure);
+                        }
                     }
+                    IrisLogging.debug("Read Tectonic Plate " + C.DARK_GREEN + name + C.RED + " in " + Form.duration(stopwatch.getMilliseconds(), 2));
                 }
             }
 

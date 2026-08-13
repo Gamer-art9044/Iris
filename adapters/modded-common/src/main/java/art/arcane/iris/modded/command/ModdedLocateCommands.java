@@ -543,6 +543,16 @@ final class ModdedLocateCommands {
 
     private static void teleportToLocateResult(CommandSourceStack source, ServerLevel level, Engine engine,
                                                 ServerPlayer player, String label, Position2 at) {
+        // Same liveness guards the structure completion path has: the search can take up to
+        // two minutes, and the captured ServerPlayer may be gone or elsewhere by then.
+        if (player.hasDisconnected() || player.isRemoved()) {
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PLAYER_DISCONNECTED_BEFORE_STRUCTURE_SEARCH_COMPLETED));
+            return;
+        }
+        if (player.level() != level) {
+            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_YOU_CHANGED_DIMENSIONS_BEFORE_STRUCTURE_SEARCH_COMPLETED_RUN_COMMAND_AGAIN));
+            return;
+        }
         int blockX = (at.getX() << 4) + 8;
         int blockZ = (at.getZ() << 4) + 8;
         try (GenerationSessionLease lease = engine.acquireGenerationLease("modded_locator_teleport");

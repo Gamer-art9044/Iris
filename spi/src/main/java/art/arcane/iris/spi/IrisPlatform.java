@@ -104,6 +104,36 @@ public interface IrisPlatform {
     File dataFile(String... path);
 
     /**
+     * Root under which installed packs live, resolved against optional sub-segments and created if
+     * missing. Defaults to {@code dataFolder("packs")}; platforms whose packs live outside the data
+     * folder (mod loaders) override this. Never null.
+     */
+    default File packsFolder(String... sub) {
+        if (sub == null || sub.length == 0) {
+            return dataFolder("packs");
+        }
+
+        String[] path = new String[sub.length + 1];
+        path[0] = "packs";
+        System.arraycopy(sub, 0, path, 1, sub.length);
+        return dataFolder(path);
+    }
+
+    /**
+     * Same resolution as {@link #packsFolder(String...)} without creating anything on disk. Never null.
+     */
+    default File packsFolderNoCreate(String... sub) {
+        if (sub == null || sub.length == 0) {
+            return dataFolderNoCreate("packs");
+        }
+
+        String[] path = new String[sub.length + 1];
+        path[0] = "packs";
+        System.arraycopy(sub, 0, path, 1, sub.length);
+        return dataFolderNoCreate(path);
+    }
+
+    /**
      * The Iris artifact this runtime was loaded from: the plugin jar on Bukkit, the mod jar on a mod
      * loader. The Bukkit-flavoured name is retained for source compatibility. Never null; adapters that
      * cannot locate the real artifact return a placeholder path inside {@link #dataFolder()}.

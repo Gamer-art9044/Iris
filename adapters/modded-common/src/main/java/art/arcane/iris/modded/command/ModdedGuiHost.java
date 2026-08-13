@@ -55,6 +55,29 @@ public final class ModdedGuiHost implements GuiHost.Provider {
         }
     }
 
+    /**
+     * Drops the GUI binding for an evicted engine. Without this the host pinned every
+     * GUI-bound Engine, its ServerLevel and transitively the MinecraftServer for the process
+     * lifetime — there was no remove path at all.
+     */
+    public static void unbind(Engine engine) {
+        if (engine == null) {
+            return;
+        }
+        INSTANCE.levels.remove(engine);
+        INSTANCE.openers.remove(engine);
+        if (INSTANCE.active == engine) {
+            INSTANCE.active = null;
+        }
+    }
+
+    public static void clear() {
+        INSTANCE.levels.clear();
+        INSTANCE.openers.clear();
+        INSTANCE.active = null;
+        INSTANCE.server = null;
+    }
+
     public static boolean isGuiLaunchable() {
         return GuiHost.isAvailable() && IrisSettings.get().getGui().isUseServerLaunchedGuis();
     }

@@ -37,6 +37,8 @@ import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 
 @Data
@@ -55,7 +57,6 @@ public class CNG {
     private double scale;
     private double bakedScale;
     private double fscale;
-    private boolean trueFracturing = false;
     private KList<CNG> children;
     private CNG fracture;
     private FloatCache cache;
@@ -278,16 +279,28 @@ public class CNG {
                 }
             }
 
+            // Write to a unique temp name (excluded from the *.cnm stale-entry pruner) and
+            // move atomically: a throw mid-write must never leak the descriptor or leave a
+            // truncated .cnm that the read path would pick up by existence alone. The name is
+            // per-writer unique so two engines caching the same style key cannot interleave
+            // into one temp file.
+            File tmp = new File(f.getParentFile(), f.getName() + "." + Long.toUnsignedString(System.nanoTime(), 36)
+                    + "-" + Long.toUnsignedString(Thread.currentThread().threadId(), 36) + ".tmp");
             try {
                 f.getParentFile().mkdirs();
-                FileOutputStream fos = new FileOutputStream(f);
-                DataOutputStream dos = new DataOutputStream(fos);
-                fbc.writeCache(dos);
-                dos.close();
+                try (DataOutputStream dos = new DataOutputStream(new FileOutputStream(tmp))) {
+                    fbc.writeCache(dos);
+                }
+                Files.move(tmp.toPath(), f.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
                 if (!quiet) {
                     IrisLogging.info("Saved Noise Cache " + f.getName());
                 }
             } catch (IOException e) {
+                try {
+                    Files.deleteIfExists(tmp.toPath());
+                } catch (IOException ignored) {
+                }
                 throw new RuntimeException(e);
             }
         }
@@ -646,13 +659,6 @@ public class CNG {
                     (dim.length > 0 ? dim[0] : 0D) * scale,
                     (dim.length > 1 ? dim[1] : 0D) * scale,
                     (dim.length > 2 ? dim[2] : 0D) * scale) * opacity;
-        }
-
-        if (fracture.isTrueFracturing()) {
-            double x = dim.length > 0 ? dim[0] + ((fracture.noise(dim) - 0.5) * fscale) : 0D;
-            double y = dim.length > 1 ? dim[1] + ((fracture.noise(dim[1], dim[0]) - 0.5) * fscale) : 0D;
-            double z = dim.length > 2 ? dim[2] + ((fracture.noise(dim[2], dim[0], dim[1]) - 0.5) * fscale) : 0D;
-            return generator.noise(x * scale, y * scale, z * scale) * opacity;
         }
 
         double x = dim.length > 0 ? dim[0] : 0D;

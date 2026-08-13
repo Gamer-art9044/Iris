@@ -23,6 +23,7 @@ import art.arcane.iris.core.gui.GuiHost;
 import art.arcane.iris.core.gui.NoiseExplorerGUI;
 import art.arcane.iris.core.gui.VisionGUI;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.StructurePackageClosure;
 import art.arcane.iris.core.project.IrisProjectCopier;
 import art.arcane.iris.engine.framework.Engine;
@@ -31,7 +32,9 @@ import art.arcane.iris.engine.object.IrisBiomeGeneratorLink;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisEntitySpawn;
 import art.arcane.iris.engine.object.IrisGenerator;
-import art.arcane.iris.engine.object.IrisObjectPlacement;
+import art.arcane.iris.core.pack.PackExportClosure;
+import art.arcane.iris.engine.object.IrisEntity;
+import art.arcane.iris.engine.object.IrisMarker;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisSpawner;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
@@ -383,7 +386,7 @@ public final class ModdedStudioCommands {
             File packFolder = new File(ModdedPackCommands.packsRoot(), pack);
             if (!new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
                 server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACK_MISSING_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack))));
-                boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, "master", false, true,
+                boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), pack, PackDownloader.DEFAULT_BRANCH, false, true,
                         (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
                 if (!installed || !new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
                     server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_TRY_IRIS_DOWNLOAD, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack))));
@@ -467,7 +470,9 @@ public final class ModdedStudioCommands {
         ServerPlayer player = source.getPlayer();
         MinecraftServer server = source.getServer();
         UUID owner = player == null ? CONSOLE_OWNER : player.getUUID();
-        String dimensionId = STUDIOS.remove(owner);
+        // Commit the ownership drop only after removal succeeds: dropping it first orphaned a
+        // still-registered studio that no command could ever remove again.
+        String dimensionId = STUDIOS.get(owner);
         if (dimensionId == null) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_YOU_DO_NOT_HAVE_OPEN_STUDIO_USE_IRIS_STUDIO_OPEN));
             return 0;
@@ -479,6 +484,7 @@ public final class ModdedStudioCommands {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_CLOSE_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return 0;
         }
+        STUDIOS.remove(owner, dimensionId);
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_CLOSED_WAS_EVACUATED_UNLOADED_ITS_REGION_DATA_DELETED, MessageArgument.untrusted("dimensionId", dimensionId)));
         return 1;
     }
@@ -588,7 +594,7 @@ public final class ModdedStudioCommands {
                 File templateFolder = new File(packsRoot, template);
                 if (!new File(templateFolder, "dimensions/" + template + ".json").isFile()) {
                     server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_TEMPLATE_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("template", template), MessageArgument.untrusted("template2", template))));
-                    boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), template, "master", false, true,
+                    boolean installed = ModdedPackInstaller.install(ModdedEngineBootstrap.loader().configDir(), template, PackDownloader.DEFAULT_BRANCH, false, true,
                             (String line) -> server.execute(() -> IrisModdedCommands.ok(source, line)));
                     if (!installed || !new File(templateFolder, "dimensions/" + template + ".json").isFile()) {
                         server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_TEMPLATE_COULD_NOT_BE_DOWNLOADED_INSTALL_PACK_WITH_DIMENSIONS_JSON, MessageArgument.untrusted("template", template), MessageArgument.untrusted("template2", template))));
@@ -655,6 +661,7 @@ public final class ModdedStudioCommands {
         LinkedHashSet<String> generatorKeys = new LinkedHashSet<>();
         LinkedHashSet<String> lootKeys = new LinkedHashSet<>();
         LinkedHashSet<String> objectKeys = new LinkedHashSet<>();
+        LinkedHashSet<String> markerKeys = new LinkedHashSet<>();
         LinkedHashSet<String> structureKeys = new LinkedHashSet<>();
 
         regionKeys.addAll(dimension.getRegions());
@@ -675,6 +682,8 @@ public final class ModdedStudioCommands {
             lootKeys.addAll(region.getLoot().getTables());
             spawnerKeys.addAll(region.getEntitySpawners());
             collectStructureKeys(structureKeys, region.getStructures());
+            objectKeys.addAll(PackExportClosure.collectObjectKeys(region.getObjects()));
+            markerKeys.addAll(PackExportClosure.collectMarkerKeys(region.getObjects()));
         }
         for (String biomeKey : biomeKeys) {
             IrisBiome biome = dm.getBiomeLoader().load(biomeKey);
@@ -685,9 +694,15 @@ public final class ModdedStudioCommands {
             lootKeys.addAll(biome.getLoot().getTables());
             spawnerKeys.addAll(biome.getEntitySpawners());
             collectStructureKeys(structureKeys, biome.getStructures());
-            for (IrisObjectPlacement placement : biome.getObjects()) {
-                objectKeys.addAll(placement.getPlace());
+            objectKeys.addAll(PackExportClosure.collectObjectKeys(biome.getObjects()));
+            markerKeys.addAll(PackExportClosure.collectMarkerKeys(biome.getObjects()));
+        }
+        for (String markerKey : markerKeys) {
+            IrisMarker marker = dm.getMarkerLoader().load(markerKey);
+            if (marker == null) {
+                continue;
             }
+            spawnerKeys.addAll(marker.getSpawners());
         }
         for (String spawnerKey : spawnerKeys) {
             IrisSpawner spawner = dm.getSpawnerLoader().load(spawnerKey);
@@ -695,6 +710,14 @@ public final class ModdedStudioCommands {
                 continue;
             }
             spawner.getSpawns().forEach((IrisEntitySpawn spawn) -> entityKeys.add(spawn.getEntity()));
+            spawner.getInitialSpawns().forEach((IrisEntitySpawn spawn) -> entityKeys.add(spawn.getEntity()));
+        }
+        for (String entityKey : entityKeys) {
+            IrisEntity entity = dm.getEntityLoader().load(entityKey);
+            if (entity == null) {
+                continue;
+            }
+            lootKeys.addAll(entity.getLoot().getTables());
         }
 
         StringBuilder hashes = new StringBuilder();
@@ -731,6 +754,12 @@ public final class ModdedStudioCommands {
         }
         for (String key : lootKeys) {
             hashes.append(copyJson(folder, "loot", key, dm.getLootLoader().findFile(key)));
+        }
+        for (String key : spawnerKeys) {
+            hashes.append(copyJson(folder, "spawners", key, dm.getSpawnerLoader().findFile(key)));
+        }
+        for (String key : markerKeys) {
+            hashes.append(copyJson(folder, "markers", key, dm.getMarkerLoader().findFile(key)));
         }
 
         JSONObject meta = new JSONObject();
@@ -794,14 +823,19 @@ public final class ModdedStudioCommands {
                 int totalTasks = diameter * diameter;
                 KMap<String, AtomicInteger> counts = new KMap<>();
                 engine.getDimension().getRegions().forEach((String key) -> counts.put(key, new AtomicInteger(0)));
+                // finally-scoped: a throw mid-scan previously leaked the sampler's whole
+                // ForkJoinPool (close() is the only thing that shuts it down).
                 MultiBurst burst = new MultiBurst("Region Sampler");
-                BurstExecutor executor = burst.burst(totalTasks);
-                new Spiraler(diameter, diameter, (int x, int z) -> executor.queue(() -> {
-                    IrisRegion region = engine.getRegion((x << 4) + 8, (z << 4) + 8);
-                    counts.computeIfAbsent(region.getLoadKey(), (String key) -> new AtomicInteger(0)).incrementAndGet();
-                })).setOffset(blockX >> 4, blockZ >> 4).drain();
-                executor.complete();
-                burst.close();
+                try {
+                    BurstExecutor executor = burst.burst(totalTasks);
+                    new Spiraler(diameter, diameter, (int x, int z) -> executor.queue(() -> {
+                        IrisRegion region = engine.getRegion((x << 4) + 8, (z << 4) + 8);
+                        counts.computeIfAbsent(region.getLoadKey(), (String key) -> new AtomicInteger(0)).incrementAndGet();
+                    })).setOffset(blockX >> 4, blockZ >> 4).drain();
+                    executor.complete();
+                } finally {
+                    burst.close();
+                }
                 server.execute(() -> counts.forEach((String key, AtomicInteger count) -> {
                     IrisRegion region = engine.getData().getRegionLoader().load(key);
                     String rarity = region == null ? "?" : String.valueOf(region.getRarity());

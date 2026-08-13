@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.pack;
 
+import art.arcane.iris.engine.object.IrisDimensionType;
 import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
 
@@ -45,6 +46,7 @@ final class PackDimensionValidator {
             }
 
             validateImportedStructurePolicy(dimensionKey, dimJson, blockingErrors, warnings);
+            validateDimensionHeights(packFolder, dimensionKey, dimJson, blockingErrors);
 
             JSONArray regionsArray = dimJson.optJSONArray("regions");
             if (regionsArray == null || regionsArray.length() == 0) {
@@ -225,5 +227,85 @@ final class PackDimensionValidator {
             resolved++;
         }
         return resolved;
+    }
+
+    /**
+     * Mirrors the IrisDimensionType constructor checks so a pack that would throw at world creation
+     * fails validation instead. Defaults must match the POJOs exactly: dimensionHeight absent means
+     * the IrisDimension field initializer (-64..320); present-but-partial means the IrisRange field
+     * initializers (min 16, max 32); logicalHeight absent means 256.
+     */
+    static void validateDimensionHeights(File packFolder, String dimensionKey, JSONObject dimJson, List<String> blockingErrors) {
+        JSONObject range = resolveDimensionHeight(packFolder, dimJson);
+        if (range == null && dimJson.has("dimensionHeight") && !dimJson.isNull("dimensionHeight")) {
+            if (!(dimJson.opt("dimensionHeight") instanceof String)) {
+                blockingErrors.add("Dimension '" + dimensionKey + "' dimensionHeight must be an object or a range snippet reference.");
+            }
+            // Unresolvable snippet references are reported by the content-key machinery.
+            return;
+        }
+
+        int minY;
+        int maxY;
+        if (range == null) {
+            minY = -64;
+            maxY = 320;
+        } else {
+            minY = (int) range.optDouble("min", 16D);
+            maxY = (int) range.optDouble("max", 32D);
+        }
+        int height = maxY - minY;
+        int logicalHeight = dimJson.optInt("logicalHeight", 256);
+
+        if (height < IrisDimensionType.MIN_HEIGHT || height > IrisDimensionType.MAX_HEIGHT) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' dimensionHeight span (max - min) is " + height
+                    + "; it must be between " + IrisDimensionType.MIN_HEIGHT + " and " + IrisDimensionType.MAX_HEIGHT + ".");
+        } else if ((height & (IrisDimensionType.HEIGHT_STEP - 1)) != 0) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' dimensionHeight span (max - min) is " + height
+                    + "; it must be a multiple of " + IrisDimensionType.HEIGHT_STEP + ".");
+        }
+        if (minY < IrisDimensionType.MIN_MIN_Y || minY > IrisDimensionType.MAX_MIN_Y) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' dimensionHeight.min is " + minY
+                    + "; it must be between " + IrisDimensionType.MIN_MIN_Y + " and " + IrisDimensionType.MAX_MIN_Y + ".");
+        } else if ((minY & (IrisDimensionType.HEIGHT_STEP - 1)) != 0) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' dimensionHeight.min is " + minY
+                    + "; it must be a multiple of " + IrisDimensionType.HEIGHT_STEP + ".");
+        }
+        if (logicalHeight < 0) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' logicalHeight is " + logicalHeight + "; it cannot be negative.");
+        } else if (logicalHeight > height) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' logicalHeight is " + logicalHeight
+                    + "; it cannot be greater than the dimension height of " + height + ".");
+        }
+    }
+
+    private static JSONObject resolveDimensionHeight(File packFolder, JSONObject dimJson) {
+        if (!dimJson.has("dimensionHeight") || dimJson.isNull("dimensionHeight")) {
+            return null;
+        }
+
+        JSONObject inline = dimJson.optJSONObject("dimensionHeight");
+        if (inline != null) {
+            return inline;
+        }
+
+        String reference = dimJson.optString("dimensionHeight", null);
+        if (reference == null || !reference.startsWith("snippet/")) {
+            return null;
+        }
+        // Mirror IrisData's snippet adapter: canonical snippet/range/... is used verbatim; any other
+        // snippet/... reference is re-rooted under this field's snippet folder.
+        if (!reference.startsWith("snippet/range/")) {
+            reference = "snippet/range/" + reference.substring("snippet/".length());
+        }
+        File snippet = new File(packFolder, reference + ".json");
+        if (!snippet.isFile()) {
+            return null;
+        }
+        try {
+            return new JSONObject(Files.readString(snippet.toPath(), StandardCharsets.UTF_8));
+        } catch (Throwable e) {
+            return null;
+        }
     }
 }

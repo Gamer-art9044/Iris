@@ -47,7 +47,7 @@ public class IrisPackRepository {
     private String repo = "overworld";
 
     @Builder.Default
-    private String branch = "stable";
+    private String branch = PackDownloader.DEFAULT_BRANCH;
 
     @Builder.Default
     private String tag = "";
@@ -96,7 +96,7 @@ public class IrisPackRepository {
             return IrisPackRepository.builder()
                     .user("IrisDimensions")
                     .repo(g)
-                    .branch("stable")
+                    .branch(PackDownloader.DEFAULT_BRANCH)
                     .build();
         }
 
@@ -112,7 +112,7 @@ public class IrisPackRepository {
     }
 
     public void install(VolmitSender sender, Runnable whenComplete) throws MalformedURLException {
-        File pack = IrisPlatforms.get().dataFolderNoCreate(StudioSVC.WORKSPACE_NAME, getRepo());
+        File pack = IrisPlatforms.get().packsFolderNoCreate(getRepo());
 
         if (!pack.exists()) {
             File dl = new File(IrisPlatforms.get().dataFolder("cache", "temp"), "dltk-" + UUID.randomUUID() + ".zip");

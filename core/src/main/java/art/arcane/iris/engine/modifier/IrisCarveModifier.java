@@ -563,6 +563,18 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
         }
     }
 
+    /**
+     * 1-in-16 marker roll from a SplitMix64 finalizer over (carve seed, block position, salt).
+     * Deterministic per seed and position, thread-order independent, allocation free.
+     */
+    private boolean markerRoll(int x, int y, int z, long salt) {
+        long h = (getEngine().getSeedManager().getCarve() + salt) ^ BlockPosition.toLong(x, y, z);
+        h = (h ^ (h >>> 30)) * 0xBF58476D1CE4E5B9L;
+        h = (h ^ (h >>> 27)) * 0x94D049BB133111EBL;
+        h ^= h >>> 31;
+        return (h & 15L) == 0L;
+    }
+
     private void processZone(Hunk<PlatformBlockState> output, MantleChunk<Matter> mc, Mantle<Matter> mantle, CaveZone zone, int rx, int rz, int xx, int zz, IrisDimensionCarvingResolver.State resolverState, Long2ObjectOpenHashMap<IrisBiome> caveBiomeCache) {
         int center = (zone.floor + zone.ceiling) / 2;
         int maxY = output.getHeight();
@@ -576,11 +588,14 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             output.setRaw(rx, zone.ceiling, rz, AIR);
         }
 
-        if (M.r(1D / 16D)) {
+        // Seed-derived and position-keyed, never Math.random(): these markers persist into the
+        // mantle and drive cave spawning, so the same seed must stamp the same markers on
+        // every run and every platform. Inline mix, no allocation on this hot path.
+        if (markerRoll(xx, zone.ceiling, zz, 0x9E3779B97F4A7C15L)) {
             mantle.set(xx, zone.ceiling, zz, MarkerMatter.CAVE_CEILING);
         }
 
-        if (M.r(1D / 16D)) {
+        if (markerRoll(xx, zone.floor, zz, 0xC2B2AE3D27D4EB4FL)) {
             mantle.set(xx, zone.floor, zz, MarkerMatter.CAVE_FLOOR);
         }
 

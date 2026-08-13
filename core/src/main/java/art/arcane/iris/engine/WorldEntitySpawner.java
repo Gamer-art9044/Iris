@@ -519,18 +519,7 @@ final class WorldEntitySpawner {
     }
 
     private KList<IrisEntitySpawn> spawnRandomly(List<IrisEntitySpawn> types) {
-        KList<IrisEntitySpawn> rarityTypes = new KList<>();
-        int totalRarity = 0;
-
-        for (IrisEntitySpawn i : types) {
-            totalRarity += IRare.get(i);
-        }
-
-        for (IrisEntitySpawn i : types) {
-            rarityTypes.addMultiple(i, totalRarity / IRare.get(i));
-        }
-
-        return rarityTypes;
+        return IRare.expandWeighted(types);
     }
 
     @Data

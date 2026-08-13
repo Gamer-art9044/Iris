@@ -67,8 +67,6 @@ import art.arcane.iris.util.project.stream.utility.CachedStream2D;
 import art.arcane.iris.util.project.stream.utility.CachedStream3D;
 import art.arcane.iris.util.project.stream.utility.ContextInjectingStream;
 import art.arcane.iris.util.project.stream.utility.NullSafeStream;
-import art.arcane.iris.util.project.stream.utility.ProfiledStream;
-import art.arcane.iris.util.project.stream.utility.SemaphoreStream;
 import art.arcane.iris.util.project.stream.utility.SynchronizedStream;
 
 import java.util.ArrayList;
@@ -117,14 +115,6 @@ public interface ProceduralStream<T> extends ProceduralLayer, Interpolated<T> {
         }, Interpolated.BOOLEAN);
     }
 
-    default ProceduralStream<T> profile() {
-        return profile(256);
-    }
-
-    default ProceduralStream<T> profile(int memory) {
-        return new ProfiledStream<>(this, memory);
-    }
-
     default ProceduralStream<T> onNull(T v) {
         return new NullSafeStream<>(this, v);
     }
@@ -148,11 +138,6 @@ public interface ProceduralStream<T> extends ProceduralLayer, Interpolated<T> {
 
     default ProceduralStream<T> add(ProceduralStream<Double> a) {
         return add2D((x, z) -> a.get(x, z));
-    }
-
-    default ProceduralStream<T> waste(String name) {
-        return this;
-        //return new WasteDetector<T>(this, name);
     }
 
     default ProceduralStream<T> subtract(ProceduralStream<Double> a) {
@@ -201,10 +186,6 @@ public interface ProceduralStream<T> extends ProceduralLayer, Interpolated<T> {
 
     default ProceduralStream<T> synchronize() {
         return new SynchronizedStream<>(this);
-    }
-
-    default ProceduralStream<T> semaphore(int permits) {
-        return new SemaphoreStream<>(this, permits);
     }
 
     default ProceduralStream<T> bitShiftCoordsLeft(int a) {

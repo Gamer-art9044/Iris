@@ -11,11 +11,13 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ChunkTickets implements Listener {
-    private final Map<World, TicketHolder> holders = new HashMap<>();
+    // Concurrent + self-healing: mutated from event handlers and read from command threads,
+    // and a holder dropped by an aborted unload must recreate on next use, not NPE forever.
+    private final Map<World, TicketHolder> holders = new ConcurrentHashMap<>();
 
     public ChunkTickets() {
         BukkitPlatform.volmitPlugin().registerListener(this);
@@ -23,7 +25,7 @@ public class ChunkTickets implements Listener {
     }
 
     public TicketHolder getHolder(@NonNull World world) {
-        return holders.get(world);
+        return holders.computeIfAbsent(world, TicketHolder::new);
     }
 
     public void addTicket(@NonNull Chunk chunk) {
@@ -50,8 +52,11 @@ public class ChunkTickets implements Listener {
         holders.put(event.getWorld(), new TicketHolder(event.getWorld()));
     }
 
-    @EventHandler(priority = EventPriority.MONITOR)
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void on(@NonNull WorldUnloadEvent event) {
-        holders.remove(event.getWorld());
+        TicketHolder holder = holders.remove(event.getWorld());
+        if (holder != null) {
+            holder.releaseAll();
+        }
     }
 }

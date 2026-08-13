@@ -42,7 +42,10 @@ import java.util.concurrent.locks.ReentrantLock;
 public final class PregenRenderer extends JPanel implements KeyListener {
     private static final long serialVersionUID = 2094606939770332040L;
 
-    private final KList<Runnable> order = new KList<>();
+    // Backstop: if paint() ever stalls (iconified frame, EDT hiccup), the producer must not
+    // grow this without bound — one entry per drawn chunk adds up fast on a big pregen.
+    private static final int MAX_QUEUED_DRAWS = 250_000;
+    private KList<Runnable> order = new KList<>();
     private final ReentrantLock lock = new ReentrantLock();
     private final int res = 512;
     private final BufferedImage image = new BufferedImage(res, res, BufferedImage.TYPE_INT_RGB);
@@ -71,7 +74,9 @@ public final class PregenRenderer extends JPanel implements KeyListener {
         return (Position2 c, Color color) -> {
             lock.lock();
             try {
-                order.add(() -> draw(c, color, bg));
+                if (order.size() < MAX_QUEUED_DRAWS) {
+                    order.add(() -> draw(c, color, bg));
+                }
             } finally {
                 lock.unlock();
             }
@@ -83,7 +88,11 @@ public final class PregenRenderer extends JPanel implements KeyListener {
     }
 
     public boolean isVisibleFrame() {
-        return frame != null && frame.isVisible();
+        // An iconified frame still reports isVisible() but AWT stops repainting it, which
+        // would stop the only queue drain while the producer keeps appending.
+        JFrame activeFrame = frame;
+        return activeFrame != null && activeFrame.isVisible()
+                && (activeFrame.getExtendedState() & java.awt.Frame.ICONIFIED) == 0;
     }
 
     public void close() {
@@ -99,17 +108,22 @@ public final class PregenRenderer extends JPanel implements KeyListener {
     public void paint(Graphics gx) {
         Graphics2D g = (Graphics2D) gx;
         bg = (Graphics2D) image.getGraphics();
+        // Swap the queue under the lock and drain outside it: generation threads must not
+        // block on the lock while the EDT walks a large batch, and pop()-per-entry was O(N^2).
+        KList<Runnable> batch;
         lock.lock();
         try {
-            while (order.isNotEmpty()) {
-                try {
-                    order.pop().run();
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
-                }
-            }
+            batch = order;
+            order = new KList<>();
         } finally {
             lock.unlock();
+        }
+        for (Runnable r : batch) {
+            try {
+                r.run();
+            } catch (Throwable e) {
+                IrisLogging.reportError(e);
+            }
         }
 
         g.drawImage(image, 0, 0, getParent().getWidth(), getParent().getHeight(), (img, infoflags, x, y, width, height) -> true);

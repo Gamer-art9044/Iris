@@ -90,7 +90,7 @@ public class IrisToolbelt {
             return null;
         }
 
-        File packsFolder = IrisPlatforms.get().dataFolder("packs");
+        File packsFolder = IrisPlatforms.get().packsFolder();
         File pack = PackDirectoryResolver.resolveExisting(packsFolder, reference.pack());
         if (pack == null) {
             File found = findCaseInsensitivePack(packsFolder, reference.pack());
@@ -302,6 +302,13 @@ public class IrisToolbelt {
      * @return the pregenerator job (already started)
      */
     public static PregeneratorJob pregenerate(PregenTask task, PregeneratorMethod method, Engine engine, boolean cached) {
+        // Match the modded adapter's contract: a running job is a rejection, never a silent
+        // kill whose teardown (60s drain + 120s flush) overlaps the new job's generation.
+        // Callers that genuinely want replacement must stop the old job first
+        // (PregeneratorJob.shutdownAndWait).
+        if (PregeneratorJob.getInstance() != null) {
+            throw new IllegalStateException("An Iris pregeneration job is already running; stop it first with /iris pregen stop.");
+        }
         applyPregenPerformanceProfile(engine);
         boolean useCachedWrapper = false;
         if (cached && engine != null) {
@@ -588,15 +595,23 @@ public class IrisToolbelt {
     }
 
     public static void endWorldMaintenance(World world, String reason) {
+        endWorldMaintenance(world, reason, false);
+    }
+
+    public static void endWorldMaintenance(World world, String reason, boolean bypassMantleStages) {
         if (world == null) {
             return;
         }
 
-        endWorldMaintenance(WorldIdentity.serialize(world), reason);
+        endWorldMaintenance(WorldIdentity.serialize(world), reason, bypassMantleStages);
     }
 
     public static void endWorldMaintenance(String worldName, String reason) {
         WorldMaintenance.endWorldMaintenance(worldName, reason);
+    }
+
+    public static void endWorldMaintenance(String worldName, String reason, boolean bypassMantleStages) {
+        WorldMaintenance.endWorldMaintenance(worldName, reason, bypassMantleStages);
     }
 
     public static boolean isWorldMaintenanceActive(World world) {
@@ -637,6 +652,14 @@ public class IrisToolbelt {
             return;
         }
         e.getEngine().getMantle().getMantle().remove(x, y - world.getMinHeight(), z, of);
+    }
+
+    public static <T> void setMantleData(World world, int x, int y, int z, T data) {
+        PlatformChunkGenerator e = access(world);
+        if (e == null || data == null) {
+            return;
+        }
+        e.getEngine().getMantle().getMantle().set(x, y - world.getMinHeight(), z, data);
     }
 
     public static boolean removeWorld(World world) throws IOException {

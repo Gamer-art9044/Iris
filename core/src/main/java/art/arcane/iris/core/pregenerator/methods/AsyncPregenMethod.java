@@ -57,7 +57,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class AsyncPregenMethod implements PregeneratorMethod {
+    // THREAD_COUNT records the pool's original size while boosted; BOOST_HOLDERS counts live
+    // jobs holding the boost. Pairing them per instance stops a dying job (whose close can
+    // land minutes after its replacement started) from shrinking the pool under the live job.
     private static final AtomicInteger THREAD_COUNT = new AtomicInteger();
+    private static final AtomicInteger BOOST_HOLDERS = new AtomicInteger();
     private static final int ADAPTIVE_TIMEOUT_STEP = 3;
     private static final int ADAPTIVE_RECOVERY_INTERVAL = 8;
     private static final long CLOSE_DRAIN_TIMEOUT_SECONDS = 60L;
@@ -102,6 +106,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     private final AtomicLong failed = new AtomicLong();
     private final AtomicLong lastProgressAt = new AtomicLong(M.ms());
     private final AtomicBoolean closing = new AtomicBoolean();
+    private final AtomicBoolean holdsWorkerBoost = new AtomicBoolean();
     private final Object permitMonitor = new Object();
     private volatile Engine metricsEngine;
     private volatile Mantle cachedMantle;
@@ -738,8 +743,8 @@ public class AsyncPregenMethod implements PregeneratorMethod {
                 + ", recommendedCap=" + recommendedRuntimeConcurrencyCap
                 + ", urgent=" + urgent
                 + ", timeout=" + timeoutSeconds + "s");
-        if (workerPoolThreads > 0) {
-            increaseWorkerThreads();
+        if (workerPoolThreads > 0 && holdsWorkerBoost.compareAndSet(false, true)) {
+            acquireWorkerThreadBoost();
         }
     }
 
@@ -775,7 +780,9 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
             flushAllRemainingChunks();
             executor.shutdown();
-            resetWorkerThreads();
+            if (holdsWorkerBoost.compareAndSet(true, false)) {
+                releaseWorkerThreadBoost();
+            }
         } finally {
             if (interrupted) {
                 Thread.currentThread().interrupt();
@@ -945,7 +952,21 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         return null;
     }
 
-    public static void increaseWorkerThreads() {
+    public static void acquireWorkerThreadBoost() {
+        if (BOOST_HOLDERS.getAndIncrement() > 0) {
+            return;
+        }
+        increaseWorkerThreads();
+    }
+
+    public static void releaseWorkerThreadBoost() {
+        if (BOOST_HOLDERS.decrementAndGet() > 0) {
+            return;
+        }
+        resetWorkerThreads();
+    }
+
+    private static void increaseWorkerThreads() {
         THREAD_COUNT.updateAndGet(i -> {
             if (i > 0) {
                 return i;
@@ -974,7 +995,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         });
     }
 
-    public static void resetWorkerThreads() {
+    private static void resetWorkerThreads() {
         THREAD_COUNT.updateAndGet(i -> {
             if (i == 0) {
                 return 0;

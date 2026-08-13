@@ -254,7 +254,10 @@ public final class PendingWorldReplacementManager implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onWorldLoad(WorldLoadEvent event) {
         World world = event.getWorld();
-        J.s(() -> verifyPublishedWorldIfPending(world), 1);
+        // One tick to let the load settle, then verify off-main: the body takes the manager
+        // monitor (held across pack staging by async threads) and SHA-hashes the whole pack
+        // tree — blocking the main thread on either froze the server.
+        J.s(() -> J.a(() -> verifyPublishedWorldIfPending(world)), 1);
     }
 
     private synchronized void verifyPublishedWorldIfPending(World world) {
@@ -506,10 +509,46 @@ public final class PendingWorldReplacementManager implements Listener {
         }
     }
 
+    /**
+     * Captures the primary level context on the main thread at startup. resolveEffectiveSeed
+     * reads this snapshot so staging never blocks on a main-thread hop while holding the
+     * manager monitor — that inversion froze the server for the full 30s hop timeout whenever
+     * another world loaded during staging. The context is stable for the process lifetime:
+     * slot replacements only commit across a restart.
+     */
+    public void captureVanillaLevelContext() {
+        try {
+            vanillaLevelContext = new VanillaLevelContext(
+                    WorldIdentity.resolve(NamespacedKey.minecraft("overworld"))
+                            .orElseThrow(() -> new IllegalStateException("The configured primary world is not loaded."))
+                            .getSeed(),
+                    Iris.instance.getServer().getAllowNether(),
+                    Iris.instance.getServer().getAllowEnd()
+            );
+        } catch (Throwable failure) {
+            Iris.debug("Could not capture the primary level context yet: " + detail(failure));
+        }
+    }
+
     private static long resolveEffectiveSeed(SlotKind slotKind, long requestedSeed) throws IOException {
         if (slotKind == SlotKind.IRIS_MANAGED) {
             return requestedSeed;
         }
+        VanillaLevelContext context = vanillaLevelContext;
+        if (context == null) {
+            context = resolveVanillaLevelContext();
+            vanillaLevelContext = context;
+        }
+        if (slotKind == SlotKind.VANILLA_NETHER && !context.allowNether()) {
+            throw new IOException("allow-nether must be true before the vanilla Nether can be replaced.");
+        }
+        if (slotKind == SlotKind.VANILLA_END && !context.allowEnd()) {
+            throw new IOException("Bukkit allow-end must be true before the vanilla End can be replaced.");
+        }
+        return context.seed();
+    }
+
+    private static VanillaLevelContext resolveVanillaLevelContext() throws IOException {
         CompletableFuture<VanillaLevelContext> contextFuture = J.sfut(() -> new VanillaLevelContext(
                 WorldIdentity.resolve(NamespacedKey.minecraft("overworld"))
                         .orElseThrow(() -> new IllegalStateException("The configured primary world is not loaded."))
@@ -521,14 +560,7 @@ public final class PendingWorldReplacementManager implements Listener {
             throw new IOException("Could not schedule primary level-seed resolution.");
         }
         try {
-            VanillaLevelContext context = contextFuture.get(30L, TimeUnit.SECONDS);
-            if (slotKind == SlotKind.VANILLA_NETHER && !context.allowNether()) {
-                throw new IOException("allow-nether must be true before the vanilla Nether can be replaced.");
-            }
-            if (slotKind == SlotKind.VANILLA_END && !context.allowEnd()) {
-                throw new IOException("Bukkit allow-end must be true before the vanilla End can be replaced.");
-            }
-            return context.seed();
+            return contextFuture.get(30L, TimeUnit.SECONDS);
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
             throw new IOException("Primary level-seed resolution was interrupted.", failure);
@@ -579,6 +611,8 @@ public final class PendingWorldReplacementManager implements Listener {
             Objects.requireNonNull(dimension, "dimension");
         }
     }
+
+    private static volatile VanillaLevelContext vanillaLevelContext;
 
     private record VanillaLevelContext(long seed, boolean allowNether, boolean allowEnd) {
     }

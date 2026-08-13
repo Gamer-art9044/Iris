@@ -46,7 +46,7 @@ public enum StudioMode {
     @Desc("Debug layout: every biome on a square grid with 36x36-chunk cells per biome, barrier floor past the last biome. Bukkit studio worlds only.")
     BIOME_BUFFET_36x36,
 
-    @Desc("Not implemented: currently generates exactly like NORMAL.")
+    @Desc("Deprecated: generates exactly like NORMAL and will be removed in a future release.")
     REGION_BUFFET,
 
     @Desc("Replaces terrain with the object studio: a flat polished-deepslate floor laying every pack object out on framed, end-rod-marked grid plinths. Bukkit studio worlds only.")

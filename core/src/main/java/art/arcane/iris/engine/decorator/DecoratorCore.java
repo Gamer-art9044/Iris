@@ -98,41 +98,6 @@ final class DecoratorCore {
         return picked;
     }
 
-    static void placeSingleUp(IrisDecorator decorator, int x, int z,
-                              int realX, int height, int realZ, Hunk<PlatformBlockState> data,
-                              RNG rng, IrisData irisData, boolean caveSkipFluid, EngineMantle mantle) {
-        PlatformBlockState bd = decorator.pickBlockData(rng, irisData, realX, realZ);
-        if (bd == null) {
-            return;
-        }
-
-        String half = IrisProceduralBlocks.propertyValue(bd, "half");
-        if (half != null) {
-            int lowerY = height + 1;
-            int upperY = height + 2;
-            if (!canPlaceTwoBlockPlant(data, x, z, lowerY, upperY, caveSkipFluid)) {
-                return;
-            }
-
-            try {
-                PlatformBlockState upper = bd.withProperty("half", topHalfValue(half));
-                PlatformBlockState lower = fixFacesForHunk(
-                        bd.withProperty("half", bottomHalfValue(half)),
-                        data, x, z, realX, lowerY, realZ, mantle);
-                data.set(x, lowerY, z, lower);
-                data.set(x, upperY, z, upper);
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
-            }
-            return;
-        }
-
-        int targetY = height + 1;
-        if (targetY < data.getHeight() && B.isAir(data.get(x, targetY, z))) {
-            data.set(x, targetY, z, fixFacesForHunk(bd, data, x, z, realX, targetY, realZ, mantle));
-        }
-    }
-
     private static String topHalfValue(String half) {
         return half.equals("upper") || half.equals("lower") ? "upper" : "top";
     }

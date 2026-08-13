@@ -609,7 +609,7 @@ public final class StudioOpenCoordinator {
                 });
         return operation.whenComplete((result, throwable) -> {
             if (world != null) {
-                IrisToolbelt.endWorldMaintenance(world, "studio-close");
+                IrisToolbelt.endWorldMaintenance(world, "studio-close", true);
             }
         });
     }

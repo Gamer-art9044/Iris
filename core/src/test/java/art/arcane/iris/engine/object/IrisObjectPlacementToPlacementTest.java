@@ -67,7 +67,6 @@ public class IrisObjectPlacementToPlacementTest {
         source.setBottom(true);
         source.setBore(true);
         source.setWarp(warp);
-        source.setTranslateCenter(true);
         source.setMode(ObjectPlaceMode.FAST_MIN_STILT);
         source.setEdit(edit);
         source.setTranslate(translate);
@@ -112,7 +111,6 @@ public class IrisObjectPlacementToPlacementTest {
         assertTrue(copy.isBottom());
         assertTrue(copy.isBore());
         assertSame(warp, copy.getWarp());
-        assertTrue(copy.isTranslateCenter());
         assertEquals(ObjectPlaceMode.FAST_MIN_STILT, copy.getMode());
         assertSame(edit, copy.getEdit());
         assertSame(translate, copy.getTranslate());

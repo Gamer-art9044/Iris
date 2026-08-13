@@ -166,7 +166,11 @@ public final class LootResolver {
         if (mode == IrisLootMode.FALLBACK && !fallback) {
             return;
         }
-        if (mode == IrisLootMode.CLEAR || mode == IrisLootMode.REPLACE) {
+        if (mode == IrisLootMode.CLEAR) {
+            sources.clear();
+            return;
+        }
+        if (mode == IrisLootMode.REPLACE) {
             sources.clear();
         }
         sources.addAll(additions);

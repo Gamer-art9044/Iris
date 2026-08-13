@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.iris.util.project.hunk.Hunk;
@@ -31,6 +32,21 @@ public abstract class EngineAssignedActuator<T> extends EngineAssignedComponent 
     @BlockCoordinates
     @Override
     public void actuate(int x, int z, Hunk<T> output, boolean multicore, ChunkContext context) {
-        onActuate(x, z, output, multicore, context);
+        try {
+            onActuate(x, z, output, multicore, context);
+        } catch (Throwable e) {
+            // Same contract as EngineAssignedModifier.modify: a failed actuator leaves a
+            // half-written chunk. Never continue as if it succeeded; let the chunk
+            // generation failure path abort the chunk instead of persisting it.
+            IrisLogging.error("Actuator Failure: " + getName());
+            IrisLogging.reportError(e);
+            if (e instanceof Error error) {
+                throw error;
+            }
+            if (e instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IllegalStateException("Actuator Failure: " + getName(), e);
+        }
     }
 }

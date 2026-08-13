@@ -46,6 +46,20 @@ final class IrisObjectShaping {
             return;
         }
 
+        // Whole computation under the object's write lock: two racing callers would otherwise
+        // both compute, with the loser reading self.blocks while the winner merges into it.
+        self.writeLock.lock();
+        try {
+            if (self.smartBored) {
+                return;
+            }
+            ensureSmartBoredLocked(self, debug);
+        } finally {
+            self.writeLock.unlock();
+        }
+    }
+
+    private static void ensureSmartBoredLocked(IrisObject self, boolean debug) {
         PrecisionStopwatch p = PrecisionStopwatch.start();
         PlatformBlockState vair = debug ? IrisObject.States.VAIR_DEBUG : IrisObject.States.VAIR;
         AtomicInteger applied = new AtomicInteger();
@@ -75,7 +89,12 @@ final class IrisObjectShaping {
         }
 
         VectorMap<PlatformBlockState> bore = new VectorMap<>();
+        // Inline on purpose: the three axis passes read AND write the shared bore map, so the
+        // bored volume must come from a fixed X->Y->Z order on the calling (lock-owning)
+        // thread, not from pool scheduling. This matches what burst-worker callers (studio,
+        // generation threads) already produced, so output is unchanged where it was stable.
         BurstExecutor burst = MultiBurst.burst.burst();
+        burst.setMulticore(false);
 
         // Smash X
         for (int rayY = min.getBlockY(); rayY <= max.getBlockY(); rayY++) {
@@ -198,18 +217,25 @@ final class IrisObjectShaping {
             max.setZ(Math.max(max.getZ(), i.getZ()));
         }
 
-        self.w = max.getBlockX() - min.getBlockX() + 1;
-        self.h = max.getBlockY() - min.getBlockY() + 1;
-        self.d = max.getBlockZ() - min.getBlockZ() + 1;
-        self.center = new Vector3i(self.w / 2, self.h / 2, self.d / 2);
+        // Compute into locals and assign every field in one block at the end, so a reader can
+        // never observe post-shrink dimensions paired with pre-shrink volume (or vice versa).
+        int w = max.getBlockX() - min.getBlockX() + 1;
+        int h = max.getBlockY() - min.getBlockY() + 1;
+        int d = max.getBlockZ() - min.getBlockZ() + 1;
+        Vector3i center = new Vector3i(w / 2, h / 2, d / 2);
 
         Vector3i offset = new Vector3i(
-                -self.center.getBlockX() - min.getBlockX(),
-                -self.center.getBlockY() - min.getBlockY(),
-                -self.center.getBlockZ() - min.getBlockZ()
+                -center.getBlockX() - min.getBlockX(),
+                -center.getBlockY() - min.getBlockY(),
+                -center.getBlockZ() - min.getBlockZ()
         );
-        if (offset.getBlockX() == 0 && offset.getBlockY() == 0 && offset.getBlockZ() == 0)
+        if (offset.getBlockX() == 0 && offset.getBlockY() == 0 && offset.getBlockZ() == 0) {
+            self.w = w;
+            self.h = h;
+            self.d = d;
+            self.center = center;
             return;
+        }
 
         VectorMap<PlatformBlockState> b = new VectorMap<>();
         VectorMap<TileData> s = new VectorMap<>();
@@ -225,10 +251,15 @@ final class IrisObjectShaping {
             s.put(vector, data);
         });
 
+        self.w = w;
+        self.h = h;
+        self.d = d;
+        self.center = center;
         self.shrinkOffset = offset;
         self.blocks = b;
         self.states = s;
         self.surfaceSupportOffsets.reset();
+        self.floatingFootprint.reset();
     }
 
     static void clean(IrisObject self) {
@@ -241,6 +272,7 @@ final class IrisObjectShaping {
         self.blocks = d;
         self.states = dx;
         self.surfaceSupportOffsets.reset();
+        self.floatingFootprint.reset();
     }
 
     static boolean shouldStilt(PlatformBlockState state) {

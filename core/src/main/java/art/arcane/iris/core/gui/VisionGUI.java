@@ -24,6 +24,7 @@ import art.arcane.iris.engine.framework.render.IrisRenderer;
 import art.arcane.iris.engine.framework.render.RenderType;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.PreservationRegistry;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -281,7 +282,7 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
     }
 
     public boolean updateEngine() {
-        if (engine.isClosed()) {
+        if (engine.isClosed() || engine.isClosing() || engine.getComplex() == null) {
             try {
                 Engine reacquired = GuiHost.get().findActiveEngine();
                 if (reacquired != null && !reacquired.isClosed()) {
@@ -451,12 +452,19 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
                     double mk = mscale;
                     double mkd = scale;
                     e.submit(() -> {
-                        PrecisionStopwatch ps = PrecisionStopwatch.start();
-                        BufferedImage b = renderer.render(x * mscale, z * mscale, div * mscale, div / (lowtile ? 3 : 1), currentType);
-                        rs.put(ps.getMilliseconds());
-                        working.remove(key);
-                        if (mk == mscale && mkd == scale) {
-                            positions.put(key, b);
+                        // finally: a render throw is swallowed by the discarded Future, and a
+                        // leaked key permanently blocks the admission gate (working < 9).
+                        try {
+                            PrecisionStopwatch ps = PrecisionStopwatch.start();
+                            BufferedImage b = renderer.render(x * mscale, z * mscale, div * mscale, div / (lowtile ? 3 : 1), currentType);
+                            rs.put(ps.getMilliseconds());
+                            if (mk == mscale && mkd == scale) {
+                                positions.put(key, b);
+                            }
+                        } catch (Throwable ex) {
+                            IrisLogging.debug("Vision tile render failed: " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+                        } finally {
+                            working.remove(key);
                         }
                     });
                 }
@@ -472,12 +480,17 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
         double mk = mscale;
         double mkd = scale;
         eh.submit(() -> {
-            PrecisionStopwatch ps = PrecisionStopwatch.start();
-            BufferedImage b = renderer.render(x * mscale, z * mscale, div * mscale, div / lowq, currentType);
-            rs.put(ps.getMilliseconds());
-            workingfast.remove(key);
-            if (mk == mscale && mkd == scale) {
-                fastpositions.put(key, b);
+            try {
+                PrecisionStopwatch ps = PrecisionStopwatch.start();
+                BufferedImage b = renderer.render(x * mscale, z * mscale, div * mscale, div / lowq, currentType);
+                rs.put(ps.getMilliseconds());
+                if (mk == mscale && mkd == scale) {
+                    fastpositions.put(key, b);
+                }
+            } catch (Throwable ex) {
+                IrisLogging.debug("Vision tile render failed: " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            } finally {
+                workingfast.remove(key);
             }
         });
         return null;
@@ -507,12 +520,30 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
 
     @Override
     public void paint(Graphics gx) {
-        if (engine.isClosed() && !updateEngine()) {
+        // Cover the closing window too: releaseRuntime nulls the complex BEFORE closed flips,
+        // and a paint NPE in that window killed the self-driven repaint loop forever.
+        if ((engine.isClosed() || engine.isClosing() || engine.getComplex() == null) && !updateEngine()) {
             EventQueue.invokeLater(() -> {
                 try { setVisible(false); } catch (Throwable ignored) { }
             });
             return;
         }
+        try {
+            paintBody(gx);
+        } catch (Throwable e) {
+            IrisLogging.debug("Vision paint failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        } finally {
+            // The repaint loop is entirely self-driven from here; it must survive any render
+            // exception or the window freezes on a stale frame permanently.
+            long sleepMs = eco ? 32 : 16;
+            J.a(() -> {
+                J.sleep(sleepMs);
+                repaint();
+            });
+        }
+    }
+
+    private void paintBody(Graphics gx) {
 
         velocity = Math.abs(ox - oxp) * 0.36 + Math.abs(oz - ozp) * 0.36;
         oxp = lerp(oxp, ox, 0.36);
@@ -587,6 +618,16 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
             }
         }
 
+        // Bounded, not pruned-to-frame: the low-quality cache is the pan placeholder, but
+        // unbounded growth while panning leaked one BufferedImage per visited tile forever.
+        if (fastpositions.size() > 4096) {
+            for (BlockPosition i : fastpositions.k()) {
+                if (!gg.contains(i)) {
+                    fastpositions.remove(i);
+                }
+            }
+        }
+
         handleFollow();
         renderOverlays(g, p.getMilliseconds());
 
@@ -594,12 +635,6 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
             return;
         }
 
-        long targetMs = eco ? 32 : 16;
-        long sleepMs = Math.max(1, targetMs - (long) p.getMilliseconds());
-        J.a(() -> {
-            J.sleep(sleepMs);
-            repaint();
-        });
     }
 
     private void renderGrid(Graphics2D g, int tileSize, double offsetX, double offsetZ) {

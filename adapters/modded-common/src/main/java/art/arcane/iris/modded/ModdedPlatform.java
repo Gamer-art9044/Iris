@@ -116,11 +116,66 @@ public final class ModdedPlatform implements IrisPlatform {
         return folder;
     }
 
+    /**
+     * Modded packs live under config/irisworldgen/packs, not the config/iris data folder. The
+     * packsFolder overrides are the source of truth; the dataFolder/dataFile overrides below
+     * re-root any path whose FIRST segment is exactly "packs" so no call site can regress onto
+     * the empty config/iris/packs directory. Settings, worlds.json, parity/, cache/ and every
+     * other name stay under config/iris.
+     */
+    @Override
+    public File packsFolder(String... sub) {
+        File folder = packsFolderNoCreate(sub);
+        folder.mkdirs();
+        return folder;
+    }
+
+    @Override
+    public File packsFolderNoCreate(String... sub) {
+        File root = loader.configDir().resolve("irisworldgen").resolve("packs").toFile();
+        if (sub == null || sub.length == 0) {
+            return root;
+        }
+        return new File(root, String.join(File.separator, sub));
+    }
+
+    @Override
+    public File dataFolder(String... path) {
+        if (isPacksPath(path)) {
+            return packsFolder(stripPacksSegment(path));
+        }
+        return IrisPlatform.super.dataFolder(path);
+    }
+
+    @Override
+    public File dataFolderNoCreate(String... path) {
+        if (isPacksPath(path)) {
+            return packsFolderNoCreate(stripPacksSegment(path));
+        }
+        return IrisPlatform.super.dataFolderNoCreate(path);
+    }
+
     @Override
     public File dataFile(String... path) {
+        if (isPacksPath(path)) {
+            File file = packsFolderNoCreate(stripPacksSegment(path));
+            file.getParentFile().mkdirs();
+            return file;
+        }
         File file = new File(dataFolder(), String.join(File.separator, path));
         file.getParentFile().mkdirs();
         return file;
+    }
+
+    private static boolean isPacksPath(String... path) {
+        // Exact-segment match only: "packbenchmarks" and "packsx" must stay under config/iris.
+        return path != null && path.length > 0 && "packs".equals(path[0]);
+    }
+
+    private static String[] stripPacksSegment(String... path) {
+        String[] sub = new String[path.length - 1];
+        System.arraycopy(path, 1, sub, 0, sub.length);
+        return sub;
     }
 
     @Override

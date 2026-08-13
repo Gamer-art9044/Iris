@@ -1,6 +1,7 @@
 package art.arcane.iris.engine.mantle;
 
 import art.arcane.iris.core.link.Identifier;
+import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -43,6 +44,57 @@ public class EngineMantleCleanupTest {
     @After
     public void unbindPlatform() {
         IrisPlatforms.unbind();
+        MantleSliceRetention.clearForTesting();
+    }
+
+    @Test
+    public void retainedSlicesSurviveCoveredCleanup() {
+        MantleSliceRetention.retain(MatterCavern.class.getCanonicalName());
+        CleanupFixture fixture = cleanupFixture();
+        doReturn(true).when(fixture.engineMantle()).isCovered(7, -4);
+
+        fixture.engineMantle().cleanupChunk(7, -4);
+
+        verify(fixture.chunk(), never()).deleteSlices(MatterCavern.class);
+        verify(fixture.chunk()).deleteSlices(PlatformBlockState.class);
+    }
+
+    @Test
+    public void retainedSlicesSurvivePregenForceCleanup() {
+        MantleSliceRetention.retain(TreeBlockMaterial.class.getCanonicalName());
+        MantleSliceRetention.retain(String.class.getCanonicalName());
+        CleanupFixture fixture = cleanupFixture();
+
+        fixture.engineMantle().forceCleanupChunk(7, -4);
+
+        verify(fixture.chunk(), never()).deleteSlices(TreeBlockMaterial.class);
+        verify(fixture.chunk(), never()).deleteSlices(String.class);
+        verify(fixture.chunk()).deleteSlices(MatterCavern.class);
+        verify(fixture.chunk()).deleteSlices(PlatformBlockState.class);
+    }
+
+    @Test
+    public void bukkitBootRetentionsSurvivePregen() {
+        // Exactly the slice types the Bukkit plugin registers at boot: markers and tree materials
+        // must keep working in pregenerated chunks.
+        MantleSliceRetention.retain(String.class.getCanonicalName());
+        MantleSliceRetention.retain(TreeBlockMaterial.class.getCanonicalName());
+        CleanupFixture fixture = cleanupFixture();
+
+        fixture.engineMantle().forceCleanupChunk(7, -4);
+
+        verify(fixture.chunk(), never()).deleteSlices(String.class);
+        verify(fixture.chunk(), never()).deleteSlices(TreeBlockMaterial.class);
+    }
+
+    @Test
+    public void blockStateSliceIsNeverRetainable() {
+        MantleSliceRetention.retain(PlatformBlockState.class.getCanonicalName());
+        CleanupFixture fixture = cleanupFixture();
+
+        fixture.engineMantle().forceCleanupChunk(7, -4);
+
+        verify(fixture.chunk()).deleteSlices(PlatformBlockState.class);
     }
 
     @Test

@@ -250,8 +250,18 @@ public class IrisBiome extends IrisRegistrant implements IRare {
         return this;
     }
 
-    public synchronized IrisBiome withInferredType(InferredType type) {
+    public IrisBiome withInferredType(InferredType type) {
         Objects.requireNonNull(type, "type");
+        // Lock-free fast path on the volatile field: this runs per column per implode level
+        // against biome instances shared by every burst thread. The variant map below stays
+        // monitor-guarded (plain EnumMap, not safe for concurrent reads during writes).
+        if (inferredType == type) {
+            return this;
+        }
+        return withInferredTypeSlow(type);
+    }
+
+    private synchronized IrisBiome withInferredTypeSlow(InferredType type) {
         if (inferredType == null) {
             inferredType = type;
             return this;

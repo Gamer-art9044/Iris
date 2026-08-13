@@ -38,7 +38,7 @@ public class ObjectHandler implements DirectorParameterHandler<String> {
         }
 
         for (File i : PackDirectoryResolver.listVisiblePackDirectories(
-                IrisPlatforms.get().dataFolder("packs"))) {
+                IrisPlatforms.get().packsFolder())) {
             data = IrisData.get(i);
             p.add(data.getObjectLoader().getPossibleKeys());
         }

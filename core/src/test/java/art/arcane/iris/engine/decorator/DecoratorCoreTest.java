@@ -316,26 +316,6 @@ public class DecoratorCoreTest {
     }
 
     @Test
-    public void tallSinglePlantDoesNotPlaceWhenLowerTargetIsOccupied() {
-        IrisDecorator decorator = mock(IrisDecorator.class);
-        IrisData data = mock(IrisData.class);
-        PlatformBlockState occupied = mock(PlatformBlockState.class);
-        PlatformBlockState air = airState();
-        PlatformBlockState plant = tallPlantState();
-        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(plant);
-
-        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 4, 1);
-        output.set(0, 1, 0, occupied);
-        output.set(0, 2, 0, air);
-
-        DecoratorCore.placeSingleUp(
-                decorator, 0, 0, 0, 0, 0, output, new RNG(1L), data, false, null);
-
-        assertSame(occupied, output.get(0, 1, 0));
-        assertSame(air, output.get(0, 2, 0));
-    }
-
-    @Test
     public void tallFloatingPlantDoesNotPlaceWhenUpperTargetIsOccupied() {
         IrisDecorator decorator = mock(IrisDecorator.class);
         IrisData data = mock(IrisData.class);

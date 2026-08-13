@@ -37,7 +37,6 @@ import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisObjectPlacementScaleInterpolator;
 import art.arcane.iris.engine.object.IrisObjectRotation;
-import art.arcane.iris.engine.object.StudioMode;
 import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.platform.bukkit.BukkitBlockState;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -144,7 +143,8 @@ public class CommandObject implements DirectorExecutor {
             return;
         }
 
-        hostDimension.setStudioMode(StudioMode.OBJECT_BUFFET);
+        // ObjectStudioActivation carries the buffet state; mutating the shared cached
+        // IrisDimension here leaked OBJECT_BUFFET into later pack exports of this dimension.
         ObjectStudioActivation.activate(hostDimension.getLoadKey());
         ObjectStudioActivation.setSources(hostDimension.getLoadKey(), sources);
 
@@ -637,6 +637,7 @@ public class CommandObject implements DirectorExecutor {
         } catch (IOException e) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_FAILED_SAVE_OBJECT_BECAUSE_IOEXCEPTION, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
             Iris.reportError(e);
+            return;
         }
 
         sender().playSound(Sound.BLOCK_ENCHANTMENT_TABLE_USE, 1f, 1.5f);

@@ -705,7 +705,7 @@ public class CommandIris implements DirectorExecutor {
     public void download(
             @Param(name = "pack", description = "The pack to download", descriptionKey = "iris.director.commandiris.param.pack_download", aliases = "project")
             String pack,
-            @Param(name = "branch", description = "The branch to download from", descriptionKey = "iris.director.commandiris.param.branch_download_from", defaultValue = "stable")
+            @Param(name = "branch", description = "The branch to download from", descriptionKey = "iris.director.commandiris.param.branch_download_from", defaultValue = PackDownloader.DEFAULT_BRANCH)
             String branch,
             @Param(name = "overwrite", description = "Whether or not to overwrite the pack with the downloaded one", descriptionKey = "iris.director.commandiris.param.whether_not_overwrite_pack_with_downloaded_one", aliases = "force", defaultValue = "false")
             boolean overwrite
@@ -803,7 +803,7 @@ public class CommandIris implements DirectorExecutor {
                     });
             guardUnloadCompletion(sequence, terminalTimeout, world.getName())
                     .whenComplete((unloaded, throwable) -> {
-                        IrisToolbelt.endWorldMaintenance(world, "world-unload");
+                        IrisToolbelt.endWorldMaintenance(world, "world-unload", true);
                         lease.close();
                         Runnable response = () -> reportUnloadResult(responseSender, world, unloaded, throwable);
                         if (responseSender.isPlayer() && J.runEntity(responseSender.player(), response)) {
@@ -812,7 +812,7 @@ public class CommandIris implements DirectorExecutor {
                         J.s(response);
                     });
         } catch (Exception e) {
-            IrisToolbelt.endWorldMaintenance(world, "world-unload");
+            IrisToolbelt.endWorldMaintenance(world, "world-unload", true);
             lease.close();
             responseSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_UNLOAD_WORLD_3, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
             Iris.reportError("Failed to unload world \"" + world.getName() + "\".", e);

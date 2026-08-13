@@ -26,7 +26,10 @@ import art.arcane.iris.core.edit.BlockSignal;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.util.common.director.DirectorExecutor;
@@ -36,8 +39,10 @@ import art.arcane.volmlib.util.director.DirectorOrigin;
 import art.arcane.volmlib.util.director.annotations.Director;
 import art.arcane.volmlib.util.director.annotations.Param;
 import art.arcane.iris.util.common.format.C;
+import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.matter.MatterMarker;
 import org.bukkit.Chunk;
+import org.bukkit.Location;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -47,7 +52,6 @@ import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Player;
 
 import java.lang.reflect.Method;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
@@ -172,33 +176,71 @@ public class CommandWhat implements DirectorExecutor {
         });
     }
 
+    // Matches ModdedWhatCommands.MAX_MARKERS so both loaders truncate identically.
+    private static final int MAX_MARKER_HITS = 8_192;
+    private static final int MARKER_SIGNAL_BATCH = 128;
+
     @Director(description = "Show markers in chunk", descriptionKey = "iris.director.commandwhat.director.show_markers_chunk", origin = DirectorOrigin.PLAYER)
     public void markers(@Param(description = "Marker name such as cave_floor or cave_ceiling", descriptionKey = "iris.director.commandwhat.param.marker_name_such_as_cave_floor_cave_ceiling") String marker) {
         VolmitSender commandSender = sender();
         Player player = player();
+        if (player == null) {
+            return;
+        }
 
-        // Chunk lookup plus the block signals both need the thread owning the player's chunk.
+        // Only the chunk coordinates need the owning thread; the 81-chunk mantle sweep loads
+        // tectonic plates from disk and must never run on the tick thread (the modded adapter
+        // already scans async, leased and capped — mirror it).
         onPlayerThread(player, () -> {
+            World world = player.getWorld();
             Chunk c = player.getLocation().getChunk();
+            int chunkX = c.getX();
+            int chunkZ = c.getZ();
 
-            if (IrisToolbelt.isIrisWorld(c.getWorld())) {
-                AtomicInteger v = new AtomicInteger(0);
+            if (!IrisToolbelt.isIrisWorld(world)) {
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IRIS_WORLDS_ONLY_2));
+                return;
+            }
+            Engine engine = IrisToolbelt.access(world).getEngine();
 
-                for (int xxx = c.getX() - 4; xxx <= c.getX() + 4; xxx++) {
-                    for (int zzz = c.getZ() - 4; zzz <= c.getZ() + 4; zzz++) {
-                        IrisToolbelt.access(c.getWorld()).getEngine().getMantle().findMarkers(xxx, zzz, new MatterMarker(marker))
-                                .convert((i) -> BukkitPlatform.toLocation(i, c.getWorld())).forEach((i) -> {
-                                    BlockSignal.of(i.getWorld(), i.getBlockX(), i.getBlockY(), i.getBlockZ(), 100);
-                                    v.incrementAndGet();
-                                });
+            J.a(() -> {
+                KList<Location> hits = new KList<>();
+                MatterMarker matterMarker = new MatterMarker(marker);
+                try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_what_markers");
+                     IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                    scan:
+                    for (int xxx = chunkX - 4; xxx <= chunkX + 4; xxx++) {
+                        for (int zzz = chunkZ - 4; zzz <= chunkZ + 4; zzz++) {
+                            for (Location i : engine.getMantle().findMarkers(xxx, zzz, matterMarker)
+                                    .convert((p) -> BukkitPlatform.toLocation(p, world))) {
+                                hits.add(i);
+                                if (hits.size() >= MAX_MARKER_HITS) {
+                                    break scan;
+                                }
+                            }
+                        }
                     }
+                } catch (GenerationSessionException e) {
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IRIS_WORLDS_ONLY_2));
+                    return;
                 }
 
-                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FOUND_NEARBY_MARKERS, MessageArgument.untrusted("value", v.get()), MessageArgument.untrusted("marker", marker)));
-            } else {
-                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IRIS_WORLDS_ONLY_2));
-            }
+                commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_FOUND_NEARBY_MARKERS, MessageArgument.untrusted("value", hits.size()), MessageArgument.untrusted("marker", marker)));
+                emitMarkerSignals(player, engine, hits, 0);
+            });
         });
+    }
+
+    private void emitMarkerSignals(Player player, Engine engine, KList<Location> hits, int from) {
+        if (from >= hits.size() || !player.isOnline() || engine.isClosed() || engine.isClosing()) {
+            return;
+        }
+        int to = Math.min(from + MARKER_SIGNAL_BATCH, hits.size());
+        for (int i = from; i < to; i++) {
+            Location at = hits.get(i);
+            BlockSignal.of(at.getWorld(), at.getBlockX(), at.getBlockY(), at.getBlockZ(), 100);
+        }
+        J.s(() -> emitMarkerSignals(player, engine, hits, to), 1);
     }
 
     /**

@@ -29,6 +29,8 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisEntity;
 import art.arcane.iris.engine.object.IrisGenerator;
 import art.arcane.iris.engine.object.IrisLootTable;
+import art.arcane.iris.core.pack.PackExportClosure;
+import art.arcane.iris.engine.object.IrisMarker;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisSpawner;
@@ -49,6 +51,7 @@ import org.zeroturnaround.zip.ZipUtil;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -62,8 +65,25 @@ public class IrisPackageCompiler {
     }
 
     public File compilePackage(VolmitSender sender, boolean obfuscate, boolean minify) {
+        // Detached loader on purpose: obfuscation rewrites the placement 'place' lists on the
+        // loaded resources, which must never leak into the shared cached pack state — a second
+        // export against a mutated cache produced archives with an empty objects/ directory.
+        IrisData dm = IrisData.openRuntime(project.getPath());
+        try {
+            return compilePackage(dm, sender, obfuscate, minify);
+        } finally {
+            dm.close();
+        }
+    }
+
+    private static <T> void addIfPresent(KSet<T> set, T value) {
+        if (value != null) {
+            set.add(value);
+        }
+    }
+
+    private File compilePackage(IrisData dm, VolmitSender sender, boolean obfuscate, boolean minify) {
         String dimm = project.getName();
-        IrisData dm = IrisData.get(project.getPath());
         IrisDimension dimension = dm.getDimensionLoader().load(dimm);
         File folder = new File(IrisPlatforms.get().dataFolder(), "exports/" + dimension.getLoadKey());
         IO.delete(folder);
@@ -82,20 +102,35 @@ public class IrisPackageCompiler {
         KSet<IrisLootTable> loot = new KSet<>();
         KSet<IrisBlockData> blocks = new KSet<>();
 
+        // KSet is ConcurrentHashMap-backed: both add(null) and remove(null) throw NPE, so a
+        // failed loader lookup must be filtered at the add site, never stripped afterwards.
         for (String i : dm.getBlockLoader().getPossibleKeys()) {
-            blocks.add(dm.getBlockLoader().load(i));
+            addIfPresent(blocks, dm.getBlockLoader().load(i));
         }
 
-        dimension.getRegions().forEach((i) -> regions.add(dm.getRegionLoader().load(i)));
-        dimension.getLoot().getTables().forEach((i) -> loot.add(dm.getLootLoader().load(i)));
+        dimension.getRegions().forEach((i) -> addIfPresent(regions, dm.getRegionLoader().load(i)));
+        dimension.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i)));
         regions.forEach((i) -> biomes.addAll(i.getAllBiomes(() -> dm)));
-        regions.forEach((r) -> r.getLoot().getTables().forEach((i) -> loot.add(dm.getLootLoader().load(i))));
-        regions.forEach((r) -> r.getEntitySpawners().forEach((sp) -> spawners.add(dm.getSpawnerLoader().load(sp))));
-        dimension.getEntitySpawners().forEach((sp) -> spawners.add(dm.getSpawnerLoader().load(sp)));
-        biomes.forEach((i) -> i.getGenerators().forEach((j) -> generators.add(j.getCachedGenerator(() -> dm))));
-        biomes.forEach((r) -> r.getLoot().getTables().forEach((i) -> loot.add(dm.getLootLoader().load(i))));
-        biomes.forEach((r) -> r.getEntitySpawners().forEach((sp) -> spawners.add(dm.getSpawnerLoader().load(sp))));
-        collectSpawnerEntityKeys(spawners).forEach((i) -> entities.add(dm.getEntityLoader().load(i)));
+        regions.forEach((r) -> r.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i))));
+        regions.forEach((r) -> r.getEntitySpawners().forEach((sp) -> addIfPresent(spawners, dm.getSpawnerLoader().load(sp))));
+        dimension.getEntitySpawners().forEach((sp) -> addIfPresent(spawners, dm.getSpawnerLoader().load(sp)));
+        biomes.forEach((i) -> i.getGenerators().forEach((j) -> addIfPresent(generators, j.getCachedGenerator(() -> dm))));
+        biomes.forEach((r) -> r.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i))));
+        biomes.forEach((r) -> r.getEntitySpawners().forEach((sp) -> addIfPresent(spawners, dm.getSpawnerLoader().load(sp))));
+        KList<IrisObjectPlacement> allPlacements = new KList<>();
+        regions.forEach((r) -> allPlacements.addAll(r.getObjects()));
+        biomes.forEach((i) -> allPlacements.addAll(i.getObjects()));
+        KSet<IrisMarker> markers = new KSet<>();
+        for (String markerKey : PackExportClosure.collectMarkerKeys(allPlacements)) {
+            IrisMarker marker = dm.getMarkerLoader().load(markerKey);
+            if (marker == null) {
+                continue;
+            }
+            markers.add(marker);
+            marker.getSpawners().forEach((sp) -> addIfPresent(spawners, dm.getSpawnerLoader().load(sp)));
+        }
+        collectSpawnerEntityKeys(spawners).forEach((i) -> addIfPresent(entities, dm.getEntityLoader().load(i)));
+        entities.forEach((e) -> e.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i))));
         Set<String> structureKeys = new LinkedHashSet<>();
         collectStructureKeys(structureKeys, dimension.getStructures());
         regions.forEach((region) -> collectStructureKeys(structureKeys, region.getStructures()));
@@ -106,25 +141,23 @@ public class IrisPackageCompiler {
         StringBuilder c = new StringBuilder();
         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_SERIALIZING_OBJECTS));
 
-        for (IrisBiome i : biomes) {
-            for (IrisObjectPlacement j : i.getObjects()) {
-                b.append(j.hashCode());
-                KList<String> newNames = new KList<>();
+        for (IrisObjectPlacement j : allPlacements) {
+            b.append(j.hashCode());
+            KList<String> newNames = new KList<>();
 
-                for (String k : j.getPlace()) {
-                    if (renameObjects.containsKey(k)) {
-                        newNames.add(renameObjects.get(k));
-                        continue;
-                    }
-
-                    String name = !obfuscate ? k : UUID.randomUUID().toString().replaceAll("-", "");
-                    b.append(name);
-                    newNames.add(name);
-                    renameObjects.put(k, name);
+            for (String k : j.getPlace()) {
+                if (renameObjects.containsKey(k)) {
+                    newNames.add(renameObjects.get(k));
+                    continue;
                 }
 
-                j.setPlace(newNames);
+                String name = !obfuscate ? k : UUID.randomUUID().toString().replaceAll("-", "");
+                b.append(name);
+                newNames.add(name);
+                renameObjects.put(k, name);
             }
+
+            j.setPlace(newNames);
         }
 
         KMap<String, KList<String>> lookupObjects = renameObjects.flip();
@@ -132,10 +165,18 @@ public class IrisPackageCompiler {
         ChronoLatch cl = new ChronoLatch(1000);
         O<Integer> ggg = new O<>();
         ggg.set(0);
-        biomes.forEach((i) -> i.getObjects().forEach((j) -> j.getPlace().forEach((k) ->
+        O<Integer> missingObjects = new O<>();
+        missingObjects.set(0);
+        allPlacements.forEach((j) -> j.getPlace().forEach((k) ->
         {
             try {
-                File f = dm.getObjectLoader().findFile(lookupObjects.get(k).get(0));
+                KList<String> sources = lookupObjects.get(k);
+                File f = sources == null || sources.isEmpty() ? null : dm.getObjectLoader().findFile(sources.get(0));
+                if (f == null) {
+                    missingObjects.set(missingObjects.get() + 1);
+                    IrisLogging.error("Missing object for placement key " + k);
+                    return;
+                }
                 IO.copyFile(f, new File(folder, "objects/" + k + ".iob"));
                 gb.append(IO.hash(f));
                 ggg.set(ggg.get() + 1);
@@ -146,9 +187,15 @@ public class IrisPackageCompiler {
                     sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_WROTE_ANOTHER_OBJECTS, MessageArgument.untrusted("g", String.valueOf(g))));
                 }
             } catch (Throwable e) {
+                missingObjects.set(missingObjects.get() + 1);
                 IrisLogging.reportError(e);
             }
-        })));
+        }));
+        if (missingObjects.get() > 0) {
+            // A package missing objects must fail loudly, not ship as a clean "compiled".
+            throw new IllegalStateException(missingObjects.get()
+                    + " object(s) could not be exported for pack '" + dimm + "'; package compile aborted.");
+        }
 
         b.append(IO.hash(gb.toString()));
         c.append(IO.hash(b.toString()));
@@ -202,6 +249,19 @@ public class IrisPackageCompiler {
             for (IrisLootTable i : loot) {
                 a = new JSONObject(new Gson().toJson(i)).toString(minify ? 0 : 4);
                 IO.writeAll(new File(folder, "loot/" + i.getLoadKey() + ".json"), a);
+                b.append(IO.hash(a));
+            }
+
+            // Sorted so package.json.hash stays stable across runs.
+            for (IrisSpawner i : spawners.stream().sorted(Comparator.comparing(IrisSpawner::getLoadKey)).toList()) {
+                a = new JSONObject(new Gson().toJson(i)).toString(minify ? 0 : 4);
+                IO.writeAll(new File(folder, "spawners/" + i.getLoadKey() + ".json"), a);
+                b.append(IO.hash(a));
+            }
+
+            for (IrisMarker i : markers.stream().sorted(Comparator.comparing(IrisMarker::getLoadKey)).toList()) {
+                a = new JSONObject(new Gson().toJson(i)).toString(minify ? 0 : 4);
+                IO.writeAll(new File(folder, "markers/" + i.getLoadKey() + ".json"), a);
                 b.append(IO.hash(a));
             }
 

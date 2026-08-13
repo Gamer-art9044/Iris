@@ -81,14 +81,16 @@ public class SimdKernelsTest {
     }
 
     @Test
-    public void vectorSumMatchesScalarWithinTolerance() {
+    public void vectorSumMatchesScalarExactly() {
+        // Zero tolerance on purpose: sum feeds generation-path ranking, so any kernel that
+        // reassociates FP addition must fail here instead of shipping a parity break.
         SimdKernels vector = requireVectorKernels();
         ScalarSimdKernels scalar = new ScalarSimdKernels();
         for (int length : new int[]{256, 251, 1, 7}) {
             double[] values = terrainLikeValues(length);
             double expected = scalar.sum(values, length);
             double actual = vector.sum(values, length);
-            assertEquals("length " + length, expected, actual, Math.max(1e-9D, Math.abs(expected) * 1e-12D));
+            assertEquals("length " + length, expected, actual, 0D);
         }
     }
 

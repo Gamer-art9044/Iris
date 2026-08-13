@@ -24,16 +24,12 @@ import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.iris.util.project.hunk.Hunk;
-import art.arcane.volmlib.util.math.RollingSequence;
 import art.arcane.iris.util.common.parallel.BurstExecutor;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
 
 public interface EngineMode extends Staged {
-    RollingSequence r = new RollingSequence(64);
-    RollingSequence r2 = new RollingSequence(256);
-
     void close();
 
     Engine getEngine();
@@ -46,16 +42,45 @@ public interface EngineMode extends Staged {
         return (x, z, blocks, biomes, multicore, ctx) -> {
             BurstExecutor e = burst().burst(stages.length);
             e.setMulticore(multicore);
+            // BurstExecutor.complete() logs-and-swallows stage failures; without re-propagation
+            // a multicore run would commit a half-written chunk that the inline (production)
+            // path correctly aborts.
+            java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
 
             for (EngineStage i : stages) {
                 e.queue(() -> {
+                    if (failure.get() != null) {
+                        return;
+                    }
                     try (IrisContext.Scope stageScope = IrisContext.open(getEngine(), ctx.getGenerationSessionId(), ctx)) {
                         i.generate(x, z, blocks, biomes, multicore, ctx);
+                    } catch (Throwable t) {
+                        failure.compareAndSet(null, t);
+                        // Rethrow so the inline (multicore=false) path still aborts out of
+                        // queue() on the first failure, exactly as before.
+                        if (t instanceof Error error) {
+                            throw error;
+                        }
+                        if (t instanceof RuntimeException runtimeException) {
+                            throw runtimeException;
+                        }
+                        throw new IllegalStateException(t);
                     }
                 });
             }
 
             e.complete();
+
+            Throwable t = failure.get();
+            if (t != null) {
+                if (t instanceof Error error) {
+                    throw error;
+                }
+                if (t instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                throw new IllegalStateException("Burst stage failure during chunk generation", t);
+            }
         };
     }
 

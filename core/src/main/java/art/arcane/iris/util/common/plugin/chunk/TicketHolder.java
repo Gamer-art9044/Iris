@@ -45,4 +45,16 @@ public class TicketHolder {
             return ref;
         }) == null;
     }
+
+    public void releaseAll() {
+        tickets.forEach((key, refs) -> {
+            int x = Cache.keyX(key);
+            int z = Cache.keyZ(key);
+            try {
+                world.removePluginChunkTicket(x, z, BukkitPlatform.plugin());
+            } catch (Throwable ignored) {
+            }
+        });
+        tickets.clear();
+    }
 }

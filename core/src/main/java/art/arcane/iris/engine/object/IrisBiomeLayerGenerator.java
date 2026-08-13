@@ -125,8 +125,10 @@ final class IrisBiomeLayerGenerator {
         }
 
         KList<CNG> heightGenerators = getLayerHeightGenerators(biome, random, rdata);
+        // Ceiling layers reuse the surface-layer height generators, so entries beyond layers.size() have no generator; skip them.
+        int usableLayers = Math.min(layerCount, heightGenerators.size());
 
-        for (int i = 0; i < layerCount; i++) {
+        for (int i = 0; i < usableLayers; i++) {
             IrisBiomePaletteLayer layer = ceilingLayers.get(i);
             double zoom = layer.getZoom();
             CNG hgen = heightGenerators.get(i);

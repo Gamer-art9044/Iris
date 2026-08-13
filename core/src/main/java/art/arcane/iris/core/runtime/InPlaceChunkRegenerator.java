@@ -44,6 +44,8 @@ import org.bukkit.generator.ChunkGenerator.ChunkData;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 public final class InPlaceChunkRegenerator {
     private static final int BIOME_STEP = 4;
@@ -111,36 +113,41 @@ public final class InPlaceChunkRegenerator {
 
             inFlight.acquire();
             MultiBurst.burst.lazy(() -> {
-                TerrainChunk buffer = TerrainChunk.create(world);
-                try {
-                    engine.generate(chunkX << 4, chunkZ << 4, buffer, false);
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
-                    reporter.countApplied(false);
-                    inFlight.release();
-                    allApplied.countDown();
-                    return;
-                }
-
-                boolean scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
-                    boolean ok = false;
-                    try {
-                        applyToLiveChunk(chunkX, chunkZ, buffer);
-                        ok = true;
-                    } catch (Throwable e) {
-                        IrisLogging.reportError(e);
-                    } finally {
+                // Settle exactly once no matter which path fails: an unguarded throw here
+                // (TerrainChunk.create, runRegion) parked the regen thread on the latch
+                // forever and stranded the player's boss bar. CAS is required — on Folia's
+                // owned-region path runRegion runs the apply inline before returning.
+                AtomicBoolean settled = new AtomicBoolean();
+                Consumer<Boolean> settle = ok -> {
+                    if (settled.compareAndSet(false, true)) {
                         reporter.countApplied(ok);
                         inFlight.release();
                         allApplied.countDown();
                     }
-                });
+                };
+                try {
+                    TerrainChunk buffer = TerrainChunk.create(world);
+                    engine.generate(chunkX << 4, chunkZ << 4, buffer, false);
 
-                if (!scheduled) {
-                    IrisLogging.warn("Regen could not schedule chunk apply at " + chunkX + "," + chunkZ + " in " + world.getName() + ".");
-                    reporter.countApplied(false);
-                    inFlight.release();
-                    allApplied.countDown();
+                    boolean scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
+                        boolean ok = false;
+                        try {
+                            applyToLiveChunk(chunkX, chunkZ, buffer);
+                            ok = true;
+                        } catch (Throwable e) {
+                            IrisLogging.reportError(e);
+                        } finally {
+                            settle.accept(ok);
+                        }
+                    });
+
+                    if (!scheduled) {
+                        IrisLogging.warn("Regen could not schedule chunk apply at " + chunkX + "," + chunkZ + " in " + world.getName() + ".");
+                        settle.accept(false);
+                    }
+                } catch (Throwable e) {
+                    IrisLogging.reportError(e);
+                    settle.accept(false);
                 }
             });
         }

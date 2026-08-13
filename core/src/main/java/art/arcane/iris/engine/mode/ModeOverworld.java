@@ -103,11 +103,13 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
         registerStage(sCave);
         registerStage(sPost);
         registerStage(sFloatingTerrainSolid);
-        registerStage(burst(
-                sDeposit,
-                sInsertMatter,
-                sDecorant
-        ));
+        // Never burst these three: all of them write the same block hunk (and sDecorant reads
+        // the surface sInsertMatter writes), so parallel order is scheduler-dependent. The
+        // production path already runs them inline in this order; sequential registration
+        // makes studio (the only multicore path) match production and the goldenhash baseline.
+        registerStage(sDeposit);
+        registerStage(sInsertMatter);
+        registerStage(sDecorant);
         registerStage(sFloatingDecorate);
         registerStage(sPerfection);
         registerStage(sCustom);

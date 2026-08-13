@@ -81,14 +81,21 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         if (foliaMaintenance && IrisSettings.get().getGeneral().isDebug()) {
             IrisLogging.info("MantleWriter using sequential chunk prefetch for maintenance regen at " + x + "," + z + ".");
         }
-        mantle.getChunks(
-                x - radius,
-                x + radius,
-                z - radius,
-                z + radius,
-                parallelism,
-                this::storePrefetchedChunk
-        );
+        // try-with-resources never calls close() when the initializer throws, so a failed
+        // prefetch must release the permits already pinned into the window here.
+        try {
+            mantle.getChunks(
+                    x - radius,
+                    x + radius,
+                    z - radius,
+                    z + radius,
+                    parallelism,
+                    this::storePrefetchedChunk
+            );
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
     }
 
     private static Set<IrisPosition> getBallooned(Set<IrisPosition> vset, double radius) {
@@ -403,7 +410,9 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
 
     @Override
     public PlatformBlockState get(int x, int y, int z) {
-        PlatformBlockState block = getData(x, y, z, PlatformBlockState.class);
+        // Read-only probe: getDataIfPresent returns the identical answer without materializing
+        // a 16^3 section + slice on a miss the way getData's getOrCreate path does.
+        PlatformBlockState block = getDataIfPresent(x, y, z, PlatformBlockState.class);
         if (block == null)
             return AIR;
         return block;
@@ -416,7 +425,7 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
 
     @Override
     public boolean isCarved(int x, int y, int z) {
-        return getData(x, y, z, MatterCavern.class) != null;
+        return getDataIfPresent(x, y, z, MatterCavern.class) != null;
     }
 
     public byte[] getCarvedColumn(int x, int z, int height) {

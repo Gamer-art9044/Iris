@@ -33,6 +33,8 @@ import art.arcane.iris.spi.IrisServices;
  * having succeeded so a partially released engine never reports itself as closed.
  */
 final class EngineShutdownSequence {
+    private static final long CLOSE_RETRY_DRAIN_TIMEOUT_MILLIS = 5000L;
+
     private final IrisEngine engine;
     private boolean runtimeReleased;
     private boolean targetReleased;
@@ -55,11 +57,50 @@ final class EngineShutdownSequence {
             engine.getClosing().set(true);
             engine.backgroundTasks.closeBackgroundTaskAdmission();
             EngineTickRegistry.unregisterTicking(engine);
-            engine.getPlatformHooks().shutdownPregenerator(engine);
+            // Best-effort like every other step: a pregen join timeout must not escape the
+            // synchronized block before anything is saved or released. On failure, save what
+            // can be saved and leave the close incomplete-but-retryable (a live pregen writer
+            // may still hold the mantle, so the releases are skipped).
+            Throwable pregenFailure = runCleanup(null, () -> engine.getPlatformHooks().shutdownPregenerator(engine));
+            if (pregenFailure != null) {
+                engine.lifecycleState = LifecycleState.FAILED;
+                failure = pregenFailure;
+                failure = runCleanup(failure, engine::savePrefetchOnce);
+                failure = runCleanup(failure, engine::saveEngineData);
+                failure = runCleanup(failure, () -> engine.getMantle().saveAllNow());
+                reportIncompleteClose(failure);
+                return;
+            }
+            Throwable drainFailure = null;
             try {
                 engine.getGenerationSessions().sealAndAwait("close", IrisEngine.SESSION_DRAIN_TIMEOUT_MILLIS, true);
             } catch (GenerationSessionException e) {
-                throw new IllegalStateException("Failed to drain Iris generation for close.", e);
+                drainFailure = e;
+            }
+            if (drainFailure != null) {
+                // A drain timeout must not abandon teardown: the world manager is the lease
+                // producer, so stop it first, then re-drain briefly.
+                IrisLogging.warn("Iris generation did not drain for close on " + engine.getWorld().name()
+                        + "; stopping the world manager and retrying.");
+                Throwable managerFailure = engine.runtime == null
+                        ? null
+                        : runCleanup(null, engine.runtime.worldManager()::close);
+                try {
+                    engine.getGenerationSessions().sealAndAwait("close-retry", CLOSE_RETRY_DRAIN_TIMEOUT_MILLIS, true);
+                    drainFailure = null;
+                } catch (GenerationSessionException e) {
+                    drainFailure = appendFailure(drainFailure, e);
+                }
+                drainFailure = appendFailure(drainFailure, managerFailure);
+            }
+            if (drainFailure != null) {
+                // A live lease may be mid-write, so the mantle must not be closed at it — but
+                // dirty plates can still be flushed (saveAll is synchronized) so terrain since
+                // the last periodic save is not lost. The close stays incomplete and retryable.
+                engine.lifecycleState = LifecycleState.FAILED;
+                failure = runCleanup(drainFailure, () -> engine.getMantle().saveAllNow());
+                reportIncompleteClose(failure);
+                return;
             }
 
             BackgroundTaskDrain backgroundDrain = engine.backgroundTasks.drainBackgroundTasks("close");
@@ -108,11 +149,15 @@ final class EngineShutdownSequence {
             }
         }
         if (failure != null) {
-            IrisLogging.error("Iris engine shutdown remains incomplete after cleanup failures for " + engine.getWorld().name() + ".");
-            IrisLogging.reportError(failure);
-            failure.printStackTrace();
-            throw new IllegalStateException("Iris engine shutdown remains incomplete after cleanup failures.", failure);
+            reportIncompleteClose(failure);
         }
+    }
+
+    private void reportIncompleteClose(Throwable failure) {
+        IrisLogging.error("Iris engine shutdown remains incomplete after cleanup failures for " + engine.getWorld().name() + ".");
+        IrisLogging.reportError(failure);
+        failure.printStackTrace();
+        throw new IllegalStateException("Iris engine shutdown remains incomplete after cleanup failures.", failure);
     }
 
     void cleanupFailedConstruction(Throwable original) {

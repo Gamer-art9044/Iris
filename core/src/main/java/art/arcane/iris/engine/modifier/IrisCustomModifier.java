@@ -27,30 +27,38 @@ public class IrisCustomModifier extends EngineAssignedModifier<PlatformBlockStat
 
         BurstExecutor burst = MultiBurst.burst.burst(output.getHeight());
         burst.setMulticore(multicore);
-        for (int y = 0; y < output.getHeight(); y++) {
-            int finalY = y;
-            burst.queue(() -> {
-                for (int rX = 0; rX < output.getWidth(); rX++) {
-                    for (int rZ = 0; rZ < output.getDepth(); rZ++) {
-                        PlatformBlockState b = output.get(rX, finalY, rZ);
-                        if (b == null || !b.isCustom()) {
-                            continue;
-                        }
-                        String placementKey = b.deferredPlacementKey();
-                        PlatformBlockState baseState = b.placementBaseState();
-                        if (placementKey == null || baseState == null) {
-                            continue;
-                        }
+        // complete() must run before release() even when queueing throws — detached burst
+        // tasks must never write into a released chunk, and a lost permit wedges close().
+        try {
+            for (int y = 0; y < output.getHeight(); y++) {
+                int finalY = y;
+                burst.queue(() -> {
+                    for (int rX = 0; rX < output.getWidth(); rX++) {
+                        for (int rZ = 0; rZ < output.getDepth(); rZ++) {
+                            PlatformBlockState b = output.get(rX, finalY, rZ);
+                            if (b == null || !b.isCustom()) {
+                                continue;
+                            }
+                            String placementKey = b.deferredPlacementKey();
+                            PlatformBlockState baseState = b.placementBaseState();
+                            if (placementKey == null || baseState == null) {
+                                continue;
+                            }
 
-                        mc.getOrCreate(finalY >> 4)
-                                .slice(Identifier.class)
-                                .set(rX, finalY & 15, rZ, Identifier.fromString(placementKey));
-                        output.set(rX, finalY, rZ, baseState);
+                            mc.getOrCreate(finalY >> 4)
+                                    .slice(Identifier.class)
+                                    .set(rX, finalY & 15, rZ, Identifier.fromString(placementKey));
+                            output.set(rX, finalY, rZ, baseState);
+                        }
                     }
-                }
-            });
+                });
+            }
+        } finally {
+            try {
+                burst.complete();
+            } finally {
+                mc.release();
+            }
         }
-        burst.complete();
-        mc.release();
     }
 }

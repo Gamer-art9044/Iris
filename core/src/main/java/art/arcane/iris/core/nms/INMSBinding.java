@@ -262,6 +262,13 @@ public interface INMSBinding {
         return true;
     }
 
+    /**
+     * Removes any instrumentation installed by {@link #injectBukkit()}. Must be idempotent;
+     * called on plugin disable and pre-unload so the transformer cannot outlive the plugin.
+     */
+    default void uninjectBukkit() {
+    }
+
     KMap<Material, List<BlockProperty>> getBlockProperties();
 
     private void validateDimensionTypes(WorldCreator c) {

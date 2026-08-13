@@ -19,6 +19,7 @@
 package art.arcane.iris.modded.command;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
@@ -88,15 +89,44 @@ public final class ModdedObjectUndo {
             if (entry == null) {
                 break;
             }
+            // Identity check, not just null: a studio closed and reopened under the same
+            // dimension id must never have blocks replayed into the dead ServerLevel.
+            MinecraftServer server = entry.level().getServer();
+            if (server == null || server.getLevel(entry.level().dimension()) != entry.level()) {
+                LOGGER.warn("Iris object undo: skipped a stale entry for removed dimension {}",
+                        entry.level().dimension().identifier());
+                continue;
+            }
             int writes = 0;
             for (Map.Entry<BlockPos, BlockState> block : entry.blocks().entrySet()) {
-                entry.level().setBlock(block.getKey(), block.getValue(), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
-                writes++;
+                try {
+                    entry.level().setBlock(block.getKey(), block.getValue(), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+                    writes++;
+                } catch (Throwable e) {
+                    LOGGER.error("Iris object undo: failed to revert a block at {}", block.getKey(), e);
+                }
             }
             LOGGER.info("Iris object undo: reverted {} block(s) in {}", writes, entry.level().dimension().identifier());
             reverted++;
         }
         return reverted;
+    }
+
+    /**
+     * Drops every entry recorded against the given level. Called on dimension removal so a
+     * closed studio releases its block snapshots and the ServerLevel reference.
+     */
+    public static void forget(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        UNDOS.entrySet().removeIf((Map.Entry<UUID, Deque<Entry>> ownerEntry) -> {
+            Deque<Entry> queue = ownerEntry.getValue();
+            synchronized (queue) {
+                queue.removeIf((Entry entry) -> entry.level() == level);
+                return queue.isEmpty();
+            }
+        });
     }
 
     public static void clearAll() {

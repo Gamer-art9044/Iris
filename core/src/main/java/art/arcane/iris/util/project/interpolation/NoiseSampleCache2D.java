@@ -35,6 +35,7 @@ final class NoiseSampleCache2D {
     private int mask;
     private int resizeThreshold;
     private int size;
+    private boolean inUse;
 
     public NoiseSampleCache2D(int initialCapacity) {
         int minimumCapacity = Math.max(8, initialCapacity);
@@ -56,6 +57,24 @@ final class NoiseSampleCache2D {
         size = 0;
     }
 
+    /**
+     * Interpolation nests on one thread (image maps and interpolated noise styles re-enter
+     * {@code IrisInterpolation.getNoise} from inside a provider), and a nested pass sharing
+     * this table would clear it mid-flight and cross-serve another provider's samples.
+     */
+    public boolean isInUse() {
+        return inUse;
+    }
+
+    public void beginUse() {
+        inUse = true;
+        clear();
+    }
+
+    public void endUse() {
+        inUse = false;
+    }
+
     public double getOrSample(double relativeX, double relativeZ, double sampleX, double sampleZ, NoiseProvider provider) {
         long rx = Double.doubleToLongBits(relativeX);
         long rz = Double.doubleToLongBits(relativeZ);
@@ -65,7 +84,9 @@ final class NoiseSampleCache2D {
         }
 
         double value = provider.noise(sampleX, sampleZ);
-        insert(slot, rx, rz, value);
+        // Recompute the slot: the provider call may have mutated the table (clear/grow), so
+        // the pre-call index can point into stale or reallocated arrays.
+        insert(findSlot(rx, rz), rx, rz, value);
         return value;
     }
 

@@ -25,9 +25,37 @@ import org.bukkit.Bukkit;
 
 public class INMS {
     //@done
-    private static final INMSBinding binding = bind();
+    private static final INMSBinding binding;
+    private static final Throwable bindFailure;
+
+    // A throwing field initializer would leave this class permanently erroneous — every
+    // later touch raises NoClassDefFoundError and buries the real "unsupported Minecraft
+    // version" message. Capture the failure so callers can report the actual cause.
+    static {
+        INMSBinding bound = null;
+        Throwable failure = null;
+        try {
+            bound = bind();
+        } catch (Throwable t) {
+            failure = t;
+        }
+        binding = bound;
+        bindFailure = failure;
+    }
+
+    public static boolean isBound() {
+        return binding != null;
+    }
+
+    public static Throwable bindFailure() {
+        return bindFailure;
+    }
 
     public static INMSBinding get() {
+        if (binding == null) {
+            throw new IllegalStateException("Iris NMS binding is unavailable: "
+                    + (bindFailure == null ? "unknown failure" : bindFailure.getMessage()), bindFailure);
+        }
         return binding;
     }
 

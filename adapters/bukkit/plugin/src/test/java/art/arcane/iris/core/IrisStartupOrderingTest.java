@@ -22,7 +22,7 @@ public class IrisStartupOrderingTest {
     @Test
     public void externalDatapacksValidateBeforeDimensionPacks() throws Exception {
         String source = Files.readString(Path.of(System.getProperty("iris.startupSource")));
-        String enable = section(source, "private void enable()", "public void addShutdownHook()");
+        String enable = section(source, "private boolean enable()", "public void addShutdownHook()");
 
         assertOrdered(enable,
                 "DatapackIngestService.validateOnStartup();",

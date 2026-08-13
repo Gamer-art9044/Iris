@@ -34,10 +34,18 @@ final class PackLootValidator {
     private PackLootValidator() {
     }
 
-    static List<String> validateLootGraph(File packFolder) {
+    record LootGraphIssues(List<String> errors, List<String> warnings) {
+        LootGraphIssues {
+            errors = List.copyOf(errors);
+            warnings = List.copyOf(warnings);
+        }
+    }
+
+    static LootGraphIssues validateLootGraph(File packFolder) {
         List<String> blockingErrors = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
         if (packFolder == null || !packFolder.isDirectory()) {
-            return blockingErrors;
+            return new LootGraphIssues(blockingErrors, warnings);
         }
 
         File lootFolder = new File(packFolder, PackValidator.LOOT_FOLDER);
@@ -69,10 +77,10 @@ final class PackLootValidator {
                 }
                 String resourceType = PackStructurePlacementValidator.structureHostType(folderName);
                 String resourceKey = PackValidationIo.deriveKey(resourceFolder, resourceFile);
-                validateLootReference(resourceType, resourceKey, resource.opt("loot"), lootKeys, blockingErrors);
+                validateLootReference(resourceType, resourceKey, resource.opt("loot"), lootKeys, blockingErrors, warnings);
             }
         }
-        return blockingErrors;
+        return new LootGraphIssues(blockingErrors, warnings);
     }
 
     private static void validateLootTable(String lootKey, JSONObject table, List<String> blockingErrors) {
@@ -158,17 +166,20 @@ final class PackLootValidator {
     }
 
     private static void validateLootReference(String resourceType, String resourceKey, Object rawLoot,
-                                              Set<String> lootKeys, List<String> blockingErrors) {
+                                              Set<String> lootKeys, List<String> blockingErrors, List<String> warnings) {
         String path = resourceType + " '" + resourceKey + "'.loot";
         if (!(rawLoot instanceof JSONObject reference)) {
             blockingErrors.add(path + " must be an object.");
             return;
         }
+        boolean clearMode = false;
         if (reference.has("mode")) {
             Object rawMode = reference.opt("mode");
             if (!(rawMode instanceof String mode)
                     || !Set.of("ADD", "CLEAR", "REPLACE", "FALLBACK").contains(mode)) {
                 blockingErrors.add(path + ".mode must be ADD, CLEAR, REPLACE, or FALLBACK.");
+            } else {
+                clearMode = "CLEAR".equals(mode);
             }
         }
         if (reference.has("multiplier")) {
@@ -188,6 +199,10 @@ final class PackLootValidator {
         if (tables == null) {
             blockingErrors.add(path + ".tables must be an array.");
             return;
+        }
+        if (clearMode && tables.length() > 0) {
+            warnings.add(path + " uses mode CLEAR and lists " + tables.length()
+                    + " table(s); CLEAR clears parent tables and contributes no tables of its own, so these entries are dead. Use REPLACE to substitute them.");
         }
         for (int tableIndex = 0; tableIndex < tables.length(); tableIndex++) {
             Object rawTableKey = tables.opt(tableIndex);

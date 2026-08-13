@@ -1,17 +1,16 @@
 package art.arcane.iris.core.tools;
 
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.engine.mantle.MantleSliceRetention;
 import art.arcane.iris.spi.IrisLogging;
 
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class WorldMaintenance {
     private static final Map<String, AtomicInteger> worldMaintenanceDepth = new ConcurrentHashMap<>();
     private static final Map<String, AtomicInteger> worldMaintenanceMantleBypassDepth = new ConcurrentHashMap<>();
-    private static final Set<String> retainedMantleSlices = ConcurrentHashMap.newKeySet();
 
     private WorldMaintenance() {
     }
@@ -37,6 +36,10 @@ public final class WorldMaintenance {
     }
 
     public static void endWorldMaintenance(String worldName, String reason) {
+        endWorldMaintenance(worldName, reason, false);
+    }
+
+    public static void endWorldMaintenance(String worldName, String reason, boolean bypassMantleStages) {
         if (worldName == null) {
             return;
         }
@@ -52,13 +55,17 @@ public final class WorldMaintenance {
             depth = 0;
         }
 
-        AtomicInteger bypassCounter = worldMaintenanceMantleBypassDepth.get(worldName);
+        // Only a bypass-begin's paired end releases bypass credit: a plain end overlapping a
+        // bypassing operation stole its credit and re-enabled mantle stages under it.
         int bypassDepth = 0;
-        if (bypassCounter != null) {
-            bypassDepth = bypassCounter.decrementAndGet();
-            if (bypassDepth <= 0) {
-                worldMaintenanceMantleBypassDepth.remove(worldName, bypassCounter);
-                bypassDepth = 0;
+        if (bypassMantleStages) {
+            AtomicInteger bypassCounter = worldMaintenanceMantleBypassDepth.get(worldName);
+            if (bypassCounter != null) {
+                bypassDepth = bypassCounter.decrementAndGet();
+                if (bypassDepth <= 0) {
+                    worldMaintenanceMantleBypassDepth.remove(worldName, bypassCounter);
+                    bypassDepth = 0;
+                }
             }
         }
 
@@ -88,14 +95,10 @@ public final class WorldMaintenance {
     }
 
     public static void retainMantleDataForSlice(String className) {
-        if (className == null) {
-            return;
-        }
-
-        retainedMantleSlices.add(className);
+        MantleSliceRetention.retain(className);
     }
 
     public static boolean isRetainingMantleDataForSlice(String className) {
-        return className != null && retainedMantleSlices.contains(className);
+        return MantleSliceRetention.isRetained(className);
     }
 }

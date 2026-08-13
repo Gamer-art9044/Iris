@@ -394,7 +394,7 @@ public class CommandDeveloper implements DirectorExecutor {
         }
     }
 
-    @Director(name = "goldenhash", aliases = {"gold"}, description = "Generate chunks into buffers (no world writes) and hash blocks+biomes; captures a golden file or verifies against an existing one. Resets mantle in the scanned area - use on disposable test worlds.", descriptionKey = "iris.director.commanddeveloper.director.generate_chunks_into_buffers_no_world_writes_hash_blocks_biomes_captures_golden", origin = DirectorOrigin.BOTH)
+    @Director(name = "goldenhash", aliases = {"gold"}, description = "Generate chunks into buffers (no world writes) and hash blocks+biomes; captures a golden file or verifies against an existing one. Deletes the world's entire mantle - use on disposable test worlds.", descriptionKey = "iris.director.commanddeveloper.director.generate_chunks_into_buffers_no_world_writes_hash_blocks_biomes_captures_golden", origin = DirectorOrigin.BOTH)
     public void goldenhash(
             @Param(description = "The world to scan", descriptionKey = "iris.director.commanddeveloper.param.world_scan", contextual = true)
             World world,
@@ -404,7 +404,7 @@ public class CommandDeveloper implements DirectorExecutor {
             int centerX,
             @Param(name = "center-z", description = "Center chunk Z", descriptionKey = "iris.director.commanddeveloper.param.center_chunk_z_2", defaultValue = "0")
             int centerZ,
-            @Param(name = "reset-mantle", description = "Delete mantle data in the scan area first for full regeneration from scratch", descriptionKey = "iris.director.commanddeveloper.param.delete_mantle_data_scan_area_first_full_regeneration_from_scratch", defaultValue = "true")
+            @Param(name = "reset-mantle", description = "Delete the world's entire mantle folder first for full regeneration from scratch", descriptionKey = "iris.director.commanddeveloper.param.delete_mantle_data_scan_area_first_full_regeneration_from_scratch", defaultValue = "true")
             boolean resetMantle,
             @Param(name = "threads", description = "Concurrent chunk generations; 1 = strictly serial for order-dependence testing", descriptionKey = "iris.director.commanddeveloper.param.concurrent_chunk_generations_1_strictly_serial_order_dependence_testing", defaultValue = "8")
             int threads,

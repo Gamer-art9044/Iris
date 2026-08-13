@@ -581,7 +581,14 @@ public class J {
                 return;
             }
 
-            r.run();
+            // A throwing body must not kill the loop (Bukkit's own runTaskTimer survives
+            // throws) or leak the canceller entry; the re-arm is unconditional.
+            try {
+                r.run();
+            } catch (Throwable e) {
+                IrisLogging.reportError(e);
+                e.printStackTrace();
+            }
             if (state.cancelled || !canSchedule()) {
                 REPEATING_CANCELLERS.remove(taskId);
                 return;
@@ -590,7 +597,9 @@ public class J {
             s(loop[0], safeInterval);
         };
 
-        s(loop[0]);
+        // Delay 1, never inline: an immediate first run can execute before the caller has
+        // stored the returned id, making the body's own cancel() target a nonexistent id.
+        s(loop[0], 1);
         return taskId;
     }
 
@@ -662,7 +671,14 @@ public class J {
                 return;
             }
 
-            r.run();
+            // A throwing body must not kill the loop (Bukkit's own runTaskTimer survives
+            // throws) or leak the canceller entry; the re-arm is unconditional.
+            try {
+                r.run();
+            } catch (Throwable e) {
+                IrisLogging.reportError(e);
+                e.printStackTrace();
+            }
             if (state.cancelled || !canSchedule()) {
                 REPEATING_CANCELLERS.remove(taskId);
                 return;
@@ -671,7 +687,7 @@ public class J {
             a(loop[0], safeInterval);
         };
 
-        a(loop[0], 0);
+        a(loop[0], 1);
         return taskId;
     }
 

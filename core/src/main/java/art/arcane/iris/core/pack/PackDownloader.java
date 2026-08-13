@@ -55,6 +55,12 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public final class PackDownloader {
+    /**
+     * The branch every download path falls back to when the caller did not name one. Compile-time
+     * constant so Director {@code @Param(defaultValue = ...)} annotations can reference it.
+     */
+    public static final String DEFAULT_BRANCH = "stable";
+    private static final String HEAD_REF = "HEAD";
     private static final String DEFAULT_OVERWORLD_PACK = "overworld";
     private static final String DEFAULT_OVERWORLD_REPOSITORY = "IrisDimensions/overworld";
     private static final String DEFAULT_OVERWORLD_REF = "master";
@@ -234,6 +240,13 @@ public final class PackDownloader {
         String url = directUrl ? ref : resolveGithubArchiveUrl(repo, ref);
         sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.DOWNLOADING, MessageArgument.untrusted("url", url)) + " ");
         File zip = WebCache.getNonCachedFile("pack-" + repo, url, ARCHIVE_LIMITS.maxArchiveBytes());
+        if ((zip == null || !zip.exists()) && !directUrl && DEFAULT_BRANCH.equals(ref)) {
+            // A repo without the shared default branch still resolves via its HEAD; one retry, never recursive.
+            String headUrl = resolveGithubArchiveUrl(repo, HEAD_REF);
+            sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.DOWNLOADING, MessageArgument.untrusted("url", headUrl)) + " ");
+            zip = WebCache.getNonCachedFile("pack-" + repo, headUrl, ARCHIVE_LIMITS.maxArchiveBytes());
+            url = headUrl;
+        }
         File temp = WebCache.getTemp();
         File work = new File(temp, "dl-" + UUID.randomUUID());
 
@@ -436,17 +449,21 @@ public final class PackDownloader {
                     + " (required primary dimension is missing).");
         }
 
-        Optional<IrisData> loadedData = IrisData.getLoaded(new File(packsFolder, prepared.key()));
-        if (loadedData.isEmpty()) {
-            loadedData = IrisData.getLoaded(target.toFile());
-        }
-        if (loadedData.isPresent()) {
+        // A registered loader alone is not "active": startup validation registers a loader for
+        // every visible pack (permanently), which made force-updating any installed pack
+        // impossible. Live engines only ever attach to detached openRuntime loaders, so the
+        // gate must go through the engine index, not the cached loader's own engine list.
+        // Stale cached registrations are closed so the swap cannot race a loader holding the
+        // old tree.
+        if (IrisData.hasActiveEngines(target.toFile())) {
             sendFeedback(
                     feedback,
                     "Pack '" + prepared.key() + "' is active and cannot be replaced safely. Unload its worlds before retrying."
             );
             return null;
         }
+        IrisData.getLoaded(new File(packsFolder, prepared.key())).ifPresent(IrisData::close);
+        IrisData.getLoaded(target.toFile()).ifPresent(IrisData::close);
         try (AtomicDirectoryPublisher.Publication publication = AtomicDirectoryPublisher.publish(staging, target)) {
             publication.commit();
             try {
@@ -471,7 +488,7 @@ public final class PackDownloader {
         Set<Path> roots = new LinkedHashSet<>();
         roots.add(packsRoot);
         if (IrisPlatforms.isBound()) {
-            roots.add(IrisPlatforms.get().dataFolder("packs").toPath().toAbsolutePath().normalize());
+            roots.add(IrisPlatforms.get().packsFolder().toPath().toAbsolutePath().normalize());
         }
         for (Path root : roots) {
             if (!Files.isDirectory(root)) {

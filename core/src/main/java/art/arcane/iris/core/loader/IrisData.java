@@ -43,6 +43,7 @@ import art.arcane.iris.engine.object.IrisBlockData;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisEntity;
 import art.arcane.iris.engine.object.IrisExpression;
+import art.arcane.iris.engine.object.IrisObjectScale;
 import art.arcane.iris.engine.object.IrisGenerator;
 import art.arcane.iris.engine.object.IrisImage;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
@@ -86,12 +87,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Data
 public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     private static final Map<File, IrisData> dataLoaders = new ConcurrentHashMap<>();
+    // Loaders (cached or detached) that currently have registered engines; see hasActiveEngines.
+    // Identity-keyed on purpose: Lombok's @Data hashCode over this class's mutable loader state
+    // drifts while an engine runs, so a hashing set would silently fail removal and pin every
+    // engine-hosting IrisData (and its pack graph) for the JVM lifetime.
+    private static final Set<IrisData> ENGINE_HOLDERS =
+            Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
     private final File dataFolder;
     private final int id;
     private final boolean datapackCompiler;
@@ -262,7 +271,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             }
 
             for (File i : PackDirectoryResolver.listVisiblePackDirectories(
-                    IrisPlatforms.get().dataFolder("packs"))) {
+                    IrisPlatforms.get().packsFolder())) {
                 IrisData dm = get(i);
                 if (dm == nearest) continue;
                 T t = dm.load(type, key, false);
@@ -338,6 +347,30 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         }
     }
 
+    /**
+     * True when any loader — including detached {@link #openRuntime(File)} instances, which
+     * never enter the dataLoaders cache — has a live engine reading the given pack folder.
+     * The dataLoaders cache cannot answer this question: engines only ever attach to
+     * openRuntime instances.
+     */
+    public static boolean hasActiveEngines(File dataFolder) {
+        Path target = dataFolder.toPath().toAbsolutePath().normalize();
+        IrisData[] holders;
+        synchronized (ENGINE_HOLDERS) {
+            holders = ENGINE_HOLDERS.toArray(new IrisData[0]);
+        }
+        for (IrisData data : holders) {
+            if (data.getEngines().isEmpty()) {
+                ENGINE_HOLDERS.remove(data);
+                continue;
+            }
+            if (data.getDataFolder().toPath().toAbsolutePath().normalize().equals(target)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void registerEngine(Engine engine) {
         Objects.requireNonNull(engine, "engine");
         synchronized (engines) {
@@ -348,6 +381,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             }
             engines.add(engine);
         }
+        ENGINE_HOLDERS.add(this);
     }
 
     public void unregisterEngine(Engine engine) {
@@ -359,8 +393,11 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             while (iterator.hasNext()) {
                 if (iterator.next() == engine) {
                     iterator.remove();
-                    return;
+                    break;
                 }
+            }
+            if (engines.isEmpty()) {
+                ENGINE_HOLDERS.remove(this);
             }
         }
     }
@@ -383,6 +420,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         synchronized (engines) {
             engines.clear();
         }
+        ENGINE_HOLDERS.remove(this);
         dataLoaders.remove(dataFolder, this);
     }
 
@@ -425,6 +463,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
 
     public synchronized void hotloaded() {
         StructureGraphCatalog.invalidate(this);
+        IrisObjectScale.invalidate();
         closed = false;
         possibleSnippets = new KMap<>();
         builder = new GsonBuilder()
@@ -490,6 +529,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
 
     public void dump() {
         StructureGraphCatalog.invalidate(this);
+        IrisObjectScale.invalidate();
         for (ResourceLoader<?> i : loaders.values()) {
             i.clearCache();
         }

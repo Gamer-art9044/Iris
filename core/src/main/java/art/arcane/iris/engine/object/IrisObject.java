@@ -80,6 +80,7 @@ public class IrisObject extends IrisRegistrant {
     @Setter
     protected transient AtomicCache<AxisAlignedBB> aabb = new AtomicCache<>();
     transient final AtomicCache<KList<IrisBlockVector>> surfaceSupportOffsets = new AtomicCache<>();
+    transient final AtomicCache<FloatingObjectFootprint> floatingFootprint = new AtomicCache<>();
     @Getter
     VectorMap<PlatformBlockState> blocks;
     @Getter
@@ -174,11 +175,25 @@ public class IrisObject extends IrisRegistrant {
     }
 
     public void shrinkwrap() {
-        IrisObjectShaping.shrinkwrap(this);
+        // Instances are loader cached and shared across generation threads; mutating the
+        // volume without the write lock let a concurrent placement mix pre-shrink anchors
+        // with post-shrink blocks. Rotation paths call the package-private statics while
+        // already holding this (reentrant) lock.
+        writeLock.lock();
+        try {
+            IrisObjectShaping.shrinkwrap(this);
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     public void clean() {
-        IrisObjectShaping.clean(this);
+        writeLock.lock();
+        try {
+            IrisObjectShaping.clean(this);
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     public IrisBlockVector getSigned(int x, int y, int z) {
@@ -200,6 +215,7 @@ public class IrisObject extends IrisRegistrant {
         }
 
         surfaceSupportOffsets.reset();
+        floatingFootprint.reset();
     }
 
     public void setUnsignedTile(int x, int y, int z, TileData tile) {
@@ -229,6 +245,7 @@ public class IrisObject extends IrisRegistrant {
         }
 
         surfaceSupportOffsets.reset();
+        floatingFootprint.reset();
     }
 
     public int place(int x, int z, IObjectPlacer placer, IrisObjectPlacement config, RNG rng, IrisData rdata) {

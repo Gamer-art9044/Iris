@@ -67,7 +67,8 @@ public class ExternalDataSVC implements IrisService {
     @Override
     public void onEnable() {
         IrisLogging.info("Loading ExternalDataProvider...");
-        Bukkit.getPluginManager().registerEvents(this, BukkitPlatform.plugin());
+        // enable() registers every enabled service as a listener; self-registration here
+        // doubled every handler invocation.
 
         for (ProviderDefinition definition : BUILT_IN_PROVIDERS) {
             activateConfiguredProvider(definition);

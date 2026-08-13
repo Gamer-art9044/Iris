@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.splash.IrisSplashComposer;
 import art.arcane.iris.core.splash.IrisSplashRenderer;
@@ -38,7 +39,7 @@ public final class ModdedIrisSplash {
     }
 
     private static void printPacks(ModdedLoader loader) {
-        File packFolder = loader.configDir().resolve("irisworldgen").resolve("packs").toFile();
+        File packFolder = IrisPlatforms.get().packsFolderNoCreate();
         for (String line : IrisSplashComposer.composePackLines(packFolder, IrisLogging::reportError)) {
             IrisLogging.info(line);
         }

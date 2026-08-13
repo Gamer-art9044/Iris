@@ -170,8 +170,6 @@ public class IrisDimension extends IrisRegistrant {
     @MaxNumber(16)
     @Desc("Minimum surface-support buffer, in blocks, applied to every surface object placement in this dimension. A placement may ask for more but never less.")
     private int objectSurfaceSupportBuffer = 2;
-    @Desc("Unused. This field is not read by the engine.")
-    private Boolean forceConvertTo320Height = false;
     @Desc("The world environment")
     private IrisEnvironment environment = IrisEnvironment.NORMAL;
     @RegistryListResource(IrisRegion.class)
@@ -257,16 +255,10 @@ public class IrisDimension extends IrisRegistrant {
     @ArrayType(min = 1, type = IrisShapedGeneratorStyle.class)
     @Desc("Overlay additional noise on top of the interoplated terrain.")
     private KList<IrisShapedGeneratorStyle> overlayNoise = new KList<>();
-    @MinNumber(0.0001)
-    @MaxNumber(512)
-    @Desc("Unused. This field is not read by the engine; rock palette styling comes from rockPalette itself.")
-    private double rockZoom = 5;
     @Desc("The palette of blocks for 'stone'")
     private IrisMaterialPalette rockPalette = new IrisMaterialPalette().qclear().qadd("stone");
     @Desc("The dimension fluid block palette used for ocean columns and cave aquifers.")
     private IrisMaterialPalette fluidPalette = new IrisMaterialPalette().qclear().qadd("water");
-    @Desc("Unused. This field is not read by the engine and no longer affects explorer maps.")
-    private boolean disableExplorerMaps = false;
     @Desc("Collection of ores to be generated")
     @ArrayType(type = IrisOreGenerator.class, min = 1)
     private KList<IrisOreGenerator> ores = new KList<>();

@@ -226,6 +226,8 @@ public final class ModdedDimensionManager {
                 ModdedWorldEngines.evictOrThrow(level);
                 level.save(null, true, false);
                 serverAccess.removeLevel(server, key);
+                // Undo snapshots pin the ServerLevel and could replay into the dead level.
+                art.arcane.iris.modded.command.ModdedObjectUndo.forget(level);
                 level.close();
                 HANDLES.remove(dimensionId);
                 if (wipeStorage) {

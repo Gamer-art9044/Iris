@@ -154,7 +154,7 @@ public class getHardware {
             for (Display display : displays) {
                 systemEDID.add("Display: " + display.getEdid());
             }
-            if (!systemEDID.isEmpty()) {
+            if (systemEDID.isEmpty()) {
                 systemEDID.add("No displays");
             }
             return systemEDID.copy();
@@ -174,8 +174,8 @@ public class getHardware {
                 for (InetAddress ia : Collections.list(inetAddresses)) {
                     interfaces.add("IP: %s", ia.getHostAddress());
                 }
-                return interfaces.copy();
             }
+            return interfaces.copy();
         } catch (Exception e) {
             e.printStackTrace();
         }

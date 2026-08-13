@@ -188,6 +188,9 @@ public final class ModdedDustRevealer {
     private static void revealBatch(ModdedScheduler scheduler, RevealRun run,
                                     List<BlockPos> hits, int from) {
         if (!active(run)) {
+            // Drop the registry entry on abort too, or the run record pins the player, level
+            // and engine until server stop. No-op if a newer run already replaced it.
+            ACTIVE_RUNS.remove(run.playerId(), run);
             return;
         }
         int to = Math.min(hits.size(), from + PARTICLE_BATCH_SIZE);

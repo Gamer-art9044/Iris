@@ -36,12 +36,12 @@ public class ModdedLootApplierTest {
     }
 
     @Test
-    public void clearRemovesNativeAndIrisSourcesBeforeAdding() {
+    public void clearRemovesEverythingAndContributesNothing() {
         List<String> sources = new ArrayList<>(List.of("placement-native", "dimension-iris"));
 
         LootResolver.injectSources(sources, List.of("biome-iris"), IrisLootMode.CLEAR, false);
 
-        assertEquals(List.of("biome-iris"), sources);
+        assertEquals(List.of(), sources);
     }
 
     @Test

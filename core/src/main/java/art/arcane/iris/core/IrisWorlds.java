@@ -222,7 +222,7 @@ public class IrisWorlds {
             dimension = IrisData.loadAnyDimension(id, null);
         }
         if (dimension == null) {
-            File packsRoot = IrisPlatforms.get().dataFolderNoCreate(StudioSVC.WORKSPACE_NAME);
+            File packsRoot = IrisPlatforms.get().packsFolderNoCreate();
             if (PackDownloader.isPackPresent(packsRoot, id)) {
                 IrisLogging.error("Pack '" + id + "' exists at " + new File(packsRoot, id).getPath()
                         + " but its dimension failed to load; not redownloading. Fix or delete the pack folder.");

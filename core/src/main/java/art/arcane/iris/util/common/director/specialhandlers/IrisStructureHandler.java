@@ -20,7 +20,7 @@ public final class IrisStructureHandler implements DirectorParameterHandler<Stri
             addStructureKeys(keys, activeData);
         }
         for (File pack : PackDirectoryResolver.listVisiblePackDirectories(
-                IrisPlatforms.get().dataFolder("packs"))) {
+                IrisPlatforms.get().packsFolder())) {
             addStructureKeys(keys, IrisData.get(pack));
         }
         return new KList<>(keys);

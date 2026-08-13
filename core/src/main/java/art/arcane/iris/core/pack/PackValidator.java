@@ -77,7 +77,9 @@ public final class PackValidator {
 
         PackDimensionValidator.validateDimensions(packFolder, dimensionFiles, blockingErrors, warnings);
         blockingErrors.addAll(PackCaveProfileValidator.validateLegacyFields(packFolder));
-        blockingErrors.addAll(PackLootValidator.validateLootGraph(packFolder));
+        PackLootValidator.LootGraphIssues lootIssues = PackLootValidator.validateLootGraph(packFolder);
+        addDistinct(blockingErrors, lootIssues.errors());
+        addDistinct(warnings, lootIssues.warnings());
         blockingErrors.addAll(PackObjectSurfaceValidator.validateRemovedWorldgenFields(packFolder));
         blockingErrors.addAll(PackObjectSurfaceValidator.validateObjectSurfaceSupport(packFolder));
         blockingErrors.addAll(PackObjectSurfaceValidator.validateUnsupportedStructureTransforms(packFolder));
@@ -96,6 +98,11 @@ public final class PackValidator {
                 new File(packFolder, "spawners"), new File(packFolder, "entities")));
         blockingErrors.addAll(PackSpawnValidator.validateCustomBiomeSpawns(
                 new File(packFolder, "biomes"), PackSpawnValidator::resolveEntitySpawnCategory));
+        blockingErrors.addAll(PackBiomeLayerValidator.validateCeilingLayerCounts(new File(packFolder, "biomes")));
+        PackStyledRangeDefaultValidator.Validation styledRanges = PackStyledRangeDefaultValidator.validate(packFolder);
+        addDistinct(blockingErrors, styledRanges.errors());
+        addDistinct(warnings, styledRanges.warnings());
+        addDistinct(warnings, PackGeneratorDuplicateValidator.validateDuplicateGenerators(packFolder));
 
         // Strict content mode promotes unresolved keys and bad block properties from advisory to blocking. Palette
         // -sourced findings are exempt and stay warnings - see ContentKeyValidator.collectContentKeyIssues.

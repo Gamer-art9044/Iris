@@ -3,14 +3,17 @@ package art.arcane.iris.core.link;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.volmlib.util.data.Cuboid;
+import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 
 import java.lang.reflect.InvocationTargetException;
+import java.util.function.BooleanSupplier;
 
 public class WorldEditLink {
     private static final AtomicCache<Boolean> active = new AtomicCache<>();
+    private static final ChronoLatch errorThrottle = new ChronoLatch(60_000);
 
     public static Cuboid getSelection(Player p) {
         if (!hasWorldEdit())
@@ -42,16 +45,40 @@ public class WorldEditLink {
                     (int) min.getClass().getDeclaredMethod("z").invoke(max)
             );
         } catch (Throwable e) {
-            IrisLogging.error("Could not get selection");
-            e.printStackTrace();
-            IrisLogging.reportError(e);
-            active.reset();
-            active.aquire(() -> false);
+            if (errorThrottle.flip()) {
+                IrisLogging.error("Could not get selection");
+                e.printStackTrace();
+                IrisLogging.reportError(e);
+            }
+            invalidate();
         }
         return null;
     }
 
     public static boolean hasWorldEdit() {
-        return active.aquire(() -> Bukkit.getPluginManager().isPluginEnabled("WorldEdit"));
+        return hasWorldEdit(() -> Bukkit.getPluginManager().isPluginEnabled("WorldEdit"));
+    }
+
+    static boolean hasWorldEdit(BooleanSupplier detector) {
+        if (Boolean.TRUE.equals(active.getIfPresent())) {
+            return true;
+        }
+
+        boolean present;
+        try {
+            present = detector.getAsBoolean();
+        } catch (Throwable ignored) {
+            return false;
+        }
+
+        if (present) {
+            active.aquire(() -> Boolean.TRUE);
+        }
+
+        return present;
+    }
+
+    static void invalidate() {
+        active.reset();
     }
 }

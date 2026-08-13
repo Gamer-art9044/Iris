@@ -768,7 +768,7 @@ public final class IrisWorldRemovalService {
         public CompletableFuture<Void> endMaintenance(ResolvedWorld resolvedWorld) {
             World world = resolvedWorld.loadedWorld();
             if (world != null) {
-                IrisToolbelt.endWorldMaintenance(world, "world-remove");
+                IrisToolbelt.endWorldMaintenance(world, "world-remove", true);
             }
             return CompletableFuture.completedFuture(null);
         }

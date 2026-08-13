@@ -29,10 +29,16 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 @EqualsAndHashCode(callSuper = false)
 public class AtomicHunk<T> extends StorageHunk<T> implements Hunk<T> {
     private final AtomicReferenceArray<T> data;
+    // index() runs per block access on the hottest paths; two final-field multiplies beat
+    // re-deriving the strides through the accessors every call.
+    private final int xStride;
+    private final int zStride;
 
     public AtomicHunk(int w, int h, int d) {
         super(w, h, d);
         data = new AtomicReferenceArray<>(w * h * d);
+        xStride = w;
+        zStride = w * h;
     }
 
     @Override
@@ -51,6 +57,6 @@ public class AtomicHunk<T> extends StorageHunk<T> implements Hunk<T> {
     }
 
     private int index(int x, int y, int z) {
-        return (z * getWidth() * getHeight()) + (y * getWidth()) + x;
+        return (z * zStride) + (y * xStride) + x;
     }
 }

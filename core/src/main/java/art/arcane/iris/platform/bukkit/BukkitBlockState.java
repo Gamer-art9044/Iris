@@ -34,6 +34,10 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class BukkitBlockState implements PlatformBlockState {
     private static final ConcurrentHashMap<String, BukkitBlockState> CACHE = new ConcurrentHashMap<>();
+    // Front cache keyed on the BlockData itself (CraftBlockData equals/hashCode delegate to
+    // the canonical NMS state): a hit skips getAsString(), which built the full property
+    // string on EVERY of() call — the dominant cost of the 99.9% hit case.
+    private static final ConcurrentHashMap<BlockData, BukkitBlockState> DATA_CACHE = new ConcurrentHashMap<>();
 
     private final BlockData data;
     private final String key;
@@ -68,8 +72,14 @@ public final class BukkitBlockState implements PlatformBlockState {
         if (data instanceof IrisCustomData custom) {
             return new BukkitBlockState(data, custom.getAsString());
         }
+        BukkitBlockState fast = DATA_CACHE.get(data);
+        if (fast != null) {
+            return fast;
+        }
         String key = data.getAsString();
-        return CACHE.computeIfAbsent(key, (String k) -> new BukkitBlockState(data, k));
+        BukkitBlockState state = CACHE.computeIfAbsent(key, (String k) -> new BukkitBlockState(data, k));
+        DATA_CACHE.putIfAbsent(data, state);
+        return state;
     }
 
     @Override
@@ -361,6 +371,12 @@ public final class BukkitBlockState implements PlatformBlockState {
     public PlatformBlockState withProperty(String name, String value) {
         String merged = mergeProperty(key, name, value);
         BlockData resolved = Bukkit.createBlockData(merged);
+        // Re-attach the custom identity (as the proxy's own merge/clone cases do): the key of
+        // a custom state is the BASE block's string, so rebuilding from it alone silently
+        // downgraded custom blocks to vanilla on e.g. auto-waterlogging.
+        if (data instanceof IrisCustomData custom) {
+            return of(IrisCustomData.of(resolved, custom.getCustom()));
+        }
         return of(resolved);
     }
 

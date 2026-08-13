@@ -51,42 +51,40 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
     @BlockCoordinates
     @Override
     public void onActuate(int x, int z, Hunk<PlatformBiome> h, boolean multicore, ChunkContext context) {
-        try {
-            PrecisionStopwatch p = PrecisionStopwatch.start();
-            int width = h.getWidth();
-            int depth = h.getDepth();
-            int height = h.getHeight();
-            Engine engine = getEngine();
-            Mantle<Matter> mantle = engine.getMantle().getMantle();
-            ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
+        // No catch here: a partial biome write must fail the chunk (EngineAssignedActuator
+        // rethrows), or the chunk is flagged REAL with default plains columns forever.
+        PrecisionStopwatch p = PrecisionStopwatch.start();
+        int width = h.getWidth();
+        int depth = h.getDepth();
+        int height = h.getHeight();
+        Engine engine = getEngine();
+        Mantle<Matter> mantle = engine.getMantle().getMantle();
+        ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
 
-            for (int xf = 0; xf < width; xf++) {
-                IrisBiome ib;
-                for (int zf = 0; zf < depth; zf++) {
-                    ib = biomeCache.get(xf, zf);
-                    String key;
+        for (int xf = 0; xf < width; xf++) {
+            IrisBiome ib;
+            for (int zf = 0; zf < depth; zf++) {
+                ib = biomeCache.get(xf, zf);
+                String key;
 
-                    if (ib.isCustom()) {
-                        IrisBiomeCustom custom = ib.getCustomBiome(rng, engine, x + xf, 0, z + zf);
-                        key = getDimension().getLoadKey() + ":" + custom.getId();
-                    } else {
-                        key = ib.getSkyBiomeKey(rng, engine, x + xf, 0, z + zf);
-                    }
-
-                    ResolvedBiome resolved = resolve(key);
-                    PlatformBiome biome = resolved.biome();
-
-                    if (biome != null) {
-                        h.set(xf, 0, zf, xf, height - 1, zf, biome);
-                    }
-
-                    mantle.set(x + xf, 0, z + zf, resolved.matter());
+                if (ib.isCustom()) {
+                    IrisBiomeCustom custom = ib.getCustomBiome(rng, engine, x + xf, 0, z + zf);
+                    key = getDimension().getLoadKey() + ":" + custom.getId();
+                } else {
+                    key = ib.getSkyBiomeKey(rng, engine, x + xf, 0, z + zf);
                 }
+
+                ResolvedBiome resolved = resolve(key);
+                PlatformBiome biome = resolved.biome();
+
+                if (biome != null) {
+                    h.set(xf, 0, zf, xf, height - 1, zf, biome);
+                }
+
+                mantle.set(x + xf, 0, z + zf, resolved.matter());
             }
-            engine.getMetrics().getBiome().put(p.getMilliseconds());
-        } catch (Throwable e) {
-            e.printStackTrace();
         }
+        engine.getMetrics().getBiome().put(p.getMilliseconds());
     }
 
     /**

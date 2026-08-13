@@ -160,6 +160,12 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     @EventHandler(priority = EventPriority.LOWEST)
     public void onWorldInit(WorldInitEvent event) {
         if (!Objects.equals(world.identity(), WorldIdentity.key(event.getWorld()).toString())) return;
+        if (event.getWorld().getGenerator() != this) {
+            // A generator leaked by an earlier failed creation of a same-key world; only the
+            // instance Bukkit actually bound may attach an engine to this world.
+            BukkitPlatform.volmitPlugin().unregisterListener(this);
+            return;
+        }
         BukkitPlatform.volmitPlugin().unregisterListener(this);
         world.setRawWorldSeed(event.getWorld().getSeed());
         if (initialize(event.getWorld())) return;
@@ -306,7 +312,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     public EngineTarget getTarget() {
         if (engine != null) return engine.getTarget();
 
-        return targetCache.aquire(() -> {
+        return targetCache.aquireOrThrow(() -> {
             IrisData data = IrisData.openRuntime(dataLocation);
             data.dump();
             data.clearLists();
@@ -425,6 +431,14 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     @Override
     public CompletableFuture<Void> closeAsync() {
         closing = true;
+        // Outside the exclusive-control block so every close path detaches the WorldInit
+        // listener, including a rollback where the world never materialized. Guarded: with no
+        // hosted plugin (unit tests, teardown) volmitPlugin() throws, and that must not stop
+        // the close.
+        try {
+            BukkitPlatform.volmitPlugin().unregisterListener(this);
+        } catch (Throwable ignored) {
+        }
         CompletableFuture<Void> future = new CompletableFuture<>();
         while (!closeFuture.compareAndSet(null, future)) {
             CompletableFuture<Void> existing = closeFuture.get();
@@ -458,6 +472,9 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         } catch (Throwable throwable) {
             future.completeExceptionally(throwable);
             closeFuture.compareAndSet(future, null);
+            // A failed close must stay retryable; leaving closing latched would permanently
+            // reject generation for a world that may still be loaded.
+            closing = false;
             return future;
         }
 
@@ -467,6 +484,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             } else {
                 future.completeExceptionally(throwable);
                 closeFuture.compareAndSet(future, null);
+                closing = false;
             }
         });
         return future;
@@ -787,7 +805,12 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             lastJigsawStudioRequestId = null;
             lastMode = null;
         }
-        StudioMode desired = getEngine().getDimension().getStudioMode();
+        // Gson nulls unknown enum names, so a pack carrying a removed or typo'd studioMode must not NPE the generator.
+        // Pack-declared studio modes are studio-only: a shipped pack that forgot to reset
+        // studioMode must never replace production terrain with a debug generator.
+        StudioMode desired = studio
+                ? java.util.Optional.ofNullable(getEngine().getDimension().getStudioMode()).orElse(StudioMode.NORMAL)
+                : StudioMode.NORMAL;
         if (studio && art.arcane.iris.core.runtime.ObjectStudioActivation.isActive(getEngine().getDimension().getLoadKey())) {
             desired = StudioMode.OBJECT_BUFFET;
         }

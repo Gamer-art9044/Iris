@@ -219,7 +219,10 @@ public class StudioSVC implements IrisService {
             validatePublishedPack(target);
 
             IrisData installedData;
-            boolean activeRuntime = previousData != null && !previousData.getEngines().isEmpty();
+            // Live engines only ever attach to detached openRuntime loaders, never to the
+            // dataLoaders-cached previousData — so the old previousData.getEngines() test was
+            // always empty and a running world's pack could be swapped with no restart.
+            boolean activeRuntime = IrisData.hasActiveEngines(target.toFile());
             if (previousData == null) {
                 createdData = IrisData.get(target.toFile());
                 installedData = createdData;
@@ -780,7 +783,7 @@ public class StudioSVC implements IrisService {
                         return generator.closeAsync().thenApply(ignored -> true);
                     })
                     .whenComplete((unloaded, throwable) -> {
-                        IrisToolbelt.endWorldMaintenance(world, "studio-disable");
+                        IrisToolbelt.endWorldMaintenance(world, "studio-disable", true);
                         if (throwable != null) {
                             IrisLogging.reportError("Failed to unload studio world \"" + world.getName()
                                     + "\" during disable cleanup; startup deletion remains queued.", throwable);
@@ -790,7 +793,7 @@ public class StudioSVC implements IrisService {
                         }
                     });
         } catch (Throwable e) {
-            IrisToolbelt.endWorldMaintenance(world, "studio-disable");
+            IrisToolbelt.endWorldMaintenance(world, "studio-disable", true);
             IrisLogging.reportError("Failed to unload studio world \"" + world.getName() + "\" during shutdown cleanup.", e);
         }
     }

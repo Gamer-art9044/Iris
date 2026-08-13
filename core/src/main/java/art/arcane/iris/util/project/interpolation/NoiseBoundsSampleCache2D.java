@@ -42,6 +42,7 @@ final class NoiseBoundsSampleCache2D {
     private int mask;
     private int resizeThreshold;
     private int size;
+    private boolean inUse;
 
     public NoiseBoundsSampleCache2D(int initialCapacity) {
         int minimumCapacity = Math.max(8, initialCapacity);
@@ -62,6 +63,23 @@ final class NoiseBoundsSampleCache2D {
         }
         Arrays.fill(states, (byte) 0);
         size = 0;
+    }
+
+    /**
+     * Bounds interpolation nests on one thread; a nested pass must never reuse the outer
+     * pass's table, since entries belong to one specific bound provider.
+     */
+    public boolean isInUse() {
+        return inUse;
+    }
+
+    public void beginUse() {
+        inUse = true;
+        clear();
+    }
+
+    public void endUse() {
+        inUse = false;
     }
 
     /**
@@ -99,7 +117,8 @@ final class NoiseBoundsSampleCache2D {
         }
 
         NoiseBounds bounds = provider.noise(sampleX, sampleZ);
-        insert(slot, xBitsValue, zBitsValue, bounds.min(), bounds.max());
+        // Recompute the slot: the provider call can mutate the table (clear/grow) via nesting.
+        insert(findSlot(xBitsValue, zBitsValue), xBitsValue, zBitsValue, bounds.min(), bounds.max());
         return bounds.min();
     }
 
@@ -112,7 +131,8 @@ final class NoiseBoundsSampleCache2D {
         }
 
         NoiseBounds bounds = provider.noise(sampleX, sampleZ);
-        insert(slot, xBitsValue, zBitsValue, bounds.min(), bounds.max());
+        // Recompute the slot: the provider call can mutate the table (clear/grow) via nesting.
+        insert(findSlot(xBitsValue, zBitsValue), xBitsValue, zBitsValue, bounds.min(), bounds.max());
         return bounds.max();
     }
 

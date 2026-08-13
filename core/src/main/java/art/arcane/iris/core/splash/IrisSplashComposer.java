@@ -24,7 +24,7 @@ public final class IrisSplashComposer {
                 prefix + style.label(" By: ") + style.value("Volmit Software (Arcane Arts)"),
                 prefix + style.label(" Web: ") + style.value("VolmitSoftware.com"),
                 prefix + style.label(" Server: ") + style.value(serverLine),
-                prefix + style.label(" Java: ") + style.value(String.valueOf(javaVersion())) + style.label(" | Date: ") + style.value(startupDate()),
+                prefix + style.label(" Java: ") + style.value(javaVersion() < 0 ? "unknown" : String.valueOf(javaVersion())) + style.label(" | Date: ") + style.value(startupDate()),
                 prefix + style.label(" Commit: ") + style.value(BuildConstants.COMMIT) + style.label("/") + style.value(BuildConstants.ENVIRONMENT),
                 "",
                 "",
@@ -54,17 +54,22 @@ public final class IrisSplashComposer {
         return lines;
     }
 
+    /**
+     * Total parser: java.version values like "25-ea" or "26-internal" have no dot but a
+     * non-numeric suffix, and a cosmetic banner must never be able to abort startup.
+     *
+     * @return the feature version, or -1 when it cannot be determined
+     */
     public static int javaVersion() {
-        String version = System.getProperty("java.version");
+        String version = System.getProperty("java.version", "");
         if (version.startsWith("1.")) {
-            version = version.substring(2, 3);
-        } else {
-            int dot = version.indexOf('.');
-            if (dot != -1) {
-                version = version.substring(0, dot);
-            }
+            version = version.length() > 2 ? version.substring(2, 3) : "";
         }
-        return Integer.parseInt(version);
+        int end = 0;
+        while (end < version.length() && Character.isDigit(version.charAt(end))) {
+            end++;
+        }
+        return end == 0 ? -1 : Integer.parseInt(version, 0, end, 10);
     }
 
     public static String releaseTrain(String version) {

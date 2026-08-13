@@ -199,14 +199,17 @@ public class IrisPregenerator {
     }
 
     public void start() {
-        init();
-        task.iterateAllChunks((_a, _b) -> totalChunks.incrementAndGet());
-        startTime.set(M.ms());
-        ticker.start();
-        checkRegions();
         PrecisionStopwatch p = PrecisionStopwatch.start();
         boolean completed = false;
+        // Everything runs inside the try: an early throw from init/checkRegions must still
+        // reach shutdown(), or the ticker/monitor threads leak and listener.onClose never
+        // fires — leaving a phantom job that suppresses spawns and blocks future pregens.
         try {
+            init();
+            task.iterateAllChunks((_a, _b) -> totalChunks.incrementAndGet());
+            startTime.set(M.ms());
+            ticker.start();
+            checkRegions();
             int[] regionBounds = task.regionBounds();
             generator.onRegionBounds(regionBounds[0], regionBounds[1], regionBounds[2], regionBounds[3]);
             task.iterateRegions((x, z) -> visitRegion(x, z, true));
@@ -371,10 +374,13 @@ public class IrisPregenerator {
 
                 generator.generateChunk(xx, zz, listener);
             });
-            generator.onRegionSubmitted(x, z);
         }
 
         if (hit) {
+            // Exactly once per visited region, on BOTH branches: a cache-completed region that
+            // never releases its sentinel wedges neighbor eviction for the whole resume
+            // frontier (allNeighborsDrained can never pass around it).
+            generator.onRegionSubmitted(x, z);
             listener.onRegionGenerated(x, z);
 
             if (saveLatch.flip()) {
@@ -391,7 +397,9 @@ public class IrisPregenerator {
             }
 
             generatedRegions.add(pos);
-            checkRegions();
+            // No checkRegions() here: re-spiraling every region after every completed region
+            // was O(regions^2) dead work on the submitter thread (result discarded, and the
+            // only side effect was CachedPregenMethod faulting plates against eviction).
         }
     }
 

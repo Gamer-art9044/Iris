@@ -42,7 +42,7 @@ public class ObjectTargetHandler implements DirectorParameterHandler<String> {
                 collectPrefixes(k, prefixes);
             }
         } else {
-            File packsFolder = IrisPlatforms.get().dataFolder("packs");
+            File packsFolder = IrisPlatforms.get().packsFolder();
             for (File pack : PackDirectoryResolver.listVisiblePackDirectories(packsFolder)) {
                 IrisData d = IrisData.get(pack);
                 for (String k : d.getObjectLoader().getPossibleKeys()) {

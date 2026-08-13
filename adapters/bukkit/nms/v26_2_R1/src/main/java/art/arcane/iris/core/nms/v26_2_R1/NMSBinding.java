@@ -55,6 +55,7 @@ import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.shorts.ShortList;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.agent.builder.ResettableClassFileTransformer;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.minecraft.core.BlockPos;
@@ -172,6 +173,7 @@ public class NMSBinding implements INMSBinding {
     private final BlockData AIR = Material.AIR.createBlockData();
     private final AtomicCache<MCAIdMap<net.minecraft.world.level.biome.Biome>> biomeMapCache = new AtomicCache<>();
     private final AtomicBoolean injected = new AtomicBoolean();
+    private volatile ResettableClassFileTransformer serverLevelTransformer;
     private final AtomicCache<MCAIdMapper<BlockState>> registryCache = new AtomicCache<>();
     private final AtomicCache<MCAPalette<BlockState>> globalCache = new AtomicCache<>();
     private final AtomicCache<RegistryAccess> registryAccess = new AtomicCache<>();
@@ -1523,7 +1525,7 @@ public class NMSBinding implements INMSBinding {
             }
             try {
                 IrisLogging.info("Injecting Bukkit");
-                new AgentBuilder.Default()
+                serverLevelTransformer = new AgentBuilder.Default()
                         .disableClassFormatChanges()
                         .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
                         .type(ElementMatchers.is(ServerLevel.class))
@@ -1546,6 +1548,17 @@ public class NMSBinding implements INMSBinding {
             } catch (Throwable e) {
                 IrisLogging.error(C.RED + "Failed to inject Bukkit");
                 e.printStackTrace();
+                // The ServerLevel transformer may already be installed when the ChunkAccess
+                // redefine throws; remove it or a retry would stack a second one and orphan
+                // this one permanently.
+                ResettableClassFileTransformer partial = serverLevelTransformer;
+                serverLevelTransformer = null;
+                if (partial != null) {
+                    try {
+                        partial.reset(Agent.getInstrumentation(), AgentBuilder.RedefinitionStrategy.RETRANSFORMATION);
+                    } catch (Throwable ignored) {
+                    }
+                }
                 return false;
             }
         }
@@ -1559,6 +1572,24 @@ public class NMSBinding implements INMSBinding {
             Agent.getInstrumentation().retransformClasses(ServerLevel.class);
         } catch (Throwable e) {
             IrisLogging.error(C.RED + "Failed to re-apply ServerLevel injection");
+        }
+    }
+
+    @Override
+    public void uninjectBukkit() {
+        synchronized (injected) {
+            ResettableClassFileTransformer transformer = serverLevelTransformer;
+            serverLevelTransformer = null;
+            injected.set(false);
+            if (transformer == null) {
+                return;
+            }
+            try {
+                transformer.reset(Agent.getInstrumentation(), AgentBuilder.RedefinitionStrategy.RETRANSFORMATION);
+            } catch (Throwable e) {
+                IrisLogging.error(C.RED + "Failed to remove ServerLevel injection");
+                e.printStackTrace();
+            }
         }
     }
 
@@ -1624,24 +1655,56 @@ public class NMSBinding implements INMSBinding {
             if (dimensionKey == null)
                 return;
 
+            // This advice is inlined into every ServerLevel construction on the server. Until a
+            // world is proven Iris-owned, every failure must fail OPEN (keep the vanilla stem):
+            // Iris being unloaded or half-loaded must never break other plugins' world creation.
+            String levelId;
+            ClassLoader pluginClassLoader;
+            Class<?> generatorType;
+            Class<?> stagingType;
             try {
-                String levelId = dimensionKey.identifier().getPath();
+                levelId = dimensionKey.identifier().getPath();
                 if (levelId == null || levelId.isBlank()) {
                     return;
                 }
 
-                ClassLoader pluginClassLoader = Bukkit.getPluginManager().getPlugin("Iris").getClass().getClassLoader();
-                Class<?> generatorType = Class.forName("art.arcane.iris.engine.platform.PlatformChunkGenerator", true, pluginClassLoader);
+                org.bukkit.plugin.Plugin irisPlugin = Bukkit.getPluginManager().getPlugin("Iris");
+                if (irisPlugin == null) {
+                    return;
+                }
+                pluginClassLoader = irisPlugin.getClass().getClassLoader();
+                generatorType = Class.forName("art.arcane.iris.engine.platform.PlatformChunkGenerator", true, pluginClassLoader);
+                stagingType = Class.forName("art.arcane.iris.core.lifecycle.WorldLifecycleStaging", true, pluginClassLoader);
+            } catch (Throwable ignored) {
+                // Iris absent or half-loaded: fail OPEN for a world we cannot prove ours.
+                return;
+            }
+
+            // From here Iris is present and its classes resolve; a failure resolving the
+            // staged generator must fail LOUD — silently handing a possibly-staged Iris world
+            // the vanilla stem corrupts generation.
+            ChunkGenerator gen = null;
+            try {
                 Object generator = generatorType.isInstance(constructorGenerator) ? constructorGenerator : null;
                 if (generator == null) {
-                    generator = Class.forName("art.arcane.iris.core.lifecycle.WorldLifecycleStaging", true, pluginClassLoader)
+                    generator = stagingType
                             .getDeclaredMethod("consumeStemGenerator", String.class)
                             .invoke(null, levelId);
                 }
-                if (!(generator instanceof ChunkGenerator gen) || !gen.getClass().getPackageName().startsWith("art.arcane.iris")) {
-                    return;
+                if (generator instanceof ChunkGenerator owned && owned.getClass().getPackageName().startsWith("art.arcane.iris")) {
+                    gen = owned;
                 }
+            } catch (Throwable e) {
+                throw new RuntimeException("Iris failed to resolve the staged world generator",
+                        e instanceof InvocationTargetException ex ? ex.getCause() : e);
+            }
+            if (gen == null) {
+                return;
+            }
 
+            // Past the ownership gate the world is Iris-owned; silently handing back the
+            // vanilla stem would corrupt generation, so failures from here rethrow.
+            try {
                 Object bindings = Class.forName("art.arcane.iris.core.nms.INMS", true, pluginClassLoader)
                         .getDeclaredMethod("get")
                         .invoke(null);

@@ -207,6 +207,7 @@ public class IrisCreator {
 
         World world = null;
         boolean bukkitRegistered = false;
+        PlatformChunkGenerator stagedGenerator = null;
         try {
             reportStudioProgress(0.08D, "resolve_dimension");
             reportStudioProgress(0.16D, "prepare_world_pack");
@@ -252,6 +253,7 @@ public class IrisCreator {
             if (access == null) {
                 throw new IrisException("Access is null. Something bad happened.");
             }
+            stagedGenerator = access;
             HudSlotClaim createClaim = !benchmark && studioProgressConsumer == null && sender.isPlayer()
                     ? openLoaderClaim("iris:world-create")
                     : null;
@@ -332,7 +334,7 @@ public class IrisCreator {
             }
             return world;
         } catch (Throwable failure) {
-            rollbackWorldCreation(worldKey, world, dimensionRoot, bukkitRegistered, failure);
+            rollbackWorldCreation(worldKey, world, stagedGenerator, dimensionRoot, bukkitRegistered, failure);
             if (failure instanceof IrisException irisException) {
                 throw irisException;
             }
@@ -655,12 +657,23 @@ public class IrisCreator {
     private void rollbackWorldCreation(
             NamespacedKey worldKey,
             World createdWorld,
+            PlatformChunkGenerator stagedGenerator,
             File dimensionRoot,
             boolean bukkitRegistered,
             Throwable failure
     ) {
         World activeWorld = createdWorld == null ? WorldIdentity.resolve(worldKey).orElse(null) : createdWorld;
         boolean safeToDelete = activeWorld != null || !containsTimeout(failure);
+        if (activeWorld == null && stagedGenerator != null) {
+            // The world never materialized, so no unload path will ever close the staged
+            // generator; without this it stays registered on WorldInitEvent and attaches a
+            // second engine when a same-name world is created later.
+            try {
+                stagedGenerator.closeAsync().get(ROLLBACK_PHASE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (Throwable rollbackFailure) {
+                failure.addSuppressed(unwrapFailure(rollbackFailure));
+            }
+        }
         if (activeWorld != null) {
             IrisToolbelt.beginWorldMaintenance(activeWorld, "world-create-rollback", true);
             try {
@@ -682,6 +695,11 @@ public class IrisCreator {
                 if (safeToDelete && generator != null) {
                     generator.closeAsync().get(ROLLBACK_PHASE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 }
+                // A staged generator the world never bound (e.g. the creation failed after a
+                // retry re-staged a fresh one) has no unload path either.
+                if (stagedGenerator != null && stagedGenerator != generator) {
+                    stagedGenerator.closeAsync().get(ROLLBACK_PHASE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                }
             } catch (Throwable rollbackFailure) {
                 Throwable cause = unwrapFailure(rollbackFailure);
                 failure.addSuppressed(cause);
@@ -690,7 +708,7 @@ public class IrisCreator {
                     ServerConfigurator.restart("World creation rollback timed out for \"" + name + "\".");
                 }
             } finally {
-                IrisToolbelt.endWorldMaintenance(activeWorld, "world-create-rollback");
+                IrisToolbelt.endWorldMaintenance(activeWorld, "world-create-rollback", true);
             }
         }
 

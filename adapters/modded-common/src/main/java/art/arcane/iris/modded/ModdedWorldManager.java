@@ -565,9 +565,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
             if (worldY <= level.getMinY() || worldY >= level.getMaxY()) {
                 continue;
             }
-            if (!LootResolver.oneIn(entityRng, entry.getRarity())) {
-                continue;
-            }
+            // Rarity is applied exactly once, as pool weighting in rarityPick - never re-rolled per position (Bukkit parity).
             if (!lightAllowed(spawner, level, worldX, worldY, worldZ)) {
                 continue;
             }
@@ -605,9 +603,7 @@ public final class ModdedWorldManager implements EngineWorldManager {
         int worldZ = position.getZ();
         int spawned = 0;
         for (int i = 0; i < count; i++) {
-            if (!LootResolver.oneIn(entityRng, entry.getRarity())) {
-                continue;
-            }
+            // Rarity is applied exactly once, as pool weighting in rarityPick - never re-rolled per position (Bukkit parity).
             if (!lightAllowed(spawner, level, worldX, worldY, worldZ)) {
                 continue;
             }
@@ -774,18 +770,8 @@ public final class ModdedWorldManager implements EngineWorldManager {
     }
 
     private IrisEntitySpawn rarityPick(KList<IrisEntitySpawn> entries) {
-        int totalRarity = 0;
-        for (IrisEntitySpawn entry : entries) {
-            totalRarity += IRare.get(entry);
-        }
-        if (totalRarity <= 0) {
-            return entries.getRandom();
-        }
-        KList<IrisEntitySpawn> weighted = new KList<>();
-        for (IrisEntitySpawn entry : entries) {
-            weighted.addMultiple(entry, totalRarity / IRare.get(entry));
-        }
-        return weighted.getRandom();
+        KList<IrisEntitySpawn> weighted = IRare.expandWeighted(entries);
+        return weighted.isEmpty() ? entries.getRandom() : weighted.getRandom();
     }
 
     private static long pack(int x, int z) {

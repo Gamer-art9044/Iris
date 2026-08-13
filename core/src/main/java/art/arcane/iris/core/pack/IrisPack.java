@@ -154,7 +154,7 @@ public class IrisPack {
      * @return the file path
      */
     public static File packsPack(String name) {
-        return IrisPlatforms.get().dataFolderNoCreate(StudioSVC.WORKSPACE_NAME, name);
+        return IrisPlatforms.get().packsFolderNoCreate(name);
     }
 
     private static KList<File> collectFiles(File f, String fileExtension) {

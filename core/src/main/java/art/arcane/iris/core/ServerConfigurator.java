@@ -892,7 +892,7 @@ public class ServerConfigurator {
 
     public static Stream<IrisData> allPacks() {
         Stream<File> locals = PackDirectoryResolver.listVisiblePackDirectories(
-                IrisPlatforms.get().dataFolder("packs")
+                IrisPlatforms.get().packsFolder()
         ).stream();
         return Stream.concat(locals
                 .filter(base -> {

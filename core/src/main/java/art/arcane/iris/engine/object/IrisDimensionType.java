@@ -30,6 +30,12 @@ public final class IrisDimensionType {
     private final int height;
     private final int minY;
 
+    public static final int MIN_HEIGHT = 16;
+    public static final int MAX_HEIGHT = 4064;
+    public static final int MIN_MIN_Y = -2032;
+    public static final int MAX_MIN_Y = 2031;
+    public static final int HEIGHT_STEP = 16;
+
     public IrisDimensionType(
             @NonNull IDataFixer.Dimension base,
             @NonNull IrisDimensionTypeOptions options,
@@ -39,10 +45,10 @@ public final class IrisDimensionType {
     ) {
         if (logicalHeight > height) throw new IllegalArgumentException("Logical height cannot be greater than height");
         if (logicalHeight < 0) throw new IllegalArgumentException("Logical height cannot be less than zero");
-        if (height < 16 || height > 4064 ) throw new IllegalArgumentException("Height must be between 16 and 4064");
-        if ((height & 15) != 0) throw new IllegalArgumentException("Height must be a multiple of 16");
-        if (minY < -2032 || minY > 2031) throw new IllegalArgumentException("Min Y must be between -2032 and 2031");
-        if ((minY & 15) != 0) throw new IllegalArgumentException("Min Y must be a multiple of 16");
+        if (height < MIN_HEIGHT || height > MAX_HEIGHT) throw new IllegalArgumentException("Height must be between 16 and 4064");
+        if ((height & (HEIGHT_STEP - 1)) != 0) throw new IllegalArgumentException("Height must be a multiple of 16");
+        if (minY < MIN_MIN_Y || minY > MAX_MIN_Y) throw new IllegalArgumentException("Min Y must be between -2032 and 2031");
+        if ((minY & (HEIGHT_STEP - 1)) != 0) throw new IllegalArgumentException("Min Y must be a multiple of 16");
 
         this.base = base;
         this.options = options;

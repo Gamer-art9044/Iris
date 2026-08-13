@@ -83,11 +83,8 @@ public class IrisAxisRotationClamp {
         }
 
         if (isUnlimited()) {
-            if (interval < 1) {
-                interval = 1;
-            }
-
-            return Math.toRadians((interval * (Math.ceil(Math.abs((rng % 360D) / interval)))) % 360D);
+            double resolvedInterval = interval < 1 ? 1 : interval;
+            return Math.toRadians((resolvedInterval * (Math.ceil(Math.abs((rng % 360D) / resolvedInterval)))) % 360D);
         }
 
         if (min == max && min != 0) {

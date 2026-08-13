@@ -161,7 +161,9 @@ public final class NativeStructureVegetationClearer {
         if (state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES)) {
             return true;
         }
-        String path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        // Field reads instead of a registry byValue map hit — this predicate runs per block
+        // probe on the hottest native-structure scans.
+        String path = state.getBlock().builtInRegistryHolder().key().identifier().getPath();
         return path.endsWith("_log") || path.endsWith("_wood")
                 || path.endsWith("_stem") || path.endsWith("_hyphae")
                 || path.endsWith("_leaves");

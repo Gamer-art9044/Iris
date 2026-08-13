@@ -6,7 +6,6 @@ import art.arcane.iris.core.safeguard.task.Tasks;
 import art.arcane.iris.core.safeguard.task.ValueWithDiagnostics;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.format.C;
-import art.arcane.iris.util.common.scheduling.J;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,7 +14,6 @@ import java.util.List;
 import java.util.Map;
 
 public final class IrisSafeguard {
-    private static volatile boolean forceShutdown = false;
     private static Map<Task, ValueWithDiagnostics<Mode>> results = Collections.emptyMap();
     private static Map<String, String> context = Collections.emptyMap();
     private static Map<String, List<String>> attachment = Collections.emptyMap();
@@ -100,10 +98,6 @@ public final class IrisSafeguard {
         }
     }
 
-    public static boolean isForceShutdown() {
-        return forceShutdown;
-    }
-
     private static void warning() {
         IrisLogging.warn(C.GOLD + "Iris is running in Warning Mode");
         IrisLogging.warn(C.GRAY + "Some startup checks need attention. Review the messages above for tuning suggestions.");
@@ -115,9 +109,9 @@ public final class IrisSafeguard {
         IrisLogging.error(C.DARK_RED + "Iris is running in Danger Mode");
         IrisLogging.error("");
         IrisLogging.error(C.DARK_GRAY + "--==<" + C.RED + " IMPORTANT " + C.DARK_GRAY + ">==--");
-        IrisLogging.error("Critical startup checks failed. Iris will continue startup in 10 seconds.");
-        IrisLogging.error("Review and resolve the errors above as soon as possible.");
-        J.sleep(10000L);
+        IrisLogging.error("Critical startup checks failed. Review and resolve the errors above as soon as possible.");
+        // No startup sleep: blocking the boot thread protected nothing — world creation and
+        // player admission are already gated by IrisStartupValidation.
         IrisLogging.info("");
     }
 }

@@ -36,7 +36,7 @@ public abstract class RegistrantHandler<T extends IrisRegistrant> implements Dir
         }
 
         for (File i : PackDirectoryResolver.listVisiblePackDirectories(
-                IrisPlatforms.get().dataFolder("packs"))) {
+                IrisPlatforms.get().packsFolder())) {
             data = IrisData.get(i);
             for (T j : data.getLoader(type).loadAll(data.getLoader(type).getPossibleKeys())) {
                 if (known.add(j.getLoadKey()))

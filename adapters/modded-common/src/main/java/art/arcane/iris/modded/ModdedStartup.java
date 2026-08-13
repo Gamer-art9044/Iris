@@ -59,7 +59,34 @@ public final class ModdedStartup {
         if (!PREPARED.compareAndSet(false, true)) {
             return;
         }
+        reportLegacyPacksDirectory();
         validateAllPacks();
+    }
+
+    /**
+     * Older builds mkdir'd (and stale guidance sometimes populated) config/iris/packs, but modded
+     * packs live under config/irisworldgen/packs. Never auto-move user content: warn loudly when
+     * the legacy directory holds packs, and quietly remove it when it is empty.
+     */
+    private static void reportLegacyPacksDirectory() {
+        try {
+            File legacy = ModdedEngineBootstrap.loader().configDir().resolve("iris").resolve("packs").toFile();
+            if (!legacy.isDirectory()) {
+                return;
+            }
+            if (!PackDirectoryResolver.listVisiblePackDirectories(legacy).isEmpty()) {
+                File real = art.arcane.iris.spi.IrisPlatforms.get().packsFolderNoCreate();
+                LOGGER.warn("Iris found packs under the legacy directory {} - modded packs load from {} only. Move them there.",
+                        legacy.getAbsolutePath(), real.getAbsolutePath());
+                return;
+            }
+            String[] entries = legacy.list();
+            if (entries == null || entries.length == 0) {
+                legacy.delete();
+            }
+        } catch (Throwable e) {
+            LOGGER.debug("Iris legacy packs directory check failed", e);
+        }
     }
 
     /**

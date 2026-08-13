@@ -83,6 +83,17 @@ public class MantleCarvingComponent extends IrisMantleComponent {
     }
 
     @Override
+    public void hotload() {
+        super.hotload();
+        // Hotload swaps in fresh IrisCaveProfile instances (identity keys), so retained
+        // entries would strand a full carver set pinning the closed IrisData per reload.
+        // Carvers rebuild deterministically from the carve seed, so output is unchanged.
+        synchronized (profileCarverLock) {
+            profileCarvers = new IdentityHashMap<>();
+        }
+    }
+
+    @Override
     public void generateLayer(MantleWriter writer, int x, int z, ChunkContext context) {
         IrisComplex complex = context.getComplex();
         IrisDimensionCarvingResolver.State resolverState = new IrisDimensionCarvingResolver.State();
@@ -259,15 +270,16 @@ public class MantleCarvingComponent extends IrisMantleComponent {
                 continue;
             }
 
-            SimdKernels kernels = SimdSupport.kernels();
-            double totalWeight = kernels.sum(weights, weights.length);
-            double maxWeight = kernels.max(weights, weights.length);
+            // averageWeight ranks and orders carve passes, so it must be bit-identical across
+            // installations: kernels.sum reassociates FP addition under the vector kernel,
+            // making profile order depend on a JVM flag. max() is order-independent and safe.
+            double maxWeight = SimdSupport.kernels().max(weights, weights.length);
 
             if (maxWeight < MIN_WEIGHT) {
                 continue;
             }
 
-            double averageWeight = totalWeight / CHUNK_AREA;
+            double averageWeight = computeAverageWeight(weights);
             columnWeightedProfiles.add(new WeightedProfile(profile, weights, averageWeight, null, columnWeightedProfiles.size()));
         }
 

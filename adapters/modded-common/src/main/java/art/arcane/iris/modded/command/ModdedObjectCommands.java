@@ -291,30 +291,35 @@ public final class ModdedObjectCommands {
         }
         int[] tilesSkipped = {0};
         int[] tilesSaved = {0};
+        // capture() must stay on the server thread (getBlockState/getBlockEntity are not
+        // async-safe), but the disk write of a local, unshared object is not tick work.
         IrisObject object = capture(level, min, max, w, h, d, tilesSkipped, tilesSaved);
-        File parent = file.getParentFile();
-        if (parent != null) {
-            parent.mkdirs();
-        }
-        try {
-            object.write(file);
-        } catch (IOException e) {
-            LOGGER.error("Iris object save failed for {}", file.getAbsolutePath(), e);
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_FAILED_SAVE_OBJECT, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
-            return 0;
-        }
-        StringBuilder tileNote = new StringBuilder();
-        if (tilesSaved[0] > 0) {
-            tileNote.append(" (").append(tilesSaved[0]).append(" tile entity state(s) captured");
-            if (tilesSkipped[0] > 0) {
-                tileNote.append(", ").append(tilesSkipped[0]).append(" failed");
+        MinecraftServer server = source.getServer();
+        J.a(() -> {
+            File parent = file.getParentFile();
+            if (parent != null) {
+                parent.mkdirs();
             }
-            tileNote.append(")");
-        } else if (tilesSkipped[0] > 0) {
-            tileNote.append(" (").append(tilesSkipped[0]).append(" tile state(s) could not be captured)");
-        }
-        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_SAVED_OBJECTS_IOB_X_X_BLOCK_S, MessageArgument.untrusted("value", engine.getData().getDataFolder().getName()), MessageArgument.untrusted("name", name), MessageArgument.untrusted("w", w), MessageArgument.untrusted("h", h), MessageArgument.untrusted("d", d), MessageArgument.untrusted("value2", object.getBlocks().size()), MessageArgument.untrusted("tileNote", tileNote)));
-        LOGGER.info("Iris object save: {} {}x{}x{} blocks={} tilesSaved={} tilesSkipped={} -> {}", name, w, h, d, object.getBlocks().size(), tilesSaved[0], tilesSkipped[0], file.getAbsolutePath());
+            try {
+                object.write(file);
+            } catch (IOException e) {
+                LOGGER.error("Iris object save failed for {}", file.getAbsolutePath(), e);
+                server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_FAILED_SAVE_OBJECT, MessageArgument.untrusted("value", String.valueOf(e.getMessage())))));
+                return;
+            }
+            StringBuilder tileNote = new StringBuilder();
+            if (tilesSaved[0] > 0) {
+                tileNote.append(" (").append(tilesSaved[0]).append(" tile entity state(s) captured");
+                if (tilesSkipped[0] > 0) {
+                    tileNote.append(", ").append(tilesSkipped[0]).append(" failed");
+                }
+                tileNote.append(")");
+            } else if (tilesSkipped[0] > 0) {
+                tileNote.append(" (").append(tilesSkipped[0]).append(" tile state(s) could not be captured)");
+            }
+            server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_SAVED_OBJECTS_IOB_X_X_BLOCK_S, MessageArgument.untrusted("value", engine.getData().getDataFolder().getName()), MessageArgument.untrusted("name", name), MessageArgument.untrusted("w", w), MessageArgument.untrusted("h", h), MessageArgument.untrusted("d", d), MessageArgument.untrusted("value2", object.getBlocks().size()), MessageArgument.untrusted("tileNote", tileNote))));
+            LOGGER.info("Iris object save: {} {}x{}x{} blocks={} tilesSaved={} tilesSkipped={} -> {}", name, w, h, d, object.getBlocks().size(), tilesSaved[0], tilesSkipped[0], file.getAbsolutePath());
+        });
         return 1;
     }
 

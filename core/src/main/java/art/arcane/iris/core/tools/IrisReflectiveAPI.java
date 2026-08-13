@@ -27,15 +27,18 @@ public class IrisReflectiveAPI {
         WorldMaintenance.retainMantleDataForSlice(classname);
     }
 
+    // These delegate to IrisToolbelt so the caller's WORLD Y is rebased into mantle space
+    // (0..worldHeight). Raw pass-through silently no-opped below Y=0 and read the wrong
+    // cell everywhere else, diverging from IrisToolbelt and IrisModdedAPI semantics.
     public static void setMantleData(World world, int x, int y, int z, Object data) {
-        IrisToolbelt.access(world).getEngine().getMantle().getMantle().set(x, y, z, data);
+        IrisToolbelt.setMantleData(world, x, y, z, data);
     }
 
     public static void deleteMantleData(World world, int x, int y, int z, Class c) {
-        IrisToolbelt.access(world).getEngine().getMantle().getMantle().remove(x, y, z, c);
+        IrisToolbelt.deleteMantleData(world, x, y, z, c);
     }
 
     public static Object getMantleData(World world, int x, int y, int z, Class c) {
-        return IrisToolbelt.access(world).getEngine().getMantle().getMantle().get(x, y, z, c);
+        return IrisToolbelt.getMantleData(world, x, y, z, c);
     }
 }

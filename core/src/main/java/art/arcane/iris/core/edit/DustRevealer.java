@@ -36,7 +36,6 @@ import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
-import lombok.Data;
 import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.World;
@@ -47,74 +46,83 @@ import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 
+import java.util.ArrayDeque;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.function.Supplier;
 
-@SuppressWarnings("ALL")
-@Data
 public class DustRevealer {
-    private final Engine engine;
-    private final World world;
-    private final BlockPosition block;
-    private final String key;
-    private final KList<BlockPosition> hits;
+    // Matches the modded twin (ModdedDustRevealer) so both platforms truncate identically.
+    private static final int MAX_HITS = 2_048;
+    private static final int PARTICLE_BATCH_SIZE = 64;
 
-    public DustRevealer(Engine engine, World world, BlockPosition block, String key, KList<BlockPosition> hits) {
-        this.engine = engine;
-        this.world = world;
-        this.block = block;
-        this.key = key;
-        this.hits = hits;
+    /**
+     * Bounded, single-threaded flood fill over the object's placement key, followed by batched
+     * particle playback on the owning threads. The previous shape recursively spawned one
+     * scheduler task + one burst task per matched block, all mutating one unsynchronized
+     * ArrayList and sleep-spinning MultiBurst workers — unbounded fan-out on large objects.
+     */
+    private static void reveal(Engine engine, World world, BlockPosition origin, String key) {
+        KList<BlockPosition> hits = new KList<>();
+        Set<BlockPosition> visited = new HashSet<>();
+        ArrayDeque<BlockPosition> frontier = new ArrayDeque<>();
+        visited.add(origin);
+        frontier.add(origin);
+        hits.add(origin);
+        int minY = world.getMinHeight();
+        int maxY = world.getMaxHeight();
 
-        Location blockLocation = block.toBlock(world).getLocation();
-        Runnable revealTask = () -> {
-            BlockSignal.of(world, block.getX(), block.getY(), block.getZ(), 10);
+        try {
+            search:
+            while (!frontier.isEmpty()) {
+                BlockPosition at = frontier.poll();
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            if (dx == 0 && dy == 0 && dz == 0) {
+                                continue;
+                            }
+                            BlockPosition next = new BlockPosition(at.getX() + dx, at.getY() + dy, at.getZ() + dz);
+                            if (next.getY() < minY || next.getY() >= maxY || !visited.add(next)) {
+                                continue;
+                            }
+                            if (key.equals(engine.getObjectPlacementKey(next.getX(), next.getY() - minY, next.getZ()))) {
+                                hits.add(next);
+                                frontier.add(next);
+                                if (hits.size() >= MAX_HITS) {
+                                    break search;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
+        }
+
+        revealBatch(world, hits, 0);
+    }
+
+    private static void revealBatch(World world, KList<BlockPosition> hits, int from) {
+        if (from >= hits.size()) {
+            return;
+        }
+        int to = Math.min(from + PARTICLE_BATCH_SIZE, hits.size());
+        Runnable batch = () -> {
+            for (int i = from; i < to; i++) {
+                BlockPosition p = hits.get(i);
+                BlockSignal.of(world, p.getX(), p.getY(), p.getZ(), 10);
+            }
+            BlockPosition first = hits.get(from);
             if (M.r(0.25)) {
-                world.playSound(block.toBlock(world).getLocation(), Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1f, RNG.r.f(0.2f, 2f));
+                world.playSound(first.toBlock(world).getLocation(), Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1f, RNG.r.f(0.2f, 2f));
             }
-            J.a(() -> {
-                while (BlockSignal.active.get() > 128) {
-                    J.sleep(5);
-                }
-
-                try {
-                    is(new BlockPosition(block.getX() + 1, block.getY(), block.getZ()));
-                    is(new BlockPosition(block.getX() - 1, block.getY(), block.getZ()));
-                    is(new BlockPosition(block.getX(), block.getY() + 1, block.getZ()));
-                    is(new BlockPosition(block.getX(), block.getY() - 1, block.getZ()));
-                    is(new BlockPosition(block.getX(), block.getY(), block.getZ() + 1));
-                    is(new BlockPosition(block.getX(), block.getY(), block.getZ() - 1));
-                    is(new BlockPosition(block.getX() + 1, block.getY(), block.getZ() + 1));
-                    is(new BlockPosition(block.getX() + 1, block.getY(), block.getZ() - 1));
-                    is(new BlockPosition(block.getX() - 1, block.getY(), block.getZ() + 1));
-                    is(new BlockPosition(block.getX() - 1, block.getY(), block.getZ() - 1));
-                    is(new BlockPosition(block.getX() + 1, block.getY() + 1, block.getZ()));
-                    is(new BlockPosition(block.getX() + 1, block.getY() - 1, block.getZ()));
-                    is(new BlockPosition(block.getX() - 1, block.getY() + 1, block.getZ()));
-                    is(new BlockPosition(block.getX() - 1, block.getY() - 1, block.getZ()));
-                    is(new BlockPosition(block.getX(), block.getY() + 1, block.getZ() - 1));
-                    is(new BlockPosition(block.getX(), block.getY() + 1, block.getZ() + 1));
-                    is(new BlockPosition(block.getX(), block.getY() - 1, block.getZ() - 1));
-                    is(new BlockPosition(block.getX(), block.getY() - 1, block.getZ() + 1));
-                    is(new BlockPosition(block.getX() - 1, block.getY() + 1, block.getZ() - 1));
-                    is(new BlockPosition(block.getX() - 1, block.getY() + 1, block.getZ() + 1));
-                    is(new BlockPosition(block.getX() - 1, block.getY() - 1, block.getZ() - 1));
-                    is(new BlockPosition(block.getX() - 1, block.getY() - 1, block.getZ() + 1));
-                    is(new BlockPosition(block.getX() + 1, block.getY() + 1, block.getZ() - 1));
-                    is(new BlockPosition(block.getX() + 1, block.getY() + 1, block.getZ() + 1));
-                    is(new BlockPosition(block.getX() + 1, block.getY() - 1, block.getZ() - 1));
-                    is(new BlockPosition(block.getX() + 1, block.getY() - 1, block.getZ() + 1));
-                } catch (Throwable e) {
-                    IrisLogging.reportError(e);
-                    e.printStackTrace();
-                }
-            });
+            revealBatch(world, hits, to);
         };
-        int delay = RNG.r.i(2, 8);
-        if (!J.runAt(blockLocation, revealTask, delay)) {
-            if (!J.isFolia()) {
-                J.s(revealTask, delay);
-            }
+        Location at = hits.get(from).toBlock(world).getLocation();
+        if (!J.runAt(at, batch, 1) && !J.isFolia()) {
+            J.s(batch, 1);
         }
     }
 
@@ -137,9 +145,7 @@ public class DustRevealer {
                         RuntimeUiMessages.DUST_FOUND_OBJECT,
                         MessageArgument.untrusted("object", a)
                 ));
-                J.a(() -> {
-                    new DustRevealer(access, world, new BlockPosition(block.getX(), block.getY(), block.getZ()), a, new KList<>());
-                });
+                J.a(() -> reveal(access, world, new BlockPosition(block.getX(), block.getY(), block.getZ()), a));
             }
         }
     }
@@ -352,24 +358,6 @@ public class DustRevealer {
         } catch (Throwable e) {
             IrisLogging.reportError(e);
         }
-    }
-
-    private boolean is(BlockPosition a) {
-        if (a.getY() < world.getMinHeight() || a.getY() >= world.getMaxHeight()) {
-            return false;
-        }
-        int betterY = a.getY() - world.getMinHeight();
-        if (isValidTry(a) && engine.getObjectPlacementKey(a.getX(), betterY, a.getZ()) != null && engine.getObjectPlacementKey(a.getX(), betterY, a.getZ()).equals(key)) {
-            hits.add(a);
-            new DustRevealer(engine, world, a, key, hits);
-            return true;
-        }
-
-        return false;
-    }
-
-    private boolean isValidTry(BlockPosition b) {
-        return !hits.contains(b);
     }
 
     private record DustLine(String text, boolean emphasis) {

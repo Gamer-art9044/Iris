@@ -426,6 +426,10 @@ public class IrisComplex implements DataProvider {
         double fz = (z - gz) / grid;
 
         long b00 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx, gz);
+        if (fx == 0D && fz == 0D) {
+            return new NoiseBounds(boundsLow(b00), boundsHigh(b00));
+        }
+
         long b10 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx + grid, gz);
         long b01 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx, gz + grid);
         long b11 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx + grid, gz + grid);

@@ -48,6 +48,19 @@ public class IrisComplexGridBoundsCacheTest {
         assertEquals(1, interpolator.getInvocations());
     }
 
+    @Test
+    public void alignedGridSampleUsesOnlyTheContributingCorner() throws Exception {
+        IrisComplex complex = createComplex();
+        Method gridSampleBounds = gridSampleBoundsMethod();
+        CountingInterpolator interpolator = new CountingInterpolator(3.5D, 7.25D);
+
+        NoiseBounds bounds = invokeGridSampleBounds(complex, gridSampleBounds, interpolator, 64D, -32D);
+
+        assertEquals(3.5F, bounds.min(), 0D);
+        assertEquals(7.25F, bounds.max(), 0D);
+        assertEquals(1, interpolator.getInvocations());
+    }
+
     private IrisComplex createComplex() throws Exception {
         IrisComplex complex = mock(IrisComplex.class, CALLS_REAL_METHODS);
 
@@ -89,11 +102,35 @@ public class IrisComplexGridBoundsCacheTest {
         return method;
     }
 
+    private Method gridSampleBoundsMethod() throws Exception {
+        Method method = IrisComplex.class.getDeclaredMethod(
+                "gridSampleBounds",
+                Engine.class,
+                IrisInterpolator.class,
+                int.class,
+                IrisGenerator[].class,
+                double.class,
+                double.class
+        );
+        method.setAccessible(true);
+        return method;
+    }
+
     private long invokeCornerBounds(IrisComplex complex, Method method, IrisInterpolator interpolator, int x, int z) throws Exception {
         Field gridBoundsCache = IrisComplex.class.getDeclaredField("gridBoundsCache");
         gridBoundsCache.setAccessible(true);
         ThreadLocal<?> cache = (ThreadLocal<?>) gridBoundsCache.get(complex);
         return (long) method.invoke(complex, cache.get(), null, interpolator, 0, new IrisGenerator[0], x, z);
+    }
+
+    private NoiseBounds invokeGridSampleBounds(
+            IrisComplex complex,
+            Method method,
+            IrisInterpolator interpolator,
+            double x,
+            double z
+    ) throws Exception {
+        return (NoiseBounds) method.invoke(complex, null, interpolator, 0, new IrisGenerator[0], x, z);
     }
 
     private float unpackLow(long packed) {

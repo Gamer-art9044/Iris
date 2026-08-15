@@ -236,8 +236,10 @@ tasks.named('test', Test).configure {
 
 configurations.matching { it.name.startsWith('slim') }.all { }
 
-def runningTestTasks = gradle.startParameter.taskNames.any { String taskName -> taskName.toLowerCase().contains('test') }
-if (runningTestTasks) {
+List<String> requestedTasks = gradle.startParameter.taskNames
+boolean runningOnlyTestTasks = !requestedTasks.isEmpty()
+    && requestedTasks.every { String taskName -> taskName.toLowerCase().contains('test') }
+if (runningOnlyTestTasks) {
     TaskProvider<Task> processResourcesTask = tasks.named('processResources')
     tasks.named('classes').configure { Task classesTask ->
         Set<Object> dependencies = new LinkedHashSet<Object>(classesTask.getDependsOn())

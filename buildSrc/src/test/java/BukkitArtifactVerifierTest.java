@@ -20,8 +20,15 @@ import static org.junit.Assert.assertTrue;
 
 public class BukkitArtifactVerifierTest {
     private static final String PLUGIN_DESCRIPTOR = "plugin.yml";
+    private static final String SLIMJAR_DEPENDENCIES = "slimjar.dat";
+    private static final String SLIMJAR_RESOLUTIONS = "slimjar-resolutions.dat";
     private static final String NMS_BINDING = "art/arcane/iris/core/nms/v26_2_R1/NMSBinding";
-    private static final List<String> REQUIRED_ENTRIES = List.of(PLUGIN_DESCRIPTOR, NMS_BINDING + ".class");
+    private static final List<String> REQUIRED_ENTRIES = List.of(
+            PLUGIN_DESCRIPTOR,
+            SLIMJAR_DEPENDENCIES,
+            SLIMJAR_RESOLUTIONS,
+            NMS_BINDING + ".class"
+    );
     private static final int LOCALES = 2;
     private static final int CAFFEINE_FACTORIES = 2;
     private static final int MATTER_SLICES = 1;
@@ -46,6 +53,30 @@ public class BukkitArtifactVerifierTest {
                 () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, CAFFEINE_FACTORIES,
                         MATTER_SLICES));
         assertTrue(failure.getMessage().contains(PLUGIN_DESCRIPTOR));
+    }
+
+    @Test
+    public void rejectsMissingSlimJarDependencyManifest() throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        entries.remove(SLIMJAR_DEPENDENCIES);
+        File artifact = createArtifact(entries);
+
+        GradleException failure = assertThrows(GradleException.class,
+                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, CAFFEINE_FACTORIES,
+                        MATTER_SLICES));
+        assertTrue(failure.getMessage().contains(SLIMJAR_DEPENDENCIES));
+    }
+
+    @Test
+    public void rejectsMissingSlimJarResolutionManifest() throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        entries.remove(SLIMJAR_RESOLUTIONS);
+        File artifact = createArtifact(entries);
+
+        GradleException failure = assertThrows(GradleException.class,
+                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, CAFFEINE_FACTORIES,
+                        MATTER_SLICES));
+        assertTrue(failure.getMessage().contains(SLIMJAR_RESOLUTIONS));
     }
 
     @Test
@@ -119,6 +150,8 @@ public class BukkitArtifactVerifierTest {
     private Map<String, byte[]> validEntries() {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         entries.put(PLUGIN_DESCRIPTOR, "name: Iris\n".getBytes(StandardCharsets.UTF_8));
+        entries.put(SLIMJAR_DEPENDENCIES, new byte[]{1});
+        entries.put(SLIMJAR_RESOLUTIONS, new byte[]{1});
         entries.put("languages/de_DE.json", "{}".getBytes(StandardCharsets.UTF_8));
         entries.put("languages/fr_FR.json", "{}".getBytes(StandardCharsets.UTF_8));
         entries.put(NMS_BINDING + ".class",

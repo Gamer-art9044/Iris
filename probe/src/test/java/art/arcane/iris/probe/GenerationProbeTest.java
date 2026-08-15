@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -77,5 +79,13 @@ public final class GenerationProbeTest {
         assertEquals(
                 "IRIS_GENPROBE_RESULT version=1 status=PASS dimension=underworld warmup_chunks=2 measured_chunks=4 successful_chunks=6 failed_chunks=0 engine_ready_ms=5.000 first_chunk_ms=6.000 measured_median_ms=10.000 measured_p95_ms=20.000 measured_max_ms=30.000 measured_total_ms=40.000 measured_cps=100.000 signature=0123456789abcdef",
                 result.machineLine());
+    }
+
+    @Test
+    public void offlineProbeResolvesVanillaEntitiesWithoutInventingExternalKeys() {
+        StubPlatform platform = new StubPlatform(new File("/tmp/iris-probe-test"));
+
+        assertNotNull(platform.registries().entity("minecraft:slime"));
+        assertNull(platform.registries().entity("external:missing"));
     }
 }

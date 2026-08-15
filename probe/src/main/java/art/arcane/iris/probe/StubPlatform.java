@@ -529,6 +529,23 @@ public final class StubPlatform implements IrisPlatform {
         }
     }
 
+    private record StubEntityType(String key) implements PlatformEntityType {
+        @Override
+        public String namespace() {
+            return "minecraft";
+        }
+
+        @Override
+        public String spawnCategory() {
+            return "monster";
+        }
+
+        @Override
+        public Object nativeHandle() {
+            return this;
+        }
+    }
+
     private static final class StubRegistries implements PlatformRegistries {
         @Override
         public PlatformBlockState block(String key) {
@@ -567,7 +584,7 @@ public final class StubPlatform implements IrisPlatform {
 
         @Override
         public PlatformEntityType entity(String key) {
-            return null;
+            return key != null && key.startsWith("minecraft:") ? new StubEntityType(key) : null;
         }
 
         @Override

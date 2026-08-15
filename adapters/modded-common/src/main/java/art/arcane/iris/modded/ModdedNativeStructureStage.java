@@ -349,7 +349,7 @@ final class ModdedNativeStructureStage {
         try {
             int runtimeMinY = world.getMinY();
             WorldgenTerrainHeightmaps.primeStructurePlacement(
-                    world, heightmapStarts,
+                    world, chunkPos, heightmapStarts,
                     worldgenSurfaceHeight(current, runtimeMinY),
                     worldgenFloorHeight(current, runtimeMinY));
         } catch (Throwable error) {

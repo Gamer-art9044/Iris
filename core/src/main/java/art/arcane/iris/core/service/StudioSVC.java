@@ -30,6 +30,7 @@ import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
+import art.arcane.iris.core.pack.PackDownloadExecution;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
@@ -53,6 +54,7 @@ import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.iris.util.common.plugin.IrisService;
 import art.arcane.iris.util.common.plugin.VolmitSender;
+import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.common.scheduling.J;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -75,6 +77,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -86,14 +90,22 @@ import art.arcane.iris.core.localization.PackDownloadMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public class StudioSVC implements IrisService {
     public static final String WORKSPACE_NAME = "packs";
+    private static final long DOWNLOAD_SHUTDOWN_POLL_SECONDS = 15L;
     private static final Pattern PROJECT_NAME = Pattern.compile("[a-z0-9_-]+");
     private static final AtomicCache<Integer> counter = new AtomicCache<>();
     private final StudioTransitionQueue studioTransitions = new StudioTransitionQueue();
+    private final Object downloadAdmissionMonitor = new Object();
     private volatile IrisProject activeProject;
     private volatile CompletableFuture<StudioOpenCoordinator.StudioOpenResult> activeOpen;
+    private PackDownloadExecution activeDownload;
+    private boolean downloadAdmissionOpen;
 
     @Override
     public void onEnable() {
+        synchronized (downloadAdmissionMonitor) {
+            activeDownload = null;
+            downloadAdmissionOpen = true;
+        }
         String configuredPack = IrisSettings.get().getGenerator().getDefaultWorldType();
         if (!PackDownloader.isPackPresent(getWorkspaceFolder(), configuredPack)) {
             IrisLogging.warn("Default pack '" + configuredPack
@@ -103,6 +115,7 @@ public class StudioSVC implements IrisService {
 
     @Override
     public void onDisable() {
+        quiesceDownloadsForShutdown();
         IrisLogging.debug("Studio Mode Active: Closing Projects");
         boolean stopping = IrisToolbelt.isServerStopping();
         LinkedHashSet<String> worldNamesToDelete = new LinkedHashSet<>(TransientWorldCleanupSupport.collectTransientStudioWorldNames(IrisWorldStorage.levelRoot()));
@@ -330,44 +343,64 @@ public class StudioSVC implements IrisService {
 
     public void downloadBuiltIn(VolmitSender sender, String key) {
         if (!PackDownloader.isBuiltInPack(key)) {
-            sender.sendMessage("Iris only provides built-in downloads for 'overworld' and 'underworld'.");
+            sender.sendMessage(IrisLanguage.text(PackDownloadMessages.INVALID_BUILT_IN));
             return;
         }
-        runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, key, () -> {
-            DownloadOutcome outcome = downloadBuiltInLocked(sender, key);
-            return finishStandalonePackMutation(outcome);
+        PackDownloadProgressReporter reporter = new PackDownloadProgressReporter(sender, key);
+        runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, key, reporter, cancellation -> {
+            PackDownloader.PackInstallResult result = downloadBuiltInLocked(key, cancellation, reporter);
+            if (result == null) {
+                reporter.fail(null);
+                return;
+            }
+            reporter.succeed(result);
         }, "Failed to download built-in Iris pack '" + key + "'.");
     }
 
     public void downloadUrl(VolmitSender sender, String url) {
         if (!PackDownloader.isDirectZipUrl(url)) {
-            sender.sendMessage("Iris requires a valid HTTP or HTTPS .zip URL.");
+            sender.sendMessage(IrisLanguage.text(PackDownloadMessages.INVALID_URL));
             return;
         }
-        runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, url, () -> {
-            DownloadOutcome outcome = DownloadOutcome.from(PackDownloader.downloadUrl(
+        PackDownloadProgressReporter reporter = new PackDownloadProgressReporter(
+                sender,
+                IrisLanguage.text(PackDownloadMessages.PROGRESS_SOURCE_REMOTE),
+                url
+        );
+        runPackMutation(sender, LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD, "remote-zip", reporter, cancellation -> {
+            PackDownloader.PackInstallResult result = PackDownloader.downloadUrl(
                     getWorkspaceFolder(),
                     url,
                     false,
-                    sender::sendMessage
-            ));
-            return finishStandalonePackMutation(outcome);
-        }, "Failed to download Iris pack from '" + url + "'.");
+                    reporter::detail,
+                    cancellation,
+                    reporter
+            );
+            if (result == null) {
+                reporter.fail(null);
+                return;
+            }
+            reporter.succeed(result);
+        }, "Failed to download Iris pack.");
     }
 
-    private DownloadOutcome downloadBuiltInLocked(VolmitSender sender, String expectedKey) throws IOException {
+    private PackDownloader.PackInstallResult downloadBuiltInLocked(
+            String expectedKey,
+            PackDownloader.DownloadCancellation cancellation,
+            PackDownloadProgressReporter reporter
+    ) throws IOException {
         if (PackDownloader.isBuiltInPackPresent(getWorkspaceFolder(), expectedKey)) {
-            sender.sendMessage(IrisLanguage.text(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
-            return DownloadOutcome.notChanged();
+            return new PackDownloader.PackInstallResult(expectedKey, false, false);
         }
 
-        PackDownloader.PackInstallResult result = PackDownloader.downloadBuiltIn(
+        return PackDownloader.downloadBuiltIn(
                 getWorkspaceFolder(),
                 expectedKey,
                 false,
-                sender::sendMessage
+                reporter::detail,
+                cancellation,
+                reporter
         );
-        return DownloadOutcome.from(result);
     }
 
     public boolean isProjectOpen() {
@@ -869,11 +902,18 @@ public class StudioSVC implements IrisService {
             VolmitSender sender,
             LifecycleOperationCoordinator.OperationKind operationKind,
             String target,
+            PackDownloadProgressReporter reporter,
             PackMutation mutation,
             String failureMessage
     ) {
-        Runnable work = () -> {
-            String operationTarget = target == null || target.isBlank() ? "unspecified-pack" : target.trim();
+        String operationTarget = target == null || target.isBlank() ? "unspecified-pack" : target.trim();
+        PackDownloadExecution execution;
+        synchronized (downloadAdmissionMonitor) {
+            if (!downloadAdmissionOpen) {
+                sender.sendMessage(IrisLanguage.text(PackDownloadMessages.SHUTTING_DOWN));
+                return;
+            }
+
             LifecycleOperationCoordinator.Lease lease;
             try {
                 lease = LifecycleOperationCoordinator.get().acquire(
@@ -886,26 +926,91 @@ public class StudioSVC implements IrisService {
                 return;
             }
 
-            boolean restartRequired;
-            try {
-                restartRequired = mutation.run();
-            } catch (Throwable e) {
-                IrisLogging.reportError(failureMessage, e);
-                sender.sendMessage(failureMessage + " " + errorDetail(e));
-                return;
-            } finally {
-                closeLease(lease);
-            }
+            execution = new PackDownloadExecution(
+                    lease,
+                    cancellation -> executePackMutation(mutation, reporter, failureMessage, cancellation)
+            );
+            PackDownloadExecution trackedExecution = execution;
+            execution.onCompletion(() -> {
+                clearActiveDownload(trackedExecution);
+                reporter.executionComplete();
+            });
+            activeDownload = execution;
+        }
 
-            if (restartRequired) {
-                sender.sendMessage("Restart the server before using the downloaded Iris pack.");
+        try {
+            reporter.start();
+            Future<?> future = MultiBurst.ioBurst.submit(execution);
+            execution.bind(future);
+        } catch (Throwable e) {
+            try {
+                IrisLogging.reportError(failureMessage, e);
+                reporter.fail(e);
+            } catch (Throwable reportingFailure) {
+                IrisLogging.reportError("Failed to report an Iris pack download startup failure.", reportingFailure);
+            } finally {
+                execution.cancel();
             }
-        };
-        runOffPrimaryThread(work);
+        }
     }
 
-    private boolean finishStandalonePackMutation(DownloadOutcome outcome) {
-        return outcome.changed() && outcome.restartRequired();
+    private void executePackMutation(
+            PackMutation mutation,
+            PackDownloadProgressReporter reporter,
+            String failureMessage,
+            PackDownloader.DownloadCancellation cancellation
+    ) throws PackDownloader.PackDownloadCancelledException {
+        try {
+            mutation.run(cancellation);
+        } catch (PackDownloader.PackDownloadCancelledException e) {
+            reporter.cancel();
+            throw e;
+        } catch (PackDownloader.PackDownloadBusyException e) {
+            reporter.fail(e);
+            return;
+        } catch (Throwable e) {
+            IrisLogging.reportError(failureMessage, e);
+            reporter.fail(e);
+        }
+    }
+
+    public void quiesceDownloadsForShutdown() {
+        PackDownloadExecution execution;
+        synchronized (downloadAdmissionMonitor) {
+            downloadAdmissionOpen = false;
+            execution = activeDownload;
+        }
+        if (execution == null) {
+            return;
+        }
+
+        execution.cancel();
+        boolean interrupted = false;
+        boolean warned = false;
+        while (!execution.isComplete()) {
+            try {
+                if (!execution.await(DOWNLOAD_SHUTDOWN_POLL_SECONDS, TimeUnit.SECONDS) && !warned) {
+                    warned = true;
+                    IrisLogging.warn(execution.isPublishing()
+                            ? "Waiting for atomic pack publication to finish before Iris shutdown."
+                            : "Waiting for the active pack download to cancel before Iris shutdown.");
+                }
+            } catch (InterruptedException e) {
+                interrupted = true;
+                execution.cancel();
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void clearActiveDownload(PackDownloadExecution execution) {
+        synchronized (downloadAdmissionMonitor) {
+            if (activeDownload == execution) {
+                activeDownload = null;
+            }
+        }
     }
 
     private void runOffPrimaryThread(Runnable work) {
@@ -1067,9 +1172,16 @@ public class StudioSVC implements IrisService {
     }
 
     private static void sendBusy(VolmitSender sender, LifecycleOperationCoordinator.BusyException busy) {
-        LifecycleOperationCoordinator.ActiveOperation operation = busy.currentOperation();
-        sender.sendMessage("Iris pack changes are busy with " + operation.kind().name().toLowerCase(Locale.ROOT)
-                + " for '" + operation.target() + "'. Try again when it completes.");
+        sender.sendMessage(packMutationBusyMessage(busy.currentOperation()));
+    }
+
+    static String packMutationBusyMessage(LifecycleOperationCoordinator.ActiveOperation operation) {
+        if (operation.domain() == LifecycleOperationCoordinator.Domain.PACK_MUTATION
+                && operation.kind() == LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD) {
+            return IrisLanguage.plain(PackDownloadMessages.IN_PROGRESS);
+        }
+        return "Iris pack changes are busy with " + operation.kind().name().toLowerCase(Locale.ROOT)
+                + " for '" + operation.target() + "'. Try again when it completes.";
     }
 
     private static void closeLease(LifecycleOperationCoordinator.Lease lease) {
@@ -1195,19 +1307,7 @@ public class StudioSVC implements IrisService {
 
     @FunctionalInterface
     private interface PackMutation {
-        boolean run() throws Exception;
-    }
-
-    private record DownloadOutcome(boolean changed, boolean restartRequired) {
-        private static DownloadOutcome notChanged() {
-            return new DownloadOutcome(false, false);
-        }
-
-        private static DownloadOutcome from(PackDownloader.PackInstallResult result) {
-            return result == null
-                    ? notChanged()
-                    : new DownloadOutcome(result.changed(), result.restartRequired());
-        }
+        void run(PackDownloader.DownloadCancellation cancellation) throws Exception;
     }
 
     private enum CreationOutcome {

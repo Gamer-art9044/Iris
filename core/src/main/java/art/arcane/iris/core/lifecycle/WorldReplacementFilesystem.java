@@ -28,6 +28,7 @@ import java.util.stream.Stream;
 
 public final class WorldReplacementFilesystem {
     private static final String CODE_WORKSPACE_SUFFIX = ".code-workspace";
+    private static final String MACOS_FINDER_METADATA_FILE = ".DS_Store";
     private static final List<Path> PAPER_WORLD_METADATA = List.of(
             Path.of("data/paper/metadata.dat"),
             Path.of("data/paper/level_overrides.dat"),
@@ -315,9 +316,12 @@ public final class WorldReplacementFilesystem {
     }
 
     private static boolean isGeneratedPackMetadata(Path relative, BasicFileAttributes attributes) {
-        return PackDirectoryResolver.isHiddenName(relative.getName(0).toString())
-                || attributes.isRegularFile()
-                && relative.getFileName().toString().endsWith(CODE_WORKSPACE_SUFFIX);
+        String fileName = relative.getFileName().toString();
+        if (PackDirectoryResolver.isHiddenName(relative.getName(0).toString())) {
+            return true;
+        }
+        return attributes.isRegularFile()
+                && (MACOS_FINDER_METADATA_FILE.equals(fileName) || fileName.endsWith(CODE_WORKSPACE_SUFFIX));
     }
 
     private static BasicFileAttributes requireSafeEntry(Path path) throws IOException {

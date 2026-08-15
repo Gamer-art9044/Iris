@@ -16,6 +16,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Objects;
+import java.util.OptionalLong;
 
 public final class WorldReplacementSeed {
     private static final Path WORLD_GEN_SETTINGS = Path.of("data/minecraft/world_gen_settings.dat");
@@ -32,6 +33,27 @@ public final class WorldReplacementSeed {
         return requireData(namedTag, settings).getLongTag("seed").asLong();
     }
 
+    public static long stageAuthoritativeSeed(
+            Path sourceWorldDirectory,
+            Path stagedWorldDirectory,
+            OptionalLong requestedSeed
+    ) throws IOException {
+        Path sourceWorld = Objects.requireNonNull(sourceWorldDirectory, "sourceWorldDirectory")
+                .toAbsolutePath()
+                .normalize();
+        Path stagedWorld = Objects.requireNonNull(stagedWorldDirectory, "stagedWorldDirectory")
+                .toAbsolutePath()
+                .normalize();
+        OptionalLong requiredRequestedSeed = Objects.requireNonNull(requestedSeed, "requestedSeed");
+        Path source = sourceWorld.resolve(WORLD_GEN_SETTINGS);
+        NamedTag namedTag = readSettings(source);
+        CompoundTag data = requireData(namedTag, source);
+        long retainedSeed = data.getLongTag("seed").asLong();
+        long effectiveSeed = requiredRequestedSeed.orElse(retainedSeed);
+        writeSettings(stagedWorld, namedTag, data, effectiveSeed);
+        return effectiveSeed;
+    }
+
     public static void copyWithAuthoritativeSeed(
             Path sourceWorldDirectory,
             Path targetWorldDirectory,
@@ -44,11 +66,19 @@ public final class WorldReplacementSeed {
                 .toAbsolutePath()
                 .normalize();
         Path source = sourceWorld.resolve(WORLD_GEN_SETTINGS);
-        Path target = targetWorld.resolve(WORLD_GEN_SETTINGS);
         NamedTag namedTag = readSettings(source);
         CompoundTag data = requireData(namedTag, source);
-        data.putLong("seed", seed);
+        writeSettings(targetWorld, namedTag, data, seed);
+    }
 
+    private static void writeSettings(
+            Path targetWorld,
+            NamedTag namedTag,
+            CompoundTag data,
+            long seed
+    ) throws IOException {
+        Path target = targetWorld.resolve(WORLD_GEN_SETTINGS);
+        data.putLong("seed", seed);
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(target)) {
             throw new IOException("Staged Paper world generation settings already exist: " + target);
         }
@@ -68,6 +98,7 @@ public final class WorldReplacementSeed {
             } catch (AtomicMoveNotSupportedException exception) {
                 Files.move(staged, target);
             }
+            forceSettingsHierarchy(targetWorld, parent);
         } finally {
             Files.deleteIfExists(staged);
         }
@@ -76,6 +107,18 @@ public final class WorldReplacementSeed {
         if (writtenSeed != seed) {
             throw new IOException("Staged Paper world generation settings did not retain the requested seed.");
         }
+    }
+
+    private static void forceSettingsHierarchy(Path targetWorld, Path settingsParent) throws IOException {
+        Path directory = settingsParent;
+        while (directory != null && directory.startsWith(targetWorld)) {
+            DirectoryDurability.forceDirectoryRequired(directory);
+            if (directory.equals(targetWorld)) {
+                return;
+            }
+            directory = directory.getParent();
+        }
+        throw new IOException("Staged Paper world generation settings escaped their target directory.");
     }
 
     private static NamedTag readSettings(Path settings) throws IOException {

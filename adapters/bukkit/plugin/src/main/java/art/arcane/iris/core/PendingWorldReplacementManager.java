@@ -40,6 +40,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -50,6 +51,7 @@ import java.util.concurrent.TimeoutException;
 public final class PendingWorldReplacementManager implements Listener {
     private final Iris plugin;
     private final Set<UUID> cleanupInFlight = new HashSet<>();
+    private final Set<UUID> verificationInFlight = new HashSet<>();
 
     public PendingWorldReplacementManager(Iris plugin) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
@@ -67,12 +69,16 @@ public final class PendingWorldReplacementManager implements Listener {
     public synchronized StagedReplacement stageReplacement(
             VolmitSender sender,
             NamespacedKey worldKey,
-            IrisDimension dimension
+            IrisDimension dimension,
+            Long requestedSeed
     ) throws IOException {
         VolmitSender requiredSender = Objects.requireNonNull(sender, "sender");
         NamespacedKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
         WorldSlotKey requiredWorldSlotKey = toWorldSlotKey(requiredWorldKey);
         IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
+        OptionalLong seedSelection = requestedSeed == null
+                ? OptionalLong.empty()
+                : OptionalLong.of(requestedSeed.longValue());
         IrisStartupValidation.requireWorldReplacementStagingReady();
         if (!WorldReplacementBootstrapMarker.wasBootstrappedThisProcess()) {
             throw new IOException("Exact world replacement requires a full Paper-family startup bootstrap.");
@@ -93,7 +99,6 @@ public final class PendingWorldReplacementManager implements Listener {
             UUID transactionId = UUID.randomUUID();
             ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transactionId);
             WorldReplacementFilesystem.requireExistingTarget(paths);
-            long effectiveSeed = WorldReplacementSeed.readAuthoritativeSeed(paths.target());
             String worldName = WorldReplacementJournal.logicalWorldName(target.levelRoot(), requiredWorldSlotKey);
             DatapackInstallResult datapacks = ServerConfigurator.installDataPacksIfChanged(true);
             if (!datapacks.succeeded()) {
@@ -119,6 +124,11 @@ public final class PendingWorldReplacementManager implements Listener {
                     throw new IOException("Iris could not stage the dimension pack.");
                 }
                 requireCompatibleEnvironment(target.slotKind(), installed.getEnvironment());
+                long effectiveSeed = WorldReplacementSeed.stageAuthoritativeSeed(
+                        paths.target(),
+                        paths.stage(),
+                        seedSelection
+                );
                 File stagedPack = paths.stage().resolve("iris/pack").toFile();
                 IrisWorldGeneratorResolver.requireSnapshotLoadable(stagedPack);
                 String packFingerprint = WorldReplacementFilesystem.fingerprintPack(stagedPack.toPath());
@@ -227,68 +237,160 @@ public final class PendingWorldReplacementManager implements Listener {
         }
     }
 
-    public synchronized void verifyLoadedPublishedWorlds() {
+    public void verifyLoadedPublishedWorlds() {
+        J.a(this::discoverLoadedPublishedWorlds);
+    }
+
+    private void discoverLoadedPublishedWorlds() {
+        List<Transaction> transactions;
         try {
-            for (Transaction transaction : loadTransactions()) {
-                if (transaction.phase() == Phase.CLEANUP_PENDING) {
-                    scheduleCommittedCleanup(transaction);
-                } else if (transaction.phase() == Phase.PUBLISHED) {
-                    WorldIdentity.resolve(toNamespacedKey(transaction.worldKey()))
-                            .ifPresent(world -> verifyPublishedWorld(world, transaction));
-                }
+            synchronized (this) {
+                transactions = loadTransactions();
             }
         } catch (Throwable failure) {
             Iris.reportError("Failed to inspect published Iris world replacements.", failure);
+            return;
+        }
+        for (Transaction transaction : transactions) {
+            if (transaction.phase() == Phase.CLEANUP_PENDING) {
+                scheduleCommittedCleanup(transaction);
+            } else if (transaction.phase() == Phase.PUBLISHED) {
+                scheduleRuntimeCapture(transaction, 0);
+            }
         }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onWorldLoad(WorldLoadEvent event) {
-        World world = event.getWorld();
-        // One tick to let the load settle, then verify off-main: the body takes the manager
-        // monitor (held across pack staging by async threads) and SHA-hashes the whole pack
-        // tree — blocking the main thread on either froze the server.
-        J.s(() -> J.a(() -> verifyPublishedWorldIfPending(world)), 1);
+        WorldSlotKey worldKey;
+        try {
+            worldKey = toWorldSlotKey(WorldIdentity.key(event.getWorld()));
+        } catch (Throwable failure) {
+            Iris.reportError("Failed to capture a loaded world identity for replacement verification.", failure);
+            return;
+        }
+        J.a(() -> discoverLoadedWorldTransaction(worldKey));
     }
 
-    private synchronized void verifyPublishedWorldIfPending(World world) {
+    private void discoverLoadedWorldTransaction(WorldSlotKey worldKey) {
+        Transaction transaction;
         try {
-            Transaction transaction = findTransaction(WorldIdentity.key(world));
-            if (transaction != null && transaction.phase() == Phase.PUBLISHED) {
-                verifyPublishedWorld(world, transaction);
-            } else if (transaction != null && transaction.phase() == Phase.CLEANUP_PENDING) {
-                scheduleCommittedCleanup(transaction);
+            synchronized (this) {
+                transaction = findTransaction(worldKey);
             }
         } catch (Throwable failure) {
-            Iris.reportError("Failed to verify a published Iris world replacement.", failure);
+            Iris.reportError("Failed to inspect a loaded Iris world replacement.", failure);
+            return;
+        }
+        if (transaction == null) {
+            return;
+        }
+        if (transaction.phase() == Phase.PUBLISHED) {
+            scheduleRuntimeCapture(transaction, 1);
+        } else if (transaction.phase() == Phase.CLEANUP_PENDING) {
+            scheduleCommittedCleanup(transaction);
         }
     }
 
-    private void verifyPublishedWorld(World world, Transaction transaction) {
+    private void scheduleRuntimeCapture(Transaction transaction, int delayTicks) {
+        synchronized (this) {
+            if (!verificationInFlight.add(transaction.id())) {
+                return;
+            }
+        }
         try {
-            if (!transaction.worldKey().equals(toWorldSlotKey(WorldIdentity.key(world)))) {
-                throw new IOException("Loaded world identity does not match the replacement journal.");
-            }
-            if (!IrisToolbelt.isIrisWorld(world)) {
-                throw new IOException("The replaced world did not load with an Iris generator.");
-            }
-            if (world.getSeed() != transaction.seed()) {
-                throw new IOException("The replaced world loaded with an unexpected seed.");
-            }
-            World.Environment expectedEnvironment = expectedEnvironment(transaction.worldKey());
-            if (expectedEnvironment != null && world.getEnvironment() != expectedEnvironment) {
-                throw new IOException("The replaced world loaded with an unexpected environment.");
-            }
-            PlatformChunkGenerator generator = IrisToolbelt.access(world);
-            if (generator == null || !transaction.dimension().equals(
-                    generator.getTarget().getDimension().getLoadKey())) {
-                throw new IOException("The replaced world loaded an unexpected Iris dimension.");
-            }
+            J.s(() -> captureLoadedPublishedWorldOnGlobal(transaction), delayTicks);
+        } catch (Throwable failure) {
+            finishRuntimeVerification(transaction.id());
+            Iris.reportError("Could not schedule runtime verification for " + transaction.worldKey() + ".", failure);
+        }
+    }
+
+    private void captureLoadedPublishedWorldOnGlobal(Transaction transaction) {
+        World world;
+        try {
+            world = WorldIdentity.resolve(toNamespacedKey(transaction.worldKey())).orElse(null);
+        } catch (Throwable failure) {
+            dispatchRuntimeCaptureFailure(transaction, failure);
+            return;
+        }
+        if (world == null) {
+            finishRuntimeVerification(transaction.id());
+            return;
+        }
+        PublishedWorldRuntimeState runtimeState;
+        try {
+            runtimeState = capturePublishedWorldRuntime(world);
+        } catch (Throwable failure) {
+            dispatchRuntimeCaptureFailure(transaction, failure);
+            return;
+        }
+        try {
+            J.a(() -> runPublishedWorldVerification(runtimeState, transaction));
+        } catch (Throwable failure) {
+            finishRuntimeVerification(transaction.id());
+            Iris.reportError("Could not dispatch runtime verification for " + transaction.worldKey() + ".", failure);
+        }
+    }
+
+    private void dispatchRuntimeCaptureFailure(Transaction transaction, Throwable failure) {
+        try {
+            J.a(() -> runPublishedWorldCaptureFailure(transaction, failure));
+        } catch (Throwable dispatchFailure) {
+            finishRuntimeVerification(transaction.id());
+            dispatchFailure.addSuppressed(failure);
+            Iris.reportError("Could not dispatch a failed runtime capture for "
+                    + transaction.worldKey() + ".", dispatchFailure);
+        }
+    }
+
+    private void runPublishedWorldCaptureFailure(Transaction transaction, Throwable failure) {
+        try {
+            initiateRollback(transaction, failure);
+        } finally {
+            finishRuntimeVerification(transaction.id());
+        }
+    }
+
+    private void runPublishedWorldVerification(
+            PublishedWorldRuntimeState runtimeState,
+            Transaction transaction
+    ) {
+        try {
+            verifyPublishedWorld(runtimeState, transaction);
+        } finally {
+            finishRuntimeVerification(transaction.id());
+        }
+    }
+
+    static PublishedWorldRuntimeState capturePublishedWorldRuntime(World world) {
+        World requiredWorld = Objects.requireNonNull(world, "world");
+        WorldSlotKey worldKey = toWorldSlotKey(WorldIdentity.key(requiredWorld));
+        boolean irisWorld = IrisToolbelt.isIrisWorld(requiredWorld);
+        long seed = requiredWorld.getSeed();
+        World.Environment bukkitEnvironment = requiredWorld.getEnvironment();
+        PlatformChunkGenerator generator = irisWorld ? IrisToolbelt.access(requiredWorld) : null;
+        String dimension = null;
+        IrisEnvironment dimensionEnvironment = null;
+        if (generator != null) {
+            IrisDimension runtimeDimension = generator.getTarget().getDimension();
+            dimension = runtimeDimension.getLoadKey();
+            dimensionEnvironment = runtimeDimension.getEnvironment();
+        }
+        return new PublishedWorldRuntimeState(
+                worldKey,
+                irisWorld,
+                seed,
+                bukkitEnvironment,
+                dimension,
+                dimensionEnvironment
+        );
+    }
+
+    private void verifyPublishedWorld(PublishedWorldRuntimeState runtimeState, Transaction transaction) {
+        try {
             ExactWorldSlotPathPolicy.Target target = resolveTransactionTarget(transaction);
-            requireCompatibleEnvironment(
-                    target.slotKind(),
-                    generator.getTarget().getDimension().getEnvironment()
-            );
+            validatePublishedWorldRuntime(runtimeState, transaction, target.slotKind());
             ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transaction.id());
             String fingerprint = WorldReplacementFilesystem.fingerprintPack(
                     paths.target().resolve("iris/pack"));
@@ -316,6 +418,39 @@ public final class PendingWorldReplacementManager implements Listener {
                     + " was verified, but its cleanup journal could not be advanced."
                     + " The retained backup was not removed.", failure);
         }
+    }
+
+    static void validatePublishedWorldRuntime(
+            PublishedWorldRuntimeState runtimeState,
+            Transaction transaction,
+            SlotKind slotKind
+    ) throws IOException {
+        PublishedWorldRuntimeState requiredRuntimeState = Objects.requireNonNull(runtimeState, "runtimeState");
+        Transaction requiredTransaction = Objects.requireNonNull(transaction, "transaction");
+        SlotKind requiredSlotKind = Objects.requireNonNull(slotKind, "slotKind");
+        if (!requiredTransaction.worldKey().equals(requiredRuntimeState.worldKey())) {
+            throw new IOException("Loaded world identity does not match the replacement journal.");
+        }
+        if (!requiredRuntimeState.irisWorld()) {
+            throw new IOException("The replaced world did not load with an Iris generator.");
+        }
+        if (requiredRuntimeState.seed() != requiredTransaction.seed()) {
+            throw new IOException("The replaced world loaded with an unexpected seed.");
+        }
+        World.Environment expectedEnvironment = expectedEnvironment(requiredTransaction.worldKey());
+        if (expectedEnvironment != null && requiredRuntimeState.bukkitEnvironment() != expectedEnvironment) {
+            throw new IOException("The replaced world loaded with an unexpected environment.");
+        }
+        if (requiredRuntimeState.dimension() == null
+                || requiredRuntimeState.dimensionEnvironment() == null
+                || !requiredTransaction.dimension().equals(requiredRuntimeState.dimension())) {
+            throw new IOException("The replaced world loaded an unexpected Iris dimension.");
+        }
+        requireCompatibleEnvironment(requiredSlotKind, requiredRuntimeState.dimensionEnvironment());
+    }
+
+    private synchronized void finishRuntimeVerification(UUID transactionId) {
+        verificationInFlight.remove(transactionId);
     }
 
     private void initiateRollback(Transaction transaction, Throwable failure) {
@@ -606,6 +741,20 @@ public final class PendingWorldReplacementManager implements Listener {
     private static final class RestartBoundaryRequired extends IOException {
         private RestartBoundaryRequired(String message) {
             super(message);
+        }
+    }
+
+    record PublishedWorldRuntimeState(
+            WorldSlotKey worldKey,
+            boolean irisWorld,
+            long seed,
+            World.Environment bukkitEnvironment,
+            String dimension,
+            IrisEnvironment dimensionEnvironment
+    ) {
+        PublishedWorldRuntimeState {
+            Objects.requireNonNull(worldKey, "worldKey");
+            Objects.requireNonNull(bukkitEnvironment, "bukkitEnvironment");
         }
     }
 }

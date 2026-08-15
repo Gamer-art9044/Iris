@@ -25,6 +25,7 @@ import art.arcane.volmlib.util.io.IO;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -37,6 +38,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Download cache helpers over the platform data folder.
@@ -48,6 +50,9 @@ public final class WebCache {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10L);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(120L);
     private static final int BUFFER_SIZE = 8192;
+    private static final long PROGRESS_INTERVAL_NANOS = Duration.ofMillis(250L).toNanos();
+    private static final TransferProgressListener NO_TRANSFER_PROGRESS = progress -> {
+    };
 
     private static volatile HttpClient client;
 
@@ -89,32 +94,48 @@ public final class WebCache {
     }
 
     public static File getNonCachedFile(String name, String url, long maxBytes) {
+        return getNonCachedFile(name, url, maxBytes, NO_TRANSFER_PROGRESS);
+    }
+
+    public static File getNonCachedFile(String name, String url, TransferProgressListener progressListener) {
+        return getNonCachedFile(name, url, Long.MAX_VALUE, progressListener);
+    }
+
+    public static File getNonCachedFile(String name, String url, long maxBytes,
+                                        TransferProgressListener progressListener) {
         String h = IO.hash(name + "*" + url);
         File f = IrisPlatforms.get().dataFile("cache", h.substring(0, 2), h.substring(3, 5), h);
-        IrisLogging.debug("Download " + name + " -> " + url);
-        return download(name, url, f, maxBytes) ? f : null;
+        IrisLogging.debug("Download " + name);
+        return download(name, url, f, maxBytes, progressListener) ? f : null;
     }
 
     private static boolean download(String name, String url, File target) {
-        return download(name, url, target, Long.MAX_VALUE);
+        return download(name, url, target, Long.MAX_VALUE, NO_TRANSFER_PROGRESS);
     }
 
     private static boolean download(String name, String url, File target, long maxBytes) {
+        return download(name, url, target, maxBytes, NO_TRANSFER_PROGRESS);
+    }
+
+    private static boolean download(String name, String url, File target, long maxBytes,
+                                    TransferProgressListener progressListener) {
         if (maxBytes < 1L) {
             throw new IllegalArgumentException("Download size limit must be positive.");
         }
+        TransferProgressListener progress = progressListener == null ? NO_TRANSFER_PROGRESS : progressListener;
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(REQUEST_TIMEOUT)
                 .GET()
                 .build();
         Path staged = null;
         try {
+            checkInterrupted();
             HttpResponse<InputStream> response = client()
                     .send(request, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() / 100 != 2) {
                 response.body().close();
                 IrisLogging.reportError(new IOException("HTTP " + response.statusCode()
-                        + " downloading " + name + " from " + url));
+                        + " downloading " + name));
                 return false;
             }
             long declaredBytes = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
@@ -130,20 +151,46 @@ public final class WebCache {
             }
             Files.createDirectories(parent);
             staged = Files.createTempFile(parent, ".download-", ".tmp");
+            long startedNanos = System.nanoTime();
+            long lastProgressNanos = startedNanos;
+            sendProgress(progress, new TransferProgress(0L, declaredBytes, 0L, false));
+            long downloadedBytes = 0L;
             try (InputStream in = response.body();
                  OutputStream out = Files.newOutputStream(staged, StandardOpenOption.WRITE)) {
                 byte[] buffer = new byte[BUFFER_SIZE];
-                long downloadedBytes = 0L;
                 int read;
-                while ((read = in.read(buffer)) != -1) {
+                while (true) {
+                    checkInterrupted();
+                    read = in.read(buffer);
+                    if (read == -1) {
+                        break;
+                    }
+                    checkInterrupted();
                     if (read > maxBytes - downloadedBytes) {
                         throw new IOException("Download exceeds the size limit for " + name + ".");
                     }
                     out.write(buffer, 0, read);
                     downloadedBytes += read;
+                    long currentNanos = System.nanoTime();
+                    if (currentNanos - lastProgressNanos >= PROGRESS_INTERVAL_NANOS) {
+                        sendProgress(progress, new TransferProgress(
+                                downloadedBytes,
+                                declaredBytes,
+                                elapsedMillis(startedNanos, currentNanos),
+                                false
+                        ));
+                        lastProgressNanos = currentNanos;
+                    }
                 }
                 out.flush();
             }
+            sendProgress(progress, new TransferProgress(
+                    downloadedBytes,
+                    declaredBytes,
+                    elapsedMillis(startedNanos),
+                    true
+            ));
+            checkInterrupted();
             try {
                 Files.move(staged, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException unsupported) {
@@ -151,12 +198,23 @@ public final class WebCache {
             }
             staged = null;
             return true;
+        } catch (InterruptedIOException e) {
+            if (Thread.currentThread().isInterrupted()) {
+                IrisLogging.debug("Download interrupted for " + name);
+            } else {
+                IrisLogging.reportError(e);
+            }
+            return false;
         } catch (IOException e) {
+            if (Thread.currentThread().isInterrupted()) {
+                IrisLogging.debug("Download interrupted for " + name);
+                return false;
+            }
             IrisLogging.reportError(e);
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            IrisLogging.reportError(e);
+            IrisLogging.debug("Download interrupted for " + name);
             return false;
         } finally {
             if (staged != null) {
@@ -166,6 +224,28 @@ public final class WebCache {
                     IrisLogging.reportError("Failed to clean incomplete download " + staged + ".", cleanupFailure);
                 }
             }
+        }
+    }
+
+    private static void checkInterrupted() throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedIOException("Download interrupted.");
+        }
+    }
+
+    private static long elapsedMillis(long startedNanos) {
+        return elapsedMillis(startedNanos, System.nanoTime());
+    }
+
+    private static long elapsedMillis(long startedNanos, long currentNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(Math.max(0L, currentNanos - startedNanos));
+    }
+
+    private static void sendProgress(TransferProgressListener listener, TransferProgress progress) {
+        try {
+            listener.onProgress(progress);
+        } catch (RuntimeException exception) {
+            IrisLogging.reportError("Download progress delivery failed", exception);
         }
     }
 
@@ -183,5 +263,13 @@ public final class WebCache {
             }
             return client;
         }
+    }
+
+    public record TransferProgress(long transferredBytes, long contentLength, long elapsedMillis, boolean complete) {
+    }
+
+    @FunctionalInterface
+    public interface TransferProgressListener {
+        void onProgress(TransferProgress progress);
     }
 }

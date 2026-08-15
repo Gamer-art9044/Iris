@@ -60,6 +60,29 @@ public class WorldReplacementFilesystemTest {
     }
 
     @Test
+    public void publishesStagedWorldGenerationSettingsWithoutChangingTheRetainedBackup() throws Exception {
+        WorldReplacementFilesystem.ReplacementPaths paths = paths("publish-seed-override", TRANSACTION_ID);
+        writeOriginalTarget(paths, "original");
+        String fingerprint = writeStage(paths, "replacement");
+        Path stagedSettings = paths.stage().resolve("data/minecraft/world_gen_settings.dat");
+        Files.createDirectories(stagedSettings.getParent());
+        Files.writeString(stagedSettings, "replacement-generation");
+
+        WorldReplacementFilesystem.publish(paths, true, fingerprint);
+
+        assertEquals("replacement-generation", Files.readString(
+                paths.target().resolve("data/minecraft/world_gen_settings.dat")));
+        assertEquals("generation", Files.readString(
+                paths.backup().resolve("data/minecraft/world_gen_settings.dat")));
+
+        WorldReplacementFilesystem.rollback(paths, true);
+
+        assertEquals("generation", Files.readString(
+                paths.target().resolve("data/minecraft/world_gen_settings.dat")));
+        assertFalse(Files.exists(paths.backup()));
+    }
+
+    @Test
     public void rejectsAbsentTargetForReplacementAdmission() throws Exception {
         WorldReplacementFilesystem.ReplacementPaths paths = paths("admit-absent", TRANSACTION_ID);
 
@@ -370,6 +393,28 @@ public class WorldReplacementFilesystemTest {
         Files.writeString(nestedPackContent.resolve("semantic.json"), "pack content");
 
         assertNotEquals(expected, WorldReplacementFilesystem.fingerprintPack(pack));
+    }
+
+    @Test
+    public void ignoresNestedFinderMetadataAddedAfterFingerprinting() throws Exception {
+        Path pack = temporaryFolder.newFolder("nested-finder-metadata").toPath();
+        Path objects = Files.createDirectories(pack.resolve("objects/oak"));
+        Files.writeString(objects.resolve("tree.iob"), "tree");
+        String expected = WorldReplacementFilesystem.fingerprintPack(pack);
+
+        Files.writeString(objects.resolve(".DS_Store"), "Finder metadata");
+
+        assertEquals(expected, WorldReplacementFilesystem.fingerprintPack(pack));
+    }
+
+    @Test
+    public void rejectsNestedFinderMetadataSymlink() throws Exception {
+        Path pack = temporaryFolder.newFolder("unsafe-nested-finder-metadata").toPath();
+        Path objects = Files.createDirectories(pack.resolve("objects/oak"));
+        Path outside = temporaryFolder.newFile("outside-finder-metadata.txt").toPath();
+        Files.createSymbolicLink(objects.resolve(".DS_Store"), outside);
+
+        assertThrows(IOException.class, () -> WorldReplacementFilesystem.fingerprintPack(pack));
     }
 
     @Test

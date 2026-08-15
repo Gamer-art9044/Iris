@@ -87,6 +87,60 @@ public class ModdedGenerationLeaseContractTest {
     }
 
     @Test
+    public void packDownloadAdmissionPrecedesAsyncDispatch() throws IOException {
+        String source = source("art/arcane/iris/modded/command/IrisModdedCommands.java");
+        String download = method(source, "static int download(CommandSourceStack source, String rawRequest)");
+        int admission = download.indexOf("LifecycleOperationCoordinator.get().acquire(");
+        int executionTracking = download.indexOf("new PackDownloadExecution(");
+        int dispatch = download.indexOf("scheduler.asyncIfRunning(execution, execution::cancel)");
+
+        assertTrue(admission >= 0);
+        assertTrue(executionTracking > admission);
+        assertTrue(dispatch > admission);
+        assertTrue(download.contains("execution.cancel();"));
+
+        String execution = method(source, "private static void executeDownload(");
+        assertTrue(execution.contains("PackDownloader.DownloadCancellation cancellation"));
+        assertTrue(execution.contains("catch (PackDownloader.PackDownloadCancelledException error)"));
+        assertFalse(execution.contains("lease.close();"));
+    }
+
+    @Test
+    public void packDownloadsDrainBeforeModdedSchedulerShutdown() throws IOException {
+        String commands = source("art/arcane/iris/modded/command/IrisModdedCommands.java");
+        String shutdownDownloads = method(commands, "public static void shutdownDownloads()");
+        assertTrue(shutdownDownloads.contains("downloadAdmissionOpen = false;"));
+        assertTrue(shutdownDownloads.contains("execution.cancel();"));
+        assertTrue(shutdownDownloads.contains("execution.await("));
+
+        String bootstrap = source("art/arcane/iris/modded/ModdedEngineBootstrap.java");
+        String stop = method(bootstrap, "public static void stop()");
+        int downloads = stop.indexOf("IrisModdedCommands::shutdownDownloads");
+        int scheduler = stop.indexOf("scheduler::shutdown");
+        assertTrue(downloads >= 0);
+        assertTrue(scheduler > downloads);
+    }
+
+    @Test
+    public void moddedSchedulerRejectsAndCancelsAbandonedDownloadSubmissions() throws IOException {
+        String scheduler = source("art/arcane/iris/modded/ModdedScheduler.java");
+        String dispatch = method(scheduler, "public boolean asyncIfRunning(Runnable task, Runnable rejection)");
+        assertTrue(dispatch.contains("RejectionAwareTask"));
+        assertTrue(dispatch.contains("Objects.requireNonNull(rejection"));
+
+        String shutdown = method(scheduler, "public void shutdown()");
+        assertTrue(shutdown.contains("asyncExecutor.shutdownNow()"));
+        assertTrue(shutdown.contains("rejectAbandonedTasks(abandonedTasks);"));
+
+        String reset = method(scheduler, "public void reset()");
+        assertTrue(reset.contains("asyncExecutor.getQueue().drainTo(abandonedTasks);"));
+        assertTrue(reset.contains("rejectAbandonedTasks(abandonedTasks);"));
+
+        String rejection = method(scheduler, "private static void rejectAbandonedTasks(");
+        assertTrue(rejection.contains("rejectionAwareTask.reject();"));
+    }
+
+    @Test
     public void blockingPregenShutdownDefersItsFinalSaveToTheServerThread() throws IOException {
         String jobSource = source("art/arcane/iris/modded/command/ModdedPregenJob.java");
         String shutdown = method(jobSource, "private static boolean shutdownAndSave(");

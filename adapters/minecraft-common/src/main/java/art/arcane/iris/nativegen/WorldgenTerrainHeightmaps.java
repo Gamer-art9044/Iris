@@ -47,11 +47,14 @@ public final class WorldgenTerrainHeightmaps {
         write(chunk, Heightmap.Types.OCEAN_FLOOR_WG, floorFirstFreeY);
     }
 
-    public static void primeStructurePlacement(WorldGenLevel world, List<StructureStart> starts,
+    public static void primeStructurePlacement(WorldGenLevel world, ChunkPos generationCenter,
+                                               List<StructureStart> starts,
                                                IntBinaryOperator surfaceFirstFreeY,
                                                IntBinaryOperator floorFirstFreeY) {
         Objects.requireNonNull(world,
                 "Iris worldgen heightmap priming requires a generation level");
+        Objects.requireNonNull(generationCenter,
+                "Iris worldgen heightmap priming requires a generation center");
         if (starts == null || starts.isEmpty()) {
             return;
         }
@@ -67,6 +70,10 @@ public final class WorldgenTerrainHeightmaps {
             int maxChunkZ = SectionPos.blockToSectionCoord(bounds.maxZ()) + PLACEMENT_CHUNK_MARGIN;
             for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
                 for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                    if (Math.abs(chunkX - generationCenter.x()) > PLACEMENT_CHUNK_MARGIN
+                            || Math.abs(chunkZ - generationCenter.z()) > PLACEMENT_CHUNK_MARGIN) {
+                        continue;
+                    }
                     if (!primed.add(ChunkPos.pack(chunkX, chunkZ))) {
                         continue;
                     }

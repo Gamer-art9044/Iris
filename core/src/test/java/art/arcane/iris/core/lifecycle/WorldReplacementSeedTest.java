@@ -10,6 +10,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.OptionalLong;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
@@ -56,6 +57,104 @@ public class WorldReplacementSeedTest {
         assertEquals("preserved", copiedRoot.getString("root-marker"));
         assertEquals("preserved", copiedData.getString("generator"));
         assertEquals("preserved", copiedData.getCompoundTag("dimensions").getString("marker"));
+    }
+
+    @Test
+    public void stagesTheRetainedAuthoritativeSeedWhenNoOverrideWasRequested() throws Exception {
+        CompoundTag data = new CompoundTag();
+        data.putLong("seed", SEED);
+        data.putString("generator", "preserved");
+        CompoundTag root = new CompoundTag();
+        root.put("data", data);
+        Path sourceWorld = writeSettings("inherited-source", root);
+        Path stagedWorld = temporaryFolder.newFolder("inherited-stage").toPath();
+
+        long effectiveSeed = WorldReplacementSeed.stageAuthoritativeSeed(
+                sourceWorld,
+                stagedWorld,
+                OptionalLong.empty()
+        );
+
+        assertEquals(SEED, effectiveSeed);
+        assertEquals(SEED, WorldReplacementSeed.readAuthoritativeSeed(sourceWorld));
+        assertEquals(SEED, WorldReplacementSeed.readAuthoritativeSeed(stagedWorld));
+        assertTrue(Files.notExists(stagedWorld.resolve("data/paper")));
+    }
+
+    @Test
+    public void stagesAnExplicitSeedWithoutChangingTheRetainedWorld() throws Exception {
+        CompoundTag data = new CompoundTag();
+        data.putLong("seed", 1337L);
+        data.putString("generator", "preserved");
+        CompoundTag root = new CompoundTag();
+        root.put("data", data);
+        Path sourceWorld = writeSettings("override-source", root);
+        Path stagedWorld = temporaryFolder.newFolder("override-stage").toPath();
+
+        long effectiveSeed = WorldReplacementSeed.stageAuthoritativeSeed(
+                sourceWorld,
+                stagedWorld,
+                OptionalLong.of(SEED)
+        );
+
+        assertEquals(SEED, effectiveSeed);
+        assertEquals(1337L, WorldReplacementSeed.readAuthoritativeSeed(sourceWorld));
+        assertEquals(SEED, WorldReplacementSeed.readAuthoritativeSeed(stagedWorld));
+        NamedTag staged = NBTUtil.read(settingsPath(stagedWorld).toFile());
+        CompoundTag stagedRoot = (CompoundTag) staged.getTag();
+        assertEquals("preserved", stagedRoot.getCompoundTag("data").getString("generator"));
+        assertTrue(Files.notExists(stagedWorld.resolve("data/paper")));
+    }
+
+    @Test
+    public void rejectsAnExistingStagedSettingsFileWithoutChangingIt() throws Exception {
+        CompoundTag sourceData = new CompoundTag();
+        sourceData.putLong("seed", 1337L);
+        CompoundTag sourceRoot = new CompoundTag();
+        sourceRoot.put("data", sourceData);
+        Path sourceWorld = writeSettings("existing-source", sourceRoot);
+
+        CompoundTag stagedData = new CompoundTag();
+        stagedData.putLong("seed", 42L);
+        CompoundTag stagedRoot = new CompoundTag();
+        stagedRoot.put("data", stagedData);
+        Path stagedWorld = writeSettings("existing-stage", stagedRoot);
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> WorldReplacementSeed.stageAuthoritativeSeed(
+                        sourceWorld,
+                        stagedWorld,
+                        OptionalLong.of(SEED)
+                )
+        );
+
+        assertTrue(failure.getMessage().contains("already exist"));
+        assertEquals(42L, WorldReplacementSeed.readAuthoritativeSeed(stagedWorld));
+        assertEquals(1337L, WorldReplacementSeed.readAuthoritativeSeed(sourceWorld));
+    }
+
+    @Test
+    public void invalidSourceDoesNotCreatePartialStageState() throws Exception {
+        CompoundTag sourceRoot = new CompoundTag();
+        sourceRoot.put("data", new CompoundTag());
+        Path sourceWorld = writeSettings("invalid-stage-source", sourceRoot);
+        Path stagedWorld = temporaryFolder.newFolder("invalid-stage-target").toPath();
+        Path retainedMarker = stagedWorld.resolve("iris/pack/marker.txt");
+        Files.createDirectories(retainedMarker.getParent());
+        Files.writeString(retainedMarker, "retained");
+
+        assertThrows(
+                IOException.class,
+                () -> WorldReplacementSeed.stageAuthoritativeSeed(
+                        sourceWorld,
+                        stagedWorld,
+                        OptionalLong.of(SEED)
+                )
+        );
+
+        assertTrue(Files.notExists(stagedWorld.resolve("data")));
+        assertEquals("retained", Files.readString(retainedMarker));
     }
 
     @Test

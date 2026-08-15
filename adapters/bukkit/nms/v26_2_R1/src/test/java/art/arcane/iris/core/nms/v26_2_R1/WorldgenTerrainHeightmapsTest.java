@@ -130,7 +130,7 @@ public class WorldgenTerrainHeightmapsTest {
 
         int canopySnap = IglooPieces.GENERATION_HEIGHT + iglooSnapOffset(world);
         WorldgenTerrainHeightmaps.primeStructurePlacement(
-                world, List.of(start), surfaceFirstFreeY(), floorFirstFreeY());
+                world, new ChunkPos(0, 0), List.of(start), surfaceFirstFreeY(), floorFirstFreeY());
         int terrainSnap = IglooPieces.GENERATION_HEIGHT + iglooSnapOffset(world);
 
         assertEquals(LAND_TERRAIN_TOP + 1, world.getHeight(
@@ -151,7 +151,8 @@ public class WorldgenTerrainHeightmapsTest {
         WorldGenLevel world = world(chunks);
 
         WorldgenTerrainHeightmaps.primeStructurePlacement(
-                world, List.of(startInOrigin()), surfaceFirstFreeY(), floorFirstFreeY());
+                world, new ChunkPos(0, 0), List.of(startInOrigin()),
+                surfaceFirstFreeY(), floorFirstFreeY());
 
         for (ChunkAccess chunk : chunks.values()) {
             assertTrue(chunk.getPos().toString(),
@@ -164,6 +165,28 @@ public class WorldgenTerrainHeightmapsTest {
     }
 
     @Test
+    public void structurePlacementDoesNotPrimeALoadedDistanceTwoChunk() {
+        Map<Long, ChunkAccess> chunks = new HashMap<>();
+        ProtoChunk origin = terrainChunk(new ChunkPos(0, 0));
+        ProtoChunk neighbour = terrainChunk(new ChunkPos(1, 0));
+        ProtoChunk distanceTwo = terrainChunk(new ChunkPos(2, 0));
+        chunks.put(ChunkPos.pack(0, 0), origin);
+        chunks.put(ChunkPos.pack(1, 0), neighbour);
+        chunks.put(ChunkPos.pack(2, 0), distanceTwo);
+        WorldGenLevel world = world(chunks);
+        StructureStart shifted = startInOrigin();
+        shifted.getPieces().forEach(piece -> piece.move(16, 0, 0));
+
+        WorldgenTerrainHeightmaps.primeStructurePlacement(
+                world, new ChunkPos(0, 0), List.of(shifted),
+                surfaceFirstFreeY(), floorFirstFreeY());
+
+        assertTrue(origin.hasPrimedHeightmap(Heightmap.Types.WORLD_SURFACE_WG));
+        assertTrue(neighbour.hasPrimedHeightmap(Heightmap.Types.WORLD_SURFACE_WG));
+        assertFalse(distanceTwo.hasPrimedHeightmap(Heightmap.Types.WORLD_SURFACE_WG));
+    }
+
+    @Test
     public void structurePlacementSkipsChunksOutsideTheGenerationRegion() {
         Map<Long, ChunkAccess> chunks = new HashMap<>();
         ProtoChunk origin = terrainChunk(new ChunkPos(0, 0));
@@ -171,7 +194,8 @@ public class WorldgenTerrainHeightmapsTest {
         WorldGenLevel world = world(chunks);
 
         WorldgenTerrainHeightmaps.primeStructurePlacement(
-                world, List.of(startInOrigin()), surfaceFirstFreeY(), floorFirstFreeY());
+                world, new ChunkPos(0, 0), List.of(startInOrigin()),
+                surfaceFirstFreeY(), floorFirstFreeY());
 
         assertTrue(origin.hasPrimedHeightmap(Heightmap.Types.WORLD_SURFACE_WG));
         assertEquals(LAND_TERRAIN_TOP, origin.getHeight(

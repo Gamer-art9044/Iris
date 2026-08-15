@@ -24,14 +24,19 @@ import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -76,6 +81,9 @@ public final class ModdedScheduler implements PlatformScheduler {
 
     private static RejectedExecutionHandler dropRejectedTask() {
         return (Runnable task, ThreadPoolExecutor executor) -> {
+            if (task instanceof RejectionAwareTask rejectionAwareTask) {
+                rejectionAwareTask.reject();
+            }
             if (executor.isShutdown()) {
                 LOGGER.debug("Iris async task dropped: scheduler is shut down");
                 return;
@@ -130,6 +138,24 @@ public final class ModdedScheduler implements PlatformScheduler {
         executor.execute(() -> runGuarded(task));
     }
 
+    public boolean asyncIfRunning(Runnable task, Runnable rejection) {
+        if (task == null) {
+            return false;
+        }
+        ThreadPoolExecutor executor = asyncExecutor;
+        RejectionAwareTask submittedTask = new RejectionAwareTask(
+                () -> runGuarded(task),
+                Objects.requireNonNull(rejection, "rejection")
+        );
+        warnOnBacklog(executor);
+        try {
+            executor.execute(submittedTask);
+        } catch (RejectedExecutionException exception) {
+            submittedTask.reject();
+        }
+        return !submittedTask.isRejected();
+    }
+
     @Override
     public void laterGlobal(Runnable task, int ticks) {
         if (task == null) {
@@ -151,7 +177,9 @@ public final class ModdedScheduler implements PlatformScheduler {
         if (asyncExecutor.isShutdown()) {
             asyncExecutor = createAsyncExecutor();
         } else {
-            asyncExecutor.getQueue().clear();
+            List<Runnable> abandonedTasks = new ArrayList<>();
+            asyncExecutor.getQueue().drainTo(abandonedTasks);
+            rejectAbandonedTasks(abandonedTasks);
         }
         mainQueue.clear();
         delayedQueue.clear();
@@ -162,12 +190,21 @@ public final class ModdedScheduler implements PlatformScheduler {
     }
 
     public void shutdown() {
-        asyncExecutor.shutdownNow();
+        List<Runnable> abandonedTasks = asyncExecutor.shutdownNow();
+        rejectAbandonedTasks(abandonedTasks);
         mainQueue.clear();
         delayedQueue.clear();
         mainThread = null;
         // Shutdown stage that always runs (ModdedEngineBootstrap.stop): release the level snapshot with it.
         ModdedServerLevels.forget();
+    }
+
+    private static void rejectAbandonedTasks(List<Runnable> abandonedTasks) {
+        for (Runnable abandonedTask : abandonedTasks) {
+            if (abandonedTask instanceof RejectionAwareTask rejectionAwareTask) {
+                rejectionAwareTask.reject();
+            }
+        }
     }
 
     private void warnOnBacklog(ThreadPoolExecutor executor) {
@@ -245,6 +282,35 @@ public final class ModdedScheduler implements PlatformScheduler {
             Thread thread = new Thread(runnable, "iris-modded-async-" + counter.getAndIncrement());
             thread.setDaemon(true);
             return thread;
+        }
+    }
+
+    private static final class RejectionAwareTask implements Runnable {
+        private final Runnable task;
+        private final Runnable rejection;
+        private final AtomicBoolean rejected;
+
+        private RejectionAwareTask(Runnable task, Runnable rejection) {
+            this.task = task;
+            this.rejection = rejection;
+            rejected = new AtomicBoolean();
+        }
+
+        @Override
+        public void run() {
+            if (!rejected.get()) {
+                task.run();
+            }
+        }
+
+        private void reject() {
+            if (rejected.compareAndSet(false, true)) {
+                rejection.run();
+            }
+        }
+
+        private boolean isRejected() {
+            return rejected.get();
         }
     }
 }

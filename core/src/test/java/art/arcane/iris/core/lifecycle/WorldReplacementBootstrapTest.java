@@ -59,6 +59,21 @@ public class WorldReplacementBootstrapTest {
     }
 
     @Test
+    public void publishesArmedReplacementAfterFinderAddsNestedMetadata() throws Exception {
+        Transaction transaction = stagedTransaction(Phase.ARMED, true, "original");
+        configureReplacement(transaction);
+        Path dimensions = paths(transaction).stage().resolve("iris/pack/dimensions");
+        Files.writeString(dimensions.resolve(".DS_Store"), "Finder metadata");
+
+        WorldReplacementBootstrap.ReconcileResult result = reconcile();
+
+        assertEquals(1, result.published());
+        assertEquals("replacement", replacementContent(target.worldDirectory()));
+        assertEquals("original", Files.readString(backup(transaction).resolve("original.txt")));
+        assertEquals(Phase.PUBLISHED, loadSingle().phase());
+    }
+
+    @Test
     public void publishesArmedReplacementWhenOriginalConfigurationAlreadyMatchesReplacement() throws Exception {
         configureExistingReplacement();
         Transaction transaction = stagedTransaction(Phase.ARMED, true, "original");

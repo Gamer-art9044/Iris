@@ -861,7 +861,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         }
         try {
             WorldgenTerrainHeightmaps.primeStructurePlacement(
-                    world, heightmapStarts, worldgenSurfaceHeight(), worldgenFloorHeight());
+                    world, chunkPos, heightmapStarts, worldgenSurfaceHeight(), worldgenFloorHeight());
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "heightmap priming", nativeStructureBatchContext(placementGroups),
@@ -932,9 +932,16 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     private void placeVanillaStructure(WorldGenLevel world, StructureManager structureManager, WorldgenRandom random,
                                        BoundingBox area, ChunkPos chunkPos, String structureId, StructureStart start,
                                        IrisNativeStructureDecision decision) {
-        NativeStructurePostProcessor.place(world, structureManager, this, random, area, chunkPos,
-                structureId, start, decision, this::resolvePaletteBlock,
-                (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
+        WorldGenLevel boundedWorld = NativeStructureWorldgenAccess.create(
+                world, chunkPos, worldgenSurfaceHeight(), worldgenFloorHeight());
+        world.setCurrentlyGenerating(() -> "Iris native structure " + structureId);
+        try {
+            NativeStructurePostProcessor.place(boundedWorld, structureManager, this, random, area, chunkPos,
+                    structureId, start, decision, this::resolvePaletteBlock,
+                    (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
+        } finally {
+            world.setCurrentlyGenerating(null);
+        }
     }
 
     private List<List<Structure>> structuresByStep(Registry<Structure> registry) {

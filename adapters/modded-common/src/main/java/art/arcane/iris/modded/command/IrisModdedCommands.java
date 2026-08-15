@@ -19,7 +19,13 @@
 package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.IrisMessages;
+import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.core.localization.PackDownloadMessages;
+import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
+import art.arcane.iris.core.pack.PackDownloadExecution;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
@@ -56,15 +62,18 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
-import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
-import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
+
 public final class IrisModdedCommands {
     private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
+    private static final long DOWNLOAD_SHUTDOWN_POLL_SECONDS = 15L;
+    private static final Object DOWNLOAD_MONITOR = new Object();
 
     static final SuggestionProvider<CommandSourceStack> PACK_NAMES = ModdedCommandSuggestions.PACK_NAMES;
+    private static PackDownloadExecution activeDownload;
+    private static boolean downloadAdmissionOpen;
 
     private IrisModdedCommands() {
     }
@@ -74,6 +83,43 @@ public final class IrisModdedCommands {
         dispatcher.register(Commands.literal("ir").redirect(root));
         dispatcher.register(Commands.literal("irs").redirect(root));
         IrisLogging.info("Iris /iris command tree registered");
+    }
+
+    public static void openDownloadAdmission() {
+        synchronized (DOWNLOAD_MONITOR) {
+            downloadAdmissionOpen = true;
+        }
+    }
+
+    public static void shutdownDownloads() {
+        PackDownloadExecution execution;
+        synchronized (DOWNLOAD_MONITOR) {
+            downloadAdmissionOpen = false;
+            execution = activeDownload;
+        }
+        if (execution == null) {
+            return;
+        }
+
+        execution.cancel();
+        boolean interrupted = false;
+        boolean warned = false;
+        while (!execution.isComplete()) {
+            try {
+                if (!execution.await(DOWNLOAD_SHUTDOWN_POLL_SECONDS, TimeUnit.SECONDS) && !warned) {
+                    warned = true;
+                    LOGGER.warn(execution.isPublishing()
+                            ? "Waiting for atomic pack publication to finish before Iris shutdown."
+                            : "Waiting for the active pack download to cancel before Iris shutdown.");
+                }
+            } catch (InterruptedException exception) {
+                interrupted = true;
+                execution.cancel();
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     static int tp(CommandSourceStack source, ServerLevel level, ServerPlayer target) {
@@ -264,9 +310,8 @@ public final class IrisModdedCommands {
             fail(source, "Use /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>.");
             return 0;
         }
-        String target = request.pack() == null ? request.url() : request.pack();
+        String target = downloadDisplayTarget(request);
         String downloadSource = request.pack() == null ? "direct ZIP URL" : "built-in beta release";
-        ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_DOWNLOADING_IRISDIMENSIONS, MessageArgument.untrusted("pack", target), MessageArgument.untrusted("downloadSource", downloadSource)));
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
         if (scheduler == null) {
             fail(source, IrisLanguage.plain(
@@ -275,34 +320,141 @@ public final class IrisModdedCommands {
                     MessageArgument.untrusted("downloadSource", downloadSource)));
             return 0;
         }
-        scheduler.async(() -> {
-            boolean installed = false;
-            File packs = ModdedPackCommands.packsRoot();
+        PackDownloadExecution execution;
+        synchronized (DOWNLOAD_MONITOR) {
+            if (!downloadAdmissionOpen) {
+                fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
+                        MessageArgument.untrusted("pack", target),
+                        MessageArgument.untrusted("downloadSource", downloadSource)));
+                return 0;
+            }
+
+            LifecycleOperationCoordinator.Lease lease;
             try {
-                PackDownloader.PackInstallResult result = request.pack() == null
-                        ? PackDownloader.downloadUrl(
-                                packs,
-                                request.url(),
-                                false,
-                                (String message) -> scheduler.global(() -> ok(source, message))
-                        )
-                        : PackDownloader.downloadBuiltIn(
-                                packs,
-                                request.pack(),
-                                false,
-                                (String message) -> scheduler.global(() -> ok(source, message))
-                        );
-                installed = result != null;
-            } catch (IOException | RuntimeException error) {
-                LOGGER.error("Iris pack download failed for {}", target, error);
+                lease = LifecycleOperationCoordinator.get().acquire(
+                        LifecycleOperationCoordinator.Domain.PACK_MUTATION,
+                        LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD,
+                        target
+                );
+            } catch (LifecycleOperationCoordinator.BusyException error) {
+                fail(source, downloadBusyMessage(error.currentOperation()));
+                return 0;
             }
-            if (installed) {
-                scheduler.global(() -> ok(source, "Pack installed on disk. Restart the server before using it."));
-            } else {
-                scheduler.global(() -> fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE, MessageArgument.untrusted("pack", target), MessageArgument.untrusted("downloadSource", downloadSource))));
+
+            execution = new PackDownloadExecution(
+                    lease,
+                    cancellation -> executeDownload(source, request, target, downloadSource, scheduler, cancellation)
+            );
+            PackDownloadExecution trackedExecution = execution;
+            execution.onCompletion(() -> clearActiveDownload(trackedExecution));
+            activeDownload = execution;
+            boolean accepted;
+            try {
+                accepted = scheduler.asyncIfRunning(execution, execution::cancel);
+            } catch (Throwable error) {
+                execution.cancel();
+                LOGGER.error("Iris pack download dispatch failed for {}", target, error);
+                fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
+                        MessageArgument.untrusted("pack", target),
+                        MessageArgument.untrusted("downloadSource", downloadSource)));
+                return 0;
             }
-        });
+            if (!accepted) {
+                execution.cancel();
+                LOGGER.error("Iris pack download dispatch rejected for {} because the scheduler is shut down", target);
+                fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
+                        MessageArgument.untrusted("pack", target),
+                        MessageArgument.untrusted("downloadSource", downloadSource)));
+                return 0;
+            }
+        }
+
+        ok(source, IrisLanguage.plain(
+                ModdedCommandMessages.IRIS_MODDED_COMMANDS_DOWNLOADING_IRISDIMENSIONS,
+                MessageArgument.untrusted("pack", target),
+                MessageArgument.untrusted("downloadSource", downloadSource)));
         return 1;
+    }
+
+    private static void executeDownload(
+            CommandSourceStack source,
+            DownloadRequest request,
+            String target,
+            String downloadSource,
+            ModdedScheduler scheduler,
+            PackDownloader.DownloadCancellation cancellation
+    ) throws PackDownloader.PackDownloadCancelledException {
+        File packs = ModdedPackCommands.packsRoot();
+        try {
+            PackDownloader.PackInstallResult result = request.pack() == null
+                    ? PackDownloader.downloadUrl(
+                            packs,
+                            request.url(),
+                            false,
+                            (String message) -> scheduler.global(() -> ok(source, message)),
+                            cancellation
+                    )
+                    : PackDownloader.downloadBuiltIn(
+                            packs,
+                            request.pack(),
+                            false,
+                            (String message) -> scheduler.global(() -> ok(source, message)),
+                            cancellation
+                    );
+            String completionMessage = downloadCompletionMessage(result);
+            if (result != null) {
+                if (completionMessage != null) {
+                    scheduler.global(() -> ok(source, completionMessage));
+                }
+                return;
+            }
+        } catch (PackDownloader.PackDownloadCancelledException error) {
+            throw error;
+        } catch (PackDownloader.PackDownloadBusyException error) {
+            scheduler.global(() -> fail(source, error.getMessage()));
+            return;
+        } catch (IOException | RuntimeException error) {
+            LOGGER.error("Iris pack download failed for {}", target, error);
+        }
+        scheduler.global(() -> fail(source, IrisLanguage.plain(
+                ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
+                MessageArgument.untrusted("pack", target),
+                MessageArgument.untrusted("downloadSource", downloadSource))));
+    }
+
+    static String downloadBusyMessage(LifecycleOperationCoordinator.ActiveOperation operation) {
+        if (operation.domain() == LifecycleOperationCoordinator.Domain.PACK_MUTATION
+                && operation.kind() == LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD) {
+            return IrisLanguage.plain(PackDownloadMessages.IN_PROGRESS);
+        }
+        return "Iris pack changes are busy with " + operation.kind().name().toLowerCase(Locale.ROOT)
+                + " for '" + operation.target() + "'. Try again when it completes.";
+    }
+
+    static String downloadCompletionMessage(PackDownloader.PackInstallResult result) {
+        if (result == null || !result.changed()) {
+            return null;
+        }
+        return result.restartRequired()
+                ? "Pack installed on disk. Restart the server before using it."
+                : "Pack installed on disk.";
+    }
+
+    static String downloadDisplayTarget(DownloadRequest request) {
+        return request.pack() == null
+                ? IrisLanguage.plain(PackDownloadMessages.PROGRESS_SOURCE_REMOTE)
+                : request.pack();
+    }
+
+    private static void clearActiveDownload(PackDownloadExecution execution) {
+        synchronized (DOWNLOAD_MONITOR) {
+            if (activeDownload == execution) {
+                activeDownload = null;
+            }
+        }
     }
 
     static DownloadRequest parseDownloadRequest(String rawRequest) {

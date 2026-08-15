@@ -1,5 +1,9 @@
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.localization.PackDownloadMessages;
+import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
+import art.arcane.iris.core.pack.PackDownloader;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.tree.CommandNode;
 import net.minecraft.SharedConstants;
@@ -9,10 +13,11 @@ import org.junit.Test;
 
 import java.util.List;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class IrisModdedCommandParityTest {
@@ -73,11 +78,59 @@ public class IrisModdedCommandParityTest {
         assertEquals("underworld", underworld.pack());
         assertNotNull(link);
         assertEquals("https://packs.example.test/custom.zip?token=a=b", link.url());
+        String displayTarget = IrisModdedCommands.downloadDisplayTarget(link);
+        assertEquals(IrisLanguage.plain(PackDownloadMessages.PROGRESS_SOURCE_REMOTE), displayTarget);
+        assertFalse(displayTarget.contains("token"));
         assertNull(IrisModdedCommands.parseDownloadRequest("overworld"));
         assertNull(IrisModdedCommands.parseDownloadRequest("pack=custom"));
         assertNull(IrisModdedCommands.parseDownloadRequest("link=https://packs.example.test/custom.tar.gz"));
         assertNull(IrisModdedCommands.parseDownloadRequest("pack=underworld branch=stable"));
         assertNull(IrisModdedCommands.parseDownloadRequest("pack=underworld overwrite=true"));
+    }
+
+    @Test
+    public void downloadCompletionMessageOnlyReportsActualPackChanges() {
+        assertEquals(
+                "Pack installed on disk. Restart the server before using it.",
+                IrisModdedCommands.downloadCompletionMessage(
+                        new PackDownloader.PackInstallResult("overworld", true, true)
+                )
+        );
+        assertEquals(
+                "Pack installed on disk.",
+                IrisModdedCommands.downloadCompletionMessage(
+                        new PackDownloader.PackInstallResult("overworld", true, false)
+                )
+        );
+        assertNull(IrisModdedCommands.downloadCompletionMessage(
+                new PackDownloader.PackInstallResult("overworld", false, false)
+        ));
+        assertNull(IrisModdedCommands.downloadCompletionMessage(null));
+    }
+
+    @Test
+    public void downloadBusyMessageDistinguishesPackDownloadsFromOtherLifecycleWork() {
+        LifecycleOperationCoordinator.ActiveOperation packDownload = new LifecycleOperationCoordinator.ActiveOperation(
+                1L,
+                LifecycleOperationCoordinator.Domain.PACK_MUTATION,
+                LifecycleOperationCoordinator.OperationKind.PACK_DOWNLOAD,
+                "overworld"
+        );
+        LifecycleOperationCoordinator.ActiveOperation worldCreation = new LifecycleOperationCoordinator.ActiveOperation(
+                2L,
+                LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
+                LifecycleOperationCoordinator.OperationKind.WORLD_CREATE,
+                "iris_world"
+        );
+
+        assertEquals(
+                IrisLanguage.plain(PackDownloadMessages.IN_PROGRESS),
+                IrisModdedCommands.downloadBusyMessage(packDownload)
+        );
+        assertEquals(
+                "Iris pack changes are busy with world_create for 'iris_world'. Try again when it completes.",
+                IrisModdedCommands.downloadBusyMessage(worldCreation)
+        );
     }
 
     @Test

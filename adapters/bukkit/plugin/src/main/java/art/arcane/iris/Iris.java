@@ -647,9 +647,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
         J.s(() -> {
             pendingWorldReplacements.captureVanillaLevelContext();
-            // Off-main: the verify body takes the replacement-manager monitor and SHA-hashes
-            // whole pack trees; neither belongs on the tick thread.
-            J.a(pendingWorldReplacements::verifyLoadedPublishedWorlds);
+            pendingWorldReplacements.verifyLoadedPublishedWorlds();
             J.a(this::bstats);
             J.ar(() -> settingsHotloadWatch.checkConfigHotload(configHotloadEngine), 60);
             J.sr(this::tickQueue, 0);

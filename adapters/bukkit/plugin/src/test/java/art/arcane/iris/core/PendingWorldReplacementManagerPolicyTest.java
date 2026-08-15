@@ -111,7 +111,7 @@ public class PendingWorldReplacementManagerPolicyTest {
 
             IOException failure = assertThrows(
                     IOException.class,
-                    () -> manager.stageReplacement(sender, NamespacedKey.minecraft("the_nether"), dimension)
+                    () -> manager.stageReplacement(sender, NamespacedKey.minecraft("the_nether"), dimension, null)
             );
 
             assertEquals(

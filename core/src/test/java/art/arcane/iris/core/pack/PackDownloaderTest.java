@@ -45,9 +45,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -219,13 +221,23 @@ public class PackDownloaderTest {
         server.start();
         try {
             File packsFolder = temp.newFolder("direct-url-packs");
-            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/direct-pack.zip";
+            String url = "http://127.0.0.1:" + server.getAddress().getPort()
+                    + "/direct-pack.zip?token=secret&expires=soon";
+            List<PackDownloader.DownloadProgress> progress = new ArrayList<>();
+            List<String> feedback = new ArrayList<>();
+            AtomicInteger listenerCalls = new AtomicInteger();
 
             PackDownloader.PackInstallResult result = PackDownloader.downloadUrl(
                     packsFolder,
                     url,
                     false,
-                    ignored -> {
+                    feedback::add,
+                    new PackDownloader.DownloadCancellation(),
+                    update -> {
+                        progress.add(update);
+                        if (listenerCalls.getAndIncrement() == 0) {
+                            throw new IllegalStateException("listener failure");
+                        }
                     }
             );
 
@@ -240,7 +252,157 @@ public class PackDownloaderTest {
             assertTrue(Files.isRegularFile(
                     packsFolder.toPath().resolve("direct_pack/dimensions/direct_pack_supporting.json")
             ));
+            assertFalse(feedback.stream().anyMatch(line -> line.contains("secret") || line.contains("http://")));
+            assertDownloadProgress(progress, response.length);
         } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void activeDownloadRejectsSameAndDifferentUrlsWithoutQueueing() throws Exception {
+        File packsFolder = temp.newFolder("single-flight-packs");
+        byte[] slowArchive = packArchive("slow-download.zip", "slow_pack");
+        byte[] followupArchive = packArchive("followup-download.zip", "followup_pack");
+        AtomicInteger slowRequests = new AtomicInteger();
+        AtomicInteger followupRequests = new AtomicInteger();
+        CountDownLatch slowRequestStarted = new CountDownLatch(1);
+        CountDownLatch releaseSlowResponse = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/slow.zip", exchange -> {
+            slowRequests.incrementAndGet();
+            slowRequestStarted.countDown();
+            try {
+                if (!releaseSlowResponse.await(10L, TimeUnit.SECONDS)) {
+                    exchange.sendResponseHeaders(504, -1L);
+                    return;
+                }
+                exchange.sendResponseHeaders(200, slowArchive.length);
+                exchange.getResponseBody().write(slowArchive);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                exchange.sendResponseHeaders(503, -1L);
+            } finally {
+                exchange.close();
+            }
+        });
+        server.createContext("/followup.zip", exchange -> {
+            followupRequests.incrementAndGet();
+            exchange.sendResponseHeaders(200, followupArchive.length);
+            exchange.getResponseBody().write(followupArchive);
+            exchange.close();
+        });
+        server.start();
+
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+        try {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+            String slowUrl = baseUrl + "/slow.zip";
+            String followupUrl = baseUrl + "/followup.zip";
+            Future<PackDownloader.PackInstallResult> active = executor.submit(() ->
+                    PackDownloader.downloadUrl(packsFolder, slowUrl, false, ignored -> {
+                    }));
+            assertTrue(slowRequestStarted.await(5L, TimeUnit.SECONDS));
+
+            Future<PackDownloader.PackInstallResult> sameUrl = executor.submit(() ->
+                    PackDownloader.downloadUrl(packsFolder, slowUrl, false, ignored -> {
+                    }));
+            Future<PackDownloader.PackInstallResult> differentUrl = executor.submit(() ->
+                    PackDownloader.downloadUrl(packsFolder, followupUrl, false, ignored -> {
+                    }));
+
+            assertBusy(sameUrl);
+            assertBusy(differentUrl);
+            assertEquals(1, slowRequests.get());
+            assertEquals(0, followupRequests.get());
+
+            releaseSlowResponse.countDown();
+            PackDownloader.PackInstallResult activeResult = active.get(15L, TimeUnit.SECONDS);
+            assertNotNull(activeResult);
+            assertEquals("slow_pack", activeResult.key());
+
+            PackDownloader.PackInstallResult followupResult = PackDownloader.downloadUrl(
+                    packsFolder,
+                    followupUrl,
+                    false,
+                    ignored -> {
+                    }
+            );
+            assertNotNull(followupResult);
+            assertEquals("followup_pack", followupResult.key());
+            assertEquals(1, followupRequests.get());
+        } finally {
+            releaseSlowResponse.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(15L, TimeUnit.SECONDS));
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void cancellationInterruptsSlowDownloadAndReopensAdmission() throws Exception {
+        File packsFolder = temp.newFolder("cancelled-download-packs");
+        byte[] followupArchive = packArchive("cancel-followup.zip", "cancel_followup");
+        CountDownLatch slowRequestStarted = new CountDownLatch(1);
+        CountDownLatch releaseSlowResponse = new CountDownLatch(1);
+        AtomicInteger followupRequests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/cancel-slow.zip", exchange -> {
+            slowRequestStarted.countDown();
+            try {
+                releaseSlowResponse.await(10L, TimeUnit.SECONDS);
+                exchange.sendResponseHeaders(504, -1L);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.createContext("/cancel-followup.zip", exchange -> {
+            followupRequests.incrementAndGet();
+            exchange.sendResponseHeaders(200, followupArchive.length);
+            exchange.getResponseBody().write(followupArchive);
+            exchange.close();
+        });
+        server.start();
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        PackDownloader.DownloadCancellation cancellation = new PackDownloader.DownloadCancellation();
+        try {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+            Future<PackDownloader.PackInstallResult> active = executor.submit(() -> PackDownloader.downloadUrl(
+                    packsFolder,
+                    baseUrl + "/cancel-slow.zip",
+                    false,
+                    ignored -> {
+                    },
+                    cancellation
+            ));
+            assertTrue(slowRequestStarted.await(5L, TimeUnit.SECONDS));
+
+            cancellation.cancel();
+
+            ExecutionException failure = assertThrows(
+                    ExecutionException.class,
+                    () -> active.get(5L, TimeUnit.SECONDS)
+            );
+            assertTrue(failure.getCause() instanceof PackDownloader.PackDownloadCancelledException);
+            releaseSlowResponse.countDown();
+
+            PackDownloader.PackInstallResult followup = PackDownloader.downloadUrl(
+                    packsFolder,
+                    baseUrl + "/cancel-followup.zip",
+                    false,
+                    ignored -> {
+                    }
+            );
+            assertNotNull(followup);
+            assertEquals("cancel_followup", followup.key());
+            assertEquals(1, followupRequests.get());
+        } finally {
+            releaseSlowResponse.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5L, TimeUnit.SECONDS));
             server.stop(0);
         }
     }
@@ -734,6 +896,55 @@ public class PackDownloaderTest {
                 StandardCharsets.UTF_8
         );
         return pack;
+    }
+
+    private byte[] packArchive(String filename, String key) throws IOException {
+        Path archive = temp.newFile(filename).toPath();
+        LinkedHashMap<String, String> entries = new LinkedHashMap<>();
+        entries.put(
+                "wrapped/dimensions/" + key + ".json",
+                "{\"name\":\"" + key + "\",\"regions\":[\"local\"],\"logicalHeight\":256,"
+                        + "\"dimensionHeight\":{\"min\":-64,\"max\":320}}"
+        );
+        entries.put("wrapped/regions/local.json", "{\"name\":\"Local\",\"landBiomes\":[\"local\"]}");
+        entries.put("wrapped/biomes/local.json", "{\"name\":\"Local\",\"derivative\":\"minecraft:plains\"}");
+        writeArchive(archive, entries);
+        return Files.readAllBytes(archive);
+    }
+
+    private static void assertBusy(Future<PackDownloader.PackInstallResult> attempt) {
+        ExecutionException failure = assertThrows(
+                ExecutionException.class,
+                () -> attempt.get(1L, TimeUnit.SECONDS)
+        );
+        assertTrue(failure.getCause() instanceof PackDownloader.PackDownloadBusyException);
+    }
+
+    private static void assertDownloadProgress(List<PackDownloader.DownloadProgress> progress, long expectedBytes) {
+        List<PackDownloader.DownloadPhase> phases = new ArrayList<>();
+        PackDownloader.DownloadPhase previousPhase = null;
+        long previousDownloadedBytes = -1L;
+        for (int index = 0; index < progress.size(); index++) {
+            PackDownloader.DownloadProgress update = progress.get(index);
+            if (update.phase() != previousPhase) {
+                phases.add(update.phase());
+                previousPhase = update.phase();
+            }
+            if (update.phase() == PackDownloader.DownloadPhase.DOWNLOADING) {
+                assertTrue(update.transferredBytes() >= previousDownloadedBytes);
+                assertEquals(expectedBytes, update.totalBytes());
+                previousDownloadedBytes = update.transferredBytes();
+            }
+            assertEquals(index == progress.size() - 1, update.complete());
+        }
+        assertEquals(List.of(
+                PackDownloader.DownloadPhase.CONNECTING,
+                PackDownloader.DownloadPhase.DOWNLOADING,
+                PackDownloader.DownloadPhase.UNPACKING,
+                PackDownloader.DownloadPhase.VALIDATING,
+                PackDownloader.DownloadPhase.PUBLISHING
+        ), phases);
+        assertEquals(expectedBytes, previousDownloadedBytes);
     }
 
     private static void writeDimension(Path root, String key) throws IOException {

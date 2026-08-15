@@ -30,6 +30,7 @@ import art.arcane.iris.engine.object.BlockDataMergeSupport;
 import art.arcane.iris.engine.object.IrisObjectRotation;
 import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.modded.api.ModdedCustomContentRegistry;
+import art.arcane.iris.modded.command.IrisModdedCommands;
 import art.arcane.iris.modded.command.ModdedGuiHost;
 import art.arcane.iris.modded.command.ModdedObjectUndo;
 import art.arcane.iris.modded.command.ModdedPregenBossBar;
@@ -109,6 +110,7 @@ public final class ModdedEngineBootstrap {
         if (scheduler != null) {
             scheduler.reset();
         }
+        IrisModdedCommands.openDownloadAdmission();
         ModdedStartup.prepareForStartup();
         IrisModdedChunkGenerator.startGenPool();
         bindWorldGenerators(server);
@@ -169,6 +171,7 @@ public final class ModdedEngineBootstrap {
     public static void stop() {
         MinecraftServer stoppingServer = currentServer;
         Throwable failure = null;
+        failure = runStopStage(failure, "pack downloads", IrisModdedCommands::shutdownDownloads);
         failure = runStopStage(failure, "world check", () -> ModdedWorldCheck.serverStopped(stoppingServer));
         failure = runStopStage(failure, "protocol", ModdedProtocolHandler::stop);
         failure = runStopStage(failure, "pregenerator", ModdedPregenJob::shutdown);

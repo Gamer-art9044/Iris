@@ -1,5 +1,6 @@
 package art.arcane.iris.core.localization;
 
+import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.localization.LinesKey;
 import art.arcane.volmlib.util.localization.MessageKey;
 import art.arcane.volmlib.util.localization.PluralKey;
@@ -9,6 +10,96 @@ import java.util.List;
 import java.util.Map;
 
 public final class PackDownloadMessages {
+    public static final TextKey PROGRESS_START = TextKey.of(
+            "iris.runtime.pack_download.progress.start",
+            C.IRIS + "Iris " + C.GOLD + "PACK DOWNLOAD" + C.DARK_GRAY + " | " + C.WHITE + "{source}"
+    );
+    public static final TextKey PROGRESS_PHASE = TextKey.of(
+            "iris.runtime.pack_download.progress.phase",
+            C.IRIS + "Iris " + C.AQUA + "{phase}" + C.DARK_GRAY + " | " + C.GRAY + "{source}"
+    );
+    public static final TextKey PROGRESS_DETERMINATE = TextKey.of(
+            "iris.runtime.pack_download.progress.determinate",
+            "{bar}" + C.GRAY + " " + C.YELLOW + "{percent}%" + C.DARK_GRAY + " | "
+                    + C.WHITE + "{transferred}" + C.GRAY + "/" + C.WHITE + "{total}"
+                    + C.DARK_GRAY + " | " + C.AQUA + "{rate}/s"
+    );
+    public static final TextKey PROGRESS_INDETERMINATE = TextKey.of(
+            "iris.runtime.pack_download.progress.indeterminate",
+            "{bar}" + C.GRAY + " " + C.AQUA + "{phase}" + C.DARK_GRAY + " | "
+                    + C.WHITE + "{transferred}" + C.DARK_GRAY + " | " + C.AQUA + "{rate}/s"
+    );
+    public static final TextKey PROGRESS_DETAIL = TextKey.of(
+            "iris.runtime.pack_download.progress.detail",
+            C.DARK_GRAY + "  - " + C.GRAY + "{detail}"
+    );
+    public static final TextKey PROGRESS_COMPLETE = TextKey.of(
+            "iris.runtime.pack_download.progress.complete",
+            C.GREEN + "Iris pack '{pack}' installed" + C.DARK_GRAY + " | "
+                    + C.WHITE + "{transferred}" + C.GRAY + " in " + C.WHITE + "{elapsed}"
+    );
+    public static final TextKey PROGRESS_UNCHANGED = TextKey.of(
+            "iris.runtime.pack_download.progress.unchanged",
+            C.YELLOW + "Iris pack '{pack}' is already installed."
+    );
+    public static final TextKey PROGRESS_FAILED = TextKey.of(
+            "iris.runtime.pack_download.progress.failed",
+            C.RED + "Iris pack download failed." + C.GRAY + " Review the download details above and retry."
+    );
+    public static final TextKey PROGRESS_FAILED_DETAIL = TextKey.of(
+            "iris.runtime.pack_download.progress.failed_detail",
+            C.RED + "Iris pack download failed." + C.GRAY + " {error}"
+    );
+    public static final TextKey PROGRESS_CANCELLED = TextKey.of(
+            "iris.runtime.pack_download.progress.cancelled",
+            C.YELLOW + "Iris pack download cancelled before publication."
+    );
+    public static final TextKey PROGRESS_RESTART = TextKey.of(
+            "iris.runtime.pack_download.progress.restart",
+            C.GOLD + "Restart required" + C.DARK_GRAY + " | "
+                    + C.GRAY + "Restart the server before creating or replacing a world with this pack."
+    );
+    public static final TextKey PROGRESS_PHASE_CONNECTING = TextKey.of(
+            "iris.runtime.pack_download.progress.phase.connecting",
+            "Connecting"
+    );
+    public static final TextKey PROGRESS_PHASE_DOWNLOADING = TextKey.of(
+            "iris.runtime.pack_download.progress.phase.downloading",
+            "Downloading"
+    );
+    public static final TextKey PROGRESS_PHASE_UNPACKING = TextKey.of(
+            "iris.runtime.pack_download.progress.phase.unpacking",
+            "Unpacking"
+    );
+    public static final TextKey PROGRESS_PHASE_VALIDATING = TextKey.of(
+            "iris.runtime.pack_download.progress.phase.validating",
+            "Validating"
+    );
+    public static final TextKey PROGRESS_PHASE_PUBLISHING = TextKey.of(
+            "iris.runtime.pack_download.progress.phase.publishing",
+            "Publishing"
+    );
+    public static final TextKey PROGRESS_SOURCE_REMOTE = TextKey.of(
+            "iris.runtime.pack_download.progress.source.remote",
+            "Remote ZIP"
+    );
+    public static final TextKey INVALID_SOURCE = TextKey.of(
+            "iris.runtime.pack_download.invalid_source",
+            C.RED + "Choose exactly one source: /iris download pack=overworld, "
+                    + "/iris download pack=underworld, or /iris download link=‹zip-url›."
+    );
+    public static final TextKey INVALID_URL = TextKey.of(
+            "iris.runtime.pack_download.invalid_url",
+            C.RED + "Iris requires a valid HTTP or HTTPS .zip URL."
+    );
+    public static final TextKey INVALID_BUILT_IN = TextKey.of(
+            "iris.runtime.pack_download.invalid_built_in",
+            C.RED + "Iris only provides built-in downloads for 'overworld' and 'underworld'."
+    );
+    public static final TextKey SHUTTING_DOWN = TextKey.of(
+            "iris.runtime.pack_download.shutting_down",
+            C.YELLOW + "Iris is shutting down and is not accepting pack downloads."
+    );
     public static final TextKey DOWNLOADING = TextKey.of(
             "iris.runtime.pack_download.downloading",
             "Downloading {url}"
@@ -74,6 +165,10 @@ public final class PackDownloadMessages {
             "iris.runtime.pack_download.already_installed",
             "Pack {key} is already installed, skipping download."
     );
+    public static final TextKey IN_PROGRESS = TextKey.of(
+            "iris.runtime.pack_download.in_progress",
+            "Another Iris pack download is already in progress. Wait for it to finish before retrying."
+    );
     public static final TextKey VALIDATION_FAILED = TextKey.of(
             "iris.runtime.pack_download.validation_failed",
             "Pack '{pack}' failed validation; world and Studio creation will be refused. Reasons:"
@@ -96,6 +191,27 @@ public final class PackDownloadMessages {
     );
 
     private static final List<MessageKey> KEYS = List.of(
+            PROGRESS_START,
+            PROGRESS_PHASE,
+            PROGRESS_DETERMINATE,
+            PROGRESS_INDETERMINATE,
+            PROGRESS_DETAIL,
+            PROGRESS_COMPLETE,
+            PROGRESS_UNCHANGED,
+            PROGRESS_FAILED,
+            PROGRESS_FAILED_DETAIL,
+            PROGRESS_CANCELLED,
+            PROGRESS_RESTART,
+            PROGRESS_PHASE_CONNECTING,
+            PROGRESS_PHASE_DOWNLOADING,
+            PROGRESS_PHASE_UNPACKING,
+            PROGRESS_PHASE_VALIDATING,
+            PROGRESS_PHASE_PUBLISHING,
+            PROGRESS_SOURCE_REMOTE,
+            INVALID_SOURCE,
+            INVALID_URL,
+            INVALID_BUILT_IN,
+            SHUTTING_DOWN,
             DOWNLOADING,
             FAILED_TO_FIND,
             UNPACKING,
@@ -111,6 +227,7 @@ public final class PackDownloadMessages {
             PACK_KEY_CONFLICT,
             ACQUIRED,
             ALREADY_INSTALLED,
+            IN_PROGRESS,
             VALIDATION_FAILED,
             VALIDATION_REASON,
             VALIDATED_WITH_WARNINGS,

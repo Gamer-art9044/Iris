@@ -79,12 +79,14 @@ import static org.bukkit.Bukkit.getServer;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.IrisMessages;
+import art.arcane.iris.core.localization.PackDownloadMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 @Director(name = "iris", aliases = {"ir", "irs"}, description = "Basic Command", descriptionKey = "iris.director.commandiris.director.basic_command")
 public class CommandIris implements DirectorExecutor {
     private static final String NO_DOWNLOAD_SOURCE = "__none__";
+    private static final String PRESERVE_REPLACEMENT_SEED = "preserve";
     private static final long WORLD_UNLOAD_TIMEOUT_SECONDS = 150L;
 
     private CommandStudio studio;
@@ -202,7 +204,15 @@ public class CommandIris implements DirectorExecutor {
                     defaultValue = "default",
                     customHandler = PackDimensionTypeHandler.class
             )
-            String type
+            String type,
+            @Param(
+                    name = "seed",
+                    aliases = "s",
+                    description = "The replacement seed; omit to preserve the target world's seed",
+                    defaultValue = PRESERVE_REPLACEMENT_SEED,
+                    customHandler = ReplacementSeedHandler.class
+            )
+            Long seed
     ) {
         NamespacedKey worldKey;
         try {
@@ -227,9 +237,13 @@ public class CommandIris implements DirectorExecutor {
         try {
             PendingWorldReplacementManager.StagedReplacement staged = Iris.instance
                     .pendingWorldReplacements()
-                    .stageReplacement(sender(), worldKey, dimension);
+                    .stageReplacement(sender(), worldKey, dimension, seed);
+            String seedDetail = seed == null
+                    ? " preserving seed " + staged.seed()
+                    : " using seed " + staged.seed();
             sender().sendMessage(C.GREEN + "Staged Iris replacement for " + staged.worldKey()
-                    + ". Restart once to publish it. The current dimension is retained until Iris verifies the replacement.");
+                    + seedDetail + ". Restart once to publish it. The current dimension is retained until Iris "
+                    + "verifies the replacement.");
         } catch (Throwable failure) {
             Iris.reportError("Failed to stage Iris world replacement for " + worldKey + ".", failure);
             String detail = failure.getMessage() == null || failure.getMessage().isBlank()
@@ -539,19 +553,17 @@ public class CommandIris implements DirectorExecutor {
         String builtInPack = NO_DOWNLOAD_SOURCE.equals(pack) ? null : pack;
         String directLink = NO_DOWNLOAD_SOURCE.equals(link) ? null : link;
         if ((builtInPack == null) == (directLink == null)) {
-            sender().sendMessage("Use exactly one source: /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>.");
+            sender().sendMessage(IrisLanguage.text(PackDownloadMessages.INVALID_SOURCE));
             return;
         }
         if (builtInPack != null) {
-            sender().sendMessage("Downloading built-in Iris pack '" + builtInPack + "' from its beta release.");
             Iris.service(StudioSVC.class).downloadBuiltIn(sender(), builtInPack);
             return;
         }
         if (!PackDownloader.isDirectZipUrl(directLink)) {
-            sender().sendMessage("Iris requires link= to contain a valid HTTP or HTTPS .zip URL.");
+            sender().sendMessage(IrisLanguage.text(PackDownloadMessages.INVALID_URL));
             return;
         }
-        sender().sendMessage("Downloading Iris pack from " + directLink + ".");
         Iris.service(StudioSVC.class).downloadUrl(sender(), directLink);
     }
 
@@ -891,6 +903,41 @@ public class CommandIris implements DirectorExecutor {
         @Override
         public boolean supports(Class<?> type) {
             return type == String.class;
+        }
+    }
+
+    public static class ReplacementSeedHandler implements DirectorParameterHandler<Long> {
+        @Override
+        public KList<Long> getPossibilities() {
+            return null;
+        }
+
+        @Override
+        public String toString(Long value) {
+            return value == null ? PRESERVE_REPLACEMENT_SEED : Long.toString(value);
+        }
+
+        @Override
+        public Long parse(String in, boolean force) throws DirectorParsingException {
+            String seed = in == null ? "" : in.trim();
+            if (PRESERVE_REPLACEMENT_SEED.equalsIgnoreCase(seed)) {
+                return null;
+            }
+            try {
+                return Long.parseLong(seed);
+            } catch (NumberFormatException failure) {
+                throw new DirectorParsingException("Seed must be a signed 64-bit integer");
+            }
+        }
+
+        @Override
+        public boolean supports(Class<?> type) {
+            return type == Long.class;
+        }
+
+        @Override
+        public String getRandomDefault() {
+            return "1337";
         }
     }
 

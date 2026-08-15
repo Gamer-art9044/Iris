@@ -25,18 +25,23 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.common.misc.WebCache;
+import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import org.zeroturnaround.zip.commons.FileUtils;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.URI;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -48,6 +53,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -74,6 +80,9 @@ public final class PackDownloader {
             256L * 1024L * 1024L
     );
     private static final ConcurrentHashMap<String, DownloadLock> DOWNLOAD_LOCKS = new ConcurrentHashMap<>();
+    private static final AtomicBoolean DOWNLOAD_ACTIVE = new AtomicBoolean();
+    private static final DownloadProgressListener NO_DOWNLOAD_PROGRESS = progress -> {
+    };
 
     private PackDownloader() {
     }
@@ -174,8 +183,52 @@ public final class PackDownloader {
         return downloadBuiltIn(packsFolder, DEFAULT_OVERWORLD_PACK, forceOverwrite, feedback);
     }
 
+    public static PackInstallResult downloadDefaultOverworld(File packsFolder, boolean forceOverwrite,
+                                                             Consumer<String> feedback,
+                                                             DownloadProgressListener progressListener) throws IOException {
+        return downloadBuiltIn(packsFolder, DEFAULT_OVERWORLD_PACK, forceOverwrite, feedback, progressListener);
+    }
+
     public static PackInstallResult downloadBuiltIn(File packsFolder, String pack, boolean forceOverwrite,
                                                     Consumer<String> feedback) throws IOException {
+        return downloadBuiltIn(
+                packsFolder,
+                pack,
+                forceOverwrite,
+                feedback,
+                new DownloadCancellation(),
+                NO_DOWNLOAD_PROGRESS
+        );
+    }
+
+    public static PackInstallResult downloadBuiltIn(File packsFolder, String pack, boolean forceOverwrite,
+                                                    Consumer<String> feedback,
+                                                    DownloadProgressListener progressListener) throws IOException {
+        return downloadBuiltIn(
+                packsFolder,
+                pack,
+                forceOverwrite,
+                feedback,
+                new DownloadCancellation(),
+                progressListener
+        );
+    }
+
+    public static PackInstallResult downloadBuiltIn(File packsFolder, String pack, boolean forceOverwrite,
+                                                    Consumer<String> feedback, DownloadCancellation cancellation) throws IOException {
+        return downloadBuiltIn(
+                packsFolder,
+                pack,
+                forceOverwrite,
+                feedback,
+                cancellation,
+                NO_DOWNLOAD_PROGRESS
+        );
+    }
+
+    public static PackInstallResult downloadBuiltIn(File packsFolder, String pack, boolean forceOverwrite,
+                                                    Consumer<String> feedback, DownloadCancellation cancellation,
+                                                    DownloadProgressListener progressListener) throws IOException {
         String url = pack == null ? null : BUILT_IN_PACK_URLS.get(pack);
         if (url == null) {
             throw new IllegalArgumentException("Pack '" + pack + "' is not a built-in Iris download");
@@ -185,12 +238,52 @@ public final class PackDownloader {
                 url,
                 forceOverwrite,
                 pack,
-                feedback
+                feedback,
+                cancellation,
+                progressListener
         );
     }
 
     public static PackInstallResult downloadUrl(File packsFolder, String url, boolean forceOverwrite,
                                                 Consumer<String> feedback) throws IOException {
+        return downloadUrl(
+                packsFolder,
+                url,
+                forceOverwrite,
+                feedback,
+                new DownloadCancellation(),
+                NO_DOWNLOAD_PROGRESS
+        );
+    }
+
+    public static PackInstallResult downloadUrl(File packsFolder, String url, boolean forceOverwrite,
+                                                Consumer<String> feedback,
+                                                DownloadProgressListener progressListener) throws IOException {
+        return downloadUrl(
+                packsFolder,
+                url,
+                forceOverwrite,
+                feedback,
+                new DownloadCancellation(),
+                progressListener
+        );
+    }
+
+    public static PackInstallResult downloadUrl(File packsFolder, String url, boolean forceOverwrite,
+                                                Consumer<String> feedback, DownloadCancellation cancellation) throws IOException {
+        return downloadUrl(
+                packsFolder,
+                url,
+                forceOverwrite,
+                feedback,
+                cancellation,
+                NO_DOWNLOAD_PROGRESS
+        );
+    }
+
+    public static PackInstallResult downloadUrl(File packsFolder, String url, boolean forceOverwrite,
+                                                Consumer<String> feedback, DownloadCancellation cancellation,
+                                                DownloadProgressListener progressListener) throws IOException {
         if (!isDirectZipUrl(url)) {
             throw new IllegalArgumentException("Pack URL must be an HTTP or HTTPS .zip link");
         }
@@ -199,51 +292,106 @@ public final class PackDownloader {
                 url.trim(),
                 forceOverwrite,
                 null,
-                feedback
+                feedback,
+                cancellation,
+                progressListener
         );
     }
 
     private static PackInstallResult downloadArchive(File packsFolder, String url, boolean forceOverwrite,
-                                                     String expectedKey, Consumer<String> feedback) throws IOException {
+                                                     String expectedKey, Consumer<String> feedback,
+                                                     DownloadCancellation cancellation,
+                                                     DownloadProgressListener progressListener) throws IOException {
         Objects.requireNonNull(packsFolder, "packsFolder");
+        DownloadCancellation control = Objects.requireNonNull(cancellation, "cancellation");
         Consumer<String> output = feedback == null ? ignored -> {
         } : feedback;
+        DownloadProgressListener progress = progressListener == null ? NO_DOWNLOAD_PROGRESS : progressListener;
         if (expectedKey != null && !expectedKey.isBlank() && !isSafePackKey(expectedKey)) {
             throw new IllegalArgumentException("Invalid expected pack key '" + expectedKey + "'");
         }
-        String lockKey = expectedKey != null && !expectedKey.isBlank() ? "key:" + expectedKey : "url:" + url;
-        return withDownloadLock(lockKey, () -> {
-            boolean present = isBuiltInPack(expectedKey)
-                    ? isBuiltInPackPresent(packsFolder, expectedKey)
-                    : isPackPresent(packsFolder, expectedKey);
-            if (!forceOverwrite && present) {
-                sendFeedback(output, IrisLanguage.plain(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
-                return new PackInstallResult(expectedKey, false, false);
-            }
-            return downloadLocked(packsFolder, url, forceOverwrite, expectedKey, lockKey, output);
-        });
+        if (!DOWNLOAD_ACTIVE.compareAndSet(false, true)) {
+            throw new PackDownloadBusyException();
+        }
+        try {
+            control.attachCurrentThread();
+            control.checkpoint();
+            String lockKey = expectedKey != null && !expectedKey.isBlank()
+                    ? "key:" + expectedKey
+                    : "url:" + IO.hash(url);
+            return withDownloadLock(lockKey, () -> {
+                control.checkpoint();
+                boolean present = isBuiltInPack(expectedKey)
+                        ? isBuiltInPackPresent(packsFolder, expectedKey)
+                        : isPackPresent(packsFolder, expectedKey);
+                if (!forceOverwrite && present) {
+                    sendFeedback(output, IrisLanguage.plain(PackDownloadMessages.ALREADY_INSTALLED, MessageArgument.untrusted("key", expectedKey)));
+                    return new PackInstallResult(expectedKey, false, false);
+                }
+                return downloadLocked(
+                        packsFolder,
+                        url,
+                        forceOverwrite,
+                        expectedKey,
+                        lockKey,
+                        output,
+                        control,
+                        progress
+                );
+            });
+        } finally {
+            control.complete();
+            DOWNLOAD_ACTIVE.set(false);
+        }
     }
 
     private static PackInstallResult downloadLocked(File packsFolder, String url, boolean forceOverwrite,
-                                                    String expectedKey, String heldLockKey, Consumer<String> feedback) throws IOException {
-        sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.DOWNLOADING, MessageArgument.untrusted("url", url)) + " ");
-        File zip = WebCache.getNonCachedFile("pack-archive", url, ARCHIVE_LIMITS.maxArchiveBytes());
+                                                    String expectedKey, String heldLockKey, Consumer<String> feedback,
+                                                    DownloadCancellation cancellation,
+                                                    DownloadProgressListener progressListener) throws IOException {
+        cancellation.checkpoint();
+        String source = expectedKey == null || expectedKey.isBlank()
+                ? IrisLanguage.plain(PackDownloadMessages.PROGRESS_SOURCE_REMOTE)
+                : expectedKey;
+        sendProgress(progressListener, DownloadProgress.phase(DownloadPhase.CONNECTING));
+        sendFeedback(feedback, IrisLanguage.plain(
+                PackDownloadMessages.DOWNLOADING,
+                MessageArgument.untrusted("url", source)
+        ) + " ");
+        File zip = WebCache.getNonCachedFile(
+                "pack-archive",
+                url,
+                ARCHIVE_LIMITS.maxArchiveBytes(),
+                transfer -> sendProgress(progressListener, DownloadProgress.transfer(transfer))
+        );
+        cancellation.checkpoint();
         File temp = WebCache.getTemp();
         File work = new File(temp, "dl-" + UUID.randomUUID());
 
         try {
             if (zip == null || !zip.exists()) {
-                sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.FAILED_TO_FIND, MessageArgument.untrusted("url", url)));
+                sendFeedback(feedback, IrisLanguage.plain(
+                        PackDownloadMessages.FAILED_TO_FIND,
+                        MessageArgument.untrusted("url", source)
+                ));
                 return null;
             }
-            sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.UNPACKING, MessageArgument.untrusted("repository", url)));
+            sendProgress(progressListener, DownloadProgress.phase(DownloadPhase.UNPACKING));
+            sendFeedback(feedback, IrisLanguage.plain(
+                    PackDownloadMessages.UNPACKING,
+                    MessageArgument.untrusted("repository", source)
+            ));
             try {
-                unpackArchive(zip.toPath(), work.toPath(), ARCHIVE_LIMITS);
+                unpackArchive(zip.toPath(), work.toPath(), ARCHIVE_LIMITS, cancellation);
             } catch (IOException exception) {
+                if (exception instanceof PackDownloadCancelledException) {
+                    throw exception;
+                }
                 IrisLogging.reportError(exception);
                 sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.UNPACK_FAILED));
                 return null;
             }
+            cancellation.checkpoint();
             File[] zipFiles = work.listFiles();
             if (zipFiles == null) {
                 sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.NO_EXTRACTED_FILES));
@@ -254,7 +402,16 @@ public final class PackDownloader {
                 sendFeedback(feedback, IrisLanguage.plain(PackDownloadMessages.INVALID_ARCHIVE_FORMAT));
                 return null;
             }
-            return installExtractedPack(packsFolder, directory, forceOverwrite, expectedKey, heldLockKey, feedback);
+            return installExtractedPack(
+                    packsFolder,
+                    directory,
+                    forceOverwrite,
+                    expectedKey,
+                    heldLockKey,
+                    feedback,
+                    cancellation,
+                    progressListener
+            );
         } finally {
             deleteDirectory(work);
         }
@@ -286,11 +443,22 @@ public final class PackDownloader {
         Objects.requireNonNull(extractedPack, "extractedPack");
         Consumer<String> output = feedback == null ? ignored -> {
         } : feedback;
-        return installExtractedPack(packsFolder, extractedPack, forceOverwrite, expectedKey, null, output);
+        return installExtractedPack(
+                packsFolder,
+                extractedPack,
+                forceOverwrite,
+                expectedKey,
+                null,
+                output,
+                null,
+                NO_DOWNLOAD_PROGRESS
+        );
     }
 
     private static PackInstallResult installExtractedPack(File packsFolder, File extractedPack, boolean forceOverwrite,
-                                                          String expectedKey, String heldLockKey, Consumer<String> feedback) throws IOException {
+                                                          String expectedKey, String heldLockKey, Consumer<String> feedback,
+                                                          DownloadCancellation cancellation,
+                                                          DownloadProgressListener progressListener) throws IOException {
         if (expectedKey != null && !expectedKey.isBlank() && !isSafePackKey(expectedKey)) {
             throw new IllegalArgumentException("Invalid expected pack key '" + expectedKey + "'");
         }
@@ -298,17 +466,43 @@ public final class PackDownloader {
         Files.createDirectories(packsRoot);
         Path staging = packsRoot.resolve(".iris-import-" + UUID.randomUUID());
         try {
-            FileUtils.copyDirectory(extractedPack, staging.toFile());
+            checkpoint(cancellation);
+            if (cancellation == null) {
+                FileUtils.copyDirectory(extractedPack, staging.toFile());
+            } else {
+                copyDirectory(extractedPack.toPath(), staging, cancellation);
+            }
+            checkpoint(cancellation);
+            sendProgress(progressListener, DownloadProgress.phase(DownloadPhase.VALIDATING));
             PreparedPack prepared = prepareStagedPack(staging.toFile(), expectedKey, feedback);
             if (prepared == null) {
                 return null;
             }
+            checkpoint(cancellation);
             String destinationLockKey = "key:" + prepared.key();
             if (destinationLockKey.equals(heldLockKey)) {
-                return publishPreparedPack(packsFolder, packsRoot, staging, prepared, forceOverwrite, feedback);
+                return publishPreparedPack(
+                        packsFolder,
+                        packsRoot,
+                        staging,
+                        prepared,
+                        forceOverwrite,
+                        feedback,
+                        cancellation,
+                        progressListener
+                );
             }
             return withDownloadLock(destinationLockKey,
-                    () -> publishPreparedPack(packsFolder, packsRoot, staging, prepared, forceOverwrite, feedback));
+                    () -> publishPreparedPack(
+                            packsFolder,
+                            packsRoot,
+                            staging,
+                            prepared,
+                            forceOverwrite,
+                            feedback,
+                            cancellation,
+                            progressListener
+                    ));
         } finally {
             deleteDirectory(staging.toFile());
         }
@@ -396,7 +590,10 @@ public final class PackDownloader {
     }
 
     private static PackInstallResult publishPreparedPack(File packsFolder, Path packsRoot, Path staging, PreparedPack prepared,
-                                                         boolean forceOverwrite, Consumer<String> feedback) throws IOException {
+                                                         boolean forceOverwrite, Consumer<String> feedback,
+                                                         DownloadCancellation cancellation,
+                                                         DownloadProgressListener progressListener) throws IOException {
+        sendProgress(progressListener, DownloadProgress.phase(DownloadPhase.PUBLISHING));
         Path target = packsRoot.resolve(prepared.key()).normalize();
         if (!Objects.equals(target.getParent(), packsRoot)) {
             throw new IOException("Pack target escapes the packs folder: " + target);
@@ -442,6 +639,9 @@ public final class PackDownloader {
             );
             return null;
         }
+        if (cancellation != null) {
+            cancellation.beginPublication();
+        }
         IrisData.getLoaded(new File(packsFolder, prepared.key())).ifPresent(IrisData::close);
         IrisData.getLoaded(target.toFile()).ifPresent(IrisData::close);
         try (AtomicDirectoryPublisher.Publication publication = AtomicDirectoryPublisher.publish(staging, target)) {
@@ -461,6 +661,7 @@ public final class PackDownloader {
                 PackDownloadMessages.ACQUIRED,
                 MessageArgument.untrusted("name", prepared.name())
         ));
+        sendProgress(progressListener, DownloadProgress.terminal());
         return new PackInstallResult(prepared.key(), true, true);
     }
 
@@ -525,9 +726,15 @@ public final class PackDownloader {
     }
 
     static void unpackArchive(Path archive, Path destination, ArchiveLimits limits) throws IOException {
+        unpackArchive(archive, destination, limits, null);
+    }
+
+    static void unpackArchive(Path archive, Path destination, ArchiveLimits limits,
+                              DownloadCancellation cancellation) throws IOException {
         Path source = Objects.requireNonNull(archive, "archive").toAbsolutePath().normalize();
         Path root = Objects.requireNonNull(destination, "destination").toAbsolutePath().normalize();
         ArchiveLimits safety = Objects.requireNonNull(limits, "limits");
+        checkpoint(cancellation);
         if (Files.isSymbolicLink(source) || !Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Pack archive is missing or unsafe: " + source);
         }
@@ -548,6 +755,7 @@ public final class PackDownloader {
         try (InputStream input = Files.newInputStream(source); ZipInputStream zip = new ZipInputStream(input)) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
+                checkpoint(cancellation);
                 entryCount++;
                 if (entryCount > safety.maxEntries()) {
                     throw new IOException("Pack archive contains too many entries.");
@@ -576,6 +784,7 @@ public final class PackDownloader {
                     byte[] buffer = new byte[8192];
                     int read;
                     while ((read = zip.read(buffer)) != -1) {
+                        checkpoint(cancellation);
                         if (read == 0) {
                             continue;
                         }
@@ -595,6 +804,52 @@ public final class PackDownloader {
         }
         if (entryCount == 0) {
             throw new IOException("Pack archive is empty.");
+        }
+    }
+
+    private static void copyDirectory(Path source, Path destination,
+                                      DownloadCancellation cancellation) throws IOException {
+        Path sourceRoot = source.toAbsolutePath().normalize();
+        Path destinationRoot = destination.toAbsolutePath().normalize();
+        Files.walkFileTree(sourceRoot, new SimpleFileVisitor<Path>() {
+            private final byte[] buffer = new byte[8192];
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) throws IOException {
+                cancellation.checkpoint();
+                Files.createDirectories(destinationRoot.resolve(sourceRoot.relativize(directory)));
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                cancellation.checkpoint();
+                if (Files.isSymbolicLink(file)) {
+                    throw new IOException("Downloaded pack contains an unsafe symbolic link: " + file);
+                }
+                Path target = destinationRoot.resolve(sourceRoot.relativize(file));
+                try (InputStream input = Files.newInputStream(file);
+                     OutputStream output = Files.newOutputStream(
+                             target,
+                             StandardOpenOption.CREATE_NEW,
+                             StandardOpenOption.WRITE
+                     )) {
+                    int read;
+                    while ((read = input.read(buffer)) != -1) {
+                        cancellation.checkpoint();
+                        if (read > 0) {
+                            output.write(buffer, 0, read);
+                        }
+                    }
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private static void checkpoint(DownloadCancellation cancellation) throws PackDownloadCancelledException {
+        if (cancellation != null) {
+            cancellation.checkpoint();
         }
     }
 
@@ -628,6 +883,14 @@ public final class PackDownloader {
             feedback.accept(message);
         } catch (RuntimeException exception) {
             IrisLogging.reportError("Pack download feedback delivery failed", exception);
+        }
+    }
+
+    private static void sendProgress(DownloadProgressListener listener, DownloadProgress progress) {
+        try {
+            listener.onProgress(progress);
+        } catch (RuntimeException exception) {
+            IrisLogging.reportError("Pack download progress delivery failed", exception);
         }
     }
 
@@ -667,6 +930,118 @@ public final class PackDownloader {
     }
 
     public record PackInstallResult(String key, boolean changed, boolean restartRequired) {
+    }
+
+    public record DownloadProgress(DownloadPhase phase, long transferredBytes, long totalBytes,
+                                   long elapsedMillis, boolean complete) {
+        private static DownloadProgress phase(DownloadPhase phase) {
+            return new DownloadProgress(phase, 0L, -1L, 0L, false);
+        }
+
+        private static DownloadProgress transfer(WebCache.TransferProgress transfer) {
+            return new DownloadProgress(
+                    DownloadPhase.DOWNLOADING,
+                    transfer.transferredBytes(),
+                    transfer.contentLength(),
+                    transfer.elapsedMillis(),
+                    false
+            );
+        }
+
+        private static DownloadProgress terminal() {
+            return new DownloadProgress(DownloadPhase.PUBLISHING, 0L, -1L, 0L, true);
+        }
+    }
+
+    public enum DownloadPhase {
+        CONNECTING,
+        DOWNLOADING,
+        UNPACKING,
+        VALIDATING,
+        PUBLISHING
+    }
+
+    @FunctionalInterface
+    public interface DownloadProgressListener {
+        void onProgress(DownloadProgress progress);
+    }
+
+    public static final class PackDownloadBusyException extends IOException {
+        public PackDownloadBusyException() {
+            super(IrisLanguage.plain(PackDownloadMessages.IN_PROGRESS));
+        }
+    }
+
+    public static final class PackDownloadCancelledException extends InterruptedIOException {
+        private PackDownloadCancelledException() {
+            super("Pack download cancelled.");
+        }
+    }
+
+    public static final class DownloadCancellation {
+        private final Object monitor = new Object();
+        private boolean cancelled;
+        private boolean publishing;
+        private Thread worker;
+
+        public void cancel() {
+            Thread interruptTarget;
+            synchronized (monitor) {
+                cancelled = true;
+                interruptTarget = publishing ? null : worker;
+            }
+            if (interruptTarget != null) {
+                interruptTarget.interrupt();
+            }
+        }
+
+        public boolean isPublishing() {
+            synchronized (monitor) {
+                return publishing;
+            }
+        }
+
+        void attachCurrentThread() throws PackDownloadCancelledException {
+            synchronized (monitor) {
+                Thread current = Thread.currentThread();
+                if (worker != null && worker != current) {
+                    throw new IllegalStateException("Pack download cancellation is already attached to another thread.");
+                }
+                worker = current;
+                checkCancelled(current);
+            }
+        }
+
+        void checkpoint() throws PackDownloadCancelledException {
+            synchronized (monitor) {
+                checkCancelled(Thread.currentThread());
+            }
+        }
+
+        void beginPublication() throws PackDownloadCancelledException {
+            synchronized (monitor) {
+                checkCancelled(Thread.currentThread());
+                publishing = true;
+            }
+        }
+
+        void complete() {
+            boolean clearInterrupt;
+            synchronized (monitor) {
+                clearInterrupt = cancelled && worker == Thread.currentThread();
+                publishing = false;
+                worker = null;
+            }
+            if (clearInterrupt) {
+                Thread.interrupted();
+            }
+        }
+
+        private void checkCancelled(Thread current) throws PackDownloadCancelledException {
+            if (cancelled || current.isInterrupted()) {
+                throw new PackDownloadCancelledException();
+            }
+        }
     }
 
     record ArchiveLimits(long maxArchiveBytes, int maxEntries, long maxExpandedBytes, long maxEntryBytes) {

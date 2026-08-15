@@ -210,6 +210,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
     private final JigsawStudioTripleSneakTracker tripleSneakTracker = new JigsawStudioTripleSneakTracker();
     private final JigsawStudioToolCodec toolCodec = new JigsawStudioToolCodec();
     private final JigsawStudioPreviewRenderer previewRenderer = new JigsawStudioPreviewRenderer();
+    private final AtomicBoolean disableStarted = new AtomicBoolean();
     private final Object saveLifecycleLock = new Object();
     private final Set<UUID> savesInProgress = new HashSet<>();
     private final Set<UUID> graphMutationsInProgress = new HashSet<>();
@@ -234,6 +235,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
 
     @Override
     public void onEnable() {
+        disableStarted.set(false);
         enabled = true;
         menuController = new JigsawStudioMenuController(BukkitPlatform.volmitPlugin(), this);
         INSTANCE = this;
@@ -241,13 +243,32 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
 
     @Override
     public void onDisable() {
-        finalizeAllJigsawTileWatches();
-        drainAutosavesBeforeDisable();
+        quiesceForServerShutdown();
+    }
+
+    public void quiesceForServerShutdown() {
+        if (!disableStarted.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            finalizeAllJigsawTileWatches();
+        } catch (Throwable exception) {
+            IrisLogging.reportError("Failed to finalize Jigsaw Studio tile watches during shutdown.", exception);
+        }
+        try {
+            drainAutosavesBeforeDisable();
+        } catch (Throwable exception) {
+            IrisLogging.reportError("Failed to drain Jigsaw Studio autosaves during shutdown.", exception);
+        }
         enabled = false;
         JigsawStudioMenuController activeMenuController = menuController;
         menuController = null;
         if (activeMenuController != null) {
-            activeMenuController.closeAll();
+            try {
+                activeMenuController.closeAll();
+            } catch (Throwable exception) {
+                IrisLogging.reportError("Failed to close Jigsaw Studio menus during shutdown.", exception);
+            }
         }
         particlesDisabled.clear();
         visualizationLoops.clear();
@@ -259,7 +280,11 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
         toolConfirmations.clear();
         tripleSneakTracker.clearAll();
         evaluations.clear();
-        previewRenderer.removeAll();
+        try {
+            previewRenderer.removeAll();
+        } catch (Throwable exception) {
+            IrisLogging.reportError("Failed to remove Jigsaw Studio previews during shutdown.", exception);
+        }
         reopenRequiredRequests.clear();
         unregisterRetries.clear();
         unregisterDrainWarnings.clear();
@@ -276,6 +301,9 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
     }
 
     public void register(Engine engine, JigsawStudioGenerator generator) {
+        if (!enabled || disableStarted.get()) {
+            return;
+        }
         Engine activeEngine = Objects.requireNonNull(engine, "Jigsaw Studio engine");
         JigsawStudioGenerator activeGenerator = Objects.requireNonNull(generator, "Jigsaw Studio generator");
         World world = BukkitWorldBinding.world(activeEngine.getTarget().getWorld());
@@ -306,6 +334,9 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
                 new AtomicLong());
         UUID displacedRequestId = null;
         synchronized (saveLifecycleLock) {
+            if (!enabled || disableStarted.get()) {
+                return;
+            }
             ActiveStudio previous = studios.get(world.getUID());
             if (previous != null && previous.generator() == activeGenerator) {
                 return;
@@ -338,7 +369,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
     }
 
     public void activationCommitted(World world, UUID requestId) {
-        if (world == null || requestId == null) {
+        if (!enabled || disableStarted.get() || world == null || requestId == null) {
             return;
         }
         ActiveStudio studio = studios.get(world.getUID());
@@ -355,7 +386,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             int chunkX,
             int chunkZ
     ) {
-        if (engine == null || generator == null) {
+        if (!enabled || disableStarted.get() || engine == null || generator == null) {
             return;
         }
         World world = BukkitWorldBinding.world(engine.getTarget().getWorld());
@@ -363,7 +394,8 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             return;
         }
         ActiveStudio studio = studios.get(world.getUID());
-        if (studio == null || studio.engine() != engine || studio.generator() != generator) {
+        if (!enabled || disableStarted.get()
+                || studio == null || studio.engine() != engine || studio.generator() != generator) {
             return;
         }
         markChunkAvailable(studio, chunkX, chunkZ);
@@ -5259,7 +5291,11 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
 
     private void finalizeAllJigsawTileWatches() {
         for (JigsawTileWatch watch : List.copyOf(jigsawTileWatches.values())) {
-            finalizeJigsawTileWatch(watch);
+            try {
+                finalizeJigsawTileWatch(watch);
+            } catch (Throwable exception) {
+                IrisLogging.reportError("Failed to finalize a Jigsaw Studio tile watch during shutdown.", exception);
+            }
         }
     }
 
@@ -5655,7 +5691,14 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
 
     private void drainAutosavesBeforeDisable() {
         for (ActiveStudio studio : List.copyOf(studios.values())) {
-            drainAutosavesBeforeRemoval(studio);
+            try {
+                drainAutosavesBeforeRemoval(studio);
+            } catch (Throwable exception) {
+                IrisLogging.reportError(
+                        "Failed to drain Jigsaw Studio autosaves in world "
+                                + studio.worldId() + " during shutdown.",
+                        exception);
+            }
         }
         if (!autosaves.isEmpty()) {
             IrisLogging.warn("Jigsaw Studio disabled with %d autosave operation(s) still pending after the final drain attempt",

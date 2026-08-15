@@ -381,6 +381,40 @@ public class BukkitChunkGeneratorGenerationStageGateTest {
     }
 
     @Test
+    public void queuedStageRemainsAdmittedWhileShutdownIsOnlyQuiesced() throws Exception {
+        AtomicBoolean closing = new AtomicBoolean(false);
+        BukkitChunkGenerator.GenerationStageGate gate =
+                new BukkitChunkGenerator.GenerationStageGate(1, closing::get);
+        gate.acquireExclusive();
+        boolean exclusiveHeld = true;
+        BukkitChunkGenerator.GenerationStagePermit admitted = null;
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            Future<BukkitChunkGenerator.GenerationStagePermit> stage =
+                    executor.submit(() -> gate.acquireStage("paper-queued-before-shutdown-boundary"));
+            awaitQueueLength(gate, 1);
+
+            assertFalse(closing.get());
+            gate.releaseExclusive();
+            exclusiveHeld = false;
+
+            admitted = stage.get(2, TimeUnit.SECONDS);
+            assertEquals(0, gate.availablePermits());
+            admitted.close();
+            assertEquals(1, gate.availablePermits());
+        } finally {
+            if (admitted != null) {
+                admitted.close();
+            }
+            if (exclusiveHeld) {
+                gate.releaseExclusive();
+            }
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     public void queuedStageIsRejectedAfterCloseBegins() throws Exception {
         AtomicBoolean closing = new AtomicBoolean(false);
         BukkitChunkGenerator.GenerationStageGate gate =

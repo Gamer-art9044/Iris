@@ -17,6 +17,7 @@ public class BukkitEngineLifecycleContractTest {
 
         assertBefore(closeAsync, "closeFuture.compareAndSet(null, future)", "withExclusiveControlFuture(");
         assertTrue(closeAsync.contains("while (!closeFuture.compareAndSet(null, future))"));
+        assertTrue(closeAsync.contains("return existing;"));
         assertTrue(closeAsync.contains("operation.whenComplete("));
         assertFalse(closeAsync.contains("!existing.isDone()"));
 

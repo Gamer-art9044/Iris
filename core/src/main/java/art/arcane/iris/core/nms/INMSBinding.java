@@ -59,6 +59,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 public interface INMSBinding {
     boolean hasTile(Material material);
@@ -277,6 +278,10 @@ public interface INMSBinding {
             long seed
     ) throws IOException {
         throw new UnsupportedOperationException("The active NMS binding does not support current Paper world data staging.");
+    }
+
+    default boolean awaitServerShutdownBoundary(long timeout, TimeUnit unit) {
+        return true;
     }
 
     KMap<Material, List<BlockProperty>> getBlockProperties();

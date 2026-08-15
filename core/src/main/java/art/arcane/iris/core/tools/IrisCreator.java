@@ -97,6 +97,7 @@ import static art.arcane.iris.util.common.misc.ServerProperties.BUKKIT_YML;
 @Accessors(fluent = true, chain = true)
 public class IrisCreator {
     private static final long WORLD_CREATE_TIMEOUT_SECONDS = 120L;
+    private static final long WORLD_ENTRY_TELEPORT_TIMEOUT_SECONDS = 60L;
     private static final long ROLLBACK_PHASE_TIMEOUT_SECONDS = 120L;
 
     /**
@@ -398,17 +399,42 @@ public class IrisCreator {
             return;
         }
 
+        Throwable failure = awaitTeleportFailure(
+                teleportFuture,
+                player.getName(),
+                WORLD_ENTRY_TELEPORT_TIMEOUT_SECONDS,
+                TimeUnit.SECONDS
+        );
+        if (failure != null) {
+            reportSenderTeleportFailure(player, world, failure);
+        }
+    }
+
+    static Throwable awaitTeleportFailure(
+            CompletableFuture<Boolean> teleportFuture,
+            String playerName,
+            long timeout,
+            TimeUnit unit
+    ) {
+        CompletableFuture<Boolean> requiredFuture = Objects.requireNonNull(teleportFuture, "teleportFuture");
+        String requiredPlayerName = Objects.requireNonNull(playerName, "playerName");
+        TimeUnit requiredUnit = Objects.requireNonNull(unit, "unit");
         try {
-            Boolean teleported = teleportFuture.get(60L, TimeUnit.SECONDS);
-            if (!Boolean.TRUE.equals(teleported)) {
-                reportSenderTeleportFailure(player, world, new IllegalStateException(
-                        "The runtime teleport operation returned false for player \"" + player.getName() + "\"."));
-            }
+            Boolean teleported = requiredFuture.get(timeout, requiredUnit);
+            return Boolean.TRUE.equals(teleported)
+                    ? null
+                    : new IllegalStateException(
+                    "The runtime teleport operation returned false for player \"" + requiredPlayerName + "\".");
         } catch (TimeoutException e) {
-            ServerConfigurator.restart("World entry teleport timed out for \"" + world.getName() + "\".");
-            reportSenderTeleportFailure(player, world, e);
+            requiredFuture.cancel(false);
+            return e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return e;
+        } catch (ExecutionException e) {
+            return e.getCause() == null ? e : e.getCause();
         } catch (Throwable e) {
-            reportSenderTeleportFailure(player, world, e);
+            return e;
         }
     }
 

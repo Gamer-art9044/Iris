@@ -30,6 +30,7 @@ import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.platform.studio.generators.JigsawStudioGenerator;
 import art.arcane.iris.platform.bukkit.BukkitBlockState;
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -37,6 +38,7 @@ import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.common.math.IrisBlockVector;
+import art.arcane.iris.util.common.plugin.VolmitPlugin;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
@@ -113,6 +115,35 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class JigsawStudioServiceCaptureTest {
+
+    @Test
+    public void shutdownQuiesceIsIdempotentAndResetsOnEnable() throws Exception {
+        JigsawStudioService service = new JigsawStudioService();
+        VolmitPlugin plugin = mock(VolmitPlugin.class);
+        Field disableStartedField = JigsawStudioService.class.getDeclaredField("disableStarted");
+        Field enabledField = JigsawStudioService.class.getDeclaredField("enabled");
+        disableStartedField.setAccessible(true);
+        enabledField.setAccessible(true);
+        AtomicBoolean disableStarted = (AtomicBoolean) disableStartedField.get(service);
+
+        try (MockedStatic<BukkitPlatform> platform = mockStatic(BukkitPlatform.class)) {
+            platform.when(BukkitPlatform::volmitPlugin).thenReturn(plugin);
+
+            service.onEnable();
+            assertFalse(disableStarted.get());
+            assertTrue(enabledField.getBoolean(service));
+
+            service.quiesceForServerShutdown();
+            service.quiesceForServerShutdown();
+            assertTrue(disableStarted.get());
+            assertFalse(enabledField.getBoolean(service));
+
+            service.onEnable();
+            assertFalse(disableStarted.get());
+            assertTrue(enabledField.getBoolean(service));
+            service.onDisable();
+        }
+    }
 
     @Test
     public void successfulStudioSavePlaysOneOwnerLocalBell() {

@@ -1,5 +1,6 @@
 package art.arcane.iris.core.tools;
 
+import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import org.bukkit.Chunk;
@@ -8,10 +9,14 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.junit.Test;
 import org.mockito.InOrder;
+import org.mockito.MockedStatic;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -20,6 +25,7 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 
 public class IrisCreatorTeleportTest {
     @Test
@@ -98,5 +104,73 @@ public class IrisCreatorTeleportTest {
         CompletableFuture<Boolean> result = IrisCreator.teleportSenderToCreatedWorld(player, world, runtimeControl);
 
         assertThrows(CompletionException.class, result::join);
+    }
+
+    @Test
+    public void awaitTeleportFailure_returnsNullForSuccessfulTeleport() {
+        CompletableFuture<Boolean> teleport = CompletableFuture.completedFuture(true);
+
+        Throwable failure = IrisCreator.awaitTeleportFailure(
+                teleport,
+                "ParthOP69",
+                1L,
+                TimeUnit.SECONDS
+        );
+
+        assertNull(failure);
+        assertFalse(teleport.isCancelled());
+    }
+
+    @Test
+    public void awaitTeleportFailure_reportsFalseTeleportResult() {
+        CompletableFuture<Boolean> teleport = CompletableFuture.completedFuture(false);
+
+        Throwable failure = IrisCreator.awaitTeleportFailure(
+                teleport,
+                "ParthOP69",
+                1L,
+                TimeUnit.SECONDS
+        );
+
+        assertTrue(failure instanceof IllegalStateException);
+        assertEquals(
+                "The runtime teleport operation returned false for player \"ParthOP69\".",
+                failure.getMessage()
+        );
+        assertFalse(teleport.isCancelled());
+    }
+
+    @Test
+    public void awaitTeleportFailure_unwrapsExceptionalTeleportResult() {
+        IllegalStateException expected = new IllegalStateException("teleport failed");
+        CompletableFuture<Boolean> teleport = CompletableFuture.failedFuture(expected);
+
+        Throwable failure = IrisCreator.awaitTeleportFailure(
+                teleport,
+                "ParthOP69",
+                1L,
+                TimeUnit.SECONDS
+        );
+
+        assertSame(expected, failure);
+        assertFalse(teleport.isCancelled());
+    }
+
+    @Test
+    public void awaitTeleportFailure_cancelsTimedOutTeleportWithoutRestartingServer() {
+        CompletableFuture<Boolean> teleport = new CompletableFuture<>();
+
+        try (MockedStatic<ServerConfigurator> serverConfigurator = mockStatic(ServerConfigurator.class)) {
+            Throwable failure = IrisCreator.awaitTeleportFailure(
+                    teleport,
+                    "ParthOP69",
+                    0L,
+                    TimeUnit.MILLISECONDS
+            );
+
+            assertTrue(failure instanceof TimeoutException);
+            assertTrue(teleport.isCancelled());
+            serverConfigurator.verifyNoInteractions();
+        }
     }
 }

@@ -495,6 +495,15 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     }
 
     @Override
+    public void quiesceForServerShutdown() {
+        Looper activeHotloader = hotloader;
+        hotloader = null;
+        if (activeHotloader != null) {
+            activeHotloader.interrupt();
+        }
+    }
+
+    @Override
     public boolean isStudio() {
         return studio;
     }

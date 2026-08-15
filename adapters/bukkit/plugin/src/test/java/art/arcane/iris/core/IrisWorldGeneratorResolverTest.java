@@ -65,6 +65,23 @@ public class IrisWorldGeneratorResolverTest {
     }
 
     @Test
+    public void startupValidationPublishesFingerprintBoundExactRootResults() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java"));
+        int validateAll = source.indexOf("public void validateAllPacks()");
+        int snapshot = source.indexOf("ServerConfigurator.computePackContentSnapshot(packsRoot)", validateAll);
+        int perPackFingerprint = source.indexOf("contentSnapshot.packContents()", snapshot);
+        int exactRootPublish = source.indexOf(
+                "PackValidationRegistry.publish(packDirectory.toPath(), result, packFingerprint)",
+                perPackFingerprint);
+
+        assertTrue(validateAll >= 0);
+        assertTrue(snapshot > validateAll);
+        assertTrue(perPackFingerprint > snapshot);
+        assertTrue(exactRootPublish > perPackFingerprint);
+    }
+
+    @Test
     public void paperStartupAliasResolvesToCanonicalRuntimeKey() {
         assertEquals(
                 new NamespacedKey("iris", "moon"),

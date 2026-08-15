@@ -62,11 +62,13 @@ import java.net.URL;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.FileStore;
 import java.nio.file.FileSystems;
 import java.nio.file.LinkOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -119,6 +121,7 @@ public final class DatapackIngestService {
     private static final int MAX_TRANSACTION_COUNT = 1_024;
     private static final int MAX_SCRATCH_DELETE_ATTEMPTS = 3;
     private static final int WINDOWS_LEGACY_PATH_LIMIT = 247;
+    private static final int HASH_BUFFER_BYTES = 64 * 1024;
     private static final Set<String> RESERVED_IDS = Set.of("iris");
     private static final ReentrantLock TRANSACTION_LOCK = new ReentrantLock();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -152,20 +155,23 @@ public final class DatapackIngestService {
         Path cacheFile = new File(root, STARTUP_VALIDATION_CACHE).toPath();
 
         try {
-            String localFingerprint = startupValidationFingerprint(root, worldFolders);
             StartupValidationCache cached = readStartupValidationCache(cacheFile);
-            if (startupValidationCacheMatches(
-                    cached,
-                    mcVersion,
-                    irisVersion,
-                    autoIngest,
-                    stripOverrides,
-                    urls,
-                    localFingerprint)) {
-                activeStartupValidation = cached;
-                IrisLogging.info("External datapacks match the persisted startup validation; remote resolution and full revalidation were skipped.");
-                IrisStartupValidation.markDatapacksReady();
-                return StartupValidationOutcome.READY;
+            if (startupValidationContextMatches(
+                    cached, mcVersion, irisVersion, autoIngest, stripOverrides, urls)) {
+                String localFingerprint = startupValidationFingerprint(root, worldFolders);
+                if (startupValidationCacheMatches(
+                        cached,
+                        mcVersion,
+                        irisVersion,
+                        autoIngest,
+                        stripOverrides,
+                        urls,
+                        localFingerprint)) {
+                    activeStartupValidation = cached;
+                    IrisLogging.info("External datapacks match the persisted startup validation; remote resolution and full revalidation were skipped.");
+                    IrisStartupValidation.markDatapacksReady();
+                    return StartupValidationOutcome.READY;
+                }
             }
         } catch (IOException | RuntimeException exception) {
             IrisLogging.warn("Persisted external datapack validation could not be reused: "
@@ -216,8 +222,8 @@ public final class DatapackIngestService {
 
     public static void runPostStartupTasks() {
         refreshWorkspaces();
-        autoImportDatapackStructures();
-        refreshStartupValidationAfterMaintenance();
+        boolean maintenanceChanged = autoImportDatapackStructures();
+        refreshStartupValidationAfterMaintenance(maintenanceChanged);
     }
 
     private static StartupValidationCache cacheStartupValidation(
@@ -247,7 +253,10 @@ public final class DatapackIngestService {
         }
     }
 
-    private static void refreshStartupValidationAfterMaintenance() {
+    private static void refreshStartupValidationAfterMaintenance(boolean maintenanceChanged) {
+        if (!maintenanceChanged) {
+            return;
+        }
         StartupValidationCache validated = activeStartupValidation;
         if (validated == null || !IrisStartupValidation.isReady()) {
             return;
@@ -623,6 +632,9 @@ public final class DatapackIngestService {
         ManifestWrite manifestWrite = null;
         boolean manifestDurabilityConfirmed = false;
         try {
+            for (InstallExecution install : installs) {
+                verifyInstallExecution(install);
+            }
             manifestWrite = prepareManifestWrite(root, manifest);
             manifestWrite.publish();
             manifestDurabilityConfirmed = true;
@@ -631,8 +643,9 @@ public final class DatapackIngestService {
                 rollbackInstallExecutions(installs, manifestFailure);
                 report.failed.add("manifest - " + manifestFailure.getMessage());
                 report.updated.clear();
+                report.upToDate.clear();
                 report.requiresRestart = false;
-                message(sender, C.RED + "Datapack ingest rolled back because the manifest could not be committed: "
+                message(sender, C.RED + "Datapack ingest rolled back before the manifest commit: "
                         + manifestFailure.getMessage());
                 IrisLogging.reportError(manifestFailure);
                 return report;
@@ -912,7 +925,7 @@ public final class DatapackIngestService {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             Path rootPath = root.toPath().toAbsolutePath().normalize();
-            List<Path> entries = new ArrayList<>();
+            List<MetadataEntry> entries = new ArrayList<>();
             try (Stream<Path> paths = Files.walk(rootPath)) {
                 Iterator<Path> iterator = paths.iterator();
                 int pathCount = 0;
@@ -928,17 +941,18 @@ public final class DatapackIngestService {
                     if (Files.isSymbolicLink(path)) {
                         throw new IOException("Datapack contains a symbolic link: " + path);
                     }
-                    entries.add(path);
+                    String relativePath = rootPath.relativize(path).toString();
+                    entries.add(new MetadataEntry(path, relativePath));
                 }
             }
-            entries.sort(Comparator.comparing(path -> rootPath.relativize(path).toString()));
-            for (Path entry : entries) {
-                String relative = rootPath.relativize(entry).toString().replace(File.separatorChar, '/');
+            entries.sort(Comparator.comparing(MetadataEntry::relativePath));
+            for (MetadataEntry entry : entries) {
+                String relative = entry.relativePath().replace(File.separatorChar, '/');
                 byte[] relativeBytes = relative.getBytes(StandardCharsets.UTF_8);
                 BasicFileAttributes attributes = Files.readAttributes(
-                        entry, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                        entry.path(), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
                 if (!attributes.isDirectory() && !attributes.isRegularFile()) {
-                    throw new IOException("Datapack contains an unsupported filesystem entry: " + entry);
+                    throw new IOException("Datapack contains an unsupported filesystem entry: " + entry.path());
                 }
                 digest.update((byte) (attributes.isDirectory() ? 1 : 2));
                 updateDigestInt(digest, relativeBytes.length);
@@ -1909,6 +1923,12 @@ public final class DatapackIngestService {
                 stripOverrides,
                 root
         );
+        try {
+            verifyInstallExecution(execution);
+        } catch (IOException failure) {
+            rollbackInstallExecutions(List.of(execution), failure);
+            throw failure;
+        }
         finishInstallExecution(execution);
         return execution.result();
     }
@@ -1973,12 +1993,14 @@ public final class DatapackIngestService {
 
         boolean changed = false;
         List<InstallPlan> publishPlans = new ArrayList<>();
+        List<InstallPlan> unchangedPlans = new ArrayList<>();
         try {
             for (InstallPlan plan : plans) {
                 changed |= plan.contentChanged();
                 if (plan.publishRequired()) {
                     publishPlans.add(plan);
                 } else {
+                    unchangedPlans.add(plan);
                     cleanupInstallPlan(plan, true);
                 }
             }
@@ -1993,7 +2015,15 @@ public final class DatapackIngestService {
             throw cleanupFailure;
         }
         if (publishPlans.isEmpty()) {
-            return new InstallExecution(new InstallResult(changed), null);
+            return new InstallExecution(
+                    new InstallResult(changed),
+                    null,
+                    stagedDir,
+                    entry,
+                    stagedHash,
+                    verifiedStagingInstall == null,
+                    publishPlans,
+                    unchangedPlans);
         }
 
         Manifest committedManifest = readCommittedManifest(root);
@@ -2033,10 +2063,44 @@ public final class DatapackIngestService {
             }
             throw publishFailure;
         }
-        return new InstallExecution(new InstallResult(changed), coordinator);
+        return new InstallExecution(
+                new InstallResult(changed),
+                coordinator,
+                stagedDir,
+                entry,
+                stagedHash,
+                verifiedStagingInstall == null,
+                publishPlans,
+                unchangedPlans);
+    }
+
+    static void verifyInstallExecution(InstallExecution execution) throws IOException {
+        if (execution.verified()) {
+            return;
+        }
+        if (execution.verifyStagedSource()) {
+            validateManagedDirectory(execution.stagedDir(), execution.entry().id);
+            Ownership stagedOwnership = readOwnership(execution.stagedDir());
+            String stagedHash = directoryHash(execution.stagedDir());
+            if (!Objects.equals(stagedHash, execution.stagedHash())
+                    || !ownershipMetadataMatches(stagedOwnership, execution.entry(), stagedHash)) {
+                throw new IOException("Iris datapack staging changed before installation commit for "
+                        + execution.entry().id);
+            }
+        }
+        for (InstallPlan plan : execution.publishedPlans()) {
+            verifyDesiredInstallSnapshot(plan.target(), plan, "published datapack target");
+        }
+        for (InstallPlan plan : execution.unchangedPlans()) {
+            verifyOriginalInstallSnapshot(plan.target(), plan, "unchanged datapack target");
+        }
+        execution.markVerified();
     }
 
     static void finishInstallExecution(InstallExecution execution) throws IOException {
+        if (!execution.verified()) {
+            throw new IOException("Datapack install cannot commit before final verification");
+        }
         if (execution.coordinator() == null) {
             return;
         }
@@ -2118,6 +2182,17 @@ public final class DatapackIngestService {
     ) throws IOException {
         ensureInstallTargetRoot(worldFolder);
         File target = new File(worldFolder, entry.id);
+        InstallPlan unchanged = tryPrepareUnchangedManagedInstall(
+                stagedDir,
+                worldFolder,
+                target,
+                entry,
+                stagedHash,
+                stripOverrides,
+                verifiedStagingInstall);
+        if (unchanged != null) {
+            return unchanged;
+        }
         boolean canonicalStagingInstall = verifiedStagingInstall != null
                 && verifiedStagingInstall.isCanonicalInstall(worldFolder, target);
         boolean legacyReplacementAuthorized = canonicalStagingInstall
@@ -2134,16 +2209,22 @@ public final class DatapackIngestService {
             String scratchRootFileIdentity = directoryIdentity(pendingRoot);
             IO.copyDirectory(stagedDir.toPath(), pending.toPath());
             Files.deleteIfExists(new File(pending, OWNERSHIP_MARKER).toPath());
-            if (!Objects.equals(stagedHash, directoryHash(pending))) {
+            String copiedHash = directoryHash(pending);
+            if (!Objects.equals(stagedHash, copiedHash)) {
                 throw new IOException("Datapack staging changed or copied incompletely while preparing " + entry.id);
             }
-            Files.deleteIfExists(new File(pending, OVERRIDES_STRIPPED_MARKER).toPath());
+            boolean removedOverrideMarker = Files.deleteIfExists(
+                    new File(pending, OVERRIDES_STRIPPED_MARKER).toPath());
             if (stripOverrides) {
                 stripVanillaStructureOverrides(pending);
                 writeMarker(new File(pending, OVERRIDES_STRIPPED_MARKER));
             }
             validatePackMetadata(pending);
-            writeOwnership(pending, entry);
+            if (!stripOverrides && !removedOverrideMarker) {
+                writeOwnership(pending, entry, copiedHash);
+            } else {
+                writeOwnership(pending, entry);
+            }
             validateInstallTree(pending, worldFolder, "Prepared datapack install");
             Ownership desiredOwnership = readOwnership(pending);
             String desiredHash = desiredOwnership.contentHash;
@@ -2241,6 +2322,69 @@ public final class DatapackIngestService {
             cleanupPreparedInstall(pending, pendingRoot, e);
             throw e;
         }
+    }
+
+    private static InstallPlan tryPrepareUnchangedManagedInstall(
+            File stagedDir,
+            File worldFolder,
+            File target,
+            Entry entry,
+            String stagedHash,
+            boolean stripOverrides,
+            VerifiedStagingInstall verifiedStagingInstall
+    ) throws IOException {
+        if (verifiedStagingInstall != null
+                || stripOverrides
+                || pathExists(new File(stagedDir, OVERRIDES_STRIPPED_MARKER).toPath(),
+                "staged datapack override marker")
+                || !pathExists(target.toPath(), "datapack install target")) {
+            return null;
+        }
+        if (Files.isSymbolicLink(target.toPath())
+                || !Files.isDirectory(target.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Refusing to replace non-directory or symbolic-link datapack " + target.getPath());
+        }
+        Ownership ownership = readOwnershipOrNull(target);
+        if (ownership == null) {
+            return null;
+        }
+        if (!entry.id.equals(ownership.id)) {
+            throw new IOException("Datapack ownership mismatch at " + target.getPath());
+        }
+        if (!ownershipMetadataMatches(ownership, entry, stagedHash)) {
+            return null;
+        }
+        validateInstallTree(target, worldFolder, "Existing datapack install");
+        removeFinderMetadata(target);
+        String currentHash = directoryHash(target);
+        if (!Objects.equals(currentHash, stagedHash)) {
+            return null;
+        }
+        String markerHash = ownershipMarkerFingerprint(target);
+        String identity = directoryIdentity(target);
+        File pendingRoot = installScratchRoot(worldFolder);
+        return new InstallPlan(
+                target,
+                new File(pendingRoot, entry.id + "-" + UUID.randomUUID()),
+                new File(pendingRoot, entry.id + "-backup-" + UUID.randomUUID()),
+                pendingRoot,
+                true,
+                false,
+                false,
+                currentHash,
+                currentHash,
+                markerHash,
+                markerHash,
+                identity,
+                identity,
+                realDirectoryPath(worldFolder, "datapack target root"),
+                "",
+                directoryIdentity(worldFolder),
+                "",
+                entry.id,
+                entry.url,
+                null
+        );
     }
 
     private static File installScratchRoot(File targetFolder) {
@@ -2550,10 +2694,16 @@ public final class DatapackIngestService {
     }
 
     static void writeOwnership(File directory, Entry entry) throws IOException {
+        writeOwnership(directory, entry, directoryHash(directory));
+    }
+
+    private static void writeOwnership(File directory, Entry entry, String contentHash) throws IOException {
         if (!isValidManagedId(entry.id) || entry.url == null || entry.url.isBlank()) {
             throw new IOException("Invalid Iris datapack ownership identity for " + directory.getPath());
         }
-        String contentHash = directoryHash(directory);
+        if (contentHash == null || contentHash.isBlank()) {
+            throw new IOException("Missing Iris datapack ownership content hash for " + directory.getPath());
+        }
         Ownership ownership = new Ownership(
                 OWNERSHIP_SCHEMA,
                 entry.id,
@@ -2640,6 +2790,10 @@ public final class DatapackIngestService {
     }
 
     static boolean isUsableStaging(File stagedDir, Entry entry) {
+        return inspectUsableStaging(stagedDir, entry).usable();
+    }
+
+    private static StagingInspection inspectUsableStaging(File stagedDir, Entry entry) {
         try {
             validateManagedDirectory(stagedDir, entry.id);
             Ownership ownership = readOwnership(stagedDir);
@@ -2649,22 +2803,28 @@ public final class DatapackIngestService {
                     || !Objects.equals(ownership.versionNumber, entry.versionNumber)
                     || !Objects.equals(ownership.sha1, entry.sha1)
                     || !Objects.equals(ownership.contentHash, contentHash)) {
-                return false;
+                return new StagingInspection(false, false, false);
             }
             PackResources resources = scanPackResources(stagedDir);
+            List<String> previousStructureKeys = copyList(entry.structureKeys);
+            List<String> previousTemplateKeys = copyList(entry.templateKeys);
+            boolean ownershipCorrected = false;
             if (!copyList(resources.structureKeys).equals(copyList(ownership.structureKeys))
                     || !copyList(resources.templateKeys).equals(copyList(ownership.templateKeys))) {
                 Entry corrected = copyEntry(entry);
                 corrected.structureKeys = resources.structureKeys;
                 corrected.templateKeys = resources.templateKeys;
                 writeOwnership(stagedDir, corrected);
+                ownershipCorrected = true;
             }
             entry.structureKeys = resources.structureKeys;
             entry.templateKeys = resources.templateKeys;
-            return true;
+            boolean manifestChanged = !previousStructureKeys.equals(copyList(entry.structureKeys))
+                    || !previousTemplateKeys.equals(copyList(entry.templateKeys));
+            return new StagingInspection(true, ownershipCorrected, manifestChanged);
         } catch (IOException e) {
             IrisLogging.warn("Ignoring unusable Iris datapack staging at " + stagedDir.getPath() + ": " + e.getMessage());
-            return false;
+            return new StagingInspection(false, false, false);
         }
     }
 
@@ -2697,6 +2857,14 @@ public final class DatapackIngestService {
         }
     }
 
+    private static boolean sameDatapackVolume(
+            Path root,
+            FileStore rootStore,
+            Path entry
+    ) throws IOException {
+        return sameScratchVolume(root, rootStore, entry, Files.getFileStore(entry));
+    }
+
     private static String directoryHash(File root) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -2709,10 +2877,7 @@ public final class DatapackIngestService {
                 int pathCount = 0;
                 while (iterator.hasNext()) {
                     Path path = iterator.next();
-                    if (path.equals(rootPath)) {
-                        continue;
-                    }
-                    if (path.equals(rootMarker)) {
+                    if (path.equals(rootPath) || path.equals(rootMarker)) {
                         continue;
                     }
                     if (isFinderMetadata(path)) {
@@ -2737,7 +2902,7 @@ public final class DatapackIngestService {
                 }
             }
             entries.sort(Comparator.comparing(path -> rootPath.relativize(path).toString()));
-            byte[] buffer = new byte[8192];
+            byte[] buffer = new byte[HASH_BUFFER_BYTES];
             long totalBytes = 0;
             for (Path entry : entries) {
                 String relative = rootPath.relativize(entry).toString().replace(File.separatorChar, '/');
@@ -2885,36 +3050,56 @@ public final class DatapackIngestService {
         return true;
     }
 
-    private static void autoImportDatapackStructures() {
+    private static boolean autoImportDatapackStructures() {
         TRANSACTION_LOCK.lock();
         try {
-            autoImportDatapackStructuresLocked();
+            return autoImportDatapackStructuresLocked();
         } finally {
             TRANSACTION_LOCK.unlock();
         }
     }
 
-    private static void autoImportDatapackStructuresLocked() {
+    private static boolean autoImportDatapackStructuresLocked() {
         boolean autoImportEnabled = IrisSettings.get().getGeneral().autoImportDatapackStructures;
         File root = IrisPlatforms.get().dataFolder("datapacks");
+        boolean recovered;
         try {
-            recoverTransactions(root, ServerConfigurator.getDatapacksFolder());
+            recovered = recoverTransactions(root, ServerConfigurator.getDatapacksFolder());
         } catch (IOException e) {
             IrisLogging.reportError("Automatic datapack structure import blocked by incomplete transaction recovery.", e);
-            return;
+            return false;
         }
         Manifest manifest = readManifest(root);
         if (manifest.entries.isEmpty()) {
-            return;
+            return recovered;
         }
         Map<String, Entry> manifestEntriesByUrl = new HashMap<>();
-        Map<String, Entry> entriesByUrl = new HashMap<>();
-        File stagingRoot = new File(root, "staging");
         for (Entry entry : manifest.entries) {
             if (entry.url != null) {
                 manifestEntriesByUrl.put(entry.url, entry);
             }
-            if (entry.url != null && isUsableStaging(new File(stagingRoot, entry.id), entry)) {
+        }
+
+        List<IrisData> packs;
+        try (Stream<IrisData> stream = ServerConfigurator.allPacks()) {
+            packs = stream.filter(Objects::nonNull).toList();
+        }
+        if (!autoImportEnabled && !hasRemovedImportState(packs, manifest.entries)) {
+            return recovered;
+        }
+
+        Map<String, Entry> entriesByUrl = new HashMap<>();
+        File stagingRoot = new File(root, "staging");
+        boolean stagingStateChanged = false;
+        boolean manifestStagingMetadataChanged = false;
+        for (Entry entry : manifest.entries) {
+            if (entry.url == null) {
+                continue;
+            }
+            StagingInspection inspection = inspectUsableStaging(new File(stagingRoot, entry.id), entry);
+            stagingStateChanged |= inspection.ownershipCorrected();
+            manifestStagingMetadataChanged |= inspection.manifestChanged();
+            if (inspection.usable()) {
                 entriesByUrl.put(entry.url, entry);
             }
         }
@@ -2924,10 +3109,6 @@ public final class DatapackIngestService {
         int cleanupTargets = 0;
         Set<String> completedUrls = new HashSet<>();
         Set<String> failedUrls = new HashSet<>();
-        List<IrisData> packs;
-        try (Stream<IrisData> stream = ServerConfigurator.allPacks()) {
-            packs = stream.filter(Objects::nonNull).toList();
-        }
         for (IrisData data : packs) {
             Set<String> configured = configuredImports(data);
             String targetId = data.getDataFolder().toPath().toAbsolutePath().normalize().toString();
@@ -3055,16 +3236,33 @@ public final class DatapackIngestService {
             }
         }
         if (attemptedPacks == 0 && cleanupTargets == 0) {
-            return;
+            if (manifestStagingMetadataChanged) {
+                writeManifest(root, manifest);
+            }
+            return recovered || stagingStateChanged || manifestStagingMetadataChanged;
         }
         writeManifest(root, manifest);
         if (attemptedPacks == 0) {
             IrisLogging.info("Datapack editable-import cleanup reconciled " + cleanupTargets + " removed source target(s).");
-            return;
+            return true;
         }
         IrisLogging.info("Datapack structure import refreshed " + completedUrls.size() + " source(s) across "
                 + completedPacks + "/" + attemptedPacks
                 + " pack(s). Reference the imported keys from a 'structures' placement to position them manually.");
+        return true;
+    }
+
+    private static boolean hasRemovedImportState(List<IrisData> packs, List<Entry> entries) {
+        for (IrisData data : packs) {
+            Set<String> configured = configuredImports(data);
+            String targetId = data.getDataFolder().toPath().toAbsolutePath().normalize().toString();
+            for (Entry entry : entries) {
+                if (!configured.contains(entry.url) && hasImportState(entry, targetId)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     static String importRevision(Entry entry) {
@@ -4237,24 +4435,42 @@ public final class DatapackIngestService {
 
     private static void validateScratchTree(Path root) throws IOException {
         FileStore rootStore = Files.getFileStore(root);
-        try (Stream<Path> paths = Files.walk(root)) {
-            List<Path> entries = paths.limit(MAX_MANAGED_PATHS + 1L).toList();
-            if (entries.size() > MAX_MANAGED_PATHS) {
-                throw new IOException("Datapack scratch contains too many paths: " + root);
-            }
-            for (Path entry : entries) {
-                BasicFileAttributes attributes = Files.readAttributes(
-                        entry, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        int[] pathCount = new int[]{0};
+        Files.walkFileTree(root, new SimpleFileVisitor<>() {
+            private FileVisitResult inspect(Path entry, BasicFileAttributes attributes) throws IOException {
+                pathCount[0]++;
+                if (pathCount[0] > MAX_MANAGED_PATHS) {
+                    throw new IOException("Datapack scratch contains too many paths: " + root);
+                }
                 if (attributes.isSymbolicLink()
                         || attributes.isOther()
                         || (!attributes.isDirectory() && !attributes.isRegularFile())) {
                     throw new IOException("Datapack scratch contains an unsupported file: " + entry);
                 }
-                if (!sameScratchVolume(root, rootStore, entry, Files.getFileStore(entry))) {
+                if (!sameDatapackVolume(root, rootStore, entry)) {
                     throw new IOException("Datapack scratch crosses a filesystem boundary: " + entry);
                 }
+                return FileVisitResult.CONTINUE;
             }
-        }
+
+            @Override
+            public FileVisitResult preVisitDirectory(
+                    Path directory,
+                    BasicFileAttributes attributes
+            ) throws IOException {
+                return inspect(directory, attributes);
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                return inspect(file, attributes);
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException failure) throws IOException {
+                throw new IOException("Unable to inspect datapack scratch entry: " + file, failure);
+            }
+        });
     }
 
     private static boolean sameScratchVolume(Path first, Path second) throws IOException {
@@ -5450,13 +5666,89 @@ public final class DatapackIngestService {
         FAILED
     }
 
-    record InstallExecution(InstallResult result, DatapackCoordinator coordinator) {
+    static final class InstallExecution {
+        private final InstallResult result;
+        private final DatapackCoordinator coordinator;
+        private final File stagedDir;
+        private final Entry entry;
+        private final String stagedHash;
+        private final boolean verifyStagedSource;
+        private final List<InstallPlan> publishedPlans;
+        private final List<InstallPlan> unchangedPlans;
+        private boolean verified;
+
+        private InstallExecution(
+                InstallResult result,
+                DatapackCoordinator coordinator,
+                File stagedDir,
+                Entry entry,
+                String stagedHash,
+                boolean verifyStagedSource,
+                List<InstallPlan> publishedPlans,
+                List<InstallPlan> unchangedPlans
+        ) {
+            this.result = result;
+            this.coordinator = coordinator;
+            this.stagedDir = stagedDir;
+            this.entry = copyEntry(entry);
+            this.stagedHash = stagedHash;
+            this.verifyStagedSource = verifyStagedSource;
+            this.publishedPlans = List.copyOf(publishedPlans);
+            this.unchangedPlans = List.copyOf(unchangedPlans);
+        }
+
+        InstallResult result() {
+            return result;
+        }
+
+        private DatapackCoordinator coordinator() {
+            return coordinator;
+        }
+
+        private File stagedDir() {
+            return stagedDir;
+        }
+
+        private Entry entry() {
+            return entry;
+        }
+
+        private String stagedHash() {
+            return stagedHash;
+        }
+
+        private boolean verifyStagedSource() {
+            return verifyStagedSource;
+        }
+
+        private List<InstallPlan> publishedPlans() {
+            return publishedPlans;
+        }
+
+        private List<InstallPlan> unchangedPlans() {
+            return unchangedPlans;
+        }
+
+        private boolean verified() {
+            return verified;
+        }
+
+        private void markVerified() {
+            verified = true;
+        }
     }
 
     private record PackResources(
             List<String> structureKeys,
             List<String> structureSetKeys,
             List<String> templateKeys
+    ) {
+    }
+
+    private record StagingInspection(
+            boolean usable,
+            boolean ownershipCorrected,
+            boolean manifestChanged
     ) {
     }
 
@@ -5838,6 +6130,9 @@ public final class DatapackIngestService {
             File dataFolder,
             StructureTransactionWriter.PreparedRemoval removal
     ) {
+    }
+
+    private record MetadataEntry(Path path, String relativePath) {
     }
 
     private record DirectoryMove(

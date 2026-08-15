@@ -78,6 +78,36 @@ public class ServerConfiguratorDatapackFingerprintTest {
     }
 
     @Test
+    public void contentSnapshotPublishesExactAggregateAndPerPackFingerprints() throws Exception {
+        File packsDir = tmp.newFolder("content-snapshot-packs");
+        Path alphaPack = packsDir.toPath().resolve("alpha");
+        Path betaPack = packsDir.toPath().resolve("beta");
+        Path alphaDimension = alphaPack.resolve("dimensions/alpha.json");
+        Path betaDimension = betaPack.resolve("dimensions/beta.json");
+        Files.createDirectories(alphaDimension.getParent());
+        Files.createDirectories(betaDimension.getParent());
+        Files.writeString(alphaDimension, "alpha-a", StandardCharsets.UTF_8);
+        Files.writeString(betaDimension, "beta-a", StandardCharsets.UTF_8);
+
+        ServerConfigurator.PackContentSnapshot before =
+                ServerConfigurator.computePackContentSnapshot(packsDir);
+
+        assertEquals(ServerConfigurator.computePackFingerprint(packsDir), before.content());
+        assertEquals(ServerConfigurator.computePackTreeFingerprint(alphaPack.toFile()),
+                before.packContents().get("alpha"));
+        assertEquals(ServerConfigurator.computePackTreeFingerprint(betaPack.toFile()),
+                before.packContents().get("beta"));
+
+        Files.writeString(alphaDimension, "alpha-b", StandardCharsets.UTF_8);
+        ServerConfigurator.PackContentSnapshot after =
+                ServerConfigurator.computePackContentSnapshot(packsDir);
+
+        assertNotEquals(before.content(), after.content());
+        assertNotEquals(before.packContents().get("alpha"), after.packContents().get("alpha"));
+        assertEquals(before.packContents().get("beta"), after.packContents().get("beta"));
+    }
+
+    @Test
     public void computePackFingerprintChangesWhenFileIsAdded() throws Exception {
         Method method = fingerprintMethod();
         File packsDir = tmp.newFolder("packs");
@@ -111,12 +141,39 @@ public class ServerConfiguratorDatapackFingerprintTest {
     }
 
     @Test
+    public void perPackFingerprintIncludesHiddenFilesCopiedIntoWorldSnapshots() throws Exception {
+        File packsDir = tmp.newFolder("hidden-pack-content");
+        Path pack = packsDir.toPath().resolve("testpack");
+        Path visible = pack.resolve("dimensions/overworld.json");
+        Path hidden = pack.resolve("dimensions/.broken.json");
+        Files.createDirectories(visible.getParent());
+        Files.writeString(visible, "visible", StandardCharsets.UTF_8);
+        Files.writeString(hidden, "hidden-one", StandardCharsets.UTF_8);
+        ServerConfigurator.PackContentSnapshot before =
+                ServerConfigurator.computePackContentSnapshot(packsDir);
+
+        Files.writeString(hidden, "hidden-two", StandardCharsets.UTF_8);
+        ServerConfigurator.PackContentSnapshot after =
+                ServerConfigurator.computePackContentSnapshot(packsDir);
+
+        assertNotEquals(before.content(), after.content());
+        assertNotEquals(
+                before.packContents().get("testpack"),
+                after.packContents().get("testpack"));
+        assertEquals(
+                after.packContents().get("testpack"),
+                ServerConfigurator.computePackTreeFingerprint(pack.toFile()));
+    }
+
+    @Test
     public void computePackFingerprintIgnoresGeneratedCodeWorkspaceFiles() throws Exception {
         File packsDir = tmp.newFolder("workspace-packs");
         Path dimension = packsDir.toPath().resolve("overworld/dimensions/overworld.json");
         Files.createDirectories(dimension.getParent());
         Files.writeString(dimension, "authored", StandardCharsets.UTF_8);
         String before = ServerConfigurator.computePackFingerprint(packsDir);
+        String packBefore = ServerConfigurator.computePackTreeFingerprint(
+                packsDir.toPath().resolve("overworld").toFile());
 
         Path workspace = packsDir.toPath().resolve("overworld/overworld.code-workspace");
         Files.writeString(workspace, "{\"folders\":[]}", StandardCharsets.UTF_8);
@@ -128,6 +185,17 @@ public class ServerConfiguratorDatapackFingerprintTest {
 
         assertEquals("Reordered workspace bytes must not alter the fingerprint",
                 before, ServerConfigurator.computePackFingerprint(packsDir));
+
+        Path schema = packsDir.toPath().resolve("overworld/.iris/schema/dimension.json");
+        Path repositoryObject = packsDir.toPath().resolve("overworld/.git/objects/blob");
+        Files.createDirectories(schema.getParent());
+        Files.createDirectories(repositoryObject.getParent());
+        Files.writeString(schema, "generated schema", StandardCharsets.UTF_8);
+        Files.writeString(repositoryObject, "repository metadata", StandardCharsets.UTF_8);
+
+        assertEquals(before, ServerConfigurator.computePackFingerprint(packsDir));
+        assertEquals(packBefore, ServerConfigurator.computePackTreeFingerprint(
+                packsDir.toPath().resolve("overworld").toFile()));
     }
 
     @Test
@@ -316,18 +384,20 @@ public class ServerConfiguratorDatapackFingerprintTest {
     }
 
     @Test
-    public void recoveryRunsBeforeFingerprintEarlyReturnAndCompilation() throws Exception {
+    public void recoveryRunsBeforeRestoredFingerprintReuseHashFallbackAndCompilation() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/ServerConfigurator.java"));
         int installIfChanged = source.indexOf("installDataPacksIfChanged(boolean fullInstall)");
         int recovery = source.indexOf("DatapackIngestService.reapplyFromStaging", installIfChanged);
-        int fingerprint = source.indexOf("computeCurrentDatapackCompilerInputFingerprint", recovery);
+        int restored = source.indexOf("restoredCompilerInputFingerprint()", recovery);
+        int fingerprint = source.indexOf("computeCurrentDatapackCompilerInputFingerprint", restored);
         int earlyReturn = source.indexOf("resultForUnchangedFingerprint", fingerprint);
         int compile = source.indexOf("compileDataPacksLocked(", earlyReturn);
         int cache = source.indexOf("writeCompilerInputFingerprintCache(cacheFile.toPath(), current)", compile);
 
         assertTrue(recovery >= 0);
-        assertTrue(fingerprint > recovery);
+        assertTrue(restored > recovery);
+        assertTrue(fingerprint > restored);
         assertTrue(earlyReturn > fingerprint);
         assertTrue(compile > earlyReturn);
         assertTrue(cache > compile);
@@ -356,6 +426,38 @@ public class ServerConfiguratorDatapackFingerprintTest {
         assertFalse(ServerConfigurator.reusableRuntimeFingerprint("abc", "def"));
         assertFalse(ServerConfigurator.reusableRuntimeFingerprint("", ""));
         assertFalse(ServerConfigurator.reusableRuntimeFingerprint(null, "abc"));
+    }
+
+    @Test
+    public void restoredCompilerInputFingerprintRequiresReadyNonRestartingRuntime() throws Exception {
+        Field ready = ServerConfigurator.class.getDeclaredField("loadedDatapackRuntimeReady");
+        Field fingerprint = ServerConfigurator.class.getDeclaredField(
+                "loadedDatapackCompilerInputFingerprint");
+        Field restartRequired = ServerConfigurator.class.getDeclaredField("loadedDatapackRestartRequired");
+        ready.setAccessible(true);
+        fingerprint.setAccessible(true);
+        restartRequired.setAccessible(true);
+        boolean previousReady = ready.getBoolean(null);
+        String previousFingerprint = (String) fingerprint.get(null);
+        boolean previousRestartRequired = restartRequired.getBoolean(null);
+
+        try {
+            ready.setBoolean(null, true);
+            fingerprint.set(null, "restored-fingerprint");
+            restartRequired.setBoolean(null, false);
+            assertEquals("restored-fingerprint", ServerConfigurator.restoredCompilerInputFingerprint());
+
+            restartRequired.setBoolean(null, true);
+            assertEquals("", ServerConfigurator.restoredCompilerInputFingerprint());
+
+            restartRequired.setBoolean(null, false);
+            ready.setBoolean(null, false);
+            assertEquals("", ServerConfigurator.restoredCompilerInputFingerprint());
+        } finally {
+            ready.setBoolean(null, previousReady);
+            fingerprint.set(null, previousFingerprint);
+            restartRequired.setBoolean(null, previousRestartRequired);
+        }
     }
 
     @Test

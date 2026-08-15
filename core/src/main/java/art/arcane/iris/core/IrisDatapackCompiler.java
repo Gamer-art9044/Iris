@@ -40,6 +40,7 @@ import java.util.stream.Stream;
 
 public final class IrisDatapackCompiler {
     private static final int INPUT_FINGERPRINT_SCHEMA = 2;
+    private static final int INPUT_BUFFER_BYTES = 64 * 1024;
     private static final int WORLD_PACK_SCAN_DEPTH = 8;
     private static final List<String> INPUT_DIRECTORIES = List.of("dimensions", "biomes", "snippet");
     private static final String FLAT_VOID_LEVEL_STEM = """
@@ -138,17 +139,25 @@ public final class IrisDatapackCompiler {
 
             List<CompilerInputEntry> entries = collectCompilerInputEntries(normalizedRoot);
             updateDigestInt(digest, entries.size());
-            byte[] buffer = new byte[8192];
+            byte[] buffer = new byte[INPUT_BUFFER_BYTES];
             for (CompilerInputEntry entry : entries) {
                 updateDigestString(digest, entry.relativePath());
-                updateDigestLong(digest, Files.size(entry.source()));
-                try (InputStream input = Files.newInputStream(entry.source())) {
+                updateDigestLong(digest, entry.size());
+                long readBytes = 0L;
+                try (InputStream input = Files.newInputStream(
+                        entry.source(),
+                        StandardOpenOption.READ,
+                        LinkOption.NOFOLLOW_LINKS)) {
                     int read;
                     while ((read = input.read(buffer)) >= 0) {
                         if (read > 0) {
                             digest.update(buffer, 0, read);
+                            readBytes += read;
                         }
                     }
+                }
+                if (readBytes != entry.size()) {
+                    throw new IOException("Iris datapack compiler input changed while hashing: " + entry.source());
                 }
             }
         }
@@ -326,26 +335,53 @@ public final class IrisDatapackCompiler {
                 || !Files.isDirectory(dimensionsRoot, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
+        List<Path> namespaces = visibleDirectories(dimensionsRoot);
         List<Path> candidates = new ArrayList<>();
-        Files.walkFileTree(dimensionsRoot, Set.of(), WORLD_PACK_SCAN_DEPTH, new SimpleFileVisitor<>() {
+        for (Path namespace : namespaces) {
+            collectNamespaceWorldPackRoots(namespace, candidates);
+        }
+        candidates.sort(Comparator.comparing(Path::toString));
+        for (Path candidate : candidates) {
+            addPackRoot(candidate, roots, validateWholePack);
+        }
+    }
+
+    private static void collectNamespaceWorldPackRoots(
+            Path namespace,
+            List<Path> candidates
+    ) throws IOException {
+        Files.walkFileTree(namespace, Set.of(), WORLD_PACK_SCAN_DEPTH, new SimpleFileVisitor<>() {
             @Override
-            public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
-                if (!directory.equals(dimensionsRoot)
-                        && PackDirectoryResolver.containsHiddenPathSegment(dimensionsRoot, directory)) {
+            public FileVisitResult preVisitDirectory(
+                    Path directory,
+                    BasicFileAttributes attributes
+            ) {
+                if (!directory.equals(namespace)
+                        && PackDirectoryResolver.isHiddenName(directory.getFileName().toString())) {
                     return FileVisitResult.SKIP_SUBTREE;
                 }
-                if ("pack".equals(directory.getFileName().toString())
-                        && directory.getParent() != null
-                        && "iris".equals(directory.getParent().getFileName().toString())
-                        && hasDimensions(directory)) {
-                    candidates.add(directory);
+                Path irisRoot = directory.resolve("iris");
+                Path candidate = irisRoot.resolve("pack");
+                if (!Files.isSymbolicLink(irisRoot)
+                        && !Files.isSymbolicLink(candidate)
+                        && Files.isDirectory(candidate, LinkOption.NOFOLLOW_LINKS)
+                        && hasDimensions(candidate)) {
+                    candidates.add(candidate);
+                    return FileVisitResult.SKIP_SUBTREE;
                 }
                 return FileVisitResult.CONTINUE;
             }
         });
-        candidates.sort(Comparator.comparing(Path::toString));
-        for (Path candidate : candidates) {
-            addPackRoot(candidate, roots, validateWholePack);
+    }
+
+    private static List<Path> visibleDirectories(Path root) throws IOException {
+        try (Stream<Path> entries = Files.list(root)) {
+            return entries
+                    .filter(entry -> !PackDirectoryResolver.isHiddenName(entry.getFileName().toString()))
+                    .filter(entry -> !Files.isSymbolicLink(entry))
+                    .filter(entry -> Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS))
+                    .sorted(Comparator.comparing(Path::toString))
+                    .toList();
         }
     }
 
@@ -416,7 +452,7 @@ public final class IrisDatapackCompiler {
                     }
                     if (file.getFileName().toString().endsWith(".json")) {
                         String relativePath = packRoot.relativize(file).toString().replace(File.separatorChar, '/');
-                        entries.add(new CompilerInputEntry(file, relativePath));
+                        entries.add(new CompilerInputEntry(file, relativePath, attributes.size()));
                     }
                     return FileVisitResult.CONTINUE;
                 }
@@ -503,7 +539,7 @@ public final class IrisDatapackCompiler {
     public record CompilationResult(int packCount, int dimensionCount, int biomeCount) {
     }
 
-    private record CompilerInputEntry(Path source, String relativePath) {
+    private record CompilerInputEntry(Path source, String relativePath, long size) {
     }
 
     private record DimensionCandidate(

@@ -29,9 +29,19 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class PackValidationRegistryTest {
@@ -120,6 +130,98 @@ public class PackValidationRegistryTest {
         assertEquals(result, PackValidationRegistry.requireLoadable(realRoot));
     }
 
+    @Test
+    public void copiedValidationPublishesOnlyForTheExactValidatedFingerprint() throws Exception {
+        Path sourceRoot = temporaryFolder.newFolder("copy-source").toPath();
+        Path matchingTarget = temporaryFolder.newFolder("copy-matching-target").toPath();
+        Path mismatchedTarget = temporaryFolder.newFolder("copy-mismatched-target").toPath();
+        PackValidationResult result = new PackValidationResult(
+                "source", List.of(), List.of("source warning"), 7L);
+        PackValidationRegistry.publish(sourceRoot, result, "fingerprint-a");
+
+        assertSame(result, PackValidationRegistry.publishMatchingCopy(
+                sourceRoot,
+                matchingTarget,
+                "fingerprint-a"));
+        assertSame(result, PackValidationRegistry.requireLoadable(matchingTarget));
+        assertNull(PackValidationRegistry.publishMatchingCopy(
+                sourceRoot,
+                mismatchedTarget,
+                "fingerprint-b"));
+        assertNull(PackValidationRegistry.get(mismatchedTarget));
+    }
+
+    @Test
+    public void unfingerprintedRepublishRevokesCopiedValidationReuse() throws Exception {
+        Path sourceRoot = temporaryFolder.newFolder("republished-source").toPath();
+        Path targetRoot = temporaryFolder.newFolder("republished-target").toPath();
+        PackValidationResult initial = new PackValidationResult("source", List.of(), List.of(), 3L);
+        PackValidationResult replacement = new PackValidationResult("source", List.of(), List.of(), 5L);
+        PackValidationRegistry.publish(sourceRoot, initial, "old-fingerprint");
+
+        PackValidationRegistry.publish(sourceRoot, replacement);
+
+        assertNull(PackValidationRegistry.publishMatchingCopy(
+                sourceRoot,
+                targetRoot,
+                "old-fingerprint"));
+        assertSame(replacement, PackValidationRegistry.requireLoadable(sourceRoot));
+        assertNull(PackValidationRegistry.get(targetRoot));
+    }
+
+    @Test
+    public void rootMutationDefeatsAnInterleavedStaleValidationTicket() throws Exception {
+        Path packRoot = temporaryFolder.newFolder("reserved-root").toPath();
+        PackValidationResult original = new PackValidationResult(
+                "pack", List.of(), List.of("original"), 1L);
+        PackValidationResult stale = new PackValidationResult(
+                "pack", List.of(), List.of("stale"), 2L);
+        PackValidationResult replacement = new PackValidationResult(
+                "pack", List.of(), List.of("replacement"), 3L);
+        PackValidationRegistry.publish(packRoot, original);
+        CountDownLatch ticketReady = new CountDownLatch(1);
+        CountDownLatch mutationStarted = new CountDownLatch(1);
+        AtomicReference<PackValidationRegistry.ValidationTicket> ticket = new AtomicReference<>();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Future<Boolean> stalePublish = executor.submit(() -> {
+            PackValidationRegistry.ValidationTicket validationTicket =
+                    PackValidationRegistry.tryBeginValidation(packRoot);
+            ticket.set(validationTicket);
+            ticketReady.countDown();
+            if (!mutationStarted.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Root mutation did not begin");
+            }
+            return PackValidationRegistry.publishIfCurrent(validationTicket, stale);
+        });
+
+        try {
+            assertTrue(ticketReady.await(5, TimeUnit.SECONDS));
+            assertNotNull(ticket.get());
+            try (PackValidationRegistry.RootMutation mutation =
+                         PackValidationRegistry.beginRootMutation(packRoot)) {
+                assertNull(PackValidationRegistry.get(packRoot));
+                assertThrows(BrokenPackException.class,
+                        () -> PackValidationRegistry.requireLoadable(packRoot));
+                assertNull(PackValidationRegistry.tryBeginValidation(packRoot));
+                mutationStarted.countDown();
+
+                assertFalse(stalePublish.get(5, TimeUnit.SECONDS));
+                assertNull(PackValidationRegistry.get(packRoot));
+                assertNull(PackValidationRegistry.tryBeginValidation(packRoot));
+
+                mutation.stage(replacement);
+                assertNull(PackValidationRegistry.get(packRoot));
+                mutation.commit();
+            }
+
+            assertSame(replacement, PackValidationRegistry.requireLoadable(packRoot));
+        } finally {
+            mutationStarted.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
     private void assertBroken(String pack, String expectedReason) {
         try {
             PackValidationRegistry.requireLoadable(pack);
@@ -132,11 +234,12 @@ public class PackValidationRegistryTest {
         throw new AssertionError("Expected pack validation to fail closed");
     }
 
-    private void assertBroken(Path packRoot, String expectedReason) {
+    private void assertBroken(Path packRoot, String expectedReason) throws IOException {
         try {
             PackValidationRegistry.requireLoadable(packRoot);
         } catch (BrokenPackException e) {
-            assertEquals(packRoot.toAbsolutePath().normalize().toString(), e.getPackName());
+            Path expectedRoot = packRoot.getParent().toRealPath().resolve(packRoot.getFileName()).normalize();
+            assertEquals(expectedRoot.toString(), e.getPackName());
             assertTrue(e.getReasons().toString(), e.getReasons().stream().anyMatch(
                     reason -> reason.contains(expectedReason)));
             return;

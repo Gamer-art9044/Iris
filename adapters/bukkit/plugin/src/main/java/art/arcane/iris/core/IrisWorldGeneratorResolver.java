@@ -45,6 +45,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -53,6 +54,7 @@ import java.util.function.Supplier;
  * Bukkit plugin entry points delegate to.
  */
 public final class IrisWorldGeneratorResolver {
+    private static final int VALIDATION_STABILITY_ATTEMPTS = 2;
     private static final Object SNAPSHOT_VALIDATION_LOCK = new Object();
 
     private final VolmitPlugin plugin;
@@ -67,15 +69,16 @@ public final class IrisWorldGeneratorResolver {
         PackValidationRegistry.clear();
         List<String> packNames = packDirs.stream().map(File::getName).sorted().toList();
         Path cacheFile = IrisPlatforms.get().dataFile("cache", "pack-validation.json").toPath();
-        String contentFingerprint = "";
+        ServerConfigurator.PackContentSnapshot contentSnapshot =
+                new ServerConfigurator.PackContentSnapshot("", Map.of());
         String contextFingerprint = "";
         Optional<List<PackValidationResult>> cached = Optional.empty();
         try {
-            contentFingerprint = PackValidationCache.contentFingerprint(packsRoot);
+            contentSnapshot = ServerConfigurator.computePackContentSnapshot(packsRoot);
             contextFingerprint = PackValidationCache.contextFingerprint();
             cached = PackValidationCache.load(
                     cacheFile,
-                    contentFingerprint,
+                    contentSnapshot.content(),
                     contextFingerprint,
                     packNames);
         } catch (RuntimeException exception) {
@@ -88,33 +91,31 @@ public final class IrisWorldGeneratorResolver {
             Iris.info("Reused persisted validation for " + results.size()
                     + " unchanged Iris pack(s); full pack parsing was skipped.");
         } else {
-            results = new ArrayList<>(packDirs.size());
-            for (File packDir : packDirs) {
+            FreshValidation validation = validateStablePacks(packsRoot, packDirs, contentSnapshot);
+            packDirs = validation.packDirs();
+            contentSnapshot = validation.contentSnapshot();
+            results = validation.results();
+            if (validation.stable()) {
                 try {
-                    results.add(PackValidator.validate(packDir));
-                } catch (Throwable exception) {
-                    Iris.reportError("Pack validation failed for '" + packDir.getName() + "'", exception);
-                    String detail = exception.getMessage();
-                    if (detail == null || detail.isBlank()) {
-                        detail = exception.getClass().getSimpleName();
-                    }
-                    results.add(new PackValidationResult(
-                            packDir.getName(),
-                            List.of("Pack validation failed with " + exception.getClass().getSimpleName()
-                                    + ": " + detail),
-                            List.of(),
-                            System.currentTimeMillis()));
+                    PackValidationCache.save(
+                            cacheFile,
+                            contentSnapshot.content(),
+                            contextFingerprint,
+                            results);
+                } catch (IOException exception) {
+                    Iris.reportError("Could not persist Iris pack-validation results", exception);
                 }
-            }
-            try {
-                PackValidationCache.save(cacheFile, contentFingerprint, contextFingerprint, results);
-            } catch (IOException exception) {
-                Iris.reportError("Could not persist Iris pack-validation results", exception);
             }
         }
 
+        Map<String, String> packFingerprints = contentSnapshot.packContents();
         for (PackValidationResult result : results) {
             PackValidationRegistry.publish(result);
+            String packFingerprint = packFingerprints.get(result.getPackName());
+            File packDirectory = PackDirectoryResolver.resolveExisting(packsRoot, result.getPackName());
+            if (packDirectory != null && packFingerprint != null && !packFingerprint.isBlank()) {
+                PackValidationRegistry.publish(packDirectory.toPath(), result, packFingerprint);
+            }
             if (!result.isLoadable()) {
                 Iris.error("Pack '" + result.getPackName()
                         + "' FAILED validation - world and Studio creation with this pack will be refused. Reasons:");
@@ -134,6 +135,67 @@ public final class IrisWorldGeneratorResolver {
         IrisStartupValidation.markPacksReady();
     }
 
+    private static FreshValidation validateStablePacks(
+            File packsRoot,
+            List<File> initialPackDirs,
+            ServerConfigurator.PackContentSnapshot initialSnapshot
+    ) {
+        List<File> packDirs = initialPackDirs;
+        ServerConfigurator.PackContentSnapshot before = initialSnapshot;
+        for (int attempt = 0; attempt < VALIDATION_STABILITY_ATTEMPTS; attempt++) {
+            List<String> packNames = packDirs.stream().map(File::getName).sorted().toList();
+            List<PackValidationResult> results = validatePacks(packDirs);
+            ServerConfigurator.PackContentSnapshot after;
+            try {
+                after = ServerConfigurator.computePackContentSnapshot(packsRoot);
+            } catch (RuntimeException exception) {
+                Iris.reportError("Could not verify Iris pack bytes after validation", exception);
+                after = new ServerConfigurator.PackContentSnapshot("", Map.of());
+            }
+            List<File> afterPackDirs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
+            List<String> afterPackNames = afterPackDirs.stream().map(File::getName).sorted().toList();
+            if (!before.content().isBlank()
+                    && before.content().equals(after.content())
+                    && packNames.equals(afterPackNames)) {
+                return new FreshValidation(afterPackDirs, after, results, true);
+            }
+            packDirs = afterPackDirs;
+            before = after;
+        }
+        Iris.error("Iris pack files kept changing during validation; validation was refused until writes stop.");
+        List<PackValidationResult> failures = new ArrayList<>(packDirs.size());
+        for (File packDir : packDirs) {
+            failures.add(new PackValidationResult(
+                    packDir.getName(),
+                    List.of("Pack files changed while validation was in progress; retry after writes stop."),
+                    List.of(),
+                    System.currentTimeMillis()));
+        }
+        return new FreshValidation(packDirs, before, failures, false);
+    }
+
+    private static List<PackValidationResult> validatePacks(List<File> packDirs) {
+        List<PackValidationResult> results = new ArrayList<>(packDirs.size());
+        for (File packDir : packDirs) {
+            try {
+                results.add(PackValidator.validate(packDir));
+            } catch (Throwable exception) {
+                Iris.reportError("Pack validation failed for '" + packDir.getName() + "'", exception);
+                String detail = exception.getMessage();
+                if (detail == null || detail.isBlank()) {
+                    detail = exception.getClass().getSimpleName();
+                }
+                results.add(new PackValidationResult(
+                        packDir.getName(),
+                        List.of("Pack validation failed with " + exception.getClass().getSimpleName()
+                                + ": " + detail),
+                        List.of(),
+                        System.currentTimeMillis()));
+            }
+        }
+        return results;
+    }
+
     static PackValidationResult requireSnapshotLoadable(File packRoot) {
         Path normalizedRoot = packRoot.toPath().toAbsolutePath().normalize();
         PackValidationResult result = PackValidationRegistry.get(normalizedRoot);
@@ -141,22 +203,26 @@ public final class IrisWorldGeneratorResolver {
             synchronized (SNAPSHOT_VALIDATION_LOCK) {
                 result = PackValidationRegistry.get(normalizedRoot);
                 if (result == null) {
-                    try {
-                        result = PackValidator.validate(normalizedRoot.toFile());
-                    } catch (Throwable exception) {
-                        Iris.reportError("Snapshot pack validation failed for '" + normalizedRoot + "'", exception);
-                        String detail = exception.getMessage();
-                        if (detail == null || detail.isBlank()) {
-                            detail = exception.getClass().getSimpleName();
+                    PackValidationRegistry.ValidationTicket ticket =
+                            PackValidationRegistry.tryBeginValidation(normalizedRoot);
+                    if (ticket != null) {
+                        try {
+                            result = PackValidator.validate(normalizedRoot.toFile());
+                        } catch (Throwable exception) {
+                            Iris.reportError("Snapshot pack validation failed for '" + normalizedRoot + "'", exception);
+                            String detail = exception.getMessage();
+                            if (detail == null || detail.isBlank()) {
+                                detail = exception.getClass().getSimpleName();
+                            }
+                            result = new PackValidationResult(
+                                    normalizedRoot.getFileName().toString(),
+                                    List.of("Pack validation failed with " + exception.getClass().getSimpleName()
+                                            + ": " + detail),
+                                    List.of(),
+                                    System.currentTimeMillis());
                         }
-                        result = new PackValidationResult(
-                                normalizedRoot.getFileName().toString(),
-                                List.of("Pack validation failed with " + exception.getClass().getSimpleName()
-                                        + ": " + detail),
-                                List.of(),
-                                System.currentTimeMillis());
+                        PackValidationRegistry.publishIfCurrent(ticket, result);
                     }
-                    PackValidationRegistry.publish(normalizedRoot, result);
                 }
             }
         }
@@ -264,5 +330,13 @@ public final class IrisWorldGeneratorResolver {
         requireSnapshotLoadable(ff);
 
         return new BukkitChunkGenerator(w, false, ff, dim.getLoadKey());
+    }
+
+    private record FreshValidation(
+            List<File> packDirs,
+            ServerConfigurator.PackContentSnapshot contentSnapshot,
+            List<PackValidationResult> results,
+            boolean stable
+    ) {
     }
 }

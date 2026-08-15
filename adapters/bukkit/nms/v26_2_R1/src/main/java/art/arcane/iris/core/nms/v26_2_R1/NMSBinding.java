@@ -10,6 +10,7 @@ import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.nms.INMSBinding;
 import art.arcane.iris.core.nms.MinecraftVersion;
+import art.arcane.iris.core.nms.ServerShutdownBoundary;
 import art.arcane.iris.core.nms.container.BiomeColor;
 import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.core.nms.container.BlockProperty;
@@ -1712,6 +1713,17 @@ public class NMSBinding implements INMSBinding {
             throw new IOException("Paper primary level data is unavailable for current world data staging.");
         }
         return PaperLevelOverrides.createFromLiveLevelData(primaryLevelData);
+    }
+
+    @Override
+    public boolean awaitServerShutdownBoundary(long timeout, TimeUnit unit) {
+        MinecraftServer server = ((CraftServer) Bukkit.getServer()).getHandle().getServer();
+        return ServerShutdownBoundary.await(
+                () -> server.hasFullyShutdown,
+                server.getRunningThread(),
+                timeout,
+                unit
+        );
     }
 
     @Override

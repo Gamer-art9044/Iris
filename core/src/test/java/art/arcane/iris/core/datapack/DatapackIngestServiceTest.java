@@ -247,6 +247,39 @@ public class DatapackIngestServiceTest {
     }
 
     @Test
+    public void startupChecksCheapCacheContextBeforeHashingManagedDatapacks() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java"));
+        int validation = source.indexOf("public static StartupValidationOutcome validateOnStartup()");
+        int cacheRead = source.indexOf("readStartupValidationCache", validation);
+        int contextCheck = source.indexOf("startupValidationContextMatches(", cacheRead);
+        int fingerprint = source.indexOf("startupValidationFingerprint(", contextCheck);
+        int fullValidation = source.indexOf("if (autoIngest && !configured.isEmpty())", fingerprint);
+
+        assertTrue(validation >= 0);
+        assertTrue(cacheRead > validation);
+        assertTrue(contextCheck > cacheRead);
+        assertTrue(fingerprint > contextCheck);
+        assertTrue(fullValidation > fingerprint);
+    }
+
+    @Test
+    public void unchangedPostStartupMaintenanceReturnsBeforeFingerprinting() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java"));
+        int refresh = source.indexOf(
+                "refreshStartupValidationAfterMaintenance(boolean maintenanceChanged)");
+        int unchangedGuard = source.indexOf("if (!maintenanceChanged)", refresh);
+        int validatedState = source.indexOf("StartupValidationCache validated", refresh);
+        int fingerprint = source.indexOf("startupValidationFingerprint(", refresh);
+
+        assertTrue(refresh >= 0);
+        assertTrue(unchangedGuard > refresh);
+        assertTrue(validatedState > unchangedGuard);
+        assertTrue(fingerprint > unchangedGuard);
+    }
+
+    @Test
     public void packMetadataMustContainAValidPackContract() throws Exception {
         File valid = temporaryFolder.newFolder("valid");
         Files.writeString(new File(valid, "pack.mcmeta").toPath(), """
@@ -734,6 +767,64 @@ public class DatapackIngestServiceTest {
     }
 
     @Test
+    public void ownershipDirectoryHashRetainsGoldenFramingAndExclusions() throws Exception {
+        File managed = temporaryFolder.newFolder("directory-hash-golden");
+        Path data = managed.toPath().resolve("data");
+        Path example = data.resolve("example");
+        Files.createDirectories(example);
+        Files.createDirectory(managed.toPath().resolve("empty"));
+        Files.write(example.resolve("value.bin"), new byte[]{0, 1, 2, 3, (byte) 0xff});
+        Files.writeString(
+                managed.toPath().resolve("pack.mcmeta"),
+                "{\"pack\":{\"description\":\"golden\",\"pack_format\":88}}",
+                StandardCharsets.UTF_8);
+        Files.writeString(managed.toPath().resolve("z.txt"), "Iris\n", StandardCharsets.UTF_8);
+        Files.writeString(
+                managed.toPath().resolve(".iris-managed.json"),
+                "ignored ownership marker",
+                StandardCharsets.UTF_8);
+        Files.writeString(managed.toPath().resolve(".DS_Store"), "ignored root metadata");
+        Files.writeString(data.resolve(".DS_Store"), "ignored nested metadata");
+        DatapackIngestService.Entry entry = entry("golden", "v1", "1", "sha");
+
+        DatapackIngestService.writeOwnership(managed, entry);
+
+        String expected = "aa62ee4ed00f0393e637411686082f253ec65ff788839b12c30fc175e5b501fb";
+        assertEquals(expected, ownershipHash(managed));
+
+        Files.writeString(
+                managed.toPath().resolve(".iris-managed.json"),
+                "different ignored ownership marker",
+                StandardCharsets.UTF_8);
+        Files.writeString(managed.toPath().resolve(".DS_Store"), "different root metadata");
+        Files.writeString(data.resolve(".DS_Store"), "different nested metadata");
+        DatapackIngestService.writeOwnership(managed, entry);
+
+        assertEquals(expected, ownershipHash(managed));
+    }
+
+    @Test
+    public void directoryHashRestatsAttributesAndVolumeBeforeOpeningEachFile() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java"));
+        int method = source.indexOf("private static String directoryHash(File root)");
+        int entries = source.indexOf("List<Path> entries = new ArrayList<>()", method);
+        int loop = source.indexOf("for (Path entry : entries)", entries);
+        int attributes = source.indexOf("BasicFileAttributes attributes = Files.readAttributes(", loop);
+        int fileStore = source.indexOf("Files.getFileStore(entry)", attributes);
+        int open = source.indexOf("Files.newInputStream(", fileStore);
+        int digest = source.indexOf("return hex(digest.digest())", open);
+
+        assertTrue(method >= 0);
+        assertTrue(entries > method);
+        assertTrue(loop > entries);
+        assertTrue(attributes > loop);
+        assertTrue(fileStore > attributes);
+        assertTrue(open > fileStore);
+        assertTrue(digest > open);
+    }
+
+    @Test
     public void failedUpdateStagingCannotBeAdoptedByTheCommittedManifest() throws Exception {
         File staging = datapackDirectory("candidate-staging");
         DatapackIngestService.Entry candidate = new DatapackIngestService.Entry();
@@ -831,6 +922,205 @@ public class DatapackIngestServiceTest {
         }
 
         assertEquals("old", Files.readString(new File(firstTarget, "value.txt").toPath(), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void exactManagedTargetSkipsPreparedCopyAndScratch() throws Exception {
+        DatapackIngestService.Entry entry = entry("exact-managed", "v1", "1", "sha");
+        File staging = datapackDirectory("exact-managed-source");
+        Files.writeString(new File(staging, "value.txt").toPath(), "same", StandardCharsets.UTF_8);
+        DatapackIngestService.writeOwnership(staging, entry);
+
+        File targetRoot = temporaryFolder.newFolder("exact-managed-target-root");
+        File worldFolder = new File(targetRoot, "datapacks");
+        assertTrue(worldFolder.mkdir());
+        File target = new File(worldFolder, entry.id);
+        writeManagedDatapack(target, entry, "same");
+        File scratch = new File(targetRoot, ".iris-datapack-install");
+
+        DatapackIngestService.InstallPlan plan = DatapackIngestService.prepareInstall(
+                staging,
+                worldFolder,
+                entry,
+                ownershipHash(staging),
+                false,
+                null
+        );
+
+        assertFalse(plan.publishRequired());
+        assertFalse(plan.contentChanged());
+        assertFalse(scratch.exists());
+        assertTrue(plan.pending() == null || !plan.pending().exists());
+    }
+
+    @Test
+    public void stagedMutationBeforePrecommitRejectsAndRollsBackPublishedWorlds() throws Exception {
+        PreparedMixedInstall fixture = preparedMixedInstall("staged-precommit-mutation");
+        Path stagedValue = new File(fixture.staging(), "value.txt").toPath();
+        FileTime originalTime = Files.getLastModifiedTime(stagedValue);
+        Files.writeString(stagedValue, "bad", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(stagedValue, originalTime);
+
+        try {
+            DatapackIngestService.verifyInstallExecution(fixture.execution());
+            fail("Expected changed staging to block the prepared install");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("staging changed"));
+            DatapackIngestService.rollbackInstallExecutions(List.of(fixture.execution()), expected);
+            assertEquals(0, expected.getSuppressed().length);
+        }
+
+        assertEquals("new", Files.readString(
+                new File(fixture.unchangedTarget(), "value.txt").toPath(), StandardCharsets.UTF_8));
+        assertEquals("old", Files.readString(
+                new File(fixture.changedTarget(), "value.txt").toPath(), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void unchangedTargetMutationBeforePrecommitRejectsAndRollsBackPublishedWorlds() throws Exception {
+        PreparedMixedInstall fixture = preparedMixedInstall("unchanged-precommit-mutation");
+        Path unchangedValue = new File(fixture.unchangedTarget(), "value.txt").toPath();
+        FileTime originalTime = Files.getLastModifiedTime(unchangedValue);
+        Files.writeString(unchangedValue, "bad", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(unchangedValue, originalTime);
+
+        try {
+            DatapackIngestService.verifyInstallExecution(fixture.execution());
+            fail("Expected changed unchanged-target snapshot to block the prepared install");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("unchanged datapack target"));
+            DatapackIngestService.rollbackInstallExecutions(List.of(fixture.execution()), expected);
+            assertEquals(0, expected.getSuppressed().length);
+        }
+
+        assertEquals("bad", Files.readString(unchangedValue, StandardCharsets.UTF_8));
+        assertEquals("old", Files.readString(
+                new File(fixture.changedTarget(), "value.txt").toPath(), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void verifiedFreshInstallCommitsAfterExtractedDirectoryIsDeleted() throws Exception {
+        PreparedVerifiedFreshInstall fixture = preparedVerifiedFreshInstall(
+                "verified-fresh-deleted-extraction");
+        DatapackIngestService.deleteInstallScratch(
+                fixture.extractedDir(), "verified fresh datapack extraction");
+        assertFalse(fixture.extractedDir().exists());
+
+        DatapackIngestService.verifyInstallExecution(fixture.execution());
+        writeManifest(fixture.root(), fixture.entry());
+        DatapackIngestService.finishInstallExecution(fixture.execution());
+
+        for (File target : List.of(fixture.worldTarget(), fixture.canonicalTarget())) {
+            assertEquals("new", Files.readString(
+                    new File(target, "value.txt").toPath(), StandardCharsets.UTF_8));
+            assertTrue(DatapackIngestService.isUsableStaging(target, fixture.entry()));
+        }
+    }
+
+    @Test
+    public void publishedTargetMutationRollsBackUnaffectedParticipantsAndRemainsFailClosed() throws Exception {
+        PreparedVerifiedFreshInstall fixture = preparedVerifiedFreshInstall(
+                "published-precommit-mutation");
+        Path publishedValue = new File(fixture.worldTarget(), "value.txt").toPath();
+        FileTime originalTime = Files.getLastModifiedTime(publishedValue);
+        Files.writeString(publishedValue, "bad", StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(publishedValue, originalTime);
+
+        try {
+            DatapackIngestService.verifyInstallExecution(fixture.execution());
+            fail("Expected changed published target to block the prepared install");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("published datapack target"));
+            DatapackIngestService.rollbackInstallExecutions(List.of(fixture.execution()), expected);
+            assertEquals(1, expected.getSuppressed().length);
+        }
+
+        assertEquals("bad", Files.readString(publishedValue, StandardCharsets.UTF_8));
+        assertFalse(fixture.canonicalTarget().exists());
+        File transactionRoot = new File(fixture.root(), ".iris-datapack-transactions");
+        File[] transactions = transactionRoot.listFiles(File::isDirectory);
+        assertTrue(transactions != null && transactions.length == 1);
+    }
+
+    @Test
+    public void changedManagedTargetStillPreparesPublication() throws Exception {
+        DatapackIngestService.Entry entry = entry("changed-managed", "v1", "1", "sha");
+        File staging = datapackDirectory("changed-managed-source");
+        Files.writeString(new File(staging, "value.txt").toPath(), "new", StandardCharsets.UTF_8);
+        DatapackIngestService.writeOwnership(staging, entry);
+
+        File targetRoot = temporaryFolder.newFolder("changed-managed-target-root");
+        File worldFolder = new File(targetRoot, "datapacks");
+        assertTrue(worldFolder.mkdir());
+        writeManagedDatapack(new File(worldFolder, entry.id), entry, "old");
+
+        DatapackIngestService.InstallPlan plan = DatapackIngestService.prepareInstall(
+                staging,
+                worldFolder,
+                entry,
+                ownershipHash(staging),
+                false,
+                null
+        );
+
+        assertTrue(plan.publishRequired());
+        assertTrue(plan.contentChanged());
+        assertTrue(plan.pending().isDirectory());
+        assertTrue(plan.pendingRoot().isDirectory());
+    }
+
+    @Test
+    public void changedOwnershipStillPreparesPublicationForExactContent() throws Exception {
+        DatapackIngestService.Entry entry = entry("changed-ownership", "v2", "2", "new-sha");
+        File staging = datapackDirectory("changed-ownership-source");
+        Files.writeString(new File(staging, "value.txt").toPath(), "same", StandardCharsets.UTF_8);
+        DatapackIngestService.writeOwnership(staging, entry);
+
+        File targetRoot = temporaryFolder.newFolder("changed-ownership-target-root");
+        File worldFolder = new File(targetRoot, "datapacks");
+        assertTrue(worldFolder.mkdir());
+        DatapackIngestService.Entry prior = entry("changed-ownership", "v1", "1", "old-sha");
+        File target = new File(worldFolder, entry.id);
+        writeManagedDatapack(target, prior, "same");
+
+        DatapackIngestService.InstallPlan plan = DatapackIngestService.prepareInstall(
+                staging,
+                worldFolder,
+                entry,
+                ownershipHash(staging),
+                false,
+                null
+        );
+
+        assertTrue(plan.publishRequired());
+        assertFalse(plan.contentChanged());
+        assertTrue(plan.pending().isDirectory());
+    }
+
+    @Test
+    public void overrideStrippingStillPreparesPublicationForExactContent() throws Exception {
+        DatapackIngestService.Entry entry = entry("strip-managed", "v1", "1", "sha");
+        File staging = datapackDirectory("strip-managed-source");
+        Files.writeString(new File(staging, "value.txt").toPath(), "same", StandardCharsets.UTF_8);
+        DatapackIngestService.writeOwnership(staging, entry);
+
+        File targetRoot = temporaryFolder.newFolder("strip-managed-target-root");
+        File worldFolder = new File(targetRoot, "datapacks");
+        assertTrue(worldFolder.mkdir());
+        writeManagedDatapack(new File(worldFolder, entry.id), entry, "same");
+
+        DatapackIngestService.InstallPlan plan = DatapackIngestService.prepareInstall(
+                staging,
+                worldFolder,
+                entry,
+                ownershipHash(staging),
+                true,
+                null
+        );
+
+        assertTrue(plan.publishRequired());
+        assertTrue(plan.contentChanged());
+        assertTrue(new File(plan.pending(), ".iris-overrides-stripped").isFile());
     }
 
     @Test
@@ -1101,6 +1391,7 @@ public class DatapackIngestServiceTest {
                         false,
                         fixture.root(),
                         fixture.authorization());
+        DatapackIngestService.verifyInstallExecution(execution);
         writeManifest(fixture.root(), fixture.desired());
         DatapackIngestService.finishInstallExecution(execution);
 
@@ -3060,6 +3351,67 @@ public class DatapackIngestServiceTest {
         return new ReapplyFixture(root, stagingRoot, staging, worlds, new File(world, entry.id));
     }
 
+    private PreparedMixedInstall preparedMixedInstall(String name) throws Exception {
+        File root = temporaryFolder.newFolder(name + "-root").toPath().toRealPath().toFile();
+        DatapackIngestService.Entry entry = entry("managed", "v1", "1", "sha");
+        writeManifest(root, entry);
+        File staging = new File(root, "staging/" + entry.id);
+        writeManagedDatapack(staging, entry, "new");
+
+        File unchangedRoot = temporaryFolder.newFolder(name + "-unchanged-root");
+        File unchangedWorld = new File(unchangedRoot, "datapacks");
+        assertTrue(unchangedWorld.mkdir());
+        File unchangedTarget = new File(unchangedWorld, entry.id);
+        writeManagedDatapack(unchangedTarget, entry, "new");
+
+        File changedRoot = temporaryFolder.newFolder(name + "-changed-root");
+        File changedWorld = new File(changedRoot, "datapacks");
+        assertTrue(changedWorld.mkdir());
+        File changedTarget = new File(changedWorld, entry.id);
+        writeManagedDatapack(changedTarget, entry, "old");
+
+        KList<File> worlds = new KList<>();
+        worlds.add(unchangedWorld);
+        worlds.add(changedWorld);
+        DatapackIngestService.InstallExecution execution =
+                DatapackIngestService.prepareInstallExecution(staging, worlds, entry, false, root);
+
+        assertTrue(execution.result().changed());
+        assertEquals("new", Files.readString(
+                new File(changedTarget, "value.txt").toPath(), StandardCharsets.UTF_8));
+        return new PreparedMixedInstall(staging, unchangedTarget, changedTarget, execution);
+    }
+
+    private PreparedVerifiedFreshInstall preparedVerifiedFreshInstall(String name) throws Exception {
+        LegacyStagingFixture fixture = legacyStagingFixture(name, false, true, false);
+        File world = temporaryFolder.newFolder(name + "-world");
+        KList<File> worlds = new KList<>();
+        worlds.add(world);
+        DatapackIngestService.InstallExecution execution =
+                DatapackIngestService.prepareInstallExecution(
+                        fixture.source(),
+                        worlds,
+                        fixture.desired(),
+                        false,
+                        fixture.root(),
+                        fixture.authorization());
+        File worldTarget = new File(world, fixture.desired().id);
+
+        assertTrue(fixture.source().isDirectory());
+        assertEquals("new", Files.readString(
+                new File(worldTarget, "value.txt").toPath(), StandardCharsets.UTF_8));
+        assertEquals("new", Files.readString(
+                new File(fixture.target(), "value.txt").toPath(), StandardCharsets.UTF_8));
+        return new PreparedVerifiedFreshInstall(
+                fixture.root(),
+                fixture.source(),
+                fixture.desired(),
+                fixture.target(),
+                worldTarget,
+                execution
+        );
+    }
+
     private JsonObject manifestEntry(File root) throws Exception {
         JsonObject manifest = JsonParser.parseString(Files.readString(
                 new File(root, "manifest.json").toPath(), StandardCharsets.UTF_8)).getAsJsonObject();
@@ -3072,6 +3424,24 @@ public class DatapackIngestServiceTest {
             File staging,
             KList<File> worlds,
             File target
+    ) {
+    }
+
+    private record PreparedMixedInstall(
+            File staging,
+            File unchangedTarget,
+            File changedTarget,
+            DatapackIngestService.InstallExecution execution
+    ) {
+    }
+
+    private record PreparedVerifiedFreshInstall(
+            File root,
+            File extractedDir,
+            DatapackIngestService.Entry entry,
+            File canonicalTarget,
+            File worldTarget,
+            DatapackIngestService.InstallExecution execution
     ) {
     }
 

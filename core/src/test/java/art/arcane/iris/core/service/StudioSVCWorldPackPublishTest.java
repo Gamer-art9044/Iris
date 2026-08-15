@@ -1,5 +1,6 @@
 package art.arcane.iris.core.service;
 
+import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.pack.BrokenPackException;
@@ -43,6 +44,12 @@ public class StudioSVCWorldPackPublishTest {
         Path target = root.resolve("iris/pack");
         Files.createDirectories(source.resolve("dimensions"));
         Files.writeString(source.resolve("dimensions/example.json"), "{}");
+        Files.writeString(source.resolve("dimensions/.hidden.json"), "{}");
+        Files.createDirectories(source.resolve(".iris/schema"));
+        Files.createDirectories(source.resolve(".git/objects"));
+        Files.writeString(source.resolve(".iris/schema/generated.json"), "{}");
+        Files.writeString(source.resolve(".git/objects/blob"), "metadata");
+        Files.writeString(source.resolve("source.code-workspace"), "{}");
         Files.createDirectories(stage);
 
         StudioSVC.copyPackTree(source, stage);
@@ -51,6 +58,10 @@ public class StudioSVCWorldPackPublishTest {
 
         assertFalse(Files.exists(stage));
         assertTrue(Files.isRegularFile(target.resolve("dimensions/example.json")));
+        assertTrue(Files.isRegularFile(target.resolve("dimensions/.hidden.json")));
+        assertFalse(Files.exists(target.resolve(".iris")));
+        assertFalse(Files.exists(target.resolve(".git")));
+        assertFalse(Files.exists(target.resolve("source.code-workspace")));
     }
 
     @Test
@@ -112,6 +123,93 @@ public class StudioSVCWorldPackPublishTest {
     }
 
     @Test
+    public void copyRejectsAnInstallationStageInsideTheSource() throws IOException {
+        Path source = temporaryFolder.newFolder("overlapping-copy").toPath();
+        Path stage = source.resolve("nested-stage");
+        Files.writeString(source.resolve("pack.txt"), "source");
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> StudioSVC.copyPackTree(source, stage));
+
+        assertTrue(failure.getMessage().contains("overlap"));
+        assertFalse(Files.exists(stage));
+        assertEquals("source", Files.readString(source.resolve("pack.txt")));
+    }
+
+    @Test
+    public void copyRejectsASymbolicInstallationStage() throws IOException {
+        Path root = temporaryFolder.newFolder("linked-copy-stage").toPath();
+        Path source = root.resolve("source");
+        Path outside = root.resolve("outside");
+        Path stage = root.resolve("stage");
+        Files.createDirectories(source);
+        Files.createDirectories(outside);
+        Files.writeString(source.resolve("pack.txt"), "source");
+        try {
+            Files.createSymbolicLink(stage, outside);
+        } catch (IOException | UnsupportedOperationException exception) {
+            Assume.assumeNoException(exception);
+        }
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> StudioSVC.copyPackTree(source, stage));
+
+        assertTrue(failure.getMessage().contains("symbolic link"));
+        assertFalse(Files.exists(outside.resolve("pack.txt")));
+    }
+
+    @Test
+    public void replaceExistingRejectsSymbolicTargetBeforePublication() throws Exception {
+        String sourceCode = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/service/StudioSVC.java"));
+        int install = sourceCode.indexOf("private IrisDimension installIntoDirectory(");
+        int initialTargetSafety = sourceCode.indexOf(
+                "requireSafePublicationTarget(target, replaceExisting)",
+                install);
+        int beginMutation = sourceCode.indexOf(
+                "PackValidationRegistry.beginRootMutation(target)",
+                initialTargetSafety);
+        int finalTargetSafety = sourceCode.indexOf(
+                "requireSafePublicationTarget(target, replaceExisting)",
+                beginMutation);
+        int publish = sourceCode.indexOf(
+                "AtomicDirectoryPublisher.publish(stage, target)",
+                finalTargetSafety);
+        assertTrue(install >= 0);
+        assertTrue(initialTargetSafety > install);
+        assertTrue(beginMutation > initialTargetSafety);
+        assertTrue(finalTargetSafety > beginMutation);
+        assertTrue(publish > finalTargetSafety);
+
+        Path root = temporaryFolder.newFolder("symbolic-replacement-target").toPath();
+        Path outside = root.resolve("outside-pack");
+        Path target = root.resolve("world/iris/pack");
+        Files.createDirectories(outside);
+        Files.createDirectories(target.getParent());
+        Files.writeString(outside.resolve("sentinel.txt"), "unchanged");
+        try {
+            Files.createSymbolicLink(target, outside);
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            Assume.assumeNoException(exception);
+        }
+        PackValidationResult existingValidation = new PackValidationResult(
+                "pack", List.of(), List.of("existing target"), 29L);
+        PackValidationRegistry.publish(target, existingValidation);
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> StudioSVC.requireSafePublicationTarget(target, true));
+
+        assertTrue(failure.getMessage().contains("symbolic link"));
+        assertTrue(Files.isSymbolicLink(target));
+        assertEquals(outside.toRealPath(), target.toRealPath());
+        assertEquals("unchanged", Files.readString(outside.resolve("sentinel.txt")));
+        assertSame(existingValidation, PackValidationRegistry.requireLoadable(target));
+    }
+
+    @Test
     public void rejectedPublicationEvictsCreatedLoaderBeforeDiskRollback() throws IOException {
         Path root = temporaryFolder.newFolder("cache-rollback").toPath();
         Path target = root.resolve("pack");
@@ -147,6 +245,120 @@ public class StudioSVCWorldPackPublishTest {
         Files.writeString(packRoot.resolve("dimensions/main.json"), "{");
         assertThrows(BrokenPackException.class, () -> StudioSVC.validatePublishedPack(packRoot));
         assertTrue(PackValidationRegistry.isBroken(packRoot));
+    }
+
+    @Test
+    public void exactCopiedFingerprintReusesSourceSemanticValidation() throws Exception {
+        Path root = temporaryFolder.newFolder("matching-validation-copy").toPath();
+        Path source = root.resolve("source");
+        Path target = root.resolve("target");
+        writeValidPack(source);
+        StudioSVC.copyPackTree(source, target);
+        String sourceFingerprint = ServerConfigurator.computePackTreeFingerprint(source.toFile());
+        String copiedFingerprint = ServerConfigurator.computePackTreeFingerprint(target.toFile());
+        PackValidationResult sourceValidation = new PackValidationResult(
+                "source", List.of(), List.of("preserved source warning"), 17L);
+        PackValidationRegistry.publish(source, sourceValidation, sourceFingerprint);
+
+        PackValidationResult reused = StudioSVC.validatePublishedPack(
+                target,
+                source,
+                copiedFingerprint);
+
+        assertEquals(sourceFingerprint, copiedFingerprint);
+        assertSame(sourceValidation, reused);
+        assertSame(sourceValidation, PackValidationRegistry.requireLoadable(target));
+    }
+
+    @Test
+    public void copiedFingerprintMismatchFallsBackToTargetValidation() throws Exception {
+        Path root = temporaryFolder.newFolder("mismatched-validation-copy").toPath();
+        Path source = root.resolve("source");
+        Path target = root.resolve("target");
+        writeValidPack(source);
+        StudioSVC.copyPackTree(source, target);
+        String sourceFingerprint = ServerConfigurator.computePackTreeFingerprint(source.toFile());
+        PackValidationResult sourceValidation = new PackValidationResult(
+                "source", List.of(), List.of(), 19L);
+        PackValidationRegistry.publish(source, sourceValidation, sourceFingerprint);
+        Files.writeString(target.resolve("dimensions/main.json"), "{");
+        String copiedFingerprint = ServerConfigurator.computePackTreeFingerprint(target.toFile());
+
+        assertFalse(sourceFingerprint.equals(copiedFingerprint));
+        assertThrows(BrokenPackException.class, () -> StudioSVC.validatePublishedPack(
+                target,
+                source,
+                copiedFingerprint));
+        assertTrue(PackValidationRegistry.isBroken(target));
+        assertSame(sourceValidation, PackValidationRegistry.requireLoadable(source));
+    }
+
+    @Test
+    public void replacementKeepsTargetUnauthorizedThroughPublishedFingerprintWindow() throws Exception {
+        String sourceCode = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/service/StudioSVC.java"));
+        int install = sourceCode.indexOf("private IrisDimension installIntoDirectory(");
+        int beginMutation = sourceCode.indexOf("PackValidationRegistry.beginRootMutation(target)", install);
+        int publish = sourceCode.indexOf("AtomicDirectoryPublisher.publish(stage, target)", beginMutation);
+        int fingerprint = sourceCode.indexOf(
+                "ServerConfigurator.computePackTreeFingerprint(target.toFile())",
+                publish);
+        int stageValidation = sourceCode.indexOf(
+                "validatePublishedPack(target, source, copiedFingerprint, validationMutation)",
+                fingerprint);
+        int publishCommit = sourceCode.indexOf("publication.commit()", stageValidation);
+        int validationCommit = sourceCode.indexOf("validationMutation.commit()", publishCommit);
+        assertTrue(install >= 0);
+        assertTrue(beginMutation > install);
+        assertTrue(publish > beginMutation);
+        assertTrue(fingerprint > publish);
+        assertTrue(stageValidation > fingerprint);
+        assertTrue(publishCommit > stageValidation);
+        assertTrue(validationCommit > publishCommit);
+
+        Path root = temporaryFolder.newFolder("validation-publication-window").toPath();
+        Path sourcePack = root.resolve("source");
+        Path target = root.resolve("world/iris/pack");
+        Path stage = root.resolve("world/iris/.pack.installing-test");
+        writeValidPack(sourcePack);
+        writeValidPack(target);
+        StudioSVC.copyPackTree(sourcePack, stage);
+        String sourceFingerprint = ServerConfigurator.computePackTreeFingerprint(sourcePack.toFile());
+        PackValidationResult sourceValidation = new PackValidationResult(
+                "source", List.of(), List.of(), 23L);
+        PackValidationResult staleTargetValidation = new PackValidationResult(
+                "pack", List.of(), List.of("stale target"), 11L);
+        PackValidationRegistry.publish(sourcePack, sourceValidation, sourceFingerprint);
+        PackValidationRegistry.publish(target, staleTargetValidation);
+        assertSame(staleTargetValidation, PackValidationRegistry.requireLoadable(target));
+
+        AtomicDirectoryPublisher.Publication publication = null;
+        try (PackValidationRegistry.RootMutation validationMutation =
+                     PackValidationRegistry.beginRootMutation(target)) {
+            assertNull(PackValidationRegistry.get(target));
+            assertThrows(BrokenPackException.class, () -> PackValidationRegistry.requireLoadable(target));
+            publication = AtomicDirectoryPublisher.publish(stage, target);
+            assertNull(PackValidationRegistry.get(target));
+            String copiedFingerprint = ServerConfigurator.computePackTreeFingerprint(target.toFile());
+            assertNull(PackValidationRegistry.get(target));
+            assertThrows(BrokenPackException.class, () -> PackValidationRegistry.requireLoadable(target));
+
+            PackValidationResult staged = validationMutation.stageMatchingCopy(
+                    sourcePack,
+                    copiedFingerprint);
+
+            assertSame(sourceValidation, staged);
+            assertNull(PackValidationRegistry.get(target));
+            publication.commit();
+            assertNull(PackValidationRegistry.get(target));
+            validationMutation.commit();
+            assertSame(sourceValidation, PackValidationRegistry.requireLoadable(target));
+            publication.cleanupBackup();
+        } finally {
+            if (publication != null) {
+                publication.close();
+            }
+        }
     }
 
     @Test

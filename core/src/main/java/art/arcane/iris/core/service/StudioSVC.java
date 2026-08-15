@@ -29,6 +29,7 @@ import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
+import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackDownloadExecution;
 import art.arcane.iris.core.pack.PackDownloader;
@@ -64,12 +65,14 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -82,7 +85,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
@@ -198,6 +200,7 @@ public class StudioSVC implements IrisService {
         Path parent = target.getParent();
         Path stage = null;
         AtomicDirectoryPublisher.Publication publication = null;
+        PackValidationRegistry.RootMutation validationMutation = null;
         IrisData previousData = IrisData.getLoaded(target.toFile()).orElse(null);
         IrisData createdData = null;
         boolean refreshedPreviousData = false;
@@ -207,10 +210,7 @@ public class StudioSVC implements IrisService {
                 throw new IOException("World pack target has no parent: " + target);
             }
             Files.createDirectories(parent);
-            if (!replaceExisting
-                    && (Files.exists(target, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(target))) {
-                throw new FileAlreadyExistsException(target.toString());
-            }
+            requireSafePublicationTarget(target, replaceExisting);
 
             stage = Files.createTempDirectory(parent, ".pack.installing-");
             copyPackTree(source, stage);
@@ -223,9 +223,18 @@ public class StudioSVC implements IrisService {
             } finally {
                 stagedData.close();
             }
+            validationMutation = PackValidationRegistry.beginRootMutation(target);
+            requireSafePublicationTarget(target, replaceExisting);
             publication = AtomicDirectoryPublisher.publish(stage, target);
             stage = null;
-            validatePublishedPack(target);
+            String copiedFingerprint = ServerConfigurator.computePackTreeFingerprint(target.toFile());
+            PackValidationResult publishedValidation =
+                    validatePublishedPack(target, source, copiedFingerprint, validationMutation);
+            if (!publishedValidation.isLoadable()) {
+                throw new BrokenPackException(
+                        target.toString(),
+                        publishedValidation.getBlockingErrors());
+            }
 
             IrisData installedData;
             // Live engines only ever attach to detached openRuntime loaders, never to the
@@ -249,6 +258,7 @@ public class StudioSVC implements IrisService {
                 throw new IOException("Published pack does not contain a loadable dimension '" + dimensionKey + "'.");
             }
             publication.commit();
+            validationMutation.commit();
             try {
                 publication.cleanupBackup();
             } catch (IOException cleanupFailure) {
@@ -275,6 +285,9 @@ public class StudioSVC implements IrisService {
             sender.sendMessage("Failed to install studio pack '" + dimensionKey + "': " + errorDetail(e));
             return null;
         } finally {
+            if (validationMutation != null) {
+                validationMutation.close();
+            }
             if (stage != null) {
                 try {
                     AtomicDirectoryPublisher.deleteTree(stage);
@@ -289,11 +302,56 @@ public class StudioSVC implements IrisService {
         PackValidationRegistry.remove(packRoot);
     }
 
+    static void requireSafePublicationTarget(Path target, boolean replaceExisting) throws IOException {
+        if (Files.isSymbolicLink(target)) {
+            throw new IOException("World pack target is a symbolic link: " + target);
+        }
+        if (!replaceExisting && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            throw new FileAlreadyExistsException(target.toString());
+        }
+    }
+
     static PackValidationResult validatePublishedPack(Path packRoot) {
-        invalidatePackValidation(packRoot);
-        PackValidationResult result = PackValidator.validate(packRoot.toFile());
-        PackValidationRegistry.publish(packRoot, result);
-        return PackValidationRegistry.requireLoadable(packRoot);
+        try (PackValidationRegistry.RootMutation mutation =
+                     PackValidationRegistry.beginRootMutation(packRoot)) {
+            PackValidationResult result = PackValidator.validate(packRoot.toFile());
+            mutation.stage(result);
+            mutation.commit();
+            return PackValidationRegistry.requireLoadable(packRoot);
+        }
+    }
+
+    static PackValidationResult validatePublishedPack(
+            Path packRoot,
+            Path validatedSource,
+            String copiedContentFingerprint
+    ) {
+        try (PackValidationRegistry.RootMutation mutation =
+                     PackValidationRegistry.beginRootMutation(packRoot)) {
+            PackValidationResult result = validatePublishedPack(
+                    packRoot,
+                    validatedSource,
+                    copiedContentFingerprint,
+                    mutation);
+            mutation.commit();
+            return PackValidationRegistry.requireLoadable(packRoot);
+        }
+    }
+
+    private static PackValidationResult validatePublishedPack(
+            Path packRoot,
+            Path validatedSource,
+            String copiedContentFingerprint,
+            PackValidationRegistry.RootMutation mutation
+    ) {
+        PackValidationResult result = mutation.stageMatchingCopy(
+                validatedSource,
+                copiedContentFingerprint);
+        if (result == null) {
+            result = PackValidator.validate(packRoot.toFile());
+            mutation.stage(result);
+        }
+        return result;
     }
 
     static void rollbackFailedPublication(
@@ -318,7 +376,6 @@ public class StudioSVC implements IrisService {
     }
 
     static Path resolveSafePackSource(File sourceFolder) throws IOException {
-        PackDirectoryResolver.requireSafePackTree(sourceFolder);
         Path source = sourceFolder.toPath().toAbsolutePath().normalize().toRealPath();
         if (!Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(source)) {
             throw new IOException("Source pack is missing or unsafe: " + sourceFolder);
@@ -1202,25 +1259,85 @@ public class StudioSVC implements IrisService {
     }
 
     static void copyPackTree(Path source, Path target) throws IOException {
-        try (Stream<Path> entries = Files.walk(source)) {
-            for (Path entry : entries.sorted(Comparator.naturalOrder()).toList()) {
-                if (Files.isSymbolicLink(entry)) {
-                    throw new IOException("Pack contains a symbolic link: " + entry);
-                }
-                Path destination = target.resolve(source.relativize(entry)).normalize();
-                if (!destination.startsWith(target)) {
-                    throw new IOException("Pack entry escapes its installation stage: " + entry);
-                }
-                if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
-                    Files.createDirectories(destination);
-                } else if (Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
-                    Files.createDirectories(destination.getParent());
-                    Files.copy(entry, destination, StandardCopyOption.COPY_ATTRIBUTES);
-                } else {
-                    throw new IOException("Pack contains an unsupported entry: " + entry);
-                }
-            }
+        Path normalizedSource = source.toRealPath();
+        if (!Files.isDirectory(normalizedSource, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Pack source is not a directory: " + normalizedSource);
         }
+        Path requestedTarget = target.toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(requestedTarget)) {
+            throw new IOException("Pack installation stage is a symbolic link: " + requestedTarget);
+        }
+        Path normalizedTarget;
+        if (Files.exists(requestedTarget, LinkOption.NOFOLLOW_LINKS)) {
+            if (!Files.isDirectory(requestedTarget, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Pack installation stage is not a directory: " + requestedTarget);
+            }
+            normalizedTarget = requestedTarget.toRealPath();
+        } else {
+            Path parent = Objects.requireNonNull(
+                    requestedTarget.getParent(),
+                    "Pack installation stage parent");
+            normalizedTarget = parent.toRealPath().resolve(requestedTarget.getFileName()).normalize();
+        }
+        if (normalizedTarget.startsWith(normalizedSource)
+                || normalizedSource.startsWith(normalizedTarget)) {
+            throw new IOException("Pack source and installation stage overlap: "
+                    + normalizedSource + " and " + normalizedTarget);
+        }
+        Files.walkFileTree(normalizedSource, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(
+                    Path directory,
+                    BasicFileAttributes attributes
+            ) throws IOException {
+                if (attributes.isSymbolicLink()) {
+                    throw new IOException("Pack contains a symbolic link: " + directory);
+                }
+                if (!directory.equals(normalizedSource)
+                        && normalizedSource.relativize(directory).getNameCount() == 1
+                        && PackDirectoryResolver.isHiddenName(directory.getFileName().toString())) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                Files.createDirectories(copyDestination(
+                        normalizedSource,
+                        normalizedTarget,
+                        directory));
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                if (attributes.isSymbolicLink()) {
+                    throw new IOException("Pack contains a symbolic link: " + file);
+                }
+                if (!attributes.isRegularFile()) {
+                    throw new IOException("Pack contains an unsupported entry: " + file);
+                }
+                String fileName = file.getFileName().toString();
+                if ((normalizedSource.relativize(file).getNameCount() == 1
+                        && PackDirectoryResolver.isHiddenName(fileName))
+                        || fileName.endsWith(".code-workspace")) {
+                    return FileVisitResult.CONTINUE;
+                }
+                Path destination = copyDestination(normalizedSource, normalizedTarget, file);
+                Files.createDirectories(Objects.requireNonNull(destination.getParent(), "Pack entry parent"));
+                Files.copy(file, destination, StandardCopyOption.COPY_ATTRIBUTES);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException failure) throws IOException {
+                throw new IOException("Unable to copy pack entry: " + file, failure);
+            }
+        });
+    }
+
+    private static Path copyDestination(Path source, Path target, Path entry) throws IOException {
+        Path destination = target.resolve(source.relativize(entry)).normalize();
+        if (!destination.startsWith(target)) {
+            throw new IOException("Pack entry escapes its installation stage: " + entry);
+        }
+        return destination;
     }
 
     static void publishNewDirectory(Path stage, Path target) throws IOException {

@@ -75,7 +75,6 @@ import art.arcane.iris.core.service.WandSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.EnginePanic;
 import art.arcane.iris.engine.framework.BlockEditAccess;
-import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.PreservationRegistry;
 import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.object.IrisCompat;
@@ -148,6 +147,8 @@ import java.util.regex.Pattern;
 
 @SuppressWarnings("CanBeFinal")
 public class Iris extends VolmitPlugin implements Listener, ReloadAware {
+    private static final long SERVER_SHUTDOWN_BOUNDARY_TIMEOUT_SECONDS = 300L;
+    private static final long SERVER_STOP_PREGEN_TIMEOUT_MILLIS = 30000L;
     private static final Queue<Runnable> syncJobs = new ShurikenQueue<>();
 
     static {
@@ -175,8 +176,11 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     private static final Object TEARDOWN_LOCK = new Object();
     private final AtomicBoolean alreadyDrained = new AtomicBoolean(false);
+    private final AtomicBoolean postStopFinisherStarted = new AtomicBoolean(false);
+    private final AtomicBoolean serverStopTeardownDeferred = new AtomicBoolean(false);
     private final AtomicBoolean servicesDisabled = new AtomicBoolean(false);
     private final AtomicBoolean sharedRuntimeClosed = new AtomicBoolean(false);
+    private final AtomicBoolean terminalCleanupCompleted = new AtomicBoolean(false);
     private volatile PlaceholderRegistration papiRegistration;
     private volatile IrisPapiListener papiListener;
     private volatile IrisPapiState papiState;
@@ -184,11 +188,13 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     // Copy-on-write: mutated on the main thread during enable() and iterated by the JVM
     // shutdown-hook thread during teardown; a plain list would CME and abort the teardown.
     private final List<IrisService> enabledServices = new CopyOnWriteArrayList<>();
+    private final List<PlatformChunkGenerator> deferredShutdownGenerators = new CopyOnWriteArrayList<>();
     private final IrisWorldGeneratorResolver generatorResolver = new IrisWorldGeneratorResolver(this);
     private final BukkitWorldReconciler worldReconciler = new BukkitWorldReconciler(this);
     private final PendingWorldDeleteQueue pendingWorldDeletes = new PendingWorldDeleteQueue(this);
     private final PendingWorldReplacementManager pendingWorldReplacements = new PendingWorldReplacementManager(this);
     private volatile SettingsHotloadWatch settingsHotloadWatch;
+    private volatile Thread serverLifecycleThread;
 
     public static VolmitSender getSender() {
         if (sender == null) {
@@ -530,8 +536,12 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             return false;
         }
         alreadyDrained.set(false);
+        postStopFinisherStarted.set(false);
+        serverStopTeardownDeferred.set(false);
         servicesDisabled.set(false);
         sharedRuntimeClosed.set(false);
+        terminalCleanupCompleted.set(false);
+        deferredShutdownGenerators.clear();
         MultiBurst.burst.reopen();
         MultiBurst.ioBurst.reopen();
         IrisLanguage.initialize();
@@ -669,7 +679,8 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     public void addShutdownHook() {
         removeShutdownHook();
-        shutdownHook = new Thread(() -> teardownRuntime("shutdown-hook", 30L), "Iris-ShutdownHook");
+        serverLifecycleThread = Thread.currentThread();
+        shutdownHook = new Thread(this::runShutdownHook, "Iris-ShutdownHook");
         try {
             Runtime.getRuntime().addShutdownHook(shutdownHook);
         } catch (IllegalStateException ex) {
@@ -756,9 +767,14 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     public void onDisable() {
         teardownPapi();
-        teardownRuntime("onDisable", 30L);
-        removeShutdownHook();
-        J.attempt(() -> INMS.get().uninjectBukkit());
+        boolean serverStopping = IrisToolbelt.isServerStopping();
+        if (serverStopping) {
+            quiesceRuntimeForServerShutdown("onDisable");
+            startPostStopFinisher();
+        } else {
+            teardownRuntime("onDisable", 30L);
+            removeShutdownHook();
+        }
         if (BukkitPlatform.hasHud()) {
             BukkitPlatform.hudSlots().shutdown();
             BukkitPlatform.hudLanes().shutdown();
@@ -767,15 +783,22 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             configHotloadEngine.clear();
             configHotloadEngine = null;
         }
-        runPostShutdown();
         // super.onDisable() cancels plugin tasks and unregisters every listener.
         super.onDisable();
-        IrisPlatforms.unbind();
+        if (!serverStopping) {
+            finishTerminalCleanup();
+        }
     }
 
     @Override
     public void onPreUnload(ReloadAware.PreUnloadReason reason) {
         teardownPapi();
+        if (IrisToolbelt.isServerStopping()) {
+            quiesceRuntimeForServerShutdown("pre-unload:" + reason);
+            startPostStopFinisher();
+            Iris.info("Pre-unload hook deferred generator teardown until Paper closes its chunk schedulers.");
+            return;
+        }
         if (alreadyDrained.get()) {
             Iris.info("Pre-unload hook skipped; Iris already drained.");
             return;
@@ -829,14 +852,131 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
     }
 
-    private void drainWorldGenerators(String reason, long timeoutSeconds) {
-        List<World> irisWorlds = new ArrayList<>();
-        for (World world : Bukkit.getWorlds()) {
-            if (IrisToolbelt.access(world) != null) {
-                irisWorlds.add(world);
+    private void quiesceRuntimeForServerShutdown(String reason) {
+        serverStopTeardownDeferred.set(true);
+        JigsawStudioService jigsawStudioService = IrisServices.getOrNull(JigsawStudioService.class);
+        if (jigsawStudioService != null) {
+            try {
+                jigsawStudioService.quiesceForServerShutdown();
+            } catch (Throwable e) {
+                Iris.reportError("Failed to quiesce Jigsaw Studio before server shutdown.", e);
             }
         }
-        if (irisWorlds.isEmpty()) {
+        StudioSVC studioService = IrisServices.getOrNull(StudioSVC.class);
+        if (studioService != null) {
+            studioService.quiesceDownloadsForShutdown();
+        }
+
+        try {
+            PregeneratorJob.shutdownAndWait(SERVER_STOP_PREGEN_TIMEOUT_MILLIS);
+        } catch (Throwable e) {
+            Iris.reportError("Failed to quiesce the Iris pregenerator before server shutdown.", e);
+        }
+
+        for (World world : Bukkit.getWorlds()) {
+            PlatformChunkGenerator generator = IrisToolbelt.access(world);
+            if (generator == null) {
+                continue;
+            }
+            IrisToolbelt.beginWorldMaintenance(world, reason, true);
+            if (!deferredShutdownGenerators.contains(generator)) {
+                deferredShutdownGenerators.add(generator);
+            }
+            generator.quiesceForServerShutdown();
+        }
+    }
+
+    private void startPostStopFinisher() {
+        if (!postStopFinisherStarted.compareAndSet(false, true)) {
+            return;
+        }
+        Thread activeServerThread = serverLifecycleThread;
+        if (activeServerThread == null) {
+            Iris.warn("Iris could not start its post-stop runtime finisher because the server lifecycle thread is unavailable.");
+            return;
+        }
+
+        Thread finisher = new Thread(() -> {
+            if (!awaitServerThreadTermination(activeServerThread)) {
+                return;
+            }
+            finishDeferredRuntimeTeardown("post-server-stop", 30L);
+        }, "Iris-PostStop-Finisher");
+        finisher.setDaemon(false);
+        finisher.start();
+    }
+
+    static boolean awaitServerThreadTermination(Thread serverThread) {
+        if (serverThread == null || serverThread == Thread.currentThread()) {
+            return false;
+        }
+        try {
+            serverThread.join();
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Iris.reportError("Iris post-stop runtime finisher was interrupted.", e);
+            return false;
+        }
+    }
+
+    private void runShutdownHook() {
+        if (!awaitServerShutdownBoundary()) {
+            Iris.warn("Iris skipped JVM-hook runtime teardown because Paper did not reach its post-world-close boundary.");
+            return;
+        }
+        finishDeferredRuntimeTeardown("shutdown-hook", 30L);
+    }
+
+    private boolean awaitServerShutdownBoundary() {
+        if (!INMS.isBound()) {
+            return true;
+        }
+        try {
+            return INMS.get().awaitServerShutdownBoundary(
+                    SERVER_SHUTDOWN_BOUNDARY_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS
+            );
+        } catch (Throwable e) {
+            Iris.reportError("Failed to await Paper's post-world-close shutdown boundary.", e);
+            return false;
+        }
+    }
+
+    private void finishDeferredRuntimeTeardown(String reason, long timeoutSeconds) {
+        teardownRuntime(reason, timeoutSeconds);
+        finishTerminalCleanup();
+    }
+
+    private void finishTerminalCleanup() {
+        if (!terminalCleanupCompleted.compareAndSet(false, true)) {
+            return;
+        }
+        J.attempt(() -> INMS.get().uninjectBukkit());
+        try {
+            runPostShutdown();
+        } catch (Throwable e) {
+            Iris.reportError("Failed to run Iris post-shutdown cleanup.", e);
+        } finally {
+            IrisPlatforms.unbind();
+        }
+    }
+
+    private void drainWorldGenerators(String reason, long timeoutSeconds) {
+        List<World> irisWorlds = new ArrayList<>();
+        List<PlatformChunkGenerator> generators = new ArrayList<>();
+        if (serverStopTeardownDeferred.get()) {
+            generators.addAll(deferredShutdownGenerators);
+        } else {
+            for (World world : Bukkit.getWorlds()) {
+                PlatformChunkGenerator generator = IrisToolbelt.access(world);
+                if (generator != null) {
+                    irisWorlds.add(world);
+                    generators.add(generator);
+                }
+            }
+        }
+        if (generators.isEmpty()) {
             Iris.info("No Iris worlds to freeze.");
             return;
         }
@@ -848,17 +988,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         J.attempt(PregeneratorJob::shutdownInstance);
 
         List<CompletableFuture<Void>> closes = new ArrayList<>();
-        for (World world : irisWorlds) {
-            PlatformChunkGenerator gen = IrisToolbelt.access(world);
-            if (gen == null) continue;
-
-            Engine engine = gen.getEngine();
-            if (engine != null) {
-                J.attempt(() -> engine.getMantle().saveAllNow());
-            }
-
+        for (PlatformChunkGenerator generator : generators) {
             try {
-                closes.add(gen.closeAsync());
+                closes.add(generator.closeAsync());
             } catch (Throwable t) {
                 Iris.reportError(t);
             }

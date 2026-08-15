@@ -19,16 +19,21 @@
 package art.arcane.iris.core.pack;
 
 import java.io.IOException;
-import java.nio.file.NoSuchFileException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class PackValidationRegistry {
     private static final Map<String, PackValidationResult> RESULTS = new ConcurrentHashMap<>();
-    private static final Map<Path, PackValidationResult> ROOT_RESULTS = new ConcurrentHashMap<>();
+    private static final Map<Path, RootState> ROOT_STATES = new ConcurrentHashMap<>();
 
     private PackValidationRegistry() {
     }
@@ -44,7 +49,78 @@ public final class PackValidationRegistry {
         if (packRoot == null || result == null) {
             return;
         }
-        ROOT_RESULTS.put(normalize(packRoot), result);
+        publish(normalize(packRoot), new RootValidation(result, ""));
+    }
+
+    public static void publish(Path packRoot, PackValidationResult result, String contentFingerprint) {
+        if (packRoot == null || result == null || contentFingerprint == null || contentFingerprint.isBlank()) {
+            return;
+        }
+        publish(normalize(packRoot), new RootValidation(result, contentFingerprint));
+    }
+
+    public static PackValidationResult publishMatchingCopy(
+            Path sourceRoot,
+            Path targetRoot,
+            String copiedContentFingerprint
+    ) {
+        if (sourceRoot == null || targetRoot == null
+                || copiedContentFingerprint == null || copiedContentFingerprint.isBlank()) {
+            return null;
+        }
+        RootValidation sourceValidation = matchingValidation(sourceRoot, copiedContentFingerprint);
+        if (sourceValidation == null) {
+            return null;
+        }
+        publish(normalize(targetRoot), sourceValidation);
+        return sourceValidation.result();
+    }
+
+    public static RootMutation beginRootMutation(Path packRoot) {
+        Path normalizedRoot = normalize(Objects.requireNonNull(packRoot, "Pack root"));
+        AtomicReference<RootMutation> mutation = new AtomicReference<>();
+        ROOT_STATES.compute(normalizedRoot, (path, current) -> {
+            if (current != null && current.mutating()) {
+                throw new IllegalStateException("Iris pack validation is already mutating " + normalizedRoot);
+            }
+            long generation = nextGeneration(current);
+            mutation.set(new RootMutation(normalizedRoot, generation));
+            return new RootState(generation, true, null);
+        });
+        return mutation.get();
+    }
+
+    public static ValidationTicket tryBeginValidation(Path packRoot) {
+        Path normalizedRoot = normalize(Objects.requireNonNull(packRoot, "Pack root"));
+        AtomicReference<ValidationTicket> ticket = new AtomicReference<>();
+        ROOT_STATES.compute(normalizedRoot, (path, current) -> {
+            RootState state = current == null ? new RootState(0L, false, null) : current;
+            if (!state.mutating()) {
+                ticket.set(new ValidationTicket(normalizedRoot, state.generation()));
+            }
+            return state;
+        });
+        return ticket.get();
+    }
+
+    public static boolean publishIfCurrent(ValidationTicket ticket, PackValidationResult result) {
+        if (ticket == null || result == null) {
+            return false;
+        }
+        AtomicBoolean published = new AtomicBoolean();
+        ROOT_STATES.compute(ticket.packRoot, (path, current) -> {
+            if (current == null
+                    || current.mutating()
+                    || current.generation() != ticket.generation) {
+                return current;
+            }
+            published.set(true);
+            return new RootState(
+                    current.generation(),
+                    false,
+                    new RootValidation(result, ""));
+        });
+        return published.get();
     }
 
     public static PackValidationResult get(String packName) {
@@ -58,7 +134,10 @@ public final class PackValidationRegistry {
         if (packRoot == null) {
             return null;
         }
-        return ROOT_RESULTS.get(normalize(packRoot));
+        RootState state = ROOT_STATES.get(normalize(packRoot));
+        return state == null || state.mutating() || state.validation() == null
+                ? null
+                : state.validation().result();
     }
 
     public static PackValidationResult requireLoadable(String packName) {
@@ -117,22 +196,158 @@ public final class PackValidationRegistry {
         if (packRoot == null) {
             return;
         }
-        ROOT_RESULTS.remove(normalize(packRoot));
+        Path normalizedRoot = normalize(packRoot);
+        ROOT_STATES.compute(normalizedRoot, (path, current) -> {
+            if (current != null && current.mutating()) {
+                return current;
+            }
+            return new RootState(nextGeneration(current), false, null);
+        });
     }
 
     public static void clear() {
         RESULTS.clear();
-        ROOT_RESULTS.clear();
+        ROOT_STATES.clear();
     }
 
     private static Path normalize(Path packRoot) {
         Path normalizedRoot = packRoot.toAbsolutePath().normalize();
         try {
-            return normalizedRoot.toRealPath();
-        } catch (NoSuchFileException exception) {
-            return normalizedRoot;
+            Path existing = normalizedRoot;
+            List<Path> missingNames = new ArrayList<>();
+            while (existing != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
+                Path name = existing.getFileName();
+                if (name != null) {
+                    missingNames.add(name);
+                }
+                existing = existing.getParent();
+            }
+            if (existing == null) {
+                return normalizedRoot;
+            }
+            Path resolved = existing.toRealPath();
+            for (int index = missingNames.size() - 1; index >= 0; index--) {
+                resolved = resolved.resolve(missingNames.get(index));
+            }
+            return resolved.normalize();
         } catch (IOException exception) {
             throw new IllegalArgumentException("Unable to resolve Iris pack root: " + normalizedRoot, exception);
         }
+    }
+
+    private static void publish(Path normalizedRoot, RootValidation validation) {
+        ROOT_STATES.compute(normalizedRoot, (path, current) -> {
+            if (current != null && current.mutating()) {
+                throw new IllegalStateException("Iris pack validation is mutating " + normalizedRoot);
+            }
+            return new RootState(nextGeneration(current), false, validation);
+        });
+    }
+
+    private static RootValidation matchingValidation(Path sourceRoot, String copiedContentFingerprint) {
+        Path normalizedSource = normalize(sourceRoot);
+        RootState sourceState = ROOT_STATES.get(normalizedSource);
+        if (sourceState == null
+                || sourceState.mutating()
+                || sourceState.validation() == null
+                || !copiedContentFingerprint.equals(sourceState.validation().contentFingerprint())) {
+            return null;
+        }
+        return sourceState.validation();
+    }
+
+    private static long nextGeneration(RootState current) {
+        return current == null ? 1L : Math.incrementExact(current.generation());
+    }
+
+    private static void closeMutation(Path packRoot, long generation) {
+        ROOT_STATES.computeIfPresent(packRoot, (path, current) -> {
+            if (!current.mutating() || current.generation() != generation) {
+                return current;
+            }
+            return new RootState(generation, false, null);
+        });
+    }
+
+    public static final class RootMutation implements AutoCloseable {
+        private final Path packRoot;
+        private final long generation;
+        private RootValidation pendingValidation;
+        private boolean closed;
+
+        private RootMutation(Path packRoot, long generation) {
+            this.packRoot = packRoot;
+            this.generation = generation;
+        }
+
+        public synchronized PackValidationResult stageMatchingCopy(
+                Path sourceRoot,
+                String copiedContentFingerprint
+        ) {
+            requireOpen();
+            RootValidation matching = matchingValidation(sourceRoot, copiedContentFingerprint);
+            if (matching == null) {
+                return null;
+            }
+            pendingValidation = matching;
+            return matching.result();
+        }
+
+        public synchronized void stage(PackValidationResult result) {
+            requireOpen();
+            pendingValidation = new RootValidation(
+                    Objects.requireNonNull(result, "Pack validation result"),
+                    "");
+        }
+
+        public synchronized void commit() {
+            requireOpen();
+            if (pendingValidation == null) {
+                throw new IllegalStateException("No pack validation is staged for " + packRoot);
+            }
+            AtomicBoolean published = new AtomicBoolean();
+            ROOT_STATES.computeIfPresent(packRoot, (path, current) -> {
+                if (!current.mutating() || current.generation() != generation) {
+                    return current;
+                }
+                published.set(true);
+                return new RootState(generation, false, pendingValidation);
+            });
+            if (!published.get()) {
+                throw new IllegalStateException("Iris pack validation mutation lost ownership of " + packRoot);
+            }
+            closed = true;
+        }
+
+        @Override
+        public synchronized void close() {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            closeMutation(packRoot, generation);
+        }
+
+        private void requireOpen() {
+            if (closed) {
+                throw new IllegalStateException("Iris pack validation mutation is already closed for " + packRoot);
+            }
+        }
+    }
+
+    public static final class ValidationTicket {
+        private final Path packRoot;
+        private final long generation;
+
+        private ValidationTicket(Path packRoot, long generation) {
+            this.packRoot = packRoot;
+            this.generation = generation;
+        }
+    }
+
+    private record RootValidation(PackValidationResult result, String contentFingerprint) {
+    }
+
+    private record RootState(long generation, boolean mutating, RootValidation validation) {
     }
 }

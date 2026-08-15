@@ -66,6 +66,9 @@ public interface PlatformChunkGenerator extends Hotloadable, DataProvider {
         }
     }
 
+    default void quiesceForServerShutdown() {
+    }
+
     boolean isStudio();
 
     default boolean isClosing() {

@@ -169,6 +169,38 @@ public class IrisDatapackCompilerInputFingerprintTest {
                 "compiler-a").isBlank());
     }
 
+    @Test
+    public void worldInputRootDiscoveryUsesOnlyCanonicalWorldSnapshots() throws Exception {
+        Path dataDirectory = tmp.newFolder("canonical-root-data").toPath();
+        Path serverRoot = tmp.newFolder("canonical-root-server").toPath();
+        Path canonicalPack = serverRoot.resolve("dimensions/iris/alpha/iris/pack");
+        Path nestedKeyPack = serverRoot.resolve("dimensions/iris/runtime/studio/iris/pack");
+        Path incompleteAncestorPack = serverRoot.resolve("dimensions/iris/runtime/iris/pack");
+        Path nestedKeyDecoy = nestedKeyPack.resolve("region/archive/iris/pack");
+        Path nestedRegionPack = serverRoot.resolve(
+                "dimensions/iris/alpha/region/archive/iris/pack");
+        Path nestedSavedPack = canonicalPack.resolve("objects/saved/iris/pack");
+        Path customNamespacePack = serverRoot.resolve("dimensions/custom/beta/iris/pack");
+        Path hiddenNamespacePack = serverRoot.resolve("dimensions/.hidden/beta/iris/pack");
+        Path hiddenWorldPack = serverRoot.resolve("dimensions/custom/.hidden/iris/pack");
+        write(canonicalPack.resolve("dimensions/alpha.json"), "{}");
+        write(nestedKeyPack.resolve("dimensions/studio.json"), "{}");
+        Files.createDirectories(incompleteAncestorPack);
+        write(nestedKeyDecoy.resolve("dimensions/decoy.json"), "{}");
+        write(nestedRegionPack.resolve("dimensions/decoy.json"), "{}");
+        write(nestedSavedPack.resolve("dimensions/decoy.json"), "{}");
+        write(customNamespacePack.resolve("dimensions/beta.json"), "{}");
+        write(hiddenNamespacePack.resolve("dimensions/decoy.json"), "{}");
+        write(hiddenWorldPack.resolve("dimensions/decoy.json"), "{}");
+
+        List<File> compilerRoots = IrisDatapackCompiler.collectCompilerInputRoots(dataDirectory, serverRoot);
+
+        assertEquals(List.of(
+                customNamespacePack.toAbsolutePath().normalize().toFile(),
+                canonicalPack.toAbsolutePath().normalize().toFile(),
+                nestedKeyPack.toAbsolutePath().normalize().toFile()), compilerRoots);
+    }
+
     private Path activePack(String name) throws IOException {
         Path pack = tmp.newFolder(name).toPath();
         write(pack.resolve("dimensions/overworld.json"), "dimension-a");

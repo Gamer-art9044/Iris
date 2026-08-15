@@ -78,6 +78,15 @@ public final class StubPlatform implements IrisPlatform {
     private final StubScheduler scheduler = new StubScheduler();
     private final StubStructureHooks structureHooks = new StubStructureHooks();
     private final StubBiomeWriter biomeWriter = new StubBiomeWriter();
+    private final File dataFolder;
+
+    public StubPlatform() {
+        this(new File(System.getProperty("java.io.tmpdir"), "iris-probe"));
+    }
+
+    public StubPlatform(File dataFolder) {
+        this.dataFolder = dataFolder;
+    }
 
     private static final class StubBlockState implements PlatformBlockState {
         private static final ConcurrentHashMap<String, StubBlockState> CACHE = new ConcurrentHashMap<>();
@@ -649,7 +658,7 @@ public final class StubPlatform implements IrisPlatform {
 
     @Override
     public File dataFolder() {
-        return new File(System.getProperty("java.io.tmpdir"), "iris-probe");
+        return dataFolder;
     }
 
     @Override

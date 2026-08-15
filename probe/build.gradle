@@ -49,12 +49,12 @@ tasks.named('test').configure {
     dependsOn(':core:compileJava')
 }
 
-String probePack = providers.gradleProperty('probePack')
-    .orElse('/Users/brianfopiano/Developer/RemoteGit/[Minecraft Server]/consumers/plugin-consumers/instances/purpur-26.2/plugins/Iris/packs/overworld')
-    .get()
-String probeRadius = providers.gradleProperty('probeRadius').orElse('2').get()
-String probeCenterChunkX = providers.gradleProperty('probeCenterChunkX').orElse('0').get()
-String probeCenterChunkZ = providers.gradleProperty('probeCenterChunkZ').orElse('0').get()
+Provider<String> probePack = providers.gradleProperty('probePack')
+Provider<String> probeDimension = providers.gradleProperty('probeDimension')
+Provider<String> probeWarmupChunks = providers.gradleProperty('probeWarmupChunks').orElse('256')
+Provider<String> probeMeasuredChunks = providers.gradleProperty('probeMeasuredChunks').orElse('1024')
+Provider<String> probeCenterChunkX = providers.gradleProperty('probeCenterChunkX').orElse('2048')
+Provider<String> probeCenterChunkZ = providers.gradleProperty('probeCenterChunkZ').orElse('2048')
 
 tasks.register('genProbe', JavaExec) {
     group = 'verification'
@@ -62,8 +62,22 @@ tasks.register('genProbe', JavaExec) {
     mainClass = 'art.arcane.iris.probe.GenerationProbe'
     classpath = sourceSets.main.runtimeClasspath
     jvmArgs('--add-modules', 'jdk.incubator.vector')
-    args(probePack, probeRadius, probeCenterChunkX, probeCenterChunkZ)
     dependsOn(':core:compileJava')
+    doFirst {
+        if (!probePack.isPresent() || probePack.get().isBlank()) {
+            throw new GradleException('genProbe requires -PprobePack=/absolute/path/to/pack')
+        }
+        if (!probeDimension.isPresent() || probeDimension.get().isBlank()) {
+            throw new GradleException('genProbe requires -PprobeDimension=<dimension-key>')
+        }
+        args(
+            probePack.get(),
+            probeDimension.get(),
+            probeWarmupChunks.get(),
+            probeMeasuredChunks.get(),
+            probeCenterChunkX.get(),
+            probeCenterChunkZ.get())
+    }
 }
 
 String deserializationPack = providers.gradleProperty('deserializationPack')

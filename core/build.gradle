@@ -121,6 +121,9 @@ dependencies {
 
 tasks.named('test').configure {
     maxHeapSize = '1g'
+    systemProperty('iris.packBenchmarkingSource', file('src/main/java/art/arcane/iris/core/tools/IrisPackBenchmarking.java').absolutePath)
+    systemProperty('iris.irisToolbeltSource', file('src/main/java/art/arcane/iris/core/tools/IrisToolbelt.java').absolutePath)
+    systemProperty('iris.bukkitChunkGeneratorSource', file('src/main/java/art/arcane/iris/engine/platform/BukkitChunkGenerator.java').absolutePath)
 }
 
 java {

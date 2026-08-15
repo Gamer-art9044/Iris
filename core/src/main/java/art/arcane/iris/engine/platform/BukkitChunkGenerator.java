@@ -85,9 +85,12 @@ import java.io.File;
 import java.io.PrintWriter;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -524,6 +527,15 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         withExclusiveControl(() -> getEngine().hotload());
     }
 
+    @Override
+    public CompletableFuture<Void> hotloadComplexAsync(long acquisitionTimeout, TimeUnit unit) {
+        Engine activeEngine = getEngine();
+        if (activeEngine == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return withExclusiveControlFuture(activeEngine::hotloadComplex, acquisitionTimeout, unit);
+    }
+
     static boolean shouldRunStudioHotload(boolean studio, boolean closing, boolean jigsawStudioActive) {
         return studio && !closing && !jigsawStudioActive;
     }
@@ -634,6 +646,21 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         return future;
     }
 
+    CompletableFuture<Void> withExclusiveControlFuture(
+            Runnable operation,
+            long acquisitionTimeout,
+            TimeUnit unit
+    ) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        J.a(() -> completeExclusiveControlFuture(
+                loadLock,
+                operation,
+                future,
+                acquisitionTimeout,
+                unit));
+        return future;
+    }
+
     static void completeExclusiveControlFuture(
             GenerationStageGate gate,
             Runnable operation,
@@ -659,6 +686,55 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             }
         }
 
+        if (failure == null) {
+            outward.complete(null);
+        } else {
+            outward.completeExceptionally(failure);
+        }
+    }
+
+    static void completeExclusiveControlFuture(
+            GenerationStageGate gate,
+            Runnable operation,
+            CompletableFuture<Void> future,
+            long acquisitionTimeout,
+            TimeUnit unit
+    ) {
+        GenerationStageGate activeGate = Objects.requireNonNull(gate, "Exclusive control gate");
+        Runnable activeOperation = Objects.requireNonNull(operation, "Exclusive control operation");
+        CompletableFuture<Void> outward = Objects.requireNonNull(future, "Exclusive control future");
+        TimeUnit activeUnit = Objects.requireNonNull(unit, "Exclusive control timeout unit");
+        boolean acquired = false;
+        Throwable failure = null;
+        try {
+            acquired = activeGate.tryAcquireExclusive(
+                    acquisitionTimeout,
+                    activeUnit,
+                    outward::isCancelled);
+            if (!acquired) {
+                if (!outward.isCancelled()) {
+                    failure = new TimeoutException("Timed out waiting for exclusive Iris generation control after "
+                            + acquisitionTimeout + " " + activeUnit.name().toLowerCase(Locale.ROOT) + ".");
+                }
+            } else if (!outward.isCancelled()) {
+                activeOperation.run();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (!outward.isCancelled()) {
+                failure = e;
+            }
+        } catch (Throwable e) {
+            failure = e;
+        } finally {
+            if (acquired) {
+                activeGate.releaseExclusive();
+            }
+        }
+
+        if (outward.isCancelled()) {
+            return;
+        }
         if (failure == null) {
             outward.complete(null);
         } else {
@@ -933,6 +1009,32 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
         void acquireExclusive() throws InterruptedException {
             permits.acquire(permitCount);
+        }
+
+        boolean tryAcquireExclusive(
+                long timeout,
+                TimeUnit unit,
+                BooleanSupplier cancelled
+        ) throws InterruptedException {
+            if (timeout <= 0L) {
+                throw new IllegalArgumentException("Exclusive generation control timeout must be positive.");
+            }
+            TimeUnit activeUnit = Objects.requireNonNull(unit, "Exclusive generation control timeout unit");
+            BooleanSupplier cancellation = Objects.requireNonNull(cancelled, "Exclusive generation control cancellation");
+            long timeoutNanos = activeUnit.toNanos(timeout);
+            long started = System.nanoTime();
+            long remainingNanos = timeoutNanos;
+            long cancellationPollNanos = TimeUnit.MILLISECONDS.toNanos(50L);
+            while (!cancellation.getAsBoolean() && remainingNanos > 0L) {
+                if (permits.tryAcquire(
+                        permitCount,
+                        Math.min(remainingNanos, cancellationPollNanos),
+                        TimeUnit.NANOSECONDS)) {
+                    return true;
+                }
+                remainingNanos = timeoutNanos - (System.nanoTime() - started);
+            }
+            return false;
         }
 
         void releaseExclusive() {

@@ -22,6 +22,7 @@ import art.arcane.iris.platform.bukkit.BukkitBlockResolution;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.engine.data.cache.LazyBoundedCache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.annotations.ArrayType;
@@ -38,7 +39,6 @@ import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
-import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import com.google.gson.annotations.SerializedName;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -69,10 +69,8 @@ public class IrisObjectPlacement {
     private static final int SURFACE_WARP_CACHE_SIZE = 8;
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
-    private final transient ConcurrentLinkedHashMap<SurfaceWarpCacheKey, CNG> surfaceWarpCache =
-            new ConcurrentLinkedHashMap.Builder<SurfaceWarpCacheKey, CNG>()
-                    .maximumWeightedCapacity(SURFACE_WARP_CACHE_SIZE)
-                    .build();
+    private final transient LazyBoundedCache<SurfaceWarpCacheKey, CNG> surfaceWarpCache =
+            new LazyBoundedCache<>(SURFACE_WARP_CACHE_SIZE);
     @RegistryListResource(IrisObject.class)
     @Required
     @ArrayType(min = 1, type = String.class)

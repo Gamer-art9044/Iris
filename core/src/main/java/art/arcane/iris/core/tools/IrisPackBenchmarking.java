@@ -51,6 +51,7 @@ public class IrisPackBenchmarking {
                 .name("PackBenchmarking")
                 .start(() -> {
                     IrisLogging.info("Setting up benchmark environment ");
+                    IrisToolbelt.applyPregenPerformanceProfile();
                     IO.delete(IrisWorldStorage.dimensionRoot("benchmark"));
                     createBenchmark();
                     while (!IrisToolbelt.isIrisWorld(benchmarkWorld())) {

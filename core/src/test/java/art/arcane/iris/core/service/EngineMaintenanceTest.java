@@ -54,6 +54,14 @@ public class EngineMaintenanceTest {
     }
 
     @Test
+    public void studioDisablesOnlyRoutineMaintenance() {
+        assertFalse(EngineMaintenance.shouldRunStudioMaintenance(true, false, false));
+        assertTrue(EngineMaintenance.shouldRunStudioMaintenance(true, false, true));
+        assertTrue(EngineMaintenance.shouldRunStudioMaintenance(true, true, false));
+        assertTrue(EngineMaintenance.shouldRunStudioMaintenance(false, false, false));
+    }
+
+    @Test
     public void nestedMantleClosedFailureIsRecognized() {
         IllegalStateException cause = new IllegalStateException("Mantle is closed");
         RuntimeException failure = new RuntimeException("maintenance failed", cause);

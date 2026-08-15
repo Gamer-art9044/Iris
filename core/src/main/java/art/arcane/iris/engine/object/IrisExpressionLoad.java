@@ -20,6 +20,7 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.engine.data.cache.LazyBoundedCache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.Required;
@@ -27,7 +28,6 @@ import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.stream.ProceduralStream;
-import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -73,10 +73,8 @@ public class IrisExpressionLoad {
             Collections.synchronizedMap(new IdentityHashMap<>());
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
-    private transient final ConcurrentLinkedHashMap<StandaloneStyleKey, CNG> standaloneStyleCache =
-            new ConcurrentLinkedHashMap.Builder<StandaloneStyleKey, CNG>()
-                    .maximumWeightedCapacity(STYLE_CACHE_SIZE)
-                    .build();
+    private transient final LazyBoundedCache<StandaloneStyleKey, CNG> standaloneStyleCache =
+            new LazyBoundedCache<>(STYLE_CACHE_SIZE);
 
     public double getValue(RNG rng, IrisData data, double x, double z) {
         if (engineValue != null) {
@@ -155,10 +153,7 @@ public class IrisExpressionLoad {
     private static final class EngineCache {
         private final AtomicCache<ProceduralStream<Double>> stream = new AtomicCache<>();
         private final AtomicCache<Double> value = new AtomicCache<>();
-        private final ConcurrentLinkedHashMap<Long, CNG> styles =
-                new ConcurrentLinkedHashMap.Builder<Long, CNG>()
-                        .maximumWeightedCapacity(STYLE_CACHE_SIZE)
-                        .build();
+        private final LazyBoundedCache<Long, CNG> styles = new LazyBoundedCache<>(STYLE_CACHE_SIZE);
     }
 
     private static final class StandaloneStyleKey {

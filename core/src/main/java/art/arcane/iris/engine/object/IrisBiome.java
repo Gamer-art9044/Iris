@@ -23,6 +23,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.engine.data.cache.LazyBoundedCache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.DependsOn;
@@ -39,7 +40,6 @@ import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.context.IrisContext;
-import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import lombok.AccessLevel;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -81,9 +81,8 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     private final transient AtomicCache<Color> cacheColorDepositLoad = new AtomicCache<>();
     private final transient AtomicCache<CNG> childrenCell = new AtomicCache<>();
     @Getter(AccessLevel.NONE)
-    private final transient ConcurrentLinkedHashMap<Long, CNG> biomeGenerators = new ConcurrentLinkedHashMap.Builder<Long, CNG>()
-            .maximumWeightedCapacity(BIOME_GENERATOR_CACHE_SIZE)
-            .build();
+    private final transient LazyBoundedCache<Long, CNG> biomeGenerators =
+            new LazyBoundedCache<>(BIOME_GENERATOR_CACHE_SIZE);
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     private transient volatile SeededBiomeGenerator recentBiomeGenerator;

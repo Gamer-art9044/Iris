@@ -48,6 +48,7 @@ import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -62,7 +63,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     // land minutes after its replacement started) from shrinking the pool under the live job.
     private static final AtomicInteger THREAD_COUNT = new AtomicInteger();
     private static final AtomicInteger BOOST_HOLDERS = new AtomicInteger();
-    private static final int ADAPTIVE_TIMEOUT_STEP = 3;
+    private static final int ADAPTIVE_SLOW_REQUEST_STEP = 3;
     private static final int ADAPTIVE_RECOVERY_INTERVAL = 8;
     private static final long CLOSE_DRAIN_TIMEOUT_SECONDS = 60L;
     private static final long FLUSH_TIMEOUT_SECONDS = 120L;
@@ -78,11 +79,12 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     private final Method directChunkAtAsyncUrgentMethod;
     private final Method directChunkAtAsyncMethod;
     private final String chunkAccessMode;
-    private final Executor executor;
+    private final ChunkRequestExecutor executor;
+    private final Executor slowRequestExecutor;
     private final Semaphore semaphore;
     private final int threads;
-    private final int timeoutSeconds;
-    private final int timeoutWarnIntervalMs;
+    private final int slowRequestWarningSeconds;
+    private final int slowRequestWarnIntervalMs;
     private final boolean urgent;
     private final ConcurrentHashMap<Long, AtomicInteger> regionPending;
     private final ConcurrentHashMap<Long, Queue<Chunk>> regionChunks;
@@ -95,10 +97,10 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     private volatile int boundsMaxRegionZ;
     private final AtomicInteger adaptiveInFlightLimit;
     private final int adaptiveMinInFlightLimit;
-    private final AtomicInteger timeoutStreak = new AtomicInteger();
-    private final AtomicLong lastTimeoutLogAt = new AtomicLong(0L);
+    private final AtomicInteger slowRequestStreak = new AtomicInteger();
+    private final AtomicLong lastSlowRequestLogAt = new AtomicLong(0L);
     private final AtomicLong lastFailedReleaseLogAt = new AtomicLong(0L);
-    private final AtomicInteger suppressedTimeoutLogs = new AtomicInteger();
+    private final AtomicInteger suppressedSlowRequestLogs = new AtomicInteger();
     private final AtomicLong lastAdaptiveLogAt = new AtomicLong(0L);
     private final AtomicInteger inFlight = new AtomicInteger();
     private final AtomicLong submitted = new AtomicLong();
@@ -158,8 +160,9 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         this.effectiveWorkerThreads = workerThreadsForCap;
         this.recommendedRuntimeConcurrencyCap = configuredThreads;
         this.semaphore = new Semaphore(this.threads, true);
-        this.timeoutSeconds = pregen.getChunkLoadTimeoutSeconds();
-        this.timeoutWarnIntervalMs = pregen.getTimeoutWarnIntervalMs();
+        this.slowRequestWarningSeconds = pregen.getChunkLoadTimeoutSeconds();
+        this.slowRequestExecutor = CompletableFuture.delayedExecutor(this.slowRequestWarningSeconds, TimeUnit.SECONDS);
+        this.slowRequestWarnIntervalMs = pregen.getTimeoutWarnIntervalMs();
         this.urgent = false;
         this.regionPending = new ConcurrentHashMap<>();
         this.regionChunks = new ConcurrentHashMap<>();
@@ -266,8 +269,8 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
         long now = M.ms();
         long last = lastFailedReleaseLogAt.get();
-        if (now - last >= timeoutWarnIntervalMs && lastFailedReleaseLogAt.compareAndSet(last, now)) {
-            IrisLogging.warn("Released region slot for failed or timed out chunk at " + x + "," + z + ". " + metricsSnapshot());
+        if (now - last >= slowRequestWarnIntervalMs && lastFailedReleaseLogAt.compareAndSet(last, now)) {
+            IrisLogging.warn("Released region slot for failed chunk at " + x + "," + z + ". " + metricsSnapshot());
         }
     }
 
@@ -457,16 +460,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
     private Chunk onChunkFutureFailure(int x, int z, Throwable throwable) {
         try {
-            Throwable root = throwable;
-            while (root.getCause() != null) {
-                root = root.getCause();
-            }
-
-            if (root instanceof TimeoutException) {
-                onTimeout(x, z);
-            } else {
-                IrisLogging.warn("Failed async pregen chunk load at " + x + "," + z + ". " + metricsSnapshot());
-            }
+            IrisLogging.warn("Failed async pregen chunk load at " + x + "," + z + ". " + metricsSnapshot());
 
             IrisLogging.reportError(throwable);
         } catch (Throwable e) {
@@ -505,32 +499,36 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         }
     }
 
-    private void onTimeout(int x, int z) {
-        int streak = timeoutStreak.incrementAndGet();
-        if (streak % ADAPTIVE_TIMEOUT_STEP == 0) {
+    private void onSlowRequest(int x, int z) {
+        if (closing.get()) {
+            return;
+        }
+
+        int streak = slowRequestStreak.incrementAndGet();
+        if (streak % ADAPTIVE_SLOW_REQUEST_STEP == 0) {
             lowerAdaptiveInFlightLimit();
         }
 
         long now = M.ms();
-        long last = lastTimeoutLogAt.get();
-        if (now - last < timeoutWarnIntervalMs || !lastTimeoutLogAt.compareAndSet(last, now)) {
-            suppressedTimeoutLogs.incrementAndGet();
+        long last = lastSlowRequestLogAt.get();
+        if (now - last < slowRequestWarnIntervalMs || !lastSlowRequestLogAt.compareAndSet(last, now)) {
+            suppressedSlowRequestLogs.incrementAndGet();
             return;
         }
 
-        int suppressed = suppressedTimeoutLogs.getAndSet(0);
+        int suppressed = suppressedSlowRequestLogs.getAndSet(0);
         String suppressedText = suppressed <= 0 ? "" : " suppressed=" + suppressed;
-        IrisLogging.warn("Timed out async pregen chunk load at " + x + "," + z
-                + " after " + timeoutSeconds + "s."
+        IrisLogging.warn("Async pregen chunk load at " + x + "," + z
+                + " is still pending after " + slowRequestWarningSeconds + "s."
                 + " adaptiveLimit=" + adaptiveInFlightLimit.get()
                 + suppressedText + " " + metricsSnapshot());
     }
 
     private void onSuccess() {
-        int streak = timeoutStreak.get();
+        int streak = slowRequestStreak.get();
         if (streak > 0) {
             int newStreak = Math.max(0, streak - 2);
-            timeoutStreak.compareAndSet(streak, newStreak);
+            slowRequestStreak.compareAndSet(streak, newStreak);
             if (newStreak > 0) {
                 return;
             }
@@ -606,12 +604,21 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     }
 
     static int resolvePaperLikeConcurrencyWorkerThreads(int detectedWorkerPoolThreads, int detectedCpuThreads, int configuredWorldGenThreads) {
-        int provisionedWorkerThreads = Math.max(1, configuredWorldGenThreads);
         if (detectedWorkerPoolThreads > 0) {
-            return Math.max(detectedWorkerPoolThreads, provisionedWorkerThreads);
+            return detectedWorkerPoolThreads;
         }
 
+        int provisionedWorkerThreads = Math.max(1, configuredWorldGenThreads);
         return Math.max(provisionedWorkerThreads, detectedCpuThreads);
+    }
+
+    static <T> CompletableFuture<T> observeSlowRequest(CompletableFuture<T> future, Executor executor, Runnable onSlowRequest) {
+        executor.execute(() -> {
+            if (!future.isDone()) {
+                onSlowRequest.run();
+            }
+        });
+        return future;
     }
 
     static int computeFoliaRecommendedCap(int workerThreads) {
@@ -742,7 +749,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
                 + ", effectiveWorkerThreads=" + effectiveWorkerThreads
                 + ", recommendedCap=" + recommendedRuntimeConcurrencyCap
                 + ", urgent=" + urgent
-                + ", timeout=" + timeoutSeconds + "s");
+                + ", slowWarning=" + slowRequestWarningSeconds + "s");
         if (workerPoolThreads > 0 && holdsWorkerBoost.compareAndSet(false, true)) {
             acquireWorkerThreadBoost();
         }
@@ -892,6 +899,10 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         return CompletableFuture.failedFuture(new IllegalStateException("Failed to request async chunk " + x + "," + z + " in world " + world.getName(), failure));
     }
 
+    private CompletableFuture<Chunk> requestMonitoredChunkAsync(int x, int z) {
+        return observeSlowRequest(requestChunkAsync(x, z), slowRequestExecutor, () -> onSlowRequest(x, z));
+    }
+
     @SuppressWarnings("unchecked")
     private CompletableFuture<Chunk> invokeChunkFuture(Method method, int x, int z, boolean generate, boolean urgentRequest) throws Throwable {
         Object result;
@@ -1016,17 +1027,16 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         });
     }
 
-    private interface Executor {
+    private interface ChunkRequestExecutor {
         void generate(int x, int z, PregenListener listener);
         default void shutdown() {}
     }
 
-    private class FoliaRegionExecutor implements Executor {
+    private class FoliaRegionExecutor implements ChunkRequestExecutor {
         @Override
         public void generate(int x, int z, PregenListener listener) {
             try {
-                requestChunkAsync(x, z)
-                        .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                requestMonitoredChunkAsync(x, z)
                         .whenComplete((chunk, throwable) -> completeChunk(x, z, listener, chunk, throwable));
                 return;
             } catch (Throwable ignored) {
@@ -1034,8 +1044,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
             Runnable regionTask = () -> {
                 try {
-                    requestChunkAsync(x, z)
-                            .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                    requestMonitoredChunkAsync(x, z)
                             .whenComplete((chunk, throwable) -> completeChunk(x, z, listener, chunk, throwable));
                 } catch (Throwable e) {
                     completeChunk(x, z, listener, null, e);
@@ -1049,16 +1058,14 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         }
     }
 
-    private class ServiceExecutor implements Executor {
+    private class ServiceExecutor implements ChunkRequestExecutor {
         private final ExecutorService service = new MultiBurst("Iris Async Pregen");
 
         public void generate(int x, int z, PregenListener listener) {
             try {
                 service.submit(() -> {
                     try {
-                        Chunk i = requestChunkAsync(x, z)
-                                .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                                .get();
+                        Chunk i = requestMonitoredChunkAsync(x, z).get();
                         completeChunk(x, z, listener, i, null);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -1078,12 +1085,11 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         }
     }
 
-    private class TicketExecutor implements Executor {
+    private class TicketExecutor implements ChunkRequestExecutor {
         @Override
         public void generate(int x, int z, PregenListener listener) {
             try {
-                requestChunkAsync(x, z)
-                        .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                requestMonitoredChunkAsync(x, z)
                         .whenComplete((chunk, throwable) -> completeChunk(x, z, listener, chunk, throwable));
             } catch (Throwable e) {
                 completeChunk(x, z, listener, null, e);

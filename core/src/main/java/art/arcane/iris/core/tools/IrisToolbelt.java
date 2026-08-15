@@ -338,7 +338,29 @@ public class IrisToolbelt {
     }
 
     public static void applyPregenPerformanceProfile(Engine engine) {
+        PlatformChunkGenerator generator = resolvePlatformGenerator(engine);
+        if (generator != null) {
+            PregenPerformanceProfile.applyToGenerator(generator);
+            return;
+        }
         PregenPerformanceProfile.apply(engine);
+    }
+
+    private static PlatformChunkGenerator resolvePlatformGenerator(Engine engine) {
+        if (engine == null) {
+            return null;
+        }
+        World world = BukkitWorldBinding.world(engine.getWorld());
+        if (world == null) {
+            return null;
+        }
+        if (!(world.getGenerator() instanceof PlatformChunkGenerator generator)) {
+            throw new IllegalStateException("Live Iris engine is not bound to its platform chunk generator.");
+        }
+        if (generator.getEngine() != engine) {
+            throw new IllegalStateException("Live Iris engine does not match its platform chunk generator runtime.");
+        }
+        return generator;
     }
 
     public static boolean supportsStrictSerialPregeneration() {

@@ -59,12 +59,19 @@ public class NMSBindingCurrentPaperWorldDataContractTest {
         assertTrue(capture.contains("craftServer.isGlobalTickThread()"));
         assertTrue(capture.contains("J.isFolia() && J.isPrimaryThread()"));
         assertTrue(capture.contains("J.runGlobal("));
+        assertTrue(capture.contains("createCurrentPaperLevelOverrides(craftServer, server)"));
         assertTrue(capture.contains("captured.get(CURRENT_WORLD_DATA_SNAPSHOT_TIMEOUT_SECONDS"));
         assertTrue(capture.contains("Thread.currentThread().interrupt()"));
+        assertTrue(create.contains("if (!craftServer.isGlobalTickThread())"));
+        assertTrue(create.indexOf("if (!craftServer.isGlobalTickThread())")
+                < create.indexOf("server.getWorldData().overworldData()"));
         assertTrue(create.contains("PaperLevelOverrides.createFromLiveLevelData(primaryLevelData)"));
         assertFalse(capture.contains("WorldReplacementSeed"));
         assertFalse(capture.contains("SavedDataStorage"));
         assertFalse(capture.contains("Files."));
+        assertFalse(create.contains("WorldReplacementSeed"));
+        assertFalse(create.contains("SavedDataStorage"));
+        assertFalse(create.contains("Files."));
     }
 
     @Test

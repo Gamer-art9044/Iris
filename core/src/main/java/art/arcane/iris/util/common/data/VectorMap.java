@@ -14,6 +14,11 @@ import java.util.function.Function;
 
 public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
     private final Map<Key, Map<Key, T>> map = new KMap<>();
+    private transient volatile long modificationRevision;
+
+    public long modificationRevision() {
+        return modificationRevision;
+    }
 
     public int size() {
         return map.values().stream().mapToInt(Map::size).sum();
@@ -40,13 +45,23 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
     }
 
     public @Nullable T put(@NonNull IrisBlockVector vector, @NonNull T value) {
-        return map.computeIfAbsent(chunk(vector), k -> new KMap<>())
+        T previous = map.computeIfAbsent(chunk(vector), k -> new KMap<>())
                 .put(relative(vector), value);
+        modificationRevision++;
+        return previous;
     }
 
     public @Nullable T computeIfAbsent(@NonNull IrisBlockVector vector, @NonNull Function<@NonNull IrisBlockVector, @NonNull T> mappingFunction) {
-         return map.computeIfAbsent(chunk(vector), k -> new KMap<>())
-                 .computeIfAbsent(relative(vector), $ -> mappingFunction.apply(vector));
+        boolean[] inserted = new boolean[1];
+        T value = map.computeIfAbsent(chunk(vector), key -> new KMap<>())
+                .computeIfAbsent(relative(vector), key -> {
+                    inserted[0] = true;
+                    return mappingFunction.apply(vector);
+                });
+        if (inserted[0]) {
+            modificationRevision++;
+        }
+        return value;
     }
 
     @SuppressWarnings("unchecked")
@@ -61,6 +76,10 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
             return chunk.isEmpty() ? null : chunk;
         });
 
+        if (removed[0] != null) {
+            modificationRevision++;
+        }
+
         return (T) removed[0];
     }
 
@@ -69,6 +88,9 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
     }
 
     public void clear() {
+        if (!map.isEmpty()) {
+            modificationRevision++;
+        }
         map.clear();
     }
 
@@ -193,6 +215,7 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
         public void remove() {
             if (relativeIterator == null) throw new IllegalStateException("No element to remove");
             relativeIterator.remove();
+            modificationRevision++;
         }
     }
 
@@ -230,6 +253,7 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
         public void remove() {
             if (relativeIterator == null) throw new IllegalStateException("No element to remove");
             relativeIterator.remove();
+            modificationRevision++;
         }
 
         @Override
@@ -267,6 +291,7 @@ public class VectorMap<T> implements Iterable<Map.Entry<IrisBlockVector, T>> {
         public void remove() {
             if (relativeIterator == null) throw new IllegalStateException("No element to remove");
             relativeIterator.remove();
+            modificationRevision++;
         }
 
         @Override

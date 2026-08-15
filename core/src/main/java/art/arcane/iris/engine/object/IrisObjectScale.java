@@ -18,17 +18,23 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.Snippet;
-import art.arcane.volmlib.util.collection.KList;
+import art.arcane.iris.util.common.math.Vector3i;
 import art.arcane.volmlib.util.math.RNG;
-import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
+
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Snippet("object-scale")
 @Accessors(chain = true)
@@ -37,23 +43,16 @@ import lombok.experimental.Accessors;
 @Desc("Scale objects")
 @Data
 public class IrisObjectScale {
-    private static final int CACHE_INITIAL_CAPACITY = 256;
-    private static final int CACHE_MAX_WEIGHT = 8192;
-    private static final ConcurrentLinkedHashMap<CacheKey, KList<IrisObject>> cache
-            = new ConcurrentLinkedHashMap.Builder<CacheKey, KList<IrisObject>>()
-            .initialCapacity(CACHE_INITIAL_CAPACITY)
-            .maximumWeightedCapacity(CACHE_MAX_WEIGHT)
-            .concurrencyLevel(32)
-            .build();
+    private static final long CACHE_MIN_ESTIMATED_BYTES = 16L * 1024L * 1024L;
+    private static final long CACHE_MAX_ESTIMATED_BYTES = 64L * 1024L * 1024L;
+    private static final long CACHE_ENTRY_ESTIMATED_BYTES = 512L;
+    private static final long CACHE_VARIANT_ESTIMATED_BYTES = 256L;
+    private static final long CACHE_ESTIMATED_BYTES_PER_VOXEL = 128L;
+    private static final int CACHE_LOAD_LOCK_COUNT = 256;
+    private static final ScaleCache CACHE = new ScaleCache(resolveCacheMaximumEstimatedBytes());
 
-    /**
-     * Coarse flush wired into IrisData dump/hotload: keys hold strong IrisObject references
-     * (and through them the owning IrisData), so without this every hotload or world unload
-     * pinned the previous pack graph for the process lifetime. Entries are pure derived data,
-     * so a flushed still-live entry just recomputes.
-     */
-    public static void invalidate() {
-        cache.clear();
+    public static void invalidate(IrisData owner) {
+        CACHE.invalidate(owner);
     }
 
     @MinNumber(0.01)
@@ -104,37 +103,315 @@ public class IrisObjectScale {
         if (origin == null) {
             return null;
         }
-        if (!shouldScale()) {
+
+        ScaleRequest request = snapshotRequest();
+        if (!request.shouldScale()) {
             return origin;
         }
 
-        CacheKey key = new CacheKey(origin, size, minimumScale, maximumScale, variations, interpolation);
-        return cache.computeIfAbsent(key, (k) -> {
-            KList<IrisObject> c = new KList<>();
+        int variantIndex = request.selectVariant(rng);
+        CacheKey key = CACHE.key(origin, request, variantIndex);
+        CacheLookup lookup = CACHE.lookup(key);
+        if (lookup.variant() != null) {
+            return lookup.variant();
+        }
 
-            if (size != 1) {
-                c.add(origin.scaled(size, interpolation));
-                return c;
+        synchronized (CACHE.loadLock(key)) {
+            CacheLookup afterWait = CACHE.lookup(key);
+            if (afterWait.variant() != null) {
+                return afterWait.variant();
             }
 
-            if (minimumScale == maximumScale) {
-                c.add(origin.scaled(minimumScale, interpolation));
-                return c;
-            }
-
-            int vs = Math.max(1, Math.min(variations, 32));
-            double step = (maximumScale - minimumScale) / (double) vs;
-            for (int v = 0; v < vs; v++) {
-                c.add(origin.scaled(minimumScale + step * v, interpolation));
-            }
-            return c;
-        }).getRandom(rng);
+            IrisObject variant = origin.scaled(request.scaleAt(variantIndex), request.interpolation());
+            long estimatedBytes = estimateVariant(variant);
+            return CACHE.putIfCurrent(key, variant, estimatedBytes, lookup.generation());
+        }
     }
 
     public boolean canScaleBeyond() {
         return shouldScale() && getMaxScale() > 1;
     }
 
-    private record CacheKey(IrisObject origin, double size, double minimumScale, double maximumScale, int variations, IrisObjectPlacementScaleInterpolator interpolation) {
+    static int cacheEntryCount() {
+        return CACHE.size();
+    }
+
+    static long cacheEstimatedBytes() {
+        return CACHE.estimatedBytes();
+    }
+
+    static boolean isOriginCached(IrisObject origin) {
+        return CACHE.containsOrigin(origin);
+    }
+
+    private ScaleRequest snapshotRequest() {
+        IrisObjectPlacementScaleInterpolator configuredInterpolation = interpolation == null
+                ? IrisObjectPlacementScaleInterpolator.NONE
+                : interpolation;
+        return new ScaleRequest(size, minimumScale, maximumScale, variations, configuredInterpolation);
+    }
+
+    private static long estimateVariant(IrisObject variant) {
+        long width = Math.max(1L, variant.getW());
+        long height = Math.max(1L, variant.getH());
+        long depth = Math.max(1L, variant.getD());
+        long volume = saturatedMultiply(saturatedMultiply(width, height), depth);
+        long populatedVoxels = saturatedAdd(variant.getBlocks().size(), variant.getStates().size());
+        long voxelBytes = saturatedMultiply(Math.max(volume, populatedVoxels), CACHE_ESTIMATED_BYTES_PER_VOXEL);
+        return saturatedAdd(CACHE_ENTRY_ESTIMATED_BYTES,
+                saturatedAdd(CACHE_VARIANT_ESTIMATED_BYTES, voxelBytes));
+    }
+
+    private static long saturatedAdd(long first, long second) {
+        if (first >= Long.MAX_VALUE - second) {
+            return Long.MAX_VALUE;
+        }
+        return first + second;
+    }
+
+    private static long saturatedMultiply(long first, long second) {
+        if (first == 0L || second == 0L) {
+            return 0L;
+        }
+        if (first > Long.MAX_VALUE / second) {
+            return Long.MAX_VALUE;
+        }
+        return first * second;
+    }
+
+    private static long resolveCacheMaximumEstimatedBytes() {
+        long heapShare = Runtime.getRuntime().maxMemory() / 32L;
+        return Math.max(CACHE_MIN_ESTIMATED_BYTES, Math.min(CACHE_MAX_ESTIMATED_BYTES, heapShare));
+    }
+
+    record ScaleRequest(double size, double minimumScale, double maximumScale, int variations,
+                        IrisObjectPlacementScaleInterpolator interpolation) {
+        boolean shouldScale() {
+            if (size != 1D) {
+                return true;
+            }
+            return variations > 0 && (minimumScale != 1D || maximumScale != 1D);
+        }
+
+        int variantCount() {
+            if (size != 1D || minimumScale == maximumScale) {
+                return 1;
+            }
+            return Math.max(1, Math.min(variations, 32));
+        }
+
+        int selectVariant(RNG rng) {
+            int count = variantCount();
+            return count == 1 ? 0 : rng.nextInt(count);
+        }
+
+        double scaleAt(int index) {
+            if (size != 1D) {
+                return size;
+            }
+            if (minimumScale == maximumScale) {
+                return minimumScale;
+            }
+            return minimumScale + (((maximumScale - minimumScale) / variantCount()) * index);
+        }
+    }
+
+    static final class CacheKey extends WeakReference<IrisObject> {
+        private final IrisData owner;
+        private final ScaleRequest request;
+        private final int variantIndex;
+        private final int originRevision;
+        private final int loadHashCode;
+        private final int hashCode;
+
+        CacheKey(IrisObject origin, ScaleRequest request, int variantIndex) {
+            this(origin, request, variantIndex, null);
+        }
+
+        CacheKey(IrisObject origin, ScaleRequest request, int variantIndex,
+                 ReferenceQueue<IrisObject> collectedOrigins) {
+            super(origin, collectedOrigins);
+            this.owner = origin.getLoader();
+            this.request = request;
+            this.variantIndex = variantIndex;
+            this.originRevision = originRevision(origin);
+            int result = System.identityHashCode(origin);
+            result = (31 * result) + System.identityHashCode(owner);
+            result = (31 * result) + originRevision;
+            result = (31 * result) + request.hashCode();
+            this.loadHashCode = result;
+            this.hashCode = (31 * result) + variantIndex;
+        }
+
+        boolean belongsTo(IrisData candidate) {
+            return owner == candidate;
+        }
+
+        boolean hasOrigin(IrisObject candidate) {
+            return get() == candidate;
+        }
+
+        @Override
+        public boolean equals(Object object) {
+            if (this == object) {
+                return true;
+            }
+            if (!(object instanceof CacheKey other)) {
+                return false;
+            }
+            IrisObject origin = get();
+            return origin != null
+                    && origin == other.get()
+                    && owner == other.owner
+                    && originRevision == other.originRevision
+                    && request.equals(other.request)
+                    && variantIndex == other.variantIndex;
+        }
+
+        @Override
+        public int hashCode() {
+            return hashCode;
+        }
+
+        int loadHashCode() {
+            return loadHashCode;
+        }
+
+        private static int originRevision(IrisObject origin) {
+            origin.readLock.lock();
+            try {
+                int result = origin.getW();
+                result = (31 * result) + origin.getH();
+                result = (31 * result) + origin.getD();
+                result = (31 * result) + System.identityHashCode(origin.getBlocks());
+                result = (31 * result) + System.identityHashCode(origin.getStates());
+                result = (31 * result) + Long.hashCode(origin.getBlocks().modificationRevision());
+                result = (31 * result) + Long.hashCode(origin.getStates().modificationRevision());
+                Vector3i center = origin.getCenter();
+                if (center != null) {
+                    result = (31 * result) + center.getX();
+                    result = (31 * result) + center.getY();
+                    result = (31 * result) + center.getZ();
+                }
+                return result;
+            } finally {
+                origin.readLock.unlock();
+            }
+        }
+    }
+
+    record CacheLookup(IrisObject variant, long generation) {
+    }
+
+    static final class ScaleCache {
+        private final long maximumEstimatedBytes;
+        private final LinkedHashMap<CacheKey, CacheValue> entries;
+        private final Object[] loadLocks;
+        private final ReferenceQueue<IrisObject> collectedOrigins;
+        private long estimatedBytes;
+        private long generation;
+
+        ScaleCache(long maximumEstimatedBytes) {
+            if (maximumEstimatedBytes <= 0L) {
+                throw new IllegalArgumentException("maximumEstimatedBytes must be positive");
+            }
+            this.maximumEstimatedBytes = maximumEstimatedBytes;
+            this.entries = new LinkedHashMap<>(256, 0.75F, true);
+            this.loadLocks = new Object[CACHE_LOAD_LOCK_COUNT];
+            this.collectedOrigins = new ReferenceQueue<>();
+            for (int index = 0; index < loadLocks.length; index++) {
+                loadLocks[index] = new Object();
+            }
+        }
+
+        CacheKey key(IrisObject origin, ScaleRequest request, int variantIndex) {
+            return new CacheKey(origin, request, variantIndex, collectedOrigins);
+        }
+
+        Object loadLock(CacheKey key) {
+            return loadLocks[key.loadHashCode() & (loadLocks.length - 1)];
+        }
+
+        synchronized CacheLookup lookup(CacheKey key) {
+            drainCollectedOrigins();
+            CacheValue value = entries.get(key);
+            return new CacheLookup(value == null ? null : value.variant(), generation);
+        }
+
+        synchronized IrisObject putIfCurrent(CacheKey key, IrisObject variant,
+                                             long entryEstimatedBytes, long expectedGeneration) {
+            drainCollectedOrigins();
+            CacheValue present = entries.get(key);
+            if (present != null) {
+                return present.variant();
+            }
+            if (generation != expectedGeneration || entryEstimatedBytes > maximumEstimatedBytes) {
+                return variant;
+            }
+
+            entries.put(key, new CacheValue(variant, entryEstimatedBytes));
+            estimatedBytes += entryEstimatedBytes;
+            evictToBudget();
+            return variant;
+        }
+
+        synchronized void invalidate(IrisData owner) {
+            drainCollectedOrigins();
+            generation++;
+            Iterator<Map.Entry<CacheKey, CacheValue>> iterator = entries.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry<CacheKey, CacheValue> entry = iterator.next();
+                if (entry.getKey().belongsTo(owner)) {
+                    estimatedBytes -= entry.getValue().estimatedBytes();
+                    iterator.remove();
+                }
+            }
+        }
+
+        synchronized int size() {
+            drainCollectedOrigins();
+            return entries.size();
+        }
+
+        synchronized long estimatedBytes() {
+            drainCollectedOrigins();
+            return estimatedBytes;
+        }
+
+        long maximumEstimatedBytes() {
+            return maximumEstimatedBytes;
+        }
+
+        synchronized boolean containsOrigin(IrisObject origin) {
+            drainCollectedOrigins();
+            for (CacheKey key : entries.keySet()) {
+                if (key.hasOrigin(origin)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void evictToBudget() {
+            Iterator<Map.Entry<CacheKey, CacheValue>> iterator = entries.entrySet().iterator();
+            while (estimatedBytes > maximumEstimatedBytes && iterator.hasNext()) {
+                Map.Entry<CacheKey, CacheValue> entry = iterator.next();
+                estimatedBytes -= entry.getValue().estimatedBytes();
+                iterator.remove();
+            }
+        }
+
+        private void drainCollectedOrigins() {
+            CacheKey collected;
+            while ((collected = (CacheKey) collectedOrigins.poll()) != null) {
+                CacheValue removed = entries.remove(collected);
+                if (removed != null) {
+                    estimatedBytes -= removed.estimatedBytes();
+                }
+            }
+        }
+    }
+
+    record CacheValue(IrisObject variant, long estimatedBytes) {
     }
 }

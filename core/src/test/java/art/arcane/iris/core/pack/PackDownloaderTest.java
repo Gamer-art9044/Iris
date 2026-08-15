@@ -20,6 +20,8 @@ package art.arcane.iris.core.pack;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisEnvironment;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformStructureHooks;
@@ -118,6 +120,69 @@ public class PackDownloaderTest {
                 PackDownloader.builtInPackUrl("underworld")
         );
         assertTrue(PackDownloader.isBuiltInPack("underworld"));
+    }
+
+    @Test
+    public void sequentialBuiltInPackInstallsPublishBothBootstrapResultsBeforeRestart() throws Exception {
+        File packsFolder = IrisPlatforms.get().packsFolder();
+        File overworldSource = writePack(
+                temp.newFolder("shipping-overworld-source").toPath(),
+                "overworld",
+                "overworld",
+                IrisEnvironment.NORMAL
+        );
+        File underworldSource = writePack(
+                temp.newFolder("shipping-underworld-source").toPath(),
+                "underworld",
+                "underworld",
+                IrisEnvironment.NETHER
+        );
+
+        PackDownloader.PackInstallResult overworld = PackDownloader.installExtractedPack(
+                packsFolder,
+                overworldSource,
+                false,
+                "overworld",
+                ignored -> {
+                }
+        );
+        PackDownloader.PackInstallResult underworld = PackDownloader.installExtractedPack(
+                packsFolder,
+                underworldSource,
+                false,
+                "underworld",
+                ignored -> {
+                }
+        );
+
+        assertNotNull(overworld);
+        assertEquals("overworld", overworld.key());
+        assertTrue(overworld.changed());
+        assertTrue(overworld.restartRequired());
+        assertNotNull(underworld);
+        assertEquals("underworld", underworld.key());
+        assertTrue(underworld.changed());
+        assertTrue(underworld.restartRequired());
+        assertTrue(Files.isRegularFile(packsFolder.toPath().resolve("overworld/dimensions/overworld.json")));
+        assertTrue(Files.isRegularFile(packsFolder.toPath().resolve("underworld/dimensions/underworld.json")));
+        assertTrue(PackValidationRegistry.requireLoadable("overworld").isLoadable());
+        assertTrue(PackValidationRegistry.requireLoadable("underworld").isLoadable());
+        IrisData overworldData = IrisData.openDatapackCompiler(new File(packsFolder, "overworld"));
+        IrisData underworldData = IrisData.openDatapackCompiler(new File(packsFolder, "underworld"));
+        try {
+            IrisDimension overworldDimension = overworldData.getDimensionLoader().load("overworld");
+            IrisDimension underworldDimension = underworldData.getDimensionLoader().load("underworld");
+            assertNotNull(overworldDimension);
+            assertEquals("overworld", overworldDimension.getLoadKey());
+            assertEquals(IrisEnvironment.NORMAL, overworldDimension.getEnvironment());
+            assertNotNull(underworldDimension);
+            assertEquals("underworld", underworldDimension.getLoadKey());
+            assertEquals(IrisEnvironment.NETHER, underworldDimension.getEnvironment());
+        } finally {
+            overworldData.close();
+            underworldData.close();
+        }
+        assertTransactionStateClean(packsFolder);
     }
 
     @Test
@@ -652,6 +717,23 @@ public class PackDownloaderTest {
         );
         Files.writeString(root.resolve("state.txt"), state, StandardCharsets.UTF_8);
         return root.toFile();
+    }
+
+    private static File writePack(
+            Path root,
+            String key,
+            String state,
+            IrisEnvironment environment
+    ) throws IOException {
+        File pack = writePack(root, key, state);
+        Files.writeString(
+                root.resolve("dimensions/" + key + ".json"),
+                "{\"name\":\"" + key + "\",\"environment\":\"" + environment.name()
+                        + "\",\"regions\":[\"local\"],\"logicalHeight\":256,"
+                        + "\"dimensionHeight\":{\"min\":-64,\"max\":320}}",
+                StandardCharsets.UTF_8
+        );
+        return pack;
     }
 
     private static void writeDimension(Path root, String key) throws IOException {

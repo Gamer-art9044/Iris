@@ -1671,7 +1671,7 @@ public class NMSBinding implements INMSBinding {
             MinecraftServer server
     ) throws IOException {
         if (craftServer.isGlobalTickThread()) {
-            return createCurrentPaperLevelOverrides(server);
+            return createCurrentPaperLevelOverrides(craftServer, server);
         }
         if (J.isFolia() && J.isPrimaryThread()) {
             throw new IOException("Current Paper world data cannot be staged from a Folia region tick thread.");
@@ -1680,7 +1680,7 @@ public class NMSBinding implements INMSBinding {
         CompletableFuture<PaperLevelOverrides> captured = new CompletableFuture<>();
         boolean scheduled = J.runGlobal(() -> {
             try {
-                captured.complete(createCurrentPaperLevelOverrides(server));
+                captured.complete(createCurrentPaperLevelOverrides(craftServer, server));
             } catch (Throwable failure) {
                 captured.completeExceptionally(failure);
             }
@@ -1701,7 +1701,13 @@ public class NMSBinding implements INMSBinding {
         }
     }
 
-    private PaperLevelOverrides createCurrentPaperLevelOverrides(MinecraftServer server) throws IOException {
+    private PaperLevelOverrides createCurrentPaperLevelOverrides(
+            CraftServer craftServer,
+            MinecraftServer server
+    ) throws IOException {
+        if (!craftServer.isGlobalTickThread()) {
+            throw new IOException("Current Paper level data must be captured on the global tick thread.");
+        }
         if (!(server.getWorldData().overworldData() instanceof PrimaryLevelData primaryLevelData)) {
             throw new IOException("Paper primary level data is unavailable for current world data staging.");
         }

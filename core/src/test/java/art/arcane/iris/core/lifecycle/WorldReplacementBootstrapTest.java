@@ -290,6 +290,90 @@ public class WorldReplacementBootstrapTest {
     }
 
     @Test
+    public void publishesPreparedOverworldAndUnderworldIntoExactVanillaSlotsInOneColdReconcile()
+            throws Exception {
+        long overworldSeed = 81818181L;
+        WorldSlotKey overworldKey = WorldSlotKey.minecraft("overworld");
+        ExactWorldSlotPathPolicy.Target overworldTarget = ExactWorldSlotPathPolicy.resolve(levelRoot, overworldKey);
+        WorldGeneratorSnapshot overworldOriginal = BukkitWorldConfiguration.snapshot(
+                bukkitConfiguration.toFile(),
+                "world"
+        );
+        UUID overworldId = UUID.randomUUID();
+        ReplacementPaths overworldPaths = WorldReplacementFilesystem.paths(overworldTarget, overworldId);
+        writeOriginalTarget(overworldPaths, "overworld-original");
+        Path overworldDimension = overworldPaths.stage().resolve("iris/pack/dimensions/overworld.json");
+        Files.createDirectories(overworldDimension.getParent());
+        Files.writeString(overworldDimension, "overworld-replacement");
+        String overworldFingerprint = WorldReplacementFilesystem.fingerprintPack(
+                overworldPaths.stage().resolve("iris/pack")
+        );
+        Transaction overworld = new Transaction(
+                overworldId,
+                overworldKey,
+                "world",
+                overworldTarget.levelRoot(),
+                "overworld",
+                overworldSeed,
+                overworldFingerprint,
+                overworldOriginal,
+                true,
+                Phase.ARMED
+        );
+        WorldReplacementJournal.write(dataDirectory, overworld);
+        configureReplacement(overworld);
+
+        Transaction nether = stagedTransaction(Phase.ARMED, true, "nether-original");
+        configureReplacement(nether);
+
+        WorldReplacementBootstrap.ReconcileResult result = reconcile();
+
+        assertEquals(2, result.transactions());
+        assertEquals(2, result.published());
+        assertEquals(0, result.rolledBack());
+        assertEquals(0, result.retained());
+        assertEquals(0, result.skipped());
+        assertEquals(
+                levelRoot.toRealPath().resolve("dimensions/minecraft/overworld"),
+                overworldTarget.worldDirectory()
+        );
+        assertEquals(
+                levelRoot.toRealPath().resolve("dimensions/minecraft/the_nether"),
+                target.worldDirectory()
+        );
+        assertEquals("overworld-replacement", Files.readString(
+                overworldTarget.worldDirectory().resolve("iris/pack/dimensions/overworld.json")
+        ));
+        assertEquals("replacement", replacementContent(target.worldDirectory()));
+        assertEquals("overworld-original", Files.readString(overworldPaths.backup().resolve("original.txt")));
+        assertEquals("nether-original", Files.readString(backup(nether).resolve("original.txt")));
+
+        WorldGeneratorSnapshot overworldConfiguration = BukkitWorldConfiguration.snapshot(
+                bukkitConfiguration.toFile(),
+                "world"
+        );
+        WorldGeneratorSnapshot netherConfiguration = BukkitWorldConfiguration.snapshot(
+                bukkitConfiguration.toFile(),
+                "world_nether"
+        );
+        assertEquals("Iris:overworld", overworldConfiguration.generator());
+        assertEquals(Long.valueOf(overworldSeed), overworldConfiguration.seed());
+        assertEquals("Iris:underworld", netherConfiguration.generator());
+        assertEquals(Long.valueOf(SEED), netherConfiguration.seed());
+
+        List<Transaction> published = WorldReplacementJournal.load(dataDirectory, levelRoot);
+        assertEquals(2, published.size());
+        assertTrue(published.stream().anyMatch(transaction ->
+                transaction.worldKey().equals(overworldKey)
+                        && transaction.dimension().equals("overworld")
+                        && transaction.phase() == Phase.PUBLISHED));
+        assertTrue(published.stream().anyMatch(transaction ->
+                transaction.worldKey().equals(WORLD_KEY)
+                        && transaction.dimension().equals("underworld")
+                        && transaction.phase() == Phase.PUBLISHED));
+    }
+
+    @Test
     public void roundTripsBlankAndWhitespaceOriginalGenerators() throws Exception {
         for (String generator : List.of("", "   ")) {
             WorldGeneratorSnapshot original = new WorldGeneratorSnapshot(

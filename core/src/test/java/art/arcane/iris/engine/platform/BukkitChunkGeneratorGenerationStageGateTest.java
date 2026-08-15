@@ -16,6 +16,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -23,6 +24,7 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.function.Supplier;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -307,6 +309,73 @@ public class BukkitChunkGeneratorGenerationStageGateTest {
             assertEquals(0L, dependentEntered.getCount());
             assertEquals(1, gate.availablePermits());
         } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void timedExclusiveControlDoesNotReleaseAnUnacquiredPermit() throws Exception {
+        AtomicBoolean closing = new AtomicBoolean(false);
+        BukkitChunkGenerator.GenerationStageGate gate =
+                new BukkitChunkGenerator.GenerationStageGate(1, closing::get);
+        BukkitChunkGenerator.GenerationStagePermit stage = gate.acquireStage("timeout-holder");
+        CompletableFuture<Void> outward = new CompletableFuture<>();
+        AtomicBoolean operationRan = new AtomicBoolean(false);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            Future<?> operation = executor.submit(() ->
+                    BukkitChunkGenerator.completeExclusiveControlFuture(
+                            gate,
+                            () -> operationRan.set(true),
+                            outward,
+                            50L,
+                            TimeUnit.MILLISECONDS));
+
+            ExecutionException failure = assertThrows(
+                    ExecutionException.class,
+                    () -> outward.get(2L, TimeUnit.SECONDS));
+            operation.get(2L, TimeUnit.SECONDS);
+
+            assertTrue(failure.getCause() instanceof TimeoutException);
+            assertFalse(operationRan.get());
+            assertEquals(0, gate.availablePermits());
+        } finally {
+            stage.close();
+            assertEquals(1, gate.availablePermits());
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void cancelledExclusiveControlStopsWaitingWithoutReleasingAStagePermit() throws Exception {
+        AtomicBoolean closing = new AtomicBoolean(false);
+        BukkitChunkGenerator.GenerationStageGate gate =
+                new BukkitChunkGenerator.GenerationStageGate(1, closing::get);
+        BukkitChunkGenerator.GenerationStagePermit stage = gate.acquireStage("cancellation-holder");
+        CompletableFuture<Void> outward = new CompletableFuture<>();
+        AtomicBoolean operationRan = new AtomicBoolean(false);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            Future<?> operation = executor.submit(() ->
+                    BukkitChunkGenerator.completeExclusiveControlFuture(
+                            gate,
+                            () -> operationRan.set(true),
+                            outward,
+                            30L,
+                            TimeUnit.SECONDS));
+            awaitQueueLength(gate, 1);
+
+            assertTrue(outward.cancel(true));
+            operation.get(2L, TimeUnit.SECONDS);
+
+            assertTrue(outward.isCancelled());
+            assertFalse(operationRan.get());
+            assertEquals(0, gate.availablePermits());
+        } finally {
+            stage.close();
+            assertEquals(1, gate.availablePermits());
             executor.shutdownNow();
         }
     }

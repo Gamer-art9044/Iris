@@ -31,12 +31,14 @@ public class CachedStream2D<T> extends BasicStream<T> implements ProceduralStrea
     private final ProceduralStream<T> stream;
     private final WorldCache2D<T> cache;
     private final Engine engine;
+    private final boolean fastCache;
     private final boolean chunked = true;
 
     public CachedStream2D(String name, Engine engine, ProceduralStream<T> stream, int size) {
         super();
         this.stream = stream;
         this.engine = engine;
+        this.fastCache = Boolean.getBoolean("iris.cache.fast");
         cache = WorldCache2D.<T>ofInts(stream::get, size, () -> new ChunkCache2D<>("iris"));
         IrisServices.get(PreservationRegistry.class).registerCache(this);
     }
@@ -74,6 +76,10 @@ public class CachedStream2D<T> extends BasicStream<T> implements ProceduralStrea
     @Override
     public long getMaxSize() {
         return cache.getMaxSize();
+    }
+
+    public boolean usesFastCache() {
+        return fastCache;
     }
 
     @Override

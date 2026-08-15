@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.data.cache.LazyBoundedCache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
@@ -30,7 +31,6 @@ import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.noise.ExpressionNoise;
 import art.arcane.iris.util.project.noise.ImageNoise;
-import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -54,10 +54,8 @@ public class IrisGeneratorStyle {
     private static final ConcurrentHashMap<String, String> ACTIVE_CACHE_KEYS = new ConcurrentHashMap<>();
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
-    private final transient ConcurrentLinkedHashMap<GeneratorCacheKey, CNG> generatorCache =
-            new ConcurrentLinkedHashMap.Builder<GeneratorCacheKey, CNG>()
-                    .maximumWeightedCapacity(GENERATOR_CACHE_SIZE)
-                    .build();
+    private final transient LazyBoundedCache<GeneratorCacheKey, CNG> generatorCache =
+            new LazyBoundedCache<>(GENERATOR_CACHE_SIZE);
     @Desc("The base noise style. Used when neither expression nor imageMap is set; a failed expression also falls back to this style.")
     private NoiseStyle style = NoiseStyle.FLAT;
 

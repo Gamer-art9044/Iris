@@ -322,8 +322,9 @@ public class WorldReplacementFilesystemTest {
     public void rejectsSymlinkInsidePackAndNonDirectoryArtifacts() throws Exception {
         WorldReplacementFilesystem.ReplacementPaths linkedPaths = paths("inside-pack-link", TRANSACTION_ID);
         Path pack = Files.createDirectories(linkedPaths.stage().resolve("iris/pack"));
+        Path nestedObjects = Files.createDirectories(pack.resolve("objects/oak"));
         Path outside = temporaryFolder.newFile("outside-pack.txt").toPath();
-        Files.createSymbolicLink(pack.resolve("linked.json"), outside);
+        Files.createSymbolicLink(nestedObjects.resolve("linked.json"), outside);
 
         assertThrows(IOException.class, () -> WorldReplacementFilesystem.fingerprintPack(pack));
 
@@ -333,6 +334,20 @@ public class WorldReplacementFilesystemTest {
                 IOException.class,
                 () -> WorldReplacementFilesystem.publish(filePaths, false, "0".repeat(64))
         );
+    }
+
+    @Test
+    public void fingerprintRemainsCompatibleAcrossNestedCreationOrder() throws Exception {
+        Path firstPack = temporaryFolder.newFolder("fingerprint-order-first").toPath();
+        Path secondPack = temporaryFolder.newFolder("fingerprint-order-second").toPath();
+        writeFingerprintFixture(firstPack, false);
+        writeFingerprintFixture(secondPack, true);
+
+        String firstFingerprint = WorldReplacementFilesystem.fingerprintPack(firstPack);
+        String secondFingerprint = WorldReplacementFilesystem.fingerprintPack(secondPack);
+
+        assertEquals("215206c4a5e74c7731fbd8d2da9265332bfb06a0f74b32e47d02dab3dd878b4c", firstFingerprint);
+        assertEquals(firstFingerprint, secondFingerprint);
     }
 
     @Test
@@ -446,6 +461,29 @@ public class WorldReplacementFilesystemTest {
         Files.writeString(paths.target().resolve("data/paper/metadata.dat"), "metadata");
         Files.writeString(paths.target().resolve("data/paper/level_overrides.dat"), "overrides");
         Files.writeString(paths.target().resolve("data/minecraft/world_gen_settings.dat"), "generation");
+    }
+
+    private void writeFingerprintFixture(Path pack, boolean reverseOrder) throws Exception {
+        if (reverseOrder) {
+            Files.createDirectories(pack.resolve("regions"));
+            Files.writeString(pack.resolve("regions/default.json"), "{}\n");
+            Files.createDirectories(pack.resolve("empty"));
+            Files.createDirectories(pack.resolve("objects/oak"));
+            Files.write(pack.resolve("objects/oak/tree.iob"), new byte[]{0, 1, 2, (byte) 255});
+            Files.createDirectories(pack.resolve("dimensions"));
+            Files.writeString(pack.resolve("dimensions/overworld.json"), "{\"name\":\"world\"}");
+        } else {
+            Files.createDirectories(pack.resolve("dimensions"));
+            Files.writeString(pack.resolve("dimensions/overworld.json"), "{\"name\":\"world\"}");
+            Files.createDirectories(pack.resolve("objects/oak"));
+            Files.write(pack.resolve("objects/oak/tree.iob"), new byte[]{0, 1, 2, (byte) 255});
+            Files.createDirectories(pack.resolve("empty"));
+            Files.createDirectories(pack.resolve("regions"));
+            Files.writeString(pack.resolve("regions/default.json"), "{}\n");
+        }
+        Files.createDirectories(pack.resolve(".iris/schema"));
+        Files.writeString(pack.resolve(".iris/schema/dimensions-schema.json"), "generated");
+        Files.writeString(pack.resolve("editor.code-workspace"), "generated");
     }
 
     private String readPackContent(Path worldDirectory) throws Exception {

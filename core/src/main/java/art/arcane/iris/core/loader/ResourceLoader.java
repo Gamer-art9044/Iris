@@ -52,12 +52,16 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -79,6 +83,11 @@ import java.util.zip.GZIPOutputStream;
 public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
     public static final AtomicDouble tlt = new AtomicDouble(0);
     private static final int CACHE_SIZE = 100000;
+    private static final int PREFETCH_MAGIC = 0x49504632;
+    private static final int PREFETCH_FORMAT_VERSION = 1;
+    private static final int PREFETCH_ENTRY_LIMIT = 1_024;
+    private static final int PREFETCH_KEY_LENGTH_LIMIT = 1_024;
+    private static final long PREFETCH_FILE_SIZE_LIMIT = 4L * 1_024L * 1_024L;
     private static volatile ExecutorService schemaBuildExecutor;
     private static final Set<String> schemaBuildQueue = ConcurrentHashMap.newKeySet();
     protected final AtomicCache<KList<File>> folderCache;
@@ -93,6 +102,7 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
     protected IrisData manager;
     protected AtomicInteger loads;
     protected ChronoLatch sec;
+    private volatile boolean firstAccessOverflowed;
     private final Options options;
 
     public ResourceLoader(
@@ -106,6 +116,7 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
         this.options = Objects.requireNonNull(options, "options");
         this.manager = manager;
         firstAccess = new KSet<>();
+        firstAccessOverflowed = false;
         folderCache = new AtomicCache<>();
         sec = new ChronoLatch(5000);
         loads = new AtomicInteger();
@@ -499,13 +510,28 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
         KSet<String> set = firstAccess;
         // contains-first: CHM.add takes the bin monitor even when the key is present, and
         // every generation thread hammers the same few keys through this line.
-        if (set != null && !set.contains(name)) set.add(name);
+        if (set != null && !set.contains(name)) {
+            if (set.size() < prefetchEntryLimit()) {
+                set.add(name);
+            } else {
+                firstAccessOverflowed = true;
+            }
+        }
         return loadCache.get(name);
     }
 
     private File prefetchFile(Engine engine) {
-        String id = "DIM" + Math.abs(engine.getSeedManager().getSeed() + engine.getDimension().getVersion() + engine.getDimension().getLoadKey().hashCode());
-        return IrisPlatforms.get().dataFile("prefetch/" + id + "/" + Math.abs(getFolderName().hashCode()) + ".ipfch");
+        String dimensionIdentity = digestIdentity(
+                root.toPath().toAbsolutePath().normalize().toString(),
+                Long.toString(engine.getSeedManager().getSeed()),
+                Integer.toString(engine.getDimension().getVersion()),
+                Objects.requireNonNullElse(engine.getDimension().getLoadKey(), ""));
+        String loaderIdentity = digestIdentity(getFolderName());
+        return IrisPlatforms.get().dataFile(
+                "prefetch",
+                "v2",
+                dimensionIdentity,
+                loaderIdentity + ".ipfch");
     }
 
     public void loadFirstAccess(Engine engine) throws IOException {
@@ -515,33 +541,43 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
             return;
         }
 
-        KList<String> s = new KList<>();
+        if (file.length() > PREFETCH_FILE_SIZE_LIMIT) {
+            discardPrefetch(file, "file exceeds " + PREFETCH_FILE_SIZE_LIMIT + " bytes");
+            return;
+        }
+
+        KList<String> entries = new KList<>();
 
         try (FileInputStream fin = new FileInputStream(file);
              GZIPInputStream gzi = new GZIPInputStream(fin);
              DataInputStream din = new DataInputStream(gzi)) {
-            int m = din.readInt();
+            int magic = din.readInt();
+            int version = din.readInt();
+            int count = din.readInt();
 
-            if (m < 0) {
-                throw new IOException("Bad prefetch count " + m);
+            if (magic != PREFETCH_MAGIC || version != PREFETCH_FORMAT_VERSION) {
+                throw new IOException("unsupported prefetch format");
             }
-
-            for (int i = 0; i < m; i++) {
-                s.add(din.readUTF());
+            if (count < 0 || count > prefetchEntryLimit()) {
+                throw new IOException("bad prefetch count " + count);
+            }
+            for (int index = 0; index < count; index++) {
+                String key = din.readUTF();
+                if (key.isBlank() || key.length() > PREFETCH_KEY_LENGTH_LIMIT) {
+                    throw new IOException("invalid prefetch key length " + key.length());
+                }
+                entries.add(key);
             }
         } catch (IOException e) {
-            IrisLogging.warn("Discarding corrupt prefetch " + file.getPath() + ": " + e.getMessage());
-
-            if (!file.delete()) {
-                IrisLogging.warn("Couldn't delete corrupt prefetch " + file.getPath());
-            }
-
+            discardPrefetch(file, e.getMessage());
             return;
         }
 
-        IrisLogging.info("Loading " + s.size() + " prefetch " + getFolderName());
+        IrisLogging.info("Loading " + entries.size() + " prefetch " + getFolderName());
         firstAccess = null;
-        loadAllParallel(s);
+        for (String entry : entries) {
+            load(entry);
+        }
     }
 
     public void saveFirstAccess(Engine engine) throws IOException {
@@ -549,6 +585,18 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
         if (set == null) return;
         KList<String> snapshot = new KList<>(set);
         File file = prefetchFile(engine);
+        if (firstAccessOverflowed || snapshot.size() > prefetchEntryLimit()) {
+            Files.deleteIfExists(file.toPath());
+            firstAccess = null;
+            return;
+        }
+        for (String key : snapshot) {
+            if (key == null || key.isBlank() || key.length() > PREFETCH_KEY_LENGTH_LIMIT) {
+                Files.deleteIfExists(file.toPath());
+                firstAccess = null;
+                return;
+            }
+        }
         File parent = file.getParentFile();
 
         if (parent == null) {
@@ -565,10 +613,12 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
             try (FileOutputStream fos = new FileOutputStream(temp);
                  GZIPOutputStream gzo = new CustomOutputStream(fos, 9);
                  DataOutputStream dos = new DataOutputStream(gzo)) {
+                dos.writeInt(PREFETCH_MAGIC);
+                dos.writeInt(PREFETCH_FORMAT_VERSION);
                 dos.writeInt(snapshot.size());
 
-                for (String i : snapshot) {
-                    dos.writeUTF(i);
+                for (String key : snapshot) {
+                    dos.writeUTF(key);
                 }
             }
 
@@ -582,6 +632,34 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
         }
 
         firstAccess = null;
+    }
+
+    private int prefetchEntryLimit() {
+        return (int) Math.min(loadCache.getMaxSize(), PREFETCH_ENTRY_LIMIT);
+    }
+
+    private void discardPrefetch(File file, String reason) {
+        IrisLogging.warn("Discarding corrupt prefetch " + file.getPath() + ": " + reason);
+        if (!file.delete()) {
+            IrisLogging.warn("Couldn't delete corrupt prefetch " + file.getPath());
+        }
+    }
+
+    private static String digestIdentity(String... components) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            for (String component : components) {
+                byte[] value = Objects.requireNonNullElse(component, "").getBytes(StandardCharsets.UTF_8);
+                digest.update((byte) (value.length >>> 24));
+                digest.update((byte) (value.length >>> 16));
+                digest.update((byte) (value.length >>> 8));
+                digest.update((byte) value.length);
+                digest.update(value);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 
     public KList<File> getFolders() {

@@ -6,7 +6,6 @@ import art.arcane.iris.core.pack.PackDirectoryResolver;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -247,27 +246,29 @@ public final class WorldReplacementFilesystem {
         Path root = Objects.requireNonNull(packRoot, "packRoot").toAbsolutePath().normalize();
         requireDirectory(root, "pack root");
         MessageDigest digest = sha256();
-        List<Path> files;
+        List<FingerprintEntry> entries;
         try (Stream<Path> stream = Files.walk(root)) {
-            files = stream
+            entries = stream
                     .filter(path -> !path.equals(root))
-                    .sorted(Comparator.comparing(path -> root.relativize(path).toString()))
+                    .map(path -> fingerprintEntry(root, path))
+                    .sorted(Comparator.comparing(FingerprintEntry::relativeString))
                     .toList();
         }
-        for (Path file : files) {
-            BasicFileAttributes attributes = requireSafeEntry(file);
-            Path relative = root.relativize(file);
+        String separator = root.getFileSystem().getSeparator();
+        byte[] buffer = new byte[8192];
+        for (FingerprintEntry entry : entries) {
+            BasicFileAttributes attributes = requireSafeEntry(entry.path());
+            Path relative = entry.relative();
             if (isGeneratedPackMetadata(relative, attributes)) {
                 continue;
             }
-            update(digest, relative.toString().replace(file.getFileSystem().getSeparator(), "/"));
+            update(digest, entry.relativeString().replace(separator, "/"));
             digest.update((byte) (attributes.isDirectory() ? 1 : 0));
             if (!attributes.isRegularFile()) {
                 continue;
             }
             update(digest, Long.toString(attributes.size()));
-            try (InputStream input = Files.newInputStream(file)) {
-                byte[] buffer = new byte[8192];
+            try (InputStream input = Files.newInputStream(entry.path())) {
                 int read;
                 while ((read = input.read(buffer)) >= 0) {
                     digest.update(buffer, 0, read);
@@ -275,6 +276,11 @@ public final class WorldReplacementFilesystem {
             }
         }
         return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static FingerprintEntry fingerprintEntry(Path root, Path path) {
+        Path relative = root.relativize(path);
+        return new FingerprintEntry(path, relative, relative.toString());
     }
 
     private static State inspect(ReplacementPaths paths) throws IOException {
@@ -405,7 +411,10 @@ public final class WorldReplacementFilesystem {
 
     private static void update(MessageDigest digest, String value) {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-        digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(bytes.length).array());
+        digest.update((byte) (bytes.length >>> 24));
+        digest.update((byte) (bytes.length >>> 16));
+        digest.update((byte) (bytes.length >>> 8));
+        digest.update((byte) bytes.length);
         digest.update(bytes);
     }
 
@@ -473,5 +482,8 @@ public final class WorldReplacementFilesystem {
     }
 
     private record State(boolean targetPresent, boolean stagePresent, boolean backupPresent) {
+    }
+
+    private record FingerprintEntry(Path path, Path relative, String relativeString) {
     }
 }

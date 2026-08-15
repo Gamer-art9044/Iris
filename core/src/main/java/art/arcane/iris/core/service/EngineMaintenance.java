@@ -31,8 +31,10 @@ public final class EngineMaintenance {
     }
 
     public static boolean shouldRun(Engine engine) {
-        if (engine.isStudio()
-                && !IrisSettings.get().getPerformance().isTrimMantleInStudio()) {
+        if (!shouldRunStudioMaintenance(
+                engine.isStudio(),
+                IrisSettings.get().getPerformance().isTrimMantleInStudio(),
+                engine.isStudio() && MantleHeapPressure.overHighWater())) {
             return false;
         }
         if (GoldenHashEngine.isActive()) {
@@ -41,6 +43,14 @@ public final class EngineMaintenance {
 
         return engine.getWorld() == null
                 || !WorldMaintenance.isWorldMaintenanceActive(engine.getWorld().identity());
+    }
+
+    static boolean shouldRunStudioMaintenance(
+            boolean studio,
+            boolean trimMantleInStudio,
+            boolean heapPressure
+    ) {
+        return !studio || trimMantleInStudio || heapPressure;
     }
 
     public static int workerParallelism() {

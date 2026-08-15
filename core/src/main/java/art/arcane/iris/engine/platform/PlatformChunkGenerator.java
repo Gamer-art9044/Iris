@@ -26,7 +26,9 @@ import art.arcane.iris.util.common.data.DataProvider;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 public interface PlatformChunkGenerator extends Hotloadable, DataProvider {
     @Nullable
@@ -45,6 +47,23 @@ public interface PlatformChunkGenerator extends Hotloadable, DataProvider {
     default CompletableFuture<Void> closeAsync() {
         close();
         return CompletableFuture.completedFuture(null);
+    }
+
+    default CompletableFuture<Void> hotloadComplexAsync(long acquisitionTimeout, TimeUnit unit) {
+        if (acquisitionTimeout <= 0L) {
+            throw new IllegalArgumentException("Complex hotload acquisition timeout must be positive.");
+        }
+        Objects.requireNonNull(unit, "Complex hotload acquisition timeout unit");
+        Engine activeEngine = getEngine();
+        if (activeEngine == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        try {
+            activeEngine.hotloadComplex();
+            return CompletableFuture.completedFuture(null);
+        } catch (Throwable failure) {
+            return CompletableFuture.failedFuture(failure);
+        }
     }
 
     boolean isStudio();

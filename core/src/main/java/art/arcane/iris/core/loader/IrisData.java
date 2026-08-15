@@ -463,7 +463,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
 
     public synchronized void hotloaded() {
         StructureGraphCatalog.invalidate(this);
-        IrisObjectScale.invalidate();
+        IrisObjectScale.invalidate(this);
         closed = false;
         possibleSnippets = new KMap<>();
         builder = new GsonBuilder()
@@ -529,7 +529,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
 
     public void dump() {
         StructureGraphCatalog.invalidate(this);
-        IrisObjectScale.invalidate();
+        IrisObjectScale.invalidate(this);
         for (ResourceLoader<?> i : loaders.values()) {
             i.clearCache();
         }
@@ -763,19 +763,13 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     }
 
     public void loadPrefetch(Engine engine) {
-        BurstExecutor b = MultiBurst.ioBurst.burst(loaders.size());
-
-        for (ResourceLoader<?> i : loaders.values()) {
-            b.queue(() -> {
-                try {
-                    i.loadFirstAccess(engine);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            });
+        for (ResourceLoader<?> loader : loaders.values()) {
+            try {
+                loader.loadFirstAccess(engine);
+            } catch (IOException exception) {
+                throw new RuntimeException(exception);
+            }
         }
-
-        b.complete();
         IrisLogging.debug("Loaded Prefetch Cache to reduce generation disk use.");
     }
 }

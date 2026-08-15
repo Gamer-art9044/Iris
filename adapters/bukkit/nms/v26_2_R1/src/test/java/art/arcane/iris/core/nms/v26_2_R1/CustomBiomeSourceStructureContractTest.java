@@ -37,4 +37,16 @@ public class CustomBiomeSourceStructureContractTest {
         assertTrue(source.contains("catch (GenerationSessionException e)"));
         assertTrue(source.contains("e.isExpectedTeardown()"));
     }
+
+    @Test
+    public void strongholdRingSearchSamplesOneQuartColumnPerChunk() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.customBiomeSource")));
+
+        assertTrue(source.contains("private static final int STRONGHOLD_RING_SEARCH_Y = 0"));
+        assertTrue(source.contains("private static final int STRONGHOLD_RING_SEARCH_RADIUS = 112"));
+        assertTrue(source.contains("private static final int STRONGHOLD_RING_SEARCH_QUART_STEP = 4"));
+        assertTrue(source.contains("x, y, z, searchRadius, quartStep, allowed, random, false, sampler"));
+        assertTrue(source.contains(
+                "return super.findBiomeHorizontal(x, y, z, searchRadius, allowed, random, sampler)"));
+    }
 }

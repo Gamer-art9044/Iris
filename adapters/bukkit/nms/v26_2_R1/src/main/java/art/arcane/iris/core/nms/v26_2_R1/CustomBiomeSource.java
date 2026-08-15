@@ -1,6 +1,7 @@
 package art.arcane.iris.core.nms.v26_2_R1;
 
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
+import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.MapCodec;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.engine.data.cache.AtomicCache;
@@ -13,6 +14,7 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.RNG;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
 import net.minecraft.core.Registry;
@@ -20,6 +22,7 @@ import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
@@ -40,10 +43,14 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 public class CustomBiomeSource extends BiomeSource {
     private static final int NOISE_BIOME_CACHE_MAX = 262144;
+    private static final int STRONGHOLD_RING_SEARCH_Y = 0;
+    private static final int STRONGHOLD_RING_SEARCH_RADIUS = 112;
+    private static final int STRONGHOLD_RING_SEARCH_QUART_STEP = 4;
 
     private final long seed;
     private final Engine engine;
@@ -307,6 +314,30 @@ public class CustomBiomeSource extends BiomeSource {
 
             return resolvedHolder;
         }
+    }
+
+    @Override
+    public Pair<BlockPos, Holder<Biome>> findBiomeHorizontal(
+            int x,
+            int y,
+            int z,
+            int searchRadius,
+            Predicate<Holder<Biome>> allowed,
+            RandomSource random,
+            Climate.Sampler sampler
+    ) {
+        int quartStep = horizontalBiomeSearchQuartStep(y, searchRadius);
+        if (quartStep == 1) {
+            return super.findBiomeHorizontal(x, y, z, searchRadius, allowed, random, sampler);
+        }
+        return super.findBiomeHorizontal(
+                x, y, z, searchRadius, quartStep, allowed, random, false, sampler);
+    }
+
+    static int horizontalBiomeSearchQuartStep(int blockY, int searchRadius) {
+        return blockY == STRONGHOLD_RING_SEARCH_Y && searchRadius == STRONGHOLD_RING_SEARCH_RADIUS
+                ? STRONGHOLD_RING_SEARCH_QUART_STEP
+                : 1;
     }
 
     @Override

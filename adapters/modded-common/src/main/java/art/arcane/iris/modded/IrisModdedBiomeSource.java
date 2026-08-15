@@ -25,7 +25,9 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.math.RNG;
+import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.MapCodec;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.QuartPos;
@@ -34,6 +36,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
@@ -49,10 +52,14 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 final class IrisModdedBiomeSource extends BiomeSource {
     private static final int UNRESOLVED_WARN_KEYS_MAX = 256;
+    private static final int STRONGHOLD_RING_SEARCH_Y = 0;
+    private static final int STRONGHOLD_RING_SEARCH_RADIUS = 112;
+    private static final int STRONGHOLD_RING_SEARCH_QUART_STEP = 4;
 
     private final BiomeSource serializedSource;
     private final Set<String> warnedUnresolvedBiomeKeys = ConcurrentHashMap.newKeySet();
@@ -554,6 +561,12 @@ final class IrisModdedBiomeSource extends BiomeSource {
         return radius == 29 && blockY == minHeight + fluidHeight;
     }
 
+    static int horizontalBiomeSearchQuartStep(int blockY, int searchRadius) {
+        return blockY == STRONGHOLD_RING_SEARCH_Y && searchRadius == STRONGHOLD_RING_SEARCH_RADIUS
+                ? STRONGHOLD_RING_SEARCH_QUART_STEP
+                : 1;
+    }
+
     private static boolean isReady(Engine engine) {
         return engine != null && !engine.isClosed() && engine.getComplex() != null;
     }
@@ -859,6 +872,24 @@ final class IrisModdedBiomeSource extends BiomeSource {
             Holder<Biome> resolved = delegate.resolveRequiredStructureBiome(x, y, z);
             cache.put(key, resolved);
             return resolved;
+        }
+
+        @Override
+        public Pair<BlockPos, Holder<Biome>> findBiomeHorizontal(
+                int x,
+                int y,
+                int z,
+                int searchRadius,
+                Predicate<Holder<Biome>> allowed,
+                RandomSource random,
+                Climate.Sampler sampler
+        ) {
+            int quartStep = horizontalBiomeSearchQuartStep(y, searchRadius);
+            if (quartStep == 1) {
+                return super.findBiomeHorizontal(x, y, z, searchRadius, allowed, random, sampler);
+            }
+            return super.findBiomeHorizontal(
+                    x, y, z, searchRadius, quartStep, allowed, random, false, sampler);
         }
 
         @Override

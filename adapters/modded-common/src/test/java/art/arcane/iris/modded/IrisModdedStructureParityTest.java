@@ -13,6 +13,9 @@ import net.minecraft.server.Bootstrap;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -54,6 +57,19 @@ public class IrisModdedStructureParityTest {
         assertTrue(IrisModdedBiomeSource.isMonumentSurfaceBiomeQuery(50, 29, -256, 306));
         assertFalse(IrisModdedBiomeSource.isMonumentSurfaceBiomeQuery(51, 29, -256, 306));
         assertFalse(IrisModdedBiomeSource.isMonumentSurfaceBiomeQuery(50, 28, -256, 306));
+    }
+
+    @Test
+    public void strongholdRingSearchSamplesOneQuartColumnPerChunk() throws IOException {
+        assertEquals(4, IrisModdedBiomeSource.horizontalBiomeSearchQuartStep(0, 112));
+        assertEquals(1, IrisModdedBiomeSource.horizontalBiomeSearchQuartStep(1, 112));
+        assertEquals(1, IrisModdedBiomeSource.horizontalBiomeSearchQuartStep(0, 111));
+        String source = Files.readString(Path.of(
+                System.getProperty("iris.moddedCommonSources"),
+                "art/arcane/iris/modded/IrisModdedBiomeSource.java"));
+        assertTrue(source.contains("x, y, z, searchRadius, quartStep, allowed, random, false, sampler"));
+        assertTrue(source.contains(
+                "return super.findBiomeHorizontal(x, y, z, searchRadius, allowed, random, sampler)"));
     }
 
     @Test

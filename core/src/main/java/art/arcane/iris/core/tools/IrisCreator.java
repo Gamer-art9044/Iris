@@ -134,8 +134,11 @@ public class IrisCreator {
     private BiConsumer<String, Long> studioTimingConsumer;
     private DatapackPreparation datapackPreparation = DatapackPreparation.INSTALL_IF_CHANGED;
 
-    public static boolean removeFromBukkitYml(String name) throws IOException {
-        return BukkitWorldConfiguration.remove(BUKKIT_YML, name);
+    public static boolean removeFromBukkitYml(NamespacedKey worldKey) throws IOException {
+        return BukkitWorldConfiguration.remove(
+                BUKKIT_YML,
+                IrisWorldStorage.configuredWorldName(worldKey, IrisWorldStorage.levelRoot().getName())
+        );
     }
 
     public static int removeTransientStudioWorldsFromBukkitYml() throws IOException {
@@ -293,7 +296,12 @@ public class IrisCreator {
             reportStudioProgress(0.86D, "create_world");
 
             if (!studio && !benchmark) {
-                BukkitWorldConfiguration.register(BUKKIT_YML, name, dimension, seed);
+                BukkitWorldConfiguration.register(
+                        BUKKIT_YML,
+                        IrisWorldStorage.configuredWorldName(worldKey, IrisWorldStorage.levelRoot().getName()),
+                        dimension,
+                        seed
+                );
                 bukkitRegistered = true;
                 World createdWorld = world;
                 CompletableFuture<Void> multiverseRegistration = J.sfut(
@@ -730,7 +738,10 @@ public class IrisCreator {
                 failure.addSuppressed(rollbackFailure);
             }
             try {
-                BukkitWorldConfiguration.remove(BUKKIT_YML, name);
+                BukkitWorldConfiguration.remove(
+                        BUKKIT_YML,
+                        IrisWorldStorage.configuredWorldName(worldKey, IrisWorldStorage.levelRoot().getName())
+                );
             } catch (Throwable rollbackFailure) {
                 failure.addSuppressed(rollbackFailure);
             }

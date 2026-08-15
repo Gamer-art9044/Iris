@@ -14,6 +14,7 @@ import art.arcane.volmlib.util.io.IO;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 
@@ -25,9 +26,11 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Stream;
 
@@ -35,34 +38,41 @@ public class IrisWorlds {
     private static final AtomicCache<IrisWorlds> cache = new AtomicCache<>();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Type TYPE = TypeToken.getParameterized(KMap.class, String.class, String.class).getType();
+    private final Path levelRoot;
+    private final Path registryFile;
     private final KMap<String, String> worlds;
     private volatile boolean dirty = false;
 
-    private IrisWorlds(KMap<String, String> worlds) {
+    private IrisWorlds(Path levelRoot, KMap<String, String> worlds) {
+        this.levelRoot = Objects.requireNonNull(levelRoot, "levelRoot").toAbsolutePath().normalize();
+        registryFile = registryFile(this.levelRoot);
         this.worlds = new KMap<>();
         worlds.forEach((identity, type) -> this.worlds.put(WorldIdentity.parse(identity).toString(), type));
-        readBukkitWorlds().forEach((name, type) -> put0(IrisWorldStorage.keyFromName(name).toString(), type));
+        readBukkitWorlds(this.levelRoot).forEach((name, type) -> put0(
+                IrisWorldStorage.keyFromConfiguredWorldName(name, this.levelRoot.getFileName().toString()).toString(),
+                type));
         save();
     }
 
     public static IrisWorlds get() {
         return cache.aquire(() -> {
-            File file = IrisPlatforms.get().dataFile("worlds.json");
+            Path levelRoot = IrisWorldStorage.levelRoot().toPath().toAbsolutePath().normalize();
+            File file = registryFile(levelRoot).toFile();
             if (!file.exists()) {
-                return new IrisWorlds(new KMap<>());
+                return new IrisWorlds(levelRoot, new KMap<>());
             }
 
             try {
                 String json = IO.readAll(file);
                 KMap<String, String> worlds = GSON.fromJson(json, TYPE);
-                return new IrisWorlds(Objects.requireNonNullElseGet(worlds, KMap::new));
+                return new IrisWorlds(levelRoot, Objects.requireNonNullElseGet(worlds, KMap::new));
             } catch (Throwable e) {
-                IrisLogging.error("Failed to load worlds.json!");
+                IrisLogging.error("Failed to load worlds.json for level root " + levelRoot + "!");
                 e.printStackTrace();
                 IrisLogging.reportError(e);
             }
 
-            return new IrisWorlds(new KMap<>());
+            return new IrisWorlds(levelRoot, new KMap<>());
         });
     }
 
@@ -114,7 +124,9 @@ public class IrisWorlds {
     public synchronized KMap<String, String> getWorlds() {
         clean();
         KMap<String, String> result = new KMap<>();
-        readBukkitWorlds().forEach((name, type) -> result.put(IrisWorldStorage.keyFromName(name).toString(), type));
+        readBukkitWorlds(levelRoot).forEach((name, type) -> result.put(
+                IrisWorldStorage.keyFromConfiguredWorldName(name, levelRoot.getFileName().toString()).toString(),
+                type));
         return result.put(worlds);
     }
 
@@ -135,7 +147,7 @@ public class IrisWorlds {
     public synchronized void clean() {
         boolean removed = worlds.entrySet().removeIf(entry -> {
             try {
-                File packRoot = IrisWorldStorage.packRoot(WorldIdentity.parse(entry.getKey()));
+                File packRoot = packRoot(entry.getKey());
                 return !new File(packRoot, "dimensions/" + entry.getValue() + ".json").exists();
             } catch (IllegalArgumentException e) {
                 return true;
@@ -159,7 +171,7 @@ public class IrisWorlds {
             return;
         }
 
-        Path target = IrisPlatforms.get().dataFile("worlds.json").toPath().toAbsolutePath().normalize();
+        Path target = registryFile;
         Path parent = target.getParent();
         if (parent == null) {
             throw new IOException("worlds.json target has no parent: " + target);
@@ -193,6 +205,49 @@ public class IrisWorlds {
     }
 
     public static KMap<String, String> readBukkitWorlds() {
+        return readBukkitWorlds(IrisWorldStorage.levelRoot().toPath());
+    }
+
+    static Path registryFile(Path levelRoot) {
+        return Objects.requireNonNull(levelRoot, "levelRoot")
+                .toAbsolutePath()
+                .normalize()
+                .resolve("iris")
+                .resolve("worlds.json");
+    }
+
+    static KMap<String, String> filterBukkitWorldsByStorage(
+            Path levelRoot,
+            Map<String, String> configuredWorlds
+    ) {
+        Path root = Objects.requireNonNull(levelRoot, "levelRoot").toAbsolutePath().normalize();
+        Path levelNamePath = root.getFileName();
+        if (levelNamePath == null) {
+            throw new IllegalArgumentException("Selected level root has no name: " + root);
+        }
+
+        KMap<String, String> result = new KMap<>();
+        for (Map.Entry<String, String> entry : Objects.requireNonNull(configuredWorlds, "configuredWorlds").entrySet()) {
+            String configuredWorldName = entry.getKey();
+            NamespacedKey worldKey = IrisWorldStorage.keyFromConfiguredWorldName(
+                    configuredWorldName,
+                    levelNamePath.toString());
+            if (!IrisWorldStorage.configuredWorldName(worldKey, levelNamePath.toString())
+                    .equals(configuredWorldName)) {
+                continue;
+            }
+            Path dimensionRoot = IrisWorldStorage.dimensionRoot(root.toFile(), worldKey)
+                    .toPath()
+                    .toAbsolutePath()
+                    .normalize();
+            if (Files.isDirectory(dimensionRoot, LinkOption.NOFOLLOW_LINKS)) {
+                result.put(configuredWorldName, entry.getValue());
+            }
+        }
+        return result;
+    }
+
+    private static KMap<String, String> readBukkitWorlds(Path levelRoot) {
         YamlConfiguration bukkit = YamlConfiguration.loadConfiguration(ServerProperties.BUKKIT_YML);
         ConfigurationSection worlds = bukkit.getConfigurationSection("worlds");
         if (worlds == null) return new KMap<>();
@@ -212,11 +267,16 @@ public class IrisWorlds {
             result.put(world, loadKey);
         }
 
-        return result;
+        return filterBukkitWorldsByStorage(levelRoot, result);
     }
 
-    private static IrisDimension loadDimension(String worldIdentity, String id) {
-        File pack = IrisWorldStorage.packRoot(WorldIdentity.parse(worldIdentity));
+    private File packRoot(String worldIdentity) {
+        NamespacedKey worldKey = WorldIdentity.parse(worldIdentity);
+        return new File(IrisWorldStorage.dimensionRoot(levelRoot.toFile(), worldKey), "iris/pack");
+    }
+
+    private IrisDimension loadDimension(String worldIdentity, String id) {
+        File pack = packRoot(worldIdentity);
         IrisDimension dimension = pack.isDirectory() ? IrisData.get(pack).getDimensionLoader().load(id) : null;
         if (dimension == null) {
             dimension = IrisData.loadAnyDimension(id, null);

@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 
 public class ExactWorldSlotPathPolicyTest {
@@ -53,6 +54,7 @@ public class ExactWorldSlotPathPolicyTest {
             assertEquals(canonicalRoot, target.levelRoot());
             assertEquals(canonicalRoot.resolve(expectation.relativePath()), target.worldDirectory());
         }
+        assertFalse(Files.exists(canonicalRoot.resolve("dimensions")));
     }
 
     @Test

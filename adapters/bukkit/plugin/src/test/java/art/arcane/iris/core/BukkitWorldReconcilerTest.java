@@ -379,6 +379,16 @@ public class BukkitWorldReconcilerTest {
         }
 
         @Override
+        public String configuredWorldName(NamespacedKey requestedWorldKey) {
+            return requestedWorldKey.getKey();
+        }
+
+        @Override
+        public NamespacedKey worldKeyFromConfiguration(String configuredWorldName) {
+            return worldKey;
+        }
+
+        @Override
         public Optional<World> loadedWorld(NamespacedKey requestedWorldKey) {
             return worldKey.equals(requestedWorldKey) ? loaded : Optional.empty();
         }

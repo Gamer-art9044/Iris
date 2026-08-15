@@ -109,6 +109,16 @@ public final class IrisStartupValidation {
         }
     }
 
+    public static void requireWorldReplacementStagingReady() {
+        Snapshot current = snapshot;
+        if (current.enforced()
+                && current.datapacks() == ValidationState.RESTART_REQUIRED
+                && current.packs() == ValidationState.READY) {
+            return;
+        }
+        requireWorldCreationReady();
+    }
+
     static Snapshot snapshot() {
         return snapshot;
     }

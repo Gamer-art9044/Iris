@@ -1,5 +1,6 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.IrisGeneratorBinding;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.v1217.DataFixerV1217;
 import art.arcane.volmlib.util.collection.KList;
@@ -18,6 +19,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class IrisDatapackCompilerTest {
@@ -42,6 +44,7 @@ public class IrisDatapackCompilerTest {
         IrisDatapackCompiler.CompilationResult result = IrisDatapackCompiler.compile(
                 packRoots,
                 new KList<File>().qadd(datapackRoot.toFile()),
+                List.of(),
                 new DataFixerV1217(),
                 false
         );
@@ -72,6 +75,7 @@ public class IrisDatapackCompilerTest {
         IrisDatapackCompiler.CompilationResult result = IrisDatapackCompiler.compile(
                 List.of(packRoot.toFile()),
                 new KList<File>().qadd(datapackRoot.toFile()),
+                List.of(),
                 new DataFixerV1217(),
                 false
         );
@@ -106,6 +110,7 @@ public class IrisDatapackCompilerTest {
         IrisDatapackCompiler.compile(
                 List.of(),
                 new KList<File>().qadd(datapackRoot.toFile()),
+                List.of(),
                 new DataFixerV1217(),
                 false
         );
@@ -136,6 +141,7 @@ public class IrisDatapackCompilerTest {
         IrisDatapackCompiler.CompilationResult result = IrisDatapackCompiler.compile(
                 List.of(),
                 new KList<File>().qadd(datapackRoot.toFile()),
+                List.of(),
                 new DataFixerV1217(),
                 false
         );
@@ -147,7 +153,112 @@ public class IrisDatapackCompilerTest {
         assertFalse(Files.exists(stale));
     }
 
+    @Test
+    public void emitsBootNativeCustomLevelStemBinding() throws Exception {
+        Path packRoot = temporaryFolder.newFolder("binding-pack").toPath();
+        Path datapackRoot = temporaryFolder.newFolder("binding-datapack").toPath();
+        createPack(packRoot, "moon_pack", "moon_custom");
+
+        IrisDatapackCompiler.compile(
+                List.of(packRoot.toFile()),
+                new KList<File>().qadd(datapackRoot.toFile()),
+                List.of(binding("moon", "moon_pack")),
+                new DataFixerV1217(),
+                false
+        );
+
+        Path levelStemPath = datapackRoot.resolve("data/iris/dimension/moon.json");
+        JSONObject levelStem = new JSONObject(Files.readString(levelStemPath, StandardCharsets.UTF_8));
+        JSONObject generator = levelStem.getJSONObject("generator");
+        JSONObject settings = generator.getJSONObject("settings");
+        assertEquals("iris:moon_pack", levelStem.getString("type"));
+        assertEquals("minecraft:flat", generator.getString("type"));
+        assertEquals("minecraft:the_void", settings.getString("biome"));
+        assertFalse(settings.getBoolean("features"));
+        assertFalse(settings.getBoolean("lakes"));
+        assertEquals(1, settings.getJSONArray("layers").length());
+        assertEquals(
+                "minecraft:air",
+                settings.getJSONArray("layers").getJSONObject(0).getString("block")
+        );
+        assertEquals(1, settings.getJSONArray("layers").getJSONObject(0).getInt("height"));
+        assertEquals(0, settings.getJSONArray("structure_overrides").length());
+        assertFalse(Files.exists(datapackRoot.resolve("data/minecraft/dimension/overworld.json")));
+        assertFalse(Files.exists(datapackRoot.resolve("data/minecraft/dimension/the_nether.json")));
+        assertFalse(Files.exists(datapackRoot.resolve("data/minecraft/dimension/the_end.json")));
+    }
+
+    @Test
+    public void rejectsBindingToMissingDimension() throws Exception {
+        Path packRoot = temporaryFolder.newFolder("missing-binding-pack").toPath();
+        Path datapackRoot = temporaryFolder.newFolder("missing-binding-datapack").toPath();
+        createPack(packRoot, "available", "available_custom");
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> IrisDatapackCompiler.compile(
+                        List.of(packRoot.toFile()),
+                        new KList<File>().qadd(datapackRoot.toFile()),
+                        List.of(binding("moon", "missing")),
+                        new DataFixerV1217(),
+                        false
+                )
+        );
+
+        assertTrue(failure.getMessage().contains("selects missing dimension \"missing\""));
+    }
+
+    @Test
+    public void rejectsBindingToConflictingDuplicateDimension() throws Exception {
+        Path firstPack = temporaryFolder.newFolder("ambiguous-binding-first").toPath();
+        Path secondPack = temporaryFolder.newFolder("ambiguous-binding-second").toPath();
+        Path datapackRoot = temporaryFolder.newFolder("ambiguous-binding-datapack").toPath();
+        createPack(firstPack, "shared", "first_custom", "NORMAL");
+        createPack(secondPack, "shared", "second_custom", "NETHER");
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> IrisDatapackCompiler.compile(
+                        List.of(firstPack.toFile(), secondPack.toFile()),
+                        new KList<File>().qadd(datapackRoot.toFile()),
+                        List.of(binding("moon", "shared")),
+                        new DataFixerV1217(),
+                        false
+                )
+        );
+
+        assertTrue(failure.getMessage().contains("selects ambiguous dimension \"shared\""));
+    }
+
+    @Test
+    public void acceptsIdenticalFrozenAndInstalledDimensionDefinitions() throws Exception {
+        Path installedPack = temporaryFolder.newFolder("identical-binding-installed").toPath();
+        Path frozenPack = temporaryFolder.newFolder("identical-binding-frozen").toPath();
+        Path datapackRoot = temporaryFolder.newFolder("identical-binding-datapack").toPath();
+        createPack(installedPack, "shared", "installed_custom");
+        createPack(frozenPack, "shared", "frozen_custom");
+
+        IrisDatapackCompiler.compile(
+                List.of(installedPack.toFile(), frozenPack.toFile()),
+                new KList<File>().qadd(datapackRoot.toFile()),
+                List.of(binding("moon", "shared")),
+                new DataFixerV1217(),
+                false
+        );
+
+        assertTrue(Files.isRegularFile(datapackRoot.resolve("data/iris/dimension/moon.json")));
+    }
+
     private static void createPack(Path root, String dimensionKey, String biomeId) throws Exception {
+        createPack(root, dimensionKey, biomeId, "NORMAL");
+    }
+
+    private static void createPack(
+            Path root,
+            String dimensionKey,
+            String biomeId,
+            String environment
+    ) throws Exception {
         Files.createDirectories(root.resolve("dimensions"));
         Files.createDirectories(root.resolve("biomes"));
         Files.writeString(
@@ -155,14 +266,14 @@ public class IrisDatapackCompilerTest {
                 """
                         {
                           "name": "Test Dimension",
-                          "environment": "NORMAL",
+                          "environment": "%s",
                           "logicalHeight": 256,
                           "dimensionHeight": {
                             "min": -64,
                             "max": 320
                           }
                         }
-                        """,
+                        """.formatted(environment),
                 StandardCharsets.UTF_8
         );
         Files.writeString(
@@ -180,6 +291,14 @@ public class IrisDatapackCompilerTest {
                         }
                         """.formatted(biomeId),
                 StandardCharsets.UTF_8
+        );
+    }
+
+    private static IrisGeneratorBinding binding(String worldKey, String dimension) {
+        return new IrisGeneratorBinding(
+                "world_iris_" + worldKey,
+                new WorldSlotKey("iris", worldKey),
+                dimension
         );
     }
 }

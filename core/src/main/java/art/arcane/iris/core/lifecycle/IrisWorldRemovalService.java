@@ -18,6 +18,7 @@ import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
@@ -695,6 +696,28 @@ public final class IrisWorldRemovalService {
         }
     }
 
+    static String bukkitConfigurationWorldName(WorldRemovalPathPolicy.Target target) {
+        WorldRemovalPathPolicy.Target requiredTarget = Objects.requireNonNull(target, "target");
+        Path levelName = requiredTarget.levelRoot().getFileName();
+        if (levelName == null || levelName.toString().isBlank()) {
+            throw new IllegalArgumentException("Level root must have a Bukkit startup name.");
+        }
+        return IrisWorldStorage.configuredWorldName(requiredTarget.worldKey(), levelName.toString());
+    }
+
+    static String bukkitGenerator(
+            YamlConfiguration configuration,
+            WorldRemovalPathPolicy.Target target
+    ) {
+        ConfigurationSection worlds = Objects.requireNonNull(configuration, "configuration")
+                .getConfigurationSection("worlds");
+        if (worlds == null) {
+            return null;
+        }
+        ConfigurationSection world = worlds.getConfigurationSection(bukkitConfigurationWorldName(target));
+        return world == null ? null : world.getString("generator");
+    }
+
     private static final class RemovalFailure extends CompletionException {
         private final RemovalStatus status;
         private final Path quarantineDirectory;
@@ -840,7 +863,7 @@ public final class IrisWorldRemovalService {
                     try {
                         boolean bukkitChanged = BukkitWorldConfiguration.remove(
                                 ServerProperties.BUKKIT_YML,
-                                target.logicalName()
+                                bukkitConfigurationWorldName(target)
                         );
                         return new ConfigurationDisposition(multiverseChanged || bukkitChanged, null);
                     } catch (Throwable failure) {
@@ -931,7 +954,7 @@ public final class IrisWorldRemovalService {
             );
             boolean directoryPresent = Files.isDirectory(target.worldDirectory(), LinkOption.NOFOLLOW_LINKS);
             YamlConfiguration configuration = YamlConfiguration.loadConfiguration(ServerProperties.BUKKIT_YML);
-            String generator = configuration.getString("worlds." + target.logicalName() + ".generator");
+            String generator = bukkitGenerator(configuration, target);
             boolean configurationManaged = generator != null
                     && (generator.equalsIgnoreCase("Iris") || generator.regionMatches(true, 0, "Iris:", 0, 5));
             boolean conflictingConfiguration = generator != null && !configurationManaged;

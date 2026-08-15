@@ -13,6 +13,7 @@ import art.arcane.iris.core.lifecycle.WorldReplacementFilesystem.ReplacementPath
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Phase;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Transaction;
+import art.arcane.iris.core.lifecycle.WorldReplacementSeed;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
@@ -33,7 +34,6 @@ import org.bukkit.event.world.WorldLoadEvent;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -56,19 +56,10 @@ public final class PendingWorldReplacementManager implements Listener {
     }
 
     public NamespacedKey resolveRequestedWorldKey(String requestedName) {
-        String requested = Objects.requireNonNull(requestedName, "requestedName").trim();
-        if (requested.isEmpty()) {
-            throw new IllegalArgumentException("World name cannot be empty.");
-        }
-        if (requested.contains("/") || requested.contains("\\") || requested.contains("..")) {
-            throw new IllegalArgumentException("World name must be a safe single path segment.");
-        }
-        NamespacedKey worldKey = requested.contains(":")
-                ? NamespacedKey.fromString(requested.toLowerCase(Locale.ENGLISH))
-                : IrisWorldStorage.keyFromName(requested);
-        if (worldKey == null) {
-            throw new IllegalArgumentException("World identifier is invalid: " + requestedName);
-        }
+        NamespacedKey worldKey = IrisWorldStorage.replacementKeyFromName(
+                requestedName,
+                IrisWorldStorage.levelRoot().getName()
+        );
         ExactWorldSlotPathPolicy.resolve(IrisWorldStorage.levelRoot().toPath(), toWorldSlotKey(worldKey));
         return worldKey;
     }
@@ -76,14 +67,13 @@ public final class PendingWorldReplacementManager implements Listener {
     public synchronized StagedReplacement stageReplacement(
             VolmitSender sender,
             NamespacedKey worldKey,
-            IrisDimension dimension,
-            long seed
+            IrisDimension dimension
     ) throws IOException {
         VolmitSender requiredSender = Objects.requireNonNull(sender, "sender");
         NamespacedKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
         WorldSlotKey requiredWorldSlotKey = toWorldSlotKey(requiredWorldKey);
         IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
-        IrisStartupValidation.requireWorldCreationReady();
+        IrisStartupValidation.requireWorldReplacementStagingReady();
         if (!WorldReplacementBootstrapMarker.wasBootstrappedThisProcess()) {
             throw new IOException("Exact world replacement requires a full Paper-family startup bootstrap.");
         }
@@ -97,18 +87,19 @@ public final class PendingWorldReplacementManager implements Listener {
             if (findTransaction(requiredWorldSlotKey) != null) {
                 throw new IOException("A replacement is already pending for " + requiredWorldKey + ".");
             }
-            ExactWorldSlotPathPolicy.Target target = prepareTarget(requiredWorldSlotKey);
+            ExactWorldSlotPathPolicy.Target target = resolveTarget(requiredWorldSlotKey);
             requireCompatibleEnvironment(target.slotKind(), requiredDimension.getEnvironment());
-            long effectiveSeed = resolveEffectiveSeed(target.slotKind(), seed);
+            requireVanillaSlotEnabled(target.slotKind());
+            UUID transactionId = UUID.randomUUID();
+            ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transactionId);
+            WorldReplacementFilesystem.requireExistingTarget(paths);
+            long effectiveSeed = WorldReplacementSeed.readAuthoritativeSeed(paths.target());
             String worldName = WorldReplacementJournal.logicalWorldName(target.levelRoot(), requiredWorldSlotKey);
             DatapackInstallResult datapacks = ServerConfigurator.installDataPacksIfChanged(true);
             if (!datapacks.succeeded()) {
                 throw new IOException("Iris could not compile the dimension datapacks.");
             }
 
-            UUID transactionId = UUID.randomUUID();
-            ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transactionId);
-            WorldReplacementFilesystem.requireExistingTarget(paths);
             boolean targetPresent = true;
             WorldGeneratorSnapshot originalConfiguration = BukkitWorldConfiguration.snapshot(
                     ServerProperties.BUKKIT_YML,
@@ -435,23 +426,8 @@ public final class PendingWorldReplacementManager implements Listener {
         }
     }
 
-    private ExactWorldSlotPathPolicy.Target prepareTarget(WorldSlotKey worldKey) throws IOException {
-        Path levelRoot = IrisWorldStorage.levelRoot().toPath();
-        ExactWorldSlotPathPolicy.Target target = ExactWorldSlotPathPolicy.resolve(levelRoot, worldKey);
-        Path dimensions = target.levelRoot().resolve("dimensions");
-        createDirectoryIfMissing(dimensions);
-        createDirectoryIfMissing(target.namespaceRoot());
-        return ExactWorldSlotPathPolicy.resolve(levelRoot, worldKey);
-    }
-
-    private static void createDirectoryIfMissing(Path directory) throws IOException {
-        if (Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
-            if (Files.isSymbolicLink(directory) || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
-                throw new IOException("World storage parent is unsafe: " + directory);
-            }
-            return;
-        }
-        Files.createDirectory(directory);
+    private static ExactWorldSlotPathPolicy.Target resolveTarget(WorldSlotKey worldKey) {
+        return ExactWorldSlotPathPolicy.resolve(IrisWorldStorage.levelRoot().toPath(), worldKey);
     }
 
     private Transaction findTransaction(NamespacedKey worldKey) throws IOException {
@@ -510,7 +486,7 @@ public final class PendingWorldReplacementManager implements Listener {
         }
     }
 
-    private static void requireCompatibleEnvironment(SlotKind slotKind, IrisEnvironment environment) {
+    static void requireCompatibleEnvironment(SlotKind slotKind, IrisEnvironment environment) {
         IrisEnvironment expected = switch (slotKind) {
             case VANILLA_OVERWORLD -> IrisEnvironment.NORMAL;
             case VANILLA_NETHER -> IrisEnvironment.NETHER;
@@ -524,62 +500,58 @@ public final class PendingWorldReplacementManager implements Listener {
     }
 
     /**
-     * Captures the primary level context on the main thread at startup. resolveEffectiveSeed
-     * reads this snapshot so staging never blocks on a main-thread hop while holding the
-     * manager monitor — that inversion froze the server for the full 30s hop timeout whenever
-     * another world loaded during staging. The context is stable for the process lifetime:
-     * slot replacements only commit across a restart.
+     * Captures vanilla-slot availability on the main thread at startup so staging never blocks
+     * on a main-thread hop while holding the manager monitor. The context is stable for the
+     * process lifetime because slot replacements only commit across a restart.
      */
     public void captureVanillaLevelContext() {
         try {
             vanillaLevelContext = new VanillaLevelContext(
-                    WorldIdentity.resolve(NamespacedKey.minecraft("overworld"))
-                            .orElseThrow(() -> new IllegalStateException("The configured primary world is not loaded."))
-                            .getSeed(),
                     Iris.instance.getServer().getAllowNether(),
                     Iris.instance.getServer().getAllowEnd()
             );
         } catch (Throwable failure) {
-            Iris.debug("Could not capture the primary level context yet: " + detail(failure));
+            Iris.debug("Could not capture vanilla-slot availability yet: " + detail(failure));
         }
     }
 
-    private static long resolveEffectiveSeed(SlotKind slotKind, long requestedSeed) throws IOException {
-        if (slotKind == SlotKind.IRIS_MANAGED) {
-            return requestedSeed;
+    private static void requireVanillaSlotEnabled(SlotKind slotKind) throws IOException {
+        if (slotKind != SlotKind.VANILLA_NETHER && slotKind != SlotKind.VANILLA_END) {
+            return;
         }
         VanillaLevelContext context = vanillaLevelContext;
         if (context == null) {
             context = resolveVanillaLevelContext();
             vanillaLevelContext = context;
         }
-        if (slotKind == SlotKind.VANILLA_NETHER && !context.allowNether()) {
+        requireVanillaSlotEnabled(slotKind, context.allowNether(), context.allowEnd());
+    }
+
+    static void requireVanillaSlotEnabled(SlotKind slotKind, boolean allowNether, boolean allowEnd)
+            throws IOException {
+        if (slotKind == SlotKind.VANILLA_NETHER && !allowNether) {
             throw new IOException("allow-nether must be true before the vanilla Nether can be replaced.");
         }
-        if (slotKind == SlotKind.VANILLA_END && !context.allowEnd()) {
+        if (slotKind == SlotKind.VANILLA_END && !allowEnd) {
             throw new IOException("Bukkit allow-end must be true before the vanilla End can be replaced.");
         }
-        return context.seed();
     }
 
     private static VanillaLevelContext resolveVanillaLevelContext() throws IOException {
         CompletableFuture<VanillaLevelContext> contextFuture = J.sfut(() -> new VanillaLevelContext(
-                WorldIdentity.resolve(NamespacedKey.minecraft("overworld"))
-                        .orElseThrow(() -> new IllegalStateException("The configured primary world is not loaded."))
-                        .getSeed(),
                 Iris.instance.getServer().getAllowNether(),
                 Iris.instance.getServer().getAllowEnd()
         ));
         if (contextFuture == null) {
-            throw new IOException("Could not schedule primary level-seed resolution.");
+            throw new IOException("Could not schedule vanilla-slot availability resolution.");
         }
         try {
             return contextFuture.get(30L, TimeUnit.SECONDS);
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
-            throw new IOException("Primary level-seed resolution was interrupted.", failure);
+            throw new IOException("Vanilla-slot availability resolution was interrupted.", failure);
         } catch (ExecutionException | TimeoutException failure) {
-            throw new IOException("Could not resolve the authoritative primary level seed.", failure);
+            throw new IOException("Could not resolve vanilla-slot availability.", failure);
         }
     }
 
@@ -628,7 +600,7 @@ public final class PendingWorldReplacementManager implements Listener {
 
     private static volatile VanillaLevelContext vanillaLevelContext;
 
-    private record VanillaLevelContext(long seed, boolean allowNether, boolean allowEnd) {
+    private record VanillaLevelContext(boolean allowNether, boolean allowEnd) {
     }
 
     private static final class RestartBoundaryRequired extends IOException {

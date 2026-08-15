@@ -123,6 +123,8 @@ nmsBindings.each { key, value ->
         tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
             systemProperty('iris.nmsChunkGeneratorSource',
                 rootProject.file("adapters/bukkit/nms/${key}/src/main/java/art/arcane/iris/core/nms/${key}/IrisChunkGenerator.java").absolutePath)
+            systemProperty('iris.nmsBindingSource',
+                rootProject.file("adapters/bukkit/nms/${key}/src/main/java/art/arcane/iris/core/nms/${key}/NMSBinding.java").absolutePath)
             systemProperty('iris.nativeStructurePostProcessorSource',
                 rootProject.file('adapters/minecraft-common/src/main/java/art/arcane/iris/nativegen/NativeStructurePostProcessor.java').absolutePath)
             systemProperty('iris.nativeStructureStartInjectorSource',

@@ -1,5 +1,6 @@
 package art.arcane.iris.core.lifecycle;
 
+import art.arcane.iris.core.WorldSlotKey;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.Rule;
 import org.junit.Test;
@@ -13,6 +14,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -25,6 +27,112 @@ import static org.junit.Assume.assumeTrue;
 public class BukkitWorldConfigurationTest {
     @Rule
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+    @Test
+    public void readsOnlyCanonicalCustomIrisGeneratorBindings() throws Exception {
+        File configuration = temporaryFolder.newFile("binding-bukkit.yml");
+        Path levelRoot = temporaryFolder.newFolder("binding-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/moon"));
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world.generator", "Iris:overworld");
+        yaml.set("worlds.world_nether.generator", "Iris:underworld");
+        yaml.set("worlds.world_the_end.generator", "Iris:theend");
+        yaml.set("worlds.moon.generator", "Iris:noncanonical_short_name");
+        yaml.set("worlds.world_iris_moon.generator", "Iris:moon_pack");
+        yaml.set("worlds.world_iris_other.generator", "Other:generator");
+        yaml.save(configuration);
+
+        List<BukkitWorldConfiguration.IrisGeneratorBinding> bindings =
+                BukkitWorldConfiguration.readIrisGeneratorBindings(configuration, "world", levelRoot);
+
+        assertEquals(List.of(new BukkitWorldConfiguration.IrisGeneratorBinding(
+                "world_iris_moon",
+                new WorldSlotKey("iris", "moon"),
+                "moon_pack"
+        )), bindings);
+    }
+
+    @Test
+    public void rejectsCustomIrisBindingWithoutSelectedDimension() throws Exception {
+        File configuration = temporaryFolder.newFile("missing-binding-dimension.yml");
+        Path levelRoot = temporaryFolder.newFolder("missing-binding-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/moon"));
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_moon.generator", "Iris");
+        yaml.save(configuration);
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> BukkitWorldConfiguration.readIrisGeneratorBindings(configuration, "world", levelRoot)
+        );
+
+        assertTrue(failure.getMessage().contains("must select a dimension"));
+    }
+
+    @Test
+    public void ignoresNoncanonicalShortNamesThatCollapseOntoCanonicalIrisKeys() throws Exception {
+        File configuration = temporaryFolder.newFile("ambiguous-binding-name.yml");
+        Path levelRoot = temporaryFolder.newFolder("ambiguous-binding-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/moon"));
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.moon.generator", "Iris:moon_pack");
+        yaml.set("worlds.world_iris_moon.generator", "Iris:moon_pack");
+        yaml.save(configuration);
+
+        assertEquals(List.of(new BukkitWorldConfiguration.IrisGeneratorBinding(
+                "world_iris_moon",
+                new WorldSlotKey("iris", "moon"),
+                "moon_pack"
+        )), BukkitWorldConfiguration.readIrisGeneratorBindings(configuration, "world", levelRoot));
+    }
+
+    @Test
+    public void admitsOnlyExistingCustomWorldDirectoriesUnderSelectedLevelRoot() throws Exception {
+        File configuration = temporaryFolder.newFile("root-admission-bukkit.yml");
+        Path selectedRoot = temporaryFolder.newFolder("selected-level-root").toPath();
+        Path otherRoot = temporaryFolder.newFolder("other-level-root").toPath();
+        Files.createDirectories(selectedRoot.resolve("dimensions/iris/moon"));
+        Files.createDirectories(otherRoot.resolve("dimensions/iris/moon"));
+        Files.createDirectories(selectedRoot.resolve("dimensions/iris"));
+        Files.writeString(selectedRoot.resolve("dimensions/iris/file"), "not a world directory");
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_moon.generator", "Iris:moon_pack");
+        yaml.set("worlds.other_iris_moon.generator", "Iris:other_pack");
+        yaml.set("worlds.world_iris_missing.generator", "Iris:missing_pack");
+        yaml.set("worlds.world_iris_file.generator", "Iris:file_pack");
+        yaml.save(configuration);
+
+        List<BukkitWorldConfiguration.IrisGeneratorBinding> bindings =
+                BukkitWorldConfiguration.readIrisGeneratorBindings(configuration, "world", selectedRoot);
+
+        assertEquals(List.of(new BukkitWorldConfiguration.IrisGeneratorBinding(
+                "world_iris_moon",
+                new WorldSlotKey("iris", "moon"),
+                "moon_pack"
+        )), bindings);
+    }
+
+    @Test
+    public void excludesSymlinkedCustomWorldTarget() throws Exception {
+        File configuration = temporaryFolder.newFile("symlink-admission-bukkit.yml");
+        Path levelRoot = temporaryFolder.newFolder("symlink-level-root").toPath();
+        Path namespaceRoot = Files.createDirectories(levelRoot.resolve("dimensions/iris"));
+        Path outside = temporaryFolder.newFolder("symlink-world-outside").toPath();
+        try {
+            Files.createSymbolicLink(namespaceRoot.resolve("moon"), outside);
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            assumeNoException(exception);
+        }
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_moon.generator", "Iris:moon_pack");
+        yaml.save(configuration);
+
+        assertTrue(BukkitWorldConfiguration.readIrisGeneratorBindings(
+                configuration,
+                "world",
+                levelRoot
+        ).isEmpty());
+    }
 
     @Test
     public void registersAndRemovesWorldAtomically() throws Exception {

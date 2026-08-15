@@ -239,6 +239,57 @@ public class WorldReplacementBootstrapTest {
     }
 
     @Test
+    public void publishesTwoDistinctArmedReplacementsInOneColdReconcile() throws Exception {
+        Transaction nether = stagedTransaction(Phase.ARMED, true, "nether-original");
+        configureReplacement(nether);
+
+        WorldSlotKey endKey = WorldSlotKey.minecraft("the_end");
+        ExactWorldSlotPathPolicy.Target endTarget = ExactWorldSlotPathPolicy.resolve(levelRoot, endKey);
+        WorldGeneratorSnapshot endOriginal = BukkitWorldConfiguration.snapshot(
+                bukkitConfiguration.toFile(),
+                "world_the_end"
+        );
+        UUID endId = UUID.randomUUID();
+        ReplacementPaths endPaths = WorldReplacementFilesystem.paths(endTarget, endId);
+        writeOriginalTarget(endPaths, "end-original");
+        Path endDimension = endPaths.stage().resolve("iris/pack/dimensions/theend.json");
+        Files.createDirectories(endDimension.getParent());
+        Files.writeString(endDimension, "end-replacement");
+        String endFingerprint = WorldReplacementFilesystem.fingerprintPack(
+                endPaths.stage().resolve("iris/pack")
+        );
+        Transaction end = new Transaction(
+                endId,
+                endKey,
+                "world_the_end",
+                endTarget.levelRoot(),
+                "theend",
+                SEED,
+                endFingerprint,
+                endOriginal,
+                true,
+                Phase.ARMED
+        );
+        WorldReplacementJournal.write(dataDirectory, end);
+        configureReplacement(end);
+
+        WorldReplacementBootstrap.ReconcileResult result = reconcile();
+
+        assertEquals(2, result.transactions());
+        assertEquals(2, result.published());
+        assertEquals(0, result.rolledBack());
+        assertEquals(0, result.retained());
+        assertEquals("replacement", replacementContent(target.worldDirectory()));
+        assertEquals("end-replacement", Files.readString(endTarget.worldDirectory()
+                .resolve("iris/pack/dimensions/theend.json")));
+        assertEquals("nether-original", Files.readString(backup(nether).resolve("original.txt")));
+        assertEquals("end-original", Files.readString(endPaths.backup().resolve("original.txt")));
+        List<Transaction> published = WorldReplacementJournal.load(dataDirectory, levelRoot);
+        assertEquals(2, published.size());
+        assertTrue(published.stream().allMatch(transaction -> transaction.phase() == Phase.PUBLISHED));
+    }
+
+    @Test
     public void roundTripsBlankAndWhitespaceOriginalGenerators() throws Exception {
         for (String generator : List.of("", "   ")) {
             WorldGeneratorSnapshot original = new WorldGeneratorSnapshot(
@@ -260,24 +311,15 @@ public class WorldReplacementBootstrapTest {
     }
 
     @Test
-    public void rejectsIrisWorldKeysThatCollideWithConfiguredVanillaAliases() {
-        WorldGeneratorSnapshot original = new WorldGeneratorSnapshot(false, false, false, null, false, null);
-        for (String alias : List.of("world", "world_nether", "world_the_end")) {
-            Transaction transaction = new Transaction(
-                    UUID.randomUUID(),
-                    new WorldSlotKey("iris", alias),
-                    alias,
-                    levelRoot,
-                    "underworld",
-                    SEED,
-                    "0".repeat(64),
-                    original,
-                    false,
-                    Phase.ARMED
-            );
-
-            assertThrows(IOException.class, () -> WorldReplacementJournal.resolveTarget(transaction, levelRoot));
-        }
+    public void usesPaperStartupAliasesForIrisReplacementJournals() {
+        assertEquals(
+                "world_iris_moon",
+                WorldReplacementJournal.logicalWorldName(levelRoot, new WorldSlotKey("iris", "moon"))
+        );
+        assertEquals(
+                "world_iris_world_nether",
+                WorldReplacementJournal.logicalWorldName(levelRoot, new WorldSlotKey("iris", "world_nether"))
+        );
     }
 
     @Test

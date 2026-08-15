@@ -1,6 +1,7 @@
 package art.arcane.iris.core;
 
 import art.arcane.iris.BuildConstants;
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.IrisGeneratorBinding;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.core.nms.datapack.DataVersion;
@@ -21,6 +22,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -37,9 +39,29 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.stream.Stream;
 
 public final class IrisDatapackCompiler {
-    private static final int INPUT_FINGERPRINT_SCHEMA = 1;
+    private static final int INPUT_FINGERPRINT_SCHEMA = 2;
     private static final int WORLD_PACK_SCAN_DEPTH = 8;
     private static final List<String> INPUT_DIRECTORIES = List.of("dimensions", "biomes", "snippet");
+    private static final String FLAT_VOID_LEVEL_STEM = """
+            {
+              "type": "%s",
+              "generator": {
+                "type": "minecraft:flat",
+                "settings": {
+                  "biome": "minecraft:the_void",
+                  "features": false,
+                  "lakes": false,
+                  "layers": [
+                    {
+                      "block": "minecraft:air",
+                      "height": 1
+                    }
+                  ],
+                  "structure_overrides": []
+                }
+              }
+            }
+            """;
 
     private IrisDatapackCompiler() {
     }
@@ -65,28 +87,37 @@ public final class IrisDatapackCompiler {
 
     public static String computeInputFingerprint(
             List<File> packRoots,
+            List<IrisGeneratorBinding> bindings,
             IDataFixer fixer,
             boolean adjustVanillaHeight
     ) throws IOException {
         Objects.requireNonNull(fixer, "fixer");
         return computeInputFingerprint(
                 packRoots,
+                bindings,
                 adjustVanillaHeight,
                 compilerIdentity(fixer));
     }
 
     static String computeInputFingerprint(
             List<File> packRoots,
+            List<IrisGeneratorBinding> bindings,
             boolean adjustVanillaHeight,
             String compilerIdentity
     ) throws IOException {
         Objects.requireNonNull(packRoots, "packRoots");
         Objects.requireNonNull(compilerIdentity, "compilerIdentity");
+        List<IrisGeneratorBinding> normalizedBindings = normalizeBindings(bindings);
         MessageDigest digest = sha256();
         updateDigestString(digest, "iris-datapack-compiler-input");
         updateDigestInt(digest, INPUT_FINGERPRINT_SCHEMA);
         updateDigestString(digest, compilerIdentity);
         digest.update((byte) (adjustVanillaHeight ? 1 : 0));
+        updateDigestInt(digest, normalizedBindings.size());
+        for (IrisGeneratorBinding binding : normalizedBindings) {
+            updateDigestString(digest, binding.worldKey().toString());
+            updateDigestString(digest, binding.dimension());
+        }
         updateDigestInt(digest, packRoots.size());
 
         for (int index = 0; index < packRoots.size(); index++) {
@@ -139,12 +170,14 @@ public final class IrisDatapackCompiler {
     public static CompilationResult compile(
             List<File> packRoots,
             KList<File> datapackRoots,
+            List<IrisGeneratorBinding> bindings,
             IDataFixer fixer,
             boolean adjustVanillaHeight
     ) throws IOException {
         Objects.requireNonNull(packRoots, "packRoots");
         Objects.requireNonNull(datapackRoots, "datapackRoots");
         Objects.requireNonNull(fixer, "fixer");
+        List<IrisGeneratorBinding> normalizedBindings = normalizeBindings(bindings);
         if (datapackRoots.isEmpty()) {
             throw new IOException("No Iris datapack output roots were provided");
         }
@@ -154,6 +187,7 @@ public final class IrisDatapackCompiler {
 
         DimensionHeight height = new DimensionHeight(fixer);
         Map<String, KSet<String>> biomes = new LinkedHashMap<>();
+        Map<String, List<DimensionCandidate>> dimensions = new LinkedHashMap<>();
         int packCount = 0;
         int dimensionCount = 0;
         for (File packRoot : packRoots) {
@@ -177,6 +211,12 @@ public final class IrisDatapackCompiler {
                     }
                     IrisLogging.debug("  Compiling Dimension " + dimension.getLoadFile().getPath());
                     height.merge(dimension);
+                    dimensions.computeIfAbsent(dimension.getLoadKey(), ignored -> new ArrayList<>())
+                            .add(new DimensionCandidate(
+                                    dimension,
+                                    packRoot.toPath().toAbsolutePath().normalize(),
+                                    dimension.getDimensionType().toJson(fixer)
+                            ));
                     KSet<String> seenBiomes = biomes.computeIfAbsent(dimension.getLoadKey(), ignored -> new KSet<>());
                     dimension.installBiomes(fixer, dimension::getLoader, datapackRoots, seenBiomes);
                     dimension.installDimensionType(fixer, datapackRoots);
@@ -192,8 +232,78 @@ public final class IrisDatapackCompiler {
         }
 
         IrisDimension.writeShared(datapackRoots, height, adjustVanillaHeight);
-        validateOutputs(datapackRoots, dimensionCount);
+        installLevelStemBindings(normalizedBindings, dimensions, datapackRoots);
+        validateOutputs(datapackRoots, dimensionCount, normalizedBindings.size());
         return new CompilationResult(packCount, dimensionCount, countBiomes(biomes));
+    }
+
+    private static void installLevelStemBindings(
+            List<IrisGeneratorBinding> bindings,
+            Map<String, List<DimensionCandidate>> dimensions,
+            Collection<File> datapackRoots
+    ) throws IOException {
+        for (IrisGeneratorBinding binding : bindings) {
+            DimensionCandidate selected = resolveDimension(binding, dimensions.get(binding.dimension()));
+            String typeKey = "iris:" + selected.dimension().getDimensionTypeKey();
+            String levelStem = FLAT_VOID_LEVEL_STEM.formatted(typeKey);
+            for (File datapackRoot : datapackRoots) {
+                Path output = datapackRoot.toPath()
+                        .toAbsolutePath()
+                        .normalize()
+                        .resolve("data/iris/dimension")
+                        .resolve(binding.worldKey().key() + ".json");
+                Files.createDirectories(output.getParent());
+                Files.writeString(
+                        output,
+                        levelStem,
+                        StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE
+                );
+            }
+        }
+    }
+
+    private static DimensionCandidate resolveDimension(
+            IrisGeneratorBinding binding,
+            List<DimensionCandidate> candidates
+    ) throws IOException {
+        if (candidates == null || candidates.isEmpty()) {
+            throw new IOException("Iris world " + binding.worldKey() + " selects missing dimension \""
+                    + binding.dimension() + "\".");
+        }
+        DimensionCandidate selected = candidates.getFirst();
+        for (int index = 1; index < candidates.size(); index++) {
+            DimensionCandidate candidate = candidates.get(index);
+            if (!selected.dimensionTypeJson().equals(candidate.dimensionTypeJson())) {
+                throw new IOException("Iris world " + binding.worldKey() + " selects ambiguous dimension \""
+                        + binding.dimension() + "\" from " + selected.packRoot() + " and "
+                        + candidate.packRoot() + ".");
+            }
+        }
+        return selected;
+    }
+
+    private static List<IrisGeneratorBinding> normalizeBindings(List<IrisGeneratorBinding> bindings)
+            throws IOException {
+        List<IrisGeneratorBinding> requiredBindings = List.copyOf(
+                Objects.requireNonNull(bindings, "bindings")
+        );
+        Map<WorldSlotKey, IrisGeneratorBinding> byWorld = new LinkedHashMap<>();
+        for (IrisGeneratorBinding binding : requiredBindings) {
+            IrisGeneratorBinding requiredBinding = Objects.requireNonNull(binding, "binding");
+            IrisGeneratorBinding previous = byWorld.putIfAbsent(
+                    requiredBinding.worldKey(),
+                    requiredBinding
+            );
+            if (previous != null) {
+                throw new IOException("Multiple Iris LevelStem bindings target "
+                        + requiredBinding.worldKey() + ".");
+            }
+        }
+        ArrayList<IrisGeneratorBinding> normalized = new ArrayList<>(byWorld.values());
+        normalized.sort(Comparator.comparing(binding -> binding.worldKey().toString()));
+        return List.copyOf(normalized);
     }
 
     private static void collectInstalledPackRoots(
@@ -363,7 +473,11 @@ public final class IrisDatapackCompiler {
         }
     }
 
-    private static void validateOutputs(Collection<File> datapackRoots, int dimensionCount) throws IOException {
+    private static void validateOutputs(
+            Collection<File> datapackRoots,
+            int dimensionCount,
+            int levelStemCount
+    ) throws IOException {
         for (File datapackRoot : datapackRoots) {
             Path root = datapackRoot.toPath();
             if (!Files.isRegularFile(root.resolve("pack.mcmeta"))) {
@@ -371,6 +485,9 @@ public final class IrisDatapackCompiler {
             }
             if (dimensionCount > 0 && !Files.isDirectory(root.resolve("data/iris/dimension_type"))) {
                 throw new IOException("Iris dimension types were not generated at " + root);
+            }
+            if (levelStemCount > 0 && !Files.isDirectory(root.resolve("data/iris/dimension"))) {
+                throw new IOException("Iris LevelStem bindings were not generated at " + root);
             }
         }
     }
@@ -387,6 +504,13 @@ public final class IrisDatapackCompiler {
     }
 
     private record CompilerInputEntry(Path source, String relativePath) {
+    }
+
+    private record DimensionCandidate(
+            IrisDimension dimension,
+            Path packRoot,
+            String dimensionTypeJson
+    ) {
     }
 
     public static final class DimensionHeight {

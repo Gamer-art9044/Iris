@@ -2,6 +2,7 @@ package art.arcane.iris.core.pack;
 
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -42,6 +43,22 @@ public final class AtomicDirectoryPublisher {
             }
             throw failure;
         }
+    }
+
+    public static Publication publishAbsent(Path stagedDirectory, Path targetDirectory) throws IOException {
+        Path staged = Objects.requireNonNull(stagedDirectory, "stagedDirectory").toAbsolutePath().normalize();
+        Path target = Objects.requireNonNull(targetDirectory, "targetDirectory").toAbsolutePath().normalize();
+        if (!Files.isDirectory(staged) || Files.isSymbolicLink(staged)) {
+            throw new IOException("Staged directory is missing or unsafe: " + staged);
+        }
+        if (!Objects.equals(staged.getParent(), target.getParent())) {
+            throw new IOException("Staged and target directories must have the same parent.");
+        }
+        if (Files.exists(target) || Files.isSymbolicLink(target)) {
+            throw new FileAlreadyExistsException("Publication target already exists: " + target);
+        }
+        move(staged, target);
+        return new Publication(target, null);
     }
 
     private static void move(Path source, Path target) throws IOException {

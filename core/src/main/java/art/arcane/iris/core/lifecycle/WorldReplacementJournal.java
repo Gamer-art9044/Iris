@@ -1,6 +1,7 @@
 package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.ExactWorldSlotPathPolicy;
+import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.WorldSlotKey;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.WorldGeneratorSnapshot;
 
@@ -152,15 +153,7 @@ public final class WorldReplacementJournal {
         }
         String levelName = fileName.toString();
         if ("iris".equals(requiredWorldKey.namespace())) {
-            String logicalName = requiredWorldKey.key();
-            if (logicalName.equals(levelName)
-                    || logicalName.equals(levelName + "_nether")
-                    || logicalName.equals(levelName + "_the_end")) {
-                throw new IllegalArgumentException(
-                        "An Iris-managed world cannot use a configured vanilla world alias."
-                );
-            }
-            return logicalName;
+            return IrisWorldStorage.configuredWorldName(requiredWorldKey, levelName);
         }
         if (WorldSlotKey.minecraft("overworld").equals(requiredWorldKey)) {
             return levelName;

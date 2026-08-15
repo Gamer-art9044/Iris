@@ -1,6 +1,7 @@
 package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.WorldRemovalPathPolicy;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -18,6 +19,7 @@ import java.util.function.BooleanSupplier;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -110,6 +112,34 @@ public class IrisWorldRemovalServiceTest {
         assertTrue(result.deletionDeferred());
         assertEquals(quarantine, result.quarantineDirectory());
         assertTrue(result.registryChanged());
+    }
+
+    @Test
+    public void bukkitUnregistrationUsesCanonicalPaperStartupName() throws Exception {
+        Path levelRoot = temporaryFolder.newFolder("world").toPath();
+        WorldRemovalPathPolicy.Target target = WorldRemovalPathPolicy.resolve("moon", "world", levelRoot);
+
+        assertEquals(
+                "world_iris_moon",
+                IrisWorldRemovalService.bukkitConfigurationWorldName(target)
+        );
+    }
+
+    @Test
+    public void diskInspectionReadsOnlyCanonicalPaperStartupSection() throws Exception {
+        Path levelRoot = temporaryFolder.newFolder("inspection-world").toPath();
+        WorldRemovalPathPolicy.Target target = WorldRemovalPathPolicy.resolve(
+                "moon",
+                "inspection-world",
+                levelRoot
+        );
+        YamlConfiguration configuration = new YamlConfiguration();
+        configuration.set("worlds.moon.generator", "Iris:noncanonical");
+
+        assertNull(IrisWorldRemovalService.bukkitGenerator(configuration, target));
+
+        configuration.set("worlds.inspection-world_iris_moon.generator", "Iris:overworld");
+        assertEquals("Iris:overworld", IrisWorldRemovalService.bukkitGenerator(configuration, target));
     }
 
     @Test

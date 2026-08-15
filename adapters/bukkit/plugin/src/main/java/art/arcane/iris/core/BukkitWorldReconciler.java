@@ -89,14 +89,17 @@ public final class BukkitWorldReconciler {
 
         DimensionResolution dimensionResolution;
         Long configuredSeed;
+        String configuredWorldName;
         try {
+            configuredWorldName = backend.configuredWorldName(worldKey);
             dimensionResolution = backend.resolveDimension(worldKey);
             configuredSeed = dimensionResolution.succeeded()
-                    ? backend.configuredSeed(IrisWorldStorage.logicalName(worldKey))
+                    ? backend.configuredSeed(configuredWorldName)
                     : null;
         } catch (Throwable failure) {
             dimensionResolution = DimensionResolution.failed(failure);
             configuredSeed = null;
+            configuredWorldName = IrisWorldStorage.logicalName(worldKey);
         }
         if (!dimensionResolution.succeeded()) {
             lease.close();
@@ -106,6 +109,7 @@ public final class BukkitWorldReconciler {
         }
         return loadWithLease(
                 configurationFile,
+                configuredWorldName,
                 worldKey,
                 dimensionResolution.dimension(),
                 configuredSeed,
@@ -137,7 +141,7 @@ public final class BukkitWorldReconciler {
             }
             NamespacedKey worldKey;
             try {
-                worldKey = IrisWorldStorage.keyFromName(worldName);
+                worldKey = backend.worldKeyFromConfiguration(worldName);
             } catch (Throwable failure) {
                 chain = chain.thenApply(results -> {
                     results.add(LoadResult.validationFailure(worldName, failure));
@@ -158,6 +162,7 @@ public final class BukkitWorldReconciler {
             }
             chain = chain.thenCompose(results -> loadConfiguredWorld(
                             ServerProperties.BUKKIT_YML,
+                            worldName,
                             worldKey,
                             dimension,
                             seed)
@@ -176,6 +181,7 @@ public final class BukkitWorldReconciler {
 
     private CompletableFuture<LoadResult> loadConfiguredWorld(
             File configurationFile,
+            String configuredWorldName,
             NamespacedKey worldKey,
             String dimension,
             Long seed
@@ -187,7 +193,7 @@ public final class BukkitWorldReconciler {
             return CompletableFuture.completedFuture(LoadResult.busy(worldKey, failure));
         }
 
-        return loadWithLease(configurationFile, worldKey, dimension, seed, lease);
+        return loadWithLease(configurationFile, configuredWorldName, worldKey, dimension, seed, lease);
     }
 
     private LifecycleOperationCoordinator.Lease acquireWorldLoad(NamespacedKey worldKey) {
@@ -199,6 +205,7 @@ public final class BukkitWorldReconciler {
 
     private CompletableFuture<LoadResult> loadWithLease(
             File configurationFile,
+            String configuredWorldName,
             NamespacedKey worldKey,
             String dimension,
             Long seed,
@@ -214,11 +221,10 @@ public final class BukkitWorldReconciler {
         }
 
         BukkitWorldConfiguration.Registration registration;
-        String worldName = IrisWorldStorage.logicalName(worldKey);
         try {
             registration = BukkitWorldConfiguration.register(
                     configurationFile,
-                    worldName,
+                    configuredWorldName,
                     dimension,
                     seed);
         } catch (Throwable failure) {
@@ -250,7 +256,7 @@ public final class BukkitWorldReconciler {
                     try {
                         boolean rolledBack = BukkitWorldConfiguration.removeIfMatching(
                                 configurationFile,
-                                worldName,
+                                configuredWorldName,
                                 dimension,
                                 seed);
                         return new LoadResult(settled, registration, true, rolledBack, null);
@@ -425,6 +431,10 @@ public final class BukkitWorldReconciler {
         Map<String, String> configuredWorlds();
 
         Long configuredSeed(String worldName);
+
+        String configuredWorldName(NamespacedKey worldKey);
+
+        NamespacedKey worldKeyFromConfiguration(String configuredWorldName);
 
         Optional<World> loadedWorld(NamespacedKey worldKey);
 
@@ -665,6 +675,19 @@ public final class BukkitWorldReconciler {
         @Override
         public Long configuredSeed(String worldName) {
             return IrisWorlds.readBukkitWorldSeed(worldName);
+        }
+
+        @Override
+        public String configuredWorldName(NamespacedKey worldKey) {
+            return IrisWorldStorage.configuredWorldName(worldKey, IrisWorldStorage.levelRoot().getName());
+        }
+
+        @Override
+        public NamespacedKey worldKeyFromConfiguration(String configuredWorldName) {
+            return IrisWorldStorage.keyFromConfiguredWorldName(
+                    configuredWorldName,
+                    IrisWorldStorage.levelRoot().getName()
+            );
         }
 
         @Override

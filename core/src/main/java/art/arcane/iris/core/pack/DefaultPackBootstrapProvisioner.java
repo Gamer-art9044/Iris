@@ -2,6 +2,8 @@ package art.arcane.iris.core.pack;
 
 import art.arcane.iris.core.IrisDatapackCompiler;
 import art.arcane.iris.core.lifecycle.BukkitStartupPaths;
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.IrisGeneratorBinding;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.volmlib.util.collection.KList;
@@ -45,7 +47,7 @@ import java.util.zip.ZipInputStream;
 public final class DefaultPackBootstrapProvisioner {
     private static final List<PackSpec> DEFAULT_PACKS = List.of();
     private static final String WORLD_DATAPACK_DIRECTORY = "iris";
-    private static final int MARKER_SCHEMA = 5;
+    private static final int MARKER_SCHEMA = 6;
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_ARCHIVE_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_EXPANDED_BYTES = 2L * 1024L * 1024L * 1024L;
@@ -71,13 +73,20 @@ public final class DefaultPackBootstrapProvisioner {
     ) throws IOException {
         Objects.requireNonNull(dataDirectory, "dataDirectory");
         Objects.requireNonNull(feedback, "feedback");
-        Path levelRoot = Objects.requireNonNull(startupPaths, "startupPaths").levelRoot();
+        BukkitStartupPaths requiredStartupPaths = Objects.requireNonNull(startupPaths, "startupPaths");
+        Path levelRoot = requiredStartupPaths.levelRoot();
+        List<IrisGeneratorBinding> bindings = BukkitWorldConfiguration.readIrisGeneratorBindings(
+                requiredStartupPaths.bukkitConfiguration().toFile(),
+                levelId(levelRoot),
+                requiredStartupPaths.levelRoot()
+        );
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.ALWAYS)
                 .build();
         ProvisionOptions options = new ProvisionOptions(
                 DEFAULT_PACKS,
+                bindings,
                 client,
                 Clock.systemUTC(),
                 Duration.ofMinutes(30),
@@ -95,20 +104,24 @@ public final class DefaultPackBootstrapProvisioner {
             return false;
         }
         try {
-            return isProvisioned(
-                    dataDirectory,
-                    BukkitStartupPaths.resolveCurrent().levelRoot()
+            BukkitStartupPaths startupPaths = BukkitStartupPaths.resolveCurrent();
+            List<IrisGeneratorBinding> bindings = BukkitWorldConfiguration.readIrisGeneratorBindings(
+                    startupPaths.bukkitConfiguration().toFile(),
+                    levelId(startupPaths.levelRoot()),
+                    startupPaths.levelRoot()
             );
+            return isProvisioned(dataDirectory, startupPaths.levelRoot(), DEFAULT_PACKS, bindings);
         } catch (IOException | RuntimeException exception) {
             return false;
         }
     }
 
-    static boolean isProvisioned(Path dataDirectory, Path levelRoot) {
-        return isProvisioned(dataDirectory, levelRoot, DEFAULT_PACKS);
-    }
-
-    static boolean isProvisioned(Path dataDirectory, Path levelRoot, List<PackSpec> requiredPacks) {
+    static boolean isProvisioned(
+            Path dataDirectory,
+            Path levelRoot,
+            List<PackSpec> requiredPacks,
+            List<IrisGeneratorBinding> bindings
+    ) {
         try {
             Path normalizedData = dataDirectory.toAbsolutePath().normalize();
             Path normalizedLevel = levelRoot.toAbsolutePath().normalize();
@@ -137,12 +150,19 @@ public final class DefaultPackBootstrapProvisioner {
                     return false;
                 }
             }
+            List<File> packRoots = IrisDatapackCompiler.collectPackRoots(
+                    normalizedData,
+                    normalizedLevel
+            );
             return directoryFingerprint(datapackRoot).equals(marker.getProperty("datapackFingerprint"))
                     && datapackRoot.toString().equals(marker.getProperty("datapackPath"))
-                    && packRootsFingerprint(IrisDatapackCompiler.collectPackRoots(
-                            normalizedData,
-                            normalizedLevel
-                    )).equals(marker.getProperty("aggregateFingerprint"));
+                    && packRootsFingerprint(packRoots).equals(marker.getProperty("aggregateFingerprint"))
+                    && IrisDatapackCompiler.computeInputFingerprint(
+                            packRoots,
+                            bindings,
+                            fixer,
+                            false
+                    ).equals(marker.getProperty("compilerInputFingerprint"));
         } catch (IOException | RuntimeException exception) {
             return false;
         }
@@ -234,10 +254,17 @@ public final class DefaultPackBootstrapProvisioner {
             }
             String compilerIdentity = IrisDatapackCompiler.compilerIdentity(fixer);
             String aggregateFingerprint = packRootsFingerprint(packRoots);
+            String compilerInputFingerprint = IrisDatapackCompiler.computeInputFingerprint(
+                    packRoots,
+                    options.bindings(),
+                    fixer,
+                    false
+            );
             boolean anyPackReplaced = !packPublications.isEmpty();
             boolean rebuildDatapack = anyPackReplaced
                     || !existingDatapack
                     || !aggregateFingerprint.equals(previousMarker.getProperty("aggregateFingerprint"))
+                    || !compilerInputFingerprint.equals(previousMarker.getProperty("compilerInputFingerprint"))
                     || !compilerIdentity.equals(previousMarker.getProperty("compilerIdentity"))
                     || !datapackRoot.toString().equals(previousMarker.getProperty("datapackPath"))
                     || !directoryFingerprint(datapackRoot).equals(previousMarker.getProperty("datapackFingerprint"));
@@ -245,7 +272,7 @@ public final class DefaultPackBootstrapProvisioner {
                 compileContainer = datapacksRoot.resolve("." + WORLD_DATAPACK_DIRECTORY + "-stage-" + UUID.randomUUID());
                 Files.createDirectories(compileContainer);
                 KList<File> outputFolders = new KList<File>().qadd(compileContainer.toFile());
-                IrisDatapackCompiler.compile(packRoots, outputFolders, fixer, false);
+                IrisDatapackCompiler.compile(packRoots, outputFolders, options.bindings(), fixer, false);
                 if (!isDatapackRoot(compileContainer, !packRoots.isEmpty())) {
                     throw new IOException("Canonical Iris datapack compiler produced incomplete output at " + compileContainer);
                 }
@@ -266,6 +293,7 @@ public final class DefaultPackBootstrapProvisioner {
             String finalAggregateFingerprint = packRootsFingerprint(finalPackRoots);
             String finalCompilerInputFingerprint = IrisDatapackCompiler.computeInputFingerprint(
                     finalPackRoots,
+                    options.bindings(),
                     fixer,
                     false);
             String finalDatapackFingerprint = directoryFingerprint(datapackRoot);
@@ -280,6 +308,7 @@ public final class DefaultPackBootstrapProvisioner {
             }
             marker.setProperty("aggregateFingerprint", finalAggregateFingerprint);
             marker.setProperty("compilerIdentity", compilerIdentity);
+            marker.setProperty("compilerInputFingerprint", finalCompilerInputFingerprint);
             marker.setProperty("datapackFingerprint", finalDatapackFingerprint);
             marker.setProperty("datapackPath", datapackRoot.toString());
             marker.setProperty("completedAt", Long.toString(options.clock().millis()));
@@ -765,6 +794,14 @@ public final class DefaultPackBootstrapProvisioner {
         }
     }
 
+    private static String levelId(Path levelRoot) throws IOException {
+        Path fileName = Objects.requireNonNull(levelRoot, "levelRoot").getFileName();
+        if (fileName == null || fileName.toString().isBlank()) {
+            throw new IOException("Configured level root has no Paper startup level id: " + levelRoot);
+        }
+        return fileName.toString();
+    }
+
     private static void deleteQuietly(Path path, Consumer<String> feedback) {
         try {
             delete(path);
@@ -880,6 +917,7 @@ public final class DefaultPackBootstrapProvisioner {
 
     record ProvisionOptions(
             List<PackSpec> packs,
+            List<IrisGeneratorBinding> bindings,
             HttpClient client,
             Clock clock,
             Duration refreshInterval,
@@ -891,6 +929,7 @@ public final class DefaultPackBootstrapProvisioner {
     ) {
         ProvisionOptions {
             packs = List.copyOf(Objects.requireNonNull(packs, "packs"));
+            bindings = List.copyOf(Objects.requireNonNull(bindings, "bindings"));
             Objects.requireNonNull(client, "client");
             Objects.requireNonNull(clock, "clock");
             Objects.requireNonNull(refreshInterval, "refreshInterval");

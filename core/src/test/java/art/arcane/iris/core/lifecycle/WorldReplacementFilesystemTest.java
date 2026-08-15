@@ -17,6 +17,7 @@ import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -67,7 +68,10 @@ public class WorldReplacementFilesystemTest {
                 () -> WorldReplacementFilesystem.requireExistingTarget(paths)
         );
 
-        assertTrue(failure.getMessage().contains("requires an existing exact world slot"));
+        assertEquals(
+                "/iris replace requires an existing exact world slot; use /iris create for a new world.",
+                failure.getMessage()
+        );
         assertFalse(Files.exists(paths.target()));
         assertFalse(Files.exists(paths.stage()));
         assertFalse(Files.exists(paths.backup()));
@@ -92,7 +96,7 @@ public class WorldReplacementFilesystemTest {
     }
 
     @Test
-    public void rejectsUnmigratedRetainedWorldBeforePublication() throws Exception {
+    public void rejectsIncompleteCurrentPaperWorldBeforePublication() throws Exception {
         WorldReplacementFilesystem.ReplacementPaths paths = paths("missing-paper-metadata", TRANSACTION_ID);
         Files.createDirectories(paths.target());
         Files.writeString(paths.target().resolve("original.txt"), "original");
@@ -109,7 +113,7 @@ public class WorldReplacementFilesystemTest {
     }
 
     @Test
-    public void rejectsUnmigratedRetainedWorldAtAdmission() throws Exception {
+    public void rejectsIncompleteCurrentPaperWorldAtAdmission() throws Exception {
         WorldReplacementFilesystem.ReplacementPaths paths = paths("admit-missing-paper-metadata", TRANSACTION_ID);
         Files.createDirectories(paths.target());
         Files.writeString(paths.target().resolve("original.txt"), "original");
@@ -329,6 +333,38 @@ public class WorldReplacementFilesystemTest {
                 IOException.class,
                 () -> WorldReplacementFilesystem.publish(filePaths, false, "0".repeat(64))
         );
+    }
+
+    @Test
+    public void ignoresGeneratedAuthoringMetadataWithoutIgnoringNestedPackContent() throws Exception {
+        Path pack = temporaryFolder.newFolder("generated-metadata").toPath();
+        Path objects = Files.createDirectories(pack.resolve("objects"));
+        Files.writeString(objects.resolve("tree.iob"), "tree");
+        String expected = WorldReplacementFilesystem.fingerprintPack(pack);
+
+        Files.createDirectories(pack.resolve(".iris/schema"));
+        Files.writeString(pack.resolve(".iris/schema/dimensions-schema.json"), "schema");
+        Files.createDirectories(pack.resolve(".idea"));
+        Files.writeString(pack.resolve(".idea/jsonSchemas.xml"), "generated UUIDs");
+        Files.writeString(pack.resolve("pack.code-workspace"), "workspace");
+        Files.writeString(objects.resolve("editor.code-workspace"), "nested workspace");
+
+        assertEquals(expected, WorldReplacementFilesystem.fingerprintPack(pack));
+
+        Path nestedPackContent = Files.createDirectories(objects.resolve(".iris"));
+        Files.writeString(nestedPackContent.resolve("semantic.json"), "pack content");
+
+        assertNotEquals(expected, WorldReplacementFilesystem.fingerprintPack(pack));
+    }
+
+    @Test
+    public void validatesExcludedAuthoringMetadataForUnsafeEntries() throws Exception {
+        Path pack = temporaryFolder.newFolder("unsafe-generated-metadata").toPath();
+        Path metadata = Files.createDirectories(pack.resolve(".iris"));
+        Path outside = temporaryFolder.newFile("outside-generated-metadata.txt").toPath();
+        Files.createSymbolicLink(metadata.resolve("linked.json"), outside);
+
+        assertThrows(IOException.class, () -> WorldReplacementFilesystem.fingerprintPack(pack));
     }
 
     @Test

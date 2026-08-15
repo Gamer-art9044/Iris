@@ -7,6 +7,7 @@ import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.bukkit.NamespacedKey;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -61,6 +62,18 @@ public class IrisWorldGeneratorResolverTest {
         PackValidationResult invalid = PackValidationRegistry.get(packRoot.toPath());
         assertNotNull(invalid);
         assertFalse(invalid.getBlockingErrors().toString(), invalid.isLoadable());
+    }
+
+    @Test
+    public void paperStartupAliasResolvesToCanonicalRuntimeKey() {
+        assertEquals(
+                new NamespacedKey("iris", "moon"),
+                IrisWorldGeneratorResolver.configuredWorldKey("world_iris_moon", "world")
+        );
+        assertEquals(
+                new NamespacedKey("iris", "moon"),
+                IrisWorldGeneratorResolver.configuredWorldKey("moon", "world")
+        );
     }
 
     private static void writeValidPack(Path packRoot) throws Exception {

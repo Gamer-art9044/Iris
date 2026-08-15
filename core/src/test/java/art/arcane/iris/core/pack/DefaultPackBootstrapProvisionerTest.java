@@ -1,5 +1,6 @@
 package art.arcane.iris.core.pack;
 
+import art.arcane.iris.core.lifecycle.BukkitStartupPaths;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.Assume;
@@ -50,6 +51,7 @@ public class DefaultPackBootstrapProvisionerTest {
             Path dataDirectory = root.resolve("plugins/Iris");
             DefaultPackBootstrapProvisioner.ProvisionOptions options = new DefaultPackBootstrapProvisioner.ProvisionOptions(
                     List.of(),
+                    List.of(),
                     HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
                     Clock.fixed(Instant.parse("2026-07-12T12:00:00Z"), ZoneOffset.UTC),
                     Duration.ofHours(1),
@@ -71,7 +73,12 @@ public class DefaultPackBootstrapProvisionerTest {
             assertTrue(result.packRoots().isEmpty());
             assertEquals(0, requests.get());
             assertTrue(Files.isRegularFile(result.datapackRoot().resolve("pack.mcmeta")));
-            assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, List.of()));
+            assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(
+                    dataDirectory,
+                    root,
+                    List.of(),
+                    List.of()
+            ));
         } finally {
             server.stop(0);
             delete(root);
@@ -114,14 +121,24 @@ public class DefaultPackBootstrapProvisionerTest {
             assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("data/overworld/worldgen/biome/bootstrap_biome.json")));
             assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("data/underworld/worldgen/biome/underworld_biome.json")));
             assertFalse(Files.exists(dataDirectory.resolve("bootstrap/datapack")));
-            assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, options.packs()));
+            assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(
+                    dataDirectory,
+                    root,
+                    options.packs(),
+                    options.bindings()
+            ));
             assertTrue(DefaultPackBootstrapProvisioner.wasProvisionedThisStartup());
             Properties marker = loadProperties(dataDirectory.resolve("bootstrap/provisioned.properties"));
             assertEquals("true", marker.getProperty("pack.overworld.managed"));
             assertEquals("true", marker.getProperty("pack.underworld.managed"));
             assertEquals("underworld", marker.getProperty("pack.underworld.requiredDimension"));
             delete(installed.packRoots().get("underworld"));
-            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, options.packs()));
+            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(
+                    dataDirectory,
+                    root,
+                    options.packs(),
+                    options.bindings()
+            ));
         } finally {
             server.stop(0);
             delete(root);
@@ -309,7 +326,12 @@ public class DefaultPackBootstrapProvisionerTest {
             assertTrue(Files.isRegularFile(result.datapackRoot().resolve("data/overworld/worldgen/biome/local_biome.json")));
 
             Files.writeString(target.resolve("biomes/local.json"), biomeJson("changed_biome"), StandardCharsets.UTF_8);
-            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, options.packs()));
+            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(
+                    dataDirectory,
+                    root,
+                    options.packs(),
+                    options.bindings()
+            ));
             DefaultPackBootstrapProvisioner.ProvisionResult updated = DefaultPackBootstrapProvisioner.provision(
                     dataDirectory,
                     ignored -> {
@@ -338,7 +360,12 @@ public class DefaultPackBootstrapProvisionerTest {
             writePack(dataDirectory.resolve("packs/second"), "second", "second_biome");
             writePack(root.resolve("dimensions/example/world/iris/pack"), "world_local", "world_local_biome");
 
-            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(dataDirectory, root, options.packs()));
+            assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(
+                    dataDirectory,
+                    root,
+                    options.packs(),
+                    options.bindings()
+            ));
             DefaultPackBootstrapProvisioner.ProvisionResult updated = DefaultPackBootstrapProvisioner.provision(
                     dataDirectory,
                     ignored -> {
@@ -591,6 +618,56 @@ public class DefaultPackBootstrapProvisionerTest {
         }
     }
 
+    @Test
+    public void effectiveStartupBindingsInstallAndRefreshBootNativeLevelStem() throws Exception {
+        Path serverRoot = Files.createTempDirectory("iris-bootstrap-level-stem");
+        try {
+            Path dataDirectory = serverRoot.resolve("plugins/Iris");
+            Path levelRoot = serverRoot.resolve("levels/primary");
+            Path packRoot = levelRoot.resolve("dimensions/iris/moon/iris/pack");
+            Files.createDirectories(levelRoot);
+            Files.writeString(
+                    serverRoot.resolve("server.properties"),
+                    "level-name=levels/primary\n",
+                    StandardCharsets.UTF_8
+            );
+            writePack(packRoot, "overworld", "overworld_biome");
+            Files.writeString(
+                    packRoot.resolve("dimensions/underworld.json"),
+                    dimensionJson("underworld"),
+                    StandardCharsets.UTF_8
+            );
+            Files.writeString(
+                    serverRoot.resolve("bukkit.yml"),
+                    "worlds:\n  primary_iris_moon:\n    generator: Iris:overworld\n",
+                    StandardCharsets.UTF_8
+            );
+            BukkitStartupPaths startupPaths = BukkitStartupPaths.resolve(serverRoot, new String[0]);
+
+            DefaultPackBootstrapProvisioner.ProvisionResult installed =
+                    DefaultPackBootstrapProvisioner.provision(dataDirectory, ignored -> {
+                    }, startupPaths);
+
+            Path levelStem = installed.datapackRoot().resolve("data/iris/dimension/moon.json");
+            assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.INSTALLED, installed.status());
+            assertTrue(Files.readString(levelStem).contains("\"type\": \"iris:overworld\""));
+
+            Files.writeString(
+                    serverRoot.resolve("bukkit.yml"),
+                    "worlds:\n  primary_iris_moon:\n    generator: Iris:underworld\n",
+                    StandardCharsets.UTF_8
+            );
+            DefaultPackBootstrapProvisioner.ProvisionResult updated =
+                    DefaultPackBootstrapProvisioner.provision(dataDirectory, ignored -> {
+                    }, startupPaths);
+
+            assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UPDATED, updated.status());
+            assertTrue(Files.readString(levelStem).contains("\"type\": \"iris:underworld\""));
+        } finally {
+            delete(serverRoot);
+        }
+    }
+
     private static DefaultPackBootstrapProvisioner.ProvisionOptions options(
             HttpServer server,
             Path serverRoot,
@@ -610,6 +687,7 @@ public class DefaultPackBootstrapProvisionerTest {
                                 "underworld"
                         )
                 ),
+                List.of(),
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
                 Clock.fixed(Instant.parse("2026-07-12T12:00:00Z"), ZoneOffset.UTC),
                 refreshInterval,

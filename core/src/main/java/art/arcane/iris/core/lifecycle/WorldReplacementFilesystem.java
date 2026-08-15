@@ -2,6 +2,7 @@ package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.ExactWorldSlotPathPolicy;
 import art.arcane.iris.core.SnapshotDirectoryTreeDeleter;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,6 +28,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public final class WorldReplacementFilesystem {
+    private static final String CODE_WORKSPACE_SUFFIX = ".code-workspace";
     private static final List<Path> PAPER_WORLD_METADATA = List.of(
             Path.of("data/paper/metadata.dat"),
             Path.of("data/paper/level_overrides.dat"),
@@ -55,15 +57,15 @@ public final class WorldReplacementFilesystem {
         ReplacementPaths requiredPaths = Objects.requireNonNull(paths, "paths");
         State state = inspect(requiredPaths);
         if (!state.targetPresent()) {
-            throw new IOException("overwrite=true requires an existing exact world slot; use ordinary create for a new world.");
+            throw new IOException("/iris replace requires an existing exact world slot; use /iris create for a new world.");
         }
         if (state.stagePresent() || state.backupPresent()) {
             throw new IOException("A replacement artifact already exists for this transaction.");
         }
-        requireMigratedRetainedWorld(requiredPaths.target());
+        requireCurrentPaperWorld(requiredPaths.target());
     }
 
-    public static void requireMigratedRetainedWorld(Path retainedWorld) throws IOException {
+    public static void requireCurrentPaperWorld(Path retainedWorld) throws IOException {
         try {
             requireDirectory(retainedWorld, "retained world");
             requireDirectory(retainedWorld.resolve("data"), "retained world data");
@@ -249,13 +251,15 @@ public final class WorldReplacementFilesystem {
         try (Stream<Path> stream = Files.walk(root)) {
             files = stream
                     .filter(path -> !path.equals(root))
-                    .filter(path -> !containsMetadataSegment(root.relativize(path)))
                     .sorted(Comparator.comparing(path -> root.relativize(path).toString()))
                     .toList();
         }
         for (Path file : files) {
             BasicFileAttributes attributes = requireSafeEntry(file);
             Path relative = root.relativize(file);
+            if (isGeneratedPackMetadata(relative, attributes)) {
+                continue;
+            }
             update(digest, relative.toString().replace(file.getFileSystem().getSeparator(), "/"));
             digest.update((byte) (attributes.isDirectory() ? 1 : 0));
             if (!attributes.isRegularFile()) {
@@ -304,13 +308,10 @@ public final class WorldReplacementFilesystem {
         return fingerprint;
     }
 
-    private static boolean containsMetadataSegment(Path relative) {
-        for (Path component : relative) {
-            if (".iris".equals(component.toString())) {
-                return true;
-            }
-        }
-        return false;
+    private static boolean isGeneratedPackMetadata(Path relative, BasicFileAttributes attributes) {
+        return PackDirectoryResolver.isHiddenName(relative.getName(0).toString())
+                || attributes.isRegularFile()
+                && relative.getFileName().toString().endsWith(CODE_WORKSPACE_SUFFIX);
     }
 
     private static BasicFileAttributes requireSafeEntry(Path path) throws IOException {
@@ -347,7 +348,7 @@ public final class WorldReplacementFilesystem {
     }
 
     private static void preservePaperWorldMetadata(Path retainedWorld, Path replacementWorld) throws IOException {
-        requireMigratedRetainedWorld(retainedWorld);
+        requireCurrentPaperWorld(retainedWorld);
         requireDirectory(replacementWorld, "replacement world");
         ensureDirectory(replacementWorld.resolve("data"), "replacement world data");
         ensureDirectory(replacementWorld.resolve("data/paper"), "replacement Paper data");

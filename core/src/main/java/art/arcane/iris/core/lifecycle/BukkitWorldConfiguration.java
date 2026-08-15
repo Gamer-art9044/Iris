@@ -1,5 +1,8 @@
 package art.arcane.iris.core.lifecycle;
 
+import art.arcane.iris.core.IrisWorldStorage;
+import art.arcane.iris.core.WorldSlotKey;
+import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -15,6 +18,10 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Predicate;
 
@@ -88,6 +95,95 @@ public final class BukkitWorldConfiguration {
                 throw new IOException("Configured world container is empty");
             }
             return value;
+        }
+    }
+
+    public static List<IrisGeneratorBinding> readIrisGeneratorBindings(
+            File configurationFile,
+            String levelName,
+            Path levelRoot
+    ) throws IOException {
+        File requiredConfigurationFile = Objects.requireNonNull(configurationFile, "configurationFile");
+        String requiredLevelName = requireName(levelName, "Level name");
+        Path requiredLevelRoot = Objects.requireNonNull(levelRoot, "levelRoot")
+                .toAbsolutePath()
+                .normalize();
+        Path configurationPath = requiredConfigurationFile.toPath();
+        if (!Files.exists(configurationPath, LinkOption.NOFOLLOW_LINKS)) {
+            return List.of();
+        }
+        synchronized (MUTATION_LOCK) {
+            YamlConfiguration configuration = load(requiredConfigurationFile);
+            Object rawWorlds = configuration.get("worlds");
+            ConfigurationSection worlds = configuration.getConfigurationSection("worlds");
+            if (rawWorlds != null && worlds == null) {
+                throw new IOException("bukkit.yml worlds entry is not a section.");
+            }
+            if (worlds == null) {
+                return List.of();
+            }
+
+            List<String> configuredNames = new ArrayList<>(worlds.getKeys(false));
+            configuredNames.sort(Comparator.naturalOrder());
+            Map<WorldSlotKey, IrisGeneratorBinding> bindings = new LinkedHashMap<>();
+            for (String configuredName : configuredNames) {
+                Object rawWorld = worlds.get(configuredName);
+                ConfigurationSection world = worlds.getConfigurationSection(configuredName);
+                if (rawWorld != null && world == null) {
+                    throw new IOException("bukkit.yml world entry \"" + configuredName + "\" is not a section.");
+                }
+                if (world == null || !world.getKeys(false).contains("generator")) {
+                    continue;
+                }
+                Object rawGenerator = world.get("generator");
+                if (!(rawGenerator instanceof String generator)) {
+                    throw new IOException("bukkit.yml generator for world \"" + configuredName
+                            + "\" is not a string.");
+                }
+                String configuredGenerator = generator.trim();
+                if (!configuredGenerator.equalsIgnoreCase("Iris")
+                        && !configuredGenerator.regionMatches(true, 0, "Iris:", 0, 5)) {
+                    continue;
+                }
+
+                NamespacedKey namespacedKey;
+                try {
+                    namespacedKey = IrisWorldStorage.keyFromConfiguredWorldName(
+                            configuredName,
+                            requiredLevelName
+                    );
+                } catch (IllegalArgumentException failure) {
+                    throw new IOException("bukkit.yml contains an invalid Iris world name \""
+                            + configuredName + "\".", failure);
+                }
+                if (!"iris".equals(namespacedKey.getNamespace())) {
+                    continue;
+                }
+                if (!configuredName.equals(IrisWorldStorage.configuredWorldName(
+                        namespacedKey,
+                        requiredLevelName
+                ))) {
+                    continue;
+                }
+                if (!IrisWorldStorage.isExistingManagedDimensionRoot(
+                        requiredLevelRoot.toFile(),
+                        namespacedKey
+                )) {
+                    continue;
+                }
+                String dimension = selectedIrisDimension(configuredGenerator, configuredName);
+                WorldSlotKey worldKey = new WorldSlotKey(
+                        namespacedKey.getNamespace(),
+                        namespacedKey.getKey()
+                );
+                IrisGeneratorBinding binding = new IrisGeneratorBinding(configuredName, worldKey, dimension);
+                IrisGeneratorBinding previous = bindings.putIfAbsent(worldKey, binding);
+                if (previous != null) {
+                    throw new IOException("bukkit.yml maps both \"" + previous.configuredWorldName()
+                            + "\" and \"" + configuredName + "\" to " + worldKey + ".");
+                }
+            }
+            return List.copyOf(bindings.values());
         }
     }
 
@@ -396,9 +492,38 @@ public final class BukkitWorldConfiguration {
         return value.trim();
     }
 
+    private static String selectedIrisDimension(String configuredGenerator, String worldName) throws IOException {
+        if (configuredGenerator.equalsIgnoreCase("Iris")) {
+            throw new IOException("bukkit.yml Iris generator for custom world \"" + worldName
+                    + "\" must select a dimension with Iris:<dimension>.");
+        }
+        String dimension = configuredGenerator.substring(5).trim();
+        if (dimension.isEmpty()) {
+            throw new IOException("bukkit.yml Iris generator for world \"" + worldName
+                    + "\" does not select a dimension.");
+        }
+        return dimension;
+    }
+
     public enum Registration {
         CREATED,
         UNCHANGED
+    }
+
+    public record IrisGeneratorBinding(
+            String configuredWorldName,
+            WorldSlotKey worldKey,
+            String dimension
+    ) {
+        public IrisGeneratorBinding {
+            configuredWorldName = requireName(configuredWorldName, "Configured world name");
+            WorldSlotKey requiredWorldKey = Objects.requireNonNull(worldKey, "worldKey");
+            if (!"iris".equals(requiredWorldKey.namespace())
+                    || !requiredWorldKey.key().matches("[a-z0-9_-]+")) {
+                throw new IllegalArgumentException("Only safe Iris-managed keys can have LevelStem bindings.");
+            }
+            dimension = requireName(dimension, "Iris dimension");
+        }
     }
 
     public record WorldGeneratorSnapshot(

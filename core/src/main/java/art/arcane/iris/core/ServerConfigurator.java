@@ -24,6 +24,8 @@ import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.datapack.DatapackIngestService.ReapplyOutcome;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.IrisGeneratorBinding;
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.nms.datapack.DataVersion;
@@ -276,10 +278,12 @@ public class ServerConfigurator {
             IrisLogging.debug("Checking Data Packs...");
         }
         List<File> packRoots;
+        List<IrisGeneratorBinding> bindings;
         try {
             packRoots = collectCompilerPackRoots();
+            bindings = collectConfiguredLevelStemBindings();
         } catch (IOException exception) {
-            IrisLogging.reportError("Unable to resolve Iris datapack compiler roots.", exception);
+            IrisLogging.reportError("Unable to resolve Iris datapack compiler inputs.", exception);
             return DatapackInstallResult.failedResult();
         }
 
@@ -303,6 +307,7 @@ public class ServerConfigurator {
             IrisDatapackCompiler.compile(
                     packRoots,
                     stagedRoots,
+                    bindings,
                     fixer,
                     IrisSettings.get().getGeneral().adjustVanillaHeight
             );
@@ -445,11 +450,25 @@ public class ServerConfigurator {
                 IrisWorldStorage.levelRoot().toPath());
     }
 
+    private static List<IrisGeneratorBinding> collectConfiguredLevelStemBindings() throws IOException {
+        File levelRoot = IrisWorldStorage.levelRoot();
+        String levelId = levelRoot.getName();
+        if (levelId.isBlank()) {
+            throw new IOException("Configured level root has no Paper startup level id: " + levelRoot);
+        }
+        return BukkitWorldConfiguration.readIrisGeneratorBindings(
+                ServerProperties.BUKKIT_YML,
+                levelId,
+                levelRoot.toPath()
+        );
+    }
+
     private static String computeCurrentDatapackCompilerInputFingerprint(IDataFixer fixer) throws IOException {
         return IrisDatapackCompiler.computeInputFingerprint(
                 IrisDatapackCompiler.collectCompilerInputRoots(
                         IrisPlatforms.get().dataFolder().toPath(),
                         IrisWorldStorage.levelRoot().toPath()),
+                collectConfiguredLevelStemBindings(),
                 Objects.requireNonNull(fixer, "Datapack fixer"),
                 IrisSettings.get().getGeneral().adjustVanillaHeight);
     }

@@ -165,7 +165,8 @@ public final class IrisWorldGeneratorResolver {
 
     @Nullable
     public static IrisDimension loadDimension(@NonNull String worldName, @NonNull String id) {
-        File pack = IrisWorldStorage.packRoot(IrisWorldStorage.keyFromName(worldName));
+        NamespacedKey worldKey = configuredWorldKey(worldName, IrisWorldStorage.levelRoot().getName());
+        File pack = IrisWorldStorage.packRoot(worldKey);
         IrisDimension dimension = pack.isDirectory() ? IrisData.get(pack).getDimensionLoader().load(id) : null;
         if (dimension == null) dimension = IrisData.loadAnyDimension(id, null);
         if (dimension == null) {
@@ -180,6 +181,10 @@ public final class IrisWorldGeneratorResolver {
         }
 
         return dimension;
+    }
+
+    static NamespacedKey configuredWorldKey(String worldName, String levelName) {
+        return IrisWorldStorage.keyFromConfiguredWorldName(worldName, levelName);
     }
 
     /**
@@ -212,7 +217,7 @@ public final class IrisWorldGeneratorResolver {
         if (dim == null) {
             throw new RuntimeException("Can't find dimension " + id + "!");
         }
-        NamespacedKey worldKey = IrisWorldStorage.keyFromName(worldName);
+        NamespacedKey worldKey = configuredWorldKey(worldName, IrisWorldStorage.levelRoot().getName());
         File snapshotRoot = IrisWorldStorage.packRoot(worldKey);
         File dimensionPackRoot = dim.getLoader().getDataFolder();
         String packName = dimensionPackRoot.getName();

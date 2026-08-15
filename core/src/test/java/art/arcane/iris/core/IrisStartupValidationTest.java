@@ -7,6 +7,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -84,6 +85,23 @@ public class IrisStartupValidationTest {
 
         assertFalse(IrisStartupValidation.isReady());
         assertEquals("restart boundary", IrisStartupValidation.denialReason().orElseThrow());
+    }
+
+    @Test
+    public void restartBoundaryAllowsReplacementStagingWithoutAllowingRuntimeCreation() {
+        IrisStartupValidation.begin();
+        IrisStartupValidation.markDatapacksReady();
+        IrisStartupValidation.markPacksReady();
+        IrisStartupValidation.requireRestart("restart boundary");
+
+        assertThrows(IllegalStateException.class, IrisStartupValidation::requireWorldCreationReady);
+        IrisStartupValidation.requireWorldReplacementStagingReady();
+
+        IrisStartupValidation.markPacksInvalid(List.of("pack validation failed"));
+        assertThrows(
+                IllegalStateException.class,
+                IrisStartupValidation::requireWorldReplacementStagingReady
+        );
     }
 
     @Test

@@ -10,8 +10,9 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Path;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -125,6 +126,54 @@ public final class IrisWorldStorage {
         return key;
     }
 
+    public static NamespacedKey replacementKeyFromName(String requestedName, String levelName) {
+        String requested = Objects.requireNonNull(requestedName, "requestedName").trim();
+        String configuredLevelName = Objects.requireNonNull(levelName, "levelName").trim();
+        if (requested.isEmpty()) {
+            throw new IllegalArgumentException("World name cannot be empty.");
+        }
+        if (configuredLevelName.isEmpty()) {
+            throw new IllegalArgumentException("Configured level name cannot be empty.");
+        }
+        if (requested.contains("/") || requested.contains("\\") || requested.contains("..")) {
+            throw new IllegalArgumentException("World name must be a safe single path segment.");
+        }
+
+        String normalized = requested.toLowerCase(Locale.ENGLISH);
+        if (normalized.contains(":")) {
+            int separator = normalized.indexOf(':');
+            if (separator == 0
+                    || separator == normalized.length() - 1
+                    || separator != normalized.lastIndexOf(':')) {
+                throw new IllegalArgumentException("World identifier is invalid: " + requestedName);
+            }
+            NamespacedKey explicit = NamespacedKey.fromString(normalized);
+            if (explicit == null) {
+                throw new IllegalArgumentException("World identifier is invalid: " + requestedName);
+            }
+            return explicit;
+        }
+        String configuredIrisPrefix = configuredLevelName + "_" + IRIS_NAMESPACE + "_";
+        if (requested.startsWith(configuredIrisPrefix)) {
+            return keyFromConfiguredWorldName(requested, configuredLevelName);
+        }
+        if (requested.equalsIgnoreCase(configuredLevelName)) {
+            return NamespacedKey.minecraft("overworld");
+        }
+        if (requested.equalsIgnoreCase(configuredLevelName + "_nether")) {
+            return NamespacedKey.minecraft("the_nether");
+        }
+        if (requested.equalsIgnoreCase(configuredLevelName + "_the_end")) {
+            return NamespacedKey.minecraft("the_end");
+        }
+        return switch (normalized) {
+            case "main", "overworld" -> NamespacedKey.minecraft("overworld");
+            case "nether", "the_nether" -> NamespacedKey.minecraft("the_nether");
+            case "end", "the_end" -> NamespacedKey.minecraft("the_end");
+            default -> new NamespacedKey(IRIS_NAMESPACE, normalized.replace(' ', '_'));
+        };
+    }
+
     static NamespacedKey keyFromName(String worldName, String levelName) {
         String name = Objects.requireNonNull(worldName, "worldName").trim();
         String mainLevelName = Objects.requireNonNull(levelName, "levelName").trim();
@@ -143,6 +192,53 @@ public final class IrisWorldStorage {
 
         String key = name.toLowerCase(Locale.ENGLISH).replace(' ', '_');
         return new NamespacedKey(IRIS_NAMESPACE, key);
+    }
+
+    public static NamespacedKey keyFromConfiguredWorldName(String configuredWorldName, String levelName) {
+        String name = Objects.requireNonNull(configuredWorldName, "configuredWorldName").trim();
+        String mainLevelName = Objects.requireNonNull(levelName, "levelName").trim();
+        if (name.isEmpty()) {
+            throw new IllegalArgumentException("Configured world name cannot be empty.");
+        }
+        if (mainLevelName.isEmpty()) {
+            throw new IllegalArgumentException("Level name cannot be empty.");
+        }
+
+        String irisPrefix = mainLevelName + "_" + IRIS_NAMESPACE + "_";
+        if (name.startsWith(irisPrefix)) {
+            return managedKeyFromName(IRIS_NAMESPACE + ":" + name.substring(irisPrefix.length()), mainLevelName);
+        }
+        return keyFromName(name, mainLevelName);
+    }
+
+    public static String configuredWorldName(NamespacedKey key, String levelName) {
+        NamespacedKey worldKey = Objects.requireNonNull(key, "key");
+        String mainLevelName = Objects.requireNonNull(levelName, "levelName").trim();
+        if (mainLevelName.isEmpty()) {
+            throw new IllegalArgumentException("Level name cannot be empty.");
+        }
+        if (NamespacedKey.minecraft("overworld").equals(worldKey)) {
+            return mainLevelName;
+        }
+        if (NamespacedKey.minecraft("the_nether").equals(worldKey)) {
+            return mainLevelName + "_nether";
+        }
+        if (NamespacedKey.minecraft("the_end").equals(worldKey)) {
+            return mainLevelName + "_the_end";
+        }
+        if (!IRIS_NAMESPACE.equals(worldKey.getNamespace()) || !worldKey.getKey().matches("[a-z0-9_-]+")) {
+            throw new IllegalArgumentException("Only safe Iris-managed world keys have a Bukkit startup name.");
+        }
+        return mainLevelName + "_" + worldKey.getNamespace() + "_" + worldKey.getKey();
+    }
+
+    public static String configuredWorldName(WorldSlotKey key, String levelName) {
+        WorldSlotKey worldKey = Objects.requireNonNull(key, "key");
+        NamespacedKey namespacedKey = NamespacedKey.fromString(worldKey.toString());
+        if (namespacedKey == null) {
+            throw new IllegalArgumentException("World key is invalid: " + worldKey);
+        }
+        return configuredWorldName(namespacedKey, levelName);
     }
 
     public static String logicalName(WorldInfo world) {
@@ -212,6 +308,15 @@ public final class IrisWorldStorage {
             }
         }
         return target.toFile();
+    }
+
+    public static boolean isExistingManagedDimensionRoot(File levelRoot, NamespacedKey key) {
+        try {
+            Path target = requireSafeManagedDimensionRoot(levelRoot, key).toPath();
+            return Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS);
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
     }
 
     public static File dimensionRoot(File levelRoot, NamespacedKey key) {

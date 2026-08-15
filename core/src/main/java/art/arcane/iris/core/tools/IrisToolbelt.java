@@ -670,7 +670,7 @@ public class IrisToolbelt {
     }
 
     public static boolean removeWorld(World world) throws IOException {
-        return IrisCreator.removeFromBukkitYml(IrisWorldStorage.logicalName(world));
+        return IrisCreator.removeFromBukkitYml(WorldIdentity.key(world));
     }
 
     record PackReference(String pack, String dimension, boolean explicitDimension) {

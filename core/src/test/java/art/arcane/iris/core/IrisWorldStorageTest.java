@@ -12,7 +12,9 @@ import java.nio.file.Path;
 import java.util.Properties;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 public class IrisWorldStorageTest {
     @Rule
@@ -43,6 +45,113 @@ public class IrisWorldStorageTest {
         assertEquals(NamespacedKey.minecraft("the_nether"), IrisWorldStorage.keyFromName("world_nether", "world"));
         assertEquals(NamespacedKey.minecraft("the_end"), IrisWorldStorage.keyFromName("world_the_end", "world"));
         assertEquals(new NamespacedKey("iris", "iris_world"), IrisWorldStorage.keyFromName("Iris World", "world"));
+    }
+
+    @Test
+    public void mapsPaperStartupNamesWithoutChangingLogicalNames() {
+        NamespacedKey worldKey = new NamespacedKey("iris", "moon");
+
+        assertEquals("world_iris_moon", IrisWorldStorage.configuredWorldName(worldKey, "world"));
+        assertEquals(
+                "world_iris_moon",
+                IrisWorldStorage.configuredWorldName(new WorldSlotKey("iris", "moon"), "world")
+        );
+        assertEquals(worldKey, IrisWorldStorage.keyFromConfiguredWorldName("world_iris_moon", "world"));
+        assertEquals("moon", IrisWorldStorage.logicalName(worldKey, "world"));
+        assertEquals(NamespacedKey.minecraft("overworld"),
+                IrisWorldStorage.keyFromConfiguredWorldName("world", "world"));
+        assertEquals(NamespacedKey.minecraft("the_nether"),
+                IrisWorldStorage.keyFromConfiguredWorldName("world_nether", "world"));
+        assertEquals(NamespacedKey.minecraft("the_end"),
+                IrisWorldStorage.keyFromConfiguredWorldName("world_the_end", "world"));
+    }
+
+    @Test
+    public void configuredWorldNameRejectsUnsafeManagedKeys() {
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.keyFromConfiguredWorldName("world_iris_nested/world", "world"));
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.configuredWorldName(new NamespacedKey("other", "moon"), "world"));
+    }
+
+    @Test
+    public void replacementKeyAcceptsExplicitCanonicalIdentities() {
+        assertEquals(
+                NamespacedKey.minecraft("overworld"),
+                IrisWorldStorage.replacementKeyFromName("minecraft:overworld", "world")
+        );
+        assertEquals(
+                NamespacedKey.minecraft("the_nether"),
+                IrisWorldStorage.replacementKeyFromName("MINECRAFT:THE_NETHER", "world")
+        );
+        assertEquals(
+                NamespacedKey.minecraft("the_end"),
+                IrisWorldStorage.replacementKeyFromName("minecraft:the_end", "world")
+        );
+        assertEquals(
+                new NamespacedKey("iris", "moon"),
+                IrisWorldStorage.replacementKeyFromName("iris:moon", "world")
+        );
+        assertEquals(
+                new NamespacedKey("iris", "main"),
+                IrisWorldStorage.replacementKeyFromName("iris:main", "world")
+        );
+        assertEquals(
+                new NamespacedKey("iris", "survival"),
+                IrisWorldStorage.replacementKeyFromName("iris:survival", "survival")
+        );
+        assertEquals(
+                new NamespacedKey("iris", "moon"),
+                IrisWorldStorage.replacementKeyFromName("world_iris_moon", "world")
+        );
+    }
+
+    @Test
+    public void replacementKeyResolvesFriendlyVanillaAliases() {
+        assertEquals(NamespacedKey.minecraft("overworld"),
+                IrisWorldStorage.replacementKeyFromName("main", "world"));
+        assertEquals(NamespacedKey.minecraft("overworld"),
+                IrisWorldStorage.replacementKeyFromName("overworld", "world"));
+        assertEquals(NamespacedKey.minecraft("the_nether"),
+                IrisWorldStorage.replacementKeyFromName("nether", "world"));
+        assertEquals(NamespacedKey.minecraft("the_nether"),
+                IrisWorldStorage.replacementKeyFromName("the_nether", "world"));
+        assertEquals(NamespacedKey.minecraft("the_end"),
+                IrisWorldStorage.replacementKeyFromName("end", "world"));
+        assertEquals(NamespacedKey.minecraft("the_end"),
+                IrisWorldStorage.replacementKeyFromName("the_end", "world"));
+    }
+
+    @Test
+    public void replacementKeyResolvesConfiguredVanillaNamesBeforeFriendlyAliases() {
+        assertEquals(NamespacedKey.minecraft("overworld"),
+                IrisWorldStorage.replacementKeyFromName("survival", "survival"));
+        assertEquals(NamespacedKey.minecraft("the_nether"),
+                IrisWorldStorage.replacementKeyFromName("survival_nether", "survival"));
+        assertEquals(NamespacedKey.minecraft("the_end"),
+                IrisWorldStorage.replacementKeyFromName("survival_the_end", "survival"));
+        assertEquals(NamespacedKey.minecraft("overworld"),
+                IrisWorldStorage.replacementKeyFromName("nether", "nether"));
+    }
+
+    @Test
+    public void replacementKeyMapsOtherBareNamesIntoIrisNamespace() {
+        assertEquals(
+                new NamespacedKey("iris", "moon_base"),
+                IrisWorldStorage.replacementKeyFromName("Moon Base", "world")
+        );
+    }
+
+    @Test
+    public void replacementKeyRejectsUnsafePathsAndInvalidIdentifiers() {
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.replacementKeyFromName("../world", "world"));
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.replacementKeyFromName("iris:nested/world", "world"));
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.replacementKeyFromName("iris:", "world"));
+        assertThrows(IllegalArgumentException.class,
+                () -> IrisWorldStorage.replacementKeyFromName("world", " "));
     }
 
     @Test
@@ -124,9 +233,26 @@ public class IrisWorldStorageTest {
         Path dimensions = Files.createDirectories(levelRoot.toPath().resolve("dimensions"));
         Path outside = temporaryFolder.newFolder("outside").toPath();
         Files.createSymbolicLink(dimensions.resolve("iris"), outside);
+        NamespacedKey key = new NamespacedKey("iris", "probe");
 
         assertThrows(IllegalArgumentException.class, () -> IrisWorldStorage.requireSafeManagedDimensionRoot(
                 levelRoot,
-                new NamespacedKey("iris", "probe")));
+                key));
+        assertFalse(IrisWorldStorage.isExistingManagedDimensionRoot(levelRoot, key));
+    }
+
+    @Test
+    public void existingManagedDimensionRootRequiresRealDirectory() throws Exception {
+        File levelRoot = temporaryFolder.newFolder("managed-world-admission");
+        Path namespace = Files.createDirectories(levelRoot.toPath().resolve("dimensions/iris"));
+        NamespacedKey missing = new NamespacedKey("iris", "missing");
+        NamespacedKey file = new NamespacedKey("iris", "file");
+        NamespacedKey directory = new NamespacedKey("iris", "directory");
+        Files.writeString(namespace.resolve("file"), "not a directory");
+        Files.createDirectory(namespace.resolve("directory"));
+
+        assertFalse(IrisWorldStorage.isExistingManagedDimensionRoot(levelRoot, missing));
+        assertFalse(IrisWorldStorage.isExistingManagedDimensionRoot(levelRoot, file));
+        assertTrue(IrisWorldStorage.isExistingManagedDimensionRoot(levelRoot, directory));
     }
 }

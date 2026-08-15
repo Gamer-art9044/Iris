@@ -175,9 +175,9 @@ public final class BukkitCommandMessagesExtended {
             "iris.bukkit.commandiris.try_one_overworld_vanilla_flat_theend",
             C.YELLOW + "Try one of: overworld, vanilla, flat, theend"
     );
-    public static final TextKey COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTART_SERVER_GENERATE_LOAD = TextKey.of(
-            "iris.bukkit.commandiris.world_staging_completed_restart_server_generate_load",
-            C.GREEN + "World staging completed. Restart the server to generate/load \"" + "{worldName}" + "\"."
+    public static final TextKey COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTARTING_SERVER_GENERATE_LOAD = TextKey.of(
+            "iris.bukkit.commandiris.world_staging_completed_restarting_server_generate_load",
+            C.GREEN + "World staging completed. Iris is restarting the server to generate/load \"" + "{worldName}" + "\"."
     );
     public static final TextKey COMMAND_IRIS_EXCEPTION_RAISED_DURING_CREATION_SEE_CONSOLE_MORE_DETAILS = TextKey.of(
             "iris.bukkit.commandiris.exception_raised_during_creation_see_console_more_details",
@@ -186,10 +186,6 @@ public final class BukkitCommandMessagesExtended {
     public static final TextKey COMMAND_IRIS_SUCCESSFULLY_CREATED_YOUR_WORLD = TextKey.of(
             "iris.bukkit.commandiris.successfully_created_your_world",
             C.GREEN + "Successfully created your world!"
-    );
-    public static final TextKey COMMAND_IRIS_YOUR_WORLD_WILL_AUTOMATICALLY_BE_SET_AS_MAIN_WORLD_WHEN = TextKey.of(
-            "iris.bukkit.commandiris.your_world_will_automatically_be_set_as_main_world_when",
-            C.GREEN + "Your world will automatically be set as the main world when the server restarts."
     );
     public static final TextKey COMMAND_IRIS_RUNTIME_WORLD_CREATION_IS_DISABLED_ON_FOLIA = TextKey.of(
             "iris.bukkit.commandiris.runtime_world_creation_is_disabled_on_folia",
@@ -203,21 +199,9 @@ public final class BukkitCommandMessagesExtended {
             "iris.bukkit.commandiris.failed_stage_world_files_dimension",
             C.RED + "Failed to stage world files for dimension \"" + "{value}" + "\"."
     );
-    public static final TextKey COMMAND_IRIS_UPDATED_SERVER_PROPERTIES_LEVEL_NAME = TextKey.of(
-            "iris.bukkit.commandiris.updated_server_properties_level_name",
-            C.GREEN + "Updated server.properties level-name to \"" + "{name}" + "\"."
-    );
-    public static final TextKey COMMAND_IRIS_WORLD_WAS_STAGED_BUT_FAILED_UPDATE_SERVER_PROPERTIES_MAIN_WORLD = TextKey.of(
-            "iris.bukkit.commandiris.world_was_staged_but_failed_update_server_properties_main_world",
-            C.RED + "World was staged, but failed to update server.properties main world."
-    );
     public static final TextKey COMMAND_IRIS_STAGED_IRIS_WORLD_WITH_GENERATOR_IRIS_SEED = TextKey.of(
             "iris.bukkit.commandiris.staged_iris_world_with_generator_iris_seed",
             C.GREEN + "Staged Iris world \"" + "{name}" + "\" with generator Iris:" + "{value}" + " and seed " + "{seed}" + "."
-    );
-    public static final TextKey COMMAND_IRIS_THIS_WORLD_IS_NOW_CONFIGURED_AS_MAIN_NEXT_RESTART = TextKey.of(
-            "iris.bukkit.commandiris.this_world_is_now_configured_as_main_next_restart",
-            C.GREEN + "This world is now configured as main for next restart."
     );
     public static final TextKey COMMAND_IRIS_FAILED_UPDATE_BUKKIT_YML = TextKey.of(
             "iris.bukkit.commandiris.failed_update_bukkit_yml",
@@ -878,17 +862,13 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_IRIS_MAY_WE_SUGGEST_NAME_IRISWORLD_INSTEAD_2,
             COMMAND_IRIS_THAT_FOLDER_ALREADY_EXISTS,
             COMMAND_IRIS_TRY_ONE_OVERWORLD_VANILLA_FLAT_THEEND,
-            COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTART_SERVER_GENERATE_LOAD,
+            COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTARTING_SERVER_GENERATE_LOAD,
             COMMAND_IRIS_EXCEPTION_RAISED_DURING_CREATION_SEE_CONSOLE_MORE_DETAILS,
             COMMAND_IRIS_SUCCESSFULLY_CREATED_YOUR_WORLD,
-            COMMAND_IRIS_YOUR_WORLD_WILL_AUTOMATICALLY_BE_SET_AS_MAIN_WORLD_WHEN,
             COMMAND_IRIS_RUNTIME_WORLD_CREATION_IS_DISABLED_ON_FOLIA,
             COMMAND_IRIS_PREPARING_WORLD_FILES_BUKKIT_YML_NEXT_STARTUP,
             COMMAND_IRIS_FAILED_STAGE_WORLD_FILES_DIMENSION,
-            COMMAND_IRIS_UPDATED_SERVER_PROPERTIES_LEVEL_NAME,
-            COMMAND_IRIS_WORLD_WAS_STAGED_BUT_FAILED_UPDATE_SERVER_PROPERTIES_MAIN_WORLD,
             COMMAND_IRIS_STAGED_IRIS_WORLD_WITH_GENERATOR_IRIS_SEED,
-            COMMAND_IRIS_THIS_WORLD_IS_NOW_CONFIGURED_AS_MAIN_NEXT_RESTART,
             COMMAND_IRIS_FAILED_UPDATE_BUKKIT_YML,
             COMMAND_IRIS_SPECIFIED_PLAYER_DOES_NOT_EXIST,
             COMMAND_IRIS_IRIS_V_BY_VOLMIT_SOFTWARE,

@@ -1,5 +1,6 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.IrisGeneratorBinding;
 import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
@@ -80,6 +81,23 @@ public class IrisDatapackCompilerInputFingerprintTest {
     }
 
     @Test
+    public void configuredLevelStemBindingsSaltTheFingerprint() throws Exception {
+        Path pack = activePack("binding-inputs");
+        IrisGeneratorBinding moon = binding("moon", "overworld");
+        IrisGeneratorBinding mars = binding("mars", "overworld");
+        String empty = fingerprint(pack, List.of(), false, "compiler-a");
+        String moonOnly = fingerprint(pack, List.of(moon), false, "compiler-a");
+        String both = fingerprint(pack, List.of(mars, moon), false, "compiler-a");
+
+        assertNotEquals(empty, moonOnly);
+        assertNotEquals(moonOnly, both);
+        assertEquals(
+                both,
+                fingerprint(pack, List.of(moon, mars), false, "compiler-a")
+        );
+    }
+
+    @Test
     public void compilerInputsRejectNestedSymbolicLinks() throws Exception {
         Path pack = activePack("unsafe-input");
         Path outside = tmp.newFile("outside.json").toPath();
@@ -146,6 +164,7 @@ public class IrisDatapackCompilerInputFingerprintTest {
         assertEquals(compilerRoots, compilationRoots);
         assertTrue(!IrisDatapackCompiler.computeInputFingerprint(
                 compilerRoots,
+                List.of(),
                 false,
                 "compiler-a").isBlank());
     }
@@ -163,9 +182,27 @@ public class IrisDatapackCompilerInputFingerprintTest {
     }
 
     private String fingerprint(Path pack, boolean adjustVanillaHeight, String compilerIdentity) throws IOException {
+        return fingerprint(pack, List.of(), adjustVanillaHeight, compilerIdentity);
+    }
+
+    private String fingerprint(
+            Path pack,
+            List<IrisGeneratorBinding> bindings,
+            boolean adjustVanillaHeight,
+            String compilerIdentity
+    ) throws IOException {
         return IrisDatapackCompiler.computeInputFingerprint(
                 List.of(pack.toFile()),
+                bindings,
                 adjustVanillaHeight,
                 compilerIdentity);
+    }
+
+    private IrisGeneratorBinding binding(String worldKey, String dimension) {
+        return new IrisGeneratorBinding(
+                "world_iris_" + worldKey,
+                new WorldSlotKey("iris", worldKey),
+                dimension
+        );
     }
 }

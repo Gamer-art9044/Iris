@@ -5,11 +5,13 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.nio.file.Files;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class AtomicDirectoryPublisherTest {
@@ -51,5 +53,22 @@ public class AtomicDirectoryPublisherTest {
 
         assertTrue(Files.isDirectory(target));
         assertEquals("old", Files.readString(target.resolve("value.txt")));
+    }
+
+    @Test
+    public void absentPublicationRefusesAnExistingTargetWithoutMovingEitherDirectory() throws Exception {
+        Path root = temporaryFolder.getRoot().toPath();
+        Path target = Files.createDirectory(root.resolve("existing-target"));
+        Files.writeString(target.resolve("value.txt"), "old");
+        Path staged = Files.createDirectory(root.resolve("absent-stage"));
+        Files.writeString(staged.resolve("value.txt"), "new");
+
+        assertThrows(
+                FileAlreadyExistsException.class,
+                () -> AtomicDirectoryPublisher.publishAbsent(staged, target)
+        );
+
+        assertEquals("old", Files.readString(target.resolve("value.txt")));
+        assertEquals("new", Files.readString(staged.resolve("value.txt")));
     }
 }

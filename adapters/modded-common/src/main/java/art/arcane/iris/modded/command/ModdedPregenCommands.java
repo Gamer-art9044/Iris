@@ -51,7 +51,14 @@ final class ModdedPregenCommands {
             return 0;
         }
         boolean showGui = gui && ModdedGuiHost.isGuiLaunchable();
-        if (!ModdedPregenJob.start(source.getServer(), level, engine, radius, centerX, centerZ, showGui, sync, !nocache)) {
+        boolean started;
+        try {
+            started = ModdedPregenJob.start(source.getServer(), level, engine, radius, centerX, centerZ, showGui, sync, !nocache);
+        } catch (IllegalArgumentException failure) {
+            IrisModdedCommands.fail(source, failure.getMessage());
+            return 0;
+        }
+        if (!started) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PREGENERATION_TASK_IS_ALREADY_RUNNING_STOP_IT_FIRST_WITH_IRIS));
             return 0;
         }

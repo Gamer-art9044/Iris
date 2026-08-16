@@ -27,6 +27,8 @@ import org.junit.Test;
 import org.junit.BeforeClass;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -38,8 +40,8 @@ import java.util.stream.Stream;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class NMSBindingDatapackStructureScopeTest {
@@ -108,28 +110,56 @@ public class NMSBindingDatapackStructureScopeTest {
     }
 
     @Test
-    public void spigotDirectHolderRetainsItsStructureSetKey() {
+    public void spigotDirectHolderRecoversItsRegistryKeyFromSharedEntries() {
         ResourceKey<StructureSet> key = ResourceKey.create(
                 Registries.STRUCTURE_SET,
-                Identifier.parse("minecraft:villages"));
-        ChunkGeneratorStructureState.KeyedRandomSpreadStructurePlacement placement =
-                new ChunkGeneratorStructureState.KeyedRandomSpreadStructurePlacement(
-                        key,
-                        Vec3i.ZERO,
-                        StructurePlacement.FrequencyReductionMethod.DEFAULT,
-                        1.0F,
-                        10387312,
-                        Optional.empty(),
-                        34,
-                        8,
-                        RandomSpreadType.LINEAR);
-        StructureSet structureSet = new StructureSet(
-                List.of(new StructureSet.StructureSelectionEntry(
-                        structureHolder("minecraft:village_plains"), 1)),
-                placement);
+                Identifier.parse("managed:illager_barracks"));
+        List<StructureSet.StructureSelectionEntry> entries = List.of(
+                new StructureSet.StructureSelectionEntry(
+                        structureHolder("minecraft:pillager_outpost"), 1));
+        Holder<StructureSet> registered = new KeyedHolder<>(key, new StructureSet(
+                entries,
+                new RandomSpreadStructurePlacement(
+                        34, 8, RandomSpreadType.LINEAR, 10387312)));
+        Holder<StructureSet> spigotDirect = Holder.direct(new StructureSet(
+                entries,
+                new RandomSpreadStructurePlacement(
+                        34, 8, RandomSpreadType.LINEAR, 14357620)));
+        DatapackStructureScopeIndex scopeIndex = index(
+                List.of(), List.of("managed:illager_barracks"));
+        DatapackStructureStateFilter.StructureSetKeyIndex keyIndex =
+                DatapackStructureStateFilter.keyIndex(List.of(registered));
 
-        assertEquals("minecraft:villages",
-                DatapackStructureStateFilter.structureSetKey(Holder.direct(structureSet)));
+        DatapackStructureStateFilter.Selection excluded =
+                DatapackStructureStateFilter.filter(
+                        List.of(spigotDirect),
+                        scopeIndex,
+                        Set.of(),
+                        new IrisImportedStructureControl(),
+                        keyIndex);
+        DatapackStructureStateFilter.Selection retained =
+                DatapackStructureStateFilter.filter(
+                        List.of(spigotDirect),
+                        scopeIndex,
+                        scopeIndex.declaredSources(List.of(SOURCE)),
+                        new IrisImportedStructureControl(),
+                        keyIndex);
+
+        assertEquals(0, excluded.structureSets().size());
+        assertEquals(1, excluded.excludedManagedSets());
+        assertSame(spigotDirect, retained.structureSets().getFirst());
+        assertEquals(1, retained.retainedManagedSets());
+    }
+
+    @Test
+    public void structureScopeDoesNotLinkPaperOnlyPlacementClasses() throws IOException {
+        InputStream classResource = NMSBindingDatapackStructureScopeTest.class
+                .getResourceAsStream("DatapackStructureStateFilter.class");
+        assertNotNull(classResource);
+        try (InputStream input = classResource) {
+            String classFile = new String(input.readAllBytes(), StandardCharsets.ISO_8859_1);
+            assertFalse(classFile.contains("KeyedRandomSpreadStructurePlacement"));
+        }
     }
 
     @Test
@@ -271,7 +301,7 @@ public class NMSBindingDatapackStructureScopeTest {
     }
 
     @Test
-    public void affectedRandomSpreadSubclassFailsInsteadOfLosingSubtypeBehavior() {
+    public void randomSpreadSubtypeUsesTheCanonicalPlacementContract() {
         Holder<StructureSet> custom = structureSetHolder(
                 "example:custom",
                 new CustomRandomSpreadPlacement(),
@@ -283,8 +313,12 @@ public class NMSBindingDatapackStructureScopeTest {
         IrisImportedStructureControl control = new IrisImportedStructureControl()
                 .setFrequencyOverrides(overrides);
 
-        assertThrows(IllegalStateException.class, () -> DatapackStructureStateFilter.filter(
-                List.of(custom), index(List.of(), List.of()), Set.of(), control));
+        DatapackStructureStateFilter.Selection selection = DatapackStructureStateFilter.filter(
+                List.of(custom), index(List.of(), List.of()), Set.of(), control);
+        StructurePlacement placement = selection.structureSets().getFirst().value().placement();
+
+        assertEquals(RandomSpreadStructurePlacement.class, placement.getClass());
+        assertEquals(26, ((RandomSpreadStructurePlacement) placement).spacing());
     }
 
     @Test
@@ -393,6 +427,21 @@ public class NMSBindingDatapackStructureScopeTest {
         assertTrue(canonicalRead > publication);
         assertTrue(identityGate > canonicalRead);
         assertTrue(structureRetarget > identityGate);
+    }
+
+    @Test
+    public void structureStateRecreationUsesTheWorldOwnedSpigotConfiguration() throws IOException {
+        Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
+        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java"));
+        int methodStart = source.indexOf("private ChunkGeneratorStructureState createStructureState(");
+        int methodEnd = source.indexOf(
+                "\n    private void initializeAndPublishStructureState(", methodStart);
+
+        assertTrue(methodStart >= 0);
+        assertTrue(methodEnd > methodStart);
+        String method = source.substring(methodStart, methodEnd);
+        assertTrue(method.contains("level.spigotConfig"));
+        assertFalse(method.contains("currentState.conf"));
     }
 
     private static DatapackStructureScopeIndex index(

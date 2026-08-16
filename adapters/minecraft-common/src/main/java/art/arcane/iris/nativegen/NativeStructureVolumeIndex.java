@@ -360,9 +360,8 @@ public final class NativeStructureVolumeIndex {
 
     private static void warnOnce(String structureId, Throwable error) {
         if (WARNED_RESOLUTION_FAILURES.add(structureId)) {
-            IrisLogging.warn("Native structure volume resolution failed for '" + structureId
-                    + "'; objects will not be vetoed against it: "
-                    + error.getClass().getSimpleName() + ":" + error.getMessage());
+            IrisLogging.reportError("Native structure volume resolution failed for '" + structureId
+                    + "'; objects will not be vetoed against it.", error);
         }
     }
 

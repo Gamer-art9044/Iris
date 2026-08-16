@@ -26,12 +26,12 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 public class IrisWorlds {
@@ -147,8 +147,9 @@ public class IrisWorlds {
     public synchronized void clean() {
         boolean removed = worlds.entrySet().removeIf(entry -> {
             try {
-                File packRoot = packRoot(entry.getKey());
-                return !new File(packRoot, "dimensions/" + entry.getValue() + ".json").exists();
+                Optional<File> packRoot = packRoot(entry.getKey());
+                return packRoot.isEmpty()
+                        || !new File(packRoot.get(), "dimensions/" + entry.getValue() + ".json").exists();
             } catch (IllegalArgumentException e) {
                 return true;
             }
@@ -236,12 +237,20 @@ public class IrisWorlds {
                     .equals(configuredWorldName)) {
                 continue;
             }
-            Path dimensionRoot = IrisWorldStorage.dimensionRoot(root.toFile(), worldKey)
-                    .toPath()
-                    .toAbsolutePath()
-                    .normalize();
-            if (Files.isDirectory(dimensionRoot, LinkOption.NOFOLLOW_LINKS)) {
-                result.put(configuredWorldName, entry.getValue());
+            Path worldContainer = root.getParent();
+            if (worldContainer == null) {
+                throw new IllegalArgumentException("Selected level root has no world container: " + root);
+            }
+            try {
+                if (IrisWorldStorage.frozenDimensionRoot(
+                        worldContainer.toFile(),
+                        root.toFile(),
+                        configuredWorldName,
+                        worldKey
+                ).isPresent()) {
+                    result.put(configuredWorldName, entry.getValue());
+                }
+            } catch (IllegalStateException ignored) {
             }
         }
         return result;
@@ -270,14 +279,28 @@ public class IrisWorlds {
         return filterBukkitWorldsByStorage(levelRoot, result);
     }
 
-    private File packRoot(String worldIdentity) {
+    private Optional<File> packRoot(String worldIdentity) {
         NamespacedKey worldKey = WorldIdentity.parse(worldIdentity);
-        return new File(IrisWorldStorage.dimensionRoot(levelRoot.toFile(), worldKey), "iris/pack");
+        Path worldContainer = levelRoot.getParent();
+        if (worldContainer == null) {
+            throw new IllegalStateException("Selected level root has no world container: " + levelRoot);
+        }
+        String configuredWorldName = IrisWorldStorage.configuredWorldName(
+                worldKey,
+                levelRoot.getFileName().toString()
+        );
+        Optional<File> dimensionRoot = IrisWorldStorage.frozenDimensionRoot(
+                worldContainer.toFile(),
+                levelRoot.toFile(),
+                configuredWorldName,
+                worldKey
+        );
+        return dimensionRoot.map(IrisWorldStorage::requireFrozenPackRoot);
     }
 
     private IrisDimension loadDimension(String worldIdentity, String id) {
-        File pack = packRoot(worldIdentity);
-        IrisDimension dimension = pack.isDirectory() ? IrisData.get(pack).getDimensionLoader().load(id) : null;
+        File pack = packRoot(worldIdentity).orElse(null);
+        IrisDimension dimension = pack == null ? null : IrisData.get(pack).getDimensionLoader().load(id);
         if (dimension == null) {
             dimension = IrisData.loadAnyDimension(id, null);
         }

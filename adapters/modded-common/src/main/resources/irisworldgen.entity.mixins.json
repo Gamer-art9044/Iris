@@ -6,7 +6,8 @@
   "mixins": [
     "EntityPersistenceMixin",
     "LivingEntityLootMixin",
-    "MobAwarenessMixin"
+    "MobAwarenessMixin",
+    "StructureTemplatePaletteConcurrencyMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -14,13 +14,25 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.mockito.invocation.InvocationOnMock;
 
+import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
+import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Logger;
 
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Answers.CALLS_REAL_METHODS;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -134,6 +146,173 @@ public class IrisDimensionCarvingResolverParityTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void sharedResolverStateNeverCarriesDimensionEntriesAcrossEngines() {
+        Fixture first = createFixture();
+        Fixture second = createMixedDepthFixture();
+        IrisDimensionCarvingResolver.State state = new IrisDimensionCarvingResolver.State();
+
+        IrisDimensionCarvingEntry firstExpected = legacyResolveRootEntry(first.engine, 80);
+        IrisDimensionCarvingEntry secondExpected = legacyResolveRootEntry(second.engine, 80);
+
+        assertSame(firstExpected, IrisDimensionCarvingResolver.resolveRootEntry(first.engine, 80, state));
+        assertSame(secondExpected, IrisDimensionCarvingResolver.resolveRootEntry(second.engine, 80, state));
+        assertSame(firstExpected, IrisDimensionCarvingResolver.resolveRootEntry(first.engine, 80, state));
+    }
+
+    @Test
+    public void threadLocalResolverNeverCarriesDimensionEntriesAcrossEngines() {
+        Fixture first = createFixture();
+        Fixture second = createMixedDepthFixture();
+        int worldY = 83;
+
+        IrisDimensionCarvingEntry firstExpected = legacyResolveRootEntry(first.engine, worldY);
+        IrisDimensionCarvingEntry secondExpected = legacyResolveRootEntry(second.engine, worldY);
+
+        assertSame(firstExpected, IrisDimensionCarvingResolver.resolveRootEntry(first.engine, worldY));
+        assertSame(secondExpected, IrisDimensionCarvingResolver.resolveRootEntry(second.engine, worldY));
+    }
+
+    @Test
+    public void threadLocalResolverInvalidatesWhenTheSameEnginePublishesReplacementData() {
+        Fixture first = createFixture();
+        Fixture replacement = createMixedDepthFixture();
+        AtomicReference<IrisDimension> dimension = new AtomicReference<>(first.engine.getDimension());
+        AtomicReference<IrisData> data = new AtomicReference<>(first.engine.getData());
+        Engine engine = mock(Engine.class, CALLS_REAL_METHODS);
+        doAnswer((InvocationOnMock invocation) -> dimension.get()).when(engine).getDimension();
+        doAnswer((InvocationOnMock invocation) -> data.get()).when(engine).getData();
+
+        int worldY = 83;
+        IrisDimensionCarvingEntry firstExpected = legacyResolveRootEntry(first.engine, worldY);
+        IrisDimensionCarvingEntry replacementExpected = legacyResolveRootEntry(replacement.engine, worldY);
+        assertSame(firstExpected, IrisDimensionCarvingResolver.resolveRootEntry(engine, worldY));
+
+        dimension.set(replacement.engine.getDimension());
+        data.set(replacement.engine.getData());
+        assertSame(replacementExpected, IrisDimensionCarvingResolver.resolveRootEntry(engine, worldY));
+    }
+
+    @Test
+    public void resolverStateUsesWeakRuntimeIdentityBindings() throws NoSuchFieldException {
+        Field engineIdentity = IrisDimensionCarvingResolver.State.class.getDeclaredField("engineIdentity");
+        Field dimensionIdentity = IrisDimensionCarvingResolver.State.class.getDeclaredField("dimensionIdentity");
+        Field dataIdentity = IrisDimensionCarvingResolver.State.class.getDeclaredField("dataIdentity");
+
+        assertSame(WeakReference.class, engineIdentity.getType());
+        assertSame(WeakReference.class, dimensionIdentity.getType());
+        assertSame(WeakReference.class, dataIdentity.getType());
+    }
+
+    @Test(timeout = 20_000L)
+    public void longLivedWorkerDoesNotRetainPopulatedThreadLocalStateOrEngine() throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        CountDownLatch blockerStarted = new CountDownLatch(1);
+        CountDownLatch releaseBlocker = new CountDownLatch(1);
+        try {
+            LifetimeReferences references = executor.submit(this::populateThreadLocalLifetimeReferences).get();
+            Future<?> blocker = executor.submit(() -> {
+                blockerStarted.countDown();
+                releaseBlocker.await();
+                return null;
+            });
+            assertTrue(blockerStarted.await(5L, TimeUnit.SECONDS));
+
+            awaitCollection(references);
+
+            releaseBlocker.countDown();
+            blocker.get(5L, TimeUnit.SECONDS);
+        } finally {
+            releaseBlocker.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5L, TimeUnit.SECONDS));
+        }
+    }
+
+    private LifetimeReferences populateThreadLocalLifetimeReferences() throws Exception {
+        RetainedFixture fixture = createRetainedFixture();
+        assertNotNull(IrisDimensionCarvingResolver.resolveRootEntry(fixture.engine(), 80));
+
+        Field threadStateField = IrisDimensionCarvingResolver.class.getDeclaredField("THREAD_STATE");
+        threadStateField.setAccessible(true);
+        ThreadLocal<?> threadState = (ThreadLocal<?>) threadStateField.get(null);
+        Object value = threadState.get();
+        assertTrue(value instanceof WeakReference<?>);
+        @SuppressWarnings("unchecked")
+        WeakReference<IrisDimensionCarvingResolver.State> state =
+                (WeakReference<IrisDimensionCarvingResolver.State>) value;
+        IrisDimensionCarvingResolver.State populatedState = state.get();
+        assertNotNull(populatedState);
+        Field biomeCacheField = IrisDimensionCarvingResolver.State.class.getDeclaredField("biomeCache");
+        biomeCacheField.setAccessible(true);
+        assertFalse(((Map<?, ?>) biomeCacheField.get(populatedState)).isEmpty());
+        return new LifetimeReferences(
+                state,
+                new WeakReference<>(fixture.engine()));
+    }
+
+    private static void awaitCollection(LifetimeReferences references) throws InterruptedException {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            System.gc();
+            if (references.state().get() == null
+                    && references.engine().get() == null) {
+                return;
+            }
+            byte[] pressure = new byte[1_048_576];
+            pressure[0] = (byte) attempt;
+            Thread.sleep(10L);
+        }
+        assertTrue("Thread-local State was retained", references.state().get() == null);
+        assertTrue("Engine was retained", references.engine().get() == null);
+    }
+
+    @Test
+    public void explicitStateRemainsStronglyCallerOwned() throws Exception {
+        RetainedFixture fixture = createRetainedFixture();
+        IrisDimensionCarvingResolver.State state = new IrisDimensionCarvingResolver.State();
+        assertSame(fixture.entry(), IrisDimensionCarvingResolver.resolveRootEntry(
+                fixture.engine(), 80, state));
+
+        Field rootEntriesField = IrisDimensionCarvingResolver.State.class
+                .getDeclaredField("rootEntriesByWorldY");
+        rootEntriesField.setAccessible(true);
+        System.gc();
+
+        assertSame(fixture.entry(), ((Map<?, ?>) rootEntriesField.get(state)).get(80));
+    }
+
+    private RetainedFixture createRetainedFixture() {
+        IrisData data = mock(IrisData.class);
+        IrisBiome biome = new IrisBiome();
+        biome.setLoader(data);
+
+        @SuppressWarnings("unchecked")
+        ResourceLoader<IrisBiome> biomeLoader = mock(ResourceLoader.class);
+        doReturn(biome).when(biomeLoader).load("retained");
+        doReturn(biomeLoader).when(data).getBiomeLoader();
+
+        IrisDimensionCarvingEntry entry = buildEntry(
+                "retained", "retained", new IrisRange(-64, 320), 0, List.of());
+        KList<IrisDimensionCarvingEntry> carvingEntries = new KList<>();
+        carvingEntries.add(entry);
+
+        IrisDimension dimension = new IrisDimension();
+        dimension.setCarving(carvingEntries);
+
+        Engine engine = (Engine) Proxy.newProxyInstance(
+                Engine.class.getClassLoader(),
+                new Class<?>[]{Engine.class},
+                (proxy, method, arguments) -> switch (method.getName()) {
+                    case "getDimension" -> dimension;
+                    case "getData" -> data;
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == arguments[0];
+                    case "toString" -> "carving-retention-test-engine";
+                    default -> throw new UnsupportedOperationException(method.toString());
+                });
+        return new RetainedFixture(engine, entry);
     }
 
     private Fixture createFixture() {
@@ -452,6 +631,15 @@ public class IrisDimensionCarvingResolverParityTest {
     }
 
     private record Fixture(Engine engine) {
+    }
+
+    private record RetainedFixture(Engine engine, IrisDimensionCarvingEntry entry) {
+    }
+
+    private record LifetimeReferences(
+            WeakReference<IrisDimensionCarvingResolver.State> state,
+            WeakReference<Engine> engine
+    ) {
     }
 
     private static final class LegacyCarvingChoice implements IRare {

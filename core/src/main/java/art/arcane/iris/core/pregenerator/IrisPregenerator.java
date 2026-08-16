@@ -418,9 +418,7 @@ public class IrisPregenerator {
             IrisLogging.reportError(e);
         }
 
-        if (MantleHeapPressure.overPanicWater()) {
-            MantleHeapPressure.requestPanicReclaim();
-        }
+        MantleHeapPressure.requestPanicReclaim();
     }
 
     private void checkRegion(int x, int z) {

@@ -1,6 +1,5 @@
 package art.arcane.iris.core;
 
-import net.kyori.adventure.text.Component;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -11,6 +10,6 @@ public final class IrisStartupAdmissionListener implements Listener {
     public void onAsyncPlayerPreLogin(AsyncPlayerPreLoginEvent event) {
         IrisStartupValidation.denialReason().ifPresent(reason -> event.disallow(
                 AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
-                Component.text(reason + " Check the server console, correct the reported Iris state, and restart.")));
+                reason + " Check the server console, correct the reported Iris state, and restart."));
     }
 }

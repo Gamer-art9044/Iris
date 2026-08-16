@@ -1,4 +1,4 @@
-package art.arcane.iris.core.nms.v26_2_R1;
+package art.arcane.iris.modded;
 
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
@@ -37,7 +37,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
-public class NativeStructureWorldgenAccessTest {
+public class ModdedNativeStructureWorldgenAccessTest {
     private static final int GENERATION_CENTER_X = 60;
     private static final int GENERATION_CENTER_Z = 15;
     private static final int SURFACE_FIRST_FREE_Y = 80;
@@ -52,7 +52,7 @@ public class NativeStructureWorldgenAccessTest {
     @Test
     public void distanceTwoTerrainReadsNeverReachTheDelegate() {
         RecordingDelegate recording = new RecordingDelegate();
-        NativeStructureWorldgenAccess access = access(recording);
+        ModdedNativeStructureWorldgenAccess access = access(recording);
         ChunkPos generationCenter = generationCenter();
         int x = generationCenter.getMiddleBlockX();
         int z = (generationCenter.z() + 2) << 4;
@@ -64,13 +64,13 @@ public class NativeStructureWorldgenAccessTest {
                 access.getFluidState(new BlockPos(x, FLOOR_FIRST_FREE_Y, z)));
         assertEquals(SURFACE_FIRST_FREE_Y, access.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z));
         assertEquals(FLOOR_FIRST_FREE_Y, access.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z));
-        assertNull(access.getBlockStateIfLoaded(new BlockPos(x, FLOOR_FIRST_FREE_Y, z)));
         assertNull(access.getChunk(generationCenter.x(), generationCenter.z() + 2, ChunkStatus.FEATURES, false));
-        assertNull(access.getChunkIfLoadedImmediately(
-                generationCenter.x(), generationCenter.z() + 2));
+        List<BlockState> loadedOnly = access.getBlockStatesIfLoaded(new AABB(
+                x, FLOOR_FIRST_FREE_Y, z, x, FLOOR_FIRST_FREE_Y, z)).toList();
         List<BlockState> streamed = access.getBlockStates(new AABB(
                 x, FLOOR_FIRST_FREE_Y, z, x, FLOOR_FIRST_FREE_Y, z)).toList();
 
+        assertTrue(loadedOnly.isEmpty());
         assertEquals(1, streamed.size());
         assertSame(Blocks.WATER, streamed.getFirst().getBlock());
         assertEquals(0, recording.terrainReads);
@@ -81,7 +81,7 @@ public class NativeStructureWorldgenAccessTest {
     @Test
     public void distanceTwoMutationsAndSideEffectsNeverReachTheDelegate() {
         RecordingDelegate recording = new RecordingDelegate();
-        NativeStructureWorldgenAccess access = access(recording);
+        ModdedNativeStructureWorldgenAccess access = access(recording);
         ChunkPos generationCenter = generationCenter();
         BlockPos position = new BlockPos(
                 generationCenter.getMiddleBlockX(),
@@ -110,7 +110,7 @@ public class NativeStructureWorldgenAccessTest {
     @Test
     public void radiusOneReadsWritesAndTicksRemainUnchanged() {
         RecordingDelegate recording = new RecordingDelegate();
-        NativeStructureWorldgenAccess access = access(recording);
+        ModdedNativeStructureWorldgenAccess access = access(recording);
         ChunkPos generationCenter = generationCenter();
         BlockPos position = new BlockPos(
                 (generationCenter.x() + 1) << 4,
@@ -138,7 +138,7 @@ public class NativeStructureWorldgenAccessTest {
     @Test
     public void statuslessChunkReadsPreserveWorldgenDelegateSemantics() {
         RecordingDelegate recording = new RecordingDelegate();
-        NativeStructureWorldgenAccess access = access(recording);
+        ModdedNativeStructureWorldgenAccess access = access(recording);
         ChunkPos generationCenter = generationCenter();
 
         assertNull(access.getChunk(generationCenter.getWorldPosition()));
@@ -150,7 +150,7 @@ public class NativeStructureWorldgenAccessTest {
     @Test
     public void entityQueriesRejectDisjointAreasAndClampOverlaps() {
         RecordingDelegate recording = new RecordingDelegate();
-        NativeStructureWorldgenAccess access = access(recording);
+        ModdedNativeStructureWorldgenAccess access = access(recording);
         ChunkPos generationCenter = generationCenter();
         int safeMaxX = generationCenter.getMaxBlockX() + 17;
         int safeMinZ = generationCenter.getMinBlockZ() - 16;
@@ -179,8 +179,8 @@ public class NativeStructureWorldgenAccessTest {
         }
     }
 
-    private static NativeStructureWorldgenAccess access(RecordingDelegate recording) {
-        return NativeStructureWorldgenAccess.create(
+    private static ModdedNativeStructureWorldgenAccess access(RecordingDelegate recording) {
+        return ModdedNativeStructureWorldgenAccess.create(
                 recording.world(), generationCenter(),
                 (x, z) -> SURFACE_FIRST_FREE_Y,
                 (x, z) -> FLOOR_FIRST_FREE_Y);

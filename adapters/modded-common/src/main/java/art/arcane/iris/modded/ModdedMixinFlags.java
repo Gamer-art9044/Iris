@@ -31,6 +31,7 @@ public final class ModdedMixinFlags {
     private static volatile boolean entityPersistenceRan;
     private static volatile boolean livingEntityLootRan;
     private static volatile boolean mobAwarenessRan;
+    private static volatile boolean structureTemplatePaletteRan;
     private static volatile boolean worldOpenFlowsRan;
     private static volatile boolean worldTypeEntryRan;
 
@@ -58,6 +59,12 @@ public final class ModdedMixinFlags {
         }
     }
 
+    public static void markStructureTemplatePalette() {
+        if (!structureTemplatePaletteRan) {
+            structureTemplatePaletteRan = true;
+        }
+    }
+
     public static void markWorldOpenFlows() {
         if (!worldOpenFlowsRan) {
             worldOpenFlowsRan = true;
@@ -82,6 +89,10 @@ public final class ModdedMixinFlags {
         return mobAwarenessRan;
     }
 
+    public static boolean structureTemplatePaletteRan() {
+        return structureTemplatePaletteRan;
+    }
+
     public static boolean worldOpenFlowsRan() {
         return worldOpenFlowsRan;
     }
@@ -94,6 +105,7 @@ public final class ModdedMixinFlags {
         entityPersistenceRan = false;
         livingEntityLootRan = false;
         mobAwarenessRan = false;
+        structureTemplatePaletteRan = false;
         worldOpenFlowsRan = false;
         worldTypeEntryRan = false;
     }

@@ -55,13 +55,13 @@ public final class ModdedPregenJob {
             return false;
         }
 
-        PregenPerformanceProfile.apply(engine);
         PregenTask task = PregenTask.builder()
                 .gui(gui)
                 .center(new Position2(centerBlockX, centerBlockZ))
                 .radiusX(radiusBlocks)
                 .radiusZ(radiusBlocks)
                 .build();
+        PregenPerformanceProfile.apply(engine);
         ModdedPregenMethod moddedMethod = new ModdedPregenMethod(level, engine, sync);
         PregeneratorMethod method = moddedMethod;
         if (cached) {

@@ -50,22 +50,21 @@ public final class WorldRemovalPathPolicy {
             throw new Rejection(RejectionReason.SYMBOLIC_LINK,
                     "World storage path contains a symbolic link: " + normalizedLevelRoot);
         }
-        Path target;
+        StorageLayout storageLayout;
         try {
-            target = IrisWorldStorage.requireSafeManagedDimensionRoot(
-                    normalizedLevelRoot.toFile(),
-                    worldKey
-            ).toPath().toAbsolutePath().normalize();
-        } catch (IllegalArgumentException failure) {
+            storageLayout = resolveStorageLayout(normalizedLevelRoot, worldKey);
+        } catch (RuntimeException failure) {
             throw classifyStorageFailure(normalizedLevelRoot, worldKey, failure);
         }
-        validateStoragePath(normalizedLevelRoot, worldKey, target);
+        validateStoragePath(normalizedLevelRoot, worldKey, storageLayout.dimensionDirectory());
+        validateStorageRoot(normalizedLevelRoot, worldKey, storageLayout.storageDirectory());
         return new Target(
                 requestedIdentifier,
                 worldKey,
                 IrisWorldStorage.logicalName(worldKey, mainWorld),
                 normalizedLevelRoot,
-                target
+                storageLayout.dimensionDirectory(),
+                storageLayout.storageDirectory()
         );
     }
 
@@ -77,17 +76,39 @@ public final class WorldRemovalPathPolicy {
         }
         Path expected;
         try {
-            expected = IrisWorldStorage.requireSafeManagedDimensionRoot(
-                    normalizedLevelRoot.toFile(),
+            expected = resolveStorageLayout(
+                    normalizedLevelRoot,
                     Objects.requireNonNull(worldKey, "worldKey")
-            ).toPath().toAbsolutePath().normalize();
-        } catch (IllegalArgumentException failure) {
+            ).dimensionDirectory();
+        } catch (RuntimeException failure) {
             throw classifyStorageFailure(normalizedLevelRoot, worldKey, failure);
         }
         Path normalizedCandidate = Objects.requireNonNull(candidate, "candidate").toAbsolutePath().normalize();
         if (!normalizedCandidate.equals(expected)) {
             throw new Rejection(RejectionReason.OUTSIDE_STORAGE_ROOT,
                     "The world directory is outside its exact Iris dimension storage root.");
+        }
+    }
+
+    public static void validateStorageRoot(Path levelRoot, NamespacedKey worldKey, Path candidate) {
+        Path normalizedLevelRoot = Objects.requireNonNull(levelRoot, "levelRoot").toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(normalizedLevelRoot)) {
+            throw new Rejection(RejectionReason.SYMBOLIC_LINK,
+                    "World storage path contains a symbolic link: " + normalizedLevelRoot);
+        }
+        Path expected;
+        try {
+            expected = resolveStorageLayout(
+                    normalizedLevelRoot,
+                    Objects.requireNonNull(worldKey, "worldKey")
+            ).storageDirectory();
+        } catch (RuntimeException failure) {
+            throw classifyStorageFailure(normalizedLevelRoot, worldKey, failure);
+        }
+        Path normalizedCandidate = Objects.requireNonNull(candidate, "candidate").toAbsolutePath().normalize();
+        if (!normalizedCandidate.equals(expected)) {
+            throw new Rejection(RejectionReason.OUTSIDE_STORAGE_ROOT,
+                    "The world storage directory is outside its exact current platform root.");
         }
     }
 
@@ -104,17 +125,58 @@ public final class WorldRemovalPathPolicy {
     private static Rejection classifyStorageFailure(
             Path levelRoot,
             NamespacedKey worldKey,
-            IllegalArgumentException failure
+            RuntimeException failure
     ) {
         Path dimensions = levelRoot.resolve("dimensions");
         Path namespace = dimensions.resolve(worldKey.getNamespace());
         Path target = namespace.resolve(worldKey.getKey());
-        RejectionReason reason = Files.isSymbolicLink(dimensions)
+        String failureMessage = String.valueOf(failure.getMessage()).toLowerCase(Locale.ENGLISH);
+        RejectionReason reason = failureMessage.contains("symbolic link")
+                || Files.isSymbolicLink(dimensions)
                 || Files.isSymbolicLink(namespace)
                 || Files.isSymbolicLink(target)
                 ? RejectionReason.SYMBOLIC_LINK
                 : RejectionReason.OUTSIDE_STORAGE_ROOT;
         return new Rejection(reason, failure.getMessage(), failure);
+    }
+
+    private static StorageLayout resolveStorageLayout(Path levelRoot, NamespacedKey worldKey) {
+        Path worldContainer = levelRoot.getParent();
+        if (worldContainer == null) {
+            throw new IllegalArgumentException("Selected level root has no world container: " + levelRoot);
+        }
+        String configuredWorldName = IrisWorldStorage.configuredWorldName(
+                worldKey,
+                levelRoot.getFileName().toString()
+        );
+        Path directDimension = IrisWorldStorage.requireSafeManagedDimensionRoot(
+                levelRoot.toFile(),
+                worldKey
+        ).toPath().toAbsolutePath().normalize();
+        Path dimensionDirectory = IrisWorldStorage.frozenDimensionRoot(
+                worldContainer.toFile(),
+                levelRoot.toFile(),
+                configuredWorldName,
+                worldKey
+        ).map(file -> file.toPath().toAbsolutePath().normalize()).orElse(directDimension);
+        if (dimensionDirectory.equals(directDimension)) {
+            return new StorageLayout(directDimension, directDimension);
+        }
+
+        Path configuredDimension = IrisWorldStorage.configuredDimensionRoot(
+                worldContainer.toFile(),
+                levelRoot.toFile(),
+                worldKey
+        ).toPath().toAbsolutePath().normalize();
+        if (!dimensionDirectory.equals(configuredDimension)) {
+            throw new IllegalStateException("Iris world storage does not match the current platform layout.");
+        }
+        Path configuredLevel = IrisWorldStorage.configuredLevelRoot(
+                worldContainer.toFile(),
+                levelRoot.toFile(),
+                worldKey
+        ).toPath().toAbsolutePath().normalize();
+        return new StorageLayout(configuredDimension, configuredLevel);
     }
 
     private static String requireIdentifier(String identifier) {
@@ -129,7 +191,8 @@ public final class WorldRemovalPathPolicy {
             NamespacedKey worldKey,
             String logicalName,
             Path levelRoot,
-            Path worldDirectory
+            Path worldDirectory,
+            Path storageDirectory
     ) {
         public Target {
             Objects.requireNonNull(requestedIdentifier, "requestedIdentifier");
@@ -137,7 +200,11 @@ public final class WorldRemovalPathPolicy {
             Objects.requireNonNull(logicalName, "logicalName");
             Objects.requireNonNull(levelRoot, "levelRoot");
             Objects.requireNonNull(worldDirectory, "worldDirectory");
+            Objects.requireNonNull(storageDirectory, "storageDirectory");
         }
+    }
+
+    private record StorageLayout(Path dimensionDirectory, Path storageDirectory) {
     }
 
     public enum RejectionReason {

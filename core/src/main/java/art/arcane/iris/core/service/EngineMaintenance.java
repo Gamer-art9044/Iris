@@ -67,7 +67,7 @@ public final class EngineMaintenance {
         long unloadStart = System.nanoTime();
         int unloadedTectonicPlates = engine.getMantle().unloadTectonicPlate(
                 plan.multicoreUnload() ? 0 : Integer.MAX_VALUE);
-        if (plan.heapPressure() && MantleHeapPressure.overPanicWater()) {
+        if (plan.heapPressure()) {
             MantleHeapPressure.requestPanicReclaim();
         }
 

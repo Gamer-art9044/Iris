@@ -17,10 +17,16 @@ import org.bukkit.Chunk;
 import org.bukkit.GameRule;
 import org.bukkit.HeightMap;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Waterlogged;
 import org.bukkit.entity.Player;
 import org.bukkit.event.world.TimeSkipEvent;
 import org.bukkit.plugin.PluginManager;
+import org.bukkit.util.BoundingBox;
+import org.bukkit.util.VoxelShape;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -31,6 +37,26 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 public final class WorldRuntimeControlService {
+    private static final int MAX_SAFE_ENTRY_HORIZONTAL_RADIUS = 15;
+    private static final int MAX_SAFE_ENTRY_VERTICAL_SEARCH = 64;
+    private static final double BLOCK_CENTER = 0.5D;
+    private static final double COLLISION_EPSILON = 0.000001D;
+    private static final Set<Material> UNSAFE_ENTRY_MATERIALS = Set.of(
+            Material.CACTUS,
+            Material.CAMPFIRE,
+            Material.COBWEB,
+            Material.END_GATEWAY,
+            Material.END_PORTAL,
+            Material.FIRE,
+            Material.MAGMA_BLOCK,
+            Material.NETHER_PORTAL,
+            Material.POINTED_DRIPSTONE,
+            Material.POWDER_SNOW,
+            Material.SOUL_CAMPFIRE,
+            Material.SOUL_FIRE,
+            Material.SWEET_BERRY_BUSH,
+            Material.WITHER_ROSE
+    );
     private static volatile WorldRuntimeControlService instance;
 
     private final CapabilitySnapshot capabilities;
@@ -352,19 +378,138 @@ public final class WorldRuntimeControlService {
     }
 
     static Location findTopSafeLocation(World world, Location source) {
-        int x = source.getBlockX();
-        int z = source.getBlockZ();
+        int sourceX = source.getBlockX();
+        int sourceZ = source.getBlockZ();
         float yaw = source.getYaw();
         float pitch = source.getPitch();
-        int minY = world.getMinHeight() + 1;
-        int maxY = world.getMaxHeight() - 2;
-        if (world.isChunkLoaded(x >> 4, z >> 4)) {
-            int raw = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
-            int y = Math.max(minY, Math.min(maxY, raw + 1));
-            return new Location(world, x + 0.5D, y, z + 0.5D, yaw, pitch);
+        int chunkX = sourceX >> 4;
+        int chunkZ = sourceZ >> 4;
+        if (!world.isChunkLoaded(chunkX, chunkZ)) {
+            return null;
         }
-        int y = Math.max(minY, Math.min(maxY, source.getBlockY()));
-        return new Location(world, x + 0.5D, y, z + 0.5D, yaw, pitch);
+
+        int minimumFloorY = world.getMinHeight();
+        int maximumFloorY = world.getMaxHeight() - 3;
+        if (minimumFloorY > maximumFloorY) {
+            return null;
+        }
+
+        int minimumX = chunkX << 4;
+        int minimumZ = chunkZ << 4;
+        int maximumX = minimumX + 15;
+        int maximumZ = minimumZ + 15;
+        for (int radius = 0; radius <= MAX_SAFE_ENTRY_HORIZONTAL_RADIUS; radius++) {
+            for (int offsetX = -radius; offsetX <= radius; offsetX++) {
+                for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
+                    if (Math.max(Math.abs(offsetX), Math.abs(offsetZ)) != radius) {
+                        continue;
+                    }
+
+                    int x = sourceX + offsetX;
+                    int z = sourceZ + offsetZ;
+                    if (x < minimumX || x > maximumX || z < minimumZ || z > maximumZ) {
+                        continue;
+                    }
+
+                    Location safeLocation = findSafeLocationInColumn(
+                            world,
+                            x,
+                            z,
+                            minimumFloorY,
+                            maximumFloorY,
+                            yaw,
+                            pitch
+                    );
+                    if (safeLocation != null) {
+                        return safeLocation;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static Location findSafeLocationInColumn(
+            World world,
+            int x,
+            int z,
+            int minimumFloorY,
+            int maximumFloorY,
+            float yaw,
+            float pitch
+    ) {
+        int highestY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+        int startingFloorY = Math.max(minimumFloorY, Math.min(maximumFloorY, highestY));
+        int lowestFloorY = Math.max(minimumFloorY, startingFloorY - MAX_SAFE_ENTRY_VERTICAL_SEARCH + 1);
+        for (int floorY = startingFloorY; floorY >= lowestFloorY; floorY--) {
+            Block floor = world.getBlockAt(x, floorY, z);
+            if (!isSafeFloor(floor)) {
+                continue;
+            }
+
+            Block feet = world.getBlockAt(x, floorY + 1, z);
+            Block head = world.getBlockAt(x, floorY + 2, z);
+            if (isClearEntryBlock(feet) && isClearEntryBlock(head)) {
+                return new Location(world, x + BLOCK_CENTER, floorY + 1D, z + BLOCK_CENTER, yaw, pitch);
+            }
+        }
+
+        return null;
+    }
+
+    private static boolean isSafeFloor(Block block) {
+        Material material = block.getType();
+        if (material == null
+                || isAir(material)
+                || material.name().endsWith("_LEAVES")
+                || UNSAFE_ENTRY_MATERIALS.contains(material)
+                || block.isLiquid()
+                || block.isPassable()
+                || isWaterlogged(block)) {
+            return false;
+        }
+
+        VoxelShape collisionShape = block.getCollisionShape();
+        if (collisionShape == null) {
+            return false;
+        }
+
+        for (BoundingBox boundingBox : collisionShape.getBoundingBoxes()) {
+            if (boundingBox.getMinX() <= BLOCK_CENTER
+                    && boundingBox.getMaxX() >= BLOCK_CENTER
+                    && boundingBox.getMinZ() <= BLOCK_CENTER
+                    && boundingBox.getMaxZ() >= BLOCK_CENTER
+                    && boundingBox.getMaxY() > COLLISION_EPSILON
+                    && boundingBox.getMaxY() <= 1D + COLLISION_EPSILON) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean isClearEntryBlock(Block block) {
+        Material material = block.getType();
+        if (material == null
+                || block.isLiquid()
+                || isWaterlogged(block)
+                || UNSAFE_ENTRY_MATERIALS.contains(material)
+                || !block.isPassable()) {
+            return false;
+        }
+
+        VoxelShape collisionShape = block.getCollisionShape();
+        return collisionShape != null && collisionShape.getBoundingBoxes().isEmpty();
+    }
+
+    private static boolean isAir(Material material) {
+        return material == Material.AIR || material == Material.CAVE_AIR || material == Material.VOID_AIR;
+    }
+
+    private static boolean isWaterlogged(Block block) {
+        BlockData blockData = block.getBlockData();
+        return blockData instanceof Waterlogged waterlogged && waterlogged.isWaterlogged();
     }
 
     @SuppressWarnings("unchecked")

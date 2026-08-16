@@ -175,6 +175,19 @@ public class PendingWorldDeleteQueueTest {
     }
 
     @Test
+    public void exactLogicalEntryResolvesCurrentCraftBukkitLevelStorage() throws IOException {
+        Path worldContainer = temporaryFolder.newFolder("configured-delete-server").toPath();
+        File levelRoot = Files.createDirectory(worldContainer.resolve("world")).toFile();
+        Path configuredLevelRoot = worldContainer.resolve("world_iris_alpha");
+        Files.createDirectories(configuredLevelRoot.resolve("dimensions/iris/alpha"));
+
+        assertEquals(
+                List.of(configuredLevelRoot.toAbsolutePath().normalize()),
+                PendingWorldDeleteQueue.resolveQueueEntryPaths(levelRoot, "exact:alpha")
+        );
+    }
+
+    @Test
     public void failedSafeDeletionSignalsQueueRetentionAndSucceedsOnRetry() throws IOException {
         File levelRoot = temporaryFolder.newFolder("retry-world");
         Path quarantine = levelRoot.toPath().resolve("dimensions/iris").resolve(QUARANTINE_NAME);

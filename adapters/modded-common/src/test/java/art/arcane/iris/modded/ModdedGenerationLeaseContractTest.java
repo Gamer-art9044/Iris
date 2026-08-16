@@ -102,7 +102,12 @@ public class ModdedGenerationLeaseContractTest {
         String execution = method(source, "private static void executeDownload(");
         assertTrue(execution.contains("PackDownloader.DownloadCancellation cancellation"));
         assertTrue(execution.contains("catch (PackDownloader.PackDownloadCancelledException error)"));
+        assertTrue(execution.contains("dispatchDownloadFeedback(source,"));
+        assertFalse(execution.contains("scheduler.global("));
         assertFalse(execution.contains("lease.close();"));
+
+        String feedback = method(source, "private static void dispatchDownloadFeedback(");
+        assertTrue(feedback.contains("source.getServer().execute(feedback);"));
     }
 
     @Test
@@ -168,6 +173,34 @@ public class ModdedGenerationLeaseContractTest {
         assertTrue(cancelRequest.contains("request.cancel();"));
         String pending = method(methodSource, "boolean hasPendingFinalSave()");
         assertTrue(pending.contains("queuedFinalSave.get() != null"));
+    }
+
+    @Test
+    public void firstPregenChunkFailureRetainsItsFullCause() throws IOException {
+        String methodSource = source("art/arcane/iris/modded/command/ModdedPregenMethod.java");
+        String logFailure = method(methodSource, "private void logChunkFailure(");
+
+        assertTrue(methodSource.contains("AtomicBoolean failureDetailLogged"));
+        assertTrue(logFailure.contains("unwrap(failure)"));
+        assertTrue(logFailure.contains("failureDetailLogged.compareAndSet(false, true)"));
+        assertTrue(logFailure.contains("x, z, cause);"));
+        assertTrue(logFailure.contains("cause.toString()"));
+    }
+
+    @Test
+    public void invalidPregenBoundsFailBeforeRuntimeMutation() throws IOException {
+        String jobSource = source("art/arcane/iris/modded/command/ModdedPregenJob.java");
+        String start = method(jobSource, "public static boolean start(");
+        int taskConstruction = start.indexOf("PregenTask task = PregenTask.builder()");
+        int profileMutation = start.indexOf("PregenPerformanceProfile.apply(engine);");
+
+        assertTrue(taskConstruction >= 0);
+        assertTrue(profileMutation > taskConstruction);
+
+        String commandSource = source("art/arcane/iris/modded/command/ModdedPregenCommands.java");
+        String command = method(commandSource, "static int pregenStart(");
+        assertTrue(command.contains("catch (IllegalArgumentException failure)"));
+        assertTrue(command.contains("IrisModdedCommands.fail(source, failure.getMessage())"));
     }
 
     private static String source(String relativePath) throws IOException {

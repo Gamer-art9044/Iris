@@ -35,6 +35,7 @@ import java.util.Map;
 @Builder
 @Data
 public class PregenTask {
+    static final int MAX_WORLD_BLOCK = 29_999_984;
     /**
      * Saturation limits for block bounds. The full int range is safe downstream: the widest derived value is
      * regionToChunk(blockToRegionFloor(MAX_BLOCK)) + 31 shifted back to blocks, which lands inside int.
@@ -71,12 +72,26 @@ public class PregenTask {
         if (radiusX <= 0 || radiusZ <= 0) {
             throw new IllegalArgumentException("Pregen radii must be greater than zero blocks.");
         }
+        requireWithinWorld(center, radiusX, radiusZ);
 
         this.gui = gui;
         this.center = new ProxiedPos(center);
         this.radiusX = radiusX;
         this.radiusZ = radiusZ;
         bounds.update();
+    }
+
+    private static void requireWithinWorld(Position2 center, int radiusX, int radiusZ) {
+        long minX = (long) center.getX() - radiusX;
+        long maxX = (long) center.getX() + radiusX;
+        long minZ = (long) center.getZ() - radiusZ;
+        long maxZ = (long) center.getZ() + radiusZ;
+        if (minX < -MAX_WORLD_BLOCK || maxX > MAX_WORLD_BLOCK
+                || minZ < -MAX_WORLD_BLOCK || maxZ > MAX_WORLD_BLOCK) {
+            throw new IllegalArgumentException("Pregen area exceeds Minecraft's coordinate limit of +/-"
+                    + MAX_WORLD_BLOCK + " blocks: center " + center.getX() + "," + center.getZ()
+                    + " radius " + radiusX + "x" + radiusZ + ".");
+        }
     }
 
     public static void iterateRegion(int xr, int zr, Spiraled s, Position2 pull) {

@@ -67,6 +67,11 @@ public class NativeStructureFailureContractTest {
         assertTrue(placement.contains("\"terrain preparation\""));
         assertTrue(placement.contains("\"foundation repair\""));
         assertFalse(placement.contains("\"terrain carving\""));
+        assertTrue(placement.contains("visitExistingPois(chunk"));
+        assertTrue(placement.contains("level.updatePOIOnBlockStateChange("));
+        assertTrue(placement.contains("Blocks.AIR.defaultBlockState(), state"));
+        assertTrue(placement.indexOf("visitExistingPois(chunk")
+                < placement.indexOf("WorldgenTerrainHeightmaps.primeStructurePlacement("));
         assertTrue(placement.contains("prepareSurfaceStructures"));
         assertTrue(placement.contains("clearIntersectingVegetation"));
         assertTrue(placement.indexOf("clearIntersectingVegetation")
@@ -93,6 +98,19 @@ public class NativeStructureFailureContractTest {
         assertTrue(source.contains("generationEngine.getHeight(x, z, false) + runtimeMinY + 1"));
         assertTrue(source.contains("generationEngine.getHeight(x, z, true) + runtimeMinY + 1"));
         assertTrue(source.contains("int minY = chunk.getMinY() + 1;"));
+    }
+
+    @Test
+    public void nativeStructurePostProcessingUsesBoundedWorldgenAccess() throws IOException {
+        String source = moddedSource("ModdedNativeStructureStage.java");
+        int placementStart = source.indexOf("private void placeVanillaStructure");
+        int placementEnd = source.indexOf("private List<List<Structure>> structuresByStep", placementStart);
+        String placement = source.substring(placementStart, placementEnd);
+
+        assertTrue(placement.contains("ModdedNativeStructureWorldgenAccess.create("));
+        assertTrue(placement.contains("NativeStructurePostProcessor.place(\n                    boundedWorld"));
+        assertFalse(placement.contains("NativeStructurePostProcessor.place(world,"));
+        assertTrue(placement.contains("world.setCurrentlyGenerating(null);"));
     }
 
     @Test

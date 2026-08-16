@@ -22,10 +22,10 @@ Canonical English is defined in the typed Java catalogs under `core/src/main/jav
 |---|---|---|---|
 | Paper / Purpur / Leaf / Canvas | plugin jar | 26.1.2 - 26.2 | Full feature set |
 | Folia | plugin jar | 26.1.2 - 26.2 | Region-safe scheduling throughout |
-| Spigot / CraftBukkit | plugin jar | 26.1.2 - 26.2 | Full feature set |
+| Spigot / CraftBukkit | plugin jar | 26.1.2 - 26.2 | Managed `iris:*` creation and generation; exact vanilla-slot `/iris replace` is unavailable |
 | Fabric | mod jar | 26.2 | Server worldgen + client HUD; requires Fabric Loader 0.19.3+ |
-| Forge | mod jar | 26.2 | Server worldgen + client HUD; requires Forge 65.0.4+ |
-| NeoForge | mod jar | 26.2 | Server worldgen + client HUD; requires NeoForge 26.2.0.12-beta+ |
+| Forge | mod jar | 26.2 | Server worldgen + client HUD; current target is Forge 26.2-65.1.1 |
+| NeoForge | mod jar | 26.2 | Server worldgen + client HUD; current target is NeoForge 26.2.0.59 |
 
 Java 25 is required on every platform.
 
@@ -63,15 +63,24 @@ content selecting on `#minecraft:is_overworld` and friends.
 
 **Plugin (Paper/Purpur/Leaf/Canvas/Folia/Spigot):** drop the plugin jar into `plugins/` and start
 the server. First boot performs no pack download. Run `/iris download pack=overworld`,
-`/iris download pack=underworld`, or `/iris download link=https://host/path/pack.zip`, then restart manually.
+`/iris download pack=underworld`, or `/iris download link=https://host/path/pack.zip`, waiting for
+each download to finish before starting another. The shipping Overworld declares Towns & Towers
+26.1 and Dungeons & Taverns 5.3.0. With the default automatic ingest enabled, the first restart
+after download installs those external datapacks and leaves admission restart-required; complete
+the ensuing clean restart so Minecraft loads them together with the Iris dimension types and
+biomes. If automatic ingest is disabled, run `/iris datapack ingest restart=true` instead and
+complete the restart it requests. Plain Spigot supports ordinary managed `/iris create`, but not
+the early-bootstrap `/iris replace` path for canonical Overworld, Nether, or End slots.
 
 **Mod (Fabric/Forge/NeoForge):** drop the mod jar into `mods/` and start the server. The jar is
 self-contained (core, SPI, and required Fabric API modules are bundled). First boot compiles only
 packs already on disk and never accesses the network. `/iris download` installs a pack atomically
-without stopping the server; restart manually afterward. Packs register their custom dimension types
-(height ranges) and custom biomes through the forced datapack at server start - restart once after
-adding a pack so worlds get its full heights and biomes; worlds created before that restart run
-with fallback heights.
+without stopping the server. Before loading the shipping Overworld, manually place the exact
+compatible Towns & Towers 26.1 and Dungeons & Taverns 5.3.0 archives in that save's `datapacks/`
+directory; modded `/iris datapack ingest` is an explanatory stub and does not install them. Restart
+once only after the Iris pack and both external datapacks are present. Packs register their custom
+dimension types, height ranges, biomes, and external structure keys during that boot; worlds created
+before it run with fallback registry data.
 
 **Singleplayer (modded clients):** installed Iris packs appear as selectable World Types on the
 Create New World screen; the integrated server runs the same engine.
@@ -89,7 +98,8 @@ mod is inert.
 
 ## Quickstart
 
-Create and enter an Iris world.
+Complete the platform's pack, external-datapack, and registry-restart workflow above first. Then
+create and enter an Iris world.
 
 Plugin (optional arguments are keyed):
 
@@ -104,6 +114,17 @@ Mod (positional arguments):
 /iris create myworld overworld 1337
 /iris tp irisworldgen:myworld
 ```
+
+On Paper-family servers with early bootstrap (not plain Spigot), the shipping pair can instead
+replace the canonical portal-linked slots after their registry workflow is complete:
+
+```
+/iris replace minecraft:overworld type=overworld seed=123456789
+/iris replace minecraft:the_nether type=underworld seed=-987654321
+```
+
+Restart once after both commands report staged. The independent seeds apply to their respective
+slots, and vanilla portals keep routing between the canonical Overworld and Nether identities.
 
 Pregeneration requires a radius in blocks. On the plugin, optional arguments are keyed; on modded
 servers they are positional and composable:

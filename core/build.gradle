@@ -37,7 +37,7 @@ plugins {
 
 def lib = 'art.arcane.iris.util'
 String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
-    .orElse('com.github.VolmitSoftware:VolmLib:d9026a7c8ebc391c8109f401ce79a0ce65df3969')
+    .orElse('com.github.VolmitSoftware:VolmLib:5486ac97ad6d6833e27275dc768222d377721522')
     .get()
 String sentryAuthToken = findProperty('sentry.auth.token') as String ?: System.getenv('SENTRY_AUTH_TOKEN')
 boolean hasSentryAuthToken = sentryAuthToken != null && !sentryAuthToken.isBlank()

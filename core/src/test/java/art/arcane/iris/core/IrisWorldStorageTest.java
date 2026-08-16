@@ -255,4 +255,164 @@ public class IrisWorldStorageTest {
         assertFalse(IrisWorldStorage.isExistingManagedDimensionRoot(levelRoot, file));
         assertTrue(IrisWorldStorage.isExistingManagedDimensionRoot(levelRoot, directory));
     }
+
+    @Test
+    public void persistentDimensionRootAllowsOnlyManagedAndExactVanillaSlots() throws Exception {
+        File levelRoot = temporaryFolder.newFolder("persistent-root");
+
+        assertEquals(
+                IrisWorldStorage.dimensionRoot(levelRoot, new NamespacedKey("iris", "moon")).getCanonicalFile(),
+                IrisWorldStorage.requireSafePersistentDimensionRoot(
+                        levelRoot,
+                        new NamespacedKey("iris", "moon")
+                )
+        );
+        assertEquals(
+                IrisWorldStorage.dimensionRoot(levelRoot, NamespacedKey.minecraft("overworld")).getCanonicalFile(),
+                IrisWorldStorage.requireSafePersistentDimensionRoot(
+                        levelRoot,
+                        NamespacedKey.minecraft("overworld")
+                )
+        );
+        assertEquals(
+                IrisWorldStorage.dimensionRoot(levelRoot, NamespacedKey.minecraft("the_nether")).getCanonicalFile(),
+                IrisWorldStorage.requireSafePersistentDimensionRoot(
+                        levelRoot,
+                        NamespacedKey.minecraft("the_nether")
+                )
+        );
+        assertEquals(
+                IrisWorldStorage.dimensionRoot(levelRoot, NamespacedKey.minecraft("the_end")).getCanonicalFile(),
+                IrisWorldStorage.requireSafePersistentDimensionRoot(
+                        levelRoot,
+                        NamespacedKey.minecraft("the_end")
+                )
+        );
+        assertThrows(
+                ExactWorldSlotPathPolicy.Rejection.class,
+                () -> IrisWorldStorage.requireSafePersistentDimensionRoot(
+                        levelRoot,
+                        NamespacedKey.minecraft("custom")
+                )
+        );
+        assertThrows(
+                ExactWorldSlotPathPolicy.Rejection.class,
+                () -> IrisWorldStorage.requireSafePersistentDimensionRoot(
+                        levelRoot,
+                        new NamespacedKey("foreign", "moon")
+                )
+        );
+    }
+
+    @Test
+    public void frozenDimensionRootUsesCanonicalLevelStorageWhenPresent() throws Exception {
+        File worldContainer = temporaryFolder.newFolder("server-direct");
+        File levelRoot = Files.createDirectory(worldContainer.toPath().resolve("world")).toFile();
+        NamespacedKey worldKey = new NamespacedKey("iris", "moon");
+        File dimensionRoot = IrisWorldStorage.dimensionRoot(levelRoot, worldKey);
+        Files.createDirectories(dimensionRoot.toPath());
+
+        assertEquals(
+                dimensionRoot,
+                IrisWorldStorage.requireFrozenDimensionRoot(
+                        worldContainer,
+                        levelRoot,
+                        "world_iris_moon",
+                        worldKey
+                )
+        );
+    }
+
+    @Test
+    public void frozenDimensionRootUsesCurrentCraftBukkitConfiguredStorage() throws Exception {
+        File worldContainer = temporaryFolder.newFolder("server-configured");
+        File levelRoot = Files.createDirectory(worldContainer.toPath().resolve("world")).toFile();
+        NamespacedKey worldKey = new NamespacedKey("iris", "moon");
+        File configuredLevelRoot = new File(worldContainer, "world_iris_moon");
+        File configuredDimensionRoot = IrisWorldStorage.dimensionRoot(configuredLevelRoot, worldKey);
+        Files.createDirectories(configuredDimensionRoot.toPath());
+
+        assertEquals(
+                configuredDimensionRoot,
+                IrisWorldStorage.requireFrozenDimensionRoot(
+                        worldContainer,
+                        levelRoot,
+                        "world_iris_moon",
+                        worldKey
+                )
+        );
+    }
+
+    @Test
+    public void frozenDimensionRootRejectsMissingAndAmbiguousStorage() throws Exception {
+        File worldContainer = temporaryFolder.newFolder("server-ambiguous");
+        File levelRoot = Files.createDirectory(worldContainer.toPath().resolve("world")).toFile();
+        NamespacedKey worldKey = new NamespacedKey("iris", "moon");
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> IrisWorldStorage.requireFrozenDimensionRoot(
+                        worldContainer,
+                        levelRoot,
+                        "world_iris_moon",
+                        worldKey
+                )
+        );
+
+        Files.createDirectories(IrisWorldStorage.dimensionRoot(levelRoot, worldKey).toPath());
+        File configuredLevelRoot = new File(worldContainer, "world_iris_moon");
+        Files.createDirectories(IrisWorldStorage.dimensionRoot(configuredLevelRoot, worldKey).toPath());
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> IrisWorldStorage.requireFrozenDimensionRoot(
+                        worldContainer,
+                        levelRoot,
+                        "world_iris_moon",
+                        worldKey
+                )
+        );
+    }
+
+    @Test
+    public void frozenDimensionRootRejectsSymlinkedStorage() throws Exception {
+        File worldContainer = temporaryFolder.newFolder("server-symlink");
+        File levelRoot = Files.createDirectory(worldContainer.toPath().resolve("world")).toFile();
+        Path namespaceRoot = Files.createDirectories(levelRoot.toPath().resolve("dimensions"));
+        Path outside = temporaryFolder.newFolder("frozen-outside").toPath();
+        Files.createSymbolicLink(namespaceRoot.resolve("iris"), outside);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> IrisWorldStorage.requireFrozenDimensionRoot(
+                        worldContainer,
+                        levelRoot,
+                        "world_iris_moon",
+                        new NamespacedKey("iris", "moon")
+                )
+        );
+    }
+
+    @Test
+    public void frozenPackRootRequiresRealWorldLocalSnapshot() throws Exception {
+        File dimensionRoot = temporaryFolder.newFolder("frozen-pack-world");
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> IrisWorldStorage.requireFrozenPackRoot(dimensionRoot)
+        );
+
+        Path irisRoot = Files.createDirectory(dimensionRoot.toPath().resolve("iris"));
+        Path externalPack = temporaryFolder.newFolder("external-pack").toPath();
+        Files.createSymbolicLink(irisRoot.resolve("pack"), externalPack);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> IrisWorldStorage.requireFrozenPackRoot(dimensionRoot)
+        );
+
+        Files.delete(irisRoot.resolve("pack"));
+        Path packRoot = Files.createDirectory(irisRoot.resolve("pack"));
+        assertEquals(packRoot.toFile(), IrisWorldStorage.requireFrozenPackRoot(dimensionRoot));
+    }
 }

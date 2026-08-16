@@ -11,6 +11,7 @@ import art.arcane.iris.util.common.plugin.IrisService;
 import art.arcane.volmlib.util.scheduling.Looper;
 import lombok.NonNull;
 import org.bukkit.Bukkit;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -145,7 +146,21 @@ public class GlobalCacheSVC implements IrisService {
 
     private static PregenCache createDefault0(String worldIdentity) {
         if (disabled) return PregenCache.EMPTY;
-        File dimensionRoot = IrisWorldStorage.dimensionRoot(WorldIdentity.parse(worldIdentity));
+        NamespacedKey worldKey = WorldIdentity.parse(worldIdentity);
+        File dimensionRoot = requireCacheDimensionRoot(
+                Bukkit.getWorldContainer(),
+                IrisWorldStorage.levelRoot(),
+                worldKey
+        );
         return PregenCache.create(new File(dimensionRoot, "iris/pregen")).sync();
+    }
+
+    static File requireCacheDimensionRoot(File worldContainer, File levelRoot, NamespacedKey worldKey) {
+        return IrisWorldStorage.requireFrozenDimensionRoot(
+                worldContainer,
+                levelRoot,
+                IrisWorldStorage.configuredWorldName(worldKey, levelRoot.getName()),
+                worldKey
+        );
     }
 }

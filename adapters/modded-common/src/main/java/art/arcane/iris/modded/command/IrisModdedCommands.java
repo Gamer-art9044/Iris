@@ -344,7 +344,7 @@ public final class IrisModdedCommands {
 
             execution = new PackDownloadExecution(
                     lease,
-                    cancellation -> executeDownload(source, request, target, downloadSource, scheduler, cancellation)
+                    cancellation -> executeDownload(source, request, target, downloadSource, cancellation)
             );
             PackDownloadExecution trackedExecution = execution;
             execution.onCompletion(() -> clearActiveDownload(trackedExecution));
@@ -384,7 +384,6 @@ public final class IrisModdedCommands {
             DownloadRequest request,
             String target,
             String downloadSource,
-            ModdedScheduler scheduler,
             PackDownloader.DownloadCancellation cancellation
     ) throws PackDownloader.PackDownloadCancelledException {
         File packs = ModdedPackCommands.packsRoot();
@@ -394,35 +393,39 @@ public final class IrisModdedCommands {
                             packs,
                             request.url(),
                             false,
-                            (String message) -> scheduler.global(() -> ok(source, message)),
+                            (String message) -> dispatchDownloadFeedback(source, () -> ok(source, message)),
                             cancellation
                     )
                     : PackDownloader.downloadBuiltIn(
                             packs,
                             request.pack(),
                             false,
-                            (String message) -> scheduler.global(() -> ok(source, message)),
+                            (String message) -> dispatchDownloadFeedback(source, () -> ok(source, message)),
                             cancellation
                     );
             String completionMessage = downloadCompletionMessage(result);
             if (result != null) {
                 if (completionMessage != null) {
-                    scheduler.global(() -> ok(source, completionMessage));
+                    dispatchDownloadFeedback(source, () -> ok(source, completionMessage));
                 }
                 return;
             }
         } catch (PackDownloader.PackDownloadCancelledException error) {
             throw error;
         } catch (PackDownloader.PackDownloadBusyException error) {
-            scheduler.global(() -> fail(source, error.getMessage()));
+            dispatchDownloadFeedback(source, () -> fail(source, error.getMessage()));
             return;
         } catch (IOException | RuntimeException error) {
             LOGGER.error("Iris pack download failed for {}", target, error);
         }
-        scheduler.global(() -> fail(source, IrisLanguage.plain(
+        dispatchDownloadFeedback(source, () -> fail(source, IrisLanguage.plain(
                 ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
                 MessageArgument.untrusted("pack", target),
                 MessageArgument.untrusted("downloadSource", downloadSource))));
+    }
+
+    private static void dispatchDownloadFeedback(CommandSourceStack source, Runnable feedback) {
+        source.getServer().execute(feedback);
     }
 
     static String downloadBusyMessage(LifecycleOperationCoordinator.ActiveOperation operation) {

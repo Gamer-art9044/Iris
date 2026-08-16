@@ -22,13 +22,13 @@ import art.arcane.iris.Iris;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.nms.INMS;
-import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.platform.bukkit.BukkitEnvironment;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.misc.ServerProperties;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
+import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
@@ -698,16 +698,17 @@ public final class BukkitWorldReconciler {
         @Override
         public CompletableFuture<World> createWorld(NamespacedKey worldKey, String dimension, Long seed) {
             try {
-                String worldName = IrisWorldStorage.logicalName(worldKey);
-                Iris.info("Loading World: %s | Generator: %s", worldName, dimension);
-                ChunkGenerator generator = plugin.getDefaultWorldGenerator(worldName, dimension);
-                IrisDimension irisDimension = IrisWorldGeneratorResolver.loadDimension(worldName, dimension);
+                String logicalWorldName = IrisWorldStorage.logicalName(worldKey);
+                String configuredWorldName = configuredWorldName(worldKey);
+                Iris.info("Loading World: %s | Generator: %s", logicalWorldName, dimension);
+                ChunkGenerator generator = plugin.getDefaultWorldGenerator(configuredWorldName, dimension);
+                IrisDimension irisDimension = IrisWorldGeneratorResolver.loadDimension(configuredWorldName, dimension);
                 if (generator == null || irisDimension == null) {
                     throw new IllegalStateException("Could not resolve the Iris generator or dimension \"" + dimension + "\".");
                 }
 
-                Iris.info(C.LIGHT_PURPLE + "Preparing Spawn for " + worldName + " using Iris:" + dimension + "...");
-                WorldCreator creator = WorldCreatorCompat.ofKey(worldKey)
+                Iris.info(C.LIGHT_PURPLE + "Preparing Spawn for " + logicalWorldName + " using Iris:" + dimension + "...");
+                WorldCreator creator = WorldCreatorCompat.ofPersistentKey(worldKey)
                         .generator(generator)
                         .environment(BukkitEnvironment.from(irisDimension.getEnvironment()));
                 if (seed != null) {
@@ -726,7 +727,7 @@ public final class BukkitWorldReconciler {
 
         @Override
         public DimensionResolution resolveDimension(NamespacedKey worldKey) {
-            File dimensionsDirectory = new File(IrisWorldStorage.packRoot(worldKey), "dimensions");
+            File dimensionsDirectory = new File(snapshotRoot(worldKey), "dimensions");
             if (!dimensionsDirectory.isDirectory()) {
                 return DimensionResolution.failed(new IllegalStateException("The world has no Iris dimensions directory."));
             }
@@ -764,19 +765,30 @@ public final class BukkitWorldReconciler {
 
         @Override
         public void requireDimensionLoadable(NamespacedKey worldKey, String dimension) {
-            File snapshotRoot = IrisWorldStorage.packRoot(worldKey);
-            boolean snapshotPresent = snapshotRoot.isDirectory();
-            if (snapshotPresent) {
-                IrisWorldGeneratorResolver.requireSnapshotLoadable(snapshotRoot);
-            }
-            String worldName = IrisWorldStorage.logicalName(worldKey);
-            IrisDimension irisDimension = IrisWorldGeneratorResolver.loadDimension(worldName, dimension);
+            File snapshotRoot = snapshotRoot(worldKey);
+            IrisWorldGeneratorResolver.requireSnapshotLoadable(snapshotRoot);
+            String configuredWorldName = configuredWorldName(worldKey);
+            IrisDimension irisDimension = IrisWorldGeneratorResolver.loadDimension(configuredWorldName, dimension);
             if (irisDimension == null) {
                 throw new IllegalStateException("Could not resolve the Iris dimension \"" + dimension + "\".");
             }
-            if (!snapshotPresent) {
-                PackValidationRegistry.requireLoadable(irisDimension.getLoader().getDataFolder().getName());
+        }
+
+        private File snapshotRoot(NamespacedKey worldKey) {
+            File levelRoot = IrisWorldStorage.levelRoot();
+            File dimensionRoot = IrisWorldStorage.requireFrozenDimensionRoot(
+                    Bukkit.getWorldContainer(),
+                    levelRoot,
+                    configuredWorldName(worldKey),
+                    worldKey
+            );
+            File expectedRoot = WorldCreatorCompat.persistentDimensionRoot(worldKey);
+            if (!dimensionRoot.toPath().toAbsolutePath().normalize()
+                    .equals(expectedRoot.toPath().toAbsolutePath().normalize())) {
+                throw new IllegalStateException("Iris world storage does not match the current platform layout for "
+                        + worldKey + ".");
             }
+            return IrisWorldStorage.requireFrozenPackRoot(dimensionRoot);
         }
     }
 }

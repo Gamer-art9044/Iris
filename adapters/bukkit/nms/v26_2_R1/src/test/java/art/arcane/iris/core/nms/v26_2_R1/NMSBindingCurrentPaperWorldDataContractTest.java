@@ -3,29 +3,54 @@ package art.arcane.iris.core.nms.v26_2_R1;
 import art.arcane.iris.core.nms.INMSBinding;
 import org.junit.Test;
 
+import java.io.InputStream;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class NMSBindingCurrentPaperWorldDataContractTest {
     @Test
-    public void stagesAllCurrentPaperWorldDataFromLiveServerState() throws Exception {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource")));
+    public void bindingDelegatesWithoutLinkingPaperSavedDataClasses() throws Exception {
+        String bindingSource = Files.readString(bindingSourcePath());
         String writer = section(
-                source,
+                bindingSource,
                 "public void writeCurrentPaperWorldData(",
-                "public KMap<Material, List<BlockProperty>> getBlockProperties()"
+                "public boolean awaitServerShutdownBoundary("
         );
+
+        assertTrue(writer.contains("CurrentPaperWorldDataWriter.write("));
+        assertFalse(bindingSource.contains("PaperWorldMetadata"));
+        assertFalse(bindingSource.contains("PaperLevelOverrides"));
+        assertFalse(bindingSource.contains("io.papermc.paper.world.saveddata"));
+
+        InputStream classResource = NMSBindingCurrentPaperWorldDataContractTest.class
+                .getResourceAsStream("NMSBinding.class");
+        assertNotNull(classResource);
+        try (InputStream input = classResource) {
+            String classFile = new String(input.readAllBytes(), StandardCharsets.ISO_8859_1);
+            assertFalse(classFile.contains("PaperWorldMetadata"));
+            assertFalse(classFile.contains("PaperLevelOverrides"));
+            assertFalse(classFile.contains("io/papermc/paper/world/saveddata"));
+        }
+    }
+
+    @Test
+    public void stagesAllCurrentPaperWorldDataFromLiveServerState() throws Exception {
+        String writer = Files.readString(writerSourcePath());
 
         assertTrue(writer.contains("WorldReplacementSeed.copyWithAuthoritativeSeed("));
         assertTrue(writer.contains("UUID metadataUuid = UUID.randomUUID()"));
         assertTrue(writer.contains("new PaperWorldMetadata(metadataUuid)"));
-        assertTrue(writer.contains("captureCurrentPaperLevelOverrides(craftServer, server)"));
+        assertTrue(writer.contains("captureLevelOverrides(craftServer, server)"));
+        assertTrue(writer.indexOf("captureLevelOverrides(craftServer, server)")
+                < writer.indexOf("WorldReplacementSeed.copyWithAuthoritativeSeed("));
         assertTrue(writer.contains("new SavedDataStorage("));
         assertTrue(writer.contains("server.getFixerUpper()"));
         assertTrue(writer.contains("server.registryAccess()"));
@@ -44,23 +69,23 @@ public class NMSBindingCurrentPaperWorldDataContractTest {
 
     @Test
     public void capturesOnlyLiveLevelOverridesOnTheGlobalThread() throws Exception {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource")));
+        String source = Files.readString(writerSourcePath());
         String capture = section(
                 source,
-                "private PaperLevelOverrides captureCurrentPaperLevelOverrides(",
-                "private PaperLevelOverrides createCurrentPaperLevelOverrides("
+                "private static PaperLevelOverrides captureLevelOverrides(",
+                "private static PaperLevelOverrides createLevelOverrides("
         );
         String create = section(
                 source,
-                "private PaperLevelOverrides createCurrentPaperLevelOverrides(",
-                "public KMap<Material, List<BlockProperty>> getBlockProperties()"
+                "private static PaperLevelOverrides createLevelOverrides(",
+                "\n    }\n}"
         );
 
         assertTrue(capture.contains("craftServer.isGlobalTickThread()"));
         assertTrue(capture.contains("J.isFolia() && J.isPrimaryThread()"));
         assertTrue(capture.contains("J.runGlobal("));
-        assertTrue(capture.contains("createCurrentPaperLevelOverrides(craftServer, server)"));
-        assertTrue(capture.contains("captured.get(CURRENT_WORLD_DATA_SNAPSHOT_TIMEOUT_SECONDS"));
+        assertTrue(capture.contains("createLevelOverrides(craftServer, server)"));
+        assertTrue(capture.contains("captured.get(SNAPSHOT_TIMEOUT_SECONDS"));
         assertTrue(capture.contains("Thread.currentThread().interrupt()"));
         assertTrue(create.contains("if (!craftServer.isGlobalTickThread())"));
         assertTrue(create.indexOf("if (!craftServer.isGlobalTickThread())")
@@ -87,6 +112,14 @@ public class NMSBindingCurrentPaperWorldDataContractTest {
                 () -> binding.writeCurrentPaperWorldData(Path.of("source"), Path.of("target"), 1L)
         );
         assertTrue(error.getMessage().contains("does not support current Paper world data staging"));
+    }
+
+    private static Path bindingSourcePath() {
+        return Path.of(System.getProperty("iris.nmsBindingSource"));
+    }
+
+    private static Path writerSourcePath() {
+        return bindingSourcePath().resolveSibling("CurrentPaperWorldDataWriter.java");
     }
 
     private static String section(String source, String startMarker, String endMarker) {

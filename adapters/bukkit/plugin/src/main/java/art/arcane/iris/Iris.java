@@ -756,6 +756,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisStartupValidation.begin();
         Bukkit.getPluginManager().registerEvents(new IrisStartupAdmissionListener(), this);
         Bukkit.getPluginManager().registerEvents(pendingWorldReplacements, this);
+        pendingWorldReplacements.registerPlatformEntryListener();
         boolean enabled = enable();
         if (!enabled) {
             return;

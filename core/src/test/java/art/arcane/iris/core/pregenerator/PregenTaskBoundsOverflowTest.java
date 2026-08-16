@@ -9,31 +9,27 @@ import static org.junit.Assert.assertTrue;
 
 public class PregenTaskBoundsOverflowTest {
     @Test
-    public void farPositiveCenterKeepsRegionBoundsOrdered() {
-        PregenTask task = PregenTask.builder()
-                .center(new Position2(Integer.MAX_VALUE - 16, Integer.MAX_VALUE - 16))
-                .radiusX(4096)
-                .radiusZ(4096)
-                .build();
+    public void farPositiveCenterIsRejectedBeforeTraversal() {
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> PregenTask.builder()
+                        .center(new Position2(Integer.MAX_VALUE - 16, Integer.MAX_VALUE - 16))
+                        .radiusX(4096)
+                        .radiusZ(4096)
+                        .build());
 
-        int[] bounds = task.regionBounds();
-
-        assertTrue("minX must not exceed maxX", bounds[0] <= bounds[2]);
-        assertTrue("minZ must not exceed maxZ", bounds[1] <= bounds[3]);
+        assertTrue(failure.getMessage().contains("coordinate limit"));
     }
 
     @Test
-    public void farNegativeCenterKeepsRegionBoundsOrdered() {
-        PregenTask task = PregenTask.builder()
-                .center(new Position2(Integer.MIN_VALUE + 16, Integer.MIN_VALUE + 16))
-                .radiusX(4096)
-                .radiusZ(4096)
-                .build();
+    public void farNegativeCenterIsRejectedBeforeTraversal() {
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> PregenTask.builder()
+                        .center(new Position2(Integer.MIN_VALUE + 16, Integer.MIN_VALUE + 16))
+                        .radiusX(4096)
+                        .radiusZ(4096)
+                        .build());
 
-        int[] bounds = task.regionBounds();
-
-        assertTrue("minX must not exceed maxX", bounds[0] <= bounds[2]);
-        assertTrue("minZ must not exceed maxZ", bounds[1] <= bounds[3]);
+        assertTrue(failure.getMessage().contains("coordinate limit"));
     }
 
     @Test
@@ -49,17 +45,41 @@ public class PregenTaskBoundsOverflowTest {
     }
 
     @Test
-    public void worldLimitRadiusIsAccepted() {
+    public void exactWorldLimitRadiusIsAccepted() {
         PregenTask task = PregenTask.builder()
                 .center(new Position2(0, 0))
-                .radiusX(30_000_000)
-                .radiusZ(30_000_000)
+                .radiusX(PregenTask.MAX_WORLD_BLOCK)
+                .radiusZ(PregenTask.MAX_WORLD_BLOCK)
                 .build();
 
         int[] bounds = task.regionBounds();
 
         assertEquals(-58594, bounds[0]);
         assertEquals(58594, bounds[2]);
+    }
+
+    @Test
+    public void oneBlockPastWorldLimitIsRejectedOnEveryEdge() {
+        int limit = PregenTask.MAX_WORLD_BLOCK;
+
+        assertWorldLimitFailure(limit, 0, 1, 1);
+        assertWorldLimitFailure(-limit, 0, 1, 1);
+        assertWorldLimitFailure(0, limit, 1, 1);
+        assertWorldLimitFailure(0, -limit, 1, 1);
+    }
+
+    @Test
+    public void offsetAreaEndingExactlyAtWorldLimitIsAccepted() {
+        int radius = 1000;
+        PregenTask task = PregenTask.builder()
+                .center(new Position2(PregenTask.MAX_WORLD_BLOCK - radius, -PregenTask.MAX_WORLD_BLOCK + radius))
+                .radiusX(radius)
+                .radiusZ(radius)
+                .build();
+
+        int[] bounds = task.regionBounds();
+        assertTrue(bounds[0] <= bounds[2]);
+        assertTrue(bounds[1] <= bounds[3]);
     }
 
     @Test
@@ -86,5 +106,15 @@ public class PregenTaskBoundsOverflowTest {
         for (int index = 0; index < expected.length; index++) {
             assertEquals("bounds[" + index + "]", expected[index], actual[index]);
         }
+    }
+
+    private static void assertWorldLimitFailure(int centerX, int centerZ, int radiusX, int radiusZ) {
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> PregenTask.builder()
+                        .center(new Position2(centerX, centerZ))
+                        .radiusX(radiusX)
+                        .radiusZ(radiusZ)
+                        .build());
+        assertTrue(failure.getMessage().contains("coordinate limit"));
     }
 }

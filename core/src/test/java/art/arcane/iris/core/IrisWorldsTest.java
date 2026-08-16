@@ -52,4 +52,20 @@ public class IrisWorldsTest {
         assertEquals(Set.of("world", "world_iris_moon"), selected.keySet());
         assertEquals(Set.of("archive_iris_foreign"), other.keySet());
     }
+
+    @Test
+    public void bukkitWorldFilteringRecognizesCurrentCraftBukkitConfiguredStorage() throws Exception {
+        Path worldContainer = temporaryFolder.newFolder("configured-server").toPath();
+        Path levelRoot = Files.createDirectory(worldContainer.resolve("world"));
+        Files.createDirectories(
+                worldContainer.resolve("world_iris_moon/dimensions/iris/moon")
+        );
+
+        Map<String, String> selected = IrisWorlds.filterBukkitWorldsByStorage(
+                levelRoot,
+                Map.of("world_iris_moon", "overworld")
+        );
+
+        assertEquals(Map.of("world_iris_moon", "overworld"), selected);
+    }
 }

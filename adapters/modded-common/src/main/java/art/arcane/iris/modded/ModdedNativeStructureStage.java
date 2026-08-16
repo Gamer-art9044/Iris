@@ -50,10 +50,12 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.ai.village.poi.PoiTypes;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.WorldGenLevel;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.chunk.ChunkAccess;
@@ -73,6 +75,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.function.IntBinaryOperator;
 
 /**
@@ -346,6 +349,11 @@ final class ModdedNativeStructureStage {
                 index++;
             }
         }
+        if (!placementGroups.isEmpty()) {
+            ServerLevel level = world.getLevel();
+            visitExistingPois(chunk, (position, state) -> level.updatePOIOnBlockStateChange(
+                    position, Blocks.AIR.defaultBlockState(), state));
+        }
         try {
             int runtimeMinY = world.getMinY();
             WorldgenTerrainHeightmaps.primeStructurePlacement(
@@ -405,6 +413,10 @@ final class ModdedNativeStructureStage {
         }
     }
 
+    static void visitExistingPois(ChunkAccess chunk, BiConsumer<BlockPos, BlockState> visitor) {
+        chunk.findBlocks(PoiTypes::hasPoi, visitor);
+    }
+
     private static String nativeStructureBatchContext(List<NativePlacementGroup> placementGroups) {
         if (placementGroups.isEmpty()) {
             return "<no resolved native structures>";
@@ -423,9 +435,21 @@ final class ModdedNativeStructureStage {
                                        WorldgenRandom random, BoundingBox area, ChunkPos chunkPos,
                                        String structureId, StructureStart start,
                                        IrisNativeStructureDecision decision) {
-        NativeStructurePostProcessor.place(world, structureManager, generator, random, area, chunkPos,
-                structureId, start, decision, this::resolvePaletteBlock,
-                (x, z) -> generator.engine().getHeight(x, z, true) + generator.engine().getMinHeight());
+        Engine current = generator.engine();
+        int runtimeMinY = world.getMinY();
+        WorldGenLevel boundedWorld = ModdedNativeStructureWorldgenAccess.create(
+                world, chunkPos,
+                worldgenSurfaceHeight(current, runtimeMinY),
+                worldgenFloorHeight(current, runtimeMinY));
+        world.setCurrentlyGenerating(() -> "Iris native structure " + structureId);
+        try {
+            NativeStructurePostProcessor.place(
+                    boundedWorld, structureManager, generator, random, area, chunkPos,
+                    structureId, start, decision, this::resolvePaletteBlock,
+                    (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
+        } finally {
+            world.setCurrentlyGenerating(null);
+        }
     }
 
     private List<List<Structure>> structuresByStep(Registry<Structure> registry) {

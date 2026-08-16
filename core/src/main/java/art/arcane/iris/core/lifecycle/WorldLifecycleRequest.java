@@ -40,7 +40,7 @@ public record WorldLifecycleRequest(
     }
 
     public WorldCreator toWorldCreator() {
-        WorldCreator creator = WorldCreatorCompat.ofKey(worldKey)
+        WorldCreator creator = WorldCreatorCompat.ofKey(worldKey, worldName)
                 .environment(environment)
                 .generateStructures(generateStructures)
                 .hardcore(hardcore)

@@ -15,7 +15,6 @@ import art.arcane.iris.core.nms.container.BiomeColor;
 import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.core.nms.container.BlockProperty;
 import art.arcane.iris.core.nms.datapack.DataVersion;
-import art.arcane.iris.core.lifecycle.WorldReplacementSeed;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.framework.Engine;
@@ -55,8 +54,6 @@ import art.arcane.volmlib.util.nbt.tag.CompoundTag;
 import art.arcane.iris.util.common.scheduling.J;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.shorts.ShortList;
-import io.papermc.paper.world.saveddata.PaperLevelOverrides;
-import io.papermc.paper.world.saveddata.PaperWorldMetadata;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer;
@@ -119,14 +116,14 @@ import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import net.minecraft.world.level.levelgen.structure.StructureCheck;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.structures.JigsawStructure;
-import net.minecraft.world.level.storage.PrimaryLevelData;
-import net.minecraft.world.level.storage.SavedDataStorage;
 import net.minecraft.world.level.levelgen.feature.AbstractHugeMushroomFeature;
 import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 import net.minecraft.world.level.levelgen.feature.FallenTreeFeature;
 import net.minecraft.world.level.levelgen.feature.Feature;
 import net.minecraft.world.level.levelgen.feature.TreeFeature;
+import net.minecraft.world.level.storage.LevelStorageSource;
 import net.minecraft.world.level.levelgen.flat.FlatLayerInfo;
 import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
 import org.bukkit.Bukkit;
@@ -162,8 +159,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -173,23 +168,18 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class NMSBinding implements INMSBinding {
-    private static final long CURRENT_WORLD_DATA_SNAPSHOT_TIMEOUT_SECONDS = 30L;
-
     private final KMap<Biome, Object> baseBiomeCache = new KMap<>();
     private volatile DataVersion dataVersion;
     private final BlockData AIR = Material.AIR.createBlockData();
     private final AtomicCache<MCAIdMap<net.minecraft.world.level.biome.Biome>> biomeMapCache = new AtomicCache<>();
     private final AtomicBoolean injected = new AtomicBoolean();
+    private volatile ResettableClassFileTransformer levelStorageAccessTransformer;
     private volatile ResettableClassFileTransformer serverLevelTransformer;
     private final AtomicCache<MCAIdMapper<BlockState>> registryCache = new AtomicCache<>();
     private final AtomicCache<MCAPalette<BlockState>> globalCache = new AtomicCache<>();
@@ -1249,8 +1239,15 @@ public class NMSBinding implements INMSBinding {
         ChunkGeneratorStructureState currentState = level.getChunkSource().getGeneratorState();
         net.minecraft.world.level.chunk.ChunkGenerator generator = level.getChunkSource().getGenerator();
         ChunkGeneratorStructureState scopedState = createStructureState(level, generator, currentState);
+        Registry<StructureSet> structureSetRegistry =
+                level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET);
         DatapackStructureStateFilter.Selection selection = DatapackStructureStateFilter.filter(
-                scopedState.possibleStructureSets(), scopeIndex, declaredSources, importedStructures);
+                scopedState.possibleStructureSets(),
+                scopeIndex,
+                declaredSources,
+                importedStructures,
+                DatapackStructureStateFilter.keyIndex(
+                        structureSetRegistry.listElements().toList()));
 
         Field possibleSetsField = getField(scopedState.getClass(), List.class);
         possibleSetsField.setAccessible(true);
@@ -1328,7 +1325,7 @@ public class NMSBinding implements INMSBinding {
                 level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET),
                 currentState.randomState(),
                 currentState.getLevelSeed(),
-                currentState.conf);
+                level.spigotConfig);
     }
 
     private void initializeAndPublishStructureState(
@@ -1542,6 +1539,18 @@ public class NMSBinding implements INMSBinding {
             }
             try {
                 IrisLogging.info("Injecting Bukkit");
+                levelStorageAccessTransformer = new AgentBuilder.Default()
+                        .disableClassFormatChanges()
+                        .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+                        .type(ElementMatchers.is(LevelStorageSource.LevelStorageAccess.class))
+                        .transform((builder, typeDescription, classLoader, module, protectionDomain) ->
+                                builder.visit(Advice.to(LevelStorageAccessAdvice.class).on(ElementMatchers.isConstructor()
+                                        .and(ElementMatchers.takesArguments(4))
+                                        .and(ElementMatchers.takesArgument(0, LevelStorageSource.class))
+                                        .and(ElementMatchers.takesArgument(1, String.class))
+                                        .and(ElementMatchers.takesArgument(2, Path.class))
+                                        .and(ElementMatchers.takesArgument(3, ResourceKey.class)))))
+                        .installOn(Agent.getInstrumentation());
                 serverLevelTransformer = new AgentBuilder.Default()
                         .disableClassFormatChanges()
                         .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
@@ -1549,8 +1558,7 @@ public class NMSBinding implements INMSBinding {
                         .transform((builder, typeDescription, classLoader, module, protectionDomain) ->
                                 builder.visit(Advice.to(ServerLevelAdvice.class).on(ElementMatchers.isConstructor()
                                         .and(ElementMatchers.takesArgument(0, MinecraftServer.class))
-                                        .and(ElementMatchers.takesArgument(5, LevelStem.class))
-                                        .and(ElementMatchers.takesArgument(12, ChunkGenerator.class)))))
+                                        .and(ElementMatchers.takesArgument(5, LevelStem.class)))))
                         .installOn(Agent.getInstrumentation());
                 ByteBuddy buddy = new ByteBuddy();
                 for (Class<?> clazz : List.of(ChunkAccess.class, ProtoChunk.class)) {
@@ -1565,12 +1573,17 @@ public class NMSBinding implements INMSBinding {
             } catch (Throwable e) {
                 IrisLogging.error(C.RED + "Failed to inject Bukkit");
                 e.printStackTrace();
-                // The ServerLevel transformer may already be installed when the ChunkAccess
-                // redefine throws; remove it or a retry would stack a second one and orphan
-                // this one permanently.
-                ResettableClassFileTransformer partial = serverLevelTransformer;
+                ResettableClassFileTransformer partialServerLevel = serverLevelTransformer;
+                ResettableClassFileTransformer partialStorageAccess = levelStorageAccessTransformer;
                 serverLevelTransformer = null;
-                if (partial != null) {
+                levelStorageAccessTransformer = null;
+                for (ResettableClassFileTransformer partial : new ResettableClassFileTransformer[]{
+                        partialServerLevel,
+                        partialStorageAccess
+                }) {
+                    if (partial == null) {
+                        continue;
+                    }
                     try {
                         partial.reset(Agent.getInstrumentation(), AgentBuilder.RedefinitionStrategy.RETRANSFORMATION);
                     } catch (Throwable ignored) {
@@ -1586,26 +1599,36 @@ public class NMSBinding implements INMSBinding {
         if (!injected.get())
             return;
         try {
-            Agent.getInstrumentation().retransformClasses(ServerLevel.class);
+            Agent.getInstrumentation().retransformClasses(
+                    LevelStorageSource.LevelStorageAccess.class,
+                    ServerLevel.class
+            );
         } catch (Throwable e) {
-            IrisLogging.error(C.RED + "Failed to re-apply ServerLevel injection");
+            IrisLogging.error(C.RED + "Failed to re-apply Bukkit world lifecycle injection");
         }
     }
 
     @Override
     public void uninjectBukkit() {
         synchronized (injected) {
-            ResettableClassFileTransformer transformer = serverLevelTransformer;
+            ResettableClassFileTransformer activeServerLevel = serverLevelTransformer;
+            ResettableClassFileTransformer activeStorageAccess = levelStorageAccessTransformer;
             serverLevelTransformer = null;
+            levelStorageAccessTransformer = null;
             injected.set(false);
-            if (transformer == null) {
-                return;
-            }
-            try {
-                transformer.reset(Agent.getInstrumentation(), AgentBuilder.RedefinitionStrategy.RETRANSFORMATION);
-            } catch (Throwable e) {
-                IrisLogging.error(C.RED + "Failed to remove ServerLevel injection");
-                e.printStackTrace();
+            for (ResettableClassFileTransformer transformer : new ResettableClassFileTransformer[]{
+                    activeServerLevel,
+                    activeStorageAccess
+            }) {
+                if (transformer == null) {
+                    continue;
+                }
+                try {
+                    transformer.reset(Agent.getInstrumentation(), AgentBuilder.RedefinitionStrategy.RETRANSFORMATION);
+                } catch (Throwable e) {
+                    IrisLogging.error(C.RED + "Failed to remove Bukkit world lifecycle injection");
+                    e.printStackTrace();
+                }
             }
         }
     }
@@ -1616,103 +1639,7 @@ public class NMSBinding implements INMSBinding {
             Path targetWorldDirectory,
             long seed
     ) throws IOException {
-        CraftServer craftServer = (CraftServer) Bukkit.getServer();
-        MinecraftServer server = craftServer.getHandle().getServer();
-        PaperLevelOverrides levelOverrides = captureCurrentPaperLevelOverrides(craftServer, server);
-
-        Path targetWorld = targetWorldDirectory.toAbsolutePath().normalize();
-        UUID metadataUuid = UUID.randomUUID();
-        WorldReplacementSeed.copyWithAuthoritativeSeed(sourceWorldDirectory, targetWorld, seed);
-        try (SavedDataStorage savedDataStorage = new SavedDataStorage(
-                targetWorld.resolve("data"),
-                server.getFixerUpper(),
-                server.registryAccess()
-        )) {
-            savedDataStorage.set(PaperWorldMetadata.TYPE, new PaperWorldMetadata(metadataUuid));
-            savedDataStorage.set(
-                    PaperLevelOverrides.TYPE,
-                    levelOverrides
-            );
-        }
-
-        List<Path> requiredDataFiles = List.of(
-                targetWorld.resolve("data/minecraft/world_gen_settings.dat"),
-                targetWorld.resolve("data/paper/metadata.dat"),
-                targetWorld.resolve("data/paper/level_overrides.dat")
-        );
-        for (Path requiredDataFile : requiredDataFiles) {
-            if (!Files.isRegularFile(requiredDataFile, LinkOption.NOFOLLOW_LINKS)) {
-                throw new IOException("Current Paper world data was not written: " + requiredDataFile);
-            }
-        }
-
-        long writtenSeed = WorldReplacementSeed.readAuthoritativeSeed(targetWorld);
-        if (writtenSeed != seed) {
-            throw new IOException("Current Paper world data did not retain the requested seed.");
-        }
-
-        try (SavedDataStorage verificationStorage = new SavedDataStorage(
-                targetWorld.resolve("data"),
-                server.getFixerUpper(),
-                server.registryAccess()
-        )) {
-            PaperWorldMetadata metadata = verificationStorage.get(PaperWorldMetadata.TYPE);
-            if (metadata == null || !metadataUuid.equals(metadata.uuid())) {
-                throw new IOException("Current Paper world metadata could not be verified.");
-            }
-            PaperLevelOverrides overrides = verificationStorage.get(PaperLevelOverrides.TYPE);
-            if (overrides == null || overrides.isInitialized()) {
-                throw new IOException("Current Paper level overrides could not be verified.");
-            }
-        }
-    }
-
-    private PaperLevelOverrides captureCurrentPaperLevelOverrides(
-            CraftServer craftServer,
-            MinecraftServer server
-    ) throws IOException {
-        if (craftServer.isGlobalTickThread()) {
-            return createCurrentPaperLevelOverrides(craftServer, server);
-        }
-        if (J.isFolia() && J.isPrimaryThread()) {
-            throw new IOException("Current Paper world data cannot be staged from a Folia region tick thread.");
-        }
-
-        CompletableFuture<PaperLevelOverrides> captured = new CompletableFuture<>();
-        boolean scheduled = J.runGlobal(() -> {
-            try {
-                captured.complete(createCurrentPaperLevelOverrides(craftServer, server));
-            } catch (Throwable failure) {
-                captured.completeExceptionally(failure);
-            }
-        });
-        if (!scheduled) {
-            throw new IOException("Could not schedule the current Paper level-data snapshot on the global thread.");
-        }
-
-        try {
-            return captured.get(CURRENT_WORLD_DATA_SNAPSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (InterruptedException failure) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while capturing current Paper level data.", failure);
-        } catch (ExecutionException failure) {
-            throw new IOException("Could not capture current Paper level data.", failure.getCause());
-        } catch (TimeoutException failure) {
-            throw new IOException("Timed out while capturing current Paper level data.", failure);
-        }
-    }
-
-    private PaperLevelOverrides createCurrentPaperLevelOverrides(
-            CraftServer craftServer,
-            MinecraftServer server
-    ) throws IOException {
-        if (!craftServer.isGlobalTickThread()) {
-            throw new IOException("Current Paper level data must be captured on the global tick thread.");
-        }
-        if (!(server.getWorldData().overworldData() instanceof PrimaryLevelData primaryLevelData)) {
-            throw new IOException("Paper primary level data is unavailable for current world data staging.");
-        }
-        return PaperLevelOverrides.createFromLiveLevelData(primaryLevelData);
+        CurrentPaperWorldDataWriter.write(sourceWorldDirectory, targetWorldDirectory, seed);
     }
 
     @Override
@@ -1777,13 +1704,76 @@ public class NMSBinding implements INMSBinding {
         }
     }
 
+    private static class LevelStorageAccessAdvice {
+        @Advice.OnMethodEnter
+        static void enter(
+                @Advice.Argument(1) String levelId,
+                @Advice.Argument(value = 3, readOnly = false) ResourceKey<LevelStem> dimensionType
+        ) {
+            if (levelId == null || levelId.isBlank()) {
+                return;
+            }
+
+            ClassLoader pluginClassLoader;
+            Class<?> generatorType;
+            Class<?> stagingType;
+            try {
+                org.bukkit.plugin.Plugin irisPlugin = Bukkit.getPluginManager().getPlugin("Iris");
+                if (irisPlugin == null) {
+                    return;
+                }
+                pluginClassLoader = irisPlugin.getClass().getClassLoader();
+                generatorType = Class.forName("art.arcane.iris.engine.platform.PlatformChunkGenerator", true, pluginClassLoader);
+                stagingType = Class.forName("art.arcane.iris.core.lifecycle.WorldLifecycleStaging", true, pluginClassLoader);
+            } catch (Throwable ignored) {
+                return;
+            }
+
+            Object generator;
+            try {
+                generator = stagingType
+                        .getDeclaredMethod("peekStemGenerator", String.class)
+                        .invoke(null, levelId);
+            } catch (Throwable e) {
+                throw new RuntimeException("Iris failed to inspect the staged world generator",
+                        e instanceof InvocationTargetException ex ? ex.getCause() : e);
+            }
+            if (generator == null || !generatorType.isInstance(generator)) {
+                return;
+            }
+
+            try {
+                Object target = generatorType.getMethod("getTarget").invoke(generator);
+                if (target == null) {
+                    throw new IllegalStateException("Iris generator has no engine target.");
+                }
+                Object world = target.getClass().getMethod("getWorld").invoke(target);
+                if (world == null) {
+                    throw new IllegalStateException("Iris generator target has no world identity.");
+                }
+                Object rawIdentity = world.getClass().getMethod("identity").invoke(world);
+                String worldIdentity = rawIdentity == null ? "" : rawIdentity.toString().trim();
+                Identifier worldIdentifier = Identifier.parse(worldIdentity);
+                if (!"iris".equals(worldIdentifier.getNamespace())
+                        && !"minecraft".equals(worldIdentifier.getNamespace())) {
+                    throw new IllegalStateException(
+                            "Iris generator has an unmanaged world identity: " + worldIdentity);
+                }
+                dimensionType = ResourceKey.create(Registries.LEVEL_STEM, worldIdentifier);
+            } catch (Throwable e) {
+                throw new RuntimeException("Iris failed to bind the staged world storage identity",
+                        e instanceof InvocationTargetException ex ? ex.getCause() : e);
+            }
+        }
+    }
+
     private static class ServerLevelAdvice {
         @Advice.OnMethodEnter
         static void enter(
                 @Advice.Argument(0) MinecraftServer server,
-                @Advice.Argument(4) ResourceKey<Level> dimensionKey,
+                @Advice.Argument(value = 4, readOnly = false) ResourceKey<Level> dimensionKey,
                 @Advice.Argument(value = 5, readOnly = false) LevelStem levelStem,
-                @Advice.Argument(12) ChunkGenerator constructorGenerator
+                @Advice.AllArguments Object[] constructorArguments
         ) {
             if (dimensionKey == null)
                 return;
@@ -1818,6 +1808,13 @@ public class NMSBinding implements INMSBinding {
             // the vanilla stem corrupts generation.
             ChunkGenerator gen = null;
             try {
+                ChunkGenerator constructorGenerator = null;
+                for (Object argument : constructorArguments) {
+                    if (argument instanceof ChunkGenerator candidate) {
+                        constructorGenerator = candidate;
+                        break;
+                    }
+                }
                 Object generator = generatorType.isInstance(constructorGenerator) ? constructorGenerator : null;
                 if (generator == null) {
                     generator = stagingType
@@ -1855,10 +1852,27 @@ public class NMSBinding implements INMSBinding {
                 if (stemMethod == null) {
                     throw new IllegalStateException("Iris binding is missing createRuntimeLevelStem.");
                 }
+                Object target = generatorType.getMethod("getTarget").invoke(gen);
+                if (target == null) {
+                    throw new IllegalStateException("Iris generator has no engine target.");
+                }
+                Object world = target.getClass().getMethod("getWorld").invoke(target);
+                if (world == null) {
+                    throw new IllegalStateException("Iris generator target has no world identity.");
+                }
+                Object rawIdentity = world.getClass().getMethod("identity").invoke(world);
+                String worldIdentity = rawIdentity == null ? "" : rawIdentity.toString().trim();
+                Identifier worldIdentifier = Identifier.parse(worldIdentity);
+                if (!"iris".equals(worldIdentifier.getNamespace())
+                        && !"minecraft".equals(worldIdentifier.getNamespace())) {
+                    throw new IllegalStateException(
+                            "Iris generator has an unmanaged world identity: " + worldIdentity);
+                }
                 Object resolvedStem = stemMethod.invoke(bindings, server.registryAccess(), gen);
                 if (!(resolvedStem instanceof LevelStem runtimeStem)) {
                     throw new IllegalStateException("Iris runtime LevelStem binding returned " + (resolvedStem == null ? "null" : resolvedStem.getClass().getName()) + ".");
                 }
+                dimensionKey = ResourceKey.create(Registries.DIMENSION, worldIdentifier);
                 levelStem = runtimeStem;
             } catch (Throwable e) {
                 throw new RuntimeException("Iris failed to replace the levelStem", e instanceof InvocationTargetException ex ? ex.getCause() : e);

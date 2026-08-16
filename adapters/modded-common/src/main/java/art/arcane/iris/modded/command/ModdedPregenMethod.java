@@ -73,6 +73,7 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
     private final AtomicBoolean finalSaveCompleted = new AtomicBoolean(false);
     private final AtomicReference<FinalSaveRequest> queuedFinalSave = new AtomicReference<>();
     private final AtomicBoolean stallHintLogged = new AtomicBoolean(false);
+    private final AtomicBoolean failureDetailLogged = new AtomicBoolean(false);
     private final int timeoutSeconds;
     private final PregenMantleBackpressure backpressure;
     private final PauseWhenEmptyGuard pauseGuard;
@@ -350,7 +351,7 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
             if (e instanceof TimeoutException) {
                 noteStallHint();
             }
-            LOGGER.warn("Iris pregen chunk {},{} failed: {}", x, z, e.toString());
+            logChunkFailure(x, z, e);
             listener.onChunkFailed(x, z);
         } finally {
             markFinished();
@@ -395,7 +396,7 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
                     if (unwrap(error) instanceof TimeoutException) {
                         onTimeout();
                     }
-                    LOGGER.warn("Iris pregen chunk {},{} failed: {}", x, z, error.toString());
+                    logChunkFailure(x, z, error);
                     listener.onChunkFailed(x, z);
                     return;
                 }
@@ -419,6 +420,15 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
     private void markSubmitted() {
         int current = inFlight.incrementAndGet();
         inFlightPeak.accumulateAndGet(current, Math::max);
+    }
+
+    private void logChunkFailure(int x, int z, Throwable failure) {
+        Throwable cause = unwrap(failure);
+        if (failureDetailLogged.compareAndSet(false, true)) {
+            LOGGER.warn("Iris pregen chunk {},{} failed; first failure follows", x, z, cause);
+            return;
+        }
+        LOGGER.warn("Iris pregen chunk {},{} failed: {}", x, z, cause.toString());
     }
 
     private void markFinished() {

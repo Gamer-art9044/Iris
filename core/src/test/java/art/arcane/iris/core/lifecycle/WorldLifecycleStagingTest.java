@@ -31,6 +31,18 @@ public class WorldLifecycleStagingTest {
     }
 
     @Test
+    public void stagedStemGeneratorCanBeInspectedWithoutConsumption() {
+        ChunkGenerator generator = mock(ChunkGenerator.class);
+
+        WorldLifecycleStaging.stageStemGenerator("world", generator);
+
+        assertSame(generator, WorldLifecycleStaging.peekStemGenerator("world"));
+        assertSame(generator, WorldLifecycleStaging.peekStemGenerator("world"));
+        assertSame(generator, WorldLifecycleStaging.consumeStemGenerator("world"));
+        assertNull(WorldLifecycleStaging.peekStemGenerator("world"));
+    }
+
+    @Test
     public void stagedStemGeneratorCannotBeConsumedByDifferentWorldName() {
         ChunkGenerator generator = mock(ChunkGenerator.class);
 

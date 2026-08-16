@@ -38,6 +38,7 @@ public class IrisWorldCreator {
     private String dimensionName = null;
     private IrisDimension dimension;
     private long seed = 1337;
+    private boolean persistent;
 
     public IrisWorldCreator() {
 
@@ -75,26 +76,35 @@ public class IrisWorldCreator {
         return this;
     }
 
+    public IrisWorldCreator persistent(boolean persistent) {
+        this.persistent = persistent;
+        return this;
+    }
+
     public WorldCreator create() {
         IrisDimension dim = dimension == null ? IrisData.loadAnyDimension(dimensionName, null) : dimension;
         NamespacedKey worldKey = IrisWorldStorage.keyFromName(name);
         World.Environment environment = findEnvironment();
+        WorldCreator creator = persistent
+                ? WorldCreatorCompat.ofPersistentKey(worldKey)
+                : WorldCreatorCompat.ofKey(worldKey);
+        File worldFolder = persistent
+                ? WorldCreatorCompat.persistentDimensionRoot(worldKey)
+                : IrisWorldStorage.dimensionRoot(worldKey);
 
         IrisWorld w = IrisWorld.builder()
                 .platformIdentity(worldKey.toString())
-                .name(name)
+                .name(creator.name())
                 .minHeight(dim.getMinHeight())
                 .maxHeight(dim.getMaxHeight())
                 .seed(seed)
-                .worldFolder(IrisWorldStorage.dimensionRoot(worldKey))
+                .worldFolder(worldFolder)
                 .build();
         ChunkGenerator g = new BukkitChunkGenerator(w, studio, studio
                 ? dim.getLoader().getDataFolder() :
                 new File(w.worldFolder(), "iris/pack"), dimensionName);
 
-
-        return WorldCreatorCompat.ofKey(worldKey)
-                .environment(environment)
+        return creator.environment(environment)
                 .generateStructures(true)
                 .generator(g).seed(seed);
     }

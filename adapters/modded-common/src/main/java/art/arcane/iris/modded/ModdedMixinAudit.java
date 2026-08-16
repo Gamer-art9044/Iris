@@ -53,6 +53,10 @@ public final class ModdedMixinAudit {
             new ExpectedMixin("MobAwarenessMixin", "entity",
                     "net.minecraft.world.entity.Mob", "iris$tickUnawareMob",
                     false, ModdedMixinFlags::mobAwarenessRan),
+            new ExpectedMixin("StructureTemplatePaletteConcurrencyMixin", "common",
+                    "net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette",
+                    "iris$installConcurrentBlockCache",
+                    false, ModdedMixinFlags::structureTemplatePaletteRan),
             new ExpectedMixin("IrisWorldOpenFlowsMixin", "client",
                     "net.minecraft.client.gui.screens.worldselection.WorldOpenFlows",
                     "iris$openWorldCheckWorldStemCompatibility",
@@ -103,7 +107,7 @@ public final class ModdedMixinAudit {
             LOGGER.error("  missing: {}", entry);
         }
         LOGGER.error("The mixin config was not registered for this loader (fabric.mod.json mixins, neoforge.mods.toml [[mixins]], forge MixinConfigs manifest attribute).");
-        LOGGER.error("Entity persistence, custom mob loot and Iris world-type labels are disabled until this is fixed.");
+        LOGGER.error("Entity persistence, custom mob loot, parallel structure safety, or Iris world-type labels are disabled until this is fixed.");
         LOGGER.error("===============================================================");
     }
 

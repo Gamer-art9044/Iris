@@ -289,6 +289,19 @@ public final class IrisWorldStorage {
         return requireSafeManagedDimensionRoot(levelRoot(), key);
     }
 
+    public static File requireSafePersistentDimensionRoot(NamespacedKey key) {
+        return requireSafePersistentDimensionRoot(levelRoot(), key);
+    }
+
+    static File requireSafePersistentDimensionRoot(File levelRoot, NamespacedKey key) {
+        NamespacedKey worldKey = Objects.requireNonNull(key, "key");
+        WorldSlotKey slotKey = new WorldSlotKey(worldKey.getNamespace(), worldKey.getKey());
+        return ExactWorldSlotPathPolicy.resolve(
+                Objects.requireNonNull(levelRoot, "levelRoot").toPath(),
+                slotKey
+        ).worldDirectory().toFile();
+    }
+
     public static File requireSafeManagedDimensionRoot(File levelRoot, NamespacedKey key) {
         NamespacedKey worldKey = Objects.requireNonNull(key, "key");
         if (!IRIS_NAMESPACE.equals(worldKey.getNamespace()) || !worldKey.getKey().matches("[a-z0-9_-]+")) {
@@ -367,5 +380,132 @@ public final class IrisWorldStorage {
 
     public static File packRoot(NamespacedKey key) {
         return new File(dimensionRoot(key), "iris/pack");
+    }
+
+    public static File requireFrozenDimensionRoot(
+            File worldContainer,
+            File levelRoot,
+            String bukkitWorldName,
+            NamespacedKey key
+    ) {
+        NamespacedKey worldKey = Objects.requireNonNull(key, "key");
+        return frozenDimensionRoot(worldContainer, levelRoot, bukkitWorldName, worldKey)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Frozen Iris world storage is missing for " + worldKey + "."));
+    }
+
+    public static Optional<File> frozenDimensionRoot(
+            File worldContainer,
+            File levelRoot,
+            String bukkitWorldName,
+            NamespacedKey key
+    ) {
+        File requiredLevelRoot = Objects.requireNonNull(levelRoot, "levelRoot").getAbsoluteFile();
+        NamespacedKey worldKey = Objects.requireNonNull(key, "key");
+        String requiredWorldName = Objects.requireNonNull(bukkitWorldName, "bukkitWorldName").trim();
+        if (requiredWorldName.isEmpty()) {
+            throw new IllegalArgumentException("Bukkit world name cannot be empty.");
+        }
+
+        File directRoot = dimensionRoot(requiredLevelRoot, worldKey);
+        boolean directExists = isExistingSafeDimensionRoot(requiredLevelRoot.toPath(), directRoot.toPath());
+        if (!IRIS_NAMESPACE.equals(worldKey.getNamespace())) {
+            return directExists ? Optional.of(directRoot) : Optional.empty();
+        }
+
+        String configuredName = configuredWorldName(worldKey, requiredLevelRoot.getName());
+        if (!configuredName.equals(requiredWorldName)) {
+            return directExists ? Optional.of(directRoot) : Optional.empty();
+        }
+
+        File configuredRoot = configuredDimensionRoot(worldContainer, requiredLevelRoot, worldKey);
+        boolean configuredExists = isExistingSafeDimensionRoot(
+                Objects.requireNonNull(worldContainer, "worldContainer").toPath(),
+                configuredRoot.toPath()
+        );
+        if (directExists == configuredExists) {
+            if (directExists) {
+                throw new IllegalStateException("Frozen Iris world storage is ambiguous for " + worldKey + ".");
+            }
+            return Optional.empty();
+        }
+        return Optional.of(directExists ? directRoot : configuredRoot);
+    }
+
+    public static File configuredLevelRoot(File worldContainer, File levelRoot, NamespacedKey key) {
+        Path container = Objects.requireNonNull(worldContainer, "worldContainer")
+                .toPath()
+                .toAbsolutePath()
+                .normalize();
+        String configuredName = configuredWorldName(
+                Objects.requireNonNull(key, "key"),
+                Objects.requireNonNull(levelRoot, "levelRoot").getName()
+        );
+        Path configuredLevelRoot = container.resolve(configuredName).normalize();
+        if (!Objects.equals(configuredLevelRoot.getParent(), container)) {
+            throw new IllegalStateException("Configured Bukkit world storage escapes the world container.");
+        }
+        isExistingSafeDimensionRoot(container, configuredLevelRoot.resolve("dimensions"));
+        return configuredLevelRoot.toFile();
+    }
+
+    public static File configuredDimensionRoot(File worldContainer, File levelRoot, NamespacedKey key) {
+        File configuredLevelRoot = configuredLevelRoot(worldContainer, levelRoot, key);
+        File configuredRoot = dimensionRoot(configuredLevelRoot, key);
+        isExistingSafeDimensionRoot(
+                Objects.requireNonNull(worldContainer, "worldContainer").toPath(),
+                configuredRoot.toPath()
+        );
+        return configuredRoot;
+    }
+
+    public static File requireFrozenPackRoot(File dimensionRoot) {
+        Path root = Objects.requireNonNull(dimensionRoot, "dimensionRoot")
+                .toPath()
+                .toAbsolutePath()
+                .normalize();
+        Path irisRoot = root.resolve("iris");
+        Path packRoot = irisRoot.resolve("pack");
+        for (Path path : new Path[]{root, irisRoot, packRoot}) {
+            if (Files.isSymbolicLink(path)) {
+                throw new IllegalStateException("Frozen Iris pack path contains a symbolic link: " + path);
+            }
+            if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalStateException("Frozen Iris pack path is not a directory: " + path);
+            }
+        }
+        if (!Files.isDirectory(packRoot, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalStateException("Frozen Iris pack snapshot is missing: " + packRoot);
+        }
+        return packRoot.toFile();
+    }
+
+    private static boolean isExistingSafeDimensionRoot(Path storageRoot, Path dimensionRoot) {
+        Path root = storageRoot.toAbsolutePath().normalize();
+        Path target = dimensionRoot.toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(root)) {
+            throw new IllegalStateException("Iris world storage root is a symbolic link: " + root);
+        }
+        if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalStateException("Iris world storage root is not a directory: " + root);
+        }
+        if (!target.startsWith(root) || Objects.equals(target, root)) {
+            throw new IllegalStateException("Iris world storage escapes its expected root: " + target);
+        }
+
+        Path relative = root.relativize(target);
+        Path current = root;
+        for (Path segment : relative) {
+            current = current.resolve(segment);
+            if (Files.isSymbolicLink(current)) {
+                throw new IllegalStateException("Iris world storage contains a symbolic link: " + current);
+            }
+            if (Files.exists(current, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalStateException("Iris world storage path is not a directory: " + current);
+            }
+        }
+        return Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS);
     }
 }

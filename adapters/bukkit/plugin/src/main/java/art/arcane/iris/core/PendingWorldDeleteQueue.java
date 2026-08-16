@@ -451,17 +451,50 @@ public final class PendingWorldDeleteQueue implements WorldDeletionQueue {
 
             if (type == QueueEntryType.EXACT) {
                 NamespacedKey key = IrisWorldStorage.managedKeyFromName(storedName, levelRoot.getName());
-                Path path = IrisWorldStorage.requireSafeManagedDimensionRoot(levelRoot, key).toPath();
+                Path path = currentStorageRoot(levelRoot, key);
                 return List.of(new DeleteTarget(key, path));
             }
 
             ArrayList<DeleteTarget> targets = new ArrayList<>(3);
             for (String familyWorldName : TransientWorldCleanupSupport.worldFamilyNames(storedName)) {
                 NamespacedKey key = IrisWorldStorage.managedKeyFromName(familyWorldName, levelRoot.getName());
-                Path path = IrisWorldStorage.requireSafeManagedDimensionRoot(levelRoot, key).toPath();
+                Path path = currentStorageRoot(levelRoot, key);
                 targets.add(new DeleteTarget(key, path));
             }
             return targets;
+        }
+
+        private static Path currentStorageRoot(File levelRoot, NamespacedKey key) {
+            File worldContainer = levelRoot.getAbsoluteFile().getParentFile();
+            if (worldContainer == null) {
+                throw new IllegalArgumentException("Selected level root has no world container: " + levelRoot);
+            }
+            String configuredWorldName = IrisWorldStorage.configuredWorldName(key, levelRoot.getName());
+            Path directRoot = IrisWorldStorage.requireSafeManagedDimensionRoot(levelRoot, key)
+                    .toPath()
+                    .toAbsolutePath()
+                    .normalize();
+            Path dimensionRoot = IrisWorldStorage.frozenDimensionRoot(
+                    worldContainer,
+                    levelRoot,
+                    configuredWorldName,
+                    key
+            ).map(file -> file.toPath().toAbsolutePath().normalize()).orElse(directRoot);
+            if (dimensionRoot.equals(directRoot)) {
+                return directRoot;
+            }
+            Path configuredDimensionRoot = IrisWorldStorage.configuredDimensionRoot(
+                    worldContainer,
+                    levelRoot,
+                    key
+            ).toPath().toAbsolutePath().normalize();
+            if (!dimensionRoot.equals(configuredDimensionRoot)) {
+                throw new IllegalStateException("Iris world storage does not match the current platform layout.");
+            }
+            return IrisWorldStorage.configuredLevelRoot(worldContainer, levelRoot, key)
+                    .toPath()
+                    .toAbsolutePath()
+                    .normalize();
         }
     }
 

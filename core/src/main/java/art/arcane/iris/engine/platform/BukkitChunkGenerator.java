@@ -250,7 +250,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
         int minY = world.getMinHeight() + 1;
         int maxY = world.getMaxHeight() - 2;
-        int y = Math.max(minY, Math.min(maxY, world.getHighestBlockYAt(initialSpawn)));
+        int y = Math.max(minY, Math.min(maxY, world.getHighestBlockYAt(initialSpawn) + 1));
         world.setSpawnLocation(new Location(world, initialSpawn.getX(), y, initialSpawn.getZ(), initialSpawn.getYaw(), initialSpawn.getPitch()));
     }
 

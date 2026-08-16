@@ -118,23 +118,33 @@ final class EngineRuntimeBuilder {
             engine.runtime = null;
         }
 
-        try {
-            next.worldManager().start();
-        } catch (Throwable e) {
-            Throwable cleanupFailure = engine.shutdownSequence.closeRuntime(next, e);
-            if (cleanupFailure != e) {
-                e.addSuppressed(cleanupFailure);
-            }
-            engine.lifecycleState = LifecycleState.FAILED;
-            throw new IllegalStateException("Failed to start the Iris world manager.", e);
-        }
-
         engine.runtime = next;
         engine.publishedTarget = next.target();
         engine.getGenerationSessions().activateNextSession();
         engine.lifecycleState = LifecycleState.RUNNING;
         engine.getClosing().set(false);
         engine.backgroundTasks.openBackgroundTaskAdmission();
+        try {
+            next.worldManager().start();
+        } catch (Throwable e) {
+            engine.getClosing().set(true);
+            engine.backgroundTasks.closeBackgroundTaskAdmission();
+            engine.lifecycleState = LifecycleState.FAILED;
+            try {
+                engine.getGenerationSessions().sealAndAwait(
+                        "failed world manager start",
+                        IrisEngine.SESSION_DRAIN_TIMEOUT_MILLIS,
+                        true
+                );
+            } catch (Throwable drainFailure) {
+                e.addSuppressed(drainFailure);
+            }
+            engine.shutdownSequence.closeRuntime(next, e);
+            if (engine.runtime == next) {
+                engine.runtime = null;
+            }
+            throw new IllegalStateException("Failed to start the Iris world manager.", e);
+        }
         scheduleRuntimeTasks(next);
         IrisLogging.debug("Engine Setup Complete " + next.cacheId());
     }

@@ -7,7 +7,6 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.HolderOwner;
 import net.minecraft.core.Vec3i;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
@@ -42,15 +41,30 @@ final class DatapackStructureStateFilter {
             Set<String> declaredSources,
             IrisImportedStructureControl importedStructures
     ) {
+        return filter(
+                structureSets,
+                scopeIndex,
+                declaredSources,
+                importedStructures,
+                keyIndex(structureSets));
+    }
+
+    static Selection filter(
+            List<Holder<StructureSet>> structureSets,
+            DatapackStructureScopeIndex scopeIndex,
+            Set<String> declaredSources,
+            IrisImportedStructureControl importedStructures,
+            StructureSetKeyIndex keyIndex
+    ) {
         if (scopeIndex.isEmpty()) {
             return new Selection(
-                    scaleFrequencyOverrides(structureSets, importedStructures),
+                    scaleFrequencyOverrides(structureSets, importedStructures, keyIndex),
                     0,
                     0);
         }
         Map<String, Holder<StructureSet>> holdersByKey = new HashMap<>();
         for (Holder<StructureSet> holder : structureSets) {
-            String key = structureSetKey(holder);
+            String key = structureSetKey(holder, keyIndex);
             if (key != null) {
                 holdersByKey.putIfAbsent(key, holder);
             }
@@ -61,7 +75,7 @@ final class DatapackStructureStateFilter {
         int retainedManagedSets = 0;
         int excludedManagedSets = 0;
         for (Holder<StructureSet> holder : structureSets) {
-            String setKey = structureSetKey(holder);
+            String setKey = structureSetKey(holder, keyIndex);
             boolean managedSet = setKey != null && scopeIndex.isManagedStructureSet(setKey);
             Holder<StructureSet> scopedHolder = scopeHolder(
                     holder,
@@ -69,7 +83,8 @@ final class DatapackStructureStateFilter {
                     declaredSources,
                     holdersByKey,
                     scopedByIdentity,
-                    visiting);
+                    visiting,
+                    keyIndex);
             if (scopedHolder == null) {
                 if (managedSet) {
                     excludedManagedSets++;
@@ -82,21 +97,29 @@ final class DatapackStructureStateFilter {
             filteredSets.add(scopedHolder);
         }
         return new Selection(
-                scaleFrequencyOverrides(List.copyOf(filteredSets), importedStructures),
+                scaleFrequencyOverrides(
+                        List.copyOf(filteredSets), importedStructures, keyIndex),
                 retainedManagedSets,
                 excludedManagedSets);
     }
 
     static String structureSetKey(Holder<StructureSet> holder) {
-        Optional<ResourceKey<StructureSet>> key = holder.unwrapKey();
-        if (key.isPresent()) {
-            return key.get().identifier().toString();
-        }
-        if (holder.value().placement()
-                instanceof ChunkGeneratorStructureState.KeyedRandomSpreadStructurePlacement keyedPlacement) {
-            return keyedPlacement.key.identifier().toString();
-        }
-        return null;
+        return structureSetKey(holder, keyIndex(List.of(holder)));
+    }
+
+    static StructureSetKeyIndex keyIndex(
+            Iterable<? extends Holder<StructureSet>> registeredStructureSets
+    ) {
+        return StructureSetKeyIndex.create(registeredStructureSets);
+    }
+
+    private static String structureSetKey(
+            Holder<StructureSet> holder,
+            StructureSetKeyIndex keyIndex
+    ) {
+        return keyIndex.resolve(holder)
+                .map(key -> key.identifier().toString())
+                .orElse(null);
     }
 
     private static List<StructureSet.StructureSelectionEntry> filterEntries(
@@ -122,7 +145,8 @@ final class DatapackStructureStateFilter {
             Set<String> declaredSources,
             Map<String, Holder<StructureSet>> holdersByKey,
             Map<Holder<StructureSet>, Holder<StructureSet>> scopedByIdentity,
-            Set<Holder<StructureSet>> visiting
+            Set<Holder<StructureSet>> visiting,
+            StructureSetKeyIndex keyIndex
     ) {
         if (scopedByIdentity.containsKey(holder)) {
             return scopedByIdentity.get(holder);
@@ -131,7 +155,7 @@ final class DatapackStructureStateFilter {
             return null;
         }
         try {
-            String setKey = structureSetKey(holder);
+            String setKey = structureSetKey(holder, keyIndex);
             if (setKey != null && scopeIndex.isManagedStructureSet(setKey)
                     && !scopeIndex.allowsStructureSet(setKey, declaredSources)) {
                 scopedByIdentity.put(holder, null);
@@ -150,14 +174,15 @@ final class DatapackStructureStateFilter {
                     declaredSources,
                     holdersByKey,
                     scopedByIdentity,
-                    visiting);
+                    visiting,
+                    keyIndex);
             if (entries.size() == originalSet.structures().size()
                     && placement == originalSet.placement()) {
                 scopedByIdentity.put(holder, holder);
                 return holder;
             }
             Holder<StructureSet> scoped = replacementHolder(
-                    holder, new StructureSet(entries, placement));
+                    holder, new StructureSet(entries, placement), keyIndex);
             scopedByIdentity.put(holder, scoped);
             return scoped;
         } finally {
@@ -184,7 +209,8 @@ final class DatapackStructureStateFilter {
             Set<String> declaredSources,
             Map<String, Holder<StructureSet>> holdersByKey,
             Map<Holder<StructureSet>, Holder<StructureSet>> scopedByIdentity,
-            Set<Holder<StructureSet>> visiting
+            Set<Holder<StructureSet>> visiting,
+            StructureSetKeyIndex keyIndex
     ) {
         Optional<StructurePlacement.ExclusionZone> currentZone = exclusionZone(placement);
         if (currentZone.isEmpty()) {
@@ -192,7 +218,7 @@ final class DatapackStructureStateFilter {
         }
 
         Holder<StructureSet> target = currentZone.get().otherSet();
-        String targetKey = structureSetKey(target);
+        String targetKey = structureSetKey(target, keyIndex);
         if (targetKey != null) {
             target = holdersByKey.getOrDefault(targetKey, target);
         }
@@ -202,7 +228,8 @@ final class DatapackStructureStateFilter {
                 declaredSources,
                 holdersByKey,
                 scopedByIdentity,
-                visiting);
+                visiting,
+                keyIndex);
         Optional<StructurePlacement.ExclusionZone> scopedZone = Optional.empty();
         if (scopedTarget != null) {
             scopedZone = Optional.of(new StructurePlacement.ExclusionZone(
@@ -217,14 +244,15 @@ final class DatapackStructureStateFilter {
 
     private static List<Holder<StructureSet>> scaleFrequencyOverrides(
             List<Holder<StructureSet>> structureSets,
-            IrisImportedStructureControl importedStructures
+            IrisImportedStructureControl importedStructures,
+            StructureSetKeyIndex keyIndex
     ) {
         if (!importedStructures.hasFrequencyOverrides()) {
             return structureSets;
         }
         Map<String, Holder<StructureSet>> holdersByKey = new HashMap<>();
         for (Holder<StructureSet> holder : structureSets) {
-            String key = structureSetKey(holder);
+            String key = structureSetKey(holder, keyIndex);
             if (key != null) {
                 holdersByKey.putIfAbsent(key, holder);
             }
@@ -234,7 +262,11 @@ final class DatapackStructureStateFilter {
         boolean changed = false;
         for (Holder<StructureSet> holder : structureSets) {
             Holder<StructureSet> scaled = scaleFrequencyHolder(
-                    holder, importedStructures, holdersByKey, scaledByIdentity);
+                    holder,
+                    importedStructures,
+                    holdersByKey,
+                    scaledByIdentity,
+                    keyIndex);
             scaledSets.add(scaled);
             changed |= scaled != holder;
         }
@@ -245,17 +277,19 @@ final class DatapackStructureStateFilter {
             Holder<StructureSet> holder,
             IrisImportedStructureControl importedStructures,
             Map<String, Holder<StructureSet>> holdersByKey,
-            Map<Holder<StructureSet>, Holder<StructureSet>> scaledByIdentity
+            Map<Holder<StructureSet>, Holder<StructureSet>> scaledByIdentity,
+            StructureSetKeyIndex keyIndex
     ) {
         if (scaledByIdentity.containsKey(holder)) {
             return scaledByIdentity.get(holder);
         }
-        if (!dependsOnFrequencyOverride(holder, importedStructures, holdersByKey)) {
+        if (!dependsOnFrequencyOverride(
+                holder, importedStructures, holdersByKey, keyIndex)) {
             scaledByIdentity.put(holder, holder);
             return holder;
         }
 
-        ResourceKey<StructureSet> holderKey = structureSetResourceKey(holder).orElseThrow(() ->
+        ResourceKey<StructureSet> holderKey = keyIndex.resolve(holder).orElseThrow(() ->
                 new IllegalStateException(
                         "An affected native structure-set exclusion graph has an unkeyed holder"));
         ReboundStructureSetHolder scaledHolder = new ReboundStructureSetHolder(holderKey);
@@ -267,16 +301,21 @@ final class DatapackStructureStateFilter {
         Optional<StructurePlacement.ExclusionZone> scaledZone = originalZone;
         if (originalZone.isPresent()) {
             Holder<StructureSet> target = canonicalHolder(
-                    originalZone.get().otherSet(), holdersByKey);
+                    originalZone.get().otherSet(), holdersByKey, keyIndex);
             Holder<StructureSet> scaledTarget = scaleFrequencyHolder(
-                    target, importedStructures, holdersByKey, scaledByIdentity);
+                    target,
+                    importedStructures,
+                    holdersByKey,
+                    scaledByIdentity,
+                    keyIndex);
             if (scaledTarget != originalZone.get().otherSet()) {
                 scaledZone = Optional.of(new StructurePlacement.ExclusionZone(
                         scaledTarget, originalZone.get().chunkCount()));
             }
         }
 
-        double multiplier = importedStructures.frequencyMultiplier(structureSetKey(holder));
+        double multiplier = importedStructures.frequencyMultiplier(
+                structureSetKey(holder, keyIndex));
         StructurePlacement scaledPlacement = multiplier == 1D && scaledZone.equals(originalZone)
                 ? originalPlacement
                 : copyPlacement(originalPlacement, scaledZone, multiplier);
@@ -287,12 +326,14 @@ final class DatapackStructureStateFilter {
     private static boolean dependsOnFrequencyOverride(
             Holder<StructureSet> holder,
             IrisImportedStructureControl importedStructures,
-            Map<String, Holder<StructureSet>> holdersByKey
+            Map<String, Holder<StructureSet>> holdersByKey,
+            StructureSetKeyIndex keyIndex
     ) {
         Set<Holder<StructureSet>> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         Holder<StructureSet> current = holder;
         while (visited.add(current)) {
-            if (importedStructures.frequencyMultiplier(structureSetKey(current)) != 1D) {
+            if (importedStructures.frequencyMultiplier(
+                    structureSetKey(current, keyIndex)) != 1D) {
                 return true;
             }
             Optional<StructurePlacement.ExclusionZone> zone =
@@ -300,44 +341,32 @@ final class DatapackStructureStateFilter {
             if (zone.isEmpty()) {
                 return false;
             }
-            current = canonicalHolder(zone.get().otherSet(), holdersByKey);
+            current = canonicalHolder(zone.get().otherSet(), holdersByKey, keyIndex);
         }
         return false;
     }
 
     private static Holder<StructureSet> canonicalHolder(
             Holder<StructureSet> holder,
-            Map<String, Holder<StructureSet>> holdersByKey
+            Map<String, Holder<StructureSet>> holdersByKey,
+            StructureSetKeyIndex keyIndex
     ) {
-        String key = structureSetKey(holder);
+        String key = structureSetKey(holder, keyIndex);
         return key == null ? holder : holdersByKey.getOrDefault(key, holder);
     }
 
     private static Holder<StructureSet> replacementHolder(
             Holder<StructureSet> original,
-            StructureSet replacement
+            StructureSet replacement,
+            StructureSetKeyIndex keyIndex
     ) {
-        Optional<ResourceKey<StructureSet>> key = structureSetResourceKey(original);
+        Optional<ResourceKey<StructureSet>> key = keyIndex.resolve(original);
         if (key.isEmpty()) {
             return Holder.direct(replacement);
         }
         ReboundStructureSetHolder holder = new ReboundStructureSetHolder(key.get());
         holder.bind(replacement);
         return holder;
-    }
-
-    private static Optional<ResourceKey<StructureSet>> structureSetResourceKey(
-            Holder<StructureSet> holder
-    ) {
-        Optional<ResourceKey<StructureSet>> key = holder.unwrapKey();
-        if (key.isPresent()) {
-            return key;
-        }
-        if (holder.value().placement()
-                instanceof ChunkGeneratorStructureState.KeyedRandomSpreadStructurePlacement keyedPlacement) {
-            return Optional.of(keyedPlacement.key);
-        }
-        return Optional.empty();
     }
 
     private static StructurePlacement copyPlacement(
@@ -357,26 +386,7 @@ final class DatapackStructureStateFilter {
         int salt = (int) declaredFieldValue(
                 StructurePlacement.class, placement, int.class);
 
-        if (placement.getClass()
-                == ChunkGeneratorStructureState.KeyedRandomSpreadStructurePlacement.class) {
-            ChunkGeneratorStructureState.KeyedRandomSpreadStructurePlacement keyedPlacement =
-                    (ChunkGeneratorStructureState.KeyedRandomSpreadStructurePlacement) placement;
-            NativeStructureFrequencyScale scale = NativeStructureFrequencyScale.randomSpread(
-                    frequency, keyedPlacement.spacing(), keyedPlacement.separation(), frequencyMultiplier);
-            return new ChunkGeneratorStructureState.KeyedRandomSpreadStructurePlacement(
-                    keyedPlacement.key,
-                    locateOffset,
-                    frequencyReductionMethod,
-                    scale.frequency(),
-                    salt,
-                    exclusionZone,
-                    scale.spacing(),
-                    keyedPlacement.separation(),
-                    keyedPlacement.spreadType());
-        }
-        if (placement.getClass() == RandomSpreadStructurePlacement.class) {
-            RandomSpreadStructurePlacement randomSpread =
-                    (RandomSpreadStructurePlacement) placement;
+        if (placement instanceof RandomSpreadStructurePlacement randomSpread) {
             NativeStructureFrequencyScale scale = NativeStructureFrequencyScale.randomSpread(
                     frequency, randomSpread.spacing(), randomSpread.separation(), frequencyMultiplier);
             return new RandomSpreadStructurePlacement(
@@ -436,6 +446,46 @@ final class DatapackStructureStateFilter {
         } catch (IllegalAccessException e) {
             throw new IllegalStateException("Could not read " + fieldType.getName() + " field on "
                     + declaringType.getName(), e);
+        }
+    }
+
+    static final class StructureSetKeyIndex {
+        private final Map<List<StructureSet.StructureSelectionEntry>, ResourceKey<StructureSet>>
+                keysByEntries;
+
+        private StructureSetKeyIndex(
+                Map<List<StructureSet.StructureSelectionEntry>, ResourceKey<StructureSet>>
+                        keysByEntries
+        ) {
+            this.keysByEntries = keysByEntries;
+        }
+
+        private static StructureSetKeyIndex create(
+                Iterable<? extends Holder<StructureSet>> registeredStructureSets
+        ) {
+            Map<List<StructureSet.StructureSelectionEntry>, ResourceKey<StructureSet>> keys =
+                    new IdentityHashMap<>();
+            for (Holder<StructureSet> holder : registeredStructureSets) {
+                Optional<ResourceKey<StructureSet>> key = holder.unwrapKey();
+                if (key.isEmpty()) {
+                    continue;
+                }
+                List<StructureSet.StructureSelectionEntry> entries = holder.value().structures();
+                ResourceKey<StructureSet> previous = keys.put(entries, key.get());
+                if (previous != null && !previous.equals(key.get())) {
+                    throw new IllegalStateException(
+                            "Multiple registered structure sets share the same entry list");
+                }
+            }
+            return new StructureSetKeyIndex(keys);
+        }
+
+        private Optional<ResourceKey<StructureSet>> resolve(Holder<StructureSet> holder) {
+            Optional<ResourceKey<StructureSet>> key = holder.unwrapKey();
+            if (key.isPresent()) {
+                return key;
+            }
+            return Optional.ofNullable(keysByEntries.get(holder.value().structures()));
         }
     }
 

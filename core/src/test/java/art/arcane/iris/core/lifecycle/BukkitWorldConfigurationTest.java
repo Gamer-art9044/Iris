@@ -113,6 +113,23 @@ public class BukkitWorldConfigurationTest {
     }
 
     @Test
+    public void admitsCurrentCraftBukkitConfiguredWorldStorage() throws Exception {
+        Path worldContainer = temporaryFolder.newFolder("configured-binding-server").toPath();
+        File configuration = worldContainer.resolve("bukkit.yml").toFile();
+        Path levelRoot = Files.createDirectory(worldContainer.resolve("world"));
+        Files.createDirectories(worldContainer.resolve("world_iris_moon/dimensions/iris/moon"));
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_moon.generator", "Iris:overworld");
+        yaml.save(configuration);
+
+        assertEquals(List.of(new BukkitWorldConfiguration.IrisGeneratorBinding(
+                "world_iris_moon",
+                new WorldSlotKey("iris", "moon"),
+                "overworld"
+        )), BukkitWorldConfiguration.readIrisGeneratorBindings(configuration, "world", levelRoot));
+    }
+
+    @Test
     public void excludesSymlinkedCustomWorldTarget() throws Exception {
         File configuration = temporaryFolder.newFile("symlink-admission-bukkit.yml");
         Path levelRoot = temporaryFolder.newFolder("symlink-level-root").toPath();

@@ -29,12 +29,12 @@ import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
 import art.arcane.iris.spi.IrisPlatforms;
-import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.util.common.plugin.VolmitPlugin;
 import lombok.NonNull;
+import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.generator.BiomeProvider;
 import org.bukkit.generator.ChunkGenerator;
@@ -231,9 +231,18 @@ public final class IrisWorldGeneratorResolver {
 
     @Nullable
     public static IrisDimension loadDimension(@NonNull String worldName, @NonNull String id) {
-        NamespacedKey worldKey = configuredWorldKey(worldName, IrisWorldStorage.levelRoot().getName());
-        File pack = IrisWorldStorage.packRoot(worldKey);
-        IrisDimension dimension = pack.isDirectory() ? IrisData.get(pack).getDimensionLoader().load(id) : null;
+        File levelRoot = IrisWorldStorage.levelRoot();
+        NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName());
+        String configuredWorldName = IrisWorldStorage.configuredWorldName(worldKey, levelRoot.getName());
+        File pack = IrisWorldStorage.frozenDimensionRoot(
+                        Bukkit.getWorldContainer(),
+                        levelRoot,
+                        configuredWorldName,
+                        worldKey
+                )
+                .map(IrisWorldStorage::requireFrozenPackRoot)
+                .orElse(null);
+        IrisDimension dimension = pack == null ? null : IrisData.get(pack).getDimensionLoader().load(id);
         if (dimension == null) dimension = IrisData.loadAnyDimension(id, null);
         if (dimension == null) {
             File packsRoot = IrisPlatforms.get().packsFolderNoCreate();
@@ -279,57 +288,63 @@ public final class IrisWorldGeneratorResolver {
         if (id == null || id.isEmpty()) id = IrisSettings.get().getGenerator().getDefaultWorldType();
         Iris.debug("Generator ID: " + id + " requested by bukkit/plugin");
 
-        IrisDimension dim = loadDimension(worldName, id);
-        if (dim == null) {
-            throw new RuntimeException("Can't find dimension " + id + "!");
-        }
-        NamespacedKey worldKey = configuredWorldKey(worldName, IrisWorldStorage.levelRoot().getName());
-        File snapshotRoot = IrisWorldStorage.packRoot(worldKey);
-        File dimensionPackRoot = dim.getLoader().getDataFolder();
-        String packName = dimensionPackRoot.getName();
         try {
-            if (snapshotRoot.toPath().toAbsolutePath().normalize()
-                    .equals(dimensionPackRoot.toPath().toAbsolutePath().normalize())) {
-                requireSnapshotLoadable(snapshotRoot);
-            } else {
-                PackValidationRegistry.requireLoadable(packName);
-            }
+            return resolveFrozenWorldGenerator(worldName, id);
+        } catch (RuntimeException failure) {
+            Iris.reportError("Refusing to load configured Iris world '" + worldName
+                    + "' because its frozen world-local pack snapshot could not be used.", failure);
+            Bukkit.shutdown();
+            throw failure;
+        }
+    }
+
+    private ChunkGenerator resolveFrozenWorldGenerator(String worldName, String id) {
+        File levelRoot = IrisWorldStorage.levelRoot();
+        NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName());
+        File dimensionRoot = IrisWorldStorage.requireFrozenDimensionRoot(
+                Bukkit.getWorldContainer(),
+                levelRoot,
+                worldName,
+                worldKey
+        );
+        File expectedDimensionRoot = WorldCreatorCompat.persistentDimensionRoot(worldKey);
+        if (!dimensionRoot.toPath().toAbsolutePath().normalize()
+                .equals(expectedDimensionRoot.toPath().toAbsolutePath().normalize())) {
+            throw new IllegalStateException("Frozen Iris world storage does not match the current platform layout for "
+                    + worldKey + ".");
+        }
+        File snapshotRoot = IrisWorldStorage.requireFrozenPackRoot(dimensionRoot);
+        try {
+            requireSnapshotLoadable(snapshotRoot);
         } catch (BrokenPackException exception) {
-            Iris.error("Refusing to create world '" + worldName + "' using broken pack '" + packName + "':");
+            Iris.error("Refusing to create world '" + worldName + "' using broken snapshot at '"
+                    + snapshotRoot + "':");
             for (String reason : exception.getReasons()) {
                 Iris.error("  - " + reason);
             }
             throw exception;
         }
 
-        Iris.debug("Assuming IrisDimension: " + dim.getName());
+        IrisDimension dimension = IrisData.get(snapshotRoot).getDimensionLoader().load(id, false);
+        if (dimension == null) {
+            throw new IllegalStateException("Frozen Iris pack snapshot at " + snapshotRoot
+                    + " does not contain dimension " + id + ".");
+        }
 
-        IrisWorld w = IrisWorld.builder()
+        Iris.debug("Assuming IrisDimension: " + dimension.getName());
+
+        IrisWorld world = IrisWorld.builder()
                 .platformIdentity(worldKey.toString())
                 .name(worldName)
                 .seed(1337)
-                .worldFolder(IrisWorldStorage.dimensionRoot(worldKey))
-                .minHeight(dim.getMinHeight())
-                .maxHeight(dim.getMaxHeight())
+                .worldFolder(dimensionRoot)
+                .minHeight(dimension.getMinHeight())
+                .maxHeight(dimension.getMaxHeight())
                 .build();
 
-        Iris.debug("Generator Config: " + w.toString());
+        Iris.debug("Generator Config: " + world);
 
-        File ff = new File(w.worldFolder(), "iris/pack");
-        IrisDimension installedDimension = ff.isDirectory()
-                ? IrisData.get(ff).getDimensionLoader().load(dim.getLoadKey(), false)
-                : null;
-        if (installedDimension == null) {
-            dim = Iris.service(StudioSVC.class).replaceIntoWorld(Iris.getSender(), dim, w.worldFolder());
-            if (dim == null) {
-                throw new IllegalStateException("Failed to install dimension pack for " + id);
-            }
-        } else {
-            dim = installedDimension;
-        }
-        requireSnapshotLoadable(ff);
-
-        return new BukkitChunkGenerator(w, false, ff, dim.getLoadKey());
+        return new BukkitChunkGenerator(world, false, snapshotRoot, dimension.getLoadKey());
     }
 
     private record FreshValidation(

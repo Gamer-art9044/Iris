@@ -1,4 +1,4 @@
-package art.arcane.iris.core.nms.v26_2_R1;
+package art.arcane.iris.modded;
 
 import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
@@ -48,7 +48,6 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.ticks.LevelTickAccess;
 import net.minecraft.world.ticks.ScheduledTick;
-import org.bukkit.event.entity.CreatureSpawnEvent;
 
 import java.util.List;
 import java.util.Objects;
@@ -57,7 +56,7 @@ import java.util.function.IntBinaryOperator;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-final class NativeStructureWorldgenAccess implements WorldGenLevel {
+final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel {
     private static final int WRITE_RADIUS = 1;
 
     private final WorldGenLevel delegate;
@@ -72,7 +71,7 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
     private final Long2LongOpenHashMap terrainHeights;
     private final Long2ObjectOpenHashMap<ChunkAccess> outsideChunks;
 
-    private NativeStructureWorldgenAccess(WorldGenLevel delegate, Boundary boundary) {
+    private ModdedNativeStructureWorldgenAccess(WorldGenLevel delegate, Boundary boundary) {
         this.delegate = Objects.requireNonNull(delegate, "Native structure world access requires a delegate");
         this.generationCenter = Objects.requireNonNull(
                 boundary.generationCenter(), "Native structure world access requires a generation center");
@@ -97,10 +96,10 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
         this.outsideChunks = new Long2ObjectOpenHashMap<>();
     }
 
-    static NativeStructureWorldgenAccess create(WorldGenLevel delegate, ChunkPos generationCenter,
+    static ModdedNativeStructureWorldgenAccess create(WorldGenLevel delegate, ChunkPos generationCenter,
                                                 IntBinaryOperator surfaceFirstFreeY,
                                                 IntBinaryOperator floorFirstFreeY) {
-        return new NativeStructureWorldgenAccess(delegate, new Boundary(
+        return new ModdedNativeStructureWorldgenAccess(delegate, new Boundary(
                 generationCenter, surfaceFirstFreeY, floorFirstFreeY));
     }
 
@@ -229,14 +228,6 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
             return delegate.getChunk(chunkX, chunkZ, status, create);
         }
         return create ? outsideChunk(chunkX, chunkZ) : null;
-    }
-
-    @Override
-    public ChunkAccess getChunkIfLoadedImmediately(int chunkX, int chunkZ) {
-        if (!isInsideGenerationRegion(chunkX, chunkZ)) {
-            return null;
-        }
-        return delegate.getChunkIfLoadedImmediately(chunkX, chunkZ);
     }
 
     @Override
@@ -374,18 +365,8 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
     }
 
     @Override
-    public BlockState getBlockStateIfLoaded(BlockPos position) {
-        return isReadable(position) ? delegate.getBlockStateIfLoaded(position) : null;
-    }
-
-    @Override
     public FluidState getFluidState(BlockPos position) {
         return isReadable(position) ? delegate.getFluidState(position) : terrainState(position).getFluidState();
-    }
-
-    @Override
-    public FluidState getFluidIfLoaded(BlockPos position) {
-        return isReadable(position) ? delegate.getFluidIfLoaded(position) : null;
     }
 
     @Override
@@ -442,10 +423,6 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
         return isWritable(entity.blockPosition()) && delegate.addFreshEntity(entity);
     }
 
-    @Override
-    public boolean addFreshEntity(Entity entity, CreatureSpawnEvent.SpawnReason reason) {
-        return isWritable(entity.blockPosition()) && delegate.addFreshEntity(entity, reason);
-    }
 
     private boolean isReadable(BlockPos position) {
         return isInsideGenerationRegion(position.getX() >> 4, position.getZ() >> 4)

@@ -8,6 +8,7 @@ import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.WorldGeneratorSna
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.lifecycle.WorldReplacementBootstrap;
 import art.arcane.iris.core.lifecycle.WorldReplacementBootstrapMarker;
+import art.arcane.iris.core.lifecycle.WorldReplacementEntryGuard;
 import art.arcane.iris.core.lifecycle.WorldReplacementFilesystem;
 import art.arcane.iris.core.lifecycle.WorldReplacementFilesystem.ReplacementPaths;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal;
@@ -15,24 +16,32 @@ import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Phase;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Transaction;
 import art.arcane.iris.core.lifecycle.WorldReplacementSeed;
 import art.arcane.iris.core.pack.PackValidationRegistry;
+import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisEnvironment;
+import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.util.common.misc.ServerProperties;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
+import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
+import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -40,21 +49,58 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public final class PendingWorldReplacementManager implements Listener {
+    private static final WorldSlotKey OVERWORLD_KEY = WorldSlotKey.minecraft("overworld");
+    private static final long SAFE_ENTRY_TIMEOUT_SECONDS = 30L;
+
     private final Iris plugin;
     private final Set<UUID> cleanupInFlight = new HashSet<>();
     private final Set<UUID> verificationInFlight = new HashSet<>();
+    private final ConcurrentHashMap<UUID, UUID> pendingEntryAcknowledgements = new ConcurrentHashMap<>();
+    private volatile WorldReplacementEntryGuard.Entry overworldEntryGuard;
+    private volatile Path overworldEntryWorldDirectory;
+    private volatile CompletableFuture<Location> overworldSafeEntry;
+    private volatile UUID overworldEntryAwaitingVerification;
+    private volatile World overworldEntryWorld;
+    private volatile boolean paperEntryListenerRegistered;
 
     public PendingWorldReplacementManager(Iris plugin) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
+    }
+
+    public void registerPlatformEntryListener() {
+        ClassLoader loader = getClass().getClassLoader();
+        try {
+            Class.forName("io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent", false, loader);
+        } catch (ClassNotFoundException | LinkageError unavailable) {
+            return;
+        }
+        try {
+            Class<?> listenerType = Class.forName(
+                    "art.arcane.iris.core.PaperWorldReplacementEntryListener",
+                    true,
+                    loader
+            );
+            Constructor<?> constructor = listenerType.getConstructor(PendingWorldReplacementManager.class);
+            Listener listener = (Listener) constructor.newInstance(this);
+            Bukkit.getPluginManager().registerEvents(listener, plugin);
+            paperEntryListenerRegistered = true;
+        } catch (InvocationTargetException failure) {
+            Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+            throw new IllegalStateException("Paper replacement entry listener registration failed.", cause);
+        } catch (ReflectiveOperationException | LinkageError failure) {
+            throw new IllegalStateException("Paper replacement entry listener is unavailable.", failure);
+        }
     }
 
     public NamespacedKey resolveRequestedWorldKey(String requestedName) {
@@ -129,6 +175,9 @@ public final class PendingWorldReplacementManager implements Listener {
                         paths.stage(),
                         seedSelection
                 );
+                if (target.slotKind() == SlotKind.VANILLA_OVERWORLD) {
+                    WorldReplacementEntryGuard.stage(target.levelRoot(), paths.stage(), transactionId);
+                }
                 File stagedPack = paths.stage().resolve("iris/pack").toFile();
                 IrisWorldGeneratorResolver.requireSnapshotLoadable(stagedPack);
                 String packFingerprint = WorldReplacementFilesystem.fingerprintPack(stagedPack.toPath());
@@ -205,6 +254,20 @@ public final class PendingWorldReplacementManager implements Listener {
     public synchronized void processPendingStartupReplacements() {
         ArrayList<String> failures = new ArrayList<>();
         ArrayList<String> restartBoundaries = new ArrayList<>();
+        try {
+            loadOverworldEntryGuard();
+        } catch (Throwable failure) {
+            String message = "Iris could not load the Overworld replacement entry guard: " + detail(failure);
+            Iris.reportError(message, failure);
+            IrisStartupValidation.markPacksInvalid(List.of(message));
+            return;
+        }
+        if (overworldEntryGuard != null && !paperEntryListenerRegistered) {
+            String message = "A pending Overworld replacement requires the Paper safe-entry capability.";
+            Iris.error(message);
+            IrisStartupValidation.markPacksInvalid(List.of(message));
+            return;
+        }
         List<Transaction> transactions;
         try {
             transactions = loadTransactions();
@@ -215,6 +278,9 @@ public final class PendingWorldReplacementManager implements Listener {
             return;
         }
         for (Transaction transaction : transactions) {
+            if (OVERWORLD_KEY.equals(transaction.worldKey()) && transaction.phase() == Phase.PUBLISHED) {
+                overworldEntryAwaitingVerification = transaction.id();
+            }
             try {
                 inspectStartupTransaction(transaction);
             } catch (RestartBoundaryRequired boundary) {
@@ -229,6 +295,7 @@ public final class PendingWorldReplacementManager implements Listener {
                 Iris.reportError(message, failure);
             }
         }
+        scheduleLoadedOverworldEntryPreparation();
         if (!failures.isEmpty()) {
             IrisStartupValidation.markPacksInvalid(failures);
         }
@@ -258,6 +325,245 @@ public final class PendingWorldReplacementManager implements Listener {
                 scheduleRuntimeCapture(transaction, 0);
             }
         }
+        scheduleLoadedOverworldEntryPreparation();
+    }
+
+    private void scheduleLoadedOverworldEntryPreparation() {
+        if (overworldEntryGuard == null) {
+            return;
+        }
+        try {
+            J.s(this::prepareLoadedOverworldEntry);
+        } catch (Throwable failure) {
+            failOverworldEntryPreparation(failure);
+        }
+    }
+
+    private void prepareLoadedOverworldEntry() {
+        World world;
+        try {
+            world = WorldIdentity.resolve(toNamespacedKey(OVERWORLD_KEY)).orElse(null);
+        } catch (Throwable failure) {
+            failOverworldEntryPreparation(failure);
+            return;
+        }
+        if (world != null) {
+            prepareOverworldEntry(world);
+        }
+    }
+
+    private void prepareOverworldEntry(World world) {
+        WorldReplacementEntryGuard.Entry guard = overworldEntryGuard;
+        if (guard == null
+                || guard.transactionId().equals(overworldEntryAwaitingVerification)
+                || !OVERWORLD_KEY.equals(toWorldSlotKey(WorldIdentity.key(world)))) {
+            return;
+        }
+        CompletableFuture<Location> targetFuture;
+        synchronized (this) {
+            if (overworldSafeEntry != null) {
+                return;
+            }
+            targetFuture = new CompletableFuture<>();
+            overworldSafeEntry = targetFuture;
+            overworldEntryWorld = world;
+        }
+        try {
+            PlatformChunkGenerator generator = IrisToolbelt.access(world);
+            if (!(generator instanceof BukkitChunkGenerator bukkitGenerator)) {
+                throw new IOException("The replaced Overworld does not have a Bukkit Iris generator.");
+            }
+            Location anchor = bukkitGenerator.getInitialSpawnLocation(world);
+            int chunkX = anchor.getBlockX() >> 4;
+            int chunkZ = anchor.getBlockZ() >> 4;
+            WorldRuntimeControlService runtime = WorldRuntimeControlService.get();
+            CompletableFuture<Chunk> chunkFuture = runtime.requestChunkAsync(world, chunkX, chunkZ, true);
+            if (chunkFuture == null) {
+                throw new IOException("The replacement spawn chunk request was not accepted.");
+            }
+            chunkFuture
+                    .thenCompose(chunk -> runtime.resolveSafeEntry(world, anchor))
+                    .thenCompose(this::applyOverworldSpawn)
+                    .thenCompose(this::persistOverworldSpawn)
+                    .whenComplete((safeEntry, failure) -> {
+                        if (failure != null) {
+                            targetFuture.completeExceptionally(failure);
+                            Iris.reportError("Could not prepare a safe spawn for the replaced Overworld.", failure);
+                            return;
+                        }
+                        targetFuture.complete(safeEntry.clone());
+                        retireOverworldEntryIfComplete(guard.transactionId());
+                    });
+        } catch (Throwable failure) {
+            targetFuture.completeExceptionally(failure);
+            Iris.reportError("Could not prepare a safe spawn for the replaced Overworld.", failure);
+        }
+    }
+
+    private CompletableFuture<Location> applyOverworldSpawn(Location safeEntry) {
+        Location requiredSafeEntry = Objects.requireNonNull(safeEntry, "safeEntry").clone();
+        World world = Objects.requireNonNull(requiredSafeEntry.getWorld(), "safeEntry.world");
+        CompletableFuture<Location> applied = new CompletableFuture<>();
+        int chunkX = requiredSafeEntry.getBlockX() >> 4;
+        int chunkZ = requiredSafeEntry.getBlockZ() >> 4;
+        boolean scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
+            try {
+                if (!world.setSpawnLocation(requiredSafeEntry)) {
+                    throw new IOException("The server rejected the replacement spawn location.");
+                }
+                applied.complete(requiredSafeEntry.clone());
+            } catch (Throwable failure) {
+                applied.completeExceptionally(failure);
+            }
+        });
+        if (!scheduled) {
+            applied.completeExceptionally(new IOException("Could not schedule the replacement spawn update."));
+        }
+        return applied;
+    }
+
+    private CompletableFuture<Location> persistOverworldSpawn(Location safeEntry) {
+        Location requiredSafeEntry = Objects.requireNonNull(safeEntry, "safeEntry").clone();
+        World world = Objects.requireNonNull(requiredSafeEntry.getWorld(), "safeEntry.world");
+        CompletableFuture<Location> persisted = new CompletableFuture<>();
+        boolean scheduled = J.runGlobal(() -> {
+            try {
+                world.save();
+                persisted.complete(requiredSafeEntry.clone());
+            } catch (Throwable failure) {
+                persisted.completeExceptionally(failure);
+            }
+        });
+        if (!scheduled) {
+            persisted.completeExceptionally(new IOException("Could not schedule replacement spawn persistence."));
+        }
+        return persisted;
+    }
+
+    private CompletableFuture<Boolean> inspectLoginCollision(Location location) {
+        Location requiredLocation = Objects.requireNonNull(location, "location").clone();
+        World world = Objects.requireNonNull(requiredLocation.getWorld(), "location.world");
+        int chunkX = requiredLocation.getBlockX() >> 4;
+        int chunkZ = requiredLocation.getBlockZ() >> 4;
+        WorldRuntimeControlService runtime = WorldRuntimeControlService.get();
+        CompletableFuture<Chunk> chunkFuture = runtime.requestChunkAsync(world, chunkX, chunkZ, true);
+        if (chunkFuture == null) {
+            return CompletableFuture.failedFuture(new IOException("The saved login chunk request was not accepted."));
+        }
+        return chunkFuture.thenCompose(chunk -> inspectLoadedLoginCollision(requiredLocation));
+    }
+
+    private CompletableFuture<Boolean> inspectLoadedLoginCollision(Location location) {
+        World world = Objects.requireNonNull(location.getWorld(), "location.world");
+        CompletableFuture<Boolean> inspected = new CompletableFuture<>();
+        int chunkX = location.getBlockX() >> 4;
+        int chunkZ = location.getBlockZ() >> 4;
+        boolean scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
+            try {
+                int blockY = location.getBlockY();
+                if (blockY < world.getMinHeight() || blockY + 1 >= world.getMaxHeight()) {
+                    inspected.complete(false);
+                    return;
+                }
+                boolean feetPassable = world.getBlockAt(location.getBlockX(), blockY, location.getBlockZ())
+                        .isPassable();
+                boolean headPassable = world.getBlockAt(location.getBlockX(), blockY + 1, location.getBlockZ())
+                        .isPassable();
+                inspected.complete(feetPassable && headPassable);
+            } catch (Throwable failure) {
+                inspected.completeExceptionally(failure);
+            }
+        });
+        if (!scheduled) {
+            inspected.completeExceptionally(new IOException("Could not schedule the saved login collision check."));
+        }
+        return inspected;
+    }
+
+    private void completeOverworldEntry(UUID playerId, UUID transactionId) {
+        try {
+            J.a(() -> completeOverworldEntryAsync(playerId, transactionId));
+        } catch (Throwable failure) {
+            Iris.reportError("Could not record a completed Overworld replacement entry for " + playerId + ".", failure);
+        }
+    }
+
+    private void completeOverworldEntryAsync(UUID playerId, UUID transactionId) {
+        boolean retire = false;
+        try {
+            synchronized (this) {
+                WorldReplacementEntryGuard.Entry current = overworldEntryGuard;
+                Path worldDirectory = overworldEntryWorldDirectory;
+                if (current == null
+                        || worldDirectory == null
+                        || !current.transactionId().equals(transactionId)
+                        || !current.pendingPlayers().contains(playerId)) {
+                    return;
+                }
+                Optional<WorldReplacementEntryGuard.Entry> updated = WorldReplacementEntryGuard.completePlayer(
+                        worldDirectory,
+                        transactionId,
+                        playerId
+                );
+                overworldEntryGuard = updated.orElse(null);
+                retire = overworldEntryGuard != null && overworldEntryGuard.pendingPlayers().isEmpty();
+            }
+        } catch (Throwable failure) {
+            Iris.reportError("Could not record a completed Overworld replacement entry for " + playerId + ".", failure);
+            return;
+        }
+        if (retire) {
+            retireOverworldEntryIfCompleteAsync(transactionId);
+        }
+    }
+
+    private void retireOverworldEntryIfComplete(UUID transactionId) {
+        try {
+            J.a(() -> retireOverworldEntryIfCompleteAsync(transactionId));
+        } catch (Throwable failure) {
+            Iris.reportError("Could not schedule Overworld replacement entry marker retirement.", failure);
+        }
+    }
+
+    private synchronized void retireOverworldEntryIfCompleteAsync(UUID transactionId) {
+        WorldReplacementEntryGuard.Entry current = overworldEntryGuard;
+        Path worldDirectory = overworldEntryWorldDirectory;
+        CompletableFuture<Location> safeEntry = overworldSafeEntry;
+        if (current == null
+                || worldDirectory == null
+                || !current.transactionId().equals(transactionId)
+                || !current.pendingPlayers().isEmpty()
+                || safeEntry == null
+                || !safeEntry.isDone()
+                || safeEntry.isCompletedExceptionally()) {
+            return;
+        }
+        try {
+            if (!WorldReplacementEntryGuard.retireIfEmpty(worldDirectory, transactionId)) {
+                return;
+            }
+            overworldEntryGuard = null;
+            overworldEntryWorldDirectory = null;
+            overworldSafeEntry = null;
+            overworldEntryWorld = null;
+            pendingEntryAcknowledgements.entrySet().removeIf(entry -> entry.getValue().equals(transactionId));
+        } catch (Throwable failure) {
+            Iris.reportError("Could not retire the completed Overworld replacement entry marker.", failure);
+        }
+    }
+
+    void reportUnsafeEntry(UUID playerId, Throwable failure) {
+        Iris.reportError("Refused unsafe Overworld replacement entry for " + playerId + ".", failure);
+    }
+
+    private synchronized void failOverworldEntryPreparation(Throwable failure) {
+        CompletableFuture<Location> future = overworldSafeEntry;
+        if (future == null) {
+            future = new CompletableFuture<>();
+            overworldSafeEntry = future;
+        }
+        future.completeExceptionally(failure);
+        Iris.reportError("Could not prepare a safe spawn for the replaced Overworld.", failure);
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -269,7 +575,79 @@ public final class PendingWorldReplacementManager implements Listener {
             Iris.reportError("Failed to capture a loaded world identity for replacement verification.", failure);
             return;
         }
+        if (OVERWORLD_KEY.equals(worldKey)) {
+            prepareOverworldEntry(event.getWorld());
+        }
         J.a(() -> discoverLoadedWorldTransaction(worldKey));
+    }
+
+    ReplacementEntryRedirect prepareReplacementEntry(UUID playerId, Location savedLocation, boolean newPlayer)
+            throws IOException, InterruptedException, ExecutionException, TimeoutException {
+        WorldReplacementEntryGuard.Entry guard = overworldEntryGuard;
+        if (guard == null || playerId == null) {
+            return null;
+        }
+        boolean pendingPlayer = guard.pendingPlayers().contains(playerId);
+        if (!pendingPlayer && !newPlayer) {
+            return null;
+        }
+        Location requiredSavedLocation = Objects.requireNonNull(savedLocation, "savedLocation").clone();
+        World replacementWorld = overworldEntryWorld;
+        if (replacementWorld == null) {
+            throw new IOException("The replacement Overworld is not ready.");
+        }
+        if (requiredSavedLocation.getWorld() != replacementWorld) {
+            if (pendingPlayer) {
+                completeOverworldEntry(playerId, guard.transactionId());
+            }
+            return null;
+        }
+        if (!newPlayer) {
+            boolean collisionSafe = inspectLoginCollision(requiredSavedLocation)
+                    .get(SAFE_ENTRY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (collisionSafe) {
+                completeOverworldEntry(playerId, guard.transactionId());
+                return null;
+            }
+        }
+        CompletableFuture<Location> safeEntry = overworldSafeEntry;
+        if (safeEntry == null) {
+            throw new IOException("The replacement safe spawn is not ready.");
+        }
+        Location prepared = safeEntry.get(SAFE_ENTRY_TIMEOUT_SECONDS, TimeUnit.SECONDS).clone();
+        prepared.setYaw(requiredSavedLocation.getYaw());
+        prepared.setPitch(requiredSavedLocation.getPitch());
+        return new ReplacementEntryRedirect(guard.transactionId(), prepared, pendingPlayer);
+    }
+
+    void expectReplacementEntryAcknowledgement(UUID playerId, UUID transactionId) throws IOException {
+        WorldReplacementEntryGuard.Entry guard = overworldEntryGuard;
+        if (guard == null
+                || !guard.transactionId().equals(transactionId)
+                || !guard.pendingPlayers().contains(playerId)) {
+            throw new IOException("The Overworld replacement entry receipt is no longer active.");
+        }
+        pendingEntryAcknowledgements.put(playerId, transactionId);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        UUID playerId = event.getPlayer().getUniqueId();
+        UUID transactionId = pendingEntryAcknowledgements.remove(playerId);
+        if (transactionId == null) {
+            return;
+        }
+        boolean scheduled = J.runEntity(event.getPlayer(), () -> {
+            try {
+                event.getPlayer().saveData();
+                completeOverworldEntry(playerId, transactionId);
+            } catch (Throwable failure) {
+                Iris.reportError("Could not persist safe Overworld replacement entry for " + playerId + ".", failure);
+            }
+        });
+        if (!scheduled) {
+            Iris.error("Could not schedule safe Overworld replacement entry persistence for " + playerId + ".");
+        }
     }
 
     private void discoverLoadedWorldTransaction(WorldSlotKey worldKey) {
@@ -412,6 +790,10 @@ public final class PendingWorldReplacementManager implements Listener {
         try {
             writeTransaction(committed);
             Iris.success("Committed Iris world replacement for " + transaction.worldKey() + ".");
+            if (OVERWORLD_KEY.equals(transaction.worldKey())) {
+                overworldEntryAwaitingVerification = null;
+                scheduleLoadedOverworldEntryPreparation();
+            }
             scheduleCommittedCleanup(committed);
         } catch (Throwable failure) {
             Iris.reportError("The replacement for " + transaction.worldKey()
@@ -456,6 +838,9 @@ public final class PendingWorldReplacementManager implements Listener {
     private void initiateRollback(Transaction transaction, Throwable failure) {
         Iris.reportError("Iris world replacement verification failed for " + transaction.worldKey()
                 + "; the retained world will be restored on restart.", failure);
+        if (OVERWORLD_KEY.equals(transaction.worldKey())) {
+            clearOverworldEntryGuard();
+        }
         try {
             Transaction rollback = transaction.withPhase(Phase.ROLLBACK_PENDING);
             writeTransaction(rollback);
@@ -608,6 +993,24 @@ public final class PendingWorldReplacementManager implements Listener {
         return plugin.getDataFolder().toPath().toAbsolutePath().normalize();
     }
 
+    private synchronized void loadOverworldEntryGuard() throws IOException {
+        ExactWorldSlotPathPolicy.Target target = resolveTarget(OVERWORLD_KEY);
+        Optional<WorldReplacementEntryGuard.Entry> loaded = WorldReplacementEntryGuard.load(target.worldDirectory());
+        overworldEntryGuard = loaded.orElse(null);
+        overworldEntryWorldDirectory = loaded.isPresent() ? target.worldDirectory() : null;
+        overworldSafeEntry = null;
+        overworldEntryAwaitingVerification = null;
+    }
+
+    private synchronized void clearOverworldEntryGuard() {
+        overworldEntryGuard = null;
+        overworldEntryWorldDirectory = null;
+        overworldSafeEntry = null;
+        overworldEntryAwaitingVerification = null;
+        overworldEntryWorld = null;
+        pendingEntryAcknowledgements.clear();
+    }
+
     private ExactWorldSlotPathPolicy.Target resolveTransactionTarget(Transaction transaction) throws IOException {
         return WorldReplacementJournal.resolveTarget(transaction, IrisWorldStorage.levelRoot().toPath());
     }
@@ -736,6 +1139,22 @@ public final class PendingWorldReplacementManager implements Listener {
     private static volatile VanillaLevelContext vanillaLevelContext;
 
     private record VanillaLevelContext(boolean allowNether, boolean allowEnd) {
+    }
+
+    record ReplacementEntryRedirect(
+            UUID transactionId,
+            Location location,
+            boolean acknowledgementRequired
+    ) {
+        ReplacementEntryRedirect {
+            Objects.requireNonNull(transactionId, "transactionId");
+            location = Objects.requireNonNull(location, "location").clone();
+        }
+
+        @Override
+        public Location location() {
+            return location.clone();
+        }
     }
 
     private static final class RestartBoundaryRequired extends IOException {

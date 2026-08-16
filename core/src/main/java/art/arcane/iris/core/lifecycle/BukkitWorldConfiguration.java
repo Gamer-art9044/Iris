@@ -165,10 +165,22 @@ public final class BukkitWorldConfiguration {
                 ))) {
                     continue;
                 }
-                if (!IrisWorldStorage.isExistingManagedDimensionRoot(
-                        requiredLevelRoot.toFile(),
-                        namespacedKey
-                )) {
+                Path worldContainer = requiredLevelRoot.getParent();
+                if (worldContainer == null) {
+                    throw new IOException("Selected level root has no world container: " + requiredLevelRoot);
+                }
+                boolean storagePresent;
+                try {
+                    storagePresent = IrisWorldStorage.frozenDimensionRoot(
+                            worldContainer.toFile(),
+                            requiredLevelRoot.toFile(),
+                            configuredName,
+                            namespacedKey
+                    ).isPresent();
+                } catch (IllegalStateException failure) {
+                    storagePresent = false;
+                }
+                if (!storagePresent) {
                     continue;
                 }
                 String dimension = selectedIrisDimension(configuredGenerator, configuredName);

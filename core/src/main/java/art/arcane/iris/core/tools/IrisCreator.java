@@ -32,6 +32,7 @@ import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.ServerConfigurator;
+import art.arcane.iris.core.WorldCreatorCompat;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.lifecycle.WorldLifecycleCaller;
@@ -165,7 +166,7 @@ public class IrisCreator {
         NamespacedKey worldKey;
         try {
             worldKey = IrisWorldStorage.managedKeyFromName(name);
-        } catch (IllegalArgumentException e) {
+        } catch (RuntimeException e) {
             throw new IrisException(e.getMessage(), e);
         }
         name = IrisWorldStorage.logicalName(worldKey);
@@ -197,12 +198,19 @@ public class IrisCreator {
 
     private World createReserved(NamespacedKey worldKey, IrisDimension resolvedDimension) throws IrisException {
         File dimensionRoot;
+        File storageRoot;
         try {
-            dimensionRoot = IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
-        } catch (IllegalArgumentException e) {
+            if (!studio && !benchmark) {
+                dimensionRoot = WorldCreatorCompat.persistentDimensionRoot(worldKey);
+                storageRoot = WorldCreatorCompat.persistentLevelRoot(worldKey);
+            } else {
+                dimensionRoot = IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
+                storageRoot = dimensionRoot;
+            }
+        } catch (RuntimeException e) {
             throw new IrisException(e.getMessage(), e);
         }
-        if (Files.exists(dimensionRoot.toPath()) || WorldIdentity.resolve(worldKey).isPresent()) {
+        if (Files.exists(storageRoot.toPath()) || WorldIdentity.resolve(worldKey).isPresent()) {
             throw new IrisException("World \"" + name + "\" already exists or is loaded.");
         }
         if (sender == null) {
@@ -249,6 +257,7 @@ public class IrisCreator {
                     .name(name)
                     .seed(seed)
                     .studio(studio)
+                    .persistent(!studio && !benchmark)
                     .create();
             reportStudioTiming("prepare_studio_generator", generatorPrepareStart);
             reportStudioProgress(0.40D, "install_datapacks");
@@ -343,7 +352,7 @@ public class IrisCreator {
             }
             return world;
         } catch (Throwable failure) {
-            rollbackWorldCreation(worldKey, world, stagedGenerator, dimensionRoot, bukkitRegistered, failure);
+            rollbackWorldCreation(worldKey, world, stagedGenerator, storageRoot, bukkitRegistered, failure);
             if (failure instanceof IrisException irisException) {
                 throw irisException;
             }
@@ -692,7 +701,7 @@ public class IrisCreator {
             NamespacedKey worldKey,
             World createdWorld,
             PlatformChunkGenerator stagedGenerator,
-            File dimensionRoot,
+            File storageRoot,
             boolean bukkitRegistered,
             Throwable failure
     ) {
@@ -749,7 +758,12 @@ public class IrisCreator {
         if (bukkitRegistered) {
             try {
                 CompletableFuture<Boolean> multiverseRemoval = J.sfut(
-                        () -> IrisServices.get(MultiverseCoreLink.class).removeFromConfig(name)
+                        () -> IrisServices.get(MultiverseCoreLink.class).removeFromConfig(
+                                IrisWorldStorage.configuredWorldName(
+                                        worldKey,
+                                        IrisWorldStorage.levelRoot().getName()
+                                )
+                        )
                 );
                 if (multiverseRemoval == null) {
                     throw new IllegalStateException("Failed to schedule Multiverse rollback for \"" + name + "\".");
@@ -782,7 +796,7 @@ public class IrisCreator {
             return;
         }
         try {
-            AtomicDirectoryPublisher.deleteTree(dimensionRoot.toPath());
+            AtomicDirectoryPublisher.deleteTree(storageRoot.toPath());
         } catch (Throwable rollbackFailure) {
             failure.addSuppressed(rollbackFailure);
             queueRollbackDeletion(name, failure);

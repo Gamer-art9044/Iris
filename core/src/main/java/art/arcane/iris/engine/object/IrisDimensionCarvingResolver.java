@@ -1,10 +1,12 @@
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.util.project.interpolation.IrisInterpolation;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.project.noise.CNG;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -14,18 +16,20 @@ import java.util.Map;
 public final class IrisDimensionCarvingResolver {
     private static final int MAX_CHILD_DEPTH = 32;
     private static final long CHILD_SEED_SALT = 0x9E3779B97F4A7C15L;
-    private static final ThreadLocal<State> THREAD_STATE = ThreadLocal.withInitial(State::new);
+    private static final ThreadLocal<WeakReference<State>> THREAD_STATE =
+            ThreadLocal.withInitial(() -> new WeakReference<>(null));
 
     private IrisDimensionCarvingResolver() {
 
     }
 
     public static IrisDimensionCarvingEntry resolveRootEntry(Engine engine, int worldY) {
-        return resolveRootEntry(engine, worldY, THREAD_STATE.get());
+        return resolveRootEntry(engine, worldY, threadState());
     }
 
     public static IrisDimensionCarvingEntry resolveRootEntry(Engine engine, int worldY, State state) {
-        State resolvedState = state == null ? THREAD_STATE.get() : state;
+        State resolvedState = state == null ? threadState() : state;
+        resolvedState.bind(engine);
         if (resolvedState.rootEntriesByWorldY.containsKey(worldY)) {
             return resolvedState.rootEntriesByWorldY.get(worldY);
         }
@@ -51,11 +55,12 @@ public final class IrisDimensionCarvingResolver {
     }
 
     public static IrisDimensionCarvingEntry resolveFromRoot(Engine engine, IrisDimensionCarvingEntry rootEntry, int worldX, int worldZ) {
-        return resolveFromRoot(engine, rootEntry, worldX, worldZ, THREAD_STATE.get());
+        return resolveFromRoot(engine, rootEntry, worldX, worldZ, threadState());
     }
 
     public static IrisDimensionCarvingEntry resolveFromRoot(Engine engine, IrisDimensionCarvingEntry rootEntry, int worldX, int worldZ, State state) {
-        State resolvedState = state == null ? THREAD_STATE.get() : state;
+        State resolvedState = state == null ? threadState() : state;
+        resolvedState.bind(engine);
         if (rootEntry == null) {
             return null;
         }
@@ -103,6 +108,7 @@ public final class IrisDimensionCarvingResolver {
             return entry.getRealBiome(engine.getData());
         }
 
+        state.bind(engine);
         if (state.biomeCache.containsKey(entry)) {
             return state.biomeCache.get(entry);
         }
@@ -266,12 +272,48 @@ public final class IrisDimensionCarvingResolver {
         return state.childSeed;
     }
 
+    private static State threadState() {
+        WeakReference<State> reference = THREAD_STATE.get();
+        State state = reference.get();
+        if (state != null) {
+            return state;
+        }
+        State replacement = new State();
+        THREAD_STATE.set(new WeakReference<>(replacement));
+        return replacement;
+    }
+
     public static final class State {
         private final Map<Integer, IrisDimensionCarvingEntry> rootEntriesByWorldY = new HashMap<>();
         private final Map<IrisDimensionCarvingEntry, ParentSelectionPlan> selectionPlans = new IdentityHashMap<>();
         private final Map<IrisDimensionCarvingEntry, IrisBiome> biomeCache = new IdentityHashMap<>();
+        private WeakReference<Engine> engineIdentity;
+        private WeakReference<IrisDimension> dimensionIdentity;
+        private WeakReference<IrisData> dataIdentity;
         private Map<String, IrisDimensionCarvingEntry> entryIndex;
         private Long childSeed;
+
+        private void bind(Engine engine) {
+            IrisDimension dimension = engine.getDimension();
+            IrisData data = engine.getData();
+            if (references(engineIdentity, engine)
+                    && references(dimensionIdentity, dimension)
+                    && references(dataIdentity, data)) {
+                return;
+            }
+            engineIdentity = new WeakReference<>(engine);
+            dimensionIdentity = new WeakReference<>(dimension);
+            dataIdentity = new WeakReference<>(data);
+            rootEntriesByWorldY.clear();
+            selectionPlans.clear();
+            biomeCache.clear();
+            entryIndex = null;
+            childSeed = null;
+        }
+
+        private static boolean references(WeakReference<?> identity, Object value) {
+            return identity != null && identity.get() == value;
+        }
     }
 
     private static final class ParentSelectionPlan {

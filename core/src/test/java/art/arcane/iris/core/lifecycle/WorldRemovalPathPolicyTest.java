@@ -28,6 +28,28 @@ public class WorldRemovalPathPolicyTest {
                 levelRoot.resolve("dimensions/iris/iris_world").toAbsolutePath().normalize(),
                 target.worldDirectory()
         );
+        assertEquals(target.worldDirectory(), target.storageDirectory());
+    }
+
+    @Test
+    public void resolvesCurrentCraftBukkitConfiguredDimensionDirectory() throws Exception {
+        Path worldContainer = temporaryFolder.newFolder("configured-removal-server").toPath();
+        Path levelRoot = Files.createDirectory(worldContainer.resolve("world"));
+        Path dimensionRoot = Files.createDirectories(
+                worldContainer.resolve("world_iris_moon/dimensions/iris/moon")
+        );
+
+        WorldRemovalPathPolicy.Target target = WorldRemovalPathPolicy.resolve("moon", "world", levelRoot);
+
+        assertEquals(dimensionRoot.toAbsolutePath().normalize(), target.worldDirectory());
+        assertEquals(worldContainer.resolve("world_iris_moon").toAbsolutePath().normalize(),
+                target.storageDirectory());
+        WorldRemovalPathPolicy.validateStoragePath(levelRoot, target.worldKey(), dimensionRoot);
+        WorldRemovalPathPolicy.validateStorageRoot(
+                levelRoot,
+                target.worldKey(),
+                worldContainer.resolve("world_iris_moon")
+        );
     }
 
     @Test

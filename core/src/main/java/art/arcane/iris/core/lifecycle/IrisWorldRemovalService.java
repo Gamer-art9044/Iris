@@ -852,7 +852,9 @@ public final class IrisWorldRemovalService {
         ) {
             return onGlobal(() -> {
                 requireNotTerminal(terminal, "Multiverse unregistration");
-                return IrisServices.get(MultiverseCoreLink.class).removeFromConfig(target.logicalName());
+                return IrisServices.get(MultiverseCoreLink.class).removeFromConfig(
+                        bukkitConfigurationWorldName(target)
+                );
             }).thenCompose(multiverseChanged -> {
                 if (terminal.getAsBoolean()) {
                     return CompletableFuture.failedFuture(new IllegalStateException(
@@ -892,7 +894,10 @@ public final class IrisWorldRemovalService {
                 WorldRemovalPathPolicy.Target target,
                 BooleanSupplier terminal
         ) {
-            Path quarantine = target.worldDirectory().resolveSibling(".iris-delete-" + UUID.randomUUID());
+            Path quarantine = target.levelRoot()
+                    .resolve("dimensions/iris/.iris-delete-" + UUID.randomUUID())
+                    .toAbsolutePath()
+                    .normalize();
             return CompletableFuture.supplyAsync(
                             () -> {
                                 requireNotTerminal(terminal, "deletion intent");
@@ -952,7 +957,12 @@ public final class IrisWorldRemovalService {
                     target.worldKey(),
                     target.worldDirectory()
             );
-            boolean directoryPresent = Files.isDirectory(target.worldDirectory(), LinkOption.NOFOLLOW_LINKS);
+            WorldRemovalPathPolicy.validateStorageRoot(
+                    target.levelRoot(),
+                    target.worldKey(),
+                    target.storageDirectory()
+            );
+            boolean directoryPresent = Files.isDirectory(target.storageDirectory(), LinkOption.NOFOLLOW_LINKS);
             YamlConfiguration configuration = YamlConfiguration.loadConfiguration(ServerProperties.BUKKIT_YML);
             String generator = bukkitGenerator(configuration, target);
             boolean configurationManaged = generator != null
@@ -1020,16 +1030,23 @@ public final class IrisWorldRemovalService {
                     target.worldKey(),
                     target.worldDirectory()
             );
-            Path worldDirectory = target.worldDirectory();
-            if (!Files.exists(worldDirectory, LinkOption.NOFOLLOW_LINKS)) {
+            WorldRemovalPathPolicy.validateStorageRoot(
+                    target.levelRoot(),
+                    target.worldKey(),
+                    target.storageDirectory()
+            );
+            Path storageDirectory = target.storageDirectory();
+            if (!Files.exists(storageDirectory, LinkOption.NOFOLLOW_LINKS)) {
                 return null;
             }
-            if (!Files.isDirectory(worldDirectory, LinkOption.NOFOLLOW_LINKS)) {
+            if (!Files.isDirectory(storageDirectory, LinkOption.NOFOLLOW_LINKS)) {
                 throw new RemovalFailure(
                         RemovalStatus.QUARANTINE_FAILED,
-                        new IOException("Iris world target is not a directory: " + worldDirectory)
+                        new IOException("Iris world target is not a directory: " + storageDirectory)
                 );
             }
+
+            requireSafeQuarantineParent(target, quarantine);
 
             WorldDeletionQueue deletionQueue = IrisServices.getOrNull(WorldDeletionQueue.class);
             if (deletionQueue == null) {
@@ -1059,23 +1076,53 @@ public final class IrisWorldRemovalService {
                     target.worldKey(),
                     target.worldDirectory()
             );
-            Path worldDirectory = target.worldDirectory();
-            if (!Files.exists(worldDirectory, LinkOption.NOFOLLOW_LINKS)) {
+            WorldRemovalPathPolicy.validateStorageRoot(
+                    target.levelRoot(),
+                    target.worldKey(),
+                    target.storageDirectory()
+            );
+            Path storageDirectory = target.storageDirectory();
+            if (!Files.exists(storageDirectory, LinkOption.NOFOLLOW_LINKS)) {
                 return null;
             }
-            if (!Files.isDirectory(worldDirectory, LinkOption.NOFOLLOW_LINKS)) {
+            if (!Files.isDirectory(storageDirectory, LinkOption.NOFOLLOW_LINKS)) {
                 throw new RemovalFailure(
                         RemovalStatus.QUARANTINE_FAILED,
-                        new IOException("Iris world target is not a directory: " + worldDirectory)
+                        new IOException("Iris world target is not a directory: " + storageDirectory)
                 );
             }
             try {
                 try {
-                    Files.move(worldDirectory, quarantine, StandardCopyOption.ATOMIC_MOVE);
+                    Files.move(storageDirectory, quarantine, StandardCopyOption.ATOMIC_MOVE);
                 } catch (AtomicMoveNotSupportedException unsupported) {
-                    Files.move(worldDirectory, quarantine);
+                    Files.move(storageDirectory, quarantine);
                 }
                 return quarantine;
+            } catch (IOException failure) {
+                throw new RemovalFailure(RemovalStatus.QUARANTINE_FAILED, failure);
+            }
+        }
+
+        private static void requireSafeQuarantineParent(
+                WorldRemovalPathPolicy.Target target,
+                Path quarantine
+        ) {
+            Path expectedParent = target.levelRoot().resolve("dimensions/iris").toAbsolutePath().normalize();
+            if (!Objects.equals(quarantine.getParent(), expectedParent)) {
+                throw new RemovalFailure(
+                        RemovalStatus.QUARANTINE_FAILED,
+                        new IOException("Iris quarantine path is outside its exact namespace root: " + quarantine)
+                );
+            }
+            try {
+                Path current = target.levelRoot().toAbsolutePath().normalize();
+                for (Path segment : target.levelRoot().relativize(expectedParent)) {
+                    current = current.resolve(segment);
+                    if (Files.isSymbolicLink(current)) {
+                        throw new IOException("Iris quarantine storage contains a symbolic link: " + current);
+                    }
+                }
+                Files.createDirectories(expectedParent);
             } catch (IOException failure) {
                 throw new RemovalFailure(RemovalStatus.QUARANTINE_FAILED, failure);
             }

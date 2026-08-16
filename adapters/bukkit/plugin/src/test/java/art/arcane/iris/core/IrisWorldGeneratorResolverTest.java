@@ -93,6 +93,61 @@ public class IrisWorldGeneratorResolverTest {
         );
     }
 
+    @Test
+    public void configuredWorldResolutionUsesOnlyFrozenWorldLocalSnapshot() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java"));
+        int resolverStart = source.indexOf("private ChunkGenerator resolveFrozenWorldGenerator(");
+        int resolverEnd = source.indexOf("private record FreshValidation", resolverStart);
+        String resolver = source.substring(resolverStart, resolverEnd);
+
+        int dimensionRoot = resolver.indexOf("IrisWorldStorage.requireFrozenDimensionRoot(");
+        int currentPlatformRoot = resolver.indexOf("WorldCreatorCompat.persistentDimensionRoot(worldKey)");
+        int layoutRefusal = resolver.indexOf(
+                "Frozen Iris world storage does not match the current platform layout",
+                currentPlatformRoot
+        );
+        int snapshotRoot = resolver.indexOf("IrisWorldStorage.requireFrozenPackRoot(dimensionRoot)");
+        int validation = resolver.indexOf("requireSnapshotLoadable(snapshotRoot)");
+        int exactLoad = resolver.indexOf(
+                "IrisData.get(snapshotRoot).getDimensionLoader().load(id, false)"
+        );
+        int canonicalIdentity = resolver.indexOf(".platformIdentity(worldKey.toString())");
+        int resolvedStorage = resolver.indexOf(".worldFolder(dimensionRoot)");
+
+        assertTrue(dimensionRoot >= 0);
+        assertTrue(currentPlatformRoot > dimensionRoot);
+        assertTrue(layoutRefusal > currentPlatformRoot);
+        assertTrue(snapshotRoot > layoutRefusal);
+        assertTrue(validation > snapshotRoot);
+        assertTrue(exactLoad > validation);
+        assertTrue(canonicalIdentity > exactLoad);
+        assertTrue(resolvedStorage > canonicalIdentity);
+        assertFalse(resolver.contains("loadDimension("));
+        assertFalse(resolver.contains("loadAnyDimension("));
+        assertFalse(resolver.contains("replaceIntoWorld("));
+        assertFalse(resolver.contains("installIntoWorld("));
+    }
+
+    @Test
+    public void configuredWorldSnapshotFailureStopsStartupAndRethrows() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java"));
+        int resolverStart = source.indexOf("public ChunkGenerator resolveDefaultWorldGenerator(");
+        int resolverEnd = source.indexOf("private ChunkGenerator resolveFrozenWorldGenerator(", resolverStart);
+        String resolver = source.substring(resolverStart, resolverEnd);
+
+        int failureCapture = resolver.indexOf("catch (RuntimeException failure)");
+        int report = resolver.indexOf("Iris.reportError(", failureCapture);
+        int shutdown = resolver.indexOf("Bukkit.shutdown()", report);
+        int rethrow = resolver.indexOf("throw failure", shutdown);
+
+        assertTrue(failureCapture >= 0);
+        assertTrue(report > failureCapture);
+        assertTrue(shutdown > report);
+        assertTrue(rethrow > shutdown);
+    }
+
     private static void writeValidPack(Path packRoot) throws Exception {
         Files.createDirectories(packRoot.resolve("dimensions"));
         Files.createDirectories(packRoot.resolve("regions"));

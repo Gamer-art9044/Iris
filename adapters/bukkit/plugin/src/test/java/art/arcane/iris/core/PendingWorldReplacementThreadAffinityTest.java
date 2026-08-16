@@ -164,6 +164,84 @@ public class PendingWorldReplacementThreadAffinityTest {
         assertFalse(irisSource.contains("J.a(pendingWorldReplacements::verifyLoadedPublishedWorlds)"));
     }
 
+    @Test
+    public void paperLoginHookIsIsolatedFromAlwaysLoadedSpigotClasses() throws Exception {
+        String managerSource = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java"));
+        String irisSource = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java"));
+        String listenerSource = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java"));
+        String registration = method(managerSource, "public void registerPlatformEntryListener()");
+
+        assertFalse(managerSource.contains("import io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent"));
+        assertFalse(managerSource.contains("AsyncPlayerSpawnLocationEvent event"));
+        assertFalse(irisSource.contains("AsyncPlayerSpawnLocationEvent"));
+        assertTrue(registration.contains("Class.forName(\"io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent\""));
+        assertTrue(registration.contains("Class.forName("));
+        assertTrue(registration.contains("PaperWorldReplacementEntryListener"));
+        assertTrue(irisSource.contains("pendingWorldReplacements.registerPlatformEntryListener();"));
+        assertTrue(listenerSource.contains("onAsyncPlayerSpawnLocation(AsyncPlayerSpawnLocationEvent event)"));
+    }
+
+    @Test
+    public void redirectedPlayerReceiptSurvivesUntilTheMaterializedPositionIsSaved() throws Exception {
+        String managerSource = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java"));
+        String listenerSource = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java"));
+        String preparation = method(
+                managerSource,
+                "ReplacementEntryRedirect prepareReplacementEntry(UUID playerId, Location savedLocation, boolean newPlayer)"
+        );
+        String acknowledgement = method(
+                managerSource,
+                "void expectReplacementEntryAcknowledgement(UUID playerId, UUID transactionId)"
+        );
+        String join = method(managerSource, "public void onPlayerJoin(PlayerJoinEvent event)");
+        String listener = method(
+                listenerSource,
+                "public void onAsyncPlayerSpawnLocation(AsyncPlayerSpawnLocationEvent event)"
+        );
+
+        assertTrue(preparation.contains("return new ReplacementEntryRedirect(guard.transactionId(), prepared, pendingPlayer)"));
+        assertFalse(preparation.substring(preparation.indexOf("CompletableFuture<Location> safeEntry"))
+                .contains("completeOverworldEntry("));
+        assertBefore(listener, "event.setSpawnLocation(location)",
+                "manager.expectReplacementEntryAcknowledgement(playerId, redirect.transactionId())");
+        assertTrue(acknowledgement.contains("pendingEntryAcknowledgements.put(playerId, transactionId)"));
+        assertBefore(join, "event.getPlayer().saveData()", "completeOverworldEntry(playerId, transactionId)");
+    }
+
+    @Test
+    public void replacementSpawnIsPersistedBeforeFinalMarkerRetirement() throws Exception {
+        String managerSource = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java"));
+        String listenerSource = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java"));
+        String preparation = method(managerSource, "private void prepareOverworldEntry(World world)");
+        String persistence = method(managerSource, "private CompletableFuture<Location> persistOverworldSpawn(Location safeEntry)");
+        String retirement = method(
+                managerSource,
+                "private synchronized void retireOverworldEntryIfCompleteAsync(UUID transactionId)"
+        );
+        String listener = method(
+                listenerSource,
+                "public void onAsyncPlayerSpawnLocation(AsyncPlayerSpawnLocationEvent event)"
+        );
+        String generatorSource = Files.readString(Path.of(System.getProperty("iris.bukkitChunkGeneratorSource")));
+
+        assertBefore(preparation, ".thenCompose(this::applyOverworldSpawn)",
+                ".thenCompose(this::persistOverworldSpawn)");
+        assertBefore(preparation, "targetFuture.complete(safeEntry.clone())",
+                "retireOverworldEntryIfComplete(guard.transactionId())");
+        assertTrue(persistence.contains("world.save()"));
+        assertTrue(retirement.contains("!current.pendingPlayers().isEmpty()"));
+        assertTrue(retirement.contains("!safeEntry.isDone()"));
+        assertTrue(retirement.contains("safeEntry.isCompletedExceptionally()"));
+        assertTrue(listener.contains("event.isNewPlayer()"));
+        assertTrue(generatorSource.contains("world.getHighestBlockYAt(initialSpawn) + 1"));
+    }
+
     private static PendingWorldReplacementManager.PublishedWorldRuntimeState runtimeState(
             WorldSlotKey worldKey,
             long seed,

@@ -133,9 +133,7 @@ public final class PregenMantleBackpressure {
                 IrisLogging.reportError(e);
             }
 
-            if (MantleHeapPressure.overPanicWater()) {
-                MantleHeapPressure.requestPanicReclaim();
-            }
+            MantleHeapPressure.requestPanicReclaim();
 
             long elapsed = M.ms() - waitStart;
             if (elapsed >= timeoutMs) {

@@ -320,6 +320,7 @@ public class WorldReplacementBootstrapTest {
         Path overworldDimension = overworldPaths.stage().resolve("iris/pack/dimensions/overworld.json");
         Files.createDirectories(overworldDimension.getParent());
         Files.writeString(overworldDimension, "overworld-replacement");
+        WorldReplacementEntryGuard.stage(levelRoot, overworldPaths.stage(), overworldId);
         String overworldFingerprint = WorldReplacementFilesystem.fingerprintPack(
                 overworldPaths.stage().resolve("iris/pack")
         );

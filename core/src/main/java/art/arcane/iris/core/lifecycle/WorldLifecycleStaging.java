@@ -44,6 +44,11 @@ public final class WorldLifecycleStaging {
         return stagedStemGenerators.remove(worldName);
     }
 
+    @Nullable
+    public static ChunkGenerator peekStemGenerator(@NotNull String worldName) {
+        return stagedStemGenerators.get(worldName);
+    }
+
     public static void clearGenerator(@NotNull String worldName) {
         stagedGenerators.remove(worldName);
         stagedBiomeProviders.remove(worldName);

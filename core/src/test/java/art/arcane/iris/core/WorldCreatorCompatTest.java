@@ -22,10 +22,22 @@ public class WorldCreatorCompatTest {
     }
 
     @Test
+    public void persistentFallbackUsesExactConfiguredStartupName() {
+        assertEquals(
+                "world_iris_compat_world",
+                WorldCreatorCompat.fallbackPersistentName(new NamespacedKey("iris", "compat_world"), "world")
+        );
+    }
+
+    @Test
     public void fallbackKeyRoundTripsCreatorName() {
         assertEquals(new NamespacedKey("iris", "compat_world"), WorldCreatorCompat.fallbackKey("compat_world", "world"));
         assertEquals(NamespacedKey.minecraft("overworld"), WorldCreatorCompat.fallbackKey("world", "world"));
         assertEquals(NamespacedKey.minecraft("the_nether"), WorldCreatorCompat.fallbackKey("world_nether", "world"));
+        assertEquals(
+                new NamespacedKey("iris", "compat_world"),
+                WorldCreatorCompat.fallbackKey("world_iris_compat_world", "world")
+        );
     }
 
     @Test

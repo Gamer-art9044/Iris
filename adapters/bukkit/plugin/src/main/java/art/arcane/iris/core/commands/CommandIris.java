@@ -801,8 +801,14 @@ public class CommandIris implements DirectorExecutor {
     }
 
     boolean doesWorldExist(String worldName) {
-        File worldDirectory = IrisWorldStorage.dimensionRoot(worldName);
-        return worldDirectory.exists() && worldDirectory.isDirectory();
+        NamespacedKey worldKey = IrisWorldStorage.managedKeyFromName(worldName);
+        File levelRoot = IrisWorldStorage.levelRoot();
+        return IrisWorldStorage.frozenDimensionRoot(
+                Bukkit.getWorldContainer(),
+                levelRoot,
+                IrisWorldStorage.configuredWorldName(worldKey, levelRoot.getName()),
+                worldKey
+        ).isPresent();
     }
 
     public static class ManagedWorldNameHandler implements DirectorParameterHandler<String> {

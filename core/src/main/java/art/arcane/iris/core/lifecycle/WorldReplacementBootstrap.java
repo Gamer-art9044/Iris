@@ -1,6 +1,7 @@
 package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.ExactWorldSlotPathPolicy;
+import art.arcane.iris.core.WorldSlotKey;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.WorldGeneratorSnapshot;
 import art.arcane.iris.core.lifecycle.WorldReplacementFilesystem.ReplacementPaths;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Phase;
@@ -8,6 +9,8 @@ import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Transaction;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
@@ -138,6 +141,7 @@ public final class WorldReplacementBootstrap {
                 throw conflict(active, "bukkit.yml matches neither the replacement nor its retained original state.");
             }
             try {
+                refreshOverworldEntryGuard(levelRoot, active, paths);
                 WorldReplacementFilesystem.publish(
                         paths,
                         active.originalTargetPresent(),
@@ -166,6 +170,7 @@ public final class WorldReplacementBootstrap {
                 }
                 throw conflict(active, "bukkit.yml matches neither the replacement nor its retained original state.");
             }
+            refreshOverworldEntryGuard(levelRoot, active, paths);
             WorldReplacementFilesystem.publish(
                     paths,
                     active.originalTargetPresent(),
@@ -174,6 +179,20 @@ public final class WorldReplacementBootstrap {
             return ReconcileAction.RETAINED;
         }
         throw conflict(active, "Replacement journal reached an unsupported bootstrap phase.");
+    }
+
+    private static void refreshOverworldEntryGuard(
+            Path levelRoot,
+            Transaction transaction,
+            ReplacementPaths paths
+    ) throws IOException {
+        if (!WorldSlotKey.minecraft("overworld").equals(transaction.worldKey())) {
+            return;
+        }
+        Path replacementWorld = Files.isDirectory(paths.stage(), LinkOption.NOFOLLOW_LINKS)
+                ? paths.stage()
+                : paths.target();
+        WorldReplacementEntryGuard.refreshPlayers(levelRoot, replacementWorld, transaction.id());
     }
 
     private static void rollback(

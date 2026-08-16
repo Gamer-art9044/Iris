@@ -94,7 +94,7 @@ public class CommandDeveloper implements DirectorExecutor {
 
     @Director(description = "Hash generated block output of a fixed area for determinism/identity testing", descriptionKey = "iris.director.commanddeveloper.director.hash_generated_block_output_fixed_area_determinism_identity_testing", origin = DirectorOrigin.BOTH)
     public void genhash(
-            @Param(description = "The world to hash", descriptionKey = "iris.director.commanddeveloper.param.world_hash", contextual = true)
+            @Param(description = "The world to hash", descriptionKey = "iris.director.commanddeveloper.param.world_hash", contextual = true, contextualOverride = true)
             World world,
             @Param(description = "Radius in chunks around the center", descriptionKey = "iris.director.commanddeveloper.param.radius_chunks_around_center", defaultValue = "4")
             int radius,
@@ -192,9 +192,9 @@ public class CommandDeveloper implements DirectorExecutor {
 
     @Director(description = "Update the pack of a world (UNSAFE!)", descriptionKey = "iris.director.commanddeveloper.director.update_pack_world_unsafe", name = "update-world", aliases = "^world")
     public void updateWorld(
-            @Param(description = "The world to update", descriptionKey = "iris.director.commanddeveloper.param.world_update", contextual = true)
+            @Param(description = "The world to update", descriptionKey = "iris.director.commanddeveloper.param.world_update", contextual = true, contextualOverride = true)
             World world,
-            @Param(description = "The pack to install into the world", descriptionKey = "iris.director.commanddeveloper.param.pack_install_into_world", contextual = true, aliases = "dimension")
+            @Param(description = "The pack to install into the world", descriptionKey = "iris.director.commanddeveloper.param.pack_install_into_world", contextual = true, contextualOverride = true, aliases = "dimension")
             IrisDimension pack,
             @Param(description = "Make sure to make a backup & read the warnings first!", descriptionKey = "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first", defaultValue = "false", aliases = "c")
             boolean confirm
@@ -390,7 +390,7 @@ public class CommandDeveloper implements DirectorExecutor {
 
     @Director(name = "goldenhash", aliases = {"gold"}, description = "Generate chunks into buffers (no world writes) and hash blocks+biomes; captures a golden file or verifies against an existing one. Deletes the world's entire mantle - use on disposable test worlds.", descriptionKey = "iris.director.commanddeveloper.director.generate_chunks_into_buffers_no_world_writes_hash_blocks_biomes_captures_golden", origin = DirectorOrigin.BOTH)
     public void goldenhash(
-            @Param(description = "The world to scan", descriptionKey = "iris.director.commanddeveloper.param.world_scan", contextual = true)
+            @Param(description = "The world to scan", descriptionKey = "iris.director.commanddeveloper.param.world_scan", contextual = true, contextualOverride = true)
             World world,
             @Param(name = "radius", description = "Radius in chunks around the center", descriptionKey = "iris.director.commanddeveloper.param.radius_chunks_around_center_2", defaultValue = "8")
             int radius,

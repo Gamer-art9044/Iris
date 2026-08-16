@@ -49,4 +49,10 @@ public class BukkitChunkGeneratorInitializationModeTest {
         assertFalse(BukkitChunkGenerator.shouldRunStudioHotload(true, false, true));
         assertTrue(BukkitChunkGenerator.shouldRunStudioHotload(true, false, false));
     }
+
+    @Test
+    public void transientStudioWorldsAreNotPersisted() {
+        assertFalse(BukkitChunkGenerator.shouldPersistWorldRegistration(true));
+        assertTrue(BukkitChunkGenerator.shouldPersistWorldRegistration(false));
+    }
 }

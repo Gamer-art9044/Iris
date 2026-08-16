@@ -862,10 +862,12 @@ public class CommandIris implements DirectorExecutor {
     public static class PackDimensionTypeHandler implements DirectorParameterHandler<String> {
         @Override
         public KList<String> getPossibilities() {
-            Set<String> options = new LinkedHashSet<>();
-            options.add("default");
+            return packDimensionOptions(Iris.instance.getDataFolder("packs"));
+        }
 
-            File packsFolder = Iris.instance.getDataFolder("packs");
+        static KList<String> packDimensionOptions(File packsFolder) {
+            Set<String> options = new LinkedHashSet<>();
+
             for (File pack : PackDirectoryResolver.listVisiblePackDirectories(packsFolder)) {
                 options.add(pack.getName());
 

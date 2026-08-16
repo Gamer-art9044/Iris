@@ -237,6 +237,7 @@ public class CommandStudio implements DirectorExecutor {
                     description = "Copy the contents of an existing project in your packs folder and use it as a template in this new project.", descriptionKey = "iris.director.commandstudio.param.copy_contents_existing_project_your_packs_folder_use_it_as_template_this",
                     defaultValue = "null",
                     contextual = true,
+                    contextualOverride = true,
                     customHandler = NullableDimensionHandler.class
             )
             IrisDimension template) {
@@ -249,7 +250,7 @@ public class CommandStudio implements DirectorExecutor {
 
     @Director(description = "Get the version of a pack", descriptionKey = "iris.director.commandstudio.director.get_version_pack")
     public void version(
-            @Param(defaultValue = "default", description = "The dimension get the version of", descriptionKey = "iris.director.commandstudio.param.dimension_get_version", aliases = "dim", contextual = true, customHandler = DimensionHandler.class)
+            @Param(defaultValue = "default", description = "The dimension get the version of", descriptionKey = "iris.director.commandstudio.param.dimension_get_version", aliases = "dim", contextual = true, contextualOverride = true, customHandler = DimensionHandler.class)
             IrisDimension dimension
     ) {
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_PACK_HAS_VERSION, MessageArgument.untrusted("value", dimension.getName()), MessageArgument.untrusted("value2", dimension.getVersion())));
@@ -257,7 +258,7 @@ public class CommandStudio implements DirectorExecutor {
 
     @Director(description = "Open the noise explorer (External GUI)", descriptionKey = "iris.director.commandstudio.director.open_noise_explorer_external_gui", aliases = {"nmap"})
     public void noise(
-            @Param(description = "Optional pack generator to preview", descriptionKey = "iris.director.commandstudio.param.optional_pack_generator_preview", defaultValue = "null", contextual = true)
+            @Param(description = "Optional pack generator to preview", descriptionKey = "iris.director.commandstudio.param.optional_pack_generator_preview", defaultValue = "null", contextual = true, contextualOverride = true)
             IrisGenerator generator,
             @Param(description = "The seed to preview the generator with", descriptionKey = "iris.director.commandstudio.param.seed_preview_generator_with", defaultValue = "12345")
             long seed
@@ -414,7 +415,7 @@ public class CommandStudio implements DirectorExecutor {
 
     @Director(description = "Render a world map (External GUI)", descriptionKey = "iris.director.commandstudio.director.render_world_map_external_gui", aliases = "render")
     public void map(
-            @Param(name = "world", description = "The world to open the generator for", descriptionKey = "iris.director.commandstudio.param.world_open_generator", contextual = true)
+            @Param(name = "world", description = "The world to open the generator for", descriptionKey = "iris.director.commandstudio.param.world_open_generator", contextual = true, contextualOverride = true)
             World world
     ) {
         if (noGUI()) return;
@@ -430,7 +431,7 @@ public class CommandStudio implements DirectorExecutor {
 
     @Director(description = "Package a dimension into a compressed format", descriptionKey = "iris.director.commandstudio.director.package_dimension_into_compressed_format", aliases = "package")
     public void pkg(
-            @Param(name = "dimension", description = "The dimension pack to compress", descriptionKey = "iris.director.commandstudio.param.dimension_pack_compress", contextual = true, defaultValue = "default", customHandler = DimensionHandler.class)
+            @Param(name = "dimension", description = "The dimension pack to compress", descriptionKey = "iris.director.commandstudio.param.dimension_pack_compress", contextual = true, contextualOverride = true, defaultValue = "default", customHandler = DimensionHandler.class)
             IrisDimension dimension,
             @Param(name = "obfuscate", description = "Whether or not to obfuscate the pack", descriptionKey = "iris.director.commandstudio.param.whether_not_obfuscate_pack", defaultValue = "false")
             boolean obfuscate,
@@ -442,7 +443,7 @@ public class CommandStudio implements DirectorExecutor {
 
     @Director(description = "Profiles the performance of a dimension", descriptionKey = "iris.director.commandstudio.director.profiles_performance_dimension", origin = DirectorOrigin.PLAYER)
     public void profile(
-            @Param(description = "The dimension to profile", descriptionKey = "iris.director.commandstudio.param.dimension_profile", contextual = true, defaultValue = "default", customHandler = DimensionHandler.class)
+            @Param(description = "The dimension to profile", descriptionKey = "iris.director.commandstudio.param.dimension_profile", contextual = true, contextualOverride = true, defaultValue = "default", customHandler = DimensionHandler.class)
             IrisDimension dimension
     ) {
         // Todo: Make this more accurate
@@ -659,7 +660,7 @@ public class CommandStudio implements DirectorExecutor {
     public void spawn(
             @Param(description = "The entity to spawn", descriptionKey = "iris.director.commandstudio.param.entity_spawn")
             IrisEntity entity,
-            @Param(description = "The location to spawn the entity at", descriptionKey = "iris.director.commandstudio.param.location_spawn_entity_at", contextual = true)
+            @Param(description = "The location to spawn the entity at", descriptionKey = "iris.director.commandstudio.param.location_spawn_entity_at", contextual = true, contextualOverride = true)
             Vector location
     ) {
         VolmitSender commandSender = sender();
@@ -701,7 +702,7 @@ public class CommandStudio implements DirectorExecutor {
 
     @Director(description = "Update your dimension projects VSCode workspace", descriptionKey = "iris.director.commandstudio.director.update_your_dimension_projects_vscode_workspace")
     public void update(
-            @Param(description = "The dimension to update the workspace of", descriptionKey = "iris.director.commandstudio.param.dimension_update_workspace", contextual = true, defaultValue = "default", customHandler = DimensionHandler.class)
+            @Param(description = "The dimension to update the workspace of", descriptionKey = "iris.director.commandstudio.param.dimension_update_workspace", contextual = true, contextualOverride = true, defaultValue = "default", customHandler = DimensionHandler.class)
             IrisDimension dimension
     ) {
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_UPDATING_CODE_WORKSPACE, MessageArgument.untrusted("value", dimension.getName())));

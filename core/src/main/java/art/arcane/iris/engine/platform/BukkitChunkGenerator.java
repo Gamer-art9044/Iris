@@ -208,7 +208,9 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         }
         spawnChunks.complete(INMS.get().getSpawnChunkCount(world));
         BukkitPlatform.volmitPlugin().unregisterListener(this);
-        IrisWorlds.get().put(WorldIdentity.serialize(world), dimensionKey);
+        if (shouldPersistWorldRegistration(studio)) {
+            IrisWorlds.get().put(WorldIdentity.serialize(world), dimensionKey);
+        }
         return true;
     }
 
@@ -308,6 +310,10 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         return jigsawStudioActive
                 ? IrisEngine.InitializationMode.JIGSAW_STUDIO
                 : IrisEngine.InitializationMode.STUDIO;
+    }
+
+    static boolean shouldPersistWorldRegistration(boolean studio) {
+        return !studio;
     }
 
     @NotNull

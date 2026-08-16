@@ -42,7 +42,7 @@ public class CommandPregen implements DirectorExecutor {
     public void start(
             @Param(description = "The radius of the pregen in blocks", descriptionKey = "iris.director.commandpregen.param.radius_pregen_blocks", aliases = "size")
             int radius,
-            @Param(description = "The world to pregen", descriptionKey = "iris.director.commandpregen.param.world_pregen", contextual = true)
+            @Param(description = "The world to pregen", descriptionKey = "iris.director.commandpregen.param.world_pregen", contextual = true, contextualOverride = true)
             World world,
             @Param(aliases = "middle", description = "The center location of the pregen. Use \"me\" for your current location", descriptionKey = "iris.director.commandpregen.param.center_location_pregen_use_me_your_current_location", defaultValue = "0,0")
             Vector center,

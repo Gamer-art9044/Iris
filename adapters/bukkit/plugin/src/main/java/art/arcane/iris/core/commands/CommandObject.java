@@ -610,7 +610,7 @@ public class CommandObject implements DirectorExecutor {
 
     @Director(description = "Save an object", descriptionKey = "iris.director.commandobject.director.save_object")
     public void save(
-            @Param(description = "The dimension to store the object in", descriptionKey = "iris.director.commandobject.param.dimension_store_object", contextual = true)
+            @Param(description = "The dimension to store the object in", descriptionKey = "iris.director.commandobject.param.dimension_store_object", contextual = true, contextualOverride = true)
             IrisDimension dimension,
             @Param(description = "The file to store it in, can use / for subfolders", descriptionKey = "iris.director.commandobject.param.file_store_it_can_use_subfolders")
             String name,

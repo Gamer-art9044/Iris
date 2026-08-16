@@ -525,7 +525,9 @@ public final class BukkitCommandMessagesExtended {
     );
     public static final TextKey COMMAND_PREGEN_SPEED_S_ETA_ELAPSED_METHOD = TextKey.of(
             "iris.bukkit.commandpregen.speed_s_eta_elapsed_method",
-            C.GREEN + "Speed: " + C.GOLD + "{value}" + "/s" + C.GREEN + " ETA: " + C.GOLD + "{value2}" + C.GREEN + " Elapsed: " + C.GOLD + "{value3}" + C.GREEN + " Method: " + C.GOLD + "{value4}" + "{value5}"
+            C.GREEN + "Rates: " + C.GOLD + "overall {overall}/s, 10s {tenSecond}/s, 30s {thirtySecond}/s, 60s {sixtySecond}/s"
+                    + C.GREEN + " ETA: " + C.GOLD + "{eta}" + C.GREEN + " Elapsed: " + C.GOLD + "{elapsed}"
+                    + C.GREEN + " Method: " + C.GOLD + "{method}" + "{failures}"
     );
     public static final TextKey COMMAND_STRUCTURE_COULD_NOT_RESOLVE_PACK_DIMENSION = TextKey.of(
             "iris.bukkit.commandstructure.could_not_resolve_pack_dimension",

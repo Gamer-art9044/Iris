@@ -88,8 +88,8 @@ public final class DesktopUiMessages {
     public static final TextKey PREGEN_PROGRESS_PAUSED = TextKey.of("iris.desktop.pregen.progress_paused", "PAUSED {generated} of {total} ({percent} complete)");
     public static final TextKey PREGEN_PROGRESS_SAVING = TextKey.of("iris.desktop.pregen.progress_saving", "Saving... {generated} of {total} ({percent} complete)");
     public static final TextKey PREGEN_PROGRESS_GENERATING = TextKey.of("iris.desktop.pregen.progress_generating", "Generating {generated} of {total} ({percent} complete)");
-    public static final TextKey PREGEN_SPEED = TextKey.of("iris.desktop.pregen.speed", "Speed: {chunksPerSecond} chunks/s, {regionsPerMinute} regions/m, {chunksPerMinute} chunks/m");
-    public static final TextKey PREGEN_SPEED_CACHED = TextKey.of("iris.desktop.pregen.speed_cached", "Speed: cached {chunksPerSecond} chunks/s, {regionsPerMinute} regions/m, {chunksPerMinute} chunks/m");
+    public static final TextKey PREGEN_SPEED = TextKey.of("iris.desktop.pregen.speed", "Speed: overall {overall}, 10s {tenSecond}, 30s {thirtySecond}, 60s {sixtySecond} chunks/s");
+    public static final TextKey PREGEN_SPEED_CACHED = TextKey.of("iris.desktop.pregen.speed_cached", "Speed (cached): overall {overall}, 10s {tenSecond}, 30s {thirtySecond}, 60s {sixtySecond} chunks/s");
     public static final TextKey PREGEN_TIME = TextKey.of("iris.desktop.pregen.time", "{remaining} remaining ({elapsed} elapsed)");
     public static final TextKey PREGEN_METHOD = TextKey.of("iris.desktop.pregen.method", "Generation method: {method}");
     public static final TextKey PREGEN_MEMORY = TextKey.of("iris.desktop.pregen.memory", "Memory: {used} ({usage}) Pressure: {pressure}/s");

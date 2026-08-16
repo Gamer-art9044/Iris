@@ -19,11 +19,18 @@
 package art.arcane.iris.core.gui;
 
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.engine.framework.Engine;
 
+import javax.swing.JFrame;
+import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
+import java.awt.desktop.QuitResponse;
+import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class GuiHost {
+    private static final AtomicBoolean DESKTOP_QUIT_GUARD_INSTALLED = new AtomicBoolean(false);
     private static volatile Provider provider = new Provider() {
     };
     private static volatile boolean desktopSuppressed = false;
@@ -67,6 +74,37 @@ public final class GuiHost {
 
     public static boolean isAvailable() {
         return !desktopSuppressed && !GraphicsEnvironment.isHeadless();
+    }
+
+    public static void prepareFrame(JFrame frame) {
+        frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        prepareServerDesktop();
+    }
+
+    private static void prepareServerDesktop() {
+        if (!isAvailable()
+                || !System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac")
+                || !DESKTOP_QUIT_GUARD_INSTALLED.compareAndSet(false, true)) {
+            return;
+        }
+
+        try {
+            if (!Desktop.isDesktopSupported()) {
+                return;
+            }
+            Desktop desktop = Desktop.getDesktop();
+            if (!desktop.isSupported(Desktop.Action.APP_QUIT_HANDLER)) {
+                return;
+            }
+            desktop.setQuitHandler((event, response) -> cancelDesktopQuit(response));
+        } catch (Throwable error) {
+            IrisLogging.reportError(error);
+            IrisLogging.warn("Unable to install the Iris desktop quit guard; use the server stop command instead of macOS Quit");
+        }
+    }
+
+    static void cancelDesktopQuit(QuitResponse response) {
+        response.cancelQuit();
     }
 
     /**

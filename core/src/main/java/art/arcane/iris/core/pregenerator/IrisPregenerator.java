@@ -30,7 +30,6 @@ import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.Position2;
-import art.arcane.volmlib.util.math.RollingSequence;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.Looper;
@@ -51,20 +50,16 @@ public class IrisPregenerator {
     private final Looper ticker;
     private final AtomicBoolean paused;
     private final AtomicBoolean shutdown;
-    private final RollingSequence cachedPerSecond;
-    private final RollingSequence chunksPerSecond;
-    private final RollingSequence chunksPerMinute;
-    private final RollingSequence regionsPerMinute;
+    private final PregenRateTracker rateTracker;
     private final KList<Integer> chunksPerSecondHistory;
     private final AtomicLong generated;
-    private final AtomicLong generatedLast;
-    private final AtomicLong generatedLastMinute;
     private final AtomicLong cached;
-    private final AtomicLong cachedLast;
-    private final AtomicLong cachedLastMinute;
+    private final AtomicLong lastCachedAtMillis;
+    private final AtomicLong historyLastGenerated;
+    private final AtomicLong historyLastCached;
+    private final AtomicLong historyLastMillis;
     private final AtomicLong totalChunks;
     private final AtomicLong startTime;
-    private final ChronoLatch minuteLatch;
     private final AtomicReference<String> currentGeneratorMethod;
     private final KSet<Position2> generatedRegions;
     private final KSet<Position2> retry;
@@ -74,12 +69,13 @@ public class IrisPregenerator {
     private final ChronoLatch heapReclaimLatch;
     private final AtomicLong failed;
     private final IrisPackBenchmarking benchmarking;
+    private volatile PregenRates rates;
 
     public IrisPregenerator(PregenTask task, PregeneratorMethod generator, PregenListener listener) {
         this.jobId = JOB_SEQUENCE.incrementAndGet();
         benchmarking = IrisPackBenchmarking.getInstance();
         this.listener = listenify(listener);
-        cl = new ChronoLatch(10000);
+        cl = new ChronoLatch(30000, false);
         saveLatch = new ChronoLatch(IrisSettings.get().getPregen().getSaveIntervalMs());
         heapReclaimLatch = new ChronoLatch(1000);
         failed = new AtomicLong(0);
@@ -91,85 +87,21 @@ public class IrisPregenerator {
         retry = new KSet<>();
         net = new KSet<>();
         currentGeneratorMethod = new AtomicReference<>("Void");
-        minuteLatch = new ChronoLatch(60000, false);
-        cachedPerSecond = new RollingSequence(5);
-        chunksPerSecond = new RollingSequence(10);
-        chunksPerMinute = new RollingSequence(10);
-        regionsPerMinute = new RollingSequence(10);
         chunksPerSecondHistory = new KList<>();
         generated = new AtomicLong(0);
-        generatedLast = new AtomicLong(0);
-        generatedLastMinute = new AtomicLong(0);
         cached = new AtomicLong();
-        cachedLast = new AtomicLong(0);
-        cachedLastMinute = new AtomicLong(0);
+        lastCachedAtMillis = new AtomicLong(0L);
+        historyLastGenerated = new AtomicLong(0L);
+        historyLastCached = new AtomicLong(0L);
+        historyLastMillis = new AtomicLong(M.ms());
         totalChunks = new AtomicLong(0);
         startTime = new AtomicLong(M.ms());
+        rateTracker = new PregenRateTracker(startTime.get(), 0L);
+        rates = PregenRates.ZERO;
         ticker = new Looper() {
             @Override
             protected long loop() {
-                long eta = computeETA();
-
-                long secondCached = cached.get() - cachedLast.get();
-                cachedLast.set(cached.get());
-                cachedPerSecond.put(secondCached);
-
-                long secondGenerated = generated.get() - generatedLast.get() - secondCached;
-                generatedLast.set(generated.get());
-                if (secondCached == 0 || secondGenerated != 0) {
-                    chunksPerSecond.put(secondGenerated);
-                    synchronized (chunksPerSecondHistory) {
-                        chunksPerSecondHistory.add((int) secondGenerated);
-                    }
-                }
-
-                if (minuteLatch.flip()) {
-                    long minuteCached = cached.get() - cachedLastMinute.get();
-                    cachedLastMinute.set(cached.get());
-
-                    long minuteGenerated = generated.get() - generatedLastMinute.get() - minuteCached;
-                    generatedLastMinute.set(generated.get());
-                    if (minuteCached == 0 || minuteGenerated != 0) {
-                        chunksPerMinute.put(minuteGenerated);
-                        regionsPerMinute.put((double) minuteGenerated / 1024D);
-                    }
-                }
-                boolean cached = cachedPerSecond.getAverage() != 0;
-
-                listener.onTick(
-                        cached ? cachedPerSecond.getAverage() : chunksPerSecond.getAverage(),
-                        chunksPerMinute.getAverage(),
-                        regionsPerMinute.getAverage(),
-                        (double) generated.get() / (double) totalChunks.get(), generated.get(),
-                        totalChunks.get(),
-                        totalChunks.get() - generated.get(), eta, M.ms() - startTime.get(), currentGeneratorMethod.get(),
-                        cached);
-
-                IrisProtocolServer protocolServer = IrisServices.getOrNull(IrisProtocolServer.class);
-                if (protocolServer != null) {
-                    protocolServer.broadcastPregenProgress(
-                            jobId,
-                            generated.get(),
-                            totalChunks.get(),
-                            cached ? cachedPerSecond.getAverage() : chunksPerSecond.getAverage(),
-                            eta,
-                            paused.get() ? IrisMessage.PregenProgress.STATE_PAUSED : IrisMessage.PregenProgress.STATE_RUNNING);
-                }
-
-                if (cl.flip()) {
-                    double percentage = ((double) generated.get() / (double) totalChunks.get()) * 100;
-
-                    IrisLogging.info("%s: %s of %s (%.0f%%), %s/s ETA: %s",
-                            benchmarking != null ? "Benchmarking" : "Pregen",
-                            Form.f(generated.get()),
-                            Form.f(totalChunks.get()),
-                            percentage,
-                            cached ?
-                                    "Cached " + Form.f((int) cachedPerSecond.getAverage()) :
-                                    Form.f((int) chunksPerSecond.getAverage()),
-                            Form.duration(eta, 2)
-                    );
-                }
+                publishProgress(M.ms(), cl.flip());
                 return 1000;
             }
         };
@@ -179,14 +111,79 @@ public class IrisPregenerator {
         long gen = generated.get();
         long total = totalChunks.get();
         long remaining = total - gen;
-        double d;
-        if (gen > 1024) {
-            d = remaining * ((double) (M.ms() - startTime.get()) / (double) gen);
-        } else {
-            double cps = chunksPerSecond.getAverage();
-            d = cps > 0 ? (remaining / cps) * 1000 : 0;
-        }
+        double cps = gen > 1024 ? rates.overall() : rates.tenSecond();
+        double d = cps > 0D ? (remaining / cps) * 1000D : 0D;
         return Double.isFinite(d) && d != INVALID ? (long) d : 0;
+    }
+
+    private void publishProgress(long now, boolean logProgress) {
+        long generatedCount = generated.get();
+        long total = totalChunks.get();
+        rates = rateTracker.sample(generatedCount, now);
+        sampleHistory(now, generatedCount, cached.get());
+        long eta = computeETA();
+        long lastCachedAt = lastCachedAtMillis.get();
+        boolean cachedProgress = lastCachedAt > 0L && now - lastCachedAt <= 10_000L;
+        double chunksPerMinute = rates.sixtySecond() * 60D;
+        double percentage = total > 0L ? (double) generatedCount / (double) total : 0D;
+
+        listener.onTick(
+                rates.tenSecond(),
+                chunksPerMinute,
+                chunksPerMinute / 1024D,
+                percentage,
+                generatedCount,
+                total,
+                Math.max(0L, total - generatedCount),
+                eta,
+                now - startTime.get(),
+                currentGeneratorMethod.get(),
+                cachedProgress);
+
+        IrisProtocolServer protocolServer = IrisServices.getOrNull(IrisProtocolServer.class);
+        if (protocolServer != null) {
+            protocolServer.broadcastPregenProgress(
+                    jobId,
+                    generatedCount,
+                    total,
+                    rates.tenSecond(),
+                    eta,
+                    paused.get() ? IrisMessage.PregenProgress.STATE_PAUSED : IrisMessage.PregenProgress.STATE_RUNNING);
+        }
+
+        if (logProgress) {
+            IrisLogging.info("%s: %s of %s (%.0f%%), rates overall=%s 10s=%s 30s=%s 60s=%s chunks/s%s, ETA: %s",
+                    benchmarking != null ? "Benchmarking" : "Pregen",
+                    Form.f(generatedCount),
+                    Form.f(total),
+                    percentage * 100D,
+                    formatRate(rates.overall()),
+                    formatRate(rates.tenSecond()),
+                    formatRate(rates.thirtySecond()),
+                    formatRate(rates.sixtySecond()),
+                    cachedProgress ? " (cached)" : "",
+                    Form.duration(eta, 2));
+        }
+    }
+
+    private void sampleHistory(long now, long generatedCount, long cachedCount) {
+        long previousTime = historyLastMillis.getAndSet(now);
+        long previousGenerated = historyLastGenerated.getAndSet(generatedCount);
+        long previousCached = historyLastCached.getAndSet(cachedCount);
+        long elapsed = now - previousTime;
+        long completed = generatedCount - previousGenerated - (cachedCount - previousCached);
+        if (elapsed <= 0L || completed <= 0L) {
+            return;
+        }
+
+        int chunksPerSecond = (int) Math.round((double) completed * 1_000D / (double) elapsed);
+        synchronized (chunksPerSecondHistory) {
+            chunksPerSecondHistory.add(chunksPerSecond);
+        }
+    }
+
+    private static String formatRate(double rate) {
+        return Form.f(rate, 1);
     }
 
 
@@ -207,7 +204,12 @@ public class IrisPregenerator {
         try {
             init();
             task.iterateAllChunks((_a, _b) -> totalChunks.incrementAndGet());
-            startTime.set(M.ms());
+            long startedAt = M.ms();
+            startTime.set(startedAt);
+            rateTracker.reset(startedAt, generated.get());
+            historyLastGenerated.set(generated.get());
+            historyLastCached.set(cached.get());
+            historyLastMillis.set(startedAt);
             ticker.start();
             checkRegions();
             int[] regionBounds = task.regionBounds();
@@ -219,6 +221,7 @@ public class IrisPregenerator {
             IrisLogging.reportError(e);
             IrisLogging.error("Pregen aborted after " + Form.duration((long) p.getMilliseconds()) + " due to " + e.getClass().getSimpleName() + ": " + e.getMessage());
         } finally {
+            publishProgress(M.ms(), false);
             shutdown();
         }
         if (completed && allVisitsComplete()) {
@@ -227,7 +230,7 @@ public class IrisPregenerator {
             logIncompleteCompletion(p);
         }
         if (benchmarking != null) {
-            benchmarking.finishedBenchmark(snapshotChunksPerSecondHistory());
+            benchmarking.finishedBenchmark(snapshotChunksPerSecondHistory(), rates.overall());
         }
     }
 
@@ -250,7 +253,8 @@ public class IrisPregenerator {
         IrisLogging.info("Pregen finished: generated=" + Form.f(generated.get())
                 + " total=" + Form.f(totalChunks.get())
                 + " failed=" + Form.f(failedCount)
-                + " duration=" + Form.duration((long) stopwatch.getMilliseconds()));
+                + " duration=" + Form.duration((long) stopwatch.getMilliseconds())
+                + formatRateSummary());
     }
 
     private void logIncompleteCompletion(PrecisionStopwatch stopwatch) {
@@ -263,7 +267,16 @@ public class IrisPregenerator {
                 + " total=" + Form.f(total)
                 + " failed=" + Form.f(failedCount)
                 + " remaining=" + Form.f(remaining)
-                + " duration=" + Form.duration((long) stopwatch.getMilliseconds()));
+                + " duration=" + Form.duration((long) stopwatch.getMilliseconds())
+                + formatRateSummary());
+    }
+
+    private String formatRateSummary() {
+        return " rates[overall=" + formatRate(rates.overall())
+                + ", 10s=" + formatRate(rates.tenSecond())
+                + ", 30s=" + formatRate(rates.thirtySecond())
+                + ", 60s=" + formatRate(rates.sixtySecond())
+                + "] chunks/s";
     }
 
     private void checkRegions() {
@@ -433,6 +446,10 @@ public class IrisPregenerator {
         return failed.get();
     }
 
+    public PregenRates getRates() {
+        return rates;
+    }
+
     public void pause() {
         paused.set(true);
     }
@@ -457,7 +474,10 @@ public class IrisPregenerator {
             public void onChunkGenerated(int x, int z, boolean c) {
                 listener.onChunkGenerated(x, z, c);
                 generated.addAndGet(1);
-                if (c) cached.addAndGet(1);
+                if (c) {
+                    cached.addAndGet(1);
+                    lastCachedAtMillis.set(M.ms());
+                }
             }
 
             @Override

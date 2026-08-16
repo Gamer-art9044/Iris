@@ -174,7 +174,7 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
     private static JFrame buildFrame(String title, NoiseExplorerGUI nv, Engine engine,
                                      Supplier<Function2<Double, Double, Double>> customGen, String customName) {
         JFrame frame = new JFrame(title);
-        frame.setDefaultCloseOperation(JFrame.HIDE_ON_CLOSE);
+        GuiHost.prepareFrame(frame);
         frame.getContentPane().setBackground(BG);
         frame.setLayout(new BorderLayout());
 
@@ -188,7 +188,7 @@ public class NoiseExplorerGUI extends JPanel implements MouseWheelListener {
         frame.setVisible(true);
         frame.addWindowListener(new WindowAdapter() {
             @Override
-            public void windowClosing(WindowEvent e) {
+            public void windowClosed(WindowEvent e) {
                 GuiHost.get().unregisterHotloadHook(nv.hotloadHook);
             }
         });

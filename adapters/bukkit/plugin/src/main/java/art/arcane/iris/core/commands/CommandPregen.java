@@ -123,6 +123,15 @@ public class CommandPregen implements DirectorExecutor {
 
         String world = progress.worldName() == null ? "?" : progress.worldName();
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_PREGEN, MessageArgument.untrusted("world", world), MessageArgument.untrusted("value", Form.f(progress.generated())), MessageArgument.untrusted("value2", Form.f(progress.totalChunks())), MessageArgument.untrusted("value3", String.format("%.1f", progress.percent())), MessageArgument.untrusted("value4", (progress.paused() ? C.YELLOW + " PAUSED" : ""))));
-        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_SPEED_S_ETA_ELAPSED_METHOD, MessageArgument.untrusted("value", Form.f((int) progress.chunksPerSecond())), MessageArgument.untrusted("value2", Form.duration(progress.eta(), 2)), MessageArgument.untrusted("value3", Form.duration(progress.elapsed(), 2)), MessageArgument.untrusted("value4", progress.method()), MessageArgument.untrusted("value5", (progress.failed() > 0 ? C.RED + " Failed: " + Form.f(progress.failed()) : ""))));
+        sender().sendMessage(IrisLanguage.text(
+                BukkitCommandMessagesExtended.COMMAND_PREGEN_SPEED_S_ETA_ELAPSED_METHOD,
+                MessageArgument.untrusted("overall", Form.f(progress.overallChunksPerSecond(), 1)),
+                MessageArgument.untrusted("tenSecond", Form.f(progress.chunksPerSecond(), 1)),
+                MessageArgument.untrusted("thirtySecond", Form.f(progress.thirtySecondChunksPerSecond(), 1)),
+                MessageArgument.untrusted("sixtySecond", Form.f(progress.sixtySecondChunksPerSecond(), 1)),
+                MessageArgument.untrusted("eta", Form.duration(progress.eta(), 2)),
+                MessageArgument.untrusted("elapsed", Form.duration(progress.elapsed(), 2)),
+                MessageArgument.untrusted("method", progress.method()),
+                MessageArgument.untrusted("failures", progress.failed() > 0 ? C.RED + " Failed: " + Form.f(progress.failed()) : "")));
     }
 }

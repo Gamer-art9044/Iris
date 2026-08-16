@@ -170,7 +170,10 @@ public final class ModdedPregenJob {
                     RuntimeUiMessages.PREGEN_STATUS_CHUNKS_FAILED,
                     MessageArgument.trusted("generated", Form.f(progress.generated())),
                     MessageArgument.trusted("total", Form.f(progress.totalChunks())),
-                    MessageArgument.trusted("speed", Form.f((int) progress.chunksPerSecond())),
+                    MessageArgument.trusted("overall", Form.f(progress.overallChunksPerSecond(), 1)),
+                    MessageArgument.trusted("tenSecond", Form.f(progress.chunksPerSecond(), 1)),
+                    MessageArgument.trusted("thirtySecond", Form.f(progress.thirtySecondChunksPerSecond(), 1)),
+                    MessageArgument.trusted("sixtySecond", Form.f(progress.sixtySecondChunksPerSecond(), 1)),
                     MessageArgument.trusted("failed", Form.f(progress.failed()))
             );
         }
@@ -178,7 +181,10 @@ public final class ModdedPregenJob {
                 RuntimeUiMessages.PREGEN_STATUS_CHUNKS,
                 MessageArgument.trusted("generated", Form.f(progress.generated())),
                 MessageArgument.trusted("total", Form.f(progress.totalChunks())),
-                MessageArgument.trusted("speed", Form.f((int) progress.chunksPerSecond()))
+                MessageArgument.trusted("overall", Form.f(progress.overallChunksPerSecond(), 1)),
+                MessageArgument.trusted("tenSecond", Form.f(progress.chunksPerSecond(), 1)),
+                MessageArgument.trusted("thirtySecond", Form.f(progress.thirtySecondChunksPerSecond(), 1)),
+                MessageArgument.trusted("sixtySecond", Form.f(progress.sixtySecondChunksPerSecond(), 1))
         );
     }
 

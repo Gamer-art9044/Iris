@@ -126,8 +126,8 @@ public final class RuntimeUiMessages {
     public static final TextKey PREGEN_FAILED_FRAGMENT = TextKey.of("iris.runtime.pregen.failed_fragment", "  failed {failed}");
     public static final TextKey PREGEN_STATUS_CONTEXT = TextKey.of("iris.runtime.pregen.status.context", "Dimension {dimension} · Method {method}");
     public static final TextKey PREGEN_STATUS_PROGRESS = TextKey.of("iris.runtime.pregen.status.progress", "{percent}%");
-    public static final TextKey PREGEN_STATUS_CHUNKS = TextKey.of("iris.runtime.pregen.status.chunks", "Chunks {generated}/{total} · Speed {speed}/s");
-    public static final TextKey PREGEN_STATUS_CHUNKS_FAILED = TextKey.of("iris.runtime.pregen.status.chunks_failed", "Chunks {generated}/{total} · Speed {speed}/s · Failed {failed}");
+    public static final TextKey PREGEN_STATUS_CHUNKS = TextKey.of("iris.runtime.pregen.status.chunks", "Chunks {generated}/{total} · Rates overall {overall}/s, 10s {tenSecond}/s, 30s {thirtySecond}/s, 60s {sixtySecond}/s");
+    public static final TextKey PREGEN_STATUS_CHUNKS_FAILED = TextKey.of("iris.runtime.pregen.status.chunks_failed", "Chunks {generated}/{total} · Rates overall {overall}/s, 10s {tenSecond}/s, 30s {thirtySecond}/s, 60s {sixtySecond}/s · Failed {failed}");
     public static final TextKey PREGEN_STATUS_TIME = TextKey.of("iris.runtime.pregen.status.time", "ETA {eta} · Elapsed {elapsed}");
     public static final TextKey PREGEN_STATUS_TIME_PAUSED = TextKey.of("iris.runtime.pregen.status.time_paused", "ETA {eta} · Elapsed {elapsed} · PAUSED");
     public static final TextKey PREGEN_PAUSE_BUTTON = TextKey.of("iris.runtime.pregen.button.pause", "Pause/Resume");

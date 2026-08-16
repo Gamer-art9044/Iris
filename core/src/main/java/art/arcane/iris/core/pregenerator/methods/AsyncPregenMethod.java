@@ -604,11 +604,11 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     }
 
     static int resolvePaperLikeConcurrencyWorkerThreads(int detectedWorkerPoolThreads, int detectedCpuThreads, int configuredWorldGenThreads) {
+        int provisionedWorkerThreads = Math.max(1, configuredWorldGenThreads);
         if (detectedWorkerPoolThreads > 0) {
-            return detectedWorkerPoolThreads;
+            return Math.max(detectedWorkerPoolThreads, provisionedWorkerThreads);
         }
 
-        int provisionedWorkerThreads = Math.max(1, configuredWorldGenThreads);
         return Math.max(provisionedWorkerThreads, detectedCpuThreads);
     }
 

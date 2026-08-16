@@ -22,105 +22,135 @@ import art.arcane.iris.core.localization.DesktopUiMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.IrisSettings;
-import art.arcane.volmlib.util.collection.KList;
-import art.arcane.volmlib.util.function.Consumer2;
 import art.arcane.volmlib.util.math.M;
-import art.arcane.volmlib.util.math.Position2;
-import art.arcane.iris.util.common.scheduling.J;
+import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 
 import javax.swing.JFrame;
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Frame;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class PregenRenderer extends JPanel implements KeyListener {
     private static final long serialVersionUID = 2094606939770332040L;
 
-    // Backstop: if paint() ever stalls (iconified frame, EDT hiccup), the producer must not
-    // grow this without bound — one entry per drawn chunk adds up fast on a big pregen.
-    private static final int MAX_QUEUED_DRAWS = 250_000;
-    private KList<Runnable> order = new KList<>();
+    private static final int MAX_PENDING_DRAWS = 16_384;
+    private Long2ObjectLinkedOpenHashMap<Color> pending = new Long2ObjectLinkedOpenHashMap<>();
     private final ReentrantLock lock = new ReentrantLock();
     private final int res = 512;
     private final BufferedImage image = new BufferedImage(res, res, BufferedImage.TYPE_INT_RGB);
+    private final Graphics2D imageGraphics = image.createGraphics();
     private final PregenRenderSource source;
     private final Runnable onPause;
-    private Graphics2D bg;
-    private JFrame frame;
+    private final Timer repaintTimer;
+    private volatile boolean renderingEnabled;
+    private boolean disposed;
+    private volatile JFrame frame;
 
     private PregenRenderer(PregenRenderSource source, Runnable onPause) {
         this.source = source;
         this.onPause = onPause;
+        repaintTimer = new Timer(IrisSettings.get().getGui().isMaximumPregenGuiFPS() ? 4 : 250, event -> repaint());
     }
 
     public static PregenRenderer open(String title, PregenRenderSource source, Runnable onPause) {
         PregenRenderer renderer = new PregenRenderer(source, onPause);
         JFrame frame = new JFrame(title);
+        GuiHost.prepareFrame(frame);
         renderer.frame = frame;
+        renderer.renderingEnabled = true;
         frame.addKeyListener(renderer);
         frame.add(renderer);
         frame.setSize(1000, 1000);
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent event) {
+                renderer.disposeRenderer();
+            }
+        });
+        frame.addWindowStateListener(event -> renderer.renderingEnabled = (event.getNewState() & Frame.ICONIFIED) == 0);
         frame.setVisible(true);
+        renderer.repaintTimer.start();
         return renderer;
     }
 
-    public Consumer2<Position2, Color> drawFunction() {
-        return (Position2 c, Color color) -> {
-            lock.lock();
-            try {
-                if (order.size() < MAX_QUEUED_DRAWS) {
-                    order.add(() -> draw(c, color, bg));
-                }
-            } finally {
-                lock.unlock();
-            }
-        };
-    }
-
     public void submit(int x, int z, Color color) {
-        drawFunction().accept(new Position2(x, z), color);
+        if (!renderingEnabled) {
+            return;
+        }
+
+        long key = ((long) x << 32) ^ (z & 0xffffffffL);
+        lock.lock();
+        try {
+            pending.putAndMoveToFirst(key, color);
+            if (pending.size() > MAX_PENDING_DRAWS) {
+                pending.removeLast();
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 
     public boolean isVisibleFrame() {
-        // An iconified frame still reports isVisible() but AWT stops repainting it, which
-        // would stop the only queue drain while the producer keeps appending.
-        JFrame activeFrame = frame;
-        return activeFrame != null && activeFrame.isVisible()
-                && (activeFrame.getExtendedState() & java.awt.Frame.ICONIFIED) == 0;
+        return renderingEnabled;
     }
 
     public void close() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::close);
+            return;
+        }
         JFrame activeFrame = frame;
         if (activeFrame != null) {
-            frame = null;
-            activeFrame.setVisible(false);
             activeFrame.dispose();
+        } else {
+            disposeRenderer();
         }
+    }
+
+    private void disposeRenderer() {
+        if (disposed) {
+            return;
+        }
+        disposed = true;
+        renderingEnabled = false;
+        frame = null;
+        repaintTimer.stop();
+        lock.lock();
+        try {
+            pending.clear();
+        } finally {
+            lock.unlock();
+        }
+        imageGraphics.dispose();
     }
 
     @Override
     public void paint(Graphics gx) {
         Graphics2D g = (Graphics2D) gx;
-        bg = (Graphics2D) image.getGraphics();
-        // Swap the queue under the lock and drain outside it: generation threads must not
-        // block on the lock while the EDT walks a large batch, and pop()-per-entry was O(N^2).
-        KList<Runnable> batch;
+        Long2ObjectLinkedOpenHashMap<Color> batch;
         lock.lock();
         try {
-            batch = order;
-            order = new KList<>();
+            batch = pending;
+            pending = new Long2ObjectLinkedOpenHashMap<>();
         } finally {
             lock.unlock();
         }
-        for (Runnable r : batch) {
+        for (Long2ObjectMap.Entry<Color> entry : batch.long2ObjectEntrySet()) {
             try {
-                r.run();
+                long key = entry.getLongKey();
+                draw((int) (key >> 32), (int) key, entry.getValue(), imageGraphics);
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
             }
@@ -143,15 +173,13 @@ public final class PregenRenderer extends JPanel implements KeyListener {
             g.drawString(IrisLanguage.plain(DesktopUiMessages.PREGEN_PAUSE_HINT), 20, hh += h);
         }
 
-        J.sleep(IrisSettings.get().getGui().isMaximumPregenGuiFPS() ? 4 : 250);
-        repaint();
     }
 
-    private void draw(Position2 p, Color c, Graphics2D bg) {
-        double pw = M.lerpInverse(source.min().getX(), source.max().getX(), p.getX());
-        double ph = M.lerpInverse(source.min().getZ(), source.max().getZ(), p.getZ());
-        double pwa = M.lerpInverse(source.min().getX(), source.max().getX(), p.getX() + 1);
-        double pha = M.lerpInverse(source.min().getZ(), source.max().getZ(), p.getZ() + 1);
+    private void draw(int chunkX, int chunkZ, Color c, Graphics2D bg) {
+        double pw = M.lerpInverse(source.min().getX(), source.max().getX(), chunkX);
+        double ph = M.lerpInverse(source.min().getZ(), source.max().getZ(), chunkZ);
+        double pwa = M.lerpInverse(source.min().getX(), source.max().getX(), chunkX + 1);
+        double pha = M.lerpInverse(source.min().getZ(), source.max().getZ(), chunkZ + 1);
         int x = (int) M.lerp(0, res, pw);
         int z = (int) M.lerp(0, res, ph);
         int xa = (int) M.lerp(0, res, pwa);

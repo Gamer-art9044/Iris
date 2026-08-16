@@ -28,12 +28,12 @@ public class AsyncPregenMethodConcurrencyCapTest {
     }
 
     @Test
-    public void paperLikeConcurrencyUsesDetectedWorkerPoolWhenAvailable() {
-        assertEquals(4, AsyncPregenMethod.resolvePaperLikeConcurrencyWorkerThreads(4, 16, 32));
-        assertEquals(4, AsyncPregenMethod.resolvePaperLikeConcurrencyWorkerThreads(4, 16, 16));
+    public void paperLikeConcurrencyUsesProvisionedWorkerPoolCapacity() {
+        assertEquals(32, AsyncPregenMethod.resolvePaperLikeConcurrencyWorkerThreads(4, 16, 32));
+        assertEquals(16, AsyncPregenMethod.resolvePaperLikeConcurrencyWorkerThreads(4, 16, 16));
         assertEquals(24, AsyncPregenMethod.resolvePaperLikeConcurrencyWorkerThreads(-1, 16, 24));
         assertEquals(16, AsyncPregenMethod.resolvePaperLikeConcurrencyWorkerThreads(-1, 16, 8));
-        assertEquals(32, AsyncPregenMethod.computePaperLikeRecommendedCap(
+        assertEquals(128, AsyncPregenMethod.computePaperLikeRecommendedCap(
                 AsyncPregenMethod.resolvePaperLikeConcurrencyWorkerThreads(4, 16, 16)));
     }
 

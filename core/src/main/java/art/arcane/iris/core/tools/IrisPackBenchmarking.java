@@ -65,7 +65,7 @@ public class IrisPackBenchmarking {
 
     }
 
-    public void finishedBenchmark(KList<Integer> cps) {
+    public void finishedBenchmark(KList<Integer> cps, double overallCps) {
         try {
             String time = Form.duration((long) stopwatch.getMilliseconds());
             World benchmarkWorld = benchmarkWorld();
@@ -76,7 +76,7 @@ public class IrisPackBenchmarking {
             IrisLogging.info("-----------------");
             IrisLogging.info("Results:");
             IrisLogging.info("- Total time: " + time);
-            IrisLogging.info("- Average CPS: " + calculateAverage(cps));
+            IrisLogging.info("- Average CPS: " + overallCps);
             IrisLogging.info("  - Median CPS: " + calculateMedian(cps));
             IrisLogging.info("  - Highest CPS: " + findHighest(cps));
             IrisLogging.info("  - Lowest CPS: " + findLowest(cps));
@@ -98,7 +98,7 @@ public class IrisPackBenchmarking {
                 writer.write("- " + metrics);
                 writer.write("Benchmark: " + LocalDateTime.now(Clock.systemDefaultZone()) + "\n");
                 writer.write("- Total time: " + time + "\n");
-                writer.write("- Average CPS: " + calculateAverage(cps) + "\n");
+                writer.write("- Average CPS: " + overallCps + "\n");
                 writer.write("  - Median CPS: " + calculateMedian(cps) + "\n");
                 writer.write("  - Highest CPS: " + findHighest(cps) + "\n");
                 writer.write("  - Lowest CPS: " + findLowest(cps) + "\n");
@@ -173,15 +173,10 @@ public class IrisPackBenchmarking {
         return WorldIdentity.resolve(IrisWorldStorage.keyFromName("benchmark")).orElse(null);
     }
 
-    private double calculateAverage(KList<Integer> list) {
-        double sum = 0;
-        for (int num : list) {
-            sum += num;
-        }
-        return sum / list.size();
-    }
-
     private double calculateMedian(KList<Integer> list) {
+        if (list.isEmpty()) {
+            return 0D;
+        }
         KList<Integer> sorted = new KList<>(list);
         Collections.sort(sorted);
         int middle = sorted.size() / 2;
@@ -194,10 +189,10 @@ public class IrisPackBenchmarking {
     }
 
     private int findLowest(KList<Integer> list) {
-        return Collections.min(list);
+        return list.isEmpty() ? 0 : Collections.min(list);
     }
 
     private int findHighest(KList<Integer> list) {
-        return Collections.max(list);
+        return list.isEmpty() ? 0 : Collections.max(list);
     }
 }

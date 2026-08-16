@@ -179,19 +179,20 @@ public class VisionGUI extends JPanel implements MouseWheelListener, KeyListener
         });
         frame.addWindowListener(new WindowAdapter() {
             @Override
-            public void windowClosing(WindowEvent windowEvent) {
-                e.shutdown();
-                eh.shutdown();
+            public void windowClosed(WindowEvent windowEvent) {
+                e.shutdownNow();
+                eh.shutdownNow();
             }
         });
     }
 
     public static void launch(Engine g) {
-        J.a(() -> createAndShowGUI(g));
+        EventQueue.invokeLater(() -> createAndShowGUI(g));
     }
 
     private static void createAndShowGUI(Engine r) {
         JFrame frame = new JFrame(IrisLanguage.plain(DesktopUiMessages.VISION_TITLE));
+        GuiHost.prepareFrame(frame);
         VisionGUI nv = new VisionGUI(frame);
         nv.engine = r;
         nv.overlay = GuiHost.get().overlayFor(r);

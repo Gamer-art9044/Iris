@@ -51,10 +51,6 @@ import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
-import art.arcane.volmlib.util.hud.HudPriority;
-import art.arcane.volmlib.util.hud.HudSlotClaim;
-import art.arcane.volmlib.util.hud.HudSlotRequest;
-import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import art.arcane.iris.util.common.plugin.VolmitSender;
@@ -84,7 +80,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
@@ -163,6 +158,9 @@ public class IrisCreator {
         if (Bukkit.isPrimaryThread()) {
             throw new IrisException("You cannot invoke create() on the main thread.");
         }
+        if (sender == null) {
+            sender = BukkitPlatform.console();
+        }
         NamespacedKey worldKey;
         try {
             worldKey = IrisWorldStorage.managedKeyFromName(name);
@@ -170,15 +168,20 @@ public class IrisCreator {
             throw new IrisException(e.getMessage(), e);
         }
         name = IrisWorldStorage.logicalName(worldKey);
+        WorldCreationProgressReporter creationReporter = !studio && !benchmark
+                ? WorldCreationProgressReporter.start(sender, name)
+                : null;
 
         LifecycleOperationCoordinator coordinator = LifecycleOperationCoordinator.get();
         LifecycleOperationCoordinator.Lease worldLease = null;
         try {
             reportStudioProgress(0.02D, "resolve_dimension");
+            reportCreationProgress(creationReporter, 0.02D, "resolve_dimension");
             IrisDimension resolvedDimension = IrisToolbelt.getDimension(dimension());
             if (resolvedDimension == null) {
                 throw new IrisException("Dimension cannot be found for id " + dimension());
             }
+            reportCreationProgress(creationReporter, 0.06D, "validate_pack");
             IrisStartupValidation.requireWorldCreationReady();
             PackValidationRegistry.requireLoadable(
                     resolvedDimension.getLoader().getDataFolder().getName());
@@ -186,9 +189,31 @@ public class IrisCreator {
                     LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
                     LifecycleOperationCoordinator.OperationKind.WORLD_CREATE,
                     worldKey.toString());
-            return createReserved(worldKey, resolvedDimension);
+            World world = createReserved(worldKey, resolvedDimension, creationReporter);
+            reportCreationProgress(creationReporter, 1.0D, "complete");
+            if (creationReporter != null) {
+                creationReporter.succeed();
+            }
+            return world;
         } catch (LifecycleOperationCoordinator.BusyException e) {
+            if (creationReporter != null) {
+                creationReporter.fail();
+            }
             throw new IrisException(e.getMessage(), e);
+        } catch (Throwable e) {
+            if (creationReporter != null) {
+                creationReporter.fail();
+            }
+            if (e instanceof IrisException irisException) {
+                throw irisException;
+            }
+            if (e instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (e instanceof Error error) {
+                throw error;
+            }
+            throw new IrisException("Failed to create world \"" + name + "\".", e);
         } finally {
             if (worldLease != null) {
                 worldLease.close();
@@ -196,7 +221,11 @@ public class IrisCreator {
         }
     }
 
-    private World createReserved(NamespacedKey worldKey, IrisDimension resolvedDimension) throws IrisException {
+    private World createReserved(
+            NamespacedKey worldKey,
+            IrisDimension resolvedDimension,
+            WorldCreationProgressReporter creationReporter
+    ) throws IrisException {
         File dimensionRoot;
         File storageRoot;
         try {
@@ -213,16 +242,13 @@ public class IrisCreator {
         if (Files.exists(storageRoot.toPath()) || WorldIdentity.resolve(worldKey).isPresent()) {
             throw new IrisException("World \"" + name + "\" already exists or is loaded.");
         }
-        if (sender == null) {
-            sender = BukkitPlatform.console();
-        }
-
         World world = null;
         boolean bukkitRegistered = false;
         PlatformChunkGenerator stagedGenerator = null;
         try {
             reportStudioProgress(0.08D, "resolve_dimension");
             reportStudioProgress(0.16D, "prepare_world_pack");
+            reportCreationProgress(creationReporter, 0.10D, "install_datapacks");
             DatapackInstallResult datapackResult = prepareDatapacks(resolvedDimension);
             if (!datapackResult.succeeded()) {
                 throw new IrisException("Failed to compile datapacks for dimension \"" + dimension() + "\".");
@@ -235,6 +261,7 @@ public class IrisCreator {
 
             IrisDimension installedDimension = resolvedDimension;
             if (!studio() || benchmark) {
+                reportCreationProgress(creationReporter, 0.26D, "prepare_world_pack");
                 installedDimension = IrisServices.get(StudioSVC.class)
                         .installIntoWorld(sender, resolvedDimension, dimensionRoot);
                 if (installedDimension == null) {
@@ -249,6 +276,7 @@ public class IrisCreator {
             }
 
             reportStudioProgress(0.28D, "install_datapacks");
+            reportCreationProgress(creationReporter, 0.36D, "prepare_generator");
             AtomicDouble pp = new AtomicDouble(0);
             AtomicBoolean done = new AtomicBoolean(false);
             long generatorPrepareStart = System.nanoTime();
@@ -267,12 +295,10 @@ public class IrisCreator {
                 throw new IrisException("Access is null. Something bad happened.");
             }
             stagedGenerator = access;
-            HudSlotClaim createClaim = !benchmark && studioProgressConsumer == null && sender.isPlayer()
-                    ? openLoaderClaim("iris:world-create")
-                    : null;
-            AtomicInteger createProgressTask = startCreateProgressReporter(access, done, createClaim);
+            AtomicInteger createProgressTask = startCreateProgressReporter(access, done, creationReporter);
 
             reportStudioProgress(0.46D, "create_world");
+            reportCreationProgress(creationReporter, 0.44D, "create_world");
             long nmsStartNanos = System.nanoTime();
             try {
                 WorldLifecycleCaller callerKind = benchmark ? WorldLifecycleCaller.BENCHMARK : studio() ? WorldLifecycleCaller.STUDIO : WorldLifecycleCaller.CREATE;
@@ -283,7 +309,6 @@ public class IrisCreator {
             } catch (Throwable e) {
                 done.set(true);
                 cancelRepeatingTask(createProgressTask);
-                releaseLoaderClaim(createClaim, "iris:world-create");
                 if (e instanceof TimeoutException) {
                     ServerConfigurator.restart("World creation timed out for \"" + name + "\".");
                 }
@@ -302,8 +327,8 @@ public class IrisCreator {
 
             done.set(true);
             cancelRepeatingTask(createProgressTask);
-            releaseLoaderClaim(createClaim, "iris:world-create");
             reportStudioProgress(0.86D, "create_world");
+            reportCreationProgress(creationReporter, 0.84D, "register_world");
 
             if (!studio && !benchmark) {
                 BukkitWorldConfiguration.register(
@@ -327,6 +352,7 @@ public class IrisCreator {
                     throw e;
                 }
             }
+            reportCreationProgress(creationReporter, 0.92D, "teleport_player");
             awaitSenderTeleport(world);
 
             if (pregen != null) {
@@ -336,20 +362,26 @@ public class IrisCreator {
                         .whenDone(() -> ff.complete(true));
 
                 AtomicBoolean dx = new AtomicBoolean(false);
-                HudSlotClaim pregenClaim = sender.isPlayer() ? openLoaderClaim("iris:pregen") : null;
-                AtomicInteger pregenProgressTask = startPregenProgressReporter(pp, dx, pregenClaim);
+                boolean pregenHud = creationReporter == null && sender.isPlayer();
+                AtomicInteger pregenProgressTask = startPregenProgressReporter(
+                        pp,
+                        dx,
+                        pregenHud,
+                        creationReporter
+                );
                 try {
                     ff.get();
                     dx.set(true);
                     cancelRepeatingTask(pregenProgressTask);
-                    releaseLoaderClaim(pregenClaim, "iris:pregen");
+                    hidePregenLane(pregenHud);
                 } catch (Throwable e) {
                     dx.set(true);
                     cancelRepeatingTask(pregenProgressTask);
-                    releaseLoaderClaim(pregenClaim, "iris:pregen");
+                    hidePregenLane(pregenHud);
                     IrisLogging.reportError(e);
                 }
             }
+            reportCreationProgress(creationReporter, 0.99D, "finalize");
             return world;
         } catch (Throwable failure) {
             rollbackWorldCreation(worldKey, world, stagedGenerator, storageRoot, bukkitRegistered, failure);
@@ -470,6 +502,16 @@ public class IrisCreator {
         }
     }
 
+    private void reportCreationProgress(
+            WorldCreationProgressReporter reporter,
+            double progress,
+            String stage
+    ) {
+        if (reporter != null) {
+            reporter.update(progress, stage);
+        }
+    }
+
     private void reportStudioTiming(String phase, long startedAtNanos) {
         BiConsumer<String, Long> consumer = studioTimingConsumer;
         if (consumer == null) {
@@ -498,7 +540,11 @@ public class IrisCreator {
         return ServerConfigurator.installDataPacksIfChanged(true, studioTimingConsumer);
     }
 
-    private AtomicInteger startCreateProgressReporter(PlatformChunkGenerator access, AtomicBoolean done, HudSlotClaim claim) {
+    private AtomicInteger startCreateProgressReporter(
+            PlatformChunkGenerator access,
+            AtomicBoolean done,
+            WorldCreationProgressReporter creationReporter
+    ) {
         AtomicInteger taskId = new AtomicInteger(-1);
         if (benchmark) {
             return taskId;
@@ -510,10 +556,9 @@ public class IrisCreator {
             }
             return access.getEngine().getGenerated();
         };
-        AtomicLong lastResolveMs = new AtomicLong(0L);
         access.getSpawnChunks().whenComplete((required, throwable) -> {
             if (throwable != null) {
-                IrisLogging.reportError("Failed to resolve studio spawn chunk target for world \"" + name() + "\".", throwable);
+                IrisLogging.reportError("Failed to resolve spawn chunk target for world \"" + name() + "\".", throwable);
                 return;
             }
 
@@ -521,7 +566,7 @@ public class IrisCreator {
                 return;
             }
 
-            int interval = studioProgressConsumer != null || sender.isPlayer() ? 1 : 20;
+            int interval = studioProgressConsumer != null || creationReporter != null && sender.isPlayer() ? 1 : 20;
             taskId.set(J.ar(() -> {
                 if (done.get()) {
                     cancelRepeatingTask(taskId);
@@ -537,57 +582,27 @@ public class IrisCreator {
                 double progress = (double) generated / required;
                 if (studioProgressConsumer != null) {
                     reportStudioProgress(0.40D + (0.42D * progress), "create_world");
-                    return;
                 }
 
-                int percent = (int) Math.round(progress * 100.0D);
-                int remaining = required - generated;
-                if (sender.isPlayer() && claim != null) {
-                    HudSurface surface = resolveThrottled(claim, lastResolveMs);
-                    if (surface == HudSurface.ACTION_BAR) {
-                        BukkitPlatform.hudLanes().hide(sender.player(), "iris:world-create");
-                        int barWidth = 44;
-                        int filled = (int) Math.round(Math.max(0.0D, Math.min(1.0D, progress)) * barWidth);
-                        StringBuilder bar = new StringBuilder(barWidth * 3 + 4);
-                        bar.append(C.DARK_GRAY).append("[");
-                        for (int bi = 0; bi < barWidth; bi++) {
-                            bar.append(bi < filled ? C.GREEN : C.DARK_GRAY).append("|");
-                        }
-                        bar.append(C.DARK_GRAY).append("]");
-                        sender.sendAction(IrisLanguage.text(
-                                RuntimeProgressMessages.WORLD_CREATE_ACTION,
-                                MessageArgument.trusted("bar", bar.toString()),
-                                MessageArgument.trusted("percent", percent),
-                                MessageArgument.trusted("generated", Form.f(generated)),
-                                MessageArgument.trusted("required", Form.f(required))
-                        ));
-                    } else if (surface == HudSurface.BOSS_BAR) {
-                        BukkitPlatform.hudLanes().show(sender.player(), "iris:world-create", IrisLanguage.text(
-                                RuntimeProgressMessages.WORLD_CREATE_ACTION,
-                                MessageArgument.trusted("bar", ""),
-                                MessageArgument.trusted("percent", percent),
-                                MessageArgument.trusted("generated", Form.f(generated)),
-                                MessageArgument.trusted("required", Form.f(required))
-                        ), progress, BarColor.GREEN, BarStyle.SOLID, 4000L);
-                    }
-                    return;
+                if (creationReporter != null) {
+                    creationReporter.update(
+                            0.44D + (0.38D * progress),
+                            "create_world",
+                            C.DARK_GRAY + " (" + Form.f(generated) + "/" + Form.f(required) + " chunks)"
+                    );
                 }
-
-                sender.sendMessage(IrisLanguage.text(
-                        RuntimeProgressMessages.WORLD_CREATE_CONSOLE,
-                        MessageArgument.trusted("percent", percent),
-                        MessageArgument.trusted("generated", Form.f(generated)),
-                        MessageArgument.trusted("required", Form.f(required)),
-                        MessageArgument.trusted("remaining", remaining)
-                ));
             }, interval));
         });
         return taskId;
     }
 
-    private AtomicInteger startPregenProgressReporter(AtomicDouble progress, AtomicBoolean done, HudSlotClaim claim) {
+    private AtomicInteger startPregenProgressReporter(
+            AtomicDouble progress,
+            AtomicBoolean done,
+            boolean showLoaderHud,
+            WorldCreationProgressReporter creationReporter
+    ) {
         AtomicInteger taskId = new AtomicInteger(-1);
-        AtomicLong lastResolveMs = new AtomicLong(0L);
         int interval = sender.isPlayer() ? 1 : 20;
         taskId.set(J.ar(() -> {
             if (done.get()) {
@@ -597,30 +612,29 @@ public class IrisCreator {
 
             double p = progress.get();
             int percent = (int) Math.round(p * 100.0D);
-            if (sender.isPlayer() && claim != null) {
-                HudSurface surface = resolveThrottled(claim, lastResolveMs);
-                if (surface == HudSurface.ACTION_BAR) {
-                    BukkitPlatform.hudLanes().hide(sender.player(), "iris:pregen");
-                    int barWidth = 44;
-                    int filled = (int) Math.round(Math.max(0.0D, Math.min(1.0D, p)) * barWidth);
-                    StringBuilder bar = new StringBuilder(barWidth * 3 + 4);
-                    bar.append(C.DARK_GRAY).append("[");
-                    for (int bi = 0; bi < barWidth; bi++) {
-                        bar.append(bi < filled ? C.GREEN : C.DARK_GRAY).append("|");
-                    }
-                    bar.append(C.DARK_GRAY).append("]");
-                    sender.sendAction(IrisLanguage.text(
-                            RuntimeProgressMessages.WORLD_PREGEN_ACTION,
-                            MessageArgument.trusted("bar", bar.toString()),
-                            MessageArgument.trusted("percent", percent)
-                    ));
-                } else if (surface == HudSurface.BOSS_BAR) {
-                    BukkitPlatform.hudLanes().show(sender.player(), "iris:pregen", IrisLanguage.text(
-                            RuntimeProgressMessages.WORLD_PREGEN_ACTION,
-                            MessageArgument.trusted("bar", ""),
-                            MessageArgument.trusted("percent", percent)
-                    ), p, BarColor.GREEN, BarStyle.SOLID, 4000L);
+            if (creationReporter != null) {
+                creationReporter.update(0.94D + (0.05D * p), "pregenerate");
+                return;
+            }
+            if (showLoaderHud) {
+                BukkitPlatform.hudLanes().show(sender.player(), "iris:pregen", IrisLanguage.text(
+                        RuntimeProgressMessages.WORLD_PREGEN_ACTION,
+                        MessageArgument.trusted("bar", ""),
+                        MessageArgument.trusted("percent", percent)
+                ), p, BarColor.GREEN, BarStyle.SOLID, 4000L);
+                int barWidth = 44;
+                int filled = (int) Math.round(Math.max(0.0D, Math.min(1.0D, p)) * barWidth);
+                StringBuilder bar = new StringBuilder(barWidth * 3 + 4);
+                bar.append(C.DARK_GRAY).append("[");
+                for (int bi = 0; bi < barWidth; bi++) {
+                    bar.append(bi < filled ? C.GREEN : C.DARK_GRAY).append("|");
                 }
+                bar.append(C.DARK_GRAY).append("]");
+                sender.sendAction(IrisLanguage.text(
+                        RuntimeProgressMessages.WORLD_PREGEN_ACTION,
+                        MessageArgument.trusted("bar", bar.toString()),
+                        MessageArgument.trusted("percent", percent)
+                ));
                 return;
             }
 
@@ -632,31 +646,12 @@ public class IrisCreator {
         return taskId;
     }
 
-    private HudSlotClaim openLoaderClaim(String purpose) {
-        return BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest(
-                purpose,
-                HudPriority.PROGRESS,
-                1200L,
-                List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)
-        ));
-    }
-
-    private void releaseLoaderClaim(HudSlotClaim claim, String laneId) {
-        if (claim == null) {
+    private void hidePregenLane(boolean shown) {
+        if (!shown) {
             return;
         }
-        claim.release();
-        BukkitPlatform.hudLanes().hide(sender.player(), laneId);
-    }
-
-    private static HudSurface resolveThrottled(HudSlotClaim claim, AtomicLong lastResolveMillis) {
-        long now = System.currentTimeMillis();
-        if (now - lastResolveMillis.get() >= 250L) {
-            lastResolveMillis.set(now);
-            return claim.resolve();
-        }
-        HudSurface granted = claim.granted();
-        return granted == null ? claim.resolve() : granted;
+        BukkitPlatform.hudLanes().hide(sender.player(), "iris:pregen");
+        sender.sendAction(" ");
     }
 
     private void cancelRepeatingTask(AtomicInteger taskId) {

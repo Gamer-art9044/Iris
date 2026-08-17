@@ -26,10 +26,6 @@ import art.arcane.iris.core.events.IrisEngineHotloadEvent;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
-import art.arcane.volmlib.util.hud.HudPriority;
-import art.arcane.volmlib.util.hud.HudSlotClaim;
-import art.arcane.volmlib.util.hud.HudSlotRequest;
-import art.arcane.volmlib.util.hud.HudSurface;
 import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -40,7 +36,6 @@ import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.world.ChunkUnloadEvent;
 import org.bukkit.event.world.WorldSaveEvent;
 
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
@@ -98,12 +93,8 @@ public abstract class EngineAssignedWorldManager extends EngineAssignedComponent
         runManagerTask("bukkit_world_manager_hotload_event", () -> {
             for (Player i : BukkitWorldBinding.players(e.getEngine().getWorld())) {
                 i.playSound(i.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_BREAK, 1f, 1.8f);
-                HudSlotClaim claim = BukkitPlatform.hudSlots().open(i, new HudSlotRequest("iris:hotload", HudPriority.NOTICE, 2000L, List.of(HudSurface.TITLE)));
-                if (claim.resolve() != HudSurface.TITLE) {
-                    continue;
-                }
                 VolmitSender s = new VolmitSender(i);
-                s.sendTitle(C.IRIS + "<font:minecraft:uniform>" + IrisLanguage.text(RuntimeUiMessages.ENGINE_HOTLOADED), 70, 60, 410);
+                s.sendAction(C.IRIS + IrisLanguage.text(RuntimeUiMessages.ENGINE_HOTLOADED));
             }
         });
     }

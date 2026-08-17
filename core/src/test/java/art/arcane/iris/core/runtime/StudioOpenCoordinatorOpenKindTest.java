@@ -133,6 +133,31 @@ public class StudioOpenCoordinatorOpenKindTest {
     }
 
     @Test
+    public void queuedRestartDefersFailedOpenCleanupWithoutAcquiringALiveCloseLease() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));
+        int openCatch = source.indexOf("} catch (Throwable e) {");
+        int restartCheck = source.indexOf(
+                ".active(LifecycleOperationCoordinator.Domain.SERVER_LIFECYCLE)",
+                openCatch);
+        int restartDeferral = source.indexOf(
+                "deferFailedOpenCleanupToRestart(",
+                restartCheck);
+        int liveCleanup = source.indexOf("cleanupFailedOpen(", restartDeferral);
+        int methodStart = source.indexOf(
+                "private void deferFailedOpenCleanupToRestart(",
+                restartDeferral);
+        int methodEnd = source.indexOf("private boolean transientWorldStorageExists", methodStart);
+        String method = source.substring(methodStart, methodEnd);
+
+        assertTrue(restartCheck > openCatch);
+        assertTrue(restartDeferral > restartCheck);
+        assertTrue(liveCleanup > restartDeferral);
+        assertTrue(method.contains("queueStartupCleanup("));
+        assertFalse(method.contains("closeWorldCoordinated("));
+    }
+
+    @Test
     public void openFinalizerReturnsToTheServerThreadBeforeCompletion() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));

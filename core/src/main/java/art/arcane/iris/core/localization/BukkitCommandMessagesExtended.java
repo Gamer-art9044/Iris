@@ -175,6 +175,14 @@ public final class BukkitCommandMessagesExtended {
             "iris.bukkit.commandiris.try_one_overworld_vanilla_flat_theend",
             C.YELLOW + "Try one of: overworld, vanilla, flat, theend"
     );
+    public static final TextKey COMMAND_IRIS_DIMENSION_NOT_FOUND = TextKey.of(
+            "iris.bukkit.commandiris.dimension_not_found",
+            C.RED + "Could not find dimension " + C.WHITE + "{dimension}" + C.RED + "."
+    );
+    public static final TextKey COMMAND_IRIS_INSTALL_PACK_AND_RESTART = TextKey.of(
+            "iris.bukkit.commandiris.install_pack_and_restart",
+            C.YELLOW + "Install it with " + C.AQUA + "{command}" + C.YELLOW + " and restart the server."
+    );
     public static final TextKey COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTARTING_SERVER_GENERATE_LOAD = TextKey.of(
             "iris.bukkit.commandiris.world_staging_completed_restarting_server_generate_load",
             C.GREEN + "World staging completed. Iris is restarting the server to generate/load \"" + "{worldName}" + "\"."
@@ -864,6 +872,8 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_IRIS_MAY_WE_SUGGEST_NAME_IRISWORLD_INSTEAD_2,
             COMMAND_IRIS_THAT_FOLDER_ALREADY_EXISTS,
             COMMAND_IRIS_TRY_ONE_OVERWORLD_VANILLA_FLAT_THEEND,
+            COMMAND_IRIS_DIMENSION_NOT_FOUND,
+            COMMAND_IRIS_INSTALL_PACK_AND_RESTART,
             COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTARTING_SERVER_GENERATE_LOAD,
             COMMAND_IRIS_EXCEPTION_RAISED_DURING_CREATION_SEE_CONSOLE_MORE_DETAILS,
             COMMAND_IRIS_SUCCESSFULLY_CREATED_YOUR_WORLD,

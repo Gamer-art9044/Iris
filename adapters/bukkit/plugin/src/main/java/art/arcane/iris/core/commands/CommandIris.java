@@ -148,10 +148,15 @@ public class CommandIris implements DirectorExecutor {
 
         IrisDimension dimension = IrisToolbelt.getDimension(resolvedType);
         if (dimension == null) {
-            sender().sendMessage("Could not find dimension '" + resolvedType + "'.");
+            sender().sendMessage(IrisLanguage.text(
+                    BukkitCommandMessagesExtended.COMMAND_IRIS_DIMENSION_NOT_FOUND,
+                    MessageArgument.untrusted("dimension", resolvedType)
+            ));
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_TRY_ONE_OVERWORLD_VANILLA_FLAT_THEEND));
-            sender().sendMessage("Install its pack with " + PackDownloader.downloadCommandFor(resolvedType)
-                    + " and restart the server.");
+            sender().sendMessage(IrisLanguage.text(
+                    BukkitCommandMessagesExtended.COMMAND_IRIS_INSTALL_PACK_AND_RESTART,
+                    MessageArgument.untrusted("command", PackDownloader.downloadCommandFor(resolvedType))
+            ));
             return;
         }
 
@@ -227,10 +232,15 @@ public class CommandIris implements DirectorExecutor {
                 : type;
         IrisDimension dimension = IrisToolbelt.getDimension(resolvedType);
         if (dimension == null) {
-            sender().sendMessage("Could not find dimension '" + resolvedType + "'.");
+            sender().sendMessage(IrisLanguage.text(
+                    BukkitCommandMessagesExtended.COMMAND_IRIS_DIMENSION_NOT_FOUND,
+                    MessageArgument.untrusted("dimension", resolvedType)
+            ));
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_TRY_ONE_OVERWORLD_VANILLA_FLAT_THEEND));
-            sender().sendMessage("Install its pack with " + PackDownloader.downloadCommandFor(resolvedType)
-                    + " and restart the server.");
+            sender().sendMessage(IrisLanguage.text(
+                    BukkitCommandMessagesExtended.COMMAND_IRIS_INSTALL_PACK_AND_RESTART,
+                    MessageArgument.untrusted("command", PackDownloader.downloadCommandFor(resolvedType))
+            ));
             return;
         }
 

@@ -408,7 +408,15 @@ public final class BukkitRuntimeMessages {
     );
     public static final TextKey STUDIO_S_V_C_INSTALLING_PACKAGE = TextKey.of(
             "iris.bukkit.runtime.studiosvc.installing_package",
-            "Installing Package: " + "{name}" + ":" + "{loadKey}"
+            C.GOLD + "World pack " + C.AQUA + "{name}" + ":" + "{loadKey}" + C.GRAY + " | " + C.WHITE + "Publishing snapshot"
+    );
+    public static final TextKey STUDIO_S_V_C_PACK_COPY_REQUIRES_ASYNC_THREAD = TextKey.of(
+            "iris.bukkit.runtime.studiosvc.pack_copy_requires_async_thread",
+            C.RED + "Iris refused to copy the world pack on the Bukkit primary thread."
+    );
+    public static final TextKey STUDIO_S_V_C_PACK_INSTALL_FAILED = TextKey.of(
+            "iris.bukkit.runtime.studiosvc.pack_install_failed",
+            C.RED + "Failed to install world pack " + C.WHITE + "{dimension}" + C.RED + ": {error}"
     );
     public static final TextKey STUDIO_S_V_C_LOOKING_PACKAGE = TextKey.of(
             "iris.bukkit.runtime.studiosvc.looking_package",
@@ -701,6 +709,8 @@ public final class BukkitRuntimeMessages {
             IRIS_CONVERTER_CONVERTED_3,
             IRIS_CONVERTER_SOME_SCHEMATICS_FAILED_CONVERT_CHECK_CONSOLE_DETAILS,
             STUDIO_S_V_C_INSTALLING_PACKAGE,
+            STUDIO_S_V_C_PACK_COPY_REQUIRES_ASYNC_THREAD,
+            STUDIO_S_V_C_PACK_INSTALL_FAILED,
             STUDIO_S_V_C_LOOKING_PACKAGE,
             STUDIO_S_V_C_FOUND_IRIS_FOLDER,
             STUDIO_S_V_C_FOUND_DIMENSION_FOLDER_REPACKAGING,

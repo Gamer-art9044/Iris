@@ -7,8 +7,10 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * The SPI splits block resolution into a null-returning lookup and an air-falling-back lookup. Modded used to
@@ -48,5 +50,14 @@ public class ModdedBlockResolutionContractTest {
         ModdedBlockState state = ModdedBlockResolution.getOrNull("minecraft:oak_log[not_a_property=x]", true);
         assertNotNull(state);
         assertEquals(Blocks.OAK_LOG, state.handle().getBlock());
+    }
+
+    @Test
+    public void cactusPlacementRequiresNativeCactusSupport() {
+        assertTrue(ModdedBlockResolution.canPlaceOnto(Blocks.CACTUS, Blocks.CACTUS));
+        assertTrue(ModdedBlockResolution.canPlaceOnto(Blocks.CACTUS, Blocks.SAND));
+        assertTrue(ModdedBlockResolution.canPlaceOnto(Blocks.CACTUS, Blocks.RED_SAND));
+        assertFalse(ModdedBlockResolution.canPlaceOnto(Blocks.CACTUS, Blocks.STONE));
+        assertTrue(ModdedBlockResolution.isDecorant(Blocks.CACTUS.defaultBlockState()));
     }
 }

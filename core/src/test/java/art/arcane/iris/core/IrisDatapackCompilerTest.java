@@ -16,9 +16,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -186,6 +188,68 @@ public class IrisDatapackCompilerTest {
         assertFalse(Files.exists(datapackRoot.resolve("data/minecraft/dimension/overworld.json")));
         assertFalse(Files.exists(datapackRoot.resolve("data/minecraft/dimension/the_nether.json")));
         assertFalse(Files.exists(datapackRoot.resolve("data/minecraft/dimension/the_end.json")));
+    }
+
+    @Test
+    public void equivalentFrozenPackAndLevelStemBindingDoNotChangeRegistryRequirements() throws Exception {
+        Path installedPack = temporaryFolder.newFolder("registry-installed-pack").toPath();
+        Path frozenPack = temporaryFolder.newFolder("registry-frozen-pack").toPath();
+        createPack(installedPack, "overworld", "forest_custom");
+        createPack(frozenPack, "overworld", "forest_custom");
+        DataFixerV1217 fixer = new DataFixerV1217();
+
+        Map<String, String> loaded = IrisDatapackCompiler.computeRegistryRequirements(
+                List.of(installedPack.toFile()),
+                fixer);
+        Map<String, String> afterWorldCreation = IrisDatapackCompiler.computeRegistryRequirements(
+                List.of(installedPack.toFile(), frozenPack.toFile()),
+                fixer);
+        String loadedCompilerInputs = IrisDatapackCompiler.computeInputFingerprint(
+                List.of(installedPack.toFile()),
+                List.of(),
+                false,
+                "compiler-a");
+        String afterWorldCreationCompilerInputs = IrisDatapackCompiler.computeInputFingerprint(
+                List.of(installedPack.toFile(), frozenPack.toFile()),
+                List.of(binding("ow", "overworld")),
+                false,
+                "compiler-a");
+
+        assertNotEquals(loadedCompilerInputs, afterWorldCreationCompilerInputs);
+        assertEquals(loaded, afterWorldCreation);
+        assertTrue(ServerConfigurator.loadedRegistrySatisfies(loaded, afterWorldCreation));
+    }
+
+    @Test
+    public void changedDimensionRegistryRequirementsDoNotReuseLoadedRuntime() throws Exception {
+        Path pack = temporaryFolder.newFolder("registry-changed-pack").toPath();
+        createPack(pack, "overworld", "forest_custom", "NORMAL");
+        DataFixerV1217 fixer = new DataFixerV1217();
+        Map<String, String> loaded = IrisDatapackCompiler.computeRegistryRequirements(
+                List.of(pack.toFile()),
+                fixer);
+
+        createPack(pack, "overworld", "forest_custom", "NETHER");
+        Map<String, String> changedDimensionType = IrisDatapackCompiler.computeRegistryRequirements(
+                List.of(pack.toFile()),
+                fixer);
+        assertFalse(ServerConfigurator.loadedRegistrySatisfies(loaded, changedDimensionType));
+
+        createPack(pack, "overworld", "new_custom", "NORMAL");
+        Map<String, String> changedCustomBiome = IrisDatapackCompiler.computeRegistryRequirements(
+                List.of(pack.toFile()),
+                fixer);
+        assertFalse(ServerConfigurator.loadedRegistrySatisfies(loaded, changedCustomBiome));
+
+        createPack(pack, "overworld", "forest_custom", "NORMAL");
+        Path biomeFile = pack.resolve("biomes/test.json");
+        String taggedBiome = Files.readString(biomeFile, StandardCharsets.UTF_8)
+                .replace("\"id\": \"forest_custom\"", "\"id\": \"forest_custom\", \"tags\": [\"is_hot\"]");
+        Files.writeString(biomeFile, taggedBiome, StandardCharsets.UTF_8);
+        Map<String, String> changedBiomeTags = IrisDatapackCompiler.computeRegistryRequirements(
+                List.of(pack.toFile()),
+                fixer);
+        assertFalse(ServerConfigurator.loadedRegistrySatisfies(loaded, changedBiomeTags));
     }
 
     @Test

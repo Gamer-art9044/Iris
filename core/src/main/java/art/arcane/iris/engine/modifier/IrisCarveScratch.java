@@ -29,7 +29,6 @@ import java.util.Map;
 final class IrisCarveScratch {
     final CarveColumnMask[] columnMasks = new CarveColumnMask[256];
     final CarveColumnMask[] boundaryMasks = new CarveColumnMask[256];
-    final MatterCavern[] boundaryCaverns = new MatterCavern[256];
     final int[] surfaceHeights = new int[256];
     final CarveWallBuffer walls = new CarveWallBuffer(512);
     final Map<String, IrisBiome> customBiomeCache = new HashMap<>();
@@ -54,7 +53,6 @@ final class IrisCarveScratch {
         for (int index = 0; index < columnMasks.length; index++) {
             columnMasks[index].clear();
             boundaryMasks[index].clear();
-            boundaryCaverns[index] = null;
         }
         walls.clear();
         customBiomeCache.clear();
@@ -181,6 +179,21 @@ final class CarveWallBuffer {
                 return;
             }
 
+            index = (index + 1) & mask;
+        }
+    }
+
+    MatterCavern get(int x, int y, int z) {
+        int key = pack(x, y, z);
+        int index = mix(key) & mask;
+        while (true) {
+            int existingKey = keys[index];
+            if (existingKey == EMPTY_KEY) {
+                return null;
+            }
+            if (existingKey == key) {
+                return values[index];
+            }
             index = (index + 1) & mask;
         }
     }

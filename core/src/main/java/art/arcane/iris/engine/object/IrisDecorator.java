@@ -119,7 +119,7 @@ public class IrisDecorator {
         return getHeightGenerator(rng, data)
                 .fit(stackMin, stackMax,
                         x / heightVariance.getZoom(),
-                        z / heightVariance.getZoom()) + 1;
+                        z / heightVariance.getZoom());
     }
 
     public CNG getHeightGenerator(RNG rng, IrisData data) {

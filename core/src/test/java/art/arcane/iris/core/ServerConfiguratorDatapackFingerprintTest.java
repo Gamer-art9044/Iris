@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -426,6 +427,26 @@ public class ServerConfiguratorDatapackFingerprintTest {
         assertFalse(ServerConfigurator.reusableRuntimeFingerprint("abc", "def"));
         assertFalse(ServerConfigurator.reusableRuntimeFingerprint("", ""));
         assertFalse(ServerConfigurator.reusableRuntimeFingerprint(null, "abc"));
+    }
+
+    @Test
+    public void loadedRegistryAllowsUnrelatedEntriesButRequiresExactRequestedContent() {
+        Map<String, String> loaded = Map.of(
+                "dimension_type/iris:overworld", "dimension-a",
+                "worldgen/biome/overworld:forest", "biome-a",
+                "dimension/iris:ow", "level-stem-a");
+
+        assertTrue(ServerConfigurator.loadedRegistrySatisfies(
+                loaded,
+                Map.of(
+                        "dimension_type/iris:overworld", "dimension-a",
+                        "worldgen/biome/overworld:forest", "biome-a")));
+        assertFalse(ServerConfigurator.loadedRegistrySatisfies(
+                loaded,
+                Map.of("dimension_type/iris:overworld", "dimension-b")));
+        assertFalse(ServerConfigurator.loadedRegistrySatisfies(
+                loaded,
+                Map.of("worldgen/biome/overworld:new", "biome-new")));
     }
 
     @Test

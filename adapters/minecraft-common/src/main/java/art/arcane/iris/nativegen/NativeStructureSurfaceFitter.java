@@ -33,7 +33,9 @@ public final class NativeStructureSurfaceFitter {
     private static final double SURFACE_TERRAIN_FALLOFF = 2.0;
     private static final long SURFACE_TERRAIN_INFLUENCE_SCALE = 1_000_000L;
     private static final int SURFACE_TERRAIN_RADIUS = 12;
-    private static final int MAX_VACUUM_TEMPLATE_CELLS = 4_194_304;
+    private static final int MAX_SURFACE_TEMPLATE_CELLS = 4_194_304;
+    private static final Set<String> WARNED_SOURCE_BUDGET =
+            ConcurrentHashMap.newKeySet();
     private static final Set<String> WARNED_VACUUM_BUDGET =
             ConcurrentHashMap.newKeySet();
 
@@ -45,23 +47,24 @@ public final class NativeStructureSurfaceFitter {
             List<NativeStructureTerrainIntegrator.TerrainTarget> targets,
             IntBinaryOperator surfaceHeight) {
         return prepareSurfaceStructures(
-                world, area, targets, surfaceHeight, MAX_VACUUM_TEMPLATE_CELLS);
+                world, area, targets, surfaceHeight, MAX_SURFACE_TEMPLATE_CELLS);
     }
 
     static VacuumFoundationPlan prepareSurfaceStructures(
             WorldGenLevel world, BoundingBox area,
             List<NativeStructureTerrainIntegrator.TerrainTarget> targets,
-            IntBinaryOperator surfaceHeight, int maximumVacuumTemplateCells) {
+            IntBinaryOperator surfaceHeight, int maximumTemplateCells) {
         if (targets == null || targets.isEmpty()) {
             return VacuumFoundationPlan.empty();
         }
         Objects.requireNonNull(surfaceHeight, "Surface structure terrain fitting requires an Iris height resolver");
-        List<SurfaceAnchor> anchors = collectSourceSurfaceAnchors(targets);
+        List<SurfaceAnchor> anchors = collectSourceSurfaceAnchors(
+                world, area, targets, maximumTemplateCells);
         if (!anchors.isEmpty()) {
             fitSurfaceTerrain(world, area, anchors, surfaceHeight);
         }
         VacuumFootprint vacuum = collectVacuumFootprint(
-                world, area, targets, maximumVacuumTemplateCells);
+                world, area, targets, maximumTemplateCells);
         if (!vacuum.anchors().isEmpty()) {
             fitVacuumTerrain(world, area, vacuum, surfaceHeight);
         }
@@ -223,7 +226,14 @@ public final class NativeStructureSurfaceFitter {
     }
 
     private static List<SurfaceAnchor> collectSourceSurfaceAnchors(
-            List<NativeStructureTerrainIntegrator.TerrainTarget> targets) {
+            WorldGenLevel world, BoundingBox area,
+            List<NativeStructureTerrainIntegrator.TerrainTarget> targets,
+            int maximumTemplateCells) {
+        BoundingBox influenceArea = new BoundingBox(
+                area.minX() - SURFACE_TERRAIN_RADIUS, area.minY(),
+                area.minZ() - SURFACE_TERRAIN_RADIUS,
+                area.maxX() + SURFACE_TERRAIN_RADIUS, area.maxY(),
+                area.maxZ() + SURFACE_TERRAIN_RADIUS);
         List<SurfaceAnchor> anchors = new ArrayList<>();
         for (NativeStructureTerrainIntegrator.TerrainTarget target : targets) {
             if (!requiresSourceSurfaceTerrain(target)) {
@@ -231,13 +241,34 @@ public final class NativeStructureSurfaceFitter {
             }
             StructureStart start = target.start();
             TerrainAdjustment adjustment = start.getStructure().terrainAdaptation();
+            BoundingBox firstBounds = start.getPieces().getFirst().getBoundingBox();
+            BlockPos firstCenter = firstBounds.getCenter();
+            BlockPos referencePosition = new BlockPos(
+                    firstCenter.getX(), firstBounds.minY(), firstCenter.getZ());
+            TemplateCellBudget budget = new TemplateCellBudget(maximumTemplateCells);
+            boolean budgetExceeded = false;
             for (StructurePiece piece : start.getPieces()) {
                 if (piece instanceof PoolElementStructurePiece poolPiece) {
-                    if (poolPiece.getElement().getProjection() == StructureTemplatePool.Projection.RIGID) {
+                    StructureTemplatePool.Projection projection =
+                            poolPiece.getElement().getProjection();
+                    if (projection == StructureTemplatePool.Projection.RIGID) {
                         BoundingBox bounds = poolPiece.getBoundingBox();
                         anchors.add(surfaceAnchor(
                                 bounds, bounds.minY() + poolPiece.getGroundLevelDelta(),
                                 2, adjustment));
+                    } else if (!budgetExceeded
+                            && projection == StructureTemplatePool.Projection.TERRAIN_MATCHING
+                            && intersectsHorizontally(poolPiece.getBoundingBox(), influenceArea)) {
+                        try {
+                            List<SurfaceAnchor> pieceAnchors = new ArrayList<>();
+                            addTerrainMatchingSurfaceAnchors(
+                                    world, influenceArea, poolPiece, referencePosition,
+                                    adjustment, budget, pieceAnchors);
+                            anchors.addAll(pieceAnchors);
+                        } catch (TemplateBudgetExceeded ignored) {
+                            budgetExceeded = true;
+                            warnSourceBudget(target);
+                        }
                     }
                     for (JigsawJunction junction : poolPiece.getJunctions()) {
                         anchors.add(new SurfaceAnchor(
@@ -253,6 +284,42 @@ public final class NativeStructureSurfaceFitter {
             }
         }
         return List.copyOf(anchors);
+    }
+
+    private static void addTerrainMatchingSurfaceAnchors(
+            WorldGenLevel world, BoundingBox influenceArea,
+            PoolElementStructurePiece piece, BlockPos referencePosition,
+            TerrainAdjustment adjustment, TemplateCellBudget budget,
+            List<SurfaceAnchor> anchors) {
+        NativeStructureTemplateOccupancy.OccupancyResult occupancy =
+                NativeStructureTemplateOccupancy.resolve(
+                        world, piece, referencePosition, influenceArea,
+                        () -> world.getLevel().getStructureManager(),
+                        influenceArea::isInside, budget::consume);
+        if (!occupancy.resolved()) {
+            return;
+        }
+        int groundY = piece.getBoundingBox().minY() + piece.getGroundLevelDelta();
+        Map<Long, NativeStructureTemplateOccupancy.LowestCell> lowest =
+                NativeStructureTemplateOccupancy.lowestProcessedSolidCells(occupancy.cells());
+        for (NativeStructureTemplateOccupancy.LowestCell cell : lowest.values()) {
+            budget.consume(1);
+            BoundingBox column = new BoundingBox(
+                    cell.x(), groundY, cell.z(), cell.x(), groundY, cell.z());
+            anchors.add(surfaceAnchor(column, groundY, 2, adjustment));
+        }
+    }
+
+    private static void warnSourceBudget(
+            NativeStructureTerrainIntegrator.TerrainTarget target) {
+        String structureId = target.structureId() == null
+                ? target.start().getStructure().getClass().getName()
+                : target.structureId();
+        if (WARNED_SOURCE_BUDGET.add(structureId)) {
+            IrisLogging.warn("Native structure SOURCE fitting for '"
+                    + structureId + "' exceeded its bounded template budget; "
+                    + "skipping remaining terrain-matching footprints for this start");
+        }
     }
 
     private static VacuumFootprint collectVacuumFootprint(
@@ -286,7 +353,7 @@ public final class NativeStructureSurfaceFitter {
             Map<Long, Integer> targetCaps = new HashMap<>();
             Set<Long> targetFoundationBases = new HashSet<>();
             Set<Long> targetOccupiedCells = new HashSet<>();
-            VacuumCellBudget budget = new VacuumCellBudget(maximumTemplateCells);
+            TemplateCellBudget budget = new TemplateCellBudget(maximumTemplateCells);
             try {
                 for (StructurePiece piece : start.getPieces()) {
                     BoundingBox bounds = piece.getBoundingBox();
@@ -330,7 +397,7 @@ public final class NativeStructureSurfaceFitter {
                                 cell.x(), cell.y(), cell.z()));
                     }
                 }
-            } catch (VacuumBudgetExceeded ignored) {
+            } catch (TemplateBudgetExceeded ignored) {
                 warnVacuumBudget(target);
                 continue;
             }
@@ -837,31 +904,31 @@ public final class NativeStructureSurfaceFitter {
         }
     }
 
-    private static final class VacuumCellBudget {
+    private static final class TemplateCellBudget {
         private final int maximum;
         private int consumed;
 
-        private VacuumCellBudget(int maximum) {
+        private TemplateCellBudget(int maximum) {
             if (maximum < 0) {
                 throw new IllegalArgumentException(
-                        "Native structure vacuum cell budget cannot be negative");
+                        "Native structure surface template budget cannot be negative");
             }
             this.maximum = maximum;
         }
 
         private void consume(int amount) {
             if (amount < 0 || consumed > maximum - amount) {
-                throw VacuumBudgetExceeded.INSTANCE;
+                throw TemplateBudgetExceeded.INSTANCE;
             }
             consumed += amount;
         }
     }
 
-    private static final class VacuumBudgetExceeded extends RuntimeException {
-        private static final VacuumBudgetExceeded INSTANCE =
-                new VacuumBudgetExceeded();
+    private static final class TemplateBudgetExceeded extends RuntimeException {
+        private static final TemplateBudgetExceeded INSTANCE =
+                new TemplateBudgetExceeded();
 
-        private VacuumBudgetExceeded() {
+        private TemplateBudgetExceeded() {
             super(null, null, false, false);
         }
     }

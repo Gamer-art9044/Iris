@@ -263,6 +263,43 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
+    public void terrainMatchingFootprintsRaiseAndLowerOnlyLowestSolidColumns() throws Exception {
+        StructureTemplate pathTemplate = template(List.of(
+                block(0, 0, 0, Blocks.AIR.defaultBlockState()),
+                block(0, 1, 0, Blocks.DIRT_PATH.defaultBlockState()),
+                block(15, 0, 0, Blocks.AIR.defaultBlockState()),
+                block(30, 0, 0, Blocks.AIR.defaultBlockState()),
+                block(30, 1, 0, Blocks.DIRT_PATH.defaultBlockState()),
+                block(45, 0, 0, Blocks.DANDELION.defaultBlockState())));
+        InlineSinglePoolElement element = new InlineSinglePoolElement(
+                pathTemplate, List.of(), StructureTemplatePool.Projection.TERRAIN_MATCHING);
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                element, new BoundingBox(0, 68, 0, 45, 74, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(
+                List.of(piece), TerrainAdjustment.BEARD_THIN);
+        BoundingBox area = new BoundingBox(0, 52, 0, 45, 76, 0);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 64);
+        blocks.remove(new BlockPos(0, 63, 0));
+        blocks.remove(new BlockPos(0, 64, 0));
+        put(blocks, 0, 59, 0, Blocks.DIRT.defaultBlockState());
+        put(blocks, 0, 60, 0, Blocks.GRASS_BLOCK.defaultBlockState());
+        put(blocks, 30, 71, 0, Blocks.DIRT.defaultBlockState());
+        put(blocks, 30, 72, 0, Blocks.GRASS_BLOCK.defaultBlockState());
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                (x, z) -> x == 0 ? 60 : x == 30 ? 72 : 64);
+
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 68, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 30, 68, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 30, 72, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 15, 64, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 15, 65, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 45, 64, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 45, 65, 0));
+    }
+
+    @Test
     public void vacuumFitsOnlyProcessedSolidTemplateColumns() throws Exception {
         StructureTemplate sparseTemplate = template(List.of(
                 block(0, 0, 0, Blocks.COBBLESTONE.defaultBlockState()),
@@ -2170,6 +2207,19 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
             }
             if (methodName.equals("getSeed")) {
                 return TEST_SEED;
+            }
+            if (methodName.equals("getHeight")) {
+                int x = (int) arguments[1];
+                int z = (int) arguments[2];
+                int highest = Integer.MIN_VALUE;
+                for (Map.Entry<BlockPos, BlockState> entry : blocks.entrySet()) {
+                    BlockPos position = entry.getKey();
+                    if (position.getX() == x && position.getZ() == z
+                            && !entry.getValue().isAir()) {
+                        highest = Math.max(highest, position.getY());
+                    }
+                }
+                return highest == Integer.MIN_VALUE ? 0 : highest + 1;
             }
             if (methodName.equals("getLevel")) {
                 return null;

@@ -20,7 +20,7 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.engine.object.annotations.Desc;
 
-@Desc("The overall silhouette of a procedural rock formation. Each form drives a distinct sculpting routine in the formation generator.")
+@Desc("The overall silhouette of a procedural natural formation. Each form drives a distinct sculpting routine in the formation generator.")
 public enum IrisFormationForm {
     @Desc("A tall, slender needle of rock that tapers smoothly to a point at the top (a sharp pinnacle or stone spire).")
     SPIRE,
@@ -33,5 +33,13 @@ public enum IrisFormationForm {
     @Desc("A rounded, lumpy boulder formed from a noise-perturbed ellipsoid that sits low on the terrain.")
     BOULDER,
     @Desc("A tightly packed cluster of several vertical, near-hexagonal columns of varying height (a basalt column formation / giant's causeway).")
-    BASALT_COLUMN
+    BASALT_COLUMN,
+    @Desc("A broad, faceted mound crowned by several irregular tapered peaks, suitable for icebergs and glacial outcrops.")
+    ICEBERG,
+    @Desc("Several separated, outward-leaning shards divided by open cracks.")
+    FISSURE,
+    @Desc("A tapered tube swept around a tightening helix, leaving open air through its curled center.")
+    SPIRAL,
+    @Desc("A grounded pillar that bends into a long hooked cantilever and curls downward at its tip.")
+    OVERHANG
 }

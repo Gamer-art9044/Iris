@@ -31,8 +31,28 @@ public final class RuntimeProgressMessages {
     public static final TextKey STUDIO_STAGE_FINALIZE_OPEN = TextKey.of("iris.runtime.studio.stage.finalize_open", "Finalizing");
     public static final TextKey STUDIO_STAGE_CLEANUP = TextKey.of("iris.runtime.studio.stage.cleanup", "Cleaning up");
     public static final TextKey WORLD_CREATE_TELEPORT_FAILED = TextKey.of("iris.runtime.world_create.teleport_failed", C.YELLOW + "The world was created, but automatic teleport failed. Try /iris teleport world={world}");
-    public static final TextKey WORLD_CREATE_ACTION = TextKey.of("iris.runtime.world_create.action", "{bar}" + C.GRAY + " " + C.YELLOW + "{percent}%" + C.DARK_GRAY + " {generated}/{required} chunks");
-    public static final TextKey WORLD_CREATE_CONSOLE = TextKey.of("iris.runtime.world_create.console", C.GOLD + "Generating " + C.YELLOW + "{percent}%" + C.GRAY + " {generated}/{required} chunks" + C.DARK_GRAY + " ({remaining} left)");
+    public static final TextKey WORLD_CREATE_BOSSBAR_WORKING = TextKey.of("iris.runtime.world_create.bossbar.working", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.WHITE + "Starting");
+    public static final TextKey WORLD_CREATE_BOSSBAR_PROGRESS = TextKey.of("iris.runtime.world_create.bossbar.progress", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.YELLOW + "{percent}% " + C.WHITE + "{stage}");
+    public static final TextKey WORLD_CREATE_BOSSBAR_FAILED = TextKey.of("iris.runtime.world_create.bossbar.failed", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.RED + "FAILED " + C.DARK_GRAY + "{percent}%");
+    public static final TextKey WORLD_CREATE_BOSSBAR_READY = TextKey.of("iris.runtime.world_create.bossbar.ready", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.GREEN + "READY 100%");
+    public static final TextKey WORLD_CREATE_LIFECYCLE_ACTION = TextKey.of("iris.runtime.world_create.lifecycle.action", "{bar}" + C.GRAY + " " + C.YELLOW + "{percent}%" + C.GRAY + " | " + C.WHITE + "{stage}{detail}" + C.DARK_GRAY + " {elapsed}");
+    public static final TextKey WORLD_CREATE_LIFECYCLE_ACTION_FAILED = TextKey.of("iris.runtime.world_create.lifecycle.action.failed", "{bar}" + C.GRAY + " " + C.RED + "FAILED" + C.GRAY + " | " + C.WHITE + "{stage}{detail}" + C.DARK_GRAY + " {elapsed}");
+    public static final TextKey WORLD_CREATE_LIFECYCLE_ACTION_READY = TextKey.of("iris.runtime.world_create.lifecycle.action.ready", "{bar}" + C.GRAY + " " + C.GREEN + "100%" + C.GRAY + " | " + C.GREEN + "World ready" + C.DARK_GRAY + " {elapsed}");
+    public static final TextKey WORLD_CREATE_LIFECYCLE_CONSOLE = TextKey.of("iris.runtime.world_create.lifecycle.console", C.GOLD + "World " + C.AQUA + "{world} {bar} " + C.YELLOW + "{percent}%" + C.GRAY + " {stage}{detail}" + C.DARK_GRAY + " ({elapsed})");
+    public static final TextKey WORLD_CREATE_LIFECYCLE_CONSOLE_FAILED = TextKey.of("iris.runtime.world_create.lifecycle.console.failed", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.RED + "creation failed" + C.DARK_GRAY + " after {elapsed}");
+    public static final TextKey WORLD_CREATE_LIFECYCLE_CONSOLE_READY = TextKey.of("iris.runtime.world_create.lifecycle.console.ready", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.GREEN + "ready" + C.DARK_GRAY + " in {elapsed}");
+    public static final TextKey WORLD_CREATE_STAGE_INITIALIZING = TextKey.of("iris.runtime.world_create.stage.initializing", "Initializing");
+    public static final TextKey WORLD_CREATE_STAGE_RESOLVE_DIMENSION = TextKey.of("iris.runtime.world_create.stage.resolve_dimension", "Resolving dimension");
+    public static final TextKey WORLD_CREATE_STAGE_VALIDATE_PACK = TextKey.of("iris.runtime.world_create.stage.validate_pack", "Validating pack");
+    public static final TextKey WORLD_CREATE_STAGE_PREPARE_WORLD_PACK = TextKey.of("iris.runtime.world_create.stage.prepare_world_pack", "Preparing world pack");
+    public static final TextKey WORLD_CREATE_STAGE_INSTALL_DATAPACKS = TextKey.of("iris.runtime.world_create.stage.install_datapacks", "Installing datapacks");
+    public static final TextKey WORLD_CREATE_STAGE_PREPARE_GENERATOR = TextKey.of("iris.runtime.world_create.stage.prepare_generator", "Preparing generator");
+    public static final TextKey WORLD_CREATE_STAGE_CREATE_WORLD = TextKey.of("iris.runtime.world_create.stage.create_world", "Generating spawn");
+    public static final TextKey WORLD_CREATE_STAGE_REGISTER_WORLD = TextKey.of("iris.runtime.world_create.stage.register_world", "Registering world");
+    public static final TextKey WORLD_CREATE_STAGE_TELEPORT_PLAYER = TextKey.of("iris.runtime.world_create.stage.teleport_player", "Finding safe entry");
+    public static final TextKey WORLD_CREATE_STAGE_PREGENERATE = TextKey.of("iris.runtime.world_create.stage.pregenerate", "Pregenerating");
+    public static final TextKey WORLD_CREATE_STAGE_FINALIZE = TextKey.of("iris.runtime.world_create.stage.finalize", "Finalizing");
+    public static final TextKey WORLD_CREATE_STAGE_COMPLETE = TextKey.of("iris.runtime.world_create.stage.complete", "World ready");
     public static final TextKey WORLD_PREGEN_ACTION = TextKey.of("iris.runtime.world_create.pregen.action", "{bar}" + C.GRAY + " " + C.YELLOW + "{percent}%" + C.GRAY + " | " + C.WHITE + "Pregenerating");
     public static final TextKey WORLD_PREGEN_CONSOLE = TextKey.of("iris.runtime.world_create.pregen.console", C.GOLD + "Pregenerating " + C.YELLOW + "{percent}%");
     public static final TextKey CHUNK_TITLE_REGEN = TextKey.of("iris.runtime.chunk_job.title.regen", "Regen");
@@ -110,8 +130,28 @@ public final class RuntimeProgressMessages {
             STUDIO_STAGE_FINALIZE_OPEN,
             STUDIO_STAGE_CLEANUP,
             WORLD_CREATE_TELEPORT_FAILED,
-            WORLD_CREATE_ACTION,
-            WORLD_CREATE_CONSOLE,
+            WORLD_CREATE_BOSSBAR_WORKING,
+            WORLD_CREATE_BOSSBAR_PROGRESS,
+            WORLD_CREATE_BOSSBAR_FAILED,
+            WORLD_CREATE_BOSSBAR_READY,
+            WORLD_CREATE_LIFECYCLE_ACTION,
+            WORLD_CREATE_LIFECYCLE_ACTION_FAILED,
+            WORLD_CREATE_LIFECYCLE_ACTION_READY,
+            WORLD_CREATE_LIFECYCLE_CONSOLE,
+            WORLD_CREATE_LIFECYCLE_CONSOLE_FAILED,
+            WORLD_CREATE_LIFECYCLE_CONSOLE_READY,
+            WORLD_CREATE_STAGE_INITIALIZING,
+            WORLD_CREATE_STAGE_RESOLVE_DIMENSION,
+            WORLD_CREATE_STAGE_VALIDATE_PACK,
+            WORLD_CREATE_STAGE_PREPARE_WORLD_PACK,
+            WORLD_CREATE_STAGE_INSTALL_DATAPACKS,
+            WORLD_CREATE_STAGE_PREPARE_GENERATOR,
+            WORLD_CREATE_STAGE_CREATE_WORLD,
+            WORLD_CREATE_STAGE_REGISTER_WORLD,
+            WORLD_CREATE_STAGE_TELEPORT_PLAYER,
+            WORLD_CREATE_STAGE_PREGENERATE,
+            WORLD_CREATE_STAGE_FINALIZE,
+            WORLD_CREATE_STAGE_COMPLETE,
             WORLD_PREGEN_ACTION,
             WORLD_PREGEN_CONSOLE,
             CHUNK_TITLE_REGEN,

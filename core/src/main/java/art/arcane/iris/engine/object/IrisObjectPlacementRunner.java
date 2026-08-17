@@ -896,8 +896,9 @@ final class IrisObjectPlacementRunner {
             return false;
         }
 
-        int envelopeMinY = paint ? Integer.MIN_VALUE : y - margin;
-        int envelopeMaxY = paint ? Integer.MAX_VALUE : y + margin;
+        int worldY = y + engine.getMinHeight();
+        int envelopeMinY = paint ? Integer.MIN_VALUE : worldY - margin;
+        int envelopeMaxY = paint ? Integer.MAX_VALUE : worldY + margin;
         boolean envelopeMeetsPiece = false;
         for (NativeStructureVolume volume : volumes) {
             if (volume.intersects(x - margin, envelopeMinY, z - margin, x + margin, envelopeMaxY, z + margin)) {
@@ -934,9 +935,10 @@ final class IrisObjectPlacementRunner {
                         ? (int) Math.round(i.getY()) + Math.floorDiv(self.h, 2)
                                 + placer.getHighest(xx, zz, self.getLoader(), config.isUnderwater())
                         : y + (int) Math.round(i.getY());
+                int worldBlockY = yy + engine.getMinHeight();
 
                 for (NativeStructureVolume volume : volumes) {
-                    if (volume.containsWithin(xx, yy, zz, warpMargin)) {
+                    if (volume.containsWithin(xx, worldBlockY, zz, warpMargin)) {
                         return true;
                     }
                 }

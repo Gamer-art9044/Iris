@@ -65,6 +65,7 @@ public class IrisShoreLineDecoratorTest {
         Fixture fixture = createFixture(false);
         PlatformBlockState support = sturdyState();
         PlatformBlockState targetAir = airState();
+        when(fixture.decorant.canPlaceOnto(support)).thenReturn(true);
         Hunk<PlatformBlockState> output = output(support, targetAir);
 
         fixture.shoreline.decorate(0, 0, 0, 1, -1, 0, 1, -1,

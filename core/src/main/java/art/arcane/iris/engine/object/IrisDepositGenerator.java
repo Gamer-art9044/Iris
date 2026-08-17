@@ -28,6 +28,7 @@ import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.Required;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.common.math.IrisBlockVector;
 import art.arcane.iris.util.common.math.Vector3i;
 import art.arcane.volmlib.util.collection.KList;
@@ -51,27 +52,38 @@ public class IrisDepositGenerator {
     private final transient ConcurrentMap<ClumpCacheKey, KList<IrisObject>> objects = new ConcurrentHashMap<>();
     private final transient AtomicCache<KList<PlatformBlockState>> blockData = new AtomicCache<>();
     private final transient AtomicCache<Boolean> ore = new AtomicCache<>();
+    private final transient AtomicCache<KSet<String>> replaceableBlockData = new AtomicCache<>();
     private final transient ConcurrentMap<ClumpCacheKey, KList<IrisObject>> scaledObjects = new ConcurrentHashMap<>();
     @Required
-    @MinNumber(0)
+    @MinNumber(-8192)
     @MaxNumber(8192)
-    @Desc("The minimum height this deposit can generate at, in engine-local Y where 0 is the bottom of the dimension, not world Y.")
+    @Desc("The inclusive minimum origin height in engine-local Y, where 0 is the bottom of the dimension. Negative values let an unclipped vanilla distribution taper into the world floor.")
     private int minHeight = 1;
     @Required
-    @MinNumber(0)
+    @MinNumber(-8192)
     @MaxNumber(8192)
-    @Desc("The maximum height this deposit can generate at, in engine-local Y where 0 is the bottom of the dimension, not world Y. Clump centers are additionally clamped to stay below the terrain surface.")
+    @Desc("The inclusive maximum origin height in engine-local Y, where 0 is the bottom of the dimension.")
     private int maxHeight = 75;
+    @Desc("How origin heights are sampled. CLIPPED_UNIFORM preserves Iris behavior by clipping the band to terrain; UNIFORM and TRIANGLE sample the authored band first and discard cells outside terrain or build height.")
+    private IrisDepositHeightDistribution heightDistribution = IrisDepositHeightDistribution.CLIPPED_UNIFORM;
+    @Desc("TERRAIN places below the generated surface. ABOVE_TERRAIN places only in existing solid hosts above it. FULL_HEIGHT permits existing solid hosts anywhere in the dimension.")
+    private IrisDepositPlacementScope placementScope = IrisDepositPlacementScope.TERRAIN;
+    @MinNumber(0)
+    @MaxNumber(256)
+    @Desc("Solid blocks kept between a deposit and the terrain surface. Vanilla-like deposits use 0; the Iris default remains 7.")
+    private int surfaceClearance = 7;
     @Required
     @MinNumber(0)
     @MaxNumber(8192)
-    @Desc("The minimum amount of deposit blocks per clump")
+    @Desc("The minimum Iris block count or vanilla configured vein size, selected according to shape.")
     private int minSize = 0;
     @Required
     @MinNumber(0)
     @MaxNumber(8192)
-    @Desc("The maximum amount of deposit blocks per clump")
+    @Desc("The maximum Iris block count or vanilla configured vein size, selected according to shape.")
     private int maxSize = 128;
+    @Desc("IRIS places a fixed-count cube clump. VANILLA_ELLIPSOID uses Minecraft's chained ellipsoid geometry. VANILLA_SCATTERED uses Minecraft's sparse candidate offsets.")
+    private IrisDepositShape shape = IrisDepositShape.IRIS;
     @Required
     @MinNumber(0)
     @MaxNumber(2048)
@@ -90,6 +102,10 @@ public class IrisDepositGenerator {
     @MaxNumber(1)
     @Desc("The chance of each individual clump spawning in a chunk")
     private double perClumpSpawnChance = 1;
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("Chance to discard a candidate ore block when it touches air. This matches vanilla ore exposure reduction.")
+    private double discardChanceOnAirExposure = 0;
     @Required
     @ArrayType(min = 1, type = IrisBlockData.class)
     @Desc("The palette of blocks to be used in this deposit generator. Each entry is picked uniformly; the per-entry weight field is ignored here.")
@@ -98,10 +114,25 @@ public class IrisDepositGenerator {
     @MaxNumber(64)
     @Desc("Ore varience is how many different objects clumps iris will create")
     private int varience = 3;
+    @ArrayType(min = 1, type = String.class)
+    @Desc("Optional block ids this deposit may replace. An empty list retains Iris's any-solid behavior.")
+    private KList<String> replaceableBlocks = new KList<>();
+    @Desc("Chooses whether includedBiomes and excludedBiomes inspect the surface biome or the cave biome at the deposit origin.")
+    private IrisDepositBiomeScope biomeScope = IrisDepositBiomeScope.CAVE;
+    @ArrayType(min = 1, type = String.class)
+    @Desc("Optional Iris biome keys or vanilla derivative ids allowed for this deposit.")
+    private KList<String> includedBiomes = new KList<>();
+    @ArrayType(min = 1, type = String.class)
+    @Desc("Optional Iris biome keys or vanilla derivative ids denied for this deposit.")
+    private KList<String> excludedBiomes = new KList<>();
     @Desc("If set to true, this deposit will replace bedrock")
     private boolean replaceBedrock = false;
 
     public IrisObject getClump(Engine engine, RNG rng, IrisData rdata) {
+        if (shape != IrisDepositShape.IRIS) {
+            return generateConfiguredClumpObject(rng, rdata, minSize, maxSize);
+        }
+
         ClumpCacheKey cacheKey = new ClumpCacheKey(engine.getSeedManager().getDeposit(), minSize, maxSize);
         KList<IrisObject> objects = this.objects.computeIfAbsent(cacheKey, key -> {
             RNG rngv = new RNG(key.depositSeed() + hashCode());
@@ -124,6 +155,10 @@ public class IrisDepositGenerator {
 
         int scaledMinSize = scaledDepositSize(minSize, sizeMultiplier);
         int scaledMaxSize = scaledDepositSize(maxSize, sizeMultiplier);
+        if (shape != IrisDepositShape.IRIS) {
+            return generateConfiguredClumpObject(rng, rdata, scaledMinSize, scaledMaxSize);
+        }
+
         ClumpCacheKey cacheKey = new ClumpCacheKey(
                 engine.getSeedManager().getDeposit(), scaledMinSize, scaledMaxSize);
         KList<IrisObject> objects = scaledObjects.computeIfAbsent(cacheKey, key -> {
@@ -147,6 +182,148 @@ public class IrisDepositGenerator {
 
     static int scaledDepositSize(int size, double multiplier) {
         return Math.max(0, Math.min(8192, (int) Math.round(size * multiplier)));
+    }
+
+    private IrisObject generateConfiguredClumpObject(RNG rng, IrisData rdata, int clumpMinSize, int clumpMaxSize) {
+        int size = rng.i(clumpMinSize, clumpMaxSize + 1);
+        return switch (shape) {
+            case VANILLA_ELLIPSOID -> generateVanillaEllipsoid(rng, rdata, size);
+            case VANILLA_SCATTERED -> generateVanillaScattered(rng, rdata, size);
+            case IRIS -> generateClumpObject(rng, rdata, clumpMinSize, clumpMaxSize);
+        };
+    }
+
+    IrisObject generateVanillaEllipsoid(RNG rng, IrisData rdata, int size) {
+        if (size <= 0) {
+            return new IrisObject(1, 1, 1);
+        }
+
+        float angle = rng.nextFloat() * (float) Math.PI;
+        float reach = size / 8F;
+        double startX = Math.sin(angle) * reach;
+        double endX = -Math.sin(angle) * reach;
+        double startZ = Math.cos(angle) * reach;
+        double endZ = -Math.cos(angle) * reach;
+        double startY = rng.nextInt(3) - 2;
+        double endY = rng.nextInt(3) - 2;
+        double[] nodes = new double[size * 4];
+
+        for (int i = 0; i < size; i++) {
+            float progress = (float) i / size;
+            double radiusNoise = rng.nextDouble() * size / 16D;
+            nodes[i * 4] = startX + (endX - startX) * progress;
+            nodes[i * 4 + 1] = startY + (endY - startY) * progress;
+            nodes[i * 4 + 2] = startZ + (endZ - startZ) * progress;
+            nodes[i * 4 + 3] = ((Math.sin(Math.PI * progress) + 1D) * radiusNoise + 1D) / 2D;
+        }
+
+        for (int i = 0; i < size - 1; i++) {
+            if (nodes[i * 4 + 3] <= 0D) {
+                continue;
+            }
+            for (int j = i + 1; j < size; j++) {
+                if (nodes[j * 4 + 3] <= 0D) {
+                    continue;
+                }
+                double dx = nodes[i * 4] - nodes[j * 4];
+                double dy = nodes[i * 4 + 1] - nodes[j * 4 + 1];
+                double dz = nodes[i * 4 + 2] - nodes[j * 4 + 2];
+                double dr = nodes[i * 4 + 3] - nodes[j * 4 + 3];
+                if (dr * dr <= dx * dx + dy * dy + dz * dz) {
+                    continue;
+                }
+                if (dr > 0D) {
+                    nodes[j * 4 + 3] = -1D;
+                } else {
+                    nodes[i * 4 + 3] = -1D;
+                }
+            }
+        }
+
+        KSet<BlockPosition> cells = new KSet<>();
+        for (int i = 0; i < size; i++) {
+            double radius = nodes[i * 4 + 3];
+            if (radius < 0D) {
+                continue;
+            }
+            double centerX = nodes[i * 4];
+            double centerY = nodes[i * 4 + 1];
+            double centerZ = nodes[i * 4 + 2];
+            int minX = (int) Math.floor(centerX - radius);
+            int maxX = Math.max((int) Math.floor(centerX + radius), minX);
+            int minY = (int) Math.floor(centerY - radius);
+            int maxY = Math.max((int) Math.floor(centerY + radius), minY);
+            int minZ = (int) Math.floor(centerZ - radius);
+            int maxZ = Math.max((int) Math.floor(centerZ + radius), minZ);
+
+            for (int x = minX; x <= maxX; x++) {
+                double nx = (x + 0.5D - centerX) / radius;
+                if (nx * nx >= 1D) {
+                    continue;
+                }
+                for (int y = minY; y <= maxY; y++) {
+                    double ny = (y + 0.5D - centerY) / radius;
+                    if (nx * nx + ny * ny >= 1D) {
+                        continue;
+                    }
+                    for (int z = minZ; z <= maxZ; z++) {
+                        double nz = (z + 0.5D - centerZ) / radius;
+                        if (nx * nx + ny * ny + nz * nz < 1D) {
+                            cells.add(new BlockPosition(x, y, z));
+                        }
+                    }
+                }
+            }
+        }
+
+        return objectFromCells(cells, rng, rdata);
+    }
+
+    IrisObject generateVanillaScattered(RNG rng, IrisData rdata, int size) {
+        KSet<BlockPosition> cells = new KSet<>();
+        int candidates = rng.nextInt(Math.max(0, size) + 1);
+        for (int i = 0; i < candidates; i++) {
+            int magnitude = Math.min(i, 7);
+            cells.add(new BlockPosition(
+                    Math.round((rng.nextFloat() - rng.nextFloat()) * magnitude),
+                    Math.round((rng.nextFloat() - rng.nextFloat()) * magnitude),
+                    Math.round((rng.nextFloat() - rng.nextFloat()) * magnitude)));
+        }
+        return objectFromCells(cells, rng, rdata);
+    }
+
+    private IrisObject objectFromCells(KSet<BlockPosition> cells, RNG rng, IrisData rdata) {
+        if (cells.isEmpty()) {
+            return new IrisObject(1, 1, 1);
+        }
+
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+        for (BlockPosition cell : cells) {
+            minX = Math.min(minX, cell.getX());
+            minY = Math.min(minY, cell.getY());
+            minZ = Math.min(minZ, cell.getZ());
+            maxX = Math.max(maxX, cell.getX());
+            maxY = Math.max(maxY, cell.getY());
+            maxZ = Math.max(maxZ, cell.getZ());
+        }
+
+        int extentX = Math.max(Math.abs(minX), Math.abs(maxX));
+        int extentY = Math.max(Math.abs(minY), Math.abs(maxY));
+        int extentZ = Math.max(Math.abs(minZ), Math.abs(maxZ));
+        IrisObject object = new IrisObject(extentX * 2 + 1, extentY * 2 + 1, extentZ * 2 + 1);
+        for (BlockPosition cell : cells) {
+            object.setUnsigned(
+                    cell.getX() + extentX,
+                    cell.getY() + extentY,
+                    cell.getZ() + extentZ,
+                    nextBlock(rng, rdata));
+        }
+        return object;
     }
 
     private IrisObject generateClumpObject(RNG rngv, IrisData rdata, int clumpMinSize, int clumpMaxSize) {
@@ -228,6 +405,54 @@ public class IrisDepositGenerator {
 
             return false;
         });
+    }
+
+    public boolean canReplace(PlatformBlockState state) {
+        if (replaceableBlocks == null || replaceableBlocks.isEmpty()) {
+            return true;
+        }
+        return replaceableBlockData.aquire(this::resolveReplaceableBlocks)
+                .contains(IrisProceduralBlocks.materialKey(state));
+    }
+
+    public boolean matchesBiome(IrisBiome surfaceBiome, IrisBiome caveBiome) {
+        IrisBiome selected = biomeScope == IrisDepositBiomeScope.SURFACE ? surfaceBiome : caveBiome;
+        if (includedBiomes != null && !includedBiomes.isEmpty() && !matchesAnyBiome(selected, includedBiomes)) {
+            return false;
+        }
+        return excludedBiomes == null || excludedBiomes.isEmpty() || !matchesAnyBiome(selected, excludedBiomes);
+    }
+
+    public boolean usesCaveBiomeFilter() {
+        return biomeScope == IrisDepositBiomeScope.CAVE
+                && ((includedBiomes != null && !includedBiomes.isEmpty())
+                || (excludedBiomes != null && !excludedBiomes.isEmpty()));
+    }
+
+    private KSet<String> resolveReplaceableBlocks() {
+        KSet<String> resolved = new KSet<>();
+        for (String key : replaceableBlocks) {
+            PlatformBlockState state = B.getStateOrNull(key, false);
+            if (state != null) {
+                resolved.add(IrisProceduralBlocks.materialKey(state));
+            }
+        }
+        return resolved;
+    }
+
+    private boolean matchesAnyBiome(IrisBiome biome, KList<String> configuredBiomes) {
+        if (biome == null) {
+            return false;
+        }
+        for (String configured : configuredBiomes) {
+            String namespaced = configured.contains(":") ? configured : "minecraft:" + configured;
+            if (configured.equals(biome.getLoadKey())
+                    || namespaced.equals(biome.getDerivativeKey())
+                    || namespaced.equals(biome.getVanillaDerivativeKey())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     record ClumpCacheKey(long depositSeed, int minSize, int maxSize) {

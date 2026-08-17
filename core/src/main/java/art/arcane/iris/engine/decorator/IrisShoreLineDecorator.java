@@ -65,7 +65,8 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             return;
         }
 
-        if (!DecoratorCore.isValidShorelineSupport(decorator, data.get(x, height, z))) {
+        PlatformBlockState support = data.get(x, height, z);
+        if (support == null || !support.isSolid()) {
             return;
         }
 
@@ -76,7 +77,7 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
                 return;
             }
             PlatformBlockState block = decorator.getBlockData100(biome, rng, realX, height, realZ, getData());
-            if (block != null) {
+            if (block != null && DecoratorCore.isValidShorelineSupport(decorator, block, support)) {
                 data.set(x, targetY, z, block);
             }
             return;
@@ -96,7 +97,7 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             }
 
             PlatformBlockState block = decorator.getBlockDataForTop(biome, rng, realX, height, realZ, getData());
-            if (block != null) {
+            if (block != null && DecoratorCore.isValidShorelineSupport(decorator, block, support)) {
                 data.set(x, targetY, z, block);
             }
             return;
@@ -114,6 +115,9 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
                     ? decorator.getBlockDataForTop(biome, rng, realX, h, realZ, getData())
                     : decorator.getBlockData100(biome, rng, realX, h, realZ, getData());
             if (block == null) {
+                break;
+            }
+            if (i == 0 && !DecoratorCore.isValidShorelineSupport(decorator, block, support)) {
                 break;
             }
             data.set(x, targetY, z, block);

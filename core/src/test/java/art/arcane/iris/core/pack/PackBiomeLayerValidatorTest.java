@@ -30,11 +30,9 @@ public class PackBiomeLayerValidatorTest {
     }
 
     @Test
-    public void respectsSingleEntryDefaultsWhenFieldsAreAbsent() throws Exception {
+    public void respectsIndependentDefaultsWhenFieldsAreAbsent() throws Exception {
         File pack = temporaryFolder.newFolder("pack");
-        // Both fields default to one entry, so omitting both is legal...
         write(pack, "biomes/defaulted.json", "{\"name\":\"Defaulted\"}");
-        // ...and two ceiling entries against the implicit single default layer is not.
         write(pack, "biomes/implicit.json", "{\"caveCeilingLayers\":[{},{}]}");
 
         assertEquals(List.of(
@@ -73,6 +71,40 @@ public class PackBiomeLayerValidatorTest {
         assertFalse(result.isLoadable());
         assertTrue(result.getBlockingErrors().contains(
                 "Biome 'biome' declares 2 caveCeilingLayers but only 1 layers. caveCeilingLayers reuses the layers height generators and must not have more entries."));
+    }
+
+    @Test
+    public void rejectsEmbeddedDecoratorWithoutPalette() throws Exception {
+        File pack = temporaryFolder.newFolder("pack");
+        write(pack, "biomes/bad.json", "{\"decorators\":[{\"block\":\"minecraft:magma_block\"}]}");
+
+        assertEquals(List.of(
+                "Biome 'bad' decorators[0] must declare a non-empty palette."
+        ), PackBiomeLayerValidator.validateDecoratorPalettes(
+                new File(pack, "biomes"), new File(pack, "snippet/decorator")));
+    }
+
+    @Test
+    public void rejectsDecoratorSnippetWithoutPalette() throws Exception {
+        File pack = temporaryFolder.newFolder("pack");
+        write(pack, "snippet/decorator/bad.json", "{\"chance\":0.5}");
+
+        assertEquals(List.of(
+                "Decorator snippet 'bad' must declare a non-empty palette."
+        ), PackBiomeLayerValidator.validateDecoratorPalettes(
+                new File(pack, "biomes"), new File(pack, "snippet/decorator")));
+    }
+
+    @Test
+    public void acceptsDecoratorPalettesAndSnippetReferences() throws Exception {
+        File pack = temporaryFolder.newFolder("pack");
+        write(pack, "biomes/ok.json",
+                "{\"decorators\":[{\"palette\":[{\"block\":\"minecraft:magma_block\"}]},\"snippet/decorator/ok\"]}");
+        write(pack, "snippet/decorator/ok.json",
+                "{\"palette\":[{\"block\":\"minecraft:magma_block\"}]}");
+
+        assertTrue(PackBiomeLayerValidator.validateDecoratorPalettes(
+                new File(pack, "biomes"), new File(pack, "snippet/decorator")).isEmpty());
     }
 
     private void write(File root, String relative, String content) throws Exception {

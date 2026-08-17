@@ -183,20 +183,20 @@ public class PackDownloadProgressReporterTest {
     }
 
     @Test
-    public void playerHudUsesArbitratedActionAndBossBarLanesWithCleanup() throws Exception {
+    public void playerHudAlwaysShowsLoaderLaneAndActionBarWithCleanup() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/service/PackDownloadProgressReporter.java"
         ));
 
-        assertTrue(source.contains("new HudSlotRequest("));
-        assertTrue(source.contains("List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)"));
+        assertFalse(source.contains("HudSlotRequest"));
+        assertFalse(source.contains("HudSurface"));
         assertTrue(source.contains("J.ar(this::pulseHud, HUD_PULSE_TICKS)"));
-        assertTrue(source.contains("HUD_CLAIM_TTL_MILLIS"));
+        assertTrue(source.contains("BukkitPlatform.hudLanes().show("));
+        assertTrue(source.contains("sender.sendAction(snapshot.line())"));
         assertTrue(source.contains("HUD_TERMINAL_TICKS, retiredCleanup"));
         assertTrue(source.contains("BukkitPlatform.hudLanes().retire(playerId, hudLaneId)"));
-        assertTrue(source.contains("claim.retire();"));
+        assertTrue(source.contains("BukkitPlatform.hudLanes().hide(player, hudLaneId)"));
         assertFalse(source.contains("J.runGlobal(cleanup)"));
-        assertTrue(source.contains("claim.release();"));
         assertTrue(source.contains("J.car(activeTaskId);"));
     }
 

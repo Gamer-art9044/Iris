@@ -275,6 +275,27 @@ public class NativeStructureOwnershipStoreTest {
     }
 
     @Test
+    public void deferredFlushRemainsDirtyForSuccessfulRetryWithoutFailingAutosave() {
+        Engine engine = engine();
+        DeferringFlushStorage storage = new DeferringFlushStorage();
+        NativeStructureOwnershipStore.State state =
+                new NativeStructureOwnershipStore.State(engine, storage);
+        NativeStructureOwnershipRecord record = record(
+                "test:flush_deferred", 13, -16, 107L);
+
+        state.record(record);
+        state.flush();
+        state.flush();
+        storage.crash();
+
+        NativeStructureOwnershipStore.State recovered =
+                new NativeStructureOwnershipStore.State(engine, storage);
+        assertEquals(record, recovered.findPersisted(
+                record.structureKey(), record.originChunkX(), record.originChunkZ()));
+        assertEquals(2, storage.flushes);
+    }
+
+    @Test
     public void cleanFlushPerformsNoStorageIo() {
         Engine engine = engine();
         CrashableStorage storage = new CrashableStorage();
@@ -341,6 +362,29 @@ public class NativeStructureOwnershipStoreTest {
                 new NativeStructureOwnershipStore.State(engine, storage);
         NativeStructureOwnershipRecord record = record(
                 "test:close_retry", -22, 23, 106L);
+
+        state.record(record);
+        assertThrows(IllegalStateException.class, state::close);
+        assertEquals(record, state.findPersisted(
+                record.structureKey(), record.originChunkX(), record.originChunkZ()));
+
+        state.close();
+        storage.crash();
+        NativeStructureOwnershipStore.State recovered =
+                new NativeStructureOwnershipStore.State(engine, storage);
+        assertEquals(record, recovered.findPersisted(
+                record.structureKey(), record.originChunkX(), record.originChunkZ()));
+        assertEquals(2, storage.flushes);
+    }
+
+    @Test
+    public void deferredCloseLeavesTheStoreOpenAndDirtyForRetry() {
+        Engine engine = engine();
+        DeferringFlushStorage storage = new DeferringFlushStorage();
+        NativeStructureOwnershipStore.State state =
+                new NativeStructureOwnershipStore.State(engine, storage);
+        NativeStructureOwnershipRecord record = record(
+                "test:close_deferred", -23, 24, 108L);
 
         state.record(record);
         assertThrows(IllegalStateException.class, state::close);
@@ -434,8 +478,9 @@ public class NativeStructureOwnershipStoreTest {
         }
 
         @Override
-        public void flush() {
+        public boolean flush() {
             flushes++;
+            return true;
         }
 
         NativeStructureOwnershipRecord find(long target,
@@ -450,10 +495,11 @@ public class NativeStructureOwnershipStoreTest {
         protected final Map<Long, NativeStructureOwnershipBundle> durable = new ConcurrentHashMap<>();
 
         @Override
-        public void flush() {
+        public boolean flush() {
             super.flush();
             durable.clear();
             durable.putAll(chunks);
+            return true;
         }
 
         void crash() {
@@ -466,13 +512,29 @@ public class NativeStructureOwnershipStoreTest {
         private final AtomicBoolean fail = new AtomicBoolean(true);
 
         @Override
-        public void flush() {
+        public boolean flush() {
             flushes++;
             if (fail.compareAndSet(true, false)) {
                 throw new IllegalStateException("Simulated ownership flush failure");
             }
             durable.clear();
             durable.putAll(chunks);
+            return true;
+        }
+    }
+
+    private static final class DeferringFlushStorage extends CrashableStorage {
+        private final AtomicBoolean defer = new AtomicBoolean(true);
+
+        @Override
+        public boolean flush() {
+            flushes++;
+            if (defer.compareAndSet(true, false)) {
+                return false;
+            }
+            durable.clear();
+            durable.putAll(chunks);
+            return true;
         }
     }
 

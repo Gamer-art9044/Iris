@@ -91,6 +91,7 @@ public class ServerConfigurator {
     private static final int FINGERPRINT_BUFFER_BYTES = 64 * 1024;
     private static volatile boolean loadedDatapackRuntimeReady;
     private static volatile String loadedDatapackCompilerInputFingerprint = "";
+    private static volatile Map<String, String> loadedDatapackRegistryRequirements = Map.of();
     private static volatile long loadedDatapackRuntimeGeneration;
     private static volatile boolean loadedDatapackRestartRequired;
 
@@ -98,6 +99,7 @@ public class ServerConfigurator {
         synchronized (DATAPACK_INSTALL_LOCK) {
             invalidateLoadedDatapackRuntime();
             loadedDatapackCompilerInputFingerprint = "";
+            loadedDatapackRegistryRequirements = Map.of();
             loadedDatapackRestartRequired = false;
         }
         IrisSettings.IrisSettingsAutoconfiguration s = IrisSettings.get().getAutoConfiguration();
@@ -112,13 +114,15 @@ public class ServerConfigurator {
         if (DefaultPackBootstrapProvisioner.wasProvisionedThisStartup()) {
             loadedDatapackRuntimeReady = !IrisSettings.get().getGeneral().adjustVanillaHeight
                     && pinLoadedDatapackCompilerInputs(
-                            DefaultPackBootstrapProvisioner.compilerInputFingerprintThisStartup());
+                            DefaultPackBootstrapProvisioner.compilerInputFingerprintThisStartup())
+                    && pinLoadedDatapackRegistryRequirements();
             IrisLogging.info("Paper loaded the Iris datapack during bootstrap; skipping the legacy startup install.");
         } else {
             DatapackInstallResult result = installDataPacks(true);
             loadedDatapackRuntimeReady = result.succeeded()
                     && !result.restartRequired()
-                    && pinLoadedDatapackCompilerInputs();
+                    && pinLoadedDatapackCompilerInputs()
+                    && pinLoadedDatapackRegistryRequirements();
             if (result.restartRequired()) {
                 IrisLogging.warn("Iris datapack changes require another server restart before worlds can use them.");
             }
@@ -138,12 +142,13 @@ public class ServerConfigurator {
                     || INMS.get().missingDimensionTypes(requiredDimension.getDimensionTypeKey())) {
                 return false;
             }
-            String currentFingerprint = computeCurrentDatapackCompilerInputFingerprint(resolveDataFixer());
-            return reusableRuntimeFingerprint(
-                    loadedDatapackCompilerInputFingerprint,
-                    currentFingerprint);
+            Map<String, String> requiredRegistryEntries =
+                    IrisDatapackCompiler.computeRegistryRequirements(requiredDimension, resolveDataFixer());
+            return loadedRegistrySatisfies(
+                    loadedDatapackRegistryRequirements,
+                    requiredRegistryEntries);
         } catch (IOException | RuntimeException exception) {
-            IrisLogging.reportError("Unable to verify loaded Iris datapack compiler inputs.", exception);
+            IrisLogging.reportError("Unable to verify loaded Iris datapack registry requirements.", exception);
             return false;
         }
     }
@@ -512,6 +517,37 @@ public class ServerConfigurator {
             IrisLogging.reportError("Unable to pin loaded Iris datapack compiler inputs.", exception);
             return false;
         }
+    }
+
+    private static boolean pinLoadedDatapackRegistryRequirements() {
+        if (loadedDatapackRestartRequired) {
+            return false;
+        }
+        try {
+            loadedDatapackRegistryRequirements = IrisDatapackCompiler.computeRegistryRequirements(
+                    collectCompilerPackRoots(),
+                    resolveDataFixer());
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            loadedDatapackRegistryRequirements = Map.of();
+            IrisLogging.reportError("Unable to pin loaded Iris datapack registry requirements.", exception);
+            return false;
+        }
+    }
+
+    static boolean loadedRegistrySatisfies(
+            Map<String, String> loadedRequirements,
+            Map<String, String> requiredEntries
+    ) {
+        if (loadedRequirements == null || requiredEntries == null || requiredEntries.isEmpty()) {
+            return false;
+        }
+        for (Map.Entry<String, String> entry : requiredEntries.entrySet()) {
+            if (!entry.getValue().equals(loadedRequirements.get(entry.getKey()))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static boolean reusableRuntimeFingerprint(String loadedFingerprint, String currentFingerprint) {

@@ -169,7 +169,10 @@ public final class NativeStructureOwnershipStore {
                 if (closed) {
                     return;
                 }
-                flushDirty();
+                if (!flushDirty()) {
+                    throw new IllegalStateException(
+                            "Cannot close native structure ownership storage while Mantle regions are in use");
+                }
                 closed = true;
                 authorities.invalidateAll();
             } finally {
@@ -177,12 +180,15 @@ public final class NativeStructureOwnershipStore {
             }
         }
 
-        private void flushDirty() {
+        private boolean flushDirty() {
             if (!dirty) {
-                return;
+                return true;
             }
-            storage.flush();
-            dirty = false;
+            if (storage.flush()) {
+                dirty = false;
+                return true;
+            }
+            return false;
         }
 
         private Authority loadAuthority(
@@ -217,7 +223,7 @@ public final class NativeStructureOwnershipStore {
 
         void remove(long target, String structureKey, int originChunkX, int originChunkZ);
 
-        void flush();
+        boolean flush();
     }
 
     private static final class MantleStorage implements Storage {
@@ -296,10 +302,10 @@ public final class NativeStructureOwnershipStore {
         }
 
         @Override
-        public void flush() {
+        public boolean flush() {
             Map<Long, NativeStructureOwnershipBundle> pending = new TreeMap<>(pendingBundles);
             if (pending.isEmpty()) {
-                return;
+                return true;
             }
 
             Mantle<Matter> mantle = mantle();
@@ -309,10 +315,15 @@ public final class NativeStructureOwnershipStore {
                 restorePendingBundle(mantle, target, entry.getValue());
                 regions.add(Mantle.key(unpackX(target) >> 5, unpackZ(target) >> 5));
             }
-            mantle.saveTectonicPlates(regions);
+            Set<Long> deferredRegions = mantle.saveIdleTectonicPlates(regions);
             for (Map.Entry<Long, NativeStructureOwnershipBundle> entry : pending.entrySet()) {
-                pendingBundles.remove(entry.getKey(), entry.getValue());
+                long target = entry.getKey();
+                long region = Mantle.key(unpackX(target) >> 5, unpackZ(target) >> 5);
+                if (!deferredRegions.contains(region)) {
+                    pendingBundles.remove(target, entry.getValue());
+                }
             }
+            return deferredRegions.isEmpty();
         }
 
         private void restorePendingBundle(Mantle<Matter> mantle, long target,

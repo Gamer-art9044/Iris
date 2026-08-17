@@ -9,16 +9,11 @@ import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.format.Form;
-import art.arcane.volmlib.util.hud.HudPriority;
-import art.arcane.volmlib.util.hud.HudSlotClaim;
-import art.arcane.volmlib.util.hud.HudSlotRequest;
-import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.entity.Player;
 
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -30,7 +25,6 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
     private static final int INDETERMINATE_SEGMENT_WIDTH = 5;
     private static final int HUD_PULSE_TICKS = 5;
     private static final int HUD_TERMINAL_TICKS = 60;
-    private static final long HUD_CLAIM_TTL_MILLIS = HUD_TERMINAL_TICKS * 50L + 1_000L;
     private static final long ACTION_INTERVAL_MILLIS = 250L;
     private static final long CHAT_INTERVAL_MILLIS = 5_000L;
     private static final int CHAT_PERCENT_STEP = 10;
@@ -47,7 +41,7 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
     private final String hudLaneId;
     private PackDownloader.DownloadPhase phase;
     private PackDownloader.DownloadProgress latestProgress;
-    private HudSlotClaim hudClaim;
+    private boolean hudActive;
     private long transferredBytes;
     private long transferElapsedMillis;
     private long phaseStartedMillis;
@@ -93,12 +87,7 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
         if (player == null || !BukkitPlatform.hasHud()) {
             return;
         }
-        hudClaim = BukkitPlatform.hudSlots().open(player, new HudSlotRequest(
-                hudLaneId,
-                HudPriority.PROGRESS,
-                HUD_CLAIM_TTL_MILLIS,
-                List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)
-        ));
+        hudActive = true;
         int scheduledTaskId = J.ar(this::pulseHud, HUD_PULSE_TICKS);
         pulseTaskId = scheduledTaskId;
         if (finished || hudDisabled) {
@@ -237,9 +226,8 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
 
     private void pulseHud() {
         HudSnapshot snapshot;
-        HudSlotClaim claim;
         synchronized (this) {
-            if (finished || hudDisabled || hudClaim == null) {
+            if (finished || hudDisabled || !hudActive) {
                 stopPulse();
                 return;
             }
@@ -249,33 +237,25 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
             }
             lastActionMillis = now;
             snapshot = hudSnapshot(now);
-            claim = hudClaim;
         }
-        boolean scheduled = J.runEntity(player, () -> renderHudPulse(claim, snapshot));
+        boolean scheduled = J.runEntity(player, () -> renderHudPulse(snapshot));
         if (!scheduled) {
             disableHud(null);
         }
     }
 
-    private void renderHudPulse(HudSlotClaim claim, HudSnapshot snapshot) {
+    private void renderHudPulse(HudSnapshot snapshot) {
         try {
-            HudSurface surface = claim.resolve();
-            if (surface == HudSurface.ACTION_BAR) {
-                BukkitPlatform.hudLanes().hide(player, hudLaneId);
-                sender.sendAction(snapshot.line());
-            } else if (surface == HudSurface.BOSS_BAR) {
-                BukkitPlatform.hudLanes().show(
-                        player,
-                        hudLaneId,
-                        snapshot.line(),
-                        snapshot.progress(),
-                        BarColor.BLUE,
-                        BarStyle.SEGMENTED_20,
-                        1_500L
-                );
-            } else {
-                BukkitPlatform.hudLanes().hide(player, hudLaneId);
-            }
+            BukkitPlatform.hudLanes().show(
+                    player,
+                    hudLaneId,
+                    snapshot.line(),
+                    snapshot.progress(),
+                    BarColor.BLUE,
+                    BarStyle.SEGMENTED_20,
+                    1_500L
+            );
+            sender.sendAction(snapshot.line());
         } catch (RuntimeException failure) {
             disableHud(failure);
         }
@@ -315,9 +295,9 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
     }
 
     private synchronized void deliverTerminalHud(String message, BarColor color, double progress) {
-        HudSlotClaim claim = hudClaim;
-        hudClaim = null;
-        if (player == null || claim == null || hudDisabled) {
+        boolean active = hudActive;
+        hudActive = false;
+        if (player == null || !active || hudDisabled) {
             return;
         }
         long now = System.currentTimeMillis();
@@ -326,25 +306,20 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
         int delayTicks = (int) Math.ceil(delayMillis / 50.0D);
         lastActionMillis = now + delayMillis;
         AtomicBoolean cleaned = new AtomicBoolean();
-        Runnable cleanup = () -> releaseHudClaim(cleaned, claim);
-        Runnable retiredCleanup = () -> retireHudClaim(cleaned, claim);
+        Runnable cleanup = () -> releaseHudLane(cleaned);
+        Runnable retiredCleanup = () -> retireHudLane(cleaned);
         Runnable display = () -> {
             try {
-                HudSurface surface = claim.resolve();
-                if (surface == HudSurface.ACTION_BAR) {
-                    BukkitPlatform.hudLanes().hide(player, hudLaneId);
-                    sender.sendAction(message);
-                } else if (surface == HudSurface.BOSS_BAR) {
-                    BukkitPlatform.hudLanes().show(
-                            player,
-                            hudLaneId,
-                            message,
-                            progress,
-                            color,
-                            BarStyle.SOLID,
-                            4_000L
-                    );
-                }
+                BukkitPlatform.hudLanes().show(
+                        player,
+                        hudLaneId,
+                        message,
+                        progress,
+                        color,
+                        BarStyle.SOLID,
+                        4_000L
+                );
+                sender.sendAction(message);
             } finally {
                 if (!J.runEntity(player, cleanup, HUD_TERMINAL_TICKS, retiredCleanup)) {
                     retiredCleanup.run();
@@ -359,43 +334,41 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
     }
 
     private void disableHud(Throwable failure) {
-        HudSlotClaim claim;
+        boolean active;
         synchronized (this) {
             if (hudDisabled) {
                 return;
             }
             hudDisabled = true;
             stopPulse();
-            claim = hudClaim;
-            hudClaim = null;
+            active = hudActive;
+            hudActive = false;
         }
         if (failure != null) {
             IrisLogging.reportError("Pack download HUD disabled after a delivery failure.", failure);
         }
-        if (player != null && claim != null) {
+        if (player != null && active) {
             AtomicBoolean cleaned = new AtomicBoolean();
-            Runnable cleanup = () -> releaseHudClaim(cleaned, claim);
-            Runnable retiredCleanup = () -> retireHudClaim(cleaned, claim);
+            Runnable cleanup = () -> releaseHudLane(cleaned);
+            Runnable retiredCleanup = () -> retireHudLane(cleaned);
             if (!J.runEntity(player, cleanup, 0, retiredCleanup)) {
                 retiredCleanup.run();
             }
         }
     }
 
-    private void releaseHudClaim(AtomicBoolean cleaned, HudSlotClaim claim) {
+    private void releaseHudLane(AtomicBoolean cleaned) {
         if (!cleaned.compareAndSet(false, true)) {
             return;
         }
         BukkitPlatform.hudLanes().hide(player, hudLaneId);
-        claim.release();
     }
 
-    private void retireHudClaim(AtomicBoolean cleaned, HudSlotClaim claim) {
+    private void retireHudLane(AtomicBoolean cleaned) {
         if (!cleaned.compareAndSet(false, true)) {
             return;
         }
         BukkitPlatform.hudLanes().retire(playerId, hudLaneId);
-        claim.retire();
     }
 
     private synchronized void stopPulse() {

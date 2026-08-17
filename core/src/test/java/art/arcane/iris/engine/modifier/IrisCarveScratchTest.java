@@ -30,6 +30,9 @@ public class IrisCarveScratchTest {
         buffer.put(5, 25, 15, replacement);
         expected.put(key(5, 25, 15), replacement);
 
+        assertSame(replacement, buffer.get(5, 25, 15));
+        assertNull(buffer.get(5, 26, 15));
+
         Map<String, MatterCavern> actual = new HashMap<>();
         buffer.forEach((x, y, z, cavern) -> actual.put(key(x, y, z), cavern));
         assertEquals(expected.keySet(), actual.keySet());
@@ -44,7 +47,6 @@ public class IrisCarveScratchTest {
         MatterCavern cavern = new MatterCavern(true, "cave", (byte) 0);
         scratch.columnMasks[0].add(12);
         scratch.boundaryMasks[0].add(13);
-        scratch.boundaryCaverns[0] = cavern;
         scratch.walls.put(1, 12, 2, cavern);
         scratch.customBiomeCache.put("cave", null);
         scratch.customCaveBiomePresent = true;
@@ -53,7 +55,6 @@ public class IrisCarveScratchTest {
 
         assertTrue(scratch.columnMasks[0].isEmpty());
         assertTrue(scratch.boundaryMasks[0].isEmpty());
-        assertNull(scratch.boundaryCaverns[0]);
         assertTrue(scratch.customBiomeCache.isEmpty());
         assertFalse(scratch.customCaveBiomePresent);
         int[] wallCount = new int[1];

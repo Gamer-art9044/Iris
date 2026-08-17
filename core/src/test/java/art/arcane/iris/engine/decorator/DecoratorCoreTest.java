@@ -149,6 +149,8 @@ public class DecoratorCoreTest {
         PlatformBlockState air = mock(PlatformBlockState.class);
         PlatformBlockState decorant = mock(PlatformBlockState.class);
         when(air.isAir()).thenReturn(true);
+        when(decorant.key()).thenReturn("minecraft:stone");
+        when(decorant.canPlaceOnto(support)).thenReturn(true);
         when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(1);
         when(decorator.pickBlockDataTop(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
 
@@ -198,6 +200,7 @@ public class DecoratorCoreTest {
         when(occupied.isAir()).thenReturn(false);
         when(occupied.isFluid()).thenReturn(false);
         when(decorant.key()).thenReturn("minecraft:tall_grass");
+        when(decorant.canPlaceOnto(support)).thenReturn(true);
         when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(3);
         when(decorator.getTopThreshold()).thenReturn(0.75);
         when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
@@ -280,6 +283,7 @@ public class DecoratorCoreTest {
         IrisDecorator decorator = mock(IrisDecorator.class);
         IrisData data = mock(IrisData.class);
         PlatformBlockState decorant = mock(PlatformBlockState.class);
+        when(decorant.key()).thenReturn("minecraft:stone");
         when(decorator.getHeight(any(RNG.class), anyDouble(), anyDouble(), eq(data))).thenReturn(3);
         when(decorator.getTopThreshold()).thenReturn(1.0);
         when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
@@ -345,6 +349,7 @@ public class DecoratorCoreTest {
         PlatformBlockState lower = mock(PlatformBlockState.class);
         PlatformBlockState upper = mock(PlatformBlockState.class);
         PlatformBlockState plant = tallPlantState(lower, upper);
+        when(plant.canPlaceOnto(support)).thenReturn(true);
         when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(plant);
 
         Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 4, 1);
@@ -357,6 +362,26 @@ public class DecoratorCoreTest {
 
         assertSame(lower, output.get(0, 1, 0));
         assertSame(upper, output.get(0, 2, 0));
+    }
+
+    @Test
+    public void surfaceDecorantRejectsInvalidNativeSupport() {
+        IrisDecorator decorator = mock(IrisDecorator.class);
+        IrisData data = mock(IrisData.class);
+        PlatformBlockState support = sturdyState();
+        PlatformBlockState air = airState();
+        PlatformBlockState decorant = mock(PlatformBlockState.class);
+        when(decorant.canPlaceOnto(support)).thenReturn(false);
+        when(decorator.pickBlockData(any(RNG.class), eq(data), anyDouble(), anyDouble())).thenReturn(decorant);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 3, 1);
+        output.set(0, 0, 0, support);
+        output.set(0, 1, 0, air);
+
+        DecoratorCore.placeSurfaceSingle(
+                decorator, 0, 0, 0, 0, 0, output, new RNG(1L), data, false, false, null);
+
+        assertSame(air, output.get(0, 1, 0));
     }
 
     @Test
@@ -382,6 +407,26 @@ public class DecoratorCoreTest {
 
         assertSame(farmland, output.get(0, 0, 0));
         assertSame(wheat, output.get(0, 1, 0));
+    }
+
+    @Test
+    public void descendingWeepingVinesUsePlantBodiesAndOneFreeEndTip() {
+        PlatformBlockState vine = mock(PlatformBlockState.class);
+        when(vine.key()).thenReturn("minecraft:weeping_vines");
+
+        assertEquals("minecraft:weeping_vines_plant", DecoratorCore.stackedVineKey(vine, 3, 0));
+        assertEquals("minecraft:weeping_vines_plant", DecoratorCore.stackedVineKey(vine, 3, 1));
+        assertEquals("minecraft:weeping_vines", DecoratorCore.stackedVineKey(vine, 3, 2));
+    }
+
+    @Test
+    public void ascendingTwistingVinesUsePlantBodiesAndOneFreeEndTip() {
+        PlatformBlockState vine = mock(PlatformBlockState.class);
+        when(vine.key()).thenReturn("minecraft:twisting_vines_plant");
+
+        assertEquals("minecraft:twisting_vines_plant", DecoratorCore.stackedVineKey(vine, 3, 0));
+        assertEquals("minecraft:twisting_vines_plant", DecoratorCore.stackedVineKey(vine, 3, 1));
+        assertEquals("minecraft:twisting_vines", DecoratorCore.stackedVineKey(vine, 3, 2));
     }
 
     private PlatformBlockState airState() {

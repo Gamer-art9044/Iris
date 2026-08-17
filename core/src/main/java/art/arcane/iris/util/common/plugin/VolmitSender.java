@@ -22,11 +22,12 @@ import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.volmlib.util.collection.KList;
-import art.arcane.volmlib.util.hud.HudSurface;
+import art.arcane.volmlib.util.hud.HudPriority;
+import art.arcane.volmlib.util.hud.HudSegment;
+import art.arcane.volmlib.util.hud.HudSlot;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.math.M;
-import art.arcane.iris.util.common.scheduling.J;
 import lombok.Getter;
 import lombok.Setter;
 import net.kyori.adventure.text.Component;
@@ -47,9 +48,7 @@ import org.bukkit.plugin.Plugin;
 
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Represents a volume sender. A command sender with extra crap in it
@@ -221,60 +220,37 @@ public class VolmitSender implements CommandSender {
         s.sendMessage("========================================================");
     }
 
-    public void sendTitle(String title, String subtitle, int i, int s, int o) {
-        try {
-            player().sendTitle(
-                    LegacyComponentSerializer.legacySection().serialize(createComponent(title)),
-                    LegacyComponentSerializer.legacySection().serialize(createComponent(subtitle)),
-                    i / 50, s / 50, o / 50);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    public void sendProgress(double percent, String thing, HudSurface titleSurface, HudSurface barSurface) {
-        if (percent < 0) {
-            int l = 44;
-            int g = (int) (1D * l);
-            if (titleSurface == HudSurface.TITLE) {
-                sendTitle(C.IRIS + thing + " ", 0, 500, 250);
-            }
-            if (barSurface == HudSurface.ACTION_BAR) {
-                sendActionNoProcessing("" + "" + pulse("#00ff80", "#00373d", 1D) + "<underlined> " + Form.repeat(" ", g) + "<reset>" + Form.repeat(" ", l - g));
-            }
-        } else {
-            int l = 44;
-            int g = (int) (percent * l);
-            if (titleSurface == HudSurface.TITLE) {
-                sendTitle(C.IRIS + thing + " " + C.BLUE + "<font:minecraft:uniform>" + Form.pc(percent, 0), 0, 500, 250);
-            }
-            if (barSurface == HudSurface.ACTION_BAR) {
-                sendActionNoProcessing("" + "" + pulse("#00ff80", "#00373d", 1D) + "<underlined> " + Form.repeat(" ", g) + "<reset>" + Form.repeat(" ", l - g));
-            }
-        }
+    public void sendProgress(double percent, String thing) {
+        int l = 44;
+        int g = (int) ((percent < 0 ? 1D : percent) * l);
+        sendActionNoProcessing("" + "" + pulse("#00ff80", "#00373d", 1D) + "<underlined> " + Form.repeat(" ", g) + "<reset>" + Form.repeat(" ", l - g));
     }
 
     public void sendAction(String action) {
         try {
-            player().spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(LegacyComponentSerializer.legacySection().serialize(createNoPrefixComponent(action))));
+            deliverAction(LegacyComponentSerializer.legacySection().serialize(createNoPrefixComponent(action)));
         } catch (Throwable ignored) {
         }
     }
 
     public void sendActionNoProcessing(String action) {
         try {
-            player().spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(LegacyComponentSerializer.legacySection().serialize(createNoPrefixComponentNoProcessing(action))));
+            deliverAction(LegacyComponentSerializer.legacySection().serialize(createNoPrefixComponentNoProcessing(action)));
         } catch (Throwable ignored) {
         }
     }
 
-    public void sendTitle(String subtitle, int i, int s, int o) {
-        try {
-            player().sendTitle(
-                    " ",
-                    LegacyComponentSerializer.legacySection().serialize(createNoPrefixComponent(subtitle)),
-                    i / 50, s / 50, o / 50);
-        } catch (Throwable ignored) {
+    private void deliverAction(String legacy) {
+        Player player = player();
+        if (BukkitPlatform.hasHud()) {
+            if (legacy.isBlank()) {
+                BukkitPlatform.hudBar().clear(player, "iris:action");
+            } else {
+                BukkitPlatform.hudBar().publish(player, new HudSegment("iris:action", HudPriority.PROGRESS, 3000L, java.util.List.of(HudSlot.CENTER, HudSlot.LEFT), legacy));
+            }
+            return;
         }
+        player.spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(legacy));
     }
 
     private Component createNoPrefixComponent(String message) {
@@ -311,22 +287,6 @@ public class VolmitSender implements CommandSender {
 
         String t = C.translateAlternateColorCodes('&', getTag() + message);
         return MiniMessage.miniMessage().deserialize(C.mini(t));
-    }
-
-    public <T> void showWaiting(String passive, CompletableFuture<T> f) {
-        // isDone() alone is the completion signal: it covers normal, exceptional AND
-        // cancelled completion, where the old null-value gate spun forever on a
-        // CompletableFuture<Void> or a failed future.
-        AtomicInteger v = new AtomicInteger(-1);
-        v.set(J.ar(() -> {
-            if (f.isDone()) {
-                J.car(v.get());
-                sendAction(" ");
-                return;
-            }
-
-            sendProgress(-1, passive, HudSurface.TITLE, HudSurface.ACTION_BAR);
-        }, 0));
     }
 
     @Override

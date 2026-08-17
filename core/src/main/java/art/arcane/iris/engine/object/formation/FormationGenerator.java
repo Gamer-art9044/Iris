@@ -51,6 +51,10 @@ public final class FormationGenerator {
             case SEA_STACK -> FormationShapeBuilder.seaStack(canvas, f, height, baseRadius, rng);
             case BOULDER -> FormationShapeBuilder.boulder(canvas, f, height, baseRadius, rng);
             case BASALT_COLUMN -> FormationShapeBuilder.basaltColumns(canvas, f, height, baseRadius, rng);
+            case ICEBERG -> FormationShapeBuilder.iceberg(canvas, f, height, baseRadius, rng);
+            case FISSURE -> FormationShapeBuilder.fissure(canvas, f, height, baseRadius, rng);
+            case SPIRAL -> FormationShapeBuilder.spiral(canvas, f, height, baseRadius, rng);
+            case OVERHANG -> FormationShapeBuilder.overhang(canvas, f, height, baseRadius, rng);
         }
 
         if (canvas.isEmpty()) {

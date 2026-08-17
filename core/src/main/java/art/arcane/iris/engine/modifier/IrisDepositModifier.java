@@ -22,6 +22,8 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedModifier;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDepositGenerator;
+import art.arcane.iris.engine.object.IrisDepositHeightDistribution;
+import art.arcane.iris.engine.object.IrisDepositPlacementScope;
 import art.arcane.iris.engine.object.IrisDepositVariant;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
@@ -114,26 +116,38 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
 
             int x = rng.i(min, max + 1);
             int z = rng.i(min, max + 1);
-            int height = getDepositSurfaceLimit(cx, cz, x, z, he, context);
+            int terrainSurface = getDepositTerrainSurface(cx, cz, x, z, he, context);
+            int height = k.getPlacementScope() == IrisDepositPlacementScope.TERRAIN
+                    ? depositSurfaceLimit(terrainSurface, k.getSurfaceClearance())
+                    : getEngine().getHeight() - 1;
 
-            if (height <= 0)
+            if (height < 0) {
+                continue;
+            }
+
+            int y = sampleHeight(
+                    k.getHeightDistribution(), rng, k.getMinHeight(), k.getMaxHeight(),
+                    Math.min(height, getEngine().getHeight() - 1));
+            if (y == Integer.MIN_VALUE) {
+                continue;
+            }
+
+            boolean clippedHeight = k.getHeightDistribution() == IrisDepositHeightDistribution.CLIPPED_UNIFORM;
+            if (clippedHeight && y > height - 2)
                 continue;
 
-            int minY = Math.max(0, k.getMinHeight());
-            int maxY = Math.min(height, Math.min(getEngine().getHeight() - 1, k.getMaxHeight()));
-
-            if (minY >= maxY)
+            int biomeY = Math.max(0, Math.min(getEngine().getHeight() - 1, y));
+            boolean oreDeposit = k.isOre(getData());
+            IrisBiome surfaceBiome = context.getBiome().get(x, z);
+            IrisBiome depositBiome = oreDeposit || k.usesCaveBiomeFilter()
+                    ? getEngine().getCaveBiome(
+                            (cx << 4) + x, biomeY, (cz << 4) + z, carvingState)
+                    : null;
+            if (!k.matchesBiome(surfaceBiome, depositBiome)) {
                 continue;
+            }
 
-            int y = rng.i(minY, maxY + 1);
-
-            if (y > k.getMaxHeight() || y < k.getMinHeight() || y > height - 2)
-                continue;
-
-            if (k.isOre(getData())) {
-                IrisBiome depositBiome = getEngine().getCaveBiome(
-                        (cx << 4) + x, y, (cz << 4) + z, carvingState);
-
+            if (oreDeposit) {
                 if (depositBiome != null) {
                     double frequencyMultiplier = depositBiome.getOreDepositFrequencyMultiplier();
                     if (frequencyMultiplier < 1D
@@ -146,7 +160,9 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                         IrisObject scaledClump = k.getClump(getEngine(), rng, getData(), sizeMultiplier);
                         int scaledDimension = scaledClump.getW();
                         x = clampDepositCenter(x, scaledDimension, 16);
-                        y = clampDepositCenter(y, scaledDimension, getEngine().getHeight());
+                        if (clippedHeight) {
+                            y = clampDepositCenter(y, scaledDimension, getEngine().getHeight());
+                        }
                         z = clampDepositCenter(z, scaledDimension, 16);
                         clump = scaledClump;
                     }
@@ -163,8 +179,9 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                 if (nx > 15 || nx < 0 || ny >= getEngine().getHeight() || ny < 0 || nz < 0 || nz > 15) {
                     continue;
                 }
-                int columnSurfaceLimit = getDepositSurfaceLimit(cx, cz, nx, nz, he, context);
-                if (ny > columnSurfaceLimit) {
+                int columnSurface = getDepositTerrainSurface(cx, cz, nx, nz, he, context);
+                if (!placementSurfaceAllows(
+                        k.getPlacementScope(), ny, columnSurface, k.getSurfaceClearance())) {
                     continue;
                 }
 
@@ -172,7 +189,14 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                 if (!canReplaceDepositTarget(current)) {
                     continue;
                 }
+                if (!k.canReplace(current)) {
+                    continue;
+                }
                 if (!k.isReplaceBedrock() && IrisProceduralBlocks.materialKey(current).equals("minecraft:bedrock")) {
+                    continue;
+                }
+                if (shouldDiscardExposed(
+                        k.getDiscardChanceOnAirExposure(), rng.d(), isAdjacentToAir(data, nx, ny, nz))) {
                     continue;
                 }
 
@@ -189,15 +213,30 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
         }
     }
 
-    private int getDepositSurfaceLimit(int cx, int cz, int localX, int localZ, HeightMap heightMap, ChunkContext context) {
-        int surfaceY = heightMap != null
+    private int getDepositTerrainSurface(
+            int cx, int cz, int localX, int localZ, HeightMap heightMap,
+            ChunkContext context) {
+        return heightMap != null
                 ? heightMap.getHeight((cx << 4) + localX, (cz << 4) + localZ)
                 : context.getRoundedHeight(localX, localZ);
-        return depositSurfaceLimit(surfaceY);
     }
 
     static int depositSurfaceLimit(int surfaceY) {
-        return surfaceY - 7;
+        return depositSurfaceLimit(surfaceY, 7);
+    }
+
+    static int depositSurfaceLimit(int surfaceY, int surfaceClearance) {
+        return surfaceY - Math.max(0, surfaceClearance);
+    }
+
+    static boolean placementSurfaceAllows(
+            IrisDepositPlacementScope scope, int candidateY, int surfaceY, int surfaceClearance) {
+        int clearance = Math.max(0, surfaceClearance);
+        return switch (scope) {
+            case ABOVE_TERRAIN -> candidateY > surfaceY + clearance;
+            case FULL_HEIGHT -> true;
+            case TERRAIN -> candidateY <= surfaceY - clearance;
+        };
     }
 
     static int absoluteWorldY(int minHeight, int localY) {
@@ -206,6 +245,54 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
 
     static boolean canReplaceDepositTarget(PlatformBlockState state) {
         return state != null && !state.isAir() && !state.isFluid();
+    }
+
+    static int sampleHeight(
+            IrisDepositHeightDistribution distribution, RNG rng,
+            int configuredMinimum, int configuredMaximum, int clippedMaximum) {
+        int minimum = distribution == IrisDepositHeightDistribution.CLIPPED_UNIFORM
+                ? Math.max(0, configuredMinimum)
+                : configuredMinimum;
+        int maximum = distribution == IrisDepositHeightDistribution.CLIPPED_UNIFORM
+                ? Math.min(clippedMaximum, configuredMaximum)
+                : configuredMaximum;
+        if (minimum > maximum) {
+            return Integer.MIN_VALUE;
+        }
+        if (minimum == maximum) {
+            return minimum;
+        }
+        if (distribution != IrisDepositHeightDistribution.TRIANGLE) {
+            return minimum + rng.nextInt(maximum - minimum + 1);
+        }
+
+        int span = maximum - minimum;
+        int lowerHalf = span / 2;
+        int upperHalf = span - lowerHalf;
+        return minimum + rng.nextInt(upperHalf + 1) + rng.nextInt(lowerHalf + 1);
+    }
+
+    static boolean shouldDiscardExposed(double chance, double sample, boolean adjacentToAir) {
+        return adjacentToAir && chance > 0D && sample < Math.min(1D, chance);
+    }
+
+    static boolean isAdjacentToAir(Hunk<PlatformBlockState> data, int x, int y, int z) {
+        return isAirAt(data, x - 1, y, z)
+                || isAirAt(data, x + 1, y, z)
+                || isAirAt(data, x, y - 1, z)
+                || isAirAt(data, x, y + 1, z)
+                || isAirAt(data, x, y, z - 1)
+                || isAirAt(data, x, y, z + 1);
+    }
+
+    private static boolean isAirAt(Hunk<PlatformBlockState> data, int x, int y, int z) {
+        if (x < 0 || x >= data.getWidth()
+                || y < 0 || y >= data.getHeight()
+                || z < 0 || z >= data.getDepth()) {
+            return false;
+        }
+        PlatformBlockState state = data.getRaw(x, y, z);
+        return state == null || state.isAir();
     }
 
     static boolean passesOreFrequency(double multiplier, double sample) {

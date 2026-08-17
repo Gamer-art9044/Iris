@@ -89,6 +89,24 @@ final class NativeStructureTemplateOccupancy {
         return lowest;
     }
 
+    static Map<Long, LowestCell> lowestProcessedSolidCells(Map<Long, OccupancyCell> occupancy) {
+        Map<Long, LowestCell> lowest = new HashMap<>();
+        for (Map.Entry<Long, OccupancyCell> entry : occupancy.entrySet()) {
+            OccupancyCell cell = entry.getValue();
+            if (cell.blocker() || !isSolidBase(cell.state())) {
+                continue;
+            }
+            BlockPos position = BlockPos.of(entry.getKey());
+            long column = columnKey(position.getX(), position.getZ());
+            LowestCell current = lowest.get(column);
+            if (current == null || position.getY() < current.y()) {
+                lowest.put(column, new LowestCell(
+                        position.getX(), position.getY(), position.getZ(), cell));
+            }
+        }
+        return lowest;
+    }
+
     static boolean isSolidBase(BlockState state) {
         return state != null && state.isSolid()
                 && !state.is(Blocks.STRUCTURE_VOID)

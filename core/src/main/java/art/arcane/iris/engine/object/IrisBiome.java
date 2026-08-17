@@ -178,8 +178,8 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     @Desc("This defines the layers of materials in this biome. Each layer has a palette and min/max height and some other properties. Usually a grassy/sandy layer then a dirt layer then a stone layer. Iris will fill in the remaining blocks below your layers with stone.")
     private KList<IrisBiomePaletteLayer> layers = new KList<IrisBiomePaletteLayer>().qadd(new IrisBiomePaletteLayer());
     @ArrayType(type = IrisBiomePaletteLayer.class)
-    @Desc("Layers of materials placed on cave ceilings in this biome, indexed upward from the ceiling surface. Must not have more entries than layers, whose height generators it reuses.")
-    private KList<IrisBiomePaletteLayer> caveCeilingLayers = new KList<IrisBiomePaletteLayer>().qadd(new IrisBiomePaletteLayer());
+    @Desc("Layers of materials placed on cave ceilings in this biome, indexed upward from the ceiling surface. Must not have more entries than layers, whose height generators it reuses. Omitting this leaves cave ceilings unchanged.")
+    private KList<IrisBiomePaletteLayer> caveCeilingLayers = new KList<>();
     @ArrayType(type = IrisBiomePaletteLayer.class)
     @Desc("Layers of materials filling the water column of sea biomes, indexed downward from the water surface. Anything below the last layer is filled with the dimension fluid palette, not stone.")
     private KList<IrisBiomePaletteLayer> seaLayers = new KList<>();

@@ -39,7 +39,15 @@ final class DecoratorCore {
 
     private static final long SEED_OFFSET = 29356788L;
     private static final long PART_FACTOR = 10439677L;
+    private static final String WEEPING_VINES = "minecraft:weeping_vines";
+    private static final String WEEPING_VINES_PLANT = "minecraft:weeping_vines_plant";
+    private static final String TWISTING_VINES = "minecraft:twisting_vines";
+    private static final String TWISTING_VINES_PLANT = "minecraft:twisting_vines_plant";
     private static final boolean BUKKIT_PRESENT = detectBukkit();
+    private static volatile PlatformBlockState weepingVines;
+    private static volatile PlatformBlockState weepingVinesPlant;
+    private static volatile PlatformBlockState twistingVines;
+    private static volatile PlatformBlockState twistingVinesPlant;
 
     private static boolean detectBukkit() {
         try {
@@ -220,6 +228,7 @@ final class DecoratorCore {
                 return;
             }
 
+            block = stackedVineBlock(block, stack, 0);
             data.set(x, targetY, z, block);
             return;
         }
@@ -259,6 +268,7 @@ final class DecoratorCore {
                 bd = dripstoneBlock(stack, i, "up");
             }
 
+            bd = stackedVineBlock(bd, stack, i);
             data.set(x, height + 1 + i, z, bd);
         }
     }
@@ -280,6 +290,7 @@ final class DecoratorCore {
             if (block == null) {
                 return;
             }
+            block = stackedVineBlock(block, stack, 0);
             data.set(x, height, z, fixFacesForHunk(block, data, x, z, realX, height, realZ, mantle));
             return;
         }
@@ -303,6 +314,7 @@ final class DecoratorCore {
                 bd = dripstoneBlock(stack, i, "down");
             }
 
+            bd = stackedVineBlock(bd, stack, i);
             if (opts.caveSkipFluid && B.isFluid(data.get(x, h, z))) {
                 break;
             }
@@ -367,6 +379,7 @@ final class DecoratorCore {
             if (bd == null) {
                 break;
             }
+            bd = stackedVineBlock(bd, stack, i);
             data.set(xf, h, zf, bd);
             placed++;
         }
@@ -431,6 +444,9 @@ final class DecoratorCore {
     }
 
     static boolean canGoOn(PlatformBlockState decorator, PlatformBlockState surface) {
+        if (!B.canPlaceOnto(decorator, surface)) {
+            return false;
+        }
         if (!BUKKIT_PRESENT) {
             DecoratorPlatformHooks.SurfaceSturdiness sturdiness = DecoratorPlatformHooks.surfaceSturdiness();
             return sturdiness == null ? B.isSolid(surface) : sturdiness.canGoOn(surface);
@@ -438,10 +454,10 @@ final class DecoratorCore {
         return ((BlockData) surface.nativeHandle()).isFaceSturdy(BlockFace.UP, BlockSupport.FULL);
     }
 
-    static boolean isValidShorelineSupport(IrisDecorator decorator, PlatformBlockState surface) {
+    static boolean isValidShorelineSupport(IrisDecorator decorator, PlatformBlockState decorant, PlatformBlockState surface) {
         return surface != null
                 && B.isSolid(surface)
-                && (decorator.isForcePlace() || canGoOn(null, surface));
+                && (decorator.isForcePlace() || canGoOn(decorant, surface));
     }
 
     static boolean canReplaceStackTarget(PlatformBlockState state, boolean allowFluid) {
@@ -502,5 +518,29 @@ final class DecoratorCore {
             dripstoneDown = buildDripstoneArr("down");
         }
         return dripstoneDown[thIdx];
+    }
+
+    static String stackedVineKey(PlatformBlockState state, int stack, int index) {
+        String material = IrisProceduralBlocks.materialKey(state);
+        boolean tip = index == stack - 1;
+        return switch (material) {
+            case WEEPING_VINES, WEEPING_VINES_PLANT -> tip ? WEEPING_VINES : WEEPING_VINES_PLANT;
+            case TWISTING_VINES, TWISTING_VINES_PLANT -> tip ? TWISTING_VINES : TWISTING_VINES_PLANT;
+            default -> null;
+        };
+    }
+
+    private static PlatformBlockState stackedVineBlock(PlatformBlockState state, int stack, int index) {
+        String key = stackedVineKey(state, stack, index);
+        if (key == null) {
+            return state;
+        }
+        return switch (key) {
+            case WEEPING_VINES -> weepingVines == null ? weepingVines = B.getState(key) : weepingVines;
+            case WEEPING_VINES_PLANT -> weepingVinesPlant == null ? weepingVinesPlant = B.getState(key) : weepingVinesPlant;
+            case TWISTING_VINES -> twistingVines == null ? twistingVines = B.getState(key) : twistingVines;
+            case TWISTING_VINES_PLANT -> twistingVinesPlant == null ? twistingVinesPlant = B.getState(key) : twistingVinesPlant;
+            default -> state;
+        };
     }
 }

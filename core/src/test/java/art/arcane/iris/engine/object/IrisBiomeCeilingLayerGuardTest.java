@@ -47,4 +47,9 @@ public class IrisBiomeCeilingLayerGuardTest {
 
         assertTrue("zeroed palettes with zero heights produce no blocks", result.isEmpty());
     }
+
+    @Test
+    public void omittedCeilingLayersLeaveCavesUnchanged() {
+        assertTrue(new IrisBiome().getCaveCeilingLayers().isEmpty());
+    }
 }

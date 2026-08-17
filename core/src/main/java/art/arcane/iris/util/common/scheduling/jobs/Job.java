@@ -23,18 +23,12 @@ import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
-import art.arcane.volmlib.util.hud.HudPriority;
-import art.arcane.volmlib.util.hud.HudSlotClaim;
-import art.arcane.volmlib.util.hud.HudSlotRequest;
-import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicLong;
 
 public interface Job {
     String getName();
@@ -73,40 +67,18 @@ public interface Job {
     default void execute(VolmitSender sender, boolean silentMsg, Runnable whenComplete) {
         PrecisionStopwatch p = PrecisionStopwatch.start();
         CompletableFuture<?> f = J.afut(this::execute);
-        HudSlotClaim titleClaim = sender.isPlayer()
-                ? BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.TITLE)))
-                : null;
-        HudSlotClaim barClaim = sender.isPlayer()
-                ? BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)))
-                : null;
-        AtomicLong lastResolveMs = new AtomicLong(0L);
         int c = J.ar(() -> {
             if (sender.isPlayer()) {
-                long now = System.currentTimeMillis();
-                if (now - lastResolveMs.get() >= 250L) {
-                    lastResolveMs.set(now);
-                    titleClaim.resolve();
-                    barClaim.resolve();
-                }
-                HudSurface titleSurface = titleClaim.granted();
-                HudSurface barSurface = barClaim.granted();
-                sender.sendProgress(getProgress(), getName(), titleSurface, barSurface);
-                if (barSurface == HudSurface.BOSS_BAR) {
-                    BukkitPlatform.showProgressLane(sender.player(), "iris:job", getName() + " " + getProgressString(), getProgress(), 4000L);
-                } else if (barSurface == HudSurface.ACTION_BAR) {
-                    BukkitPlatform.hudLanes().hide(sender.player(), "iris:job");
-                }
+                sender.sendProgress(getProgress(), getName());
+                BukkitPlatform.showProgressLane(sender.player(), "iris:job", getName() + " " + getProgressString(), getProgress(), 4000L);
             } else {
                 sender.sendMessage(getName() + ": " + getProgressString());
             }
         }, sender.isPlayer() ? 0 : 20);
         f.whenComplete((fs, ff) -> {
             J.car(c);
-            if (titleClaim != null) {
-                titleClaim.release();
-            }
-            if (barClaim != null) {
-                barClaim.release();
+            if (sender.isPlayer()) {
+                sender.sendAction(" ");
                 BukkitPlatform.hudLanes().hide(sender.player(), "iris:job");
             }
             if (!silentMsg) {

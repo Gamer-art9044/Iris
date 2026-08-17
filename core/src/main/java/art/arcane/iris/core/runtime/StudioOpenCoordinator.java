@@ -230,7 +230,15 @@ public final class StudioOpenCoordinator {
             IrisLogging.reportError("Studio open failed for world \"" + request.worldName() + "\".", e);
             if (!request.retainOnFailure()) {
                 updateStage(request, "cleanup", 1.00D);
-                if (requiresDeferredEntryCleanup(entryLoadFuture)) {
+                if (LifecycleOperationCoordinator.get()
+                        .active(LifecycleOperationCoordinator.Domain.SERVER_LIFECYCLE)
+                        .isPresent()) {
+                    deferFailedOpenCleanupToRestart(
+                            provider,
+                            request.worldName(),
+                            world,
+                            entryLoadFuture);
+                } else if (requiresDeferredEntryCleanup(entryLoadFuture)) {
                     deferFailedOpenCleanup(
                             entryLoadFuture,
                             provider,
@@ -256,6 +264,33 @@ public final class StudioOpenCoordinator {
                 }
             }
             future.completeExceptionally(e);
+        }
+    }
+
+    private void deferFailedOpenCleanupToRestart(
+            PlatformChunkGenerator provider,
+            String worldName,
+            World world,
+            CompletableFuture<Void> entryLoadFuture
+    ) {
+        if (provider != null || world != null || transientWorldStorageExists(worldName)) {
+            queueStartupCleanup(
+                    worldName,
+                    new IllegalStateException("Studio cleanup deferred across the queued server restart."));
+        }
+        entryLoads.release(worldName, entryLoadFuture);
+    }
+
+    private boolean transientWorldStorageExists(String worldName) {
+        if (worldName == null || worldName.isBlank()) {
+            return false;
+        }
+        try {
+            File root = IrisWorldStorage.requireSafeManagedDimensionRoot(
+                    IrisWorldStorage.managedKeyFromName(worldName));
+            return Files.exists(root.toPath(), LinkOption.NOFOLLOW_LINKS);
+        } catch (RuntimeException failure) {
+            return true;
         }
     }
 

@@ -38,7 +38,7 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Desc("A single procedurally generated rock formation (a natural landmark such as a spire, hoodoo, arch, sea stack, boulder or basalt column cluster). Iris bakes a pool of deterministic variants from these settings and scatters them at world-gen time, exactly like an object placement but generated from scratch instead of loaded from an iob file.")
+@Desc("A single procedurally generated natural formation, including rock landmarks and magical glacial silhouettes. Iris bakes a pool of deterministic variants from these settings and scatters them at world-gen time, exactly like an object placement but generated from scratch instead of loaded from an iob file.")
 @Data
 public class IrisFormation implements IrisProceduralPlacement {
     private final transient AtomicCache<KList<IrisObject>> variantCache = new AtomicCache<>();
@@ -185,6 +185,11 @@ public class IrisFormation implements IrisProceduralPlacement {
     @Desc("The thickness in blocks of the ARCH legs and spanning curve.")
     private int archThickness = 3;
 
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("How strongly an ARCH varies its leg steepness, crown position, depth bow and tube width between deterministic variants. 0 is symmetric and 1 is highly organic.")
+    private double archAsymmetry = 0.35;
+
     @MinNumber(2)
     @MaxNumber(12)
     @Desc("How many separate columns make up a BASALT_COLUMN cluster. Each column gets a randomized height around the formation height range.")
@@ -198,6 +203,46 @@ public class IrisFormation implements IrisProceduralPlacement {
     @MaxNumber(1)
     @Desc("How much the heights of individual BASALT_COLUMN columns vary from each other, from 0 (all equal) to 1 (highly varied).")
     private double basaltHeightVariance = 0.45;
+
+    @MinNumber(1)
+    @MaxNumber(12)
+    @Desc("How many tapered summits crown an ICEBERG formation.")
+    private int icebergPeaks = 3;
+
+    @MinNumber(2)
+    @MaxNumber(8)
+    @Desc("How many separated shards form a FISSURE.")
+    private int fractureCount = 3;
+
+    @MinNumber(1)
+    @MaxNumber(16)
+    @Desc("Open-air separation in blocks between the shards of a FISSURE.")
+    private int fractureSeparation = 2;
+
+    @MinNumber(0.25)
+    @MaxNumber(6)
+    @Desc("How many complete turns a SPIRAL makes from base to tip.")
+    private double spiralTurns = 1.5;
+
+    @MinNumber(1)
+    @MaxNumber(32)
+    @Desc("The starting distance in blocks between a SPIRAL and its open center.")
+    private int spiralRadius = 4;
+
+    @MinNumber(1)
+    @MaxNumber(8)
+    @Desc("The radius in blocks of the tube swept along a SPIRAL.")
+    private int spiralThickness = 2;
+
+    @MinNumber(1)
+    @MaxNumber(32)
+    @Desc("How far the hooked arm of an OVERHANG projects from its base.")
+    private int overhangReach = 8;
+
+    @MinNumber(0)
+    @MaxNumber(16)
+    @Desc("How many blocks the tip of an OVERHANG curls downward.")
+    private int overhangDrop = 3;
 
     public KList<IrisObject> getVariantObjects(IrisData data) {
         return variantCache.aquire(() -> {

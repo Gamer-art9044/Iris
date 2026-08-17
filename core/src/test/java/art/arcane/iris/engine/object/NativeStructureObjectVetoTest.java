@@ -91,6 +91,17 @@ public class NativeStructureObjectVetoTest {
     }
 
     @Test
+    public void negativeWorldMinimumConvertsMantleCoordinatesBeforeVeto() {
+        when(engine.getMinHeight()).thenReturn(-256);
+        int worldBaseY = plantedBottomY() - 256;
+        RecordingPlacer placer = new RecordingPlacer(engine);
+        volumes(volume(0, worldBaseY, 0, 0, worldBaseY, 0));
+
+        assertEquals(-1, place(placer));
+        assertTrue(placer.written().isEmpty());
+    }
+
+    @Test
     public void pieceOverlappingOnlyTheEnvelopeStillPlaces() {
         RecordingPlacer placer = new RecordingPlacer(engine);
         volumes(volume(2, plantedBottomY(), 2, 4, plantedTopY(), 4));

@@ -77,18 +77,12 @@ import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.scheduling.O;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
-import art.arcane.volmlib.util.hud.HudPriority;
-import art.arcane.volmlib.util.hud.HudSlotClaim;
-import art.arcane.volmlib.util.hud.HudSlotRequest;
-import art.arcane.volmlib.util.hud.HudSurface;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.World;
-import org.bukkit.boss.BarColor;
-import org.bukkit.boss.BarStyle;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.Inventory;
@@ -108,7 +102,6 @@ import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 import art.arcane.iris.core.localization.IrisLanguage;
@@ -343,8 +336,7 @@ public class CommandStudio implements DirectorExecutor {
                     // previously leaked the whole sampler ForkJoinPool, the self-rescheduling
                     // progress task and both HUD claims for the rest of the server's uptime.
                     MultiBurst multiBurst = null;
-                    HudSlotClaim titleClaim = null;
-                    HudSlotClaim barClaim = null;
+                    boolean progressShown = false;
                     int c = -1;
                     try {
                     engine.getDimension().getRegions().forEach(key -> data.put(key, new AtomicInteger(0)));
@@ -354,31 +346,11 @@ public class CommandStudio implements DirectorExecutor {
                     var loc = player.getLocation();
                     int totalTasks = d * d;
                     AtomicInteger completedTasks = new AtomicInteger(0);
-                    titleClaim = BukkitPlatform.hudSlots().open(player, new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.TITLE)));
-                    barClaim = BukkitPlatform.hudSlots().open(player, new HudSlotRequest("iris:job", HudPriority.PROGRESS, 1200L, List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)));
-                    HudSlotClaim finalTitleClaim = titleClaim;
-                    HudSlotClaim finalBarClaim = barClaim;
-                    AtomicLong lastResolveMs = new AtomicLong(0L);
+                    progressShown = true;
                     c = J.ar(() -> {
-                        long now = System.currentTimeMillis();
-                        if (now - lastResolveMs.get() >= 250L) {
-                            lastResolveMs.set(now);
-                            finalTitleClaim.resolve();
-                            finalBarClaim.resolve();
-                        }
                         double jobProgress = (double) completedTasks.get() / totalTasks;
-                        HudSurface barSurface = finalBarClaim.granted();
-                        sender.sendProgress(
-                                jobProgress,
-                                IrisLanguage.text(RuntimeUiMessages.FINDING_REGIONS),
-                                finalTitleClaim.granted(),
-                                barSurface
-                        );
-                        if (barSurface == HudSurface.BOSS_BAR) {
-                            BukkitPlatform.hudLanes().show(player, "iris:job", IrisLanguage.text(RuntimeUiMessages.FINDING_REGIONS) + " " + Form.pc(jobProgress, 0), jobProgress, BarColor.BLUE, BarStyle.SOLID, 4000L);
-                        } else if (barSurface == HudSurface.ACTION_BAR) {
-                            BukkitPlatform.hudLanes().hide(player, "iris:job");
-                        }
+                        sender.sendProgress(jobProgress, IrisLanguage.text(RuntimeUiMessages.FINDING_REGIONS));
+                        BukkitPlatform.showProgressLane(player, "iris:job", IrisLanguage.text(RuntimeUiMessages.FINDING_REGIONS) + " " + Form.pc(jobProgress, 0), jobProgress, 4000L);
                     }, 0);
                     new Spiraler(d, d, (x, z) -> executor.queue(() -> {
                         var region = engine.getRegion((x << 4) + 8, (z << 4) + 8);
@@ -399,11 +371,8 @@ public class CommandStudio implements DirectorExecutor {
                         if (c != -1) {
                             J.car(c);
                         }
-                        if (titleClaim != null) {
-                            titleClaim.release();
-                        }
-                        if (barClaim != null) {
-                            barClaim.release();
+                        if (progressShown) {
+                            sender.sendAction(" ");
                             BukkitPlatform.hudLanes().hide(player, "iris:job");
                         }
                         if (multiBurst != null) {

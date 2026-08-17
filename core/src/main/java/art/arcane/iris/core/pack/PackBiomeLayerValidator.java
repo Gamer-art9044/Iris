@@ -34,7 +34,6 @@ import java.util.List;
  * engine skips them, and this validator surfaces the mistake to the author at validate time.
  */
 final class PackBiomeLayerValidator {
-    /** Both layers and caveCeilingLayers default to a single entry when absent (IrisBiome field initializers). */
     private static final int DEFAULT_LAYER_COUNT = 1;
 
     private PackBiomeLayerValidator() {
@@ -58,8 +57,8 @@ final class PackBiomeLayerValidator {
                 continue;
             }
 
-            Integer layers = arrayLength(biome, "layers", biomeKey, blockingErrors);
-            Integer ceiling = arrayLength(biome, "caveCeilingLayers", biomeKey, blockingErrors);
+            Integer layers = arrayLength(biome, "layers", biomeKey, DEFAULT_LAYER_COUNT, blockingErrors);
+            Integer ceiling = arrayLength(biome, "caveCeilingLayers", biomeKey, 0, blockingErrors);
             if (layers == null || ceiling == null) {
                 continue;
             }
@@ -72,9 +71,65 @@ final class PackBiomeLayerValidator {
         return blockingErrors;
     }
 
-    private static Integer arrayLength(JSONObject biome, String field, String biomeKey, List<String> blockingErrors) {
+    static List<String> validateDecoratorPalettes(File biomesFolder, File decoratorSnippetsFolder) {
+        List<String> blockingErrors = new ArrayList<>();
+        if (biomesFolder != null && biomesFolder.isDirectory()) {
+            List<File> biomeFiles = PackValidationIo.listJsonRecursive(biomesFolder);
+            biomeFiles.sort(Comparator.comparing(File::getPath));
+            for (File biomeFile : biomeFiles) {
+                String biomeKey = PackValidationIo.deriveKey(biomesFolder, biomeFile);
+                JSONObject biome = PackValidationIo.readJson(biomeFile);
+                if (biome == null || !biome.has("decorators") || biome.isNull("decorators")) {
+                    continue;
+                }
+                JSONArray decorators = biome.optJSONArray("decorators");
+                if (decorators == null) {
+                    blockingErrors.add("Biome '" + biomeKey + "' decorators must be an array.");
+                    continue;
+                }
+                validateDecoratorArray(decorators, "Biome '" + biomeKey + "' decorators", blockingErrors);
+            }
+        }
+
+        if (decoratorSnippetsFolder != null && decoratorSnippetsFolder.isDirectory()) {
+            List<File> snippetFiles = PackValidationIo.listJsonRecursive(decoratorSnippetsFolder);
+            snippetFiles.sort(Comparator.comparing(File::getPath));
+            for (File snippetFile : snippetFiles) {
+                String snippetKey = PackValidationIo.deriveKey(decoratorSnippetsFolder, snippetFile);
+                JSONObject snippet = PackValidationIo.readJson(snippetFile);
+                if (snippet != null) {
+                    validateDecoratorPalette(snippet, "Decorator snippet '" + snippetKey + "'", blockingErrors);
+                }
+            }
+        }
+        return blockingErrors;
+    }
+
+    private static void validateDecoratorArray(JSONArray decorators, String path, List<String> blockingErrors) {
+        for (int index = 0; index < decorators.length(); index++) {
+            Object rawDecorator = decorators.opt(index);
+            if (rawDecorator instanceof String) {
+                continue;
+            }
+            if (!(rawDecorator instanceof JSONObject decorator)) {
+                blockingErrors.add(path + "[" + index + "] must be an object or snippet reference.");
+                continue;
+            }
+            validateDecoratorPalette(decorator, path + "[" + index + "]", blockingErrors);
+        }
+    }
+
+    private static void validateDecoratorPalette(JSONObject decorator, String path, List<String> blockingErrors) {
+        JSONArray palette = decorator.optJSONArray("palette");
+        if (palette == null || palette.length() == 0) {
+            blockingErrors.add(path + " must declare a non-empty palette.");
+        }
+    }
+
+    private static Integer arrayLength(JSONObject biome, String field, String biomeKey, int defaultCount,
+                                       List<String> blockingErrors) {
         if (!biome.has(field) || biome.isNull(field)) {
-            return DEFAULT_LAYER_COUNT;
+            return defaultCount;
         }
 
         JSONArray array = biome.optJSONArray(field);

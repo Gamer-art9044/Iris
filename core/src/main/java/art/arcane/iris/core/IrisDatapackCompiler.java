@@ -8,6 +8,8 @@ import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
+import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
@@ -31,17 +33,22 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public final class IrisDatapackCompiler {
     private static final int INPUT_FINGERPRINT_SCHEMA = 2;
     private static final int INPUT_BUFFER_BYTES = 64 * 1024;
     private static final int WORLD_PACK_SCAN_DEPTH = 8;
+    private static final Pattern REGISTRY_KEY_PATTERN = Pattern.compile("[a-z0-9_.-]+:[a-z0-9/._-]+");
     private static final List<String> INPUT_DIRECTORIES = List.of("dimensions", "biomes", "snippet");
     private static final String FLAT_VOID_LEVEL_STEM = """
             {
@@ -161,6 +168,117 @@ public final class IrisDatapackCompiler {
                 }
             }
         }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    public static Map<String, String> computeRegistryRequirements(
+            List<File> packRoots,
+            IDataFixer fixer
+    ) throws IOException {
+        Objects.requireNonNull(packRoots, "packRoots");
+        Objects.requireNonNull(fixer, "fixer");
+        LinkedHashMap<String, String> requirements = new LinkedHashMap<>();
+        Set<String> installedBiomeKeys = new LinkedHashSet<>();
+        for (File packRoot : packRoots) {
+            PackDirectoryResolver.requireSafePackTree(packRoot);
+            if (!hasDimensions(packRoot.toPath())) {
+                continue;
+            }
+            IrisData data = IrisData.openDatapackCompiler(packRoot);
+            try {
+                ResourceLoader<IrisDimension> loader = data.getDimensionLoader();
+                String[] possibleKeys = loader.getPossibleKeys();
+                if (possibleKeys == null || possibleKeys.length == 0) {
+                    throw new IOException("Iris pack has no dimension definitions: " + packRoot);
+                }
+                for (String possibleKey : possibleKeys) {
+                    IrisDimension dimension = loader.load(possibleKey);
+                    if (dimension == null) {
+                        throw new IOException("Unable to load Iris dimension '" + possibleKey + "' from " + packRoot);
+                    }
+                    collectRegistryRequirements(
+                            requirements,
+                            installedBiomeKeys,
+                            dimension,
+                            fixer);
+                }
+            } finally {
+                data.close();
+            }
+        }
+        return Map.copyOf(requirements);
+    }
+
+    public static Map<String, String> computeRegistryRequirements(
+            IrisDimension dimension,
+            IDataFixer fixer
+    ) throws IOException {
+        IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
+        IDataFixer requiredFixer = Objects.requireNonNull(fixer, "fixer");
+        LinkedHashMap<String, String> requirements = new LinkedHashMap<>();
+        collectRegistryRequirements(
+                requirements,
+                new LinkedHashSet<>(),
+                requiredDimension,
+                requiredFixer);
+        return Map.copyOf(requirements);
+    }
+
+    private static void collectRegistryRequirements(
+            Map<String, String> requirements,
+            Set<String> installedBiomeKeys,
+            IrisDimension dimension,
+            IDataFixer fixer
+    ) {
+        requirements.put(
+                "dimension_type/iris:" + dimension.getDimensionTypeKey(),
+                fingerprintContent(dimension.getDimensionType().toJson(fixer)));
+
+        String namespace = dimension.getLoadKey().toLowerCase(Locale.ROOT);
+        for (IrisBiome biome : dimension.getAllBiomes(dimension::getLoader)) {
+            if (biome == null || !biome.isCustom()) {
+                continue;
+            }
+            String derivativeKey = biome.getVanillaDerivativeKey();
+            for (IrisBiomeCustom customBiome : biome.getCustomDerivitives()) {
+                if (customBiome == null) {
+                    continue;
+                }
+                String biomeKey = namespace + ":" + customBiome.getId();
+                if (!installedBiomeKeys.add(biomeKey)) {
+                    continue;
+                }
+                requirements.put(
+                        "worldgen/biome/" + biomeKey,
+                        fingerprintContent(customBiome.generateJson(fixer)));
+                TreeSet<String> tags = new TreeSet<>();
+                for (String tag : customBiome.getEffectiveTags(derivativeKey)) {
+                    String normalizedTag = normalizeRegistryKey(tag);
+                    if (normalizedTag != null) {
+                        tags.add(normalizedTag);
+                    }
+                }
+                requirements.put(
+                        "worldgen/biome_tags/" + biomeKey,
+                        fingerprintContent(String.join("\n", tags)));
+            }
+        }
+    }
+
+    private static String normalizeRegistryKey(String key) {
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        String normalized = key.trim().toLowerCase(Locale.ROOT);
+        if (normalized.indexOf(':') < 0) {
+            normalized = "minecraft:" + normalized;
+        }
+        return REGISTRY_KEY_PATTERN.matcher(normalized).matches() ? normalized : null;
+    }
+
+    private static String fingerprintContent(String content) {
+        MessageDigest digest = sha256();
+        updateDigestString(digest, Objects.requireNonNull(content, "registry content"));
         return HexFormat.of().formatHex(digest.digest());
     }
 

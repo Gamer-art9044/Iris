@@ -21,21 +21,13 @@ package art.arcane.iris.core.project;
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeProgressMessages;
-import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.format.Form;
-import art.arcane.volmlib.util.hud.HudPriority;
-import art.arcane.volmlib.util.hud.HudSlotClaim;
-import art.arcane.volmlib.util.hud.HudSlotRequest;
-import art.arcane.volmlib.util.hud.HudSurface;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import org.bukkit.Bukkit;
-import org.bukkit.boss.BarColor;
-import org.bukkit.boss.BarStyle;
 
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -53,7 +45,6 @@ final class StudioOpenProgressReporter {
         AtomicLong startMs = new AtomicLong(System.currentTimeMillis());
         AtomicInteger taskId = new AtomicInteger(-1);
         org.bukkit.boss.BossBar bossBar;
-        HudSlotClaim loaderClaim;
 
         if (sender.isPlayer() && sender.player() != null) {
             bossBar = Bukkit.createBossBar(
@@ -64,15 +55,8 @@ final class StudioOpenProgressReporter {
             bossBar.setProgress(0.0D);
             bossBar.addPlayer(sender.player());
             bossBar.setVisible(true);
-            loaderClaim = BukkitPlatform.hudSlots().open(sender.player(), new HudSlotRequest(
-                    "iris:studio-open",
-                    HudPriority.PROGRESS,
-                    1200L,
-                    List.of(HudSurface.ACTION_BAR, HudSurface.BOSS_BAR)
-            ));
         } else {
             bossBar = null;
-            loaderClaim = null;
         }
 
         int scheduledTaskId = J.ar(() -> {
@@ -95,26 +79,14 @@ final class StudioOpenProgressReporter {
                         J.a(() -> {
                             bossBar.removeAll();
                             bossBar.setVisible(false);
-                            loaderClaim.release();
-                            BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
                         }, 60);
                     }
                     if (sender.isPlayer()) {
-                        HudSurface loaderSurface = loaderClaim.resolve();
-                        if (loaderSurface == HudSurface.ACTION_BAR) {
-                            BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
-                            sender.sendAction(IrisLanguage.text(
-                                    RuntimeProgressMessages.STUDIO_ACTION_FAILED,
-                                    MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
-                                    MessageArgument.trusted("stage", currentStage)
-                            ));
-                        } else if (loaderSurface == HudSurface.BOSS_BAR) {
-                            BukkitPlatform.hudLanes().show(sender.player(), "iris:studio-open", IrisLanguage.text(
-                                    RuntimeProgressMessages.STUDIO_ACTION_FAILED,
-                                    MessageArgument.trusted("bar", ""),
-                                    MessageArgument.trusted("stage", currentStage)
-                            ), currentProgress, BarColor.RED, BarStyle.SOLID, 4000L);
-                        }
+                        sender.sendAction(IrisLanguage.text(
+                                RuntimeProgressMessages.STUDIO_ACTION_FAILED,
+                                MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
+                                MessageArgument.trusted("stage", currentStage)
+                        ));
                     } else {
                         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_STUDIO_OPEN_FAILED_2));
                     }
@@ -126,26 +98,14 @@ final class StudioOpenProgressReporter {
                         J.a(() -> {
                             bossBar.removeAll();
                             bossBar.setVisible(false);
-                            loaderClaim.release();
-                            BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
                         }, 60);
                     }
                     if (sender.isPlayer()) {
-                        HudSurface loaderSurface = loaderClaim.resolve();
-                        if (loaderSurface == HudSurface.ACTION_BAR) {
-                            BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
-                            sender.sendAction(IrisLanguage.text(
-                                    RuntimeProgressMessages.STUDIO_ACTION_READY,
-                                    MessageArgument.trusted("bar", buildStudioProgressBar(1.0D)),
-                                    MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
-                            ));
-                        } else if (loaderSurface == HudSurface.BOSS_BAR) {
-                            BukkitPlatform.hudLanes().show(sender.player(), "iris:studio-open", IrisLanguage.text(
-                                    RuntimeProgressMessages.STUDIO_ACTION_READY,
-                                    MessageArgument.trusted("bar", ""),
-                                    MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
-                            ), 1.0D, BarColor.GREEN, BarStyle.SOLID, 4000L);
-                        }
+                        sender.sendAction(IrisLanguage.text(
+                                RuntimeProgressMessages.STUDIO_ACTION_READY,
+                                MessageArgument.trusted("bar", buildStudioProgressBar(1.0D)),
+                                MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
+                        ));
                     } else {
                         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_STUDIO_READY, MessageArgument.untrusted("value", String.valueOf(Form.duration(elapsed, 1)))));
                     }
@@ -162,25 +122,13 @@ final class StudioOpenProgressReporter {
                     ));
                 }
 
-                HudSurface loaderSurface = loaderClaim.resolve();
-                if (loaderSurface == HudSurface.ACTION_BAR) {
-                    BukkitPlatform.hudLanes().hide(sender.player(), "iris:studio-open");
-                    sender.sendAction(IrisLanguage.text(
-                            RuntimeProgressMessages.STUDIO_ACTION_PROGRESS,
-                            MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
-                            MessageArgument.trusted("percent", percent),
-                            MessageArgument.trusted("stage", currentStage),
-                            MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
-                    ));
-                } else if (loaderSurface == HudSurface.BOSS_BAR) {
-                    BukkitPlatform.hudLanes().show(sender.player(), "iris:studio-open", IrisLanguage.text(
-                            RuntimeProgressMessages.STUDIO_ACTION_PROGRESS,
-                            MessageArgument.trusted("bar", ""),
-                            MessageArgument.trusted("percent", percent),
-                            MessageArgument.trusted("stage", currentStage),
-                            MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
-                    ), currentProgress, BarColor.GREEN, BarStyle.SOLID, 4000L);
-                }
+                sender.sendAction(IrisLanguage.text(
+                        RuntimeProgressMessages.STUDIO_ACTION_PROGRESS,
+                        MessageArgument.trusted("bar", buildStudioProgressBar(currentProgress)),
+                        MessageArgument.trusted("percent", percent),
+                        MessageArgument.trusted("stage", currentStage),
+                        MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
+                ));
             } else {
                 long now = System.currentTimeMillis();
                 long nextUpdate = nextConsoleUpdate.get();

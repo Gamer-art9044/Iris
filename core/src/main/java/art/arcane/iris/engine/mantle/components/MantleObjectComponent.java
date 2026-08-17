@@ -412,7 +412,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
         CaveAnchorCache caveAnchorCache = new CaveAnchorCache();
         for (IrisProceduralPlacement p : proceduralObjects.getAllPlacements()) {
             boolean treePlacement = p instanceof IrisProceduralTree;
-            boolean chancePassed = rng.chance(p.getChance() + rng.d(-0.005, 0.005));
+            boolean chancePassed = passesProceduralChance(rng, p.getChance());
             if (golden) {
                 IrisLogging.info("Goldendebug procedural chance: chunk=" + x + "," + z
                         + " scope=" + scope
@@ -539,6 +539,16 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 }
             }
         }
+    }
+
+    static boolean passesProceduralChance(RNG rng, double chance) {
+        if (chance <= 0.0) {
+            return false;
+        }
+        if (chance >= 1.0) {
+            return true;
+        }
+        return rng.chance(Math.max(0.0, Math.min(1.0, chance + rng.d(-0.005, 0.005))));
     }
 
     private CavePlacementAnchor findCavePlacementAnchor(

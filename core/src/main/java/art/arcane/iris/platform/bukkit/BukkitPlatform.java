@@ -33,8 +33,8 @@ import art.arcane.iris.util.common.misc.Bindings;
 import art.arcane.iris.util.common.plugin.VolmitPlugin;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.volmlib.util.collection.KMap;
+import art.arcane.volmlib.util.hud.HudActionBar;
 import art.arcane.volmlib.util.hud.HudBossBarLane;
-import art.arcane.volmlib.util.hud.HudSlotService;
 import art.arcane.volmlib.util.math.Vector3d;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -65,7 +65,7 @@ import java.util.function.Supplier;
 public final class BukkitPlatform implements IrisPlatform {
     private static volatile Plugin PLUGIN;
     private static volatile Bindings.Adventure AUDIENCES;
-    private static volatile HudSlotService HUD_SLOTS;
+    private static volatile HudActionBar HUD_BAR;
     private static volatile HudBossBarLane HUD_LANES;
     private static volatile Supplier<VolmitSender> CONSOLE;
     private static volatile HostBridge BRIDGE;
@@ -135,21 +135,21 @@ public final class BukkitPlatform implements IrisPlatform {
         return adventure;
     }
 
-    public static void hostHud(HudSlotService hudSlots, HudBossBarLane hudLanes) {
-        HUD_SLOTS = hudSlots;
+    public static void hostHud(HudActionBar hudBar, HudBossBarLane hudLanes) {
+        HUD_BAR = hudBar;
         HUD_LANES = hudLanes;
     }
 
     public static boolean hasHud() {
-        return HUD_SLOTS != null && HUD_LANES != null;
+        return HUD_BAR != null && HUD_LANES != null;
     }
 
-    public static HudSlotService hudSlots() {
-        HudSlotService hudSlots = HUD_SLOTS;
-        if (hudSlots == null) {
-            throw new IllegalStateException("No Iris HUD slot service is hosted");
+    public static HudActionBar hudBar() {
+        HudActionBar hudBar = HUD_BAR;
+        if (hudBar == null) {
+            throw new IllegalStateException("No Iris HUD action bar is hosted");
         }
-        return hudSlots;
+        return hudBar;
     }
 
     public static HudBossBarLane hudLanes() {

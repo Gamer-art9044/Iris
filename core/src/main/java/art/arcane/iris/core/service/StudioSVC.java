@@ -184,7 +184,9 @@ public class StudioSVC implements IrisService {
             boolean replaceExisting
     ) {
         if (J.isPrimaryThread()) {
-            sender.sendMessage("Iris refused to copy a pack on the Bukkit primary thread.");
+            sender.sendMessage(IrisLanguage.text(
+                    BukkitRuntimeMessages.STUDIO_S_V_C_PACK_COPY_REQUIRES_ASYNC_THREAD
+            ));
             return null;
         }
         String dimensionKey = dimension.getLoadKey();
@@ -193,7 +195,11 @@ public class StudioSVC implements IrisService {
             source = resolveSafePackSource(dimension.getLoader().getDataFolder());
         } catch (IOException e) {
             IrisLogging.reportError("Failed to inspect source dimension pack '" + dimensionKey + "'.", e);
-            sender.sendMessage("Failed to install studio pack '" + dimensionKey + "': " + errorDetail(e));
+            sender.sendMessage(IrisLanguage.text(
+                    BukkitRuntimeMessages.STUDIO_S_V_C_PACK_INSTALL_FAILED,
+                    MessageArgument.untrusted("dimension", dimensionKey),
+                    MessageArgument.untrusted("error", errorDetail(e))
+            ));
             return null;
         }
         Path target = folder.toPath().toAbsolutePath().normalize();
@@ -282,7 +288,11 @@ public class StudioSVC implements IrisService {
                 }
             }
             IrisLogging.reportError("Failed to install dimension pack '" + dimensionKey + "' into " + folder.getPath(), e);
-            sender.sendMessage("Failed to install studio pack '" + dimensionKey + "': " + errorDetail(e));
+            sender.sendMessage(IrisLanguage.text(
+                    BukkitRuntimeMessages.STUDIO_S_V_C_PACK_INSTALL_FAILED,
+                    MessageArgument.untrusted("dimension", dimensionKey),
+                    MessageArgument.untrusted("error", errorDetail(e))
+            ));
             return null;
         } finally {
             if (validationMutation != null) {

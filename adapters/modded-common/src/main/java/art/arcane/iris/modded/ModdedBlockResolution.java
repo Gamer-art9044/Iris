@@ -113,7 +113,7 @@ public final class ModdedBlockResolution {
                 "poppy", "dandelion", "oxeye_daisy", "orange_tulip", "pink_tulip", "red_tulip", "white_tulip",
                 "lilac", "dead_bush", "sweet_berry_bush", "rose_bush", "wither_rose", "allium", "blue_orchid",
                 "lily_of_the_valley", "crimson_fungus", "warped_fungus", "red_mushroom", "brown_mushroom",
-                "crimson_roots", "azure_bluet", "weeping_vines", "weeping_vines_plant", "warped_roots",
+                "crimson_roots", "azure_bluet", "cactus", "weeping_vines", "weeping_vines_plant", "warped_roots",
                 "nether_sprouts", "twisting_vines", "twisting_vines_plant", "sugar_cane", "wheat", "potatoes",
                 "carrots", "beetroots", "nether_wart", "sea_pickle", "seagrass", "tall_seagrass",
                 "acacia_button", "birch_button", "crimson_button", "dark_oak_button", "jungle_button",
@@ -510,6 +510,10 @@ public final class ModdedBlockResolution {
     }
 
     public static boolean canPlaceOnto(Block mat, Block onto) {
+        if (mat == Blocks.CACTUS) {
+            return onto == Blocks.CACTUS || onto == Blocks.SAND || onto == Blocks.RED_SAND;
+        }
+
         if ((onto == Blocks.CRIMSON_NYLIUM || onto == Blocks.WARPED_NYLIUM)
                 && (mat == Blocks.CRIMSON_FUNGUS || mat == Blocks.CRIMSON_ROOTS
                 || mat == Blocks.WARPED_FUNGUS || mat == Blocks.WARPED_ROOTS)) {

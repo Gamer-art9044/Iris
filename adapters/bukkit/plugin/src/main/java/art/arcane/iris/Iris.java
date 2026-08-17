@@ -93,8 +93,8 @@ import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.function.NastyRunnable;
 import art.arcane.volmlib.util.hotload.ConfigHotloadEngine;
+import art.arcane.volmlib.util.hud.HudActionBar;
 import art.arcane.volmlib.util.hud.HudBossBarLane;
-import art.arcane.volmlib.util.hud.HudSlotService;
 import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.io.InstanceState;
 import art.arcane.volmlib.util.math.M;
@@ -549,7 +549,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         SimdSupport.install();
         services = new KMap<>();
         setupAudience();
-        BukkitPlatform.hostHud(new HudSlotService(this), new HudBossBarLane());
+        BukkitPlatform.hostHud(new HudActionBar(this), new HudBossBarLane());
         Bindings.setupSentry();
         // Explicit, ordered service list: the previous reflective jar scan gave hash-ordered
         // enable/disable and paid a full-jar class sweep at boot. Infrastructure first,
@@ -777,7 +777,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             removeShutdownHook();
         }
         if (BukkitPlatform.hasHud()) {
-            BukkitPlatform.hudSlots().shutdown();
+            BukkitPlatform.hudBar().shutdown();
             BukkitPlatform.hudLanes().shutdown();
         }
         if (configHotloadEngine != null) {

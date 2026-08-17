@@ -2,6 +2,7 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.volmlib.util.math.RNG;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -50,6 +51,69 @@ public class IrisDepositTuningTest {
 
         assertTrue(oreGenerator.isOre(data));
         assertFalse(stoneGenerator.isOre(data));
+    }
+
+    @Test
+    public void vanillaEllipsoidSizeControlsGeometryRatherThanExactBlockCount() {
+        IrisData data = mock(IrisData.class);
+        IrisDepositGenerator generator = generatorWithState(data, true);
+        long smallBlocks = 0L;
+        long mediumBlocks = 0L;
+        long largeBlocks = 0L;
+        int samples = 500;
+        for (int i = 0; i < samples; i++) {
+            smallBlocks += generator.generateVanillaEllipsoid(new RNG(i), data, 4).getBlocks().size();
+            mediumBlocks += generator.generateVanillaEllipsoid(new RNG(i), data, 8).getBlocks().size();
+            largeBlocks += generator.generateVanillaEllipsoid(new RNG(i), data, 17).getBlocks().size();
+        }
+
+        assertTrue(smallBlocks > 0L);
+        assertTrue(mediumBlocks > smallBlocks);
+        assertTrue(largeBlocks > mediumBlocks);
+        assertNotEquals(17L * samples, largeBlocks);
+    }
+
+    @Test
+    public void vanillaScatteredSizeIsAnUpperCandidateBound() {
+        IrisData data = mock(IrisData.class);
+        IrisDepositGenerator generator = generatorWithState(data, true);
+        boolean foundEmpty = false;
+        boolean foundNonEmpty = false;
+        RNG rng = new RNG(991L);
+        for (int i = 0; i < 200; i++) {
+            int blocks = generator.generateVanillaScattered(rng, data, 3).getBlocks().size();
+            assertTrue(blocks <= 3);
+            foundEmpty |= blocks == 0;
+            foundNonEmpty |= blocks > 0;
+        }
+
+        assertTrue(foundEmpty);
+        assertTrue(foundNonEmpty);
+    }
+
+    @Test
+    public void biomeFiltersAcceptResourceKeysAndVanillaDerivatives() {
+        IrisBiome mountain = new IrisBiome();
+        mountain.setLoadKey("custom/mountain");
+        mountain.setDerivative("minecraft:stony_peaks");
+        IrisBiome plains = new IrisBiome();
+        plains.setLoadKey("custom/plains");
+        plains.setDerivative("minecraft:plains");
+        IrisDepositGenerator generator = new IrisDepositGenerator();
+        generator.setBiomeScope(IrisDepositBiomeScope.SURFACE);
+        generator.getIncludedBiomes().add("minecraft:stony_peaks");
+
+        assertTrue(generator.matchesBiome(mountain, plains));
+        assertFalse(generator.matchesBiome(plains, mountain));
+        assertFalse(generator.usesCaveBiomeFilter());
+
+        generator.getIncludedBiomes().clear();
+        generator.getExcludedBiomes().add("custom/mountain");
+        assertFalse(generator.matchesBiome(mountain, plains));
+        assertTrue(generator.matchesBiome(plains, mountain));
+
+        generator.setBiomeScope(IrisDepositBiomeScope.CAVE);
+        assertTrue(generator.usesCaveBiomeFilter());
     }
 
     private IrisDepositGenerator generatorWithState(IrisData data, boolean ore) {

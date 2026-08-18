@@ -1,18 +1,44 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.math.RNG;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 public class IrisDepositTuningTest {
+    @Test
+    public void everyDepositEnumAndValueHasSchemaDescription() throws ReflectiveOperationException {
+        for (Field modelField : IrisDepositGenerator.class.getDeclaredFields()) {
+            Class<?> enumType = modelField.getType();
+            if (!enumType.isEnum()) {
+                continue;
+            }
+
+            Desc typeDescription = enumType.getAnnotation(Desc.class);
+            assertNotNull(enumType.getSimpleName(), typeDescription);
+            assertFalse(typeDescription.value().isBlank());
+
+            Object[] constants = enumType.getEnumConstants();
+            for (Object constant : constants) {
+                String constantName = ((Enum<?>) constant).name();
+                Desc constantDescription = enumType.getField(constantName).getAnnotation(Desc.class);
+                assertNotNull(enumType.getSimpleName() + "." + constantName, constantDescription);
+                assertFalse(constantDescription.value().isBlank());
+            }
+        }
+    }
+
     @Test
     public void depositSizesScaleAndRemainWithinSchemaLimit() {
         assertEquals(8, IrisDepositGenerator.scaledDepositSize(4, 2D));

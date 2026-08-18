@@ -7,6 +7,8 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public final class StubPlatformStateTest {
     @BeforeClass
@@ -39,6 +41,22 @@ public final class StubPlatformStateTest {
         PlatformBlockState merged = StubPlatform.mergeForTest(
                 base, state("minecraft:oak_leaves[persistent=true]"));
         assertEquals("minecraft:oak_leaves[distance=7,persistent=true]", merged.key());
+    }
+
+    @Test
+    public void classifiesVanillaFluidStates() {
+        PlatformBlockState water = state("minecraft:water[level=0]");
+        PlatformBlockState lava = state("minecraft:lava[level=0]");
+        PlatformBlockState stone = state("minecraft:stone");
+
+        assertTrue(water.isFluid());
+        assertTrue(water.isWater());
+        assertFalse(water.isSolid());
+        assertTrue(lava.isFluid());
+        assertFalse(lava.isWater());
+        assertFalse(lava.isSolid());
+        assertFalse(stone.isFluid());
+        assertTrue(stone.isSolid());
     }
 
     private PlatformBlockState state(String key) {

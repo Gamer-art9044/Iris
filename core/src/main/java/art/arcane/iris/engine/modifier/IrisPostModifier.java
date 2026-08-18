@@ -35,7 +35,6 @@ import art.arcane.iris.spi.PlatformBlockState;
 public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState> {
     private static final class States {
         private static final PlatformBlockState AIR = B.getState("AIR");
-        private static final PlatformBlockState WATER = B.getState("WATER");
     }
 
     private final RNG rng;
@@ -244,10 +243,6 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
 
             if (w != "true".equals(IrisProceduralBlocks.propertyValue(b, "waterlogged"))) {
                 setPostBlock(x, h, z, b.withProperty("waterlogged", String.valueOf(w)), originX, originZ, currentData);
-            }
-        } else if (IrisProceduralBlocks.materialKey(b).equals("minecraft:air") && h <= fluidHeight) {
-            if ((isWaterOrWaterlogged(x + 1, h, z, originX, originZ, currentData) || isWaterOrWaterlogged(x - 1, h, z, originX, originZ, currentData) || isWaterOrWaterlogged(x, h, z + 1, originX, originZ, currentData) || isWaterOrWaterlogged(x, h, z - 1, originX, originZ, currentData))) {
-                setPostBlock(x, h, z, States.WATER, originX, originZ, currentData);
             }
         }
 

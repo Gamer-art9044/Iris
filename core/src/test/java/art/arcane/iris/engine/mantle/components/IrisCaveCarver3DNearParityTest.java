@@ -287,6 +287,13 @@ public class IrisCaveCarver3DNearParityTest {
     }
 
     @Test
+    public void surfaceFluidBoundaryProtectsReservoirWithoutFloodingDeeperCaves() {
+        assertSurfaceFluidBoundaryForProfile(createFluidProfile().setAdaptiveSampling(false).setSampleStep(1));
+        assertSurfaceFluidBoundaryForProfile(createFluidProfile().setAdaptiveSampling(true).setSampleStep(1));
+        assertSurfaceFluidBoundaryForProfile(createFluidProfile().setAdaptiveSampling(false).setSampleStep(4));
+    }
+
+    @Test
     public void floorRequiredFluidResolvesAfterTheCompleteCarveMask() {
         Engine engine = createEngine(80, 70);
         int[] surfaceHeights = filledHeights(70);
@@ -301,7 +308,7 @@ public class IrisCaveCarver3DNearParityTest {
         WriterCapture firstCapture = createWriterCapture(80);
         CaveFluidSupportPlan supportPlan = new CaveFluidSupportPlan();
         new IrisCaveCarver3D(engine, supportedProfile).carve(
-                firstCapture.writer, chunkX, chunkZ, fullWeights(), 0D, 0D, null, surfaceHeights, null, supportPlan);
+                firstCapture.writer, chunkX, chunkZ, fullWeights(), 0D, 0D, null, surfaceHeights, null, null, supportPlan);
         int candidateCount = countLiquid(firstCapture, (byte) 1);
         supportPlan.resolve(firstCapture.writer.acquireChunk(chunkX, chunkZ));
 
@@ -362,13 +369,13 @@ public class IrisCaveCarver3DNearParityTest {
 
         new IrisCaveCarver3D(engine, fluidProfile).carve(
                 capture.writer, 0, 0, fullWeights(), 0D, 0D, null, surfaceHeights,
-                new IrisRange(20D, 64D), fluidSupportPlan);
+                null, new IrisRange(20D, 64D), fluidSupportPlan);
         String fluidCell = firstCellWithLiquid(capture, (byte) 1);
         assertTrue(fluidCell != null);
         int fluidY = coordinate(fluidCell, 1);
         new IrisCaveCarver3D(engine, airProfile).carve(
                 capture.writer, 0, 0, fullWeights(), 0D, 0D, null, surfaceHeights,
-                new IrisRange(fluidY - 1D, fluidY - 1D), fluidSupportPlan);
+                null, new IrisRange(fluidY - 1D, fluidY - 1D), fluidSupportPlan);
 
         assertEquals(Byte.valueOf((byte) 1), capture.carvedLiquids.get(fluidCell));
         fluidSupportPlan.resolve(capture.writer.acquireChunk(0, 0));
@@ -730,6 +737,43 @@ public class IrisCaveCarver3DNearParityTest {
                 .setAllowFluid(true)
                 .setFluidRequiresFloor(false)
                 .setAllowLava(true);
+    }
+
+    private void assertSurfaceFluidBoundaryForProfile(IrisCaveProfile profile) {
+        Engine engine = createEngine(80, 70);
+        int[] surfaceHeights = filledHeights(70);
+        surfaceHeights[0] = 60;
+        int[] boundaryStartY = new int[256];
+        Arrays.fill(boundaryStartY, SurfaceFluidBoundaryPlan.NO_BOUNDARY);
+        boundaryStartY[0] = 60;
+        boundaryStartY[16] = 61;
+        WriterCapture capture = createWriterCapture(80);
+        CaveFluidSupportPlan supportPlan = new CaveFluidSupportPlan();
+
+        new IrisCaveCarver3D(engine, profile.setFluidMinDepthBelowSurface(0).setFluidRequiresFloor(false)).carve(
+                capture.writer,
+                0,
+                0,
+                fullWeights(),
+                0D,
+                0D,
+                null,
+                surfaceHeights,
+                boundaryStartY,
+                null,
+                supportPlan
+        );
+
+        assertTrue(capture.carvedCells.contains(cellKey(0, 56, 0)));
+        assertFalse(capture.carvedCells.contains(cellKey(0, 60, 0)));
+        assertTrue(capture.carvedCells.contains(cellKey(1, 60, 0)));
+        for (int y = 61; y <= 64; y++) {
+            assertFalse(capture.carvedCells.contains(cellKey(1, y, 0)));
+        }
+        assertTrue(capture.carvedCells.contains(cellKey(1, 65, 0)));
+        assertTrue(capture.carvedCells.contains(cellKey(2, 64, 0)));
+        assertTrue(countLiquid(capture, (byte) 1) > 0);
+        assertTrue(countLiquid(capture, (byte) 0) > 0);
     }
 
     private WriterCapture createWriterCapture(int worldHeight) {

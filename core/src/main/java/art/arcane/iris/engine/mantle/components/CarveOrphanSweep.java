@@ -39,6 +39,10 @@ public final class CarveOrphanSweep {
 
         void markCarved(int localX, int y, int localZ);
 
+        default boolean isProtected(int localX, int y, int localZ) {
+            return false;
+        }
+
         /**
          * Cheap pre-check: may any block in [minY, maxY] be carved at all? Default true keeps
          * every implementor correct; the mantle-backed access answers from section slice
@@ -52,12 +56,20 @@ public final class CarveOrphanSweep {
     private CarveOrphanSweep() {
     }
 
-    static int sweepChunk(MantleChunk<Matter> chunk, int[] surfaceHeights, int maxSurfaceBreakDepth, int worldCeilingY) {
+    static int sweepChunk(
+            MantleChunk<Matter> chunk,
+            int[] surfaceHeights,
+            int maxSurfaceBreakDepth,
+            int worldCeilingY,
+            int[] surfaceFluidBoundaryStartY,
+            int fluidHeight
+    ) {
         if (chunk == null) {
             return 0;
         }
 
-        return sweep(surfaceHeights, maxSurfaceBreakDepth, 0, worldCeilingY, new MantleCarveAccess(chunk));
+        return sweep(surfaceHeights, maxSurfaceBreakDepth, 0, worldCeilingY,
+                new MantleCarveAccess(chunk, surfaceFluidBoundaryStartY, fluidHeight));
     }
 
     public static int sweep(int[] surfaceHeights, int maxSurfaceBreakDepth, int worldFloorY, int worldCeilingY, CarveAccess access) {
@@ -141,7 +153,9 @@ public final class CarveOrphanSweep {
                 int y = bandFloor + (current / CHUNK_AREA);
 
                 if (!anchored) {
-                    if (localX == 0 || localX == CHUNK_SIZE - 1 || localZ == 0 || localZ == CHUNK_SIZE - 1) {
+                    if (access.isProtected(localX, y, localZ)) {
+                        anchored = true;
+                    } else if (localX == 0 || localX == CHUNK_SIZE - 1 || localZ == 0 || localZ == CHUNK_SIZE - 1) {
                         anchored = true;
                     } else if (y == bandFloor && isSolidBelowBand(access, surfaceHeights, columnIndex, localX, localZ, bandFloor - 1, worldFloorY)) {
                         anchored = true;
@@ -215,11 +229,15 @@ public final class CarveOrphanSweep {
 
     private static final class MantleCarveAccess implements CarveAccess {
         private final MantleChunk<Matter> chunk;
+        private final int[] surfaceFluidBoundaryStartY;
+        private final int fluidHeight;
         private MatterSlice<MatterCavern> cachedSlice;
         private int cachedSectionIndex = -1;
 
-        private MantleCarveAccess(MantleChunk<Matter> chunk) {
+        private MantleCarveAccess(MantleChunk<Matter> chunk, int[] surfaceFluidBoundaryStartY, int fluidHeight) {
             this.chunk = chunk;
+            this.surfaceFluidBoundaryStartY = surfaceFluidBoundaryStartY;
+            this.fluidHeight = fluidHeight;
         }
 
         @Override
@@ -238,6 +256,12 @@ public final class CarveOrphanSweep {
             chunk.getOrCreate(y >> 4).slice(MatterCavern.class).set(localX, y & 15, localZ, ORPHAN_CAVERN);
             cachedSectionIndex = -1;
             cachedSlice = null;
+        }
+
+        @Override
+        public boolean isProtected(int localX, int y, int localZ) {
+            int columnIndex = PowerOfTwoCoordinates.packLocal16(localX, localZ);
+            return SurfaceFluidBoundaryPlan.protects(surfaceFluidBoundaryStartY, columnIndex, y, fluidHeight);
         }
 
         @Override

@@ -57,6 +57,7 @@ import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.volmlib.util.matter.MatterCavern;
 import art.arcane.volmlib.util.matter.MatterStructurePOI;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.noise.NoiseType;
@@ -77,6 +78,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class MantleObjectComponent extends IrisMantleComponent {
     private static final long CAVE_REJECT_LOG_THROTTLE_MS = 5000L;
     private static final int BEDROCK_CLEARANCE = 6;
+    private static final byte LIQUID_FORCED_AIR = 3;
     private static final Map<String, CaveRejectLogState> CAVE_REJECT_LOG_STATE = new ConcurrentHashMap<>();
     private static final Set<String> MISSING_LOAD_KEY_WARNED = ConcurrentHashMap.newKeySet();
 
@@ -384,11 +386,11 @@ public class MantleObjectComponent extends IrisMantleComponent {
     private void placeProceduralObjects(MantleWriter writer, RNG rng, int x, int z, IrisBiome surfaceBiome, IrisBiome caveBiome, IrisRegion region) {
         IrisCaveProfile surfaceCaveProfile = resolveCaveProfile(surfaceBiome.getCaveProfile(), region.getCaveProfile());
         IrisCaveProfile regionCaveProfile = resolveCaveProfile(region.getCaveProfile(), caveBiome == null ? null : caveBiome.getCaveProfile());
-        placeProceduralFrom(writer, rng, x, z, surfaceBiome.getProceduralObjects(), surfaceBiome.getName(), surfaceCaveProfile);
-        placeProceduralFrom(writer, rng, x, z, region.getProceduralObjects(), region.getName(), regionCaveProfile);
+        placeProceduralFrom(writer, rng, x, z, surfaceBiome.getProceduralObjects(), surfaceBiome.getName(), surfaceCaveProfile, surfaceBiome.getLoadKey());
+        placeProceduralFrom(writer, rng, x, z, region.getProceduralObjects(), region.getName(), regionCaveProfile, null);
         if (caveBiome != null && caveBiome != surfaceBiome) {
             IrisCaveProfile caveProfile = resolveCaveProfile(caveBiome.getCaveProfile(), region.getCaveProfile());
-            placeProceduralFrom(writer, rng, x, z, caveBiome.getProceduralObjects(), caveBiome.getName(), caveProfile);
+            placeProceduralFrom(writer, rng, x, z, caveBiome.getProceduralObjects(), caveBiome.getName(), caveProfile, caveBiome.getLoadKey());
         }
     }
 
@@ -400,7 +402,8 @@ public class MantleObjectComponent extends IrisMantleComponent {
             int z,
             IrisProceduralObjects proceduralObjects,
             String scope,
-            IrisCaveProfile caveProfile
+            IrisCaveProfile caveProfile,
+            String expectedCaveBiomeKey
     ) {
         if (proceduralObjects == null || proceduralObjects.isEmpty()) {
             return;
@@ -457,7 +460,8 @@ public class MantleObjectComponent extends IrisMantleComponent {
                             anchorScanStep,
                             minDepthBelowSurface,
                             anchorSearchAttempts,
-                            null,
+                            expectedCaveBiomeKey,
+                            placement.isUnderwater(),
                             caveAnchorCache
                     );
                 }
@@ -561,6 +565,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             int minDepthBelowSurface,
             int searchAttempts,
             String expectedCaveBiomeKey,
+            boolean underwater,
             CaveAnchorCache anchorCache
     ) {
         for (int search = 0; search < searchAttempts; search++) {
@@ -576,12 +581,28 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     minDepthBelowSurface,
                     anchorCache
             );
-            if (candidateY < 0 || caveAnchorBiomeConflicts(candidateX, candidateY, candidateZ, expectedCaveBiomeKey)) {
+            if (candidateY < 0
+                    || caveAnchorBiomeConflicts(candidateX, candidateY, candidateZ, expectedCaveBiomeKey)
+                    || !acceptsCaveAnchorFluid(
+                            underwater,
+                            writer.getDataIfPresent(candidateX, candidateY, candidateZ, MatterCavern.class),
+                            candidateY,
+                            getDimension().getCaveLavaHeight())) {
                 continue;
             }
             return new CavePlacementAnchor(candidateX, candidateY, candidateZ);
         }
         return null;
+    }
+
+    static boolean acceptsCaveAnchorFluid(boolean underwater, MatterCavern cavern, int y, int lavaHeight) {
+        if (cavern == null || !cavern.isCavern()) {
+            return false;
+        }
+        if (underwater || cavern.getLiquid() == LIQUID_FORCED_AIR) {
+            return true;
+        }
+        return cavern.isAir() && y > lavaHeight;
     }
 
     private ContainedPlacementResult placeContainedCaveObject(
@@ -732,14 +753,18 @@ public class MantleObjectComponent extends IrisMantleComponent {
         }
         Engine engine = getEngineMantle().getEngine();
         IrisBiome at = engine.getCaveBiome(x, y, z);
-        if (at == null) {
+        IrisBiome surface = engine.getSurfaceBiome(x, z);
+        return caveAnchorBiomeConflicts(at, surface, expectedCaveBiomeKey);
+    }
+
+    static boolean caveAnchorBiomeConflicts(IrisBiome at, IrisBiome surface, String expectedCaveBiomeKey) {
+        if (expectedCaveBiomeKey == null || at == null) {
             return false;
         }
         String atKey = at.getLoadKey();
         if (atKey == null || atKey.equals(expectedCaveBiomeKey)) {
             return false;
         }
-        IrisBiome surface = engine.getSurfaceBiome(x, z);
         if (surface != null && atKey.equals(surface.getLoadKey())) {
             return false;
         }
@@ -818,6 +843,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     objectMinDepthBelowSurface,
                     anchorSearchAttempts,
                     expectedCaveBiomeKey,
+                    objectPlacement.isUnderwater(),
                     anchorCache
             );
 

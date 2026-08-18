@@ -183,7 +183,7 @@ public class IrisCaveCarver3D {
     ) {
         CaveFluidSupportPlan fluidSupportPlan = new CaveFluidSupportPlan();
         int carved = carve(writer, chunkX, chunkZ, columnWeights, minWeight, thresholdPenalty,
-                worldYRange, precomputedSurfaceHeights, overrideVerticalRange, fluidSupportPlan);
+                worldYRange, precomputedSurfaceHeights, null, overrideVerticalRange, fluidSupportPlan);
         fluidSupportPlan.resolve(writer.acquireChunk(chunkX, chunkZ));
         return carved;
     }
@@ -197,6 +197,7 @@ public class IrisCaveCarver3D {
             double thresholdPenalty,
             IrisRange worldYRange,
             int[] precomputedSurfaceHeights,
+            int[] surfaceFluidBoundaryStartY,
             IrisRange overrideVerticalRange,
             CaveFluidSupportPlan fluidSupportPlan
     ) {
@@ -317,6 +318,7 @@ public class IrisCaveCarver3D {
                             surfaceBreakThresholdBoost,
                             columnMaxY,
                             fluidMaxY,
+                            surfaceFluidBoundaryStartY,
                             surfaceBreakFloorY,
                             surfaceBreakColumn,
                             columnThreshold,
@@ -339,6 +341,7 @@ public class IrisCaveCarver3D {
                             surfaceBreakThresholdBoost,
                             columnMaxY,
                             fluidMaxY,
+                            surfaceFluidBoundaryStartY,
                             surfaceBreakFloorY,
                             surfaceBreakColumn,
                             columnThreshold,
@@ -364,6 +367,7 @@ public class IrisCaveCarver3D {
                         surfaceBreakThresholdBoost,
                         columnMaxY,
                         fluidMaxY,
+                        surfaceFluidBoundaryStartY,
                         surfaceBreakFloorY,
                         surfaceBreakColumn,
                         columnThreshold,
@@ -387,6 +391,7 @@ public class IrisCaveCarver3D {
                             surfaceBreakThresholdBoost,
                             columnMaxY,
                             fluidMaxY,
+                            surfaceFluidBoundaryStartY,
                             surfaceBreakFloorY,
                             surfaceBreakColumn,
                             columnThreshold,
@@ -417,6 +422,7 @@ public class IrisCaveCarver3D {
             double surfaceBreakThresholdBoost,
             int[] columnMaxY,
             int[] fluidMaxY,
+            int[] surfaceFluidBoundaryStartY,
             int[] surfaceBreakFloorY,
             boolean[] surfaceBreakColumn,
             double[] columnThreshold,
@@ -472,6 +478,9 @@ public class IrisCaveCarver3D {
                     }
 
                     int columnIndex = activeColumnIndices[activeIndex];
+                    if (SurfaceFluidBoundaryPlan.protects(surfaceFluidBoundaryStartY, columnIndex, y, fluidHeight)) {
+                        continue;
+                    }
                     planeColumnIndices[planeCount] = columnIndex;
                     double localThreshold = passThreshold[columnIndex];
                     if (surfaceBreakColumn[columnIndex] && y >= surfaceBreakFloorY[columnIndex]) {
@@ -544,6 +553,7 @@ public class IrisCaveCarver3D {
             double surfaceBreakThresholdBoost,
             int[] columnMaxY,
             int[] fluidMaxY,
+            int[] surfaceFluidBoundaryStartY,
             int[] surfaceBreakFloorY,
             boolean[] surfaceBreakColumn,
             double[] columnThreshold,
@@ -605,6 +615,9 @@ public class IrisCaveCarver3D {
                     }
 
                     int columnIndex = activeColumnIndices[activeIndex];
+                    if (SurfaceFluidBoundaryPlan.protects(surfaceFluidBoundaryStartY, columnIndex, y, fluidHeight)) {
+                        continue;
+                    }
                     planeColumnIndices[planeCount] = columnIndex;
                     double localThreshold = passThreshold[columnIndex];
                     if (surfaceBreakColumn[columnIndex] && y >= surfaceBreakFloorY[columnIndex]) {
@@ -699,6 +712,7 @@ public class IrisCaveCarver3D {
             double surfaceBreakThresholdBoost,
             int[] columnMaxY,
             int[] fluidMaxY,
+            int[] surfaceFluidBoundaryStartY,
             int[] surfaceBreakFloorY,
             boolean[] surfaceBreakColumn,
             double[] columnThreshold,
@@ -800,6 +814,9 @@ public class IrisCaveCarver3D {
                             }
 
                             int index = tileIndices[columnIndex];
+                            if (SurfaceFluidBoundaryPlan.protects(surfaceFluidBoundaryStartY, index, yy, fluidHeight)) {
+                                continue;
+                            }
                             double localThreshold = passThreshold[index];
                             if (surfaceBreakColumn[index] && yy >= surfaceBreakFloorY[index]) {
                                 localThreshold += surfaceBreakThresholdBoost;
@@ -844,6 +861,7 @@ public class IrisCaveCarver3D {
             double surfaceBreakThresholdBoost,
             int[] columnMaxY,
             int[] fluidMaxY,
+            int[] surfaceFluidBoundaryStartY,
             int[] surfaceBreakFloorY,
             boolean[] surfaceBreakColumn,
             double[] columnThreshold,
@@ -891,6 +909,9 @@ public class IrisCaveCarver3D {
 
                     int carveMaxY = Math.min(columnTopY, y + sampleStep - 1);
                     for (int yy = y; yy <= carveMaxY; yy++) {
+                        if (SurfaceFluidBoundaryPlan.protects(surfaceFluidBoundaryStartY, index, yy, fluidHeight)) {
+                            continue;
+                        }
                         MatterCavern verticalMatter = matterByY[yy - minY];
                         MatterCavern matter = resolveMatter(verticalMatter, x, yy, z,
                                 index, fluidMaxY, localThreshold);

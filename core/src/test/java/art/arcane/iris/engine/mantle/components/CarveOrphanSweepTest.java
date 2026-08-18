@@ -126,6 +126,19 @@ public class CarveOrphanSweepTest {
     }
 
     @Test
+    public void protectedSurfaceFluidSupportIsNotMarkedCarved() {
+        Fixture fixture = new Fixture();
+        fixture.carveBox(1, 14, 25, 35, 1, 14);
+        fixture.uncarve(7, 30, 7);
+        fixture.protect(7, 30, 7);
+
+        int marked = fixture.sweep();
+
+        assertEquals(0, marked);
+        assertFalse(fixture.wasMarked(7, 30, 7));
+    }
+
+    @Test
     public void sweepIsDeterministicAndIdempotent() {
         Fixture first = new Fixture();
         first.carveBox(1, 14, 25, 35, 1, 14);
@@ -166,6 +179,7 @@ public class CarveOrphanSweepTest {
         private final boolean[] carved = new boolean[16 * WORLD_HEIGHT * 16];
         private final int[] surfaceHeights = new int[256];
         private final List<Integer> marks = new ArrayList<>();
+        private int protectedCell = -1;
 
         private Fixture() {
             Arrays.fill(surfaceHeights, SURFACE_Y);
@@ -193,6 +207,10 @@ public class CarveOrphanSweepTest {
             return marks.contains(index(localX, y, localZ));
         }
 
+        private void protect(int localX, int y, int localZ) {
+            protectedCell = index(localX, y, localZ);
+        }
+
         private List<Integer> marks() {
             return marks;
         }
@@ -214,6 +232,11 @@ public class CarveOrphanSweepTest {
         public void markCarved(int localX, int y, int localZ) {
             carved[index(localX, y, localZ)] = true;
             marks.add(index(localX, y, localZ));
+        }
+
+        @Override
+        public boolean isProtected(int localX, int y, int localZ) {
+            return protectedCell == index(localX, y, localZ);
         }
     }
 }

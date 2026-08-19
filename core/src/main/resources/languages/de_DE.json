@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "Dieser Befehl kann von diesem Ursprung aus nicht ausgeführt werden.",
     "director.runtime.error.unknown_parameter": "Unbekannter Parameterschlüssel: {key}",
     "director.runtime.error.unexpected_argument": "Unerwartetes Argument \"{argument}\". Optionale Parameter müssen als Schlüssel angegeben werden, z. B. seed=123",
+    "director.runtime.error.unclosed_group": "Fehlende schließende \"]\" für Parameter {key}",
     "director.runtime.error.conversion_failed": "\"{value}\" kann für {parameter} nicht in {type} konvertiert werden",
     "director.runtime.error.default_parse_failed": "Der Standardwert für Parameter {parameter} kann nicht gelesen werden",
     "director.runtime.error.missing_argument": "Fehlendes Argument \"{parameter}\" ({type})",

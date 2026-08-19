@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "Эту команду нельзя выполнить из данного источника.",
     "director.runtime.error.unknown_parameter": "Неизвестный ключ параметра: {key}",
     "director.runtime.error.unexpected_argument": "Неожиданный аргумент \"{argument}\". Необязательные параметры должны задаваться с ключом, например seed=123",
+    "director.runtime.error.unclosed_group": "Отсутствует закрывающая скобка \"]\" для параметра {key}",
     "director.runtime.error.conversion_failed": "Невозможно преобразовать \"{value}\" в {type} для {parameter}",
     "director.runtime.error.default_parse_failed": "Невозможно разобрать значение по умолчанию параметра {parameter}",
     "director.runtime.error.missing_argument": "Отсутствует аргумент \"{parameter}\" ({type})",

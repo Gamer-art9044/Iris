@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "Questo comando non può essere eseguito da questa origine.",
     "director.runtime.error.unknown_parameter": "Chiave di parametro sconosciuta: {key}",
     "director.runtime.error.unexpected_argument": "Argomento imprevisto \"{argument}\". I parametri opzionali devono essere specificati con una chiave, ad es. seed=123",
+    "director.runtime.error.unclosed_group": "Manca la parentesi quadra di chiusura \"]\" per il parametro {key}",
     "director.runtime.error.conversion_failed": "Impossibile convertire \"{value}\" in {type} per {parameter}",
     "director.runtime.error.default_parse_failed": "Impossibile analizzare il valore predefinito del parametro {parameter}",
     "director.runtime.error.missing_argument": "Argomento mancante \"{parameter}\" ({type})",

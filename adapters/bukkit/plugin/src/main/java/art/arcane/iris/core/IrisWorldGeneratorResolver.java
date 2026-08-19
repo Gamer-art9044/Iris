@@ -33,15 +33,19 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.util.common.plugin.VolmitPlugin;
+import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import lombok.NonNull;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
+import org.bukkit.World;
 import org.bukkit.generator.BiomeProvider;
 import org.bukkit.generator.ChunkGenerator;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,6 +60,7 @@ import java.util.function.Supplier;
 public final class IrisWorldGeneratorResolver {
     private static final int VALIDATION_STABILITY_ATTEMPTS = 2;
     private static final Object SNAPSHOT_VALIDATION_LOCK = new Object();
+    private static final String IRIS_DIMENSION_NAMESPACE = "iris";
 
     private final VolmitPlugin plugin;
 
@@ -278,6 +283,10 @@ public final class IrisWorldGeneratorResolver {
     }
 
     public ChunkGenerator resolveDefaultWorldGenerator(String worldName, String id) {
+        if (isGeneratorDiscoveryProbe(worldName, id)) {
+            Iris.debug("Generator discovery probe for loaded world " + worldName);
+            return new IrisProbeChunkGenerator(worldName);
+        }
         IrisStartupValidation.requireWorldCreationReady();
         ChunkGenerator stagedGenerator = WorldLifecycleStaging.consumeGenerator(worldName);
         if (stagedGenerator != null) {
@@ -288,6 +297,11 @@ public final class IrisWorldGeneratorResolver {
         if (id == null || id.isEmpty()) id = IrisSettings.get().getGenerator().getDefaultWorldType();
         Iris.debug("Generator ID: " + id + " requested by bukkit/plugin");
 
+        File levelRoot = IrisWorldStorage.levelRoot();
+        NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName());
+        requireWorldKeyAvailable(worldName, worldKey);
+        requireOwnedWorld(worldName, levelRoot, worldKey);
+
         try {
             return resolveFrozenWorldGenerator(worldName, id);
         } catch (RuntimeException failure) {
@@ -296,6 +310,66 @@ public final class IrisWorldGeneratorResolver {
             Bukkit.shutdown();
             throw failure;
         }
+    }
+
+    /**
+     * Multiverse-Core probes every enabled plugin by asking for a generator with an empty dimension
+     * id and the name of a world that is already loaded. Bukkit never creates a world that is
+     * already loaded, so that pair only ever means discovery, never generation.
+     */
+    private static boolean isGeneratorDiscoveryProbe(String worldName, String id) {
+        return id != null && id.isEmpty() && Bukkit.getWorld(worldName) != null;
+    }
+
+    /**
+     * Refuses a second generator for a world key that is already live. Multiverse imports accept a
+     * world name that maps onto a loaded Iris key, which would otherwise start a second engine on
+     * the same storage with a different seed.
+     */
+    private static void requireWorldKeyAvailable(String worldName, NamespacedKey worldKey) {
+        World loaded = WorldIdentity.resolve(worldKey).orElse(null);
+        if (loaded == null) {
+            return;
+        }
+        throw new IllegalStateException("Refusing to generate '" + worldName + "': " + worldKey
+                + " is already loaded as '" + loaded.getName() + "'.");
+    }
+
+    /**
+     * Refuses worlds Iris does not own before the fail-fast path can see them. A world without Iris
+     * storage is somebody else's create or import, and returning null there would silently hand the
+     * caller a vanilla world.
+     * <p>
+     * The {@code iris} dimension namespace is Iris-exclusive, so a directory in it is ownership on
+     * its own. Every server already has {@code dimensions/minecraft/*}, so a vanilla slot counts as
+     * Iris' only once it carries a frozen pack snapshot.
+     */
+    private static void requireOwnedWorld(String worldName, File levelRoot, NamespacedKey worldKey) {
+        File dimensionRoot;
+        try {
+            dimensionRoot = IrisWorldStorage.frozenDimensionRoot(
+                    Bukkit.getWorldContainer(),
+                    levelRoot,
+                    worldName,
+                    worldKey
+            ).orElse(null);
+        } catch (RuntimeException unusableStorage) {
+            // Storage exists but cannot be resolved: an owned world, left to the fail-fast path.
+            return;
+        }
+        if (dimensionRoot != null
+                && (IRIS_DIMENSION_NAMESPACE.equals(worldKey.getNamespace()) || hasFrozenPack(dimensionRoot))) {
+            return;
+        }
+        throw new IllegalStateException("'" + worldName + "' (" + worldKey
+                + ") has no Iris world storage, so Iris cannot generate it."
+                + " Create Iris worlds with /iris create " + worldName + " type=<pack>;"
+                + " Iris registers them with Multiverse itself.");
+    }
+
+    private static boolean hasFrozenPack(File dimensionRoot) {
+        Path packRoot = dimensionRoot.toPath().toAbsolutePath().normalize().resolve("iris").resolve("pack");
+        return Files.isDirectory(packRoot, LinkOption.NOFOLLOW_LINKS);
     }
 
     private ChunkGenerator resolveFrozenWorldGenerator(String worldName, String id) {

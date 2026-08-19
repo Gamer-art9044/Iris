@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "לא ניתן להריץ פקודה זו ממקור זה.",
     "director.runtime.error.unknown_parameter": "מפתח פרמטר לא ידוע: {key}",
     "director.runtime.error.unexpected_argument": "ארגומנט לא צפוי \"{argument}\". פרמטרים אופציונליים חייבים להינתן עם מפתח, לדוגמה seed=123",
+    "director.runtime.error.unclosed_group": "חסר סוגר מרובע סוגר \"]\" עבור הפרמטר {key}",
     "director.runtime.error.conversion_failed": "לא ניתן להמיר את \"{value}\" ל-{type} עבור {parameter}",
     "director.runtime.error.default_parse_failed": "לא ניתן לנתח את ערך ברירת המחדל של הפרמטר {parameter}",
     "director.runtime.error.missing_argument": "חסר ארגומנט \"{parameter}\" ({type})",

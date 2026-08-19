@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "無法從此來源執行該指令。",
     "director.runtime.error.unknown_parameter": "未知參數鍵: {key}",
     "director.runtime.error.unexpected_argument": "意外參數 \"{argument}\"。選用參數必須使用鍵指定，例如 seed=123",
+    "director.runtime.error.unclosed_group": "參數 {key} 缺少右方括號 \"]\"",
     "director.runtime.error.conversion_failed": "無法將 \"{value}\" 轉換為 {parameter} 所需的 {type}",
     "director.runtime.error.default_parse_failed": "無法解析參數 {parameter} 的預設值",
     "director.runtime.error.missing_argument": "缺少參數 \"{parameter}\" ({type})",

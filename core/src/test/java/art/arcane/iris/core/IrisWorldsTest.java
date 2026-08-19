@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 public class IrisWorldsTest {
     @Rule
@@ -51,6 +52,18 @@ public class IrisWorldsTest {
 
         assertEquals(Set.of("world", "world_iris_moon"), selected.keySet());
         assertEquals(Set.of("archive_iris_foreign"), other.keySet());
+    }
+
+    @Test
+    public void bukkitGeneratorStringsAreMatchedCaseInsensitively() {
+        assertEquals("pack", IrisWorlds.generatorLoadKey("Iris:pack", "overworld"));
+        assertEquals("pack", IrisWorlds.generatorLoadKey("iris:pack", "overworld"));
+        assertEquals("pack", IrisWorlds.generatorLoadKey("IRIS:pack", "overworld"));
+        assertEquals("overworld", IrisWorlds.generatorLoadKey("Iris", "overworld"));
+        assertEquals("overworld", IrisWorlds.generatorLoadKey("iris", "overworld"));
+        assertNull(IrisWorlds.generatorLoadKey("VoidGen", "overworld"));
+        assertNull(IrisWorlds.generatorLoadKey("Irissy:pack", "overworld"));
+        assertNull(IrisWorlds.generatorLoadKey(null, "overworld"));
     }
 
     @Test

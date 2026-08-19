@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "この実行元からはコマンドを実行できません。",
     "director.runtime.error.unknown_parameter": "不明なパラメーターキー: {key}",
     "director.runtime.error.unexpected_argument": "予期しない引数 \"{argument}\"。オプションのパラメーターはキー付きで指定してください。例: seed=123",
+    "director.runtime.error.unclosed_group": "パラメーター {key} の閉じ角括弧 \"]\" がありません",
     "director.runtime.error.conversion_failed": "\"{value}\" を {parameter} 用の {type} に変換できません",
     "director.runtime.error.default_parse_failed": "パラメーター {parameter} のデフォルト値を解析できません",
     "director.runtime.error.missing_argument": "引数 \"{parameter}\" ({type}) が必要です",

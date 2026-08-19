@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "Bu komut bu kaynaktan çalıştırılamaz.",
     "director.runtime.error.unknown_parameter": "Bilinmeyen parametre anahtarı: {key}",
     "director.runtime.error.unexpected_argument": "Beklenmeyen bağımsız değişken \"{argument}\". İsteğe bağlı parametreler anahtarla belirtilmelidir, ör. seed=123",
+    "director.runtime.error.unclosed_group": "{key} parametresi için kapanış köşeli parantezi \"]\" eksik",
     "director.runtime.error.conversion_failed": "\"{value}\", {parameter} için {type} türüne dönüştürülemiyor",
     "director.runtime.error.default_parse_failed": "{parameter} parametresinin varsayılan değeri ayrıştırılamıyor",
     "director.runtime.error.missing_argument": "Eksik bağımsız değişken \"{parameter}\" ({type})",

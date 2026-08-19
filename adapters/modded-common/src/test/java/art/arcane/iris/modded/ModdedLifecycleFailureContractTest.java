@@ -278,46 +278,75 @@ public class ModdedLifecycleFailureContractTest {
 
     private static String method(String source, String signature) {
         int start = requiredIndex(source, signature);
-        int openBrace = requiredIndex(source, "{", start);
+        int openBrace = openingBrace(source, start);
         return source.substring(start, matchingBrace(source, openBrace) + 1);
     }
 
+    /**
+     * Returns the block of the shallowest catch in the method, i.e. the one attached to the
+     * method's outermost try. Textual first-match would return a nested catch instead, and a
+     * nested catch handles a different failure than the one these contracts pin.
+     */
     private static String catchBlock(String source) {
-        int catchIndex = requiredIndex(source, "catch (");
-        int openBrace = requiredIndex(source, "{", catchIndex);
-        return blockAt(source, openBrace);
+        int bodyStart = openingBrace(source, 0);
+        int depth = 0;
+        int bestDepth = Integer.MAX_VALUE;
+        int catchIndex = -1;
+        int i = bodyStart;
+        while (i < source.length()) {
+            int skipped = skipNonCode(source, i);
+            if (skipped > i) {
+                i = skipped;
+                continue;
+            }
+            char current = source.charAt(i);
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    break;
+                }
+            } else if (current == 'c' && depth < bestDepth && source.startsWith("catch (", i)) {
+                bestDepth = depth;
+                catchIndex = i;
+            }
+            i++;
+        }
+        assertTrue("Missing source contract token: catch (", catchIndex >= 0);
+        return blockAt(source, openingBrace(source, catchIndex));
     }
 
     private static String blockAt(String source, int openBrace) {
         return source.substring(openBrace, matchingBrace(source, openBrace) + 1);
     }
 
+    private static int openingBrace(String source, int start) {
+        int i = start;
+        while (i < source.length()) {
+            int skipped = skipNonCode(source, i);
+            if (skipped > i) {
+                i = skipped;
+                continue;
+            }
+            if (source.charAt(i) == '{') {
+                return i;
+            }
+            i++;
+        }
+        throw new IllegalArgumentException("No source block after offset " + start);
+    }
+
     private static int matchingBrace(String source, int openBrace) {
         int depth = 0;
-        boolean quoted = false;
-        boolean character = false;
-        boolean escaped = false;
-        for (int i = openBrace; i < source.length(); i++) {
+        int i = openBrace;
+        while (i < source.length()) {
+            int skipped = skipNonCode(source, i);
+            if (skipped > i) {
+                i = skipped;
+                continue;
+            }
             char current = source.charAt(i);
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
-            if ((quoted || character) && current == '\\') {
-                escaped = true;
-                continue;
-            }
-            if (!character && current == '"') {
-                quoted = !quoted;
-                continue;
-            }
-            if (!quoted && current == '\'') {
-                character = !character;
-                continue;
-            }
-            if (quoted || character) {
-                continue;
-            }
             if (current == '{') {
                 depth++;
             } else if (current == '}') {
@@ -326,8 +355,52 @@ public class ModdedLifecycleFailureContractTest {
                     return i;
                 }
             }
+            i++;
         }
         throw new IllegalArgumentException("Unclosed source block");
+    }
+
+    /**
+     * Advances past a comment, string, char or text block starting at the index, otherwise returns
+     * the index unchanged. Comments must be skipped: an apostrophe in prose ("generator's") would
+     * otherwise open a char literal and swallow the rest of the file.
+     */
+    private static int skipNonCode(String source, int index) {
+        char current = source.charAt(index);
+        if (current == '/' && index + 1 < source.length()) {
+            char next = source.charAt(index + 1);
+            if (next == '/') {
+                int end = source.indexOf('\n', index);
+                return end < 0 ? source.length() : end + 1;
+            }
+            if (next == '*') {
+                int end = source.indexOf("*/", index + 2);
+                return end < 0 ? source.length() : end + 2;
+            }
+            return index;
+        }
+        if (current == '"' && source.startsWith("\"\"\"", index)) {
+            int end = source.indexOf("\"\"\"", index + 3);
+            return end < 0 ? source.length() : end + 3;
+        }
+        if (current == '"' || current == '\'') {
+            return endOfLiteral(source, index, current);
+        }
+        return index;
+    }
+
+    private static int endOfLiteral(String source, int index, char terminator) {
+        for (int i = index + 1; i < source.length(); i++) {
+            char current = source.charAt(i);
+            if (current == '\\') {
+                i++;
+                continue;
+            }
+            if (current == terminator) {
+                return i + 1;
+            }
+        }
+        return source.length();
     }
 
     private static int occurrences(String source, String needle) {

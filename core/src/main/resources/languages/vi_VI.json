@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "Không thể chạy lệnh này từ nguồn này.",
     "director.runtime.error.unknown_parameter": "Khóa tham số không xác định: {key}",
     "director.runtime.error.unexpected_argument": "Đối số không mong đợi \"{argument}\". Các tham số tùy chọn phải được chỉ định bằng khóa, ví dụ seed=123",
+    "director.runtime.error.unclosed_group": "Thiếu dấu ngoặc vuông đóng \"]\" cho tham số {key}",
     "director.runtime.error.conversion_failed": "Không thể chuyển \"{value}\" thành {type} cho {parameter}",
     "director.runtime.error.default_parse_failed": "Không thể phân tích giá trị mặc định của tham số {parameter}",
     "director.runtime.error.missing_argument": "Thiếu đối số \"{parameter}\" ({type})",

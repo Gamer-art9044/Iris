@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "Tätä komentoa ei voi suorittaa tästä lähteestä.",
     "director.runtime.error.unknown_parameter": "Tuntematon parametriavain: {key}",
     "director.runtime.error.unexpected_argument": "Odottamaton argumentti \"{argument}\". Valinnaiset parametrit on annettava avaimella, esim. seed=123",
+    "director.runtime.error.unclosed_group": "Parametrilta {key} puuttuu sulkeva \"]\"",
     "director.runtime.error.conversion_failed": "Arvoa \"{value}\" ei voi muuntaa tyypiksi {type} parametrille {parameter}",
     "director.runtime.error.default_parse_failed": "Parametrin {parameter} oletusarvoa ei voi jäsentää",
     "director.runtime.error.missing_argument": "Puuttuva argumentti \"{parameter}\" ({type})",

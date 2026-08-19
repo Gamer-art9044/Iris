@@ -234,7 +234,7 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     }
 
     private boolean sendHelpIfRequested(CommandSender sender, String[] args) {
-        Optional<DirectorHelpPage> request = DirectorMiniMenu.resolveHelp(getDirector(), Arrays.asList(args), 17);
+        Optional<DirectorHelpPage> request = DirectorMiniMenu.resolveHelp(getDirector(), Arrays.asList(args));
         if (request.isEmpty()) {
             return false;
         }

@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "Cette commande ne peut pas être exécutée depuis cette origine.",
     "director.runtime.error.unknown_parameter": "Clé de paramètre inconnue : {key}",
     "director.runtime.error.unexpected_argument": "Argument inattendu \"{argument}\". Les paramètres facultatifs doivent être nommés, par ex. seed=123",
+    "director.runtime.error.unclosed_group": "Crochet fermant \"]\" manquant pour le paramètre {key}",
     "director.runtime.error.conversion_failed": "Impossible de convertir \"{value}\" en {type} pour {parameter}",
     "director.runtime.error.default_parse_failed": "Impossible d'analyser la valeur par défaut du paramètre {parameter}",
     "director.runtime.error.missing_argument": "Argument manquant \"{parameter}\" ({type})",

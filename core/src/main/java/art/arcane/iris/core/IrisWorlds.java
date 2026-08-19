@@ -35,6 +35,8 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 public class IrisWorlds {
+    private static final String IRIS_GENERATOR_NAME = "iris";
+    private static final String IRIS_GENERATOR_PREFIX = "iris:";
     private static final AtomicCache<IrisWorlds> cache = new AtomicCache<>();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Type TYPE = TypeToken.getParameterized(KMap.class, String.class, String.class).getType();
@@ -262,21 +264,31 @@ public class IrisWorlds {
         if (worlds == null) return new KMap<>();
 
         KMap<String, String> result = new KMap<>();
+        String defaultWorldType = IrisSettings.get().getGenerator().getDefaultWorldType();
         for (String world : worlds.getKeys(false)) {
-            String gen = worlds.getString(world + ".generator");
-            if (gen == null) continue;
-
-            String loadKey;
-            if (gen.equalsIgnoreCase("iris")) {
-                loadKey = IrisSettings.get().getGenerator().getDefaultWorldType();
-            } else if (gen.startsWith("Iris:")) {
-                loadKey = gen.substring(5);
-            } else continue;
+            String loadKey = generatorLoadKey(worlds.getString(world + ".generator"), defaultWorldType);
+            if (loadKey == null) continue;
 
             result.put(world, loadKey);
         }
 
         return filterBukkitWorldsByStorage(levelRoot, result);
+    }
+
+    /**
+     * Maps a bukkit.yml generator string onto the Iris pack it selects, or null when the string is
+     * not Iris. Bukkit matches generator plugin names case-insensitively, so the prefix does too.
+     */
+    static String generatorLoadKey(String generator, String defaultWorldType) {
+        if (generator == null) return null;
+        if (generator.equalsIgnoreCase(IRIS_GENERATOR_NAME)) return defaultWorldType;
+
+        int prefixLength = IRIS_GENERATOR_PREFIX.length();
+        if (generator.length() > prefixLength
+                && generator.regionMatches(true, 0, IRIS_GENERATOR_PREFIX, 0, prefixLength)) {
+            return generator.substring(prefixLength);
+        }
+        return null;
     }
 
     private Optional<File> packRoot(String worldIdentity) {

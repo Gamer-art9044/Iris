@@ -1,5 +1,6 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.Iris;
 import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
@@ -7,19 +8,30 @@ import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
+import org.bukkit.Server;
+import org.bukkit.World;
+import org.bukkit.generator.ChunkGenerator;
+import org.bukkit.generator.WorldInfo;
+import org.mockito.MockedStatic;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Random;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.when;
 
 public class IrisWorldGeneratorResolverTest {
     @Rule
@@ -130,22 +142,158 @@ public class IrisWorldGeneratorResolverTest {
     }
 
     @Test
-    public void configuredWorldSnapshotFailureStopsStartupAndRethrows() throws Exception {
+    public void ownedWorldSnapshotFailureStopsStartupAndRethrows() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java"));
         int resolverStart = source.indexOf("public ChunkGenerator resolveDefaultWorldGenerator(");
         int resolverEnd = source.indexOf("private ChunkGenerator resolveFrozenWorldGenerator(", resolverStart);
         String resolver = source.substring(resolverStart, resolverEnd);
 
-        int failureCapture = resolver.indexOf("catch (RuntimeException failure)");
+        int probe = resolver.indexOf("isGeneratorDiscoveryProbe(worldName, id)");
+        int readiness = resolver.indexOf("IrisStartupValidation.requireWorldCreationReady()");
+        int duplicateGuard = resolver.indexOf("requireWorldKeyAvailable(worldName, worldKey)");
+        int ownership = resolver.indexOf("requireOwnedWorld(worldName, levelRoot, worldKey)");
+        int frozen = resolver.indexOf("return resolveFrozenWorldGenerator(", ownership);
+        int failureCapture = resolver.indexOf("catch (RuntimeException failure)", frozen);
         int report = resolver.indexOf("Iris.reportError(", failureCapture);
         int shutdown = resolver.indexOf("Bukkit.shutdown()", report);
         int rethrow = resolver.indexOf("throw failure", shutdown);
 
-        assertTrue(failureCapture >= 0);
+        assertTrue(probe >= 0);
+        assertTrue(readiness > probe);
+        assertTrue(duplicateGuard > readiness);
+        assertTrue(ownership > duplicateGuard);
+        assertTrue(frozen > ownership);
+        assertTrue(failureCapture > frozen);
         assertTrue(report > failureCapture);
         assertTrue(shutdown > report);
         assertTrue(rethrow > shutdown);
+
+        String shutdownScope = "the fail-fast shutdown must stay scoped to the frozen snapshot of an owned world";
+        assertEquals(shutdownScope, resolverStart + shutdown, source.indexOf("Bukkit.shutdown()"));
+        assertEquals(shutdownScope, resolverStart + shutdown, source.lastIndexOf("Bukkit.shutdown()"));
+    }
+
+    @Test
+    public void discoveryProbeOfLoadedWorldReturnsInertGeneratorQuietly() {
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            bukkit.when(() -> Bukkit.getWorld("world")).thenReturn(mock(World.class));
+
+            ChunkGenerator probe = new IrisWorldGeneratorResolver(null)
+                    .resolveDefaultWorldGenerator("world", "");
+
+            assertNotNull("Multiverse drops Iris from /mv generators when the probe returns null", probe);
+            bukkit.verify(Bukkit::shutdown, never());
+            IllegalStateException refusal = assertThrows(
+                    IllegalStateException.class,
+                    () -> probe.generateNoise(mock(WorldInfo.class), new Random(), 0, 0, null));
+            assertTrue(refusal.getMessage(), refusal.getMessage().contains("'world'"));
+        }
+    }
+
+    @Test
+    public void externalCreateWithoutIrisStorageThrowsWithoutShutdown() throws Exception {
+        File worldContainer = temporaryFolder.newFolder("external-create");
+        File levelRoot = new File(worldContainer, "world");
+        assertTrue(levelRoot.mkdirs());
+
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            Server server = mock(Server.class);
+            when(server.getLevelDirectory()).thenReturn(levelRoot.toPath());
+            bukkit.when(Bukkit::getServer).thenReturn(server);
+            bukkit.when(Bukkit::getWorldContainer).thenReturn(worldContainer);
+            bukkit.when(Bukkit::getWorlds).thenReturn(List.of());
+
+            IllegalStateException failure = assertThrows(
+                    IllegalStateException.class,
+                    () -> new IrisWorldGeneratorResolver(null)
+                            .resolveDefaultWorldGenerator("mvtest", "overworld"));
+
+            assertTrue(failure.getMessage(), failure.getMessage().contains("mvtest"));
+            assertTrue(failure.getMessage(), failure.getMessage().contains("/iris create"));
+            bukkit.verify(Bukkit::shutdown, never());
+        }
+    }
+
+    @Test
+    public void ownedIrisWorldWithUnusableSnapshotStillStopsTheServer() throws Exception {
+        File worldContainer = temporaryFolder.newFolder("owned-broken");
+        File levelRoot = new File(worldContainer, "world");
+        assertTrue(levelRoot.mkdirs());
+        assertTrue(new File(worldContainer, "world_iris_moon/dimensions/iris/moon").mkdirs());
+
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            Server server = mock(Server.class);
+            when(server.getLevelDirectory()).thenReturn(levelRoot.toPath());
+            bukkit.when(Bukkit::getServer).thenReturn(server);
+            bukkit.when(Bukkit::getWorldContainer).thenReturn(worldContainer);
+            bukkit.when(Bukkit::getWorlds).thenReturn(List.of());
+
+            assertThrows(
+                    IllegalStateException.class,
+                    () -> new IrisWorldGeneratorResolver(null)
+                            .resolveDefaultWorldGenerator("world_iris_moon", "overworld"));
+
+            bukkit.verify(Bukkit::shutdown);
+        }
+    }
+
+    @Test
+    public void vanillaDimensionSlotWithoutFrozenPackIsNotOwned() throws Exception {
+        File worldContainer = temporaryFolder.newFolder("vanilla-slot");
+        File levelRoot = new File(worldContainer, "world");
+        assertTrue(new File(levelRoot, "dimensions/minecraft/the_nether").mkdirs());
+
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            Server server = mock(Server.class);
+            when(server.getLevelDirectory()).thenReturn(levelRoot.toPath());
+            bukkit.when(Bukkit::getServer).thenReturn(server);
+            bukkit.when(Bukkit::getWorldContainer).thenReturn(worldContainer);
+            bukkit.when(Bukkit::getWorlds).thenReturn(List.of());
+
+            IllegalStateException failure = assertThrows(
+                    IllegalStateException.class,
+                    () -> new IrisWorldGeneratorResolver(null)
+                            .resolveDefaultWorldGenerator("world_nether", "overworld"));
+
+            assertTrue(failure.getMessage(), failure.getMessage().contains("minecraft:the_nether"));
+            assertTrue(failure.getMessage(), failure.getMessage().contains("/iris create"));
+            bukkit.verify(Bukkit::shutdown, never());
+        }
+    }
+
+    @Test
+    public void alreadyLoadedIrisKeyIsRefusedBeforeAnyEngineCanStart() throws Exception {
+        File worldContainer = temporaryFolder.newFolder("duplicate-key");
+        File levelRoot = new File(worldContainer, "world");
+        assertTrue(levelRoot.mkdirs());
+        writeValidPack(new File(levelRoot, "dimensions/iris/irisworld/iris/pack").toPath());
+
+        World loaded = mock(World.class);
+        when(loaded.getKey()).thenReturn(new NamespacedKey("iris", "irisworld"));
+        when(loaded.getName()).thenReturn("world_iris_irisworld");
+
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            Server server = mock(Server.class);
+            when(server.getLevelDirectory()).thenReturn(levelRoot.toPath());
+            bukkit.when(Bukkit::getServer).thenReturn(server);
+            bukkit.when(Bukkit::getWorldContainer).thenReturn(worldContainer);
+            bukkit.when(Bukkit::getWorlds).thenReturn(List.of(loaded));
+
+            IllegalStateException failure = assertThrows(
+                    IllegalStateException.class,
+                    () -> new IrisWorldGeneratorResolver(null)
+                            .resolveDefaultWorldGenerator("irisworld", "overworld"));
+
+            assertTrue(failure.getMessage(), failure.getMessage().contains("iris:irisworld"));
+            assertTrue(failure.getMessage(), failure.getMessage().contains("world_iris_irisworld"));
+            bukkit.verify(Bukkit::shutdown, never());
+        }
     }
 
     private static void writeValidPack(Path packRoot) throws Exception {

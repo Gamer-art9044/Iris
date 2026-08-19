@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "Šios komandos negalima vykdyti iš šio šaltinio.",
     "director.runtime.error.unknown_parameter": "Nežinomas parametro raktas: {key}",
     "director.runtime.error.unexpected_argument": "Netikėtas argumentas \"{argument}\". Pasirenkami parametrai turi būti nurodyti su raktu, pvz. seed=123",
+    "director.runtime.error.unclosed_group": "Parametrui {key} trūksta uždaromojo skliausto \"]\"",
     "director.runtime.error.conversion_failed": "Reikšmės \"{value}\" nepavyko konvertuoti į {type} parametrui {parameter}",
     "director.runtime.error.default_parse_failed": "Nepavyko nuskaityti parametro {parameter} numatytosios reikšmės",
     "director.runtime.error.missing_argument": "Trūksta argumento \"{parameter}\" ({type})",

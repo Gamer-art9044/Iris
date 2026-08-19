@@ -19,6 +19,7 @@
     "director.runtime.error.invalid_origin": "Tego polecenia nie można wykonać z tego źródła.",
     "director.runtime.error.unknown_parameter": "Nieznany klucz parametru: {key}",
     "director.runtime.error.unexpected_argument": "Nieoczekiwany argument \"{argument}\". Parametry opcjonalne muszą mieć klucz, np. seed=123",
+    "director.runtime.error.unclosed_group": "Brak zamykającego nawiasu \"]\" dla parametru {key}",
     "director.runtime.error.conversion_failed": "Nie można przekonwertować \"{value}\" na {type} dla {parameter}",
     "director.runtime.error.default_parse_failed": "Nie można odczytać wartości domyślnej parametru {parameter}",
     "director.runtime.error.missing_argument": "Brak argumentu \"{parameter}\" ({type})",

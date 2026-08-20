@@ -713,9 +713,12 @@ public class IrisComplex implements DataProvider {
             } catch (Throwable e) {
                 long now = System.currentTimeMillis();
                 long last = lastBoundsFailureLog.get();
-                if (now - last >= 5000L && lastBoundsFailureLog.compareAndSet(last, now)) {
+                // The five second gate keeps this off the hot path; the once key keeps it out of a log
+                // scan for the rest of the generation, where the same cause repeats for every column.
+                if (now - last >= 5000L && lastBoundsFailureLog.compareAndSet(last, now)
+                        && IrisLogging.warnOnce("biome-bounds:" + e.getClass().getName() + ":" + e.getMessage(),
+                        "Failed to sample interpolated biome bounds at " + xx + " " + zz + ", flattening height to zero: " + e.getClass().getSimpleName() + ": " + e.getMessage())) {
                     IrisLogging.reportError(e);
-                    IrisLogging.warn("Failed to sample interpolated biome bounds at " + xx + " " + zz + ", flattening height to zero: " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 }
             }
 

@@ -40,6 +40,7 @@ public class PregenCacheImpl implements PregenCache {
 
     private final File directory;
     private final int maxSize;
+    private final AtomicBoolean missingStorageReported = new AtomicBoolean();
     private final Long2ObjectLinkedOpenHashMap<Plate> cache = new Long2ObjectLinkedOpenHashMap<>();
 
     public PregenCacheImpl(File directory, int maxSize) {
@@ -183,6 +184,9 @@ public class PregenCacheImpl implements PregenCache {
         if (!plate.dirty) {
             return;
         }
+        if (!prepareCacheDirectory()) {
+            return;
+        }
 
         File file = null;
         try {
@@ -196,10 +200,29 @@ public class PregenCacheImpl implements PregenCache {
         }
     }
 
-    private File fileForPlate(int x, int z) {
-        if (!directory.exists() && !directory.mkdirs()) {
+    /**
+     * Creates the cache directory under an existing parent only. This is a cache: when the storage it lives
+     * in has been deleted the plate is dropped rather than rebuilt, so a trim cannot resurrect a world tree.
+     */
+    private boolean prepareCacheDirectory() {
+        if (directory.isDirectory()) {
+            return true;
+        }
+        File parent = directory.getParentFile();
+        if (parent == null || !parent.isDirectory()) {
+            if (missingStorageReported.compareAndSet(false, true)) {
+                IrisLogging.warn("Pregen cache storage is gone at %s; cached plates are being dropped.",
+                        directory.getAbsolutePath());
+            }
+            return false;
+        }
+        if (!directory.mkdirs() && !directory.isDirectory()) {
             throw new IllegalStateException("Cannot create directory: " + directory.getAbsolutePath());
         }
+        return true;
+    }
+
+    private File fileForPlate(int x, int z) {
         return new File(directory, "c." + x + "." + z + ".lz4b");
     }
 

@@ -17,6 +17,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.stream.Stream;
 
 public final class IrisWorldStorage {
     private static final String IRIS_NAMESPACE = "iris";
@@ -323,6 +324,29 @@ public final class IrisWorldStorage {
             }
         }
         return target.toFile();
+    }
+
+    /**
+     * True when the level root holds at least one Iris-managed world directory. Used by the failure paths
+     * that have to decide whether letting the server continue would put vanilla terrain into Iris storage.
+     */
+    public static boolean hasManagedWorldStorage(File levelRoot) {
+        if (levelRoot == null) {
+            return false;
+        }
+        Path namespace = levelRoot.toPath()
+                .toAbsolutePath()
+                .normalize()
+                .resolve("dimensions")
+                .resolve(IRIS_NAMESPACE);
+        if (!Files.isDirectory(namespace, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        try (Stream<Path> entries = Files.list(namespace)) {
+            return entries.anyMatch(entry -> Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS));
+        } catch (IOException unreadable) {
+            return false;
+        }
     }
 
     public static boolean isExistingManagedDimensionRoot(File levelRoot, NamespacedKey key) {

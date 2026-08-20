@@ -341,7 +341,7 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
     public MantleChunk<Matter> acquireChunk(int cx, int cz) {
         int index = windowIndex(cx, cz);
         if (index < 0) {
-            IrisLogging.error("Mantle Writer Accessed chunk out of bounds" + cx + "," + cz);
+            IrisLogging.debug("Mantle Writer Accessed chunk out of bounds" + cx + "," + cz);
             return null;
         }
 
@@ -927,7 +927,9 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         try {
             setData(pos.getX(), pos.getY(), pos.getZ(), data);
         } catch (Throwable e) {
-            IrisLogging.error("No set? " + data.toString() + " for " + pos.toString());
+            // Reached per position while an object writes past the edge of the writer window, which is
+            // how a large object is clipped. Nothing here is actionable from outside the engine.
+            IrisLogging.debug("No set? " + data.toString() + " for " + pos.toString());
         }
     }
 

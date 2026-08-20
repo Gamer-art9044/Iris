@@ -182,7 +182,7 @@ public class IrisDecorator {
 
     public PlatformBlockState getBlockData100(IrisBiome b, RNG rng, double x, double y, double z, IrisData data) {
         if (getBlockData(data).isEmpty()) {
-            IrisLogging.warn("Empty Block Data for " + b.getName());
+            IrisLogging.warnOnce("decorator-empty:" + b.getName(), "Empty Block Data for " + b.getName());
             return null;
         }
 

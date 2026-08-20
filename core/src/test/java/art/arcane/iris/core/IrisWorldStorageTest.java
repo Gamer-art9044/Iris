@@ -427,4 +427,21 @@ public class IrisWorldStorageTest {
         Path packRoot = Files.createDirectory(irisRoot.resolve("pack"));
         assertEquals(packRoot.toFile(), IrisWorldStorage.requireFrozenPackRoot(dimensionRoot));
     }
+
+    @Test
+    public void managedWorldStorageIsOnlyReportedForRealIrisWorldDirectories() throws Exception {
+        File levelRoot = temporaryFolder.newFolder("managed-storage-level-root");
+
+        assertFalse(IrisWorldStorage.hasManagedWorldStorage(null));
+        assertFalse(IrisWorldStorage.hasManagedWorldStorage(levelRoot));
+
+        Path namespace = Files.createDirectories(levelRoot.toPath().resolve("dimensions/iris"));
+        assertFalse(IrisWorldStorage.hasManagedWorldStorage(levelRoot));
+
+        Files.writeString(namespace.resolve("stray"), "not a world directory");
+        assertFalse(IrisWorldStorage.hasManagedWorldStorage(levelRoot));
+
+        Files.createDirectory(namespace.resolve("moon"));
+        assertTrue(IrisWorldStorage.hasManagedWorldStorage(levelRoot));
+    }
 }

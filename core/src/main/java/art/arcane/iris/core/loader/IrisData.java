@@ -193,10 +193,6 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         return m;
     }
 
-    private static void printData(ResourceLoader<?> rl) {
-        IrisLogging.warn("  " + rl.getResourceTypeName() + " @ /" + rl.getFolderName() + ": Cache=" + rl.getLoadCache().getSize() + " Folders=" + rl.getFolders().size());
-    }
-
     public static IrisObject loadAnyObject(String key, @Nullable IrisData nearest) {
         return loadAny(IrisObject.class, key, nearest);
     }

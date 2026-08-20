@@ -38,7 +38,9 @@ public class SlimJar {
                         .debug(DEBUG)
                         .build();
             } catch (Throwable e) {
-                IrisLogging.warn("Failed to inject the library loader, falling back to application builder");
+                // The Spigot builder is a probe: not every server exposes it, and the fallback is the
+                // supported path on the ones that do not.
+                IrisLogging.info("Failed to inject the library loader, falling back to application builder");
                 ApplicationBuilder.appending(plugin.getName())
                         .injectableFactory(InjectableFactory.selecting(InjectableFactory.ERROR, InjectableFactory.INJECTABLE, InjectableFactory.WRAPPED, InjectableFactory.UNSAFE))
                         .downloadDirectoryPath(downloadPath)

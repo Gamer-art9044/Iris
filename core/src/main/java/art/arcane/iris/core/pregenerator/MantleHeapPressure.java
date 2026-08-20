@@ -39,7 +39,9 @@ public final class MantleHeapPressure {
                     System::currentTimeMillis,
                     System::gc,
                     () -> invokeHotSpotDiagnosticGc(ManagementFactory.getPlatformMBeanServer()),
-                    (double fraction) -> IrisLogging.warn(
+                    // An escalation step in the reclaim policy, rate limited by that policy rather than by
+                    // anything the operator did. What is actionable is the wait budget being exceeded.
+                    (double fraction) -> IrisLogging.info(
                             "Iris heap remained at %.1f%% after normal panic reclaim; invoking the current JVM's diagnostic full GC to keep generation live.",
                             fraction * 100.0D),
                     (String context, Throwable failure) -> IrisLogging.reportError(context, failure)));

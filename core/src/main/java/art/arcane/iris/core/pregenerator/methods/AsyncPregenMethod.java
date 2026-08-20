@@ -518,7 +518,9 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
         int suppressed = suppressedSlowRequestLogs.getAndSet(0);
         String suppressedText = suppressed <= 0 ? "" : " suppressed=" + suppressed;
-        IrisLogging.warn("Async pregen chunk load at " + x + "," + z
+        // Slow chunk loads are what the adaptive in flight limit exists to absorb, and this line is already
+        // interval throttled with a suppression count. It reports the throttle working, not a fault.
+        IrisLogging.info("Async pregen chunk load at " + x + "," + z
                 + " is still pending after " + slowRequestWarningSeconds + "s."
                 + " adaptiveLimit=" + adaptiveInFlightLimit.get()
                 + suppressedText + " " + metricsSnapshot());

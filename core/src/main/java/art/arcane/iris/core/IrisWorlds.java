@@ -1,5 +1,6 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.core.lifecycle.MissingWorldStorageLog;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.service.StudioSVC;
@@ -32,12 +33,16 @@ import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 public class IrisWorlds {
     private static final String IRIS_GENERATOR_NAME = "iris";
     private static final String IRIS_GENERATOR_PREFIX = "iris:";
+    private static final String IRIS_NAMESPACE = "iris";
     private static final AtomicCache<IrisWorlds> cache = new AtomicCache<>();
+    private static final Set<String> UNUSABLE_STORAGE_REPORTED = ConcurrentHashMap.newKeySet();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Type TYPE = TypeToken.getParameterized(KMap.class, String.class, String.class).getType();
     private final Path levelRoot;
@@ -49,15 +54,33 @@ public class IrisWorlds {
         this.levelRoot = Objects.requireNonNull(levelRoot, "levelRoot").toAbsolutePath().normalize();
         registryFile = registryFile(this.levelRoot);
         this.worlds = new KMap<>();
-        worlds.forEach((identity, type) -> this.worlds.put(WorldIdentity.parse(identity).toString(), type));
+        // One unreadable entry drops itself. This runs behind a static cache whose callers all dereference
+        // the result immediately, so anything thrown here stops Iris from enabling for every world.
+        worlds.forEach((identity, type) -> {
+            try {
+                this.worlds.put(WorldIdentity.parse(identity).toString(), type);
+            } catch (IllegalArgumentException unreadable) {
+                IrisLogging.warn("Dropping unreadable worlds.json entry %s: %s", identity, unreadable.getMessage());
+                dirty = true;
+            }
+        });
         readBukkitWorlds(this.levelRoot).forEach((name, type) -> put0(
                 IrisWorldStorage.keyFromConfiguredWorldName(name, this.levelRoot.getFileName().toString()).toString(),
                 type));
         save();
     }
 
+    /**
+     * The world registry, never null.
+     * <p>
+     * A failure here used to be swallowed into a null return, and every caller dereferences the result
+     * immediately, so a single unusable world folder turned into an NPE that stopped Iris from enabling -
+     * and a server whose Iris worlds then generated vanilla terrain over their own region files. Per-world
+     * storage problems are isolated in {@link #clean()} and {@link #loadDimension(String, String)}; anything
+     * that gets past those is a real failure and is raised, not hidden.
+     */
     public static IrisWorlds get() {
-        return cache.aquire(() -> {
+        return cache.aquireOnceOrThrow(() -> {
             Path levelRoot = IrisWorldStorage.levelRoot().toPath().toAbsolutePath().normalize();
             File file = registryFile(levelRoot).toFile();
             if (!file.exists()) {
@@ -69,8 +92,8 @@ public class IrisWorlds {
                 KMap<String, String> worlds = GSON.fromJson(json, TYPE);
                 return new IrisWorlds(levelRoot, Objects.requireNonNullElseGet(worlds, KMap::new));
             } catch (Throwable e) {
-                IrisLogging.error("Failed to load worlds.json for level root " + levelRoot + "!");
-                e.printStackTrace();
+                IrisLogging.error("Failed to read worlds.json for level root " + levelRoot
+                        + "; rebuilding it from bukkit.yml.");
                 IrisLogging.reportError(e);
             }
 
@@ -138,6 +161,14 @@ public class IrisWorlds {
                 .filter(Objects::nonNull);
     }
 
+    /**
+     * The dimension one registered world generates from, or null when its pack snapshot cannot supply it.
+     * Same resolution {@link #getDimensions()} uses, for callers that hold a single world identity.
+     */
+    public IrisDimension getDimension(String worldIdentity, String id) {
+        return loadDimension(worldIdentity, id);
+    }
+
     public Stream<IrisDimension> getDimensions() {
         return getWorlds()
                 .entrySet()
@@ -146,6 +177,14 @@ public class IrisWorlds {
                 .filter(Objects::nonNull);
     }
 
+    /**
+     * Drops registry entries whose pack snapshot no longer backs them.
+     * <p>
+     * A world whose storage is present but unusable is kept and reported instead of dropped: the entry is
+     * what lets {@code /iris remove} find the world, and dropping it would not stop the server from loading
+     * the folder anyway. It is excluded from {@link #getDimensions()} so one broken world cannot fail the
+     * whole registry - that failure used to propagate out of the constructor and null out {@link #get()}.
+     */
     public synchronized void clean() {
         boolean removed = worlds.entrySet().removeIf(entry -> {
             try {
@@ -154,6 +193,9 @@ public class IrisWorlds {
                         || !new File(packRoot.get(), "dimensions/" + entry.getValue() + ".json").exists();
             } catch (IllegalArgumentException e) {
                 return true;
+            } catch (IllegalStateException e) {
+                warnUnusableStorage(entry.getKey(), e);
+                return false;
             }
         });
         dirty = dirty || removed;
@@ -232,27 +274,45 @@ public class IrisWorlds {
         KMap<String, String> result = new KMap<>();
         for (Map.Entry<String, String> entry : Objects.requireNonNull(configuredWorlds, "configuredWorlds").entrySet()) {
             String configuredWorldName = entry.getKey();
-            NamespacedKey worldKey = IrisWorldStorage.keyFromConfiguredWorldName(
-                    configuredWorldName,
-                    levelNamePath.toString());
-            if (!IrisWorldStorage.configuredWorldName(worldKey, levelNamePath.toString())
-                    .equals(configuredWorldName)) {
+            NamespacedKey worldKey;
+            try {
+                worldKey = IrisWorldStorage.keyFromConfiguredWorldName(
+                        configuredWorldName,
+                        levelNamePath.toString());
+                if (!IrisWorldStorage.configuredWorldName(worldKey, levelNamePath.toString())
+                        .equals(configuredWorldName)) {
+                    continue;
+                }
+            } catch (IllegalArgumentException notAnIrisWorldName) {
+                // A bukkit.yml name that has no Iris identity is somebody else's world, never this
+                // registry's, and must not stop the whole registry from being built.
                 continue;
             }
             Path worldContainer = root.getParent();
             if (worldContainer == null) {
                 throw new IllegalArgumentException("Selected level root has no world container: " + root);
             }
+            boolean storagePresent;
             try {
-                if (IrisWorldStorage.frozenDimensionRoot(
+                storagePresent = IrisWorldStorage.frozenDimensionRoot(
                         worldContainer.toFile(),
                         root.toFile(),
                         configuredWorldName,
                         worldKey
-                ).isPresent()) {
-                    result.put(configuredWorldName, entry.getValue());
-                }
-            } catch (IllegalStateException ignored) {
+                ).isPresent();
+            } catch (IllegalStateException unusableStorage) {
+                storagePresent = false;
+            }
+            if (storagePresent) {
+                result.put(configuredWorldName, entry.getValue());
+                continue;
+            }
+            // Vanilla slots are absent on every server that never created them; only an Iris world that
+            // bukkit.yml still points at is an orphan worth reporting.
+            if (IRIS_NAMESPACE.equals(worldKey.getNamespace())) {
+                MissingWorldStorageLog.warnOnce(
+                        configuredWorldName,
+                        root.resolve("dimensions").resolve(IRIS_NAMESPACE).resolve(worldKey.getKey()));
             }
         }
         return result;
@@ -310,8 +370,24 @@ public class IrisWorlds {
         return dimensionRoot.map(IrisWorldStorage::requireFrozenPackRoot);
     }
 
+    private static void warnUnusableStorage(String worldIdentity, IllegalStateException failure) {
+        if (!UNUSABLE_STORAGE_REPORTED.add(worldIdentity)) {
+            return;
+        }
+        IrisLogging.error("Iris world %s has unusable world storage and is excluded: %s",
+                worldIdentity, failure.getMessage());
+        IrisLogging.error("Restore its iris/pack snapshot, or drop the world with /iris remove world=%s delete=true.",
+                worldIdentity);
+    }
+
     private IrisDimension loadDimension(String worldIdentity, String id) {
-        File pack = packRoot(worldIdentity).orElse(null);
+        File pack;
+        try {
+            pack = packRoot(worldIdentity).orElse(null);
+        } catch (IllegalStateException unusableStorage) {
+            warnUnusableStorage(worldIdentity, unusableStorage);
+            return null;
+        }
         IrisDimension dimension = pack == null ? null : IrisData.get(pack).getDimensionLoader().load(id);
         if (dimension == null) {
             dimension = IrisData.loadAnyDimension(id, null);

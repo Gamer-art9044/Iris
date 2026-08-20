@@ -28,6 +28,7 @@ public class AtomicCache<T> {
     private transient final Object initLock = new Object();
     private transient final boolean nullSupport;
     private transient volatile Object value;
+    private transient volatile Throwable failure;
 
     public AtomicCache() {
         this(false);
@@ -40,6 +41,7 @@ public class AtomicCache<T> {
     public void reset() {
         synchronized (initLock) {
             value = null;
+            failure = null;
         }
     }
 
@@ -72,6 +74,10 @@ public class AtomicCache<T> {
      * Like {@link #aquire(Supplier)} but propagates a supplier failure to the caller instead
      * of swallowing it into a null return. For values that are mandatory: a caller of a
      * "@NotNull" accessor should see the supplier's real exception, not a downstream NPE.
+     * <p>
+     * The supplier is retried on every call until it produces a value, which is what a caller that can
+     * repair the cause between attempts needs. Use {@link #aquireOnceOrThrow(Supplier)} when re-running a
+     * failed supplier is itself the problem.
      */
     public T aquireOrThrow(Supplier<T> t) {
         Object v = value;
@@ -94,6 +100,56 @@ public class AtomicCache<T> {
             value = computed;
             return computed;
         }
+    }
+
+    /**
+     * Like {@link #aquireOrThrow(Supplier)} but memoizes the failure as well as the value, so a supplier
+     * that cannot produce one is run exactly once and every later caller is told the same reason. For
+     * values whose supplier rebuilds shared state, where re-running it per call repeats that work and
+     * hides the original cause behind whatever the retry happens to fail on. {@link #reset()} clears it.
+     */
+    public T aquireOnceOrThrow(Supplier<T> t) {
+        Object v = value;
+
+        if (v != null) {
+            return unwrap(v);
+        }
+        rethrowFailure(failure);
+
+        synchronized (initLock) {
+            v = value;
+
+            if (v != null) {
+                return unwrap(v);
+            }
+            rethrowFailure(failure);
+
+            T computed;
+            try {
+                computed = t.get();
+                if (computed == null) {
+                    throw new IllegalStateException("Atomic cache supplier produced null");
+                }
+            } catch (Throwable e) {
+                failure = e;
+                throw e;
+            }
+            value = computed;
+            return computed;
+        }
+    }
+
+    private static void rethrowFailure(Throwable memoized) {
+        if (memoized == null) {
+            return;
+        }
+        if (memoized instanceof RuntimeException runtimeFailure) {
+            throw runtimeFailure;
+        }
+        if (memoized instanceof Error error) {
+            throw error;
+        }
+        throw new IllegalStateException("Atomic cache supplier failed", memoized);
     }
 
     public T aquire(Supplier<T> t) {
@@ -122,8 +178,12 @@ public class AtomicCache<T> {
                     value = NULL_VALUE;
                 }
             } catch (Throwable e) {
-                IrisLogging.error("Atomic cache failure!");
-                e.printStackTrace();
+                // aquire retries on every call, so a supplier that stays broken is reached per sample.
+                // The first statement of it carries the stack; the rest are traces of the same cause.
+                if (IrisLogging.warnOnce("atomic-cache:" + e.getClass().getName() + ":" + e.getMessage(),
+                        "Atomic cache supplier failed: %s: %s", e.getClass().getSimpleName(), e.getMessage())) {
+                    IrisLogging.reportError(e);
+                }
             }
 
             return null;

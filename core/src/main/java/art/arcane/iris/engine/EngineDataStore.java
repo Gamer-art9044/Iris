@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine;
 
+import art.arcane.iris.core.lifecycle.VanishedWorldStorage;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.IrisEngineData;
 import art.arcane.iris.spi.IrisLogging;
@@ -31,6 +32,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
@@ -40,8 +42,14 @@ import java.nio.file.StandardCopyOption;
  * atomic temp-file move so a crash mid-save can never truncate the live engine data.
  */
 final class EngineDataStore {
+    private static final String ENGINE_DATA_DIRECTORY = "iris/engine-data";
     private final IrisEngine engine;
     private final Object engineDataLock = new Object();
+    /**
+     * Set once this store has written {@code iris/engine-data} into the world folder. From then on that
+     * directory going missing is a delete, whether or not the server has already put the world folder back.
+     */
+    private volatile boolean engineDataEstablished;
 
     EngineDataStore(IrisEngine engine) {
         this.engine = engine;
@@ -57,8 +65,9 @@ final class EngineDataStore {
             if (loaded != null) {
                 return loaded;
             }
-            File f = new File(engine.getWorld().worldFolder(), "iris/engine-data/" + engine.getDimension().getLoadKey() + ".json");
+            File f = engineDataFile();
             if (f.exists()) {
+                engineDataEstablished = true;
                 try {
                     loaded = new Gson().fromJson(IO.readAll(f), IrisEngineData.class);
                     if (loaded == null) {
@@ -79,12 +88,15 @@ final class EngineDataStore {
                 if (loaded.getStatistics().getVersion() == -1 || loaded.getStatistics().getMCVersion() == -1) {
                     IrisLogging.error("Failed to setup Engine Data!");
                 }
-                try {
-                    writeEngineDataAtomically(f, loaded);
-                } catch (IOException e) {
-                    IrisLogging.reportError(e);
-                    e.printStackTrace();
-                    throw new IllegalStateException("Failed to create Iris engine data: " + f.getAbsolutePath(), e);
+                if (!storageVanished()) {
+                    try {
+                        writeEngineDataAtomically(f, loaded);
+                        engineDataEstablished = true;
+                    } catch (IOException e) {
+                        IrisLogging.reportError(e);
+                        e.printStackTrace();
+                        throw new IllegalStateException("Failed to create Iris engine data: " + f.getAbsolutePath(), e);
+                    }
                 }
             }
             engine.engineData = loaded;
@@ -92,11 +104,39 @@ final class EngineDataStore {
         }
     }
 
+    /**
+     * True when this engine's world storage is gone, which stops persistence rather than letting the write
+     * rebuild the tree it is supposed to be writing into.
+     * <p>
+     * The world folder existing is not enough. A {@code save-all} after a hot delete writes the level's own
+     * {@code data/*.dat} files back and recreates the folder, and Iris' {@code WorldSaveEvent} handler runs
+     * after that, so a folder check alone lets the save rebuild {@code iris/engine-data} - which is exactly
+     * the directory the next boot's storage audit reads as "this is an Iris world whose pack snapshot broke".
+     * Once this store has written that directory, its absence is the delete.
+     */
+    private boolean storageVanished() {
+        File worldFolder = engine.getWorld().worldFolder();
+        if (!engineDataEstablished) {
+            return VanishedWorldStorage.vanished(worldFolder);
+        }
+        return VanishedWorldStorage.vanished(worldFolder, new File(worldFolder, ENGINE_DATA_DIRECTORY));
+    }
+
+    private File engineDataFile() {
+        return new File(
+                engine.getWorld().worldFolder(),
+                ENGINE_DATA_DIRECTORY + "/" + engine.getDimension().getLoadKey() + ".json");
+    }
+
     void saveEngineData() {
         synchronized (engineDataLock) {
-            File f = new File(engine.getWorld().worldFolder(), "iris/engine-data/" + engine.getDimension().getLoadKey() + ".json");
+            if (storageVanished()) {
+                return;
+            }
+            File f = engineDataFile();
             try {
                 writeEngineDataAtomically(f, engine.getEngineData());
+                engineDataEstablished = true;
                 IrisLogging.debug("Saved Engine Data");
             } catch (IOException e) {
                 IrisLogging.error("Failed to save Engine Data");
@@ -121,6 +161,13 @@ final class EngineDataStore {
         Path parent = output.getParent();
         if (parent == null) {
             throw new IOException("Engine data path has no parent: " + output);
+        }
+        // <worldFolder>/iris/engine-data/<key>.json: the world folder itself is never created here, so a
+        // deleted world cannot be rebuilt by a save that races the guard in saveEngineData.
+        Path irisRoot = parent.getParent();
+        Path worldFolder = irisRoot == null ? null : irisRoot.getParent();
+        if (worldFolder == null || !Files.isDirectory(worldFolder, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Iris world storage is missing: " + worldFolder);
         }
         Files.createDirectories(parent);
         Path temporary = Files.createTempFile(parent, output.getFileName().toString(), ".tmp");

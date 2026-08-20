@@ -33,6 +33,12 @@ public enum LogLevel {
     DEBUG,
     /** Normal operational messages. */
     INFO,
+    /**
+     * Lifecycle milestones an operator reads the server log to find. Not a problem, but adapters route it to
+     * the host logger rather than to a console sender, so it survives into the log file the server writes.
+     * Reserved for a handful of events per boot.
+     */
+    NOTICE,
     /** Recoverable problems and misconfiguration. */
     WARN,
     /** Failures; usually paired with {@link IrisPlatform#reportError(Throwable)}. */

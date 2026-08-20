@@ -116,4 +116,34 @@ public class WorldRemovalPathPolicyTest {
         );
         assertEquals(WorldRemovalPathPolicy.RejectionReason.SYMBOLIC_LINK, targetFailure.reason());
     }
+
+    /**
+     * "iris worlds", Multiverse and the storage folder each print a different name for the same world, so
+     * all three forms have to select it. Storage presence must not change which world is selected either;
+     * an orphan is exactly the world an admin needs to remove.
+     */
+    @Test
+    public void everyPrintedFormOfAWorldNameSelectsTheSameTarget() throws Exception {
+        Path levelRoot = temporaryFolder.newFolder("name-forms", "world").toPath();
+
+        for (boolean storagePresent : new boolean[]{false, true}) {
+            if (storagePresent) {
+                Files.createDirectories(levelRoot.resolve("dimensions/iris/orphan1"));
+            }
+            WorldRemovalPathPolicy.Target bare =
+                    WorldRemovalPathPolicy.resolve("orphan1", "world", levelRoot);
+            WorldRemovalPathPolicy.Target startup =
+                    WorldRemovalPathPolicy.resolve("world_iris_orphan1", "world", levelRoot);
+            WorldRemovalPathPolicy.Target namespaced =
+                    WorldRemovalPathPolicy.resolve("iris:orphan1", "world", levelRoot);
+
+            assertEquals("iris:orphan1", bare.worldKey().toString());
+            assertEquals(bare.worldKey(), startup.worldKey());
+            assertEquals(bare.worldKey(), namespaced.worldKey());
+            assertEquals(bare.worldDirectory(), startup.worldDirectory());
+            assertEquals(bare.worldDirectory(), namespaced.worldDirectory());
+            assertEquals(bare.storageDirectory(), startup.storageDirectory());
+            assertEquals(bare.storageDirectory(), namespaced.storageDirectory());
+        }
+    }
 }

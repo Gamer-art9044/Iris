@@ -31,12 +31,15 @@ import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.IrisStartupAdmissionListener;
 import art.arcane.iris.core.BukkitWorldReconciler;
 import art.arcane.iris.core.IrisWorldGeneratorResolver;
+import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.PendingWorldDeleteQueue;
 import art.arcane.iris.core.PendingWorldReplacementManager;
 import art.arcane.iris.core.SettingsHotloadWatch;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.datapack.DatapackIngestService.StartupValidationOutcome;
+import art.arcane.iris.core.lifecycle.ManagedWorldLoader;
+import art.arcane.iris.core.lifecycle.MissingWorldStorageLog;
 import art.arcane.iris.core.lifecycle.PaperLibBootstrap;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.runtime.BukkitEnginePlatformHooks;
@@ -65,6 +68,7 @@ import art.arcane.iris.core.service.IrisProtocolService;
 import art.arcane.iris.core.service.IrisTerrainSVC;
 import art.arcane.iris.core.service.JigsawStudioService;
 import art.arcane.iris.core.service.LogFilterSVC;
+import art.arcane.iris.core.service.MultiverseSVC;
 import art.arcane.iris.core.service.ObjectSVC;
 import art.arcane.iris.core.service.ObjectStudioSaveService;
 import art.arcane.iris.core.service.PreservationSVC;
@@ -100,6 +104,7 @@ import art.arcane.volmlib.util.io.InstanceState;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.common.misc.Bindings;
+import art.arcane.iris.util.common.misc.ServerProperties;
 import art.arcane.iris.util.common.misc.SlimJar;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.common.plugin.IrisService;
@@ -142,6 +147,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -261,12 +267,16 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
     }
 
+    /**
+     * A warning raised here is the same kind of thing as one raised in core, so it takes the same route: the
+     * plugin logger at WARNING, where a log scan of logs/latest.log finds it.
+     */
     public static void warn(String format, Object... objs) {
-        msg(C.YELLOW + safeFormat(format, objs));
+        diagnostic(Level.WARNING, safeFormat(format, objs));
     }
 
     public static void error(String format, Object... objs) {
-        msg(C.RED + safeFormat(format, objs));
+        diagnostic(Level.SEVERE, safeFormat(format, objs));
     }
 
     public static void debug(String string) {
@@ -512,12 +522,52 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     private static void bridgeLog(LogLevel level, String message) {
         LogLevel target = level == null ? LogLevel.INFO : level;
-        switch (target) {
-            case DEBUG -> Iris.debug(message);
-            case INFO -> Iris.info(message);
-            case WARN -> Iris.warn(message);
-            case ERROR -> Iris.error(message);
+        Level diagnostic = diagnosticLevel(target);
+        if (diagnostic != null) {
+            diagnostic(diagnostic, message);
+            return;
         }
+        if (target == LogLevel.DEBUG) {
+            Iris.debug(message);
+            return;
+        }
+        Iris.info(message);
+    }
+
+    /**
+     * The java.util.logging level a message keeps, or null when it belongs on the console sender path.
+     * <p>
+     * Core states a severity and every other adapter honours it; on Bukkit a coloured line through the
+     * console sender reaches the terminal but not the instance's logs/latest.log, so a WARN-level scan of
+     * that file never saw a single core warning. Diagnostics go to the plugin logger at their own level
+     * instead, and NOTICE carries the handful of lifecycle lines that have to land there too. Player-facing
+     * text still goes through {@code IrisLogging.msg}.
+     */
+    static Level diagnosticLevel(LogLevel level) {
+        return switch (level) {
+            case NOTICE -> Level.INFO;
+            case WARN -> Level.WARNING;
+            case ERROR -> Level.SEVERE;
+            case DEBUG, INFO -> null;
+        };
+    }
+
+    private static void diagnostic(Level level, String message) {
+        String line = IrisLogging.clean(message);
+        Iris plugin = instance;
+        if (plugin != null) {
+            try {
+                plugin.getLogger().log(level, line);
+                return;
+            } catch (Throwable unavailable) {
+                // Paper runs the bootstrap before a plugin logger exists; the streams below are all there is.
+            }
+        }
+        if (level.intValue() >= Level.WARNING.intValue()) {
+            System.err.println("[Iris] " + line);
+            return;
+        }
+        System.out.println("[Iris] " + line);
     }
 
     /**
@@ -573,6 +623,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 new WandSVC(),
                 new BoardSVC(),
                 new IrisIntegrationService(),
+                new MultiverseSVC(),
                 new IrisProtocolService(),
                 new IrisApiEventSVC(),
                 new CommandSVC()
@@ -597,6 +648,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         J.attempt(this::splash);
         IrisSafeguard.printReports();
         IrisSafeguard.printFooter();
+        // Paper's bootstrap runs before any plugin logger exists, so orphan-storage warnings raised there
+        // never reach logs/latest.log. Replay them once now that the platform log is up.
+        MissingWorldStorageLog.replayToPlatformLog();
         tickets = new ChunkTickets();
         linkMultiverseCore = new MultiverseCoreLink();
         IrisServices.register(MultiverseCoreLink.class, linkMultiverseCore);
@@ -606,6 +660,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisServices.register(EngineWorldManagerProvider.class,
                 (EngineWorldManagerProvider) IrisWorldManager::new);
         IrisServices.register(WorldDeletionQueue.class, pendingWorldDeletes);
+        IrisServices.register(ManagedWorldLoader.class, (ManagedWorldLoader) this::loadManagedWorld);
         SettingsHotloadWatch watch = new SettingsHotloadWatch(getDataFile("settings.json"));
         settingsHotloadWatch = watch;
         configHotloadEngine = new ConfigHotloadEngine(
@@ -710,6 +765,16 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         return worldReconciler;
     }
 
+    /**
+     * The load every integration goes through. {@code /iris load} and the Multiverse guard both land here,
+     * so a world loaded from outside Iris still gets the keyed creator, the pack's environment and the
+     * bukkit.yml reconciliation that make it an Iris world rather than a vanilla one under the same name.
+     */
+    private CompletableFuture<ManagedWorldLoader.ManagedWorldLoad> loadManagedWorld(String configuredWorldName) {
+        return worldReconciler.loadWorld(ServerProperties.BUKKIT_YML, configuredWorldName)
+                .thenApply(result -> new ManagedWorldLoader.ManagedWorldLoad(result.succeeded(), result.message()));
+    }
+
     public PendingWorldReplacementManager pendingWorldReplacements() {
         return pendingWorldReplacements;
     }
@@ -757,13 +822,51 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         Bukkit.getPluginManager().registerEvents(new IrisStartupAdmissionListener(), this);
         Bukkit.getPluginManager().registerEvents(pendingWorldReplacements, this);
         pendingWorldReplacements.registerPlatformEntryListener();
-        boolean enabled = enable();
+        boolean enabled;
+        try {
+            enabled = enable();
+        } catch (Throwable failure) {
+            refuseVanillaFallback(failure);
+            throw failure;
+        }
         if (!enabled) {
+            refuseVanillaFallback(null);
             return;
         }
         BukkitGuiHost.install();
         // super.onEnable() already registers this instance as a listener.
         super.onEnable();
+    }
+
+    /**
+     * Stops a server whose Iris worlds would otherwise be generated by the vanilla generator.
+     * <p>
+     * A disabled Iris gets no {@code getDefaultWorldGenerator} call at all, so the server falls back to
+     * vanilla for every world bukkit.yml points at Iris and writes vanilla terrain into their region files.
+     * There is no Bukkit API that refuses a world at that point, so the server is stopped instead. This is
+     * damage control, not prevention: level creation runs in the same startup step that enables plugins, so
+     * spawn chunks of the affected worlds can still be written before the stop takes effect. The prevention
+     * lives in IrisBootstrap, which refuses startup before any level is created.
+     */
+    private static void refuseVanillaFallback(Throwable failure) {
+        File levelRoot;
+        try {
+            levelRoot = IrisWorldStorage.levelRoot();
+        } catch (Throwable unavailable) {
+            return;
+        }
+        if (!IrisWorldStorage.hasManagedWorldStorage(levelRoot)) {
+            return;
+        }
+        Iris.error("Iris did not enable and this server has Iris worlds; stopping the server before they generate vanilla terrain.");
+        if (failure != null) {
+            Iris.reportError("Iris enable failed", failure);
+        }
+        try {
+            Bukkit.shutdown();
+        } catch (Throwable unavailable) {
+            Iris.error("Could not stop the server: " + unavailable.getClass().getSimpleName());
+        }
     }
 
     public void onDisable() {

@@ -162,7 +162,37 @@ public final class IrisEngineSVC implements IrisService {
         World world = event.getWorld();
         CompletionStage<Boolean> unloadBoundary = WorldUnloadBoundaryRegistry.claim(
                 WorldIdentity.serialize(world));
-        remove(world, unloadBoundary);
+        if (remove(world, unloadBoundary) || unloadBoundary != null) {
+            return;
+        }
+        closeUntrackedGenerator(world);
+    }
+
+    /**
+     * Closes the engine of a world this service never registered.
+     * <p>
+     * Registration is skipped while a previous generator for the same identity is still closing and while
+     * the world is not yet the server's world for its UID, and an unload that lands in that window would
+     * otherwise leave a live engine bound to a dead world. Only an unload Iris did not drive is covered:
+     * an Iris-driven unload carries a boundary and closes the generator in its own phase. The close is
+     * CAS-idempotent, so a redundant call returns the in-flight completion.
+     */
+    private void closeUntrackedGenerator(World world) {
+        PlatformChunkGenerator generator = IrisToolbelt.access(world);
+        if (generator == null || generator.isClosing()) {
+            return;
+        }
+        IrisLogging.debug("EngineSVC: closing untracked generator for unloaded world " + world.getName());
+        CompletableFuture<Void> close = generator.closeAsync();
+        if (close == null) {
+            return;
+        }
+        close.whenComplete((ignored, failure) -> {
+            if (failure != null) {
+                Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+                reportFailure("Failed to close untracked generator for " + world.getName(), cause);
+            }
+        });
     }
 
     @EventHandler
@@ -235,9 +265,12 @@ public final class IrisEngineSVC implements IrisService {
         }
     }
 
-    private void remove(World world, CompletionStage<Boolean> unloadBoundary) {
+    /**
+     * @return true when a registration was found and its close was reserved
+     */
+    private boolean remove(World world, CompletionStage<Boolean> unloadBoundary) {
         if (world == null) {
-            return;
+            return false;
         }
 
         Registered registered;
@@ -250,10 +283,12 @@ public final class IrisEngineSVC implements IrisService {
                 closing = reserveClose(registered);
             }
         }
-        if (closing != null) {
-            phases.closing(world);
-            deferCloseUntilWorldUnload(world, registered, closing, unloadBoundary);
+        if (closing == null) {
+            return false;
         }
+        phases.closing(world);
+        deferCloseUntilWorldUnload(world, registered, closing, unloadBoundary);
+        return true;
     }
 
     private void deferCloseUntilWorldUnload(

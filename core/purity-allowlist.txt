@@ -24,6 +24,7 @@ art/arcane/iris/core/lifecycle/WorldLifecycleSupport.java
 art/arcane/iris/core/lifecycle/WorldsProviderBackend.java
 art/arcane/iris/core/link/ExternalDataProvider.java
 art/arcane/iris/core/link/MultiverseCoreLink.java
+art/arcane/iris/core/link/MultiverseGuardListener.java
 art/arcane/iris/core/link/WorldEditLink.java
 art/arcane/iris/core/link/data/CraftEngineDataProvider.java
 art/arcane/iris/core/link/data/EcoItemsDataProvider.java
@@ -66,6 +67,7 @@ art/arcane/iris/core/service/JigsawStudioBoundsRenderer.java
 art/arcane/iris/core/service/JigsawStudioPreviewRenderer.java
 art/arcane/iris/core/service/JigsawStudioService.java
 art/arcane/iris/core/service/JigsawStudioToolCodec.java
+art/arcane/iris/core/service/MultiverseSVC.java
 art/arcane/iris/core/service/ObjectSVC.java
 art/arcane/iris/core/service/ObjectStudioSaveService.java
 art/arcane/iris/core/service/PackDownloadProgressReporter.java

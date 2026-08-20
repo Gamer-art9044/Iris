@@ -28,6 +28,7 @@ import art.arcane.iris.core.pack.PackValidationCache;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
@@ -237,7 +238,7 @@ public final class IrisWorldGeneratorResolver {
     @Nullable
     public static IrisDimension loadDimension(@NonNull String worldName, @NonNull String id) {
         File levelRoot = IrisWorldStorage.levelRoot();
-        NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName());
+        NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName(), levelRoot);
         String configuredWorldName = IrisWorldStorage.configuredWorldName(worldKey, levelRoot.getName());
         File pack = IrisWorldStorage.frozenDimensionRoot(
                         Bukkit.getWorldContainer(),
@@ -263,8 +264,65 @@ public final class IrisWorldGeneratorResolver {
         return dimension;
     }
 
-    static NamespacedKey configuredWorldKey(String worldName, String levelName) {
-        return IrisWorldStorage.keyFromConfiguredWorldName(worldName, levelName);
+    /**
+     * Resolves the Iris key behind a Bukkit world name, accepting the runtime keyed name alongside the
+     * startup name.
+     * <p>
+     * Paper names a world built from {@code WorldCreator.ofKey} {@code <namespace>_<key>}, and Multiverse
+     * loads Iris worlds that way because its own keyed creator refuses a non-{@code minecraft} namespace.
+     * That is not the startup name, so the configured-name parser reads {@code iris_moon} as
+     * {@code iris:iris_moon} and loses the world.
+     * <p>
+     * Only a name whose decoded key already has Iris storage is remapped, and only when the literal
+     * reading has none, so a world genuinely created as {@code /iris create "iris moon"} keeps its own
+     * identity and a server without Multiverse resolves exactly the names it resolved before.
+     */
+    static NamespacedKey configuredWorldKey(String worldName, String levelName, File levelRoot) {
+        NamespacedKey literal = IrisWorldStorage.keyFromConfiguredWorldName(worldName, levelName);
+        String runtimePrefix = IRIS_DIMENSION_NAMESPACE + "_";
+        if (!worldName.startsWith(runtimePrefix)
+                || worldName.startsWith(levelName + "_" + runtimePrefix)
+                || IrisWorldStorage.isExistingManagedDimensionRoot(levelRoot, literal)) {
+            return literal;
+        }
+        NamespacedKey runtime;
+        try {
+            runtime = IrisWorldStorage.managedKeyFromName(
+                    IRIS_DIMENSION_NAMESPACE + ":" + worldName.substring(runtimePrefix.length()),
+                    levelName);
+        } catch (RuntimeException notAManagedKey) {
+            return literal;
+        }
+        if (!IrisWorldStorage.isExistingManagedDimensionRoot(levelRoot, runtime)) {
+            return literal;
+        }
+        IrisLogging.debug("Resolved runtime keyed world name " + worldName + " as " + runtime);
+        return runtime;
+    }
+
+    /**
+     * The key a refusal message should name for a world name, without the storage-existence guard.
+     * <p>
+     * {@link #configuredWorldKey} only remaps the runtime keyed name when the decoded key has storage, so an
+     * orphan keeps the literal reading and a message built from it names {@code iris:iris_moon} and tells
+     * the admin to create a world that never existed under that name. Messaging does not have to be safe
+     * against mis-mapping a live world, only correct about what the admin typed, so it drops that guard;
+     * generation keeps it.
+     */
+    static NamespacedKey messageWorldKey(String worldName, String levelName) {
+        NamespacedKey literal = IrisWorldStorage.keyFromConfiguredWorldName(worldName, levelName);
+        String runtimePrefix = IRIS_DIMENSION_NAMESPACE + "_";
+        if (!worldName.startsWith(runtimePrefix)
+                || worldName.startsWith(levelName + "_" + runtimePrefix)) {
+            return literal;
+        }
+        try {
+            return IrisWorldStorage.managedKeyFromName(
+                    IRIS_DIMENSION_NAMESPACE + ":" + worldName.substring(runtimePrefix.length()),
+                    levelName);
+        } catch (RuntimeException notAManagedKey) {
+            return literal;
+        }
     }
 
     /**
@@ -298,7 +356,7 @@ public final class IrisWorldGeneratorResolver {
         Iris.debug("Generator ID: " + id + " requested by bukkit/plugin");
 
         File levelRoot = IrisWorldStorage.levelRoot();
-        NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName());
+        NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName(), levelRoot);
         requireWorldKeyAvailable(worldName, worldKey);
         requireOwnedWorld(worldName, levelRoot, worldKey);
 
@@ -361,10 +419,11 @@ public final class IrisWorldGeneratorResolver {
                 && (IRIS_DIMENSION_NAMESPACE.equals(worldKey.getNamespace()) || hasFrozenPack(dimensionRoot))) {
             return;
         }
-        throw new IllegalStateException("'" + worldName + "' (" + worldKey
+        NamespacedKey messageKey = messageWorldKey(worldName, levelRoot.getName());
+        throw new IllegalStateException("'" + worldName + "' (" + messageKey
                 + ") has no Iris world storage, so Iris cannot generate it."
-                + " Create Iris worlds with /iris create " + worldName + " type=<pack>;"
-                + " Iris registers them with Multiverse itself.");
+                + " Create Iris worlds with /iris create " + IrisWorldStorage.logicalName(messageKey)
+                + " type=<pack>; Iris registers them with Multiverse itself.");
     }
 
     private static boolean hasFrozenPack(File dimensionRoot) {
@@ -374,7 +433,7 @@ public final class IrisWorldGeneratorResolver {
 
     private ChunkGenerator resolveFrozenWorldGenerator(String worldName, String id) {
         File levelRoot = IrisWorldStorage.levelRoot();
-        NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName());
+        NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName(), levelRoot);
         File dimensionRoot = IrisWorldStorage.requireFrozenDimensionRoot(
                 Bukkit.getWorldContainer(),
                 levelRoot,

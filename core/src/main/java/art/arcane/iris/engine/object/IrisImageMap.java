@@ -67,7 +67,9 @@ public class IrisImageMap {
     public double getNoise(IrisData data, int x, int z) {
         IrisImage i = imageCache.aquire(() -> data.getImageLoader().load(image));
         if (i == null) {
-            IrisLogging.error("NULL IMAGE FOR " + image);
+            // Reached per sample for as long as the pack points at an image that will not load, so the
+            // pack key is what the operator needs and one statement of it is enough.
+            IrisLogging.warnOnce("image-map:" + image, "No image %s in the pack; that noise samples as zero.", image);
             return 0;
         }
 

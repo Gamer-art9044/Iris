@@ -1,5 +1,6 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.core.lifecycle.MissingWorldStorageLog;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -11,7 +12,9 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class IrisWorldsTest {
     @Rule
@@ -64,6 +67,54 @@ public class IrisWorldsTest {
         assertNull(IrisWorlds.generatorLoadKey("VoidGen", "overworld"));
         assertNull(IrisWorlds.generatorLoadKey("Irissy:pack", "overworld"));
         assertNull(IrisWorlds.generatorLoadKey(null, "overworld"));
+    }
+
+    @Test
+    public void orphanedIrisWorldsAreReportedButVanillaSlotsAreNot() throws Exception {
+        MissingWorldStorageLog.reset();
+        Path levelRoot = temporaryFolder.newFolder("orphan-report", "world").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/present"));
+
+        Map<String, String> configuredWorlds = new LinkedHashMap<>();
+        configuredWorlds.put("world_nether", "underworld");
+        configuredWorlds.put("world_iris_present", "overworld");
+        configuredWorlds.put("world_iris_gone", "overworld");
+
+        assertEquals(
+                Set.of("world_iris_present"),
+                IrisWorlds.filterBukkitWorldsByStorage(levelRoot, configuredWorlds).keySet());
+        assertTrue(MissingWorldStorageLog.hasWarned("world_iris_gone"));
+        assertFalse("a vanilla slot that was never created is not an orphan",
+                MissingWorldStorageLog.hasWarned("world_nether"));
+        assertFalse(MissingWorldStorageLog.hasWarned("world_iris_present"));
+        MissingWorldStorageLog.reset();
+    }
+
+    /**
+     * The registry is built from a private constructor behind a static cache, so the isolation contract is
+     * asserted against the source: one unusable world folder used to throw out of {@code clean()}, through
+     * the constructor and into the cache, which returned null and NPE'd every caller.
+     */
+    @Test
+    public void oneUnusableWorldIsExcludedInsteadOfFailingTheWholeRegistry() throws Exception {
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/IrisWorlds.java"));
+
+        int accessor = source.indexOf("public static IrisWorlds get()");
+        int accessorEnd = source.indexOf("public synchronized void put(", accessor);
+        assertTrue("get() must not swallow a failure into a null return",
+                source.substring(accessor, accessorEnd).contains("cache.aquireOnceOrThrow("));
+
+        int clean = source.indexOf("public synchronized void clean()");
+        int cleanEnd = source.indexOf("public synchronized void save()", clean);
+        String cleanBody = source.substring(clean, cleanEnd);
+        assertTrue("clean() must isolate an unusable entry",
+                cleanBody.contains("catch (IllegalStateException e)"));
+        assertTrue("an unusable entry stays in the registry so /iris remove can still find it",
+                cleanBody.contains("warnUnusableStorage(entry.getKey(), e);"));
+
+        int loadDimension = source.indexOf("private IrisDimension loadDimension(");
+        assertTrue("loadDimension must exclude an unusable world rather than propagate",
+                source.substring(loadDimension).contains("catch (IllegalStateException unusableStorage)"));
     }
 
     @Test

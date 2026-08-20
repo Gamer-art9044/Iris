@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Predicate;
+import java.util.stream.Stream;
 
 public final class BukkitWorldConfiguration {
     private static final String DEFAULT_WORLD_CONTAINER = ".";
@@ -113,58 +114,12 @@ public final class BukkitWorldConfiguration {
             return List.of();
         }
         synchronized (MUTATION_LOCK) {
-            YamlConfiguration configuration = load(requiredConfigurationFile);
-            Object rawWorlds = configuration.get("worlds");
-            ConfigurationSection worlds = configuration.getConfigurationSection("worlds");
-            if (rawWorlds != null && worlds == null) {
-                throw new IOException("bukkit.yml worlds entry is not a section.");
-            }
-            if (worlds == null) {
-                return List.of();
-            }
-
-            List<String> configuredNames = new ArrayList<>(worlds.getKeys(false));
-            configuredNames.sort(Comparator.naturalOrder());
             Map<WorldSlotKey, IrisGeneratorBinding> bindings = new LinkedHashMap<>();
-            for (String configuredName : configuredNames) {
-                Object rawWorld = worlds.get(configuredName);
-                ConfigurationSection world = worlds.getConfigurationSection(configuredName);
-                if (rawWorld != null && world == null) {
-                    throw new IOException("bukkit.yml world entry \"" + configuredName + "\" is not a section.");
-                }
-                if (world == null || !world.getKeys(false).contains("generator")) {
-                    continue;
-                }
-                Object rawGenerator = world.get("generator");
-                if (!(rawGenerator instanceof String generator)) {
-                    throw new IOException("bukkit.yml generator for world \"" + configuredName
-                            + "\" is not a string.");
-                }
-                String configuredGenerator = generator.trim();
-                if (!configuredGenerator.equalsIgnoreCase("Iris")
-                        && !configuredGenerator.regionMatches(true, 0, "Iris:", 0, 5)) {
-                    continue;
-                }
-
-                NamespacedKey namespacedKey;
-                try {
-                    namespacedKey = IrisWorldStorage.keyFromConfiguredWorldName(
-                            configuredName,
-                            requiredLevelName
-                    );
-                } catch (IllegalArgumentException failure) {
-                    throw new IOException("bukkit.yml contains an invalid Iris world name \""
-                            + configuredName + "\".", failure);
-                }
-                if (!"iris".equals(namespacedKey.getNamespace())) {
-                    continue;
-                }
-                if (!configuredName.equals(IrisWorldStorage.configuredWorldName(
-                        namespacedKey,
-                        requiredLevelName
-                ))) {
-                    continue;
-                }
+            for (IrisWorldCandidate candidate : readIrisWorldCandidates(
+                    load(requiredConfigurationFile),
+                    requiredLevelName
+            )) {
+                String configuredName = candidate.configuredWorldName();
                 Path worldContainer = requiredLevelRoot.getParent();
                 if (worldContainer == null) {
                     throw new IOException("Selected level root has no world container: " + requiredLevelRoot);
@@ -175,18 +130,21 @@ public final class BukkitWorldConfiguration {
                             worldContainer.toFile(),
                             requiredLevelRoot.toFile(),
                             configuredName,
-                            namespacedKey
+                            candidate.worldKey()
                     ).isPresent();
                 } catch (IllegalStateException failure) {
                     storagePresent = false;
                 }
                 if (!storagePresent) {
+                    MissingWorldStorageLog.warnOnce(
+                            configuredName,
+                            expectedDimensionRoot(requiredLevelRoot, candidate.worldKey()));
                     continue;
                 }
-                String dimension = selectedIrisDimension(configuredGenerator, configuredName);
+                String dimension = selectedIrisDimension(candidate.configuredGenerator(), configuredName);
                 WorldSlotKey worldKey = new WorldSlotKey(
-                        namespacedKey.getNamespace(),
-                        namespacedKey.getKey()
+                        candidate.worldKey().getNamespace(),
+                        candidate.worldKey().getKey()
                 );
                 IrisGeneratorBinding binding = new IrisGeneratorBinding(configuredName, worldKey, dimension);
                 IrisGeneratorBinding previous = bindings.putIfAbsent(worldKey, binding);
@@ -197,6 +155,228 @@ public final class BukkitWorldConfiguration {
             }
             return List.copyOf(bindings.values());
         }
+    }
+
+    /**
+     * Classifies the world storage behind every Iris entry in bukkit.yml.
+     * <p>
+     * {@link #readIrisGeneratorBindings} answers "which worlds can Iris bind", which deliberately drops
+     * anything without storage. Startup needs the opposite view: a world whose folder is on disk but whose
+     * frozen pack snapshot is gone still gets loaded by the server, and if Iris cannot supply a generator
+     * for it the server writes vanilla terrain into Iris region files. That state has to be found before
+     * any level loads, so it is reported here rather than discovered at world-generation time.
+     */
+    public static List<IrisWorldStorageEntry> auditIrisWorldStorage(
+            File configurationFile,
+            String levelName,
+            Path levelRoot
+    ) throws IOException {
+        File requiredConfigurationFile = Objects.requireNonNull(configurationFile, "configurationFile");
+        String requiredLevelName = requireName(levelName, "Level name");
+        Path requiredLevelRoot = Objects.requireNonNull(levelRoot, "levelRoot")
+                .toAbsolutePath()
+                .normalize();
+        Path configurationPath = requiredConfigurationFile.toPath();
+        if (!Files.exists(configurationPath, LinkOption.NOFOLLOW_LINKS)) {
+            return List.of();
+        }
+        Path worldContainer = requiredLevelRoot.getParent();
+        if (worldContainer == null) {
+            throw new IOException("Selected level root has no world container: " + requiredLevelRoot);
+        }
+        synchronized (MUTATION_LOCK) {
+            List<IrisWorldStorageEntry> entries = new ArrayList<>();
+            for (IrisWorldCandidate candidate : readIrisWorldCandidates(
+                    load(requiredConfigurationFile),
+                    requiredLevelName
+            )) {
+                entries.add(classifyStorage(worldContainer, requiredLevelRoot, candidate));
+            }
+            return List.copyOf(entries);
+        }
+    }
+
+    private static IrisWorldStorageEntry classifyStorage(
+            Path worldContainer,
+            Path levelRoot,
+            IrisWorldCandidate candidate
+    ) {
+        String configuredName = candidate.configuredWorldName();
+        NamespacedKey worldKey = candidate.worldKey();
+        WorldSlotKey slotKey = new WorldSlotKey(worldKey.getNamespace(), worldKey.getKey());
+        Path expectedRoot = expectedDimensionRoot(levelRoot, worldKey);
+        File dimensionRoot;
+        try {
+            dimensionRoot = IrisWorldStorage.frozenDimensionRoot(
+                    worldContainer.toFile(),
+                    levelRoot.toFile(),
+                    configuredName,
+                    worldKey
+            ).orElse(null);
+        } catch (IllegalStateException unusable) {
+            // The server only loads a level it can see as a directory, so an entry with no directory at
+            // either candidate path is an orphan, not a world that is about to generate.
+            return hasDimensionDirectory(worldContainer, levelRoot, configuredName, worldKey)
+                    ? new IrisWorldStorageEntry(configuredName, slotKey, expectedRoot,
+                    IrisWorldStorageState.UNUSABLE, unusable.getMessage())
+                    : new IrisWorldStorageEntry(configuredName, slotKey, expectedRoot,
+                    IrisWorldStorageState.MISSING, null);
+        }
+        if (dimensionRoot == null) {
+            return new IrisWorldStorageEntry(configuredName, slotKey, expectedRoot,
+                    IrisWorldStorageState.MISSING, null);
+        }
+        Path resolvedRoot = dimensionRoot.toPath().toAbsolutePath().normalize();
+        try {
+            IrisWorldStorage.requireFrozenPackRoot(dimensionRoot);
+        } catch (IllegalStateException unusablePack) {
+            // Only a folder that owns something can be corrupted by a vanilla generator writing into it.
+            return new IrisWorldStorageEntry(configuredName, slotKey, resolvedRoot,
+                    hasWorldData(resolvedRoot)
+                            ? IrisWorldStorageState.UNUSABLE
+                            : IrisWorldStorageState.EMPTY,
+                    unusablePack.getMessage());
+        }
+        return new IrisWorldStorageEntry(configuredName, slotKey, resolvedRoot,
+                IrisWorldStorageState.PRESENT, null);
+    }
+
+    /**
+     * True when the world folder holds something a vanilla generator could overwrite: an {@code iris/}
+     * directory marking it as an Iris world whose pack snapshot broke, or stored chunk data.
+     * <p>
+     * Deleting a loaded world's folder and letting the server save the level back recreates a small
+     * {@code data/} skeleton with no regions and no {@code iris/} directory. That husk owns nothing, so
+     * refusing to boot over it only strands the server behind a manual delete.
+     */
+    private static boolean hasWorldData(Path worldRoot) {
+        if (Files.isDirectory(worldRoot.resolve("iris"), LinkOption.NOFOLLOW_LINKS)) {
+            return true;
+        }
+        for (String directory : new String[]{"region", "entities", "poi", "mantle"}) {
+            if (hasEntries(worldRoot.resolve(directory))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasEntries(Path directory) {
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        try (Stream<Path> entries = Files.list(directory)) {
+            return entries.findAny().isPresent();
+        } catch (IOException unreadable) {
+            // An unreadable directory is not proof that there is nothing to lose.
+            return true;
+        }
+    }
+
+    private static boolean hasDimensionDirectory(
+            Path worldContainer,
+            Path levelRoot,
+            String configuredWorldName,
+            NamespacedKey worldKey
+    ) {
+        if (occupiesDimensionPath(levelRoot, expectedDimensionRoot(levelRoot, worldKey))) {
+            return true;
+        }
+        Path configuredLevelRoot = worldContainer.resolve(configuredWorldName).normalize();
+        return occupiesDimensionPath(configuredLevelRoot, expectedDimensionRoot(configuredLevelRoot, worldKey));
+    }
+
+    /**
+     * True when something the server could load sits at the dimension path: a real directory, or a symbolic
+     * link on any segment below the level root.
+     * <p>
+     * {@link IrisWorldStorage} refuses to resolve through a link, so a linked path is storage Iris cannot use,
+     * not storage that is not there. Calling it missing tells the operator to restore a folder that is already
+     * present and leaves whatever the link points at open to a vanilla generator.
+     */
+    private static boolean occupiesDimensionPath(Path levelRoot, Path dimensionRoot) {
+        Path root = levelRoot.toAbsolutePath().normalize();
+        Path target = dimensionRoot.toAbsolutePath().normalize();
+        if (!target.startsWith(root) || target.equals(root)) {
+            return Files.isSymbolicLink(target) || Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS);
+        }
+
+        Path current = root;
+        for (Path segment : root.relativize(target)) {
+            current = current.resolve(segment);
+            if (Files.isSymbolicLink(current)) {
+                return true;
+            }
+        }
+        return Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS);
+    }
+
+    private static Path expectedDimensionRoot(Path levelRoot, NamespacedKey worldKey) {
+        return levelRoot.toAbsolutePath()
+                .normalize()
+                .resolve("dimensions")
+                .resolve(worldKey.getNamespace())
+                .resolve(worldKey.getKey())
+                .normalize();
+    }
+
+    /**
+     * Every canonical Iris entry in bukkit.yml, in configured-name order, before any storage is inspected.
+     * Malformed entries throw exactly as they always did; entries that are not Iris', or whose name is not
+     * the canonical startup name for their key, are dropped.
+     */
+    private static List<IrisWorldCandidate> readIrisWorldCandidates(
+            YamlConfiguration configuration,
+            String levelName
+    ) throws IOException {
+        Object rawWorlds = configuration.get("worlds");
+        ConfigurationSection worlds = configuration.getConfigurationSection("worlds");
+        if (rawWorlds != null && worlds == null) {
+            throw new IOException("bukkit.yml worlds entry is not a section.");
+        }
+        if (worlds == null) {
+            return List.of();
+        }
+
+        List<String> configuredNames = new ArrayList<>(worlds.getKeys(false));
+        configuredNames.sort(Comparator.naturalOrder());
+        List<IrisWorldCandidate> candidates = new ArrayList<>(configuredNames.size());
+        for (String configuredName : configuredNames) {
+            Object rawWorld = worlds.get(configuredName);
+            ConfigurationSection world = worlds.getConfigurationSection(configuredName);
+            if (rawWorld != null && world == null) {
+                throw new IOException("bukkit.yml world entry \"" + configuredName + "\" is not a section.");
+            }
+            if (world == null || !world.getKeys(false).contains("generator")) {
+                continue;
+            }
+            Object rawGenerator = world.get("generator");
+            if (!(rawGenerator instanceof String generator)) {
+                throw new IOException("bukkit.yml generator for world \"" + configuredName
+                        + "\" is not a string.");
+            }
+            String configuredGenerator = generator.trim();
+            if (!configuredGenerator.equalsIgnoreCase("Iris")
+                    && !configuredGenerator.regionMatches(true, 0, "Iris:", 0, 5)) {
+                continue;
+            }
+
+            NamespacedKey namespacedKey;
+            try {
+                namespacedKey = IrisWorldStorage.keyFromConfiguredWorldName(configuredName, levelName);
+            } catch (IllegalArgumentException failure) {
+                throw new IOException("bukkit.yml contains an invalid Iris world name \""
+                        + configuredName + "\".", failure);
+            }
+            if (!"iris".equals(namespacedKey.getNamespace())) {
+                continue;
+            }
+            if (!configuredName.equals(IrisWorldStorage.configuredWorldName(namespacedKey, levelName))) {
+                continue;
+            }
+            candidates.add(new IrisWorldCandidate(configuredName, namespacedKey, configuredGenerator));
+        }
+        return candidates;
     }
 
     public static GeneratorReplacement replaceIfMatching(
@@ -520,6 +700,51 @@ public final class BukkitWorldConfiguration {
     public enum Registration {
         CREATED,
         UNCHANGED
+    }
+
+    public enum IrisWorldStorageState {
+        /**
+         * Storage resolves and carries a usable frozen pack snapshot.
+         */
+        PRESENT,
+        /**
+         * No world directory at all. The server never enumerates the level, so nothing generates; the
+         * bukkit.yml and Multiverse entries are left alone so putting the folder back restores the world.
+         */
+        MISSING,
+        /**
+         * A world directory the server will load that holds no pack snapshot and no world data - the
+         * skeleton the server writes back when it saves a level whose folder was deleted underneath it.
+         * There is nothing to overwrite, so it is reported and the server starts.
+         */
+        EMPTY,
+        /**
+         * A world directory the server will load, whose frozen pack snapshot cannot be used. Iris cannot
+         * generate it and nothing else may.
+         */
+        UNUSABLE
+    }
+
+    public record IrisWorldStorageEntry(
+            String configuredWorldName,
+            WorldSlotKey worldKey,
+            Path storagePath,
+            IrisWorldStorageState state,
+            String detail
+    ) {
+        public IrisWorldStorageEntry {
+            configuredWorldName = requireName(configuredWorldName, "Configured world name");
+            Objects.requireNonNull(worldKey, "worldKey");
+            Objects.requireNonNull(storagePath, "storagePath");
+            Objects.requireNonNull(state, "state");
+        }
+    }
+
+    private record IrisWorldCandidate(
+            String configuredWorldName,
+            NamespacedKey worldKey,
+            String configuredGenerator
+    ) {
     }
 
     public record IrisGeneratorBinding(

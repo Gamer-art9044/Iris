@@ -86,7 +86,9 @@ public final class IrisSafeguard {
         }
 
         for (ValueWithDiagnostics<Mode> value : results.values()) {
-            value.log(true, true);
+            // Without the stack trace: Diagnostic.Logger splits on newlines, so a trace became one log
+            // record per frame at the diagnostic's own severity. Traces go through reportError.
+            value.log(true, false);
         }
     }
 
@@ -98,20 +100,18 @@ public final class IrisSafeguard {
         }
     }
 
+    // A log record carries a level, so a blank record renders as an empty [WARN] line and a rule of
+    // dashes renders as a [SEVERE] one. Spacing belongs to a console, not to the server log.
     private static void warning() {
         IrisLogging.warn(C.GOLD + "Iris is running in Warning Mode");
         IrisLogging.warn(C.GRAY + "Some startup checks need attention. Review the messages above for tuning suggestions.");
         IrisLogging.warn(C.GRAY + "Iris will continue startup normally.");
-        IrisLogging.warn("");
     }
 
     private static void unstable() {
         IrisLogging.error(C.DARK_RED + "Iris is running in Danger Mode");
-        IrisLogging.error("");
-        IrisLogging.error(C.DARK_GRAY + "--==<" + C.RED + " IMPORTANT " + C.DARK_GRAY + ">==--");
         IrisLogging.error("Critical startup checks failed. Review and resolve the errors above as soon as possible.");
         // No startup sleep: blocking the boot thread protected nothing — world creation and
         // player admission are already gated by IrisStartupValidation.
-        IrisLogging.info("");
     }
 }

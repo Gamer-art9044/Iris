@@ -226,7 +226,7 @@ public class IrisEngine implements Engine {
                 IrisLogging.reportError(e);
                 e.printStackTrace();
             }
-            IrisLogging.info("Engine init: " + target.getWorld().name() + "/" + target.getDimension().getLoadKey() + " seed=" + getSeedManager().getSeed());
+            IrisLogging.notice("Engine init: " + target.getWorld().name() + "/" + target.getDimension().getLoadKey() + " seed=" + getSeedManager().getSeed());
             _t0 = M.ms();
             phaseStartedAt = System.nanoTime();
             EngineRuntime initialRuntime = runtimeBuilder.buildRuntime();

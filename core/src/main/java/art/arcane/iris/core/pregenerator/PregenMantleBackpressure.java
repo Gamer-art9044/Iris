@@ -102,7 +102,9 @@ public final class PregenMantleBackpressure {
             long logNow = M.ms();
             if (logNow - lastLog >= 5_000L) {
                 lastLog = logNow;
-                IrisLogging.warn("Pregen mantle backpressure: " + resident + " tectonic plates resident (hard cap " + hardCap
+                // Pausing to stay under the plate cap is the design working, and it is reported every five
+                // seconds for the whole duration of a large pregen. Only exceeding the budget is a warning.
+                IrisLogging.info("Pregen mantle backpressure: " + resident + " tectonic plates resident (hard cap " + hardCap
                         + "), freed " + freed + " last pass, waited " + elapsed + "ms.");
             }
 
@@ -147,7 +149,7 @@ public final class PregenMantleBackpressure {
             long logNow = M.ms();
             if (logNow - lastLog >= 5_000L) {
                 lastLog = logNow;
-                IrisLogging.warn("Pregen heap pressure: pausing generation at "
+                IrisLogging.info("Pregen heap pressure: pausing generation at "
                         + Math.round(MantleHeapPressure.usedFraction() * 100.0D) + "% heap; evicting tectonic plates and waiting for headroom"
                         + (mantle != null ? " (" + mantle.getLoadedRegionCount() + " plates resident)" : "") + ".");
             }

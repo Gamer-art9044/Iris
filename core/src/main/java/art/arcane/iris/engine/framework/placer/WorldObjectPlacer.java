@@ -68,7 +68,9 @@ public class WorldObjectPlacer implements IObjectPlacer {
 
         if (d instanceof IrisCustomData data) {
             block.setBlockData(data.getBase(), false);
-            IrisLogging.warn("Tried to place custom block at " + x + ", " + y + ", " + z + " which is not supported!");
+            // Reached per block for every custom block in the pack; the pack is what needs changing, and
+            // one statement of that is enough.
+            IrisLogging.warnOnce("custom-block-placer", "Tried to place custom block at " + x + ", " + y + ", " + z + " which is not supported.");
         } else block.setBlockData(d, false);
 
         if (storageChest && !J.runRegion(world, x >> 4, z >> 4, () -> fillLoot(block), 1)) {

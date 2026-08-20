@@ -47,9 +47,14 @@ public final class IrisPlatforms {
 
     /**
      * Clears the binding. Safe to call when nothing is bound.
+     * <p>
+     * Also forgets the keys {@link IrisLogging#warnOnce(String, String, Object...)} has claimed. Unbinding is
+     * what a reload does, and an operator who has just fixed a pack has to see whether the condition that was
+     * stated once is still there.
      */
     public static synchronized void unbind() {
         platform = null;
+        IrisLogging.resetOnceKeys();
     }
 
     /**

@@ -986,12 +986,11 @@ public class ServerConfigurator {
 
 
         if (INMS.get().supportsDataPacks()) {
-            IrisLogging.error("============================================================================");
+            // Three sentences, no rules: a separator carries the record's severity too, so a box drawn
+            // out of equals signs became three more [SEVERE] lines saying nothing.
             IrisLogging.error(C.ITALIC + "You need to restart your server to properly generate custom biomes.");
             IrisLogging.error(C.ITALIC + "By continuing, Iris will use backup biomes in place of the custom biomes.");
-            IrisLogging.error("----------------------------------------------------------------------------");
-            IrisLogging.error(C.UNDERLINE + "IT IS HIGHLY RECOMMENDED YOU RESTART THE SERVER BEFORE GENERATING!");
-            IrisLogging.error("============================================================================");
+            IrisLogging.error(C.UNDERLINE + "Restart the server before generating.");
 
             for (Player i : Bukkit.getOnlinePlayers()) {
                 if (i.isOp() || i.hasPermission("iris.all")) {

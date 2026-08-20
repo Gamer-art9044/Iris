@@ -152,6 +152,186 @@ public class BukkitWorldConfigurationTest {
     }
 
     @Test
+    public void auditSeparatesUsableStorageFromOrphansAndBrokenSnapshots() throws Exception {
+        File configuration = temporaryFolder.newFile("audit-bukkit.yml");
+        Path levelRoot = temporaryFolder.newFolder("audit-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/healthy/iris/pack"));
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/broken/region"));
+        Files.writeString(levelRoot.resolve("dimensions/iris/broken/region/r.0.0.mca"), "terrain");
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_healthy.generator", "Iris:overworld");
+        yaml.set("worlds.world_iris_broken.generator", "Iris:overworld");
+        yaml.set("worlds.world_iris_gone.generator", "Iris:overworld");
+        yaml.save(configuration);
+
+        List<BukkitWorldConfiguration.IrisWorldStorageEntry> audited =
+                BukkitWorldConfiguration.auditIrisWorldStorage(configuration, "world", levelRoot);
+
+        assertEquals(3, audited.size());
+        assertEquals(BukkitWorldConfiguration.IrisWorldStorageState.UNUSABLE, stateOf(audited, "world_iris_broken"));
+        assertEquals(BukkitWorldConfiguration.IrisWorldStorageState.MISSING, stateOf(audited, "world_iris_gone"));
+        assertEquals(BukkitWorldConfiguration.IrisWorldStorageState.PRESENT, stateOf(audited, "world_iris_healthy"));
+        assertEquals(
+                levelRoot.resolve("dimensions/iris/broken").toAbsolutePath().normalize(),
+                entryOf(audited, "world_iris_broken").storagePath());
+        assertTrue(entryOf(audited, "world_iris_broken").detail().contains("pack"));
+    }
+
+    @Test
+    public void auditTreatsANonDirectoryStorageSlotAsAnOrphanTheServerNeverLoads() throws Exception {
+        File configuration = temporaryFolder.newFile("audit-file-slot.yml");
+        Path levelRoot = temporaryFolder.newFolder("audit-file-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris"));
+        Files.writeString(levelRoot.resolve("dimensions/iris/file"), "not a world directory");
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_file.generator", "Iris:overworld");
+        yaml.save(configuration);
+
+        assertEquals(
+                BukkitWorldConfiguration.IrisWorldStorageState.MISSING,
+                stateOf(BukkitWorldConfiguration.auditIrisWorldStorage(configuration, "world", levelRoot),
+                        "world_iris_file"));
+    }
+
+    /**
+     * Deleting a live world's folder and letting the server save it back leaves a five-file data/ skeleton
+     * with no regions and no iris/ directory. Nothing in it can be overwritten, so it must not hold the
+     * server hostage on the next boot.
+     */
+    @Test
+    public void auditTreatsAServerRewrittenHuskAsAnOrphan() throws Exception {
+        File configuration = temporaryFolder.newFile("audit-husk.yml");
+        Path levelRoot = temporaryFolder.newFolder("audit-husk-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/husk/data/paper"));
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/husk/data/minecraft"));
+        Files.writeString(levelRoot.resolve("dimensions/iris/husk/data/paper/level_overrides.dat"), "x");
+        Files.writeString(levelRoot.resolve("dimensions/iris/husk/data/minecraft/raids.dat"), "x");
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_husk.generator", "Iris:overworld");
+        yaml.save(configuration);
+
+        List<BukkitWorldConfiguration.IrisWorldStorageEntry> audited =
+                BukkitWorldConfiguration.auditIrisWorldStorage(configuration, "world", levelRoot);
+
+        assertEquals(BukkitWorldConfiguration.IrisWorldStorageState.EMPTY, stateOf(audited, "world_iris_husk"));
+        assertEquals(
+                levelRoot.resolve("dimensions/iris/husk").toAbsolutePath().normalize(),
+                entryOf(audited, "world_iris_husk").storagePath());
+    }
+
+    @Test
+    public void auditFailsClosedForMantleDataWithoutAPackSnapshot() throws Exception {
+        File configuration = temporaryFolder.newFile("audit-mantle.yml");
+        Path levelRoot = temporaryFolder.newFolder("audit-mantle-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/mantled/mantle"));
+        Files.writeString(levelRoot.resolve("dimensions/iris/mantled/mantle/0.0.ttp"), "mantle");
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_mantled.generator", "Iris:overworld");
+        yaml.save(configuration);
+
+        assertEquals(
+                BukkitWorldConfiguration.IrisWorldStorageState.UNUSABLE,
+                stateOf(BukkitWorldConfiguration.auditIrisWorldStorage(configuration, "world", levelRoot),
+                        "world_iris_mantled"));
+    }
+
+    /**
+     * An iris/ directory without iris/pack is an Iris world whose pack snapshot broke, not an empty folder.
+     */
+    @Test
+    public void auditFailsClosedForAnIrisMarkerWithoutAPackSnapshot() throws Exception {
+        File configuration = temporaryFolder.newFile("audit-marker.yml");
+        Path levelRoot = temporaryFolder.newFolder("audit-marker-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris/marked/iris/engine-data"));
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_marked.generator", "Iris:overworld");
+        yaml.save(configuration);
+
+        assertEquals(
+                BukkitWorldConfiguration.IrisWorldStorageState.UNUSABLE,
+                stateOf(BukkitWorldConfiguration.auditIrisWorldStorage(configuration, "world", levelRoot),
+                        "world_iris_marked"));
+    }
+
+    /**
+     * IrisWorldStorage refuses to resolve through a symbolic link, so a linked dimension path is storage Iris
+     * cannot use - not storage that is not there. Reporting it as a cold orphan tells the operator to restore
+     * a folder that is already present.
+     */
+    @Test
+    public void auditFailsClosedForASymlinkedDimensionPath() throws Exception {
+        File configuration = temporaryFolder.newFile("audit-symlink.yml");
+        Path levelRoot = temporaryFolder.newFolder("audit-symlink-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris"));
+        Path elsewhere = temporaryFolder.newFolder("audit-symlink-target").toPath();
+        Files.createDirectories(elsewhere.resolve("iris/pack"));
+        try {
+            Files.createSymbolicLink(levelRoot.resolve("dimensions/iris/linked"), elsewhere);
+        } catch (IOException | UnsupportedOperationException unsupported) {
+            assumeNoException("symbolic links are not creatable on this filesystem", unsupported);
+        }
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_linked.generator", "Iris:overworld");
+        yaml.save(configuration);
+
+        List<BukkitWorldConfiguration.IrisWorldStorageEntry> audited =
+                BukkitWorldConfiguration.auditIrisWorldStorage(configuration, "world", levelRoot);
+
+        assertEquals(BukkitWorldConfiguration.IrisWorldStorageState.UNUSABLE, stateOf(audited, "world_iris_linked"));
+        assertTrue(entryOf(audited, "world_iris_linked").detail(),
+                entryOf(audited, "world_iris_linked").detail().contains("symbolic link"));
+    }
+
+    @Test
+    public void auditStillReportsATrulyAbsentDimensionPathAsAnOrphan() throws Exception {
+        File configuration = temporaryFolder.newFile("audit-absent.yml");
+        Path levelRoot = temporaryFolder.newFolder("audit-absent-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris"));
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_absent.generator", "Iris:overworld");
+        yaml.save(configuration);
+
+        assertEquals(
+                BukkitWorldConfiguration.IrisWorldStorageState.MISSING,
+                stateOf(BukkitWorldConfiguration.auditIrisWorldStorage(configuration, "world", levelRoot),
+                        "world_iris_absent"));
+    }
+
+    @Test
+    public void missingStorageIsReportedOncePerWorld() throws Exception {
+        MissingWorldStorageLog.reset();
+        File configuration = temporaryFolder.newFile("orphan-warning-bukkit.yml");
+        Path levelRoot = temporaryFolder.newFolder("orphan-warning-level-root").toPath();
+        Files.createDirectories(levelRoot.resolve("dimensions/iris"));
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("worlds.world_iris_gone.generator", "Iris:overworld");
+        yaml.save(configuration);
+
+        assertFalse(MissingWorldStorageLog.hasWarned("world_iris_gone"));
+        BukkitWorldConfiguration.readIrisGeneratorBindings(configuration, "world", levelRoot);
+
+        assertTrue(MissingWorldStorageLog.hasWarned("world_iris_gone"));
+        MissingWorldStorageLog.reset();
+    }
+
+    private static BukkitWorldConfiguration.IrisWorldStorageState stateOf(
+            List<BukkitWorldConfiguration.IrisWorldStorageEntry> entries,
+            String configuredWorldName
+    ) {
+        return entryOf(entries, configuredWorldName).state();
+    }
+
+    private static BukkitWorldConfiguration.IrisWorldStorageEntry entryOf(
+            List<BukkitWorldConfiguration.IrisWorldStorageEntry> entries,
+            String configuredWorldName
+    ) {
+        return entries.stream()
+                .filter(entry -> entry.configuredWorldName().equals(configuredWorldName))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No audit entry for " + configuredWorldName));
+    }
+
+    @Test
     public void registersAndRemovesWorldAtomically() throws Exception {
         File configuration = temporaryFolder.newFile("bukkit.yml");
 

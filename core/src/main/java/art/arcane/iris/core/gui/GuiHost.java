@@ -99,7 +99,7 @@ public final class GuiHost {
             desktop.setQuitHandler((event, response) -> cancelDesktopQuit(response));
         } catch (Throwable error) {
             IrisLogging.reportError(error);
-            IrisLogging.warn("Unable to install the Iris desktop quit guard; use the server stop command instead of macOS Quit");
+            IrisLogging.info("Unable to install the Iris desktop quit guard; use the server stop command instead of macOS Quit");
         }
     }
 

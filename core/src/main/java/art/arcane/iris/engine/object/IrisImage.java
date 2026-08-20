@@ -19,13 +19,9 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisRegistrant;
-import art.arcane.iris.spi.IrisLogging;
 
-import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
 import java.util.Objects;
 
 public class IrisImage extends IrisRegistrant {
@@ -116,21 +112,4 @@ public class IrisImage extends IrisRegistrant {
         return "Image";
     }
 
-    public void writeDebug(IrisImageChannel channel) {
-
-
-        try {
-            File at = new File(getLoadFile().getParentFile(), "debug-see-" + getLoadFile().getName());
-            BufferedImage b = new BufferedImage(getWidth(), getHeight(), BufferedImage.TYPE_INT_RGB);
-            for (int i = 0; i < getWidth(); i++) {
-                for (int j = 0; j < getHeight(); j++) {
-                    b.setRGB(i, j, Color.getHSBColor(0, 0, (float) getValue(channel, i, j)).getRGB());
-                }
-            }
-            ImageIO.write(b, "png", at);
-            IrisLogging.warn("Debug image written to " + at.getPath() + " for channel " + channel.name());
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
 }

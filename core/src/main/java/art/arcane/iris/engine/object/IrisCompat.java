@@ -276,7 +276,7 @@ public class IrisCompat {
         searching:
         while (true) {
             if (err-- <= 0) {
-                IrisLogging.error("Can't find block data for " + n);
+                IrisLogging.warnOnce("compat-block:" + n, "Can't find block data for " + n + "; using STONE.");
                 return BukkitBlockResolution.getNoCompat("STONE");
             }
             String m = buf;
@@ -300,7 +300,7 @@ public class IrisCompat {
                 }
             }
 
-            IrisLogging.error("Can't find block data for " + n);
+            IrisLogging.warnOnce("compat-block:" + n, "Can't find block data for " + n + "; using STONE.");
             return BukkitBlockResolution.getNoCompat("STONE");
         }
     }

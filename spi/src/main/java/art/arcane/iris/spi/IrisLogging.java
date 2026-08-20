@@ -19,6 +19,8 @@
 package art.arcane.iris.spi;
 
 import java.util.IllegalFormatException;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -33,6 +35,8 @@ import java.util.regex.Pattern;
  * Internal to Iris; not a published integration surface.
  */
 public final class IrisLogging {
+    private static final int MAX_ONCE_KEYS = 512;
+    private static final Set<String> ONCE_KEYS = ConcurrentHashMap.newKeySet();
     private static final Pattern LEGACY_COLOR = Pattern.compile("(?i)\\u00a7[0-9A-FK-ORX]");
     private static final Pattern MINI_MESSAGE_TAG = Pattern.compile("(?i)</?(?:reset|bold|b|italic|i|underlined?|u|strikethrough|st|obfuscated?|obf|black|dark_blue|dark_green|dark_aqua|dark_red|dark_purple|gold|gray|dark_gray|blue|green|aqua|red|light_purple|yellow|white|gradient|font|hover|click|rainbow)(?::[^>\\n]{0,96})?>|<#[0-9a-f]{6}>");
 
@@ -55,6 +59,14 @@ public final class IrisLogging {
     }
 
     /**
+     * Logs at {@link LogLevel#NOTICE}, applying {@link #format(String, Object...)} to the arguments. For the
+     * few lifecycle milestones per boot that have to survive into the server's own log file.
+     */
+    public static void notice(String format, Object... args) {
+        emit(LogLevel.NOTICE, format(format, args));
+    }
+
+    /**
      * Logs at {@link LogLevel#WARN}, applying {@link #format(String, Object...)} to the arguments.
      */
     public static void warn(String format, Object... args) {
@@ -66,6 +78,25 @@ public final class IrisLogging {
      */
     public static void error(String format, Object... args) {
         emit(LogLevel.ERROR, format(format, args));
+    }
+
+    /**
+     * Logs at {@link LogLevel#WARN} the first time {@code key} is seen and at {@link LogLevel#DEBUG} every
+     * time after, for a condition that is worth stating once but is reached per block, per sample or per
+     * chunk. Returns true when the warning was the one that got stated, so a caller can attach a stack trace
+     * or other one-off detail to it.
+     *
+     * @see #resetOnceKeys()
+     */
+    public static boolean warnOnce(String key, String format, Object... args) {
+        return once(LogLevel.WARN, key, format, args);
+    }
+
+    /**
+     * {@link #warnOnce(String, String, Object...)} at {@link LogLevel#ERROR}.
+     */
+    public static boolean errorOnce(String key, String format, Object... args) {
+        return once(LogLevel.ERROR, key, format, args);
     }
 
     /**
@@ -154,6 +185,38 @@ public final class IrisLogging {
 
         String legacyStripped = LEGACY_COLOR.matcher(message).replaceAll("");
         return MINI_MESSAGE_TAG.matcher(legacyStripped).replaceAll("");
+    }
+
+    /**
+     * Forgets every key {@link #warnOnce(String, String, Object...)} and {@link #errorOnce} have claimed, so
+     * the next occurrence is stated again. Called when the platform unbinds: an operator who fixes a pack and
+     * reloads has to be able to see whether the fix took.
+     */
+    static void resetOnceKeys() {
+        ONCE_KEYS.clear();
+    }
+
+    private static boolean once(LogLevel level, String key, String format, Object... args) {
+        String message = format(format, args);
+        if (!claim(key)) {
+            emit(LogLevel.DEBUG, message);
+            return false;
+        }
+
+        emit(level, message);
+        return true;
+    }
+
+    /**
+     * The cap is what keeps a key space nobody bounded - a block name, a biome name, a mod id - from becoming
+     * a leak. Past it nothing new is claimed, which drops later conditions to debug rather than growing.
+     */
+    private static boolean claim(String key) {
+        if (ONCE_KEYS.size() >= MAX_ONCE_KEYS) {
+            return false;
+        }
+
+        return ONCE_KEYS.add(key == null ? "null" : key);
     }
 
     private static void emit(LogLevel level, String message) {

@@ -250,7 +250,7 @@ public class IrisPregenerator {
         if (failedCount > 0) {
             IrisLogging.warn("Pregen finished with " + Form.f(failedCount) + " failed chunk(s); failures are not cached, rerun to fill them");
         }
-        IrisLogging.info("Pregen finished: generated=" + Form.f(generated.get())
+        IrisLogging.notice("Pregen finished: generated=" + Form.f(generated.get())
                 + " total=" + Form.f(totalChunks.get())
                 + " failed=" + Form.f(failedCount)
                 + " duration=" + Form.duration((long) stopwatch.getMilliseconds())

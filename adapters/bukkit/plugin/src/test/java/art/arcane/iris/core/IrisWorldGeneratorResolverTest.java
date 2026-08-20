@@ -94,15 +94,97 @@ public class IrisWorldGeneratorResolverTest {
     }
 
     @Test
-    public void paperStartupAliasResolvesToCanonicalRuntimeKey() {
+    public void paperStartupAliasResolvesToCanonicalRuntimeKey() throws Exception {
+        File levelRoot = ownedLevelRoot("startup-alias", "moon");
+
         assertEquals(
                 new NamespacedKey("iris", "moon"),
-                IrisWorldGeneratorResolver.configuredWorldKey("world_iris_moon", "world")
+                IrisWorldGeneratorResolver.configuredWorldKey("world_iris_moon", "world", levelRoot)
         );
         assertEquals(
                 new NamespacedKey("iris", "moon"),
-                IrisWorldGeneratorResolver.configuredWorldKey("moon", "world")
+                IrisWorldGeneratorResolver.configuredWorldKey("moon", "world", levelRoot)
         );
+        assertEquals(
+                NamespacedKey.minecraft("overworld"),
+                IrisWorldGeneratorResolver.configuredWorldKey("world", "world", levelRoot)
+        );
+    }
+
+    @Test
+    public void multiverseRuntimeKeyedNameResolvesToTheStoredIrisWorld() throws Exception {
+        File levelRoot = ownedLevelRoot("runtime-keyed", "moon");
+
+        assertEquals(
+                "mv load names an Iris world iris_<key> because its keyed creator refuses the namespace",
+                new NamespacedKey("iris", "moon"),
+                IrisWorldGeneratorResolver.configuredWorldKey("iris_moon", "world", levelRoot)
+        );
+    }
+
+    @Test
+    public void runtimeKeyedNameWithoutStorageKeepsItsLiteralKey() throws Exception {
+        File levelRoot = ownedLevelRoot("runtime-keyed-missing", "elsewhere");
+
+        assertEquals(
+                new NamespacedKey("iris", "iris_moon"),
+                IrisWorldGeneratorResolver.configuredWorldKey("iris_moon", "world", levelRoot)
+        );
+    }
+
+    @Test
+    public void literalWorldStorageWinsOverTheRuntimeKeyedReading() throws Exception {
+        File levelRoot = ownedLevelRoot("runtime-keyed-collision", "moon");
+        assertTrue(new File(levelRoot, "dimensions/iris/iris_moon").mkdirs());
+
+        assertEquals(
+                "a world genuinely created as iris_moon keeps its own identity",
+                new NamespacedKey("iris", "iris_moon"),
+                IrisWorldGeneratorResolver.configuredWorldKey("iris_moon", "world", levelRoot)
+        );
+    }
+
+    @Test
+    public void levelNamedIrisStillResolvesItsOwnStartupNames() throws Exception {
+        File levelRoot = temporaryFolder.newFolder("level-named-iris", "iris");
+        assertTrue(new File(levelRoot, "dimensions/iris/moon").mkdirs());
+
+        assertEquals(
+                new NamespacedKey("iris", "moon"),
+                IrisWorldGeneratorResolver.configuredWorldKey("iris_iris_moon", "iris", levelRoot)
+        );
+    }
+
+    /**
+     * A refusal has to name the world the admin typed. The generation guard keeps the storage-existence
+     * check that stops a genuine iris_moon world being mis-mapped; the message must not, or an orphan is
+     * described as iris:iris_orphan1 and the remedy names a world that never existed.
+     */
+    @Test
+    public void refusalMessagesNameTheRuntimeKeyedWorldWithoutItsStorage() {
+        assertEquals(
+                new NamespacedKey("iris", "orphan1"),
+                IrisWorldGeneratorResolver.messageWorldKey("iris_orphan1", "world")
+        );
+        assertEquals(
+                new NamespacedKey("iris", "moon"),
+                IrisWorldGeneratorResolver.messageWorldKey("world_iris_moon", "world")
+        );
+        assertEquals(
+                "a world genuinely created as iris_moon keeps its own identity",
+                new NamespacedKey("iris", "iris_moon"),
+                IrisWorldGeneratorResolver.messageWorldKey("world_iris_iris_moon", "world")
+        );
+        assertEquals(
+                NamespacedKey.minecraft("overworld"),
+                IrisWorldGeneratorResolver.messageWorldKey("world", "world")
+        );
+    }
+
+    private File ownedLevelRoot(String scope, String worldKey) throws Exception {
+        File levelRoot = temporaryFolder.newFolder(scope, "world");
+        assertTrue(new File(levelRoot, "dimensions/iris/" + worldKey).mkdirs());
+        return levelRoot;
     }
 
     @Test

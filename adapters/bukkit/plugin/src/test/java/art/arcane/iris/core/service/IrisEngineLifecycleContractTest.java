@@ -49,7 +49,7 @@ public class IrisEngineLifecycleContractTest {
     public void registrationRetryWaitsAsynchronouslyForClose() throws IOException {
         String source = Files.readString(Path.of(System.getProperty("iris.engineSvcSource")));
         String add = method(source, "private void add(World world)");
-        String remove = method(source, "private void remove(World world, CompletionStage<Boolean> unloadBoundary)");
+        String remove = method(source, "private boolean remove(World world, CompletionStage<Boolean> unloadBoundary)");
         String completeClose = method(source, "private void completeClose(");
         String retry = method(source, "private void retryRegistrationAfterClose(");
         String invokeClose = method(source, "private CompletableFuture<Void> invokeGeneratorClose()");
@@ -73,7 +73,7 @@ public class IrisEngineLifecycleContractTest {
     public void worldUnloadDefersGeneratorCloseUntilTheRawBoundaryCompletesTrue() throws IOException {
         String source = Files.readString(Path.of(System.getProperty("iris.engineSvcSource")));
         String handler = method(source, "public void onWorldUnload(WorldUnloadEvent event)");
-        String remove = method(source, "private void remove(World world, CompletionStage<Boolean> unloadBoundary)");
+        String remove = method(source, "private boolean remove(World world, CompletionStage<Boolean> unloadBoundary)");
         String defer = method(source, "private void deferCloseUntilWorldUnload(");
 
         assertBefore(handler, "WorldUnloadBoundaryRegistry.claim(", "remove(world, unloadBoundary)");

@@ -35,9 +35,13 @@ public final class ModdedIrisLog {
         LogLevel target = level == null ? LogLevel.INFO : level;
         switch (target) {
             case DEBUG -> debug(message);
-            case INFO -> info(message);
             case WARN -> warn(message);
             case ERROR -> error(message);
+            // INFO, NOTICE, and any level added later. This is a switch statement, so the compiler does not
+            // check it for exhaustiveness and a missing arm would drop the message silently. The modded
+            // loaders have one logger, so a lifecycle notice is already in the file the server writes; the
+            // level only differs on Bukkit, where INFO goes to a console sender instead.
+            default -> info(message);
         }
     }
 

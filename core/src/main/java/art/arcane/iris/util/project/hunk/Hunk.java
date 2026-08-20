@@ -1009,7 +1009,9 @@ public interface Hunk<T> extends HunkLike<T> {
      */
     default void set(int x, int y, int z, T t) {
         if (!contains(x, y, z)) {
-            IrisLogging.warn("OUT OF BOUNDS " + x + " " + y + " " + z + " in bounds " + getWidth() + " " + getHeight() + " " + getDepth());
+            // The clamp on the default write path: callers write past the edge of a hunk by design and
+            // rely on the write being dropped, so this is a trace of a normal event, not a problem.
+            IrisLogging.debug("OUT OF BOUNDS " + x + " " + y + " " + z + " in bounds " + getWidth() + " " + getHeight() + " " + getDepth());
             return;
         }
 

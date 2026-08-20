@@ -285,8 +285,8 @@ public final class ModdedStudioCommands {
         }
         File workspace;
         try {
-            workspace = ModdedWorkspaceGenerator.writeWorkspace(IrisData.get(folder), folder);
-        } catch (IOException e) {
+            workspace = ModdedWorkspaceGenerator.writeWorkspace(IrisData.get(folder), folder, open);
+        } catch (Throwable e) {
             LOGGER.error("Iris workspace write failed for {}", folder, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_FAILED_WRITE_WORKSPACE, MessageArgument.untrusted("value", folder.getAbsolutePath()), MessageArgument.untrusted("value2", String.valueOf(e.getMessage()))));
             return 0;
@@ -392,6 +392,15 @@ public final class ModdedStudioCommands {
             if (dimension == null) {
                 server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACK_HAS_NO_DIMENSIONS_JSON, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack))));
                 return;
+            }
+            try {
+                ModdedWorkspaceGenerator.writeWorkspace(data, packFolder, true);
+            } catch (Throwable workspaceError) {
+                LOGGER.error("Iris workspace write failed for {}", packFolder, workspaceError);
+                server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_FAILED_WRITE_WORKSPACE,
+                        MessageArgument.untrusted("value", packFolder.getAbsolutePath()),
+                        MessageArgument.untrusted("value2", String.valueOf(workspaceError.getMessage())))));
             }
             server.execute(() -> {
                 if (owner.equals(CONSOLE_OWNER)) {

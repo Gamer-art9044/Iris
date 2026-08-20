@@ -158,6 +158,14 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
     }
 
     public JSONObject buildSchema() {
+        return buildSchema(false);
+    }
+
+    public JSONObject buildSchemaImmediately() {
+        return buildSchema(true);
+    }
+
+    private JSONObject buildSchema(boolean immediate) {
         IrisLogging.debug("Building Schema " + objectClass.getSimpleName() + " " + root.getPath());
         JSONObject o = new JSONObject();
         KList<String> fm = new KList<>();
@@ -169,6 +177,15 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
         o.put("fileMatch", new JSONArray(fm.toArray()));
         o.put("url", "./.iris/schema/" + getFolderName() + "-schema.json");
         File a = new File(getManager().getDataFolder(), ".iris/schema/" + getFolderName() + "-schema.json");
+        if (immediate) {
+            try {
+                IO.writeAll(a, new SchemaBuilder(objectClass, manager).construct().toString(4));
+            } catch (IOException e) {
+                throw new IllegalStateException("Could not write schema " + a.getAbsolutePath(), e);
+            }
+            return o;
+        }
+
         String schemaPath = a.getAbsolutePath();
         if (schemaBuildQueue.add(schemaPath)) {
             try {

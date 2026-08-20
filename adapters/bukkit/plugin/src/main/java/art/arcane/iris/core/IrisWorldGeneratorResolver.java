@@ -62,6 +62,7 @@ public final class IrisWorldGeneratorResolver {
     private static final int VALIDATION_STABILITY_ATTEMPTS = 2;
     private static final Object SNAPSHOT_VALIDATION_LOCK = new Object();
     private static final String IRIS_DIMENSION_NAMESPACE = "iris";
+    private static final String PLOT_SQUARED_DISCOVERY_WORLD = "CheckingPlotSquaredGenerator";
 
     private final VolmitPlugin plugin;
 
@@ -340,7 +341,12 @@ public final class IrisWorldGeneratorResolver {
         return fallback.get();
     }
 
-    public ChunkGenerator resolveDefaultWorldGenerator(String worldName, String id) {
+    @Nullable
+    public ChunkGenerator resolveDefaultWorldGenerator(String worldName, @Nullable String id) {
+        if (isPlotSquaredGeneratorDiscoveryProbe(worldName, id)) {
+            Iris.debug("Ignoring PlotSquared generator discovery probe");
+            return null;
+        }
         if (isGeneratorDiscoveryProbe(worldName, id)) {
             Iris.debug("Generator discovery probe for loaded world " + worldName);
             return new IrisProbeChunkGenerator(worldName);
@@ -368,6 +374,10 @@ public final class IrisWorldGeneratorResolver {
             Bukkit.shutdown();
             throw failure;
         }
+    }
+
+    private static boolean isPlotSquaredGeneratorDiscoveryProbe(String worldName, String id) {
+        return PLOT_SQUARED_DISCOVERY_WORLD.equals(worldName) && id != null && id.isEmpty();
     }
 
     /**

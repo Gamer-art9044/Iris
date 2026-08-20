@@ -26,6 +26,7 @@ import java.util.Random;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -231,7 +232,8 @@ public class IrisWorldGeneratorResolverTest {
         int resolverEnd = source.indexOf("private ChunkGenerator resolveFrozenWorldGenerator(", resolverStart);
         String resolver = source.substring(resolverStart, resolverEnd);
 
-        int probe = resolver.indexOf("isGeneratorDiscoveryProbe(worldName, id)");
+        int plotSquaredProbe = resolver.indexOf("isPlotSquaredGeneratorDiscoveryProbe(worldName, id)");
+        int probe = resolver.indexOf("isGeneratorDiscoveryProbe(worldName, id)", plotSquaredProbe);
         int readiness = resolver.indexOf("IrisStartupValidation.requireWorldCreationReady()");
         int duplicateGuard = resolver.indexOf("requireWorldKeyAvailable(worldName, worldKey)");
         int ownership = resolver.indexOf("requireOwnedWorld(worldName, levelRoot, worldKey)");
@@ -241,7 +243,8 @@ public class IrisWorldGeneratorResolverTest {
         int shutdown = resolver.indexOf("Bukkit.shutdown()", report);
         int rethrow = resolver.indexOf("throw failure", shutdown);
 
-        assertTrue(probe >= 0);
+        assertTrue(plotSquaredProbe >= 0);
+        assertTrue(probe > plotSquaredProbe);
         assertTrue(readiness > probe);
         assertTrue(duplicateGuard > readiness);
         assertTrue(ownership > duplicateGuard);
@@ -254,6 +257,44 @@ public class IrisWorldGeneratorResolverTest {
         String shutdownScope = "the fail-fast shutdown must stay scoped to the frozen snapshot of an owned world";
         assertEquals(shutdownScope, resolverStart + shutdown, source.indexOf("Bukkit.shutdown()"));
         assertEquals(shutdownScope, resolverStart + shutdown, source.lastIndexOf("Bukkit.shutdown()"));
+    }
+
+    @Test
+    public void plotSquaredDiscoveryProbeIsIgnoredQuietly() {
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            bukkit.when(() -> Bukkit.getWorld("CheckingPlotSquaredGenerator")).thenReturn(null);
+
+            ChunkGenerator probe = new IrisWorldGeneratorResolver(null)
+                    .resolveDefaultWorldGenerator("CheckingPlotSquaredGenerator", "");
+
+            assertNull("Iris cannot be used as a PlotSquared base generator", probe);
+            bukkit.verify(Bukkit::shutdown, never());
+        }
+    }
+
+    @Test
+    public void plotSquaredSentinelWithDimensionIdUsesNormalOwnershipChecks() throws Exception {
+        File worldContainer = temporaryFolder.newFolder("plotsquared-non-probe");
+        File levelRoot = new File(worldContainer, "world");
+        assertTrue(levelRoot.mkdirs());
+
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            Server server = mock(Server.class);
+            when(server.getLevelDirectory()).thenReturn(levelRoot.toPath());
+            bukkit.when(Bukkit::getServer).thenReturn(server);
+            bukkit.when(Bukkit::getWorldContainer).thenReturn(worldContainer);
+            bukkit.when(Bukkit::getWorlds).thenReturn(List.of());
+
+            IllegalStateException failure = assertThrows(
+                    IllegalStateException.class,
+                    () -> new IrisWorldGeneratorResolver(null)
+                            .resolveDefaultWorldGenerator("CheckingPlotSquaredGenerator", "overworld"));
+
+            assertTrue(failure.getMessage(), failure.getMessage().contains("CheckingPlotSquaredGenerator"));
+            bukkit.verify(Bukkit::shutdown, never());
+        }
     }
 
     @Test

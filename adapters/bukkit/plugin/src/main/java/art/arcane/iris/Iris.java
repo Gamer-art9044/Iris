@@ -1222,8 +1222,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         return generatorResolver.resolveDefaultBiomeProvider(worldName, id, () -> super.getDefaultBiomeProvider(worldName, id));
     }
 
+    @Nullable
     @Override
-    public ChunkGenerator getDefaultWorldGenerator(String worldName, String id) {
+    public ChunkGenerator getDefaultWorldGenerator(@NotNull String worldName, @Nullable String id) {
         return generatorResolver.resolveDefaultWorldGenerator(worldName, id);
     }
 

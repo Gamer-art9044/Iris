@@ -7,6 +7,7 @@ import art.arcane.iris.engine.framework.PreservationRegistry;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisServices;
+import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
 import org.junit.After;
@@ -17,6 +18,7 @@ import org.junit.rules.TemporaryFolder;
 import org.mockito.Answers;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
@@ -45,7 +47,9 @@ public class IrisCodeWorkspaceTest {
         previousSettings = IrisSettings.settings;
         IrisPlatforms.unbind();
         IrisPlatform platform = mock(IrisPlatform.class, Answers.CALLS_REAL_METHODS);
+        PlatformRegistries registries = mock(PlatformRegistries.class);
         when(platform.dataFolder()).thenReturn(temporaryFolder.getRoot());
+        when(platform.registries()).thenReturn(registries);
         IrisPlatforms.bind(platform);
         IrisSettings.settings = new IrisSettings();
         IrisServices.register(PreservationRegistry.class, new NoOpPreservationRegistry());
@@ -101,6 +105,43 @@ public class IrisCodeWorkspaceTest {
 
         assertFalse("Expected the workspace to declare schemas", urls.isEmpty());
         assertEquals("Schema entries must be emitted in a boot-stable order", sorted, urls);
+    }
+
+    @Test
+    public void studioOpenCreatesAndRefreshesCanonicalWorkspaceAndMaterializesSchemas() throws Exception {
+        File pack = temporaryFolder.newFolder("studio-pack");
+        File canonicalWorkspace = new File(pack, "studio-pack.code-workspace");
+        File unrelatedWorkspace = new File(pack, "unrelated.code-workspace");
+        File intellijMappings = new File(pack, ".idea/jsonSchemas.xml");
+        Files.writeString(unrelatedWorkspace.toPath(), "unrelated", StandardCharsets.UTF_8);
+        Files.createDirectories(intellijMappings.toPath().getParent());
+        Files.writeString(intellijMappings.toPath(), "not xml", StandardCharsets.UTF_8);
+        IrisSettings.get().getStudio().setOpenVSCode(false);
+
+        IrisCodeWorkspace workspace = new IrisCodeWorkspace(new IrisProject(pack));
+        workspace.prepareAndOpenVSCode();
+        data = IrisData.get(pack);
+
+        JSONArray schemas = assertWorkspaceSchemasMaterialized(pack, canonicalWorkspace);
+        String firstSchemaPath = schemas.getJSONObject(0).getString("url").substring(2);
+        Files.writeString(canonicalWorkspace.toPath(), "{\"settings\":{\"json.schemas\":[]}}", StandardCharsets.UTF_8);
+        Files.delete(new File(pack, firstSchemaPath).toPath());
+
+        workspace.prepareAndOpenVSCode();
+        assertWorkspaceSchemasMaterialized(pack, canonicalWorkspace);
+        assertEquals("Studio open must target only the canonical workspace", "unrelated",
+                Files.readString(unrelatedWorkspace.toPath(), StandardCharsets.UTF_8));
+    }
+
+    private static JSONArray assertWorkspaceSchemasMaterialized(File pack, File canonicalWorkspace) throws Exception {
+        JSONObject configuration = new JSONObject(Files.readString(canonicalWorkspace.toPath(), StandardCharsets.UTF_8));
+        JSONArray schemas = configuration.getJSONObject("settings").getJSONArray("json.schemas");
+        assertTrue("Studio open must declare schemas", schemas.length() > 0);
+        for (int index = 0; index < schemas.length(); index++) {
+            String relativePath = schemas.getJSONObject(index).getString("url").substring(2);
+            assertTrue("Studio open must write schema " + relativePath, new File(pack, relativePath).isFile());
+        }
+        return schemas;
     }
 
     private static final class NoOpPreservationRegistry implements PreservationRegistry {

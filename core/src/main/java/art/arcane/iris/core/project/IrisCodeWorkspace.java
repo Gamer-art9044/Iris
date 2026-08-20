@@ -21,9 +21,6 @@ package art.arcane.iris.core.project;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
-import art.arcane.iris.core.localization.BukkitRuntimeMessages;
-import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.plugin.VolmitSender;
@@ -34,7 +31,6 @@ import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
-import art.arcane.volmlib.util.localization.MessageArgument;
 import org.dom4j.Document;
 import org.dom4j.Element;
 
@@ -45,7 +41,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -58,69 +53,35 @@ public class IrisCodeWorkspace {
     }
 
     public void openVSCode(VolmitSender sender) {
-
-        IrisDimension d = IrisData.loadAnyDimension(project.getName(), null);
-        J.attemptAsync(() ->
-        {
-            try {
-                if (d == null) {
-                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_COULD_NOT_LOAD_DIMENSION, MessageArgument.untrusted("value", String.valueOf(project.getName()))));
-                    return;
-                }
-
-                if (d.getLoader() == null) {
-                    sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_COULD_NOT_GET_DIMENSION_LOADER));
-                    return;
-                }
-                File f = d.getLoader().getDataFolder();
-
-                if (!doOpenVSCode(f)) {
-                    File ff = new File(d.getLoader().getDataFolder(), d.getLoadKey() + ".code-workspace");
-                    IrisLogging.warn("Project missing code-workspace: " + ff.getAbsolutePath() + " Re-creating code workspace.");
-
-                    try {
-                        IO.writeAll(ff, createCodeWorkspaceConfig(false));
-                    } catch (IOException e1) {
-                        IrisLogging.reportError(e1);
-                        e1.printStackTrace();
-                    }
-                    if (!doOpenVSCode(f)) {
-                        IrisLogging.warn("Tried creating code workspace but failed a second time. Your project is likely corrupt.");
-                    }
-                }
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
-                e.printStackTrace();
-            }
-        });
+        J.attemptAsync(this::prepareAndOpenVSCode);
     }
 
-    private boolean doOpenVSCode(File f) throws IOException {
-        boolean foundWork = false;
-        for (File i : Objects.requireNonNull(f.listFiles())) {
-            if (i.getName().endsWith(".code-workspace")) {
-                foundWork = true;
-
-                if (IrisSettings.get().getStudio().isOpenVSCode()) {
-                    if (!GraphicsEnvironment.isHeadless()) {
-                        IrisLogging.msg("Opening VSCode. You may see the output from VSCode.");
-                        IrisLogging.msg("VSCode output always starts with: '(node:#####) electron'");
-                        Thread launcherThread = new Thread(() -> {
-                            try {
-                                Desktop.getDesktop().open(i);
-                            } catch (Throwable e) {
-                                IrisLogging.reportError(e);
-                            }
-                        }, "Iris-VSCode-Launcher");
-                        launcherThread.setDaemon(true);
-                        launcherThread.start();
-                    }
-                }
-
-                break;
-            }
+    void prepareAndOpenVSCode() {
+        boolean updated = updateWorkspace(true);
+        File workspace = getCodeWorkspaceFile();
+        if (!workspace.isFile()) {
+            IrisLogging.warn("Could not create the code workspace for project " + project.getName() + " at " + workspace.getAbsolutePath() + ".");
+            return;
         }
-        return foundWork;
+        if (!updated) {
+            IrisLogging.warn("Could not refresh every schema for " + workspace.getAbsolutePath() + "; the editor will not be opened with stale autocomplete data.");
+            return;
+        }
+        if (!IrisSettings.get().getStudio().isOpenVSCode() || GraphicsEnvironment.isHeadless()) {
+            return;
+        }
+
+        IrisLogging.msg("Opening VSCode. You may see the output from VSCode.");
+        IrisLogging.msg("VSCode output always starts with: '(node:#####) electron'");
+        Thread launcherThread = new Thread(() -> {
+            try {
+                Desktop.getDesktop().open(workspace);
+            } catch (Throwable e) {
+                IrisLogging.reportError(e);
+            }
+        }, "Iris-VSCode-Launcher");
+        launcherThread.setDaemon(true);
+        launcherThread.start();
     }
 
     public File getCodeWorkspaceFile() {
@@ -128,6 +89,10 @@ public class IrisCodeWorkspace {
     }
 
     public boolean updateWorkspace() {
+        return updateWorkspace(false);
+    }
+
+    private boolean updateWorkspace(boolean immediateSchemas) {
         project.getPath().mkdirs();
         File ws = getCodeWorkspaceFile();
 
@@ -136,7 +101,7 @@ public class IrisCodeWorkspace {
         // destroyed the author's workspace on every boot.
         String rendered;
         try {
-            rendered = createCodeWorkspaceConfig().toString(4);
+            rendered = createCodeWorkspaceConfig(immediateSchemas).toString(4);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             IrisLogging.warn("Could not generate the code workspace config for " + ws.getAbsolutePath() + "; leaving the existing workspace file untouched.");
@@ -162,7 +127,7 @@ public class IrisCodeWorkspace {
     }
 
     public JSONObject createCodeWorkspaceConfig() {
-        return createCodeWorkspaceConfig(true);
+        return createCodeWorkspaceConfig(false);
     }
 
     private static void writeIfChanged(File target, String rendered) throws IOException {
@@ -172,7 +137,7 @@ public class IrisCodeWorkspace {
         IO.writeAll(target, rendered);
     }
 
-    private JSONObject createCodeWorkspaceConfig(boolean includeSchemas) {
+    private JSONObject createCodeWorkspaceConfig(boolean immediateSchemas) {
         JSONObject ws = new JSONObject();
         JSONArray folders = new JSONArray();
         JSONObject folder = new JSONObject();
@@ -204,55 +169,68 @@ public class IrisCodeWorkspace {
         settings.put("json.maxItemsComputed", 30000);
         JSONArray schemas = new JSONArray();
         List<JSONObject> schemaEntries = new ArrayList<>();
-        IrisData dm = null;
-        if (includeSchemas) {
-            dm = IrisData.get(project.getPath());
-            for (ResourceLoader<?> r : dm.getLoaders().v()) {
-                if (r.supportsSchemas()) {
-                    schemaEntries.add(r.buildSchema());
-                }
+        IrisData dm = IrisData.get(project.getPath());
+        for (ResourceLoader<?> resourceLoader : dm.getLoaders().v()) {
+            if (resourceLoader.supportsSchemas()) {
+                schemaEntries.add(immediateSchemas
+                        ? resourceLoader.buildSchemaImmediately()
+                        : resourceLoader.buildSchema());
             }
+        }
 
-            for (Class<?> i : sortedSnippets(dm.resolveSnippets())) {
-                try {
-                    String snipType = i.getDeclaredAnnotation(Snippet.class).value();
-                    JSONObject o = new JSONObject();
-                    KList<String> fm = new KList<>();
+        for (Class<?> snippetClass : sortedSnippets(dm.resolveSnippets())) {
+            try {
+                String snipType = snippetClass.getDeclaredAnnotation(Snippet.class).value();
+                JSONObject schemaEntry = new JSONObject();
+                KList<String> fileMatches = new KList<>();
 
-                    for (int g = 1; g < 8; g++) {
-                        fm.add("/snippet/" + snipType + Form.repeat("/*", g) + ".json");
-                    }
+                for (int depth = 1; depth < 8; depth++) {
+                    fileMatches.add("/snippet/" + snipType + Form.repeat("/*", depth) + ".json");
+                }
 
-                    o.put("fileMatch", new JSONArray(fm.toArray()));
-                    o.put("url", "./.iris/schema/snippet/" + snipType + "-schema.json");
-                    schemaEntries.add(o);
+                schemaEntry.put("fileMatch", new JSONArray(fileMatches.toArray()));
+                schemaEntry.put("url", "./.iris/schema/snippet/" + snipType + "-schema.json");
+                schemaEntries.add(schemaEntry);
+                File schemaFile = new File(dm.getDataFolder(), ".iris/schema/snippet/" + snipType + "-schema.json");
+                if (immediateSchemas) {
+                    IO.writeAll(schemaFile, new SchemaBuilder(snippetClass, dm).construct().toString(4));
+                } else {
                     IrisData snippetData = dm;
-                    File a = new File(snippetData.getDataFolder(), ".iris/schema/snippet/" + snipType + "-schema.json");
                     J.attemptAsync(() -> {
                         try {
-                            IO.writeAll(a, new SchemaBuilder(i, snippetData).construct().toString(4));
+                            IO.writeAll(schemaFile, new SchemaBuilder(snippetClass, snippetData).construct().toString(4));
                         } catch (Throwable e) {
-                            e.printStackTrace();
+                            IrisLogging.reportError(e);
                         }
                     });
-                } catch (Throwable e) {
-                    e.printStackTrace();
                 }
+            } catch (Throwable e) {
+                if (immediateSchemas) {
+                    throw new IllegalStateException("Could not write snippet schema for " + snippetClass.getName(), e);
+                }
+                IrisLogging.reportError(e);
             }
+        }
 
-            schemaEntries.sort(Comparator.comparing(entry -> entry.getString("url")));
-            for (JSONObject entry : schemaEntries) {
-                schemas.put(entry);
-            }
+        schemaEntries.sort(Comparator.comparing(entry -> entry.getString("url")));
+        for (JSONObject entry : schemaEntries) {
+            schemas.put(entry);
         }
 
         settings.put("json.schemas", schemas);
         ws.put("settings", settings);
 
-        if (!includeSchemas) {
-            return ws;
+        try {
+            updateIntelliJSchemaMappings(schemas);
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            IrisLogging.warn("Could not update IntelliJ schema mappings for " + project.getPath().getAbsolutePath() + "; VSCode workspace generation will continue.");
         }
 
+        return ws;
+    }
+
+    private void updateIntelliJSchemaMappings(JSONArray schemas) {
         File schemasFile = new File(project.getPath(), ".idea" + File.separator + "jsonSchemas.xml");
         Document doc = IO.read(schemasFile);
         Element mappings = (Element) doc.selectSingleNode("//component[@name='JsonSchemaMappingsProjectConfiguration']");
@@ -267,7 +245,7 @@ public class IrisCodeWorkspace {
 
         Element map = (Element) state.selectSingleNode("map");
         if (map == null) map = state.addElement("map");
-        var schemaMap = new KMap<String, String>();
+        KMap<String, String> schemaMap = new KMap<>();
         schemas.forEach(element -> {
             if (!(element instanceof JSONObject obj))
                 return;
@@ -282,17 +260,17 @@ public class IrisCodeWorkspace {
                 .map(node -> node.valueOf("@value"))
                 .forEach(schemaMap::remove);
 
-        var ideaSchemas = map;
+        Element ideaSchemas = map;
         schemaMap.forEach((url, dir) -> {
-            var genName = UUID.randomUUID().toString();
+            String generatedName = UUID.randomUUID().toString();
 
-            var info = ideaSchemas.addElement("entry")
-                    .addAttribute("key", genName)
+            Element info = ideaSchemas.addElement("entry")
+                    .addAttribute("key", generatedName)
                     .addElement("value")
                     .addElement("SchemaInfo");
             info.addElement("option")
                     .addAttribute("name", "generatedName")
-                    .addAttribute("value", genName);
+                    .addAttribute("value", generatedName);
             info.addElement("option")
                     .addAttribute("name", "name")
                     .addAttribute("value", dir);
@@ -301,7 +279,7 @@ public class IrisCodeWorkspace {
                     .addAttribute("value", url);
 
 
-            var item = info.addElement("option")
+            Element item = info.addElement("option")
                     .addAttribute("name", "patterns")
                     .addElement("list")
                     .addElement("Item");
@@ -318,7 +296,6 @@ public class IrisCodeWorkspace {
         if (!schemaMap.isEmpty()) {
             IO.write(schemasFile, doc);
         }
-        return ws;
     }
 
     private static List<Class<?>> sortedSnippets(Set<Class<?>> snippets) {

@@ -42,7 +42,6 @@ import art.arcane.iris.platform.bukkit.BukkitBlockState;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.data.Cuboid;
 import art.arcane.iris.util.common.data.IrisCustomData;
-import art.arcane.iris.util.common.data.registry.Materials;
 import art.arcane.iris.util.common.director.DirectorExecutor;
 import art.arcane.iris.util.common.director.specialhandlers.NullableDimensionHandler;
 import art.arcane.iris.util.common.plugin.VolmitSender;
@@ -89,6 +88,23 @@ import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 @Director(name = "object", aliases = "o", origin = DirectorOrigin.PLAYER, description = "Iris object manipulation", descriptionKey = "iris.director.commandobject.director.iris_object_manipulation")
 public class CommandObject implements DirectorExecutor {
+    static final Set<Material> PASTE_TRANSPARENT_BLOCKS = Set.of(
+            Material.AIR,
+            Material.CAVE_AIR,
+            Material.VOID_AIR,
+            Material.SHORT_GRASS,
+            Material.SNOW,
+            Material.VINE,
+            Material.TORCH,
+            Material.DEAD_BUSH,
+            Material.POPPY,
+            Material.DANDELION
+    );
+
+    static boolean isPasteTarget(Material material) {
+        return !PASTE_TRANSPARENT_BLOCKS.contains(material);
+    }
+
     @Director(description = "Open an object studio world (grid of every object; dimension optional, defaults to all packs)", descriptionKey = "iris.director.commandobject.director.open_object_studio_world_grid_every_object_dimension_optional_defaults_all_packs", sync = true)
     public void studio(
             @Param(defaultValue = "null", description = "Optional dimension whose object pack to lay out; omit to aggregate objects from every pack", descriptionKey = "iris.director.commandobject.param.optional_dimension_whose_object_pack_lay_out_omit_aggregate_objects_from_every", aliases = "dim", customHandler = NullableDimensionHandler.class)
@@ -178,9 +194,6 @@ public class CommandObject implements DirectorExecutor {
             commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_OBJECT_FAILED_OPEN_OBJECT_STUDIO, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
         }
     }
-
-    private static final Set<Material> skipBlocks = Set.of(Materials.GRASS, Material.SNOW, Material.VINE, Material.TORCH, Material.DEAD_BUSH,
-            Material.POPPY, Material.DANDELION);
 
     public static IObjectPlacer createPlacer(World world, Map<Block, BlockData> futureBlockChanges, Engine targetEngine) {
         return new IObjectPlacer() {
@@ -545,15 +558,20 @@ public class CommandObject implements DirectorExecutor {
             scale = maxScale;
         }
 
-        sender().playSound(Sound.BLOCK_ENCHANTMENT_TABLE_USE, 1f, 1.5f);
-
         IrisObjectPlacement placement = new IrisObjectPlacement();
         placement.setRotation(IrisObjectRotation.of(0, rotate, 0));
 
         VolmitSender commandSender = sender();
         Player player = player();
         ItemStack wand = player.getInventory().getItemInMainHand();
-        Location block = player.getTargetBlock(skipBlocks, 256).getLocation().clone().add(0, 1, 0);
+        Block targetBlock = player.getTargetBlock(PASTE_TRANSPARENT_BLOCKS, 256);
+        if (!isPasteTarget(targetBlock.getType())) {
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_PLEASE_LOOK_AT_ANY_BLOCK_NOT_AT_SKY));
+            return;
+        }
+        Location block = targetBlock.getLocation().clone().add(0, 1, 0);
+
+        commandSender.playSound(Sound.BLOCK_ENCHANTMENT_TABLE_USE, 1f, 1.5f);
 
         Map<Block, BlockData> futureChanges = new HashMap<>();
 
@@ -573,9 +591,11 @@ public class CommandObject implements DirectorExecutor {
             }
 
             onPlayerThread(player, () -> {
-                Vector center = new Vector(placed.getCenter().getX(), placed.getCenter().getY(), placed.getCenter().getZ());
-                ItemStack newWand = WandSVC.createWand(block.clone().subtract(center).add(placed.getW() - 1,
-                        placed.getH() + center.getY() - 1, placed.getD() - 1), block.clone().subtract(center.clone().setY(0)));
+                ObjectPasteBounds bounds = ObjectPasteBounds.resolve(placed, placement.getRotation(), block.getBlockX(),
+                        block.getBlockY() + placed.getCenter().getBlockY(), block.getBlockZ());
+                Location minimum = new Location(block.getWorld(), bounds.minX(), bounds.minY(), bounds.minZ());
+                Location maximum = new Location(block.getWorld(), bounds.maxX(), bounds.maxY(), bounds.maxZ());
+                ItemStack newWand = WandSVC.createWand(maximum, minimum);
                 if (WandSVC.isWand(wand)) {
                     player.getInventory().setItemInMainHand(newWand);
                     commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_UPDATED_WAND_OBJECTS_IOB, MessageArgument.untrusted("value", placed.getLoadKey())));

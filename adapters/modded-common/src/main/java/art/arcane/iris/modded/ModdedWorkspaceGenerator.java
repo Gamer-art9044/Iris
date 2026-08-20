@@ -38,13 +38,21 @@ public final class ModdedWorkspaceGenerator {
     }
 
     public static File writeWorkspace(IrisData data, File folder) throws IOException {
-        JSONObject workspaceConfig = buildWorkspace(data);
+        return writeWorkspace(data, folder, false);
+    }
+
+    public static File writeWorkspace(IrisData data, File folder, boolean immediateSchemas) throws IOException {
+        JSONObject workspaceConfig = buildWorkspace(data, immediateSchemas);
         File workspace = new File(folder, folder.getName() + ".code-workspace");
         IO.writeAll(workspace, workspaceConfig.toString(4));
         return workspace;
     }
 
     public static JSONObject buildWorkspace(IrisData data) {
+        return buildWorkspace(data, false);
+    }
+
+    private static JSONObject buildWorkspace(IrisData data, boolean immediateSchemas) {
         JSONObject ws = new JSONObject();
         JSONArray folders = new JSONArray();
         JSONObject folder = new JSONObject();
@@ -74,17 +82,17 @@ public final class ModdedWorkspaceGenerator {
         json.put("editor.suggest.insertMode", "replace");
         settings.put("[json]", json);
         settings.put("json.maxItemsComputed", 30000);
-        settings.put("json.schemas", buildSchemas(data));
+        settings.put("json.schemas", buildSchemas(data, immediateSchemas));
         ws.put("settings", settings);
         return ws;
     }
 
-    private static JSONArray buildSchemas(IrisData data) {
+    private static JSONArray buildSchemas(IrisData data, boolean immediateSchemas) {
         JSONArray schemas = new JSONArray();
 
         for (ResourceLoader<?> loader : data.getLoaders().v()) {
             if (loader.supportsSchemas()) {
-                schemas.put(loader.buildSchema());
+                schemas.put(immediateSchemas ? loader.buildSchemaImmediately() : loader.buildSchema());
             }
         }
 
@@ -102,14 +110,21 @@ public final class ModdedWorkspaceGenerator {
                 entry.put("url", "./.iris/schema/snippet/" + snipType + "-schema.json");
                 schemas.put(entry);
                 File schemaFile = new File(data.getDataFolder(), ".iris/schema/snippet/" + snipType + "-schema.json");
-                J.attemptAsync(() -> {
-                    try {
-                        IO.writeAll(schemaFile, new SchemaBuilder(snippetClass, data).construct().toString(4));
-                    } catch (Throwable e) {
-                        IrisLogging.reportError(e);
-                    }
-                });
+                if (immediateSchemas) {
+                    IO.writeAll(schemaFile, new SchemaBuilder(snippetClass, data).construct().toString(4));
+                } else {
+                    J.attemptAsync(() -> {
+                        try {
+                            IO.writeAll(schemaFile, new SchemaBuilder(snippetClass, data).construct().toString(4));
+                        } catch (Throwable e) {
+                            IrisLogging.reportError(e);
+                        }
+                    });
+                }
             } catch (Throwable e) {
+                if (immediateSchemas) {
+                    throw new IllegalStateException("Could not write snippet schema for " + snippetClass.getName(), e);
+                }
                 IrisLogging.reportError(e);
             }
         }

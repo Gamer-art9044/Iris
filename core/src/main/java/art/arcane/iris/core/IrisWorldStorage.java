@@ -117,7 +117,9 @@ public final class IrisWorldStorage {
                 throw new IllegalArgumentException("World identifier is invalid: " + requestedName);
             }
         } else {
-            key = keyFromName(requestedName, levelName);
+            // "iris worlds" and Multiverse print the Bukkit startup name (<level>_iris_<key>), so
+            // accept that form here instead of turning it into iris:<level>_iris_<key>.
+            key = keyFromConfiguredWorldName(requestedName, levelName);
         }
 
         if (!IRIS_NAMESPACE.equals(key.getNamespace()) || !key.getKey().matches("[a-z0-9_-]+")) {

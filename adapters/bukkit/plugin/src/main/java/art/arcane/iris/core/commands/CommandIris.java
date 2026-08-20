@@ -826,8 +826,13 @@ public class CommandIris implements DirectorExecutor {
         public KList<String> getPossibilities() {
             Set<String> options = new LinkedHashSet<>();
             for (World world : Bukkit.getWorlds()) {
-                if (IrisToolbelt.isIrisWorld(world)) {
-                    options.add(IrisWorldStorage.logicalName(world));
+                if (!IrisToolbelt.isIrisWorld(world)) {
+                    continue;
+                }
+                options.add(IrisWorldStorage.logicalName(world));
+                String startupName = configuredStartupName(world);
+                if (startupName != null) {
+                    options.add(startupName);
                 }
             }
             for (String identity : IrisWorlds.get().getWorlds().keySet()) {
@@ -848,6 +853,21 @@ public class CommandIris implements DirectorExecutor {
                 }
             }
             return new KList<>(options);
+        }
+
+        /**
+         * "iris worlds" prints the Bukkit startup name, so it has to be offered and accepted here too.
+         */
+        private static String configuredStartupName(World world) {
+            try {
+                String configured = IrisWorldStorage.configuredWorldName(
+                        WorldIdentity.key(world),
+                        IrisWorldStorage.levelRoot().getName()
+                );
+                return configured.equals(world.getName()) ? configured : null;
+            } catch (RuntimeException failure) {
+                return null;
+            }
         }
 
         @Override

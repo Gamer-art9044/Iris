@@ -106,7 +106,7 @@ public final class WorldRuntimeControlService {
             return false;
         }
 
-        IrisServices.get(art.arcane.iris.core.link.MultiverseCoreLink.class).removeFromConfig(world);
+        IrisServices.get(art.arcane.iris.core.link.MultiverseCoreLink.class).removeIfPresent(world);
         setIntGameRule(world, 0, "SPAWN_CHUNK_RADIUS", "spawnChunkRadius");
         enableStudioEntitySpawning(world);
         if (!IrisSettings.get().getStudio().isDisableTimeAndWeather()) {

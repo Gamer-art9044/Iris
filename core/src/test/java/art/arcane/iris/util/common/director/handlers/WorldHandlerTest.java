@@ -14,7 +14,7 @@ import static org.junit.Assert.assertThrows;
 public class WorldHandlerTest {
     @Test
     public void resolvesOwnedIrisWorldByLogicalNameAndCanonicalKey() throws DirectorParsingException {
-        World world = world("iris_irisworld", new NamespacedKey("iris", "irisworld"));
+        World world = world("world_iris_irisworld", new NamespacedKey("iris", "irisworld"));
         WorldHandler handler = new TestWorldHandler(List.of(world));
 
         assertSame(world, handler.parse("irisworld", false));

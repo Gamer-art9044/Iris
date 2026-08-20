@@ -117,12 +117,14 @@ dependencies {
     testImplementation('org.mockito:mockito-core:5.23.0')
     testImplementation(libs.paper.api)
     testRuntimeOnly(libs.paper.api)
+    testRuntimeOnly(libs.multiverseCore)
 }
 
 tasks.named('test').configure {
     maxHeapSize = '1g'
     systemProperty('iris.packBenchmarkingSource', file('src/main/java/art/arcane/iris/core/tools/IrisPackBenchmarking.java').absolutePath)
     systemProperty('iris.irisToolbeltSource', file('src/main/java/art/arcane/iris/core/tools/IrisToolbelt.java').absolutePath)
+    systemProperty('iris.irisCreatorSource', file('src/main/java/art/arcane/iris/core/tools/IrisCreator.java').absolutePath)
     systemProperty('iris.bukkitChunkGeneratorSource', file('src/main/java/art/arcane/iris/engine/platform/BukkitChunkGenerator.java').absolutePath)
 }
 

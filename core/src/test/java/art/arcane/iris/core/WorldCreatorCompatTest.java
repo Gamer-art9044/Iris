@@ -1,9 +1,11 @@
 package art.arcane.iris.core;
 
 import org.bukkit.NamespacedKey;
+import org.bukkit.WorldCreator;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 
 public class WorldCreatorCompatTest {
     @Test
@@ -14,39 +16,48 @@ public class WorldCreatorCompatTest {
     }
 
     @Test
-    public void fallbackNameDerivesLogicalNameFromKey() {
-        assertEquals("compat_world", WorldCreatorCompat.fallbackName(new NamespacedKey("iris", "compat_world"), "world"));
-        assertEquals("world", WorldCreatorCompat.fallbackName(NamespacedKey.minecraft("overworld"), "world"));
-        assertEquals("world_nether", WorldCreatorCompat.fallbackName(NamespacedKey.minecraft("the_nether"), "world"));
-        assertEquals("world_the_end", WorldCreatorCompat.fallbackName(NamespacedKey.minecraft("the_end"), "world"));
+    public void keyedCreatorIsBornUnderTheRequestedStartupName() {
+        NamespacedKey key = new NamespacedKey("iris", "compat_world");
+
+        WorldCreator creator = WorldCreatorCompat.ofKey(key, "world_iris_compat_world");
+
+        assertEquals("world_iris_compat_world", creator.name());
+        assertEquals(key, creator.key());
     }
 
     @Test
-    public void persistentFallbackUsesExactConfiguredStartupName() {
+    public void keyedCreatorKeepsThePaperKeyNameWhenNoStartupNameIsGiven() {
+        NamespacedKey key = new NamespacedKey("iris", "compat_world");
+
+        WorldCreator creator = WorldCreatorCompat.ofKey(key);
+
+        assertNotEquals("world_iris_compat_world", creator.name());
+        assertEquals(key, creator.key());
+    }
+
+    @Test
+    public void persistentNameIsTheExactConfiguredStartupName() {
         assertEquals(
                 "world_iris_compat_world",
-                WorldCreatorCompat.fallbackPersistentName(new NamespacedKey("iris", "compat_world"), "world")
+                WorldCreatorCompat.persistentWorldName(new NamespacedKey("iris", "compat_world"), "world")
         );
     }
 
     @Test
-    public void fallbackKeyRoundTripsCreatorName() {
-        assertEquals(new NamespacedKey("iris", "compat_world"), WorldCreatorCompat.fallbackKey("compat_world", "world"));
-        assertEquals(NamespacedKey.minecraft("overworld"), WorldCreatorCompat.fallbackKey("world", "world"));
-        assertEquals(NamespacedKey.minecraft("the_nether"), WorldCreatorCompat.fallbackKey("world_nether", "world"));
-        assertEquals(
-                new NamespacedKey("iris", "compat_world"),
-                WorldCreatorCompat.fallbackKey("world_iris_compat_world", "world")
-        );
+    public void logicalNameDerivesTheLogicalNameFromKey() {
+        assertEquals("compat_world", IrisWorldStorage.logicalName(new NamespacedKey("iris", "compat_world"), "world"));
+        assertEquals("world", IrisWorldStorage.logicalName(NamespacedKey.minecraft("overworld"), "world"));
+        assertEquals("world_nether", IrisWorldStorage.logicalName(NamespacedKey.minecraft("the_nether"), "world"));
+        assertEquals("world_the_end", IrisWorldStorage.logicalName(NamespacedKey.minecraft("the_end"), "world"));
     }
 
     @Test
-    public void fallbackMappingIsStableAcrossRoundTrips() {
-        NamespacedKey key = new NamespacedKey("iris", "iris_world");
+    public void startupNameRoundTripsBackToTheWorldKey() {
+        NamespacedKey key = new NamespacedKey("iris", "compat_world");
 
-        String name = WorldCreatorCompat.fallbackName(key, "world");
+        String name = WorldCreatorCompat.persistentWorldName(key, "world");
 
-        assertEquals(key, WorldCreatorCompat.fallbackKey(name, "world"));
-        assertEquals(name, WorldCreatorCompat.fallbackName(key, "world"));
+        assertEquals("world_iris_compat_world", name);
+        assertEquals(key, IrisWorldStorage.keyFromConfiguredWorldName(name, "world"));
     }
 }

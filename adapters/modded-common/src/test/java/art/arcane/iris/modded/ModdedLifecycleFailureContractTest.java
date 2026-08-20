@@ -166,6 +166,9 @@ public class ModdedLifecycleFailureContractTest {
 
         assertTrue(shutdown.contains("new ArrayList<>(ENGINES.entrySet())"));
         assertFalse(shutdown.contains("ENGINES.clear()"));
+        // Bound generators must go through unbindEngine (latch unloading, then strict evict) so a
+        // late chunk-system drain cannot rebuild an engine nothing closes again.
+        assertTrue(shutdown.contains("generator.unbindEngine(level);"));
         assertBefore(shutdown, "close(engine);", "ENGINES.remove(level, engine)");
         assertTrue(shutdown.contains("ENGINES.containsKey(level)"));
         assertTrue(shutdown.contains("failure.addSuppressed(e);"));

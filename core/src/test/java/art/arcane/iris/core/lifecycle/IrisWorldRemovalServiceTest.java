@@ -126,6 +126,22 @@ public class IrisWorldRemovalServiceTest {
     }
 
     @Test
+    public void removalAcceptsTheConfiguredStartupNameThatIrisWorldsPrints() throws Exception {
+        Path levelRoot = temporaryFolder.newFolder("world").toPath();
+        WorldRemovalPathPolicy.Target logical = WorldRemovalPathPolicy.resolve("moon", "world", levelRoot);
+        WorldRemovalPathPolicy.Target configured =
+                WorldRemovalPathPolicy.resolve("world_iris_moon", "world", levelRoot);
+
+        assertEquals(logical.worldKey(), configured.worldKey());
+        assertEquals("moon", configured.logicalName());
+        assertEquals(logical.worldDirectory(), configured.worldDirectory());
+        assertEquals(
+                "world_iris_moon",
+                IrisWorldRemovalService.bukkitConfigurationWorldName(configured)
+        );
+    }
+
+    @Test
     public void diskInspectionReadsOnlyCanonicalPaperStartupSection() throws Exception {
         Path levelRoot = temporaryFolder.newFolder("inspection-world").toPath();
         WorldRemovalPathPolicy.Target target = WorldRemovalPathPolicy.resolve(

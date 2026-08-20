@@ -750,7 +750,7 @@ public final class StudioOpenCoordinator {
         for (World loadedWorld : loadedWorlds) {
             CompletableFuture<Boolean> unload = J.sfut(() ->
                             IrisServices.get(MultiverseCoreLink.class)
-                                    .removeFromConfig(loadedWorld))
+                                    .removeIfPresent(loadedWorld))
                     .thenCompose(ignored -> WorldLifecycleService.get().unloadAsync(loadedWorld, false));
             unloads.add(unload);
         }

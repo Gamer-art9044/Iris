@@ -173,6 +173,18 @@ public class IrisWorldStorageTest {
     }
 
     @Test
+    public void managedKeyAcceptsTheConfiguredBukkitStartupName() {
+        assertEquals(new NamespacedKey("iris", "mvtest"),
+                IrisWorldStorage.managedKeyFromName("world_iris_mvtest", "world"));
+        assertEquals(new NamespacedKey("iris", "mvtest"),
+                IrisWorldStorage.managedKeyFromName("survival_iris_mvtest", "survival"));
+        assertEquals(new NamespacedKey("iris", "iris_mvtest"),
+                IrisWorldStorage.managedKeyFromName("iris_mvtest", "world"));
+        assertEquals(new NamespacedKey("iris", "world_iris_mvtest"),
+                IrisWorldStorage.managedKeyFromName("world_iris_mvtest", "survival"));
+    }
+
+    @Test
     public void explicitManagedIdentityDoesNotRequireServerLevelLookup() {
         NamespacedKey worldKey = new NamespacedKey("iris", "probe");
 

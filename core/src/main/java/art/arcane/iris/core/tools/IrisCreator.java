@@ -331,16 +331,23 @@ public class IrisCreator {
             reportCreationProgress(creationReporter, 0.84D, "register_world");
 
             if (!studio && !benchmark) {
+                // bukkit.yml and Multiverse must agree on the startup name, or Multiverse re-imports the
+                // world on the next boot and collides with its own config key.
+                String registrationName = IrisWorldStorage.configuredWorldName(
+                        worldKey,
+                        IrisWorldStorage.levelRoot().getName()
+                );
                 BukkitWorldConfiguration.register(
                         BUKKIT_YML,
-                        IrisWorldStorage.configuredWorldName(worldKey, IrisWorldStorage.levelRoot().getName()),
+                        registrationName,
                         dimension,
                         seed
                 );
                 bukkitRegistered = true;
                 World createdWorld = world;
                 CompletableFuture<Void> multiverseRegistration = J.sfut(
-                        () -> IrisServices.get(MultiverseCoreLink.class).updateWorld(createdWorld, dimension)
+                        () -> IrisServices.get(MultiverseCoreLink.class)
+                                .updateWorld(createdWorld, registrationName, dimension)
                 );
                 if (multiverseRegistration == null) {
                     throw new IrisException("Failed to schedule Multiverse registration for world \"" + name + "\".");

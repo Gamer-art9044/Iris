@@ -426,7 +426,7 @@ public final class VillageImporter {
                     emittedPools.size(), emittedPieces.size(), losses, true);
         }
 
-        String msg = "Imported village " + structureKey + " as '" + name + "': " + emittedPieces.size() + " pieces, " + emittedPools.size() + " pools, " + pieceBlocks + " blocks";
+        String msg = "Imported jigsaw structure " + structureKey + " as '" + name + "': " + emittedPieces.size() + " pieces, " + emittedPools.size() + " pools, " + pieceBlocks + " blocks";
         if (!losses.isEmpty()) {
             msg += " (" + losses.size() + " fidelity warning(s) recorded)";
         }

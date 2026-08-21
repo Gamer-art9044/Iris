@@ -19,6 +19,7 @@
 package art.arcane.iris.core.project;
 
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.util.common.format.C;
@@ -46,7 +47,8 @@ final class StudioOpenProgressReporter {
         AtomicInteger taskId = new AtomicInteger(-1);
         org.bukkit.boss.BossBar bossBar;
 
-        if (sender.isPlayer() && sender.player() != null) {
+        if (sender.isPlayer() && sender.player() != null
+                && IrisSettings.get().getGeneral().isProgressBossBar()) {
             bossBar = Bukkit.createBossBar(
                     IrisLanguage.text(RuntimeProgressMessages.STUDIO_OPENING),
                     org.bukkit.boss.BarColor.BLUE,

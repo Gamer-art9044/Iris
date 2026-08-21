@@ -1,5 +1,6 @@
 package art.arcane.iris.core.commands;
 
+import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.runtime.StudioOpenCoordinator;
 import art.arcane.iris.core.runtime.jigsaw.JigsawPlanarArchetype;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioCellDimensions;
@@ -7,6 +8,7 @@ import art.arcane.iris.core.runtime.jigsaw.JigsawStudioLayout;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioMode;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioVariantCatalog;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioWorkcellSpec;
+import art.arcane.iris.core.service.JigsawStudioService;
 import art.arcane.iris.core.structure.authoring.StructureBackend;
 import art.arcane.iris.core.structure.authoring.StructureCapability;
 import art.arcane.iris.core.structure.authoring.StructureHash;
@@ -17,7 +19,6 @@ import art.arcane.iris.core.structure.authoring.StructureTransactionWriter;
 import art.arcane.iris.core.structure.conversion.IrisStructureAdoptionInputKind;
 import art.arcane.iris.core.structure.export.VanillaJigsawExportFormat;
 import art.arcane.iris.core.tools.IrisCreator;
-import art.arcane.iris.core.service.JigsawStudioService;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDirection;
 import art.arcane.iris.engine.object.IrisJigsawConnector;
@@ -44,6 +45,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
@@ -102,6 +104,18 @@ public class CommandJigsawContractTest {
     }
 
     @Test
+    public void packValidationDenialsAreExpectedOpenFailures() {
+        BrokenPackException failure = new BrokenPackException(
+                "overworld", List.of("Biome 'broken' has no resolvable regions."));
+
+        assertTrue(CommandJigsaw.isExpectedOpenDenial(failure));
+        assertTrue(CommandJigsaw.isExpectedOpenDenial(
+                new CompletionException(failure)));
+        assertFalse(CommandJigsaw.isExpectedOpenDenial(
+                new IllegalStateException("Unexpected Studio failure")));
+    }
+
+    @Test
     public void committedActivationStartsInitialEvaluationBeforePlayerBinding() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/commands/CommandJigsaw.java"));
@@ -129,6 +143,10 @@ public class CommandJigsawContractTest {
         NamespacedKey source = CommandJigsaw.parseRegisteredStructureKey("minecraft:village_plains");
         assertEquals("minecraft_village_plains", CommandJigsaw.resolveConversionTarget(source, "auto"));
         assertEquals("villages/plains", CommandJigsaw.resolveConversionTarget(source, "iris:villages/plains"));
+        NamespacedKey ancientCity = CommandJigsaw.parseRegisteredStructureKey(
+                "minecraft:ancient_city");
+        assertEquals("minecraft_ancient_city",
+                CommandJigsaw.resolveConversionTarget(ancientCity, "auto"));
         assertThrows(IllegalArgumentException.class,
                 () -> CommandJigsaw.resolveConversionTarget(source, "custom:village"));
     }

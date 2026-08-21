@@ -281,8 +281,8 @@ public final class IrisObjectIO {
         AtomicReference<IOException> ref = new AtomicReference<>();
         CountDownLatch latch = new CountDownLatch(1);
         new Job() {
-            private int total = self.blocks.size() * 3 + self.states.size();
-            private int c = 0;
+            private volatile int total = self.blocks.size() * 3 + self.states.size();
+            private volatile int c = 0;
 
             @Override
             public String getName() {

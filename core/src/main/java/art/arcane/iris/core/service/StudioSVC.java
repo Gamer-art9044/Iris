@@ -488,33 +488,50 @@ public class StudioSVC implements IrisService {
         }
     }
 
-    private static boolean blockIfPackBroken(VolmitSender sender, String dimm) {
+    private static BrokenPackException reportPackAdmissionFailure(
+            VolmitSender sender, String dimm) {
         Optional<String> startupDenial = IrisStartupValidation.denialReason();
-        if (startupDenial.isPresent()) {
-            sender.sendMessage(startupDenial.get());
-            return true;
-        }
         IrisDimension dimension = IrisToolbelt.getDimension(dimm);
         String packName = dimension == null || dimension.getLoader() == null
                 ? dimm
                 : dimension.getLoader().getDataFolder().getName();
         PackValidationResult validation = PackValidationRegistry.get(packName);
-        if (validation != null && validation.isLoadable()) {
-            return false;
+        BrokenPackException failure = resolvePackAdmissionFailure(
+                packName, startupDenial, validation);
+        if (failure == null) {
+            return null;
+        }
+        if (startupDenial.isPresent()) {
+            sender.sendMessage(startupDenial.get());
+            return failure;
         }
         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_CANNOT_OPEN_STUDIO_PACK_HAS_BLOCKING_ERRORS, MessageArgument.untrusted("dimm", String.valueOf(dimm))));
+        for (String reason : failure.getReasons()) {
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_MESSAGE, MessageArgument.untrusted("reason", String.valueOf(reason))));
+        }
+        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FIX_PACK_RUN_IRIS_PACK_VALIDATE_REVALIDATE, MessageArgument.untrusted("dimm", String.valueOf(packName))));
+        return failure;
+    }
+
+    static BrokenPackException resolvePackAdmissionFailure(
+            String packName,
+            Optional<String> startupDenial,
+            PackValidationResult validation
+    ) {
+        if (startupDenial.isPresent()) {
+            return new BrokenPackException(packName, List.of(startupDenial.get()));
+        }
+        if (validation != null && validation.isLoadable()) {
+            return null;
+        }
         List<String> failures = validation == null
                 ? List.of("Required pack validation has not completed. Studio creation fails closed until validation succeeds.")
                 : validation.getBlockingErrors();
-        for (String reason : failures) {
-            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_MESSAGE, MessageArgument.untrusted("reason", String.valueOf(reason))));
-        }
-        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FIX_PACK_RUN_IRIS_PACK_VALIDATE_REVALIDATE, MessageArgument.untrusted("dimm", String.valueOf(dimm))));
-        return true;
+        return new BrokenPackException(packName, failures);
     }
 
     public void open(VolmitSender sender, long seed, String dimm, Consumer<World> onDone) throws IrisException {
-        if (blockIfPackBroken(sender, dimm)) {
+        if (reportPackAdmissionFailure(sender, dimm) != null) {
             return;
         }
         studioTransitions.submit(() -> replaceActiveProject(sender, seed, dimm, onDone))
@@ -537,9 +554,9 @@ public class StudioSVC implements IrisService {
             Runnable beforeOpen,
             Consumer<World> onDone
     ) {
-        if (blockIfPackBroken(sender, dimension)) {
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("Studio pack '" + dimension + "' has blocking validation errors."));
+        BrokenPackException failure = reportPackAdmissionFailure(sender, dimension);
+        if (failure != null) {
+            return CompletableFuture.failedFuture(failure);
         }
         return studioTransitions.submit(() -> replaceActiveProjectTracked(
                 sender,

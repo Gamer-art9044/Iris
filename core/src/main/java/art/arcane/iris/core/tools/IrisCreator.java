@@ -624,11 +624,13 @@ public class IrisCreator {
                 return;
             }
             if (showLoaderHud) {
-                BukkitPlatform.hudLanes().show(sender.player(), "iris:pregen", IrisLanguage.text(
-                        RuntimeProgressMessages.WORLD_PREGEN_ACTION,
-                        MessageArgument.trusted("bar", ""),
-                        MessageArgument.trusted("percent", percent)
-                ), p, BarColor.GREEN, BarStyle.SOLID, 4000L);
+                if (IrisSettings.get().getGeneral().isProgressBossBar()) {
+                    BukkitPlatform.hudLanes().show(sender.player(), "iris:pregen", IrisLanguage.text(
+                            RuntimeProgressMessages.WORLD_PREGEN_ACTION,
+                            MessageArgument.trusted("bar", ""),
+                            MessageArgument.trusted("percent", percent)
+                    ), p, BarColor.GREEN, BarStyle.SOLID, 4000L);
+                }
                 int barWidth = 44;
                 int filled = (int) Math.round(Math.max(0.0D, Math.min(1.0D, p)) * barWidth);
                 StringBuilder bar = new StringBuilder(barWidth * 3 + 4);

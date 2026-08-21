@@ -30,6 +30,8 @@ import lombok.Data;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Objects;
+import java.util.function.Predicate;
 
 @Data
 public class IrisSettings {
@@ -136,6 +138,46 @@ public class IrisSettings {
         }
     }
 
+    public static IrisSettings installHotloadSnapshot(String rawJson) {
+        IrisSettings parsed = parseHotloadSnapshot(rawJson);
+        synchronized (SETTINGS_LOCK) {
+            settings = parsed;
+        }
+        return parsed;
+    }
+
+    public static boolean applyHotloadSnapshot(String rawJson, Predicate<IrisSettings> candidateActivation) {
+        Objects.requireNonNull(candidateActivation, "candidateActivation");
+        IrisSettings parsed = parseHotloadSnapshot(rawJson);
+        if (!candidateActivation.test(parsed)) {
+            return false;
+        }
+        synchronized (SETTINGS_LOCK) {
+            settings = parsed;
+        }
+        return true;
+    }
+
+    public static IrisSettings parseHotloadSnapshot(String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            throw new IllegalArgumentException("Iris settings snapshot is empty");
+        }
+
+        IrisSettings parsed;
+        try {
+            parsed = new Gson().fromJson(rawJson, IrisSettings.class);
+            if (parsed == null) {
+                throw new IllegalArgumentException("Iris settings snapshot did not contain an object");
+            }
+            migrateLegacyKeys(parsed, rawJson);
+        } catch (RuntimeException failure) {
+            throw new IllegalArgumentException("Iris settings snapshot is invalid", failure);
+        }
+
+        parsed.fillMissingSections();
+        return parsed;
+    }
+
     public void forceSave() {
         File s = IrisPlatforms.get().dataFile("settings.json");
 
@@ -145,6 +187,20 @@ public class IrisSettings {
             e.printStackTrace();
             IrisLogging.reportError(e);
         }
+    }
+
+    private void fillMissingSections() {
+        general = general == null ? new IrisSettingsGeneral() : general;
+        world = world == null ? new IrisSettingsWorld() : world;
+        gui = gui == null ? new IrisSettingsGUI() : gui;
+        autoConfiguration = autoConfiguration == null ? new IrisSettingsAutoconfiguration() : autoConfiguration;
+        generator = generator == null ? new IrisSettingsGenerator() : generator;
+        concurrency = concurrency == null ? new IrisSettingsConcurrency() : concurrency;
+        studio = studio == null ? new IrisSettingsStudio() : studio;
+        performance = performance == null ? new IrisSettingsPerformance() : performance;
+        pregen = pregen == null ? new IrisSettingsPregen() : pregen;
+        sentry = sentry == null ? new IrisSettingsSentry() : sentry;
+        treeFeller = treeFeller == null ? new IrisSettingsTreeFeller() : treeFeller;
     }
 
     @Data
@@ -273,6 +329,11 @@ public class IrisSettings {
         public boolean splashLogoStartup = true;
         public boolean useConsoleCustomColors = true;
         public boolean useCustomColorsIngame = true;
+        /**
+         * Boss bar progress loaders for jobs, studio opens, world creation, chunk jobs and pack
+         * downloads. Turning this off keeps the action bar progress line; only the bar goes away.
+         */
+        public boolean progressBossBar = true;
         public boolean adjustVanillaHeight = false;
         public boolean autoIngestDatapacks = true;
         /**

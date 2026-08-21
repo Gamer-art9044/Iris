@@ -147,7 +147,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         this.dimensionKey = dimensionKey;
         this.folder = new ReactiveFolder(
                 dataLocation,
-                (_a, _b, _c) -> hotload(),
+                (_a, _b, _c) -> hotloadFromWatcher(),
                 new KList<>(".iob", ".json"),
                 new KList<>(".iris"),
                 new KList<>()
@@ -540,6 +540,13 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         }
 
         withExclusiveControl(() -> getEngine().hotload());
+    }
+
+    private void hotloadFromWatcher() {
+        if (!shouldRunStudioHotload(isStudio(), closing, jigsawStudioActive)) {
+            return;
+        }
+        withExclusiveControlFuture(() -> getEngine().hotload(), 30L, TimeUnit.SECONDS).join();
     }
 
     @Override

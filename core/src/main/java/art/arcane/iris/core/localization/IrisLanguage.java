@@ -28,19 +28,32 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 public final class IrisLanguage {
     private static final long MAX_LOCALE_BYTES = 2L * 1024L * 1024L;
+    private static final long HOTLOAD_CONTENT_STABILITY_NANOS = TimeUnit.MILLISECONDS.toNanos(250L);
+    private static final long HOTLOAD_DELETION_GRACE_NANOS = TimeUnit.SECONDS.toNanos(3L);
+    private static final long HOTLOAD_COOLDOWN_NANOS = TimeUnit.SECONDS.toNanos(3L);
     private static final int MAX_REPORTED_ISSUES = 12;
     private static final Pattern LOCALE_NAME = Pattern.compile("[A-Za-z0-9_-]+");
     private static final Pattern LEGACY_COLOR = Pattern.compile("(?i)\\u00a7[0-9A-FK-ORX]");
@@ -55,10 +68,17 @@ public final class IrisLanguage {
      * new snapshot and the whole memo is discarded. Bounded by the catalog size.
      */
     private static final AtomicReference<PlainMemo> PLAIN_MEMO = new AtomicReference<>(null);
+    private static final LocaleHotloadGate HOTLOAD_GATE = new LocaleHotloadGate(
+            new LocaleHotloadGate.Timing(
+                    HOTLOAD_CONTENT_STABILITY_NANOS,
+                    HOTLOAD_DELETION_GRACE_NANOS,
+                    HOTLOAD_COOLDOWN_NANOS
+            )
+    );
 
     private static volatile File dataFolder;
-    private static volatile File watchedFile;
-    private static volatile long watchedSignature = Long.MIN_VALUE;
+    private static volatile String lastCaptureFailureKey;
+    private static volatile String lastInvalidHotloadLocale;
     private static volatile String activeLocale = CATALOG.englishLocale();
 
     private IrisLanguage() {
@@ -82,6 +102,20 @@ public final class IrisLanguage {
         return reload(root, configuredLocale());
     }
 
+    public static synchronized boolean reload(IrisSettings candidate) {
+        IrisSettings resolvedCandidate = Objects.requireNonNull(candidate, "Candidate settings cannot be null");
+        File root = dataFolder;
+        if (root == null && IrisPlatforms.isBound()) {
+            root = IrisPlatforms.get().dataFolder();
+        }
+        if (root == null) {
+            return false;
+        }
+        IrisSettings.IrisSettingsGeneral general = resolvedCandidate.getGeneral();
+        String locale = general == null ? CATALOG.englishLocale() : general.getLanguage();
+        return reload(root, locale);
+    }
+
     public static synchronized boolean reload(File root, String locale) {
         File resolvedRoot = root == null ? null : root.getAbsoluteFile();
         if (resolvedRoot == null) {
@@ -92,16 +126,26 @@ public final class IrisLanguage {
             requestedLocale = normalizeLocale(locale);
         } catch (RuntimeException exception) {
             dataFolder = resolvedRoot;
+            HOTLOAD_GATE.reset(null);
             IrisLogging.error("Rejected locale setting '" + locale + "'; continuing with " + activeLocale + ".");
             IrisLogging.reportError(exception);
             exception.printStackTrace();
             return false;
         }
-        LocalizationReloadResult result = MANAGER.reload(() -> loadCandidate(resolvedRoot, requestedLocale));
-        dataFolder = resolvedRoot;
+
         File override = overrideFile(resolvedRoot, requestedLocale);
-        watchedFile = override;
-        watchedSignature = signature(override);
+        SnapshotCapture capture = captureForReload(override, requestedLocale);
+        LocalizationReloadResult result;
+        if (capture.failure() == null) {
+            result = MANAGER.reload(() -> loadCandidate(resolvedRoot, requestedLocale, capture.snapshot()));
+        } else {
+            result = MANAGER.reload(() -> {
+                throw capture.failure();
+            });
+        }
+        dataFolder = resolvedRoot;
+        HOTLOAD_GATE.reset(capture.snapshot());
+        lastCaptureFailureKey = null;
         if (!result.applied()) {
             reportRejectedReload(requestedLocale, result);
             return false;
@@ -123,14 +167,47 @@ public final class IrisLanguage {
         try {
             locale = normalizeLocale(configuredLocale());
         } catch (RuntimeException exception) {
-            return reload(root, configuredLocale());
+            String invalidLocale = configuredLocale();
+            if (Objects.equals(lastInvalidHotloadLocale, invalidLocale)) {
+                return false;
+            }
+            lastInvalidHotloadLocale = invalidLocale;
+            return reload(root, invalidLocale);
         }
+        lastInvalidHotloadLocale = null;
         File expected = overrideFile(root, locale);
-        long signature = signature(expected);
-        if (expected.equals(watchedFile) && signature == watchedSignature) {
+        LocaleHotloadSnapshot snapshot;
+        try {
+            snapshot = captureHotloadSnapshot(expected, locale);
+        } catch (IOException | RuntimeException failure) {
+            HOTLOAD_GATE.unavailable();
+            reportCaptureFailure(expected, failure);
+            return false;
+        }
+        if (snapshot == null) {
+            HOTLOAD_GATE.unavailable();
             return true;
         }
-        return reload(root, locale);
+        lastCaptureFailureKey = null;
+
+        LocaleHotloadGate.Attempt attempt = HOTLOAD_GATE.observe(snapshot, System.nanoTime());
+        if (attempt == null) {
+            return true;
+        }
+
+        LocalizationReloadResult result = MANAGER.reload(() -> loadCandidate(root, locale, attempt.snapshot()));
+        boolean applied = result.applied();
+        HOTLOAD_GATE.complete(attempt, System.nanoTime(), applied);
+        if (!applied) {
+            reportRejectedReload(locale, result);
+            return false;
+        }
+
+        activeLocale = locale;
+        int warnings = result.validation().warnings().size();
+        IrisLogging.info("Loaded locale " + locale + " with " + warnings + " fallback "
+                + (warnings == 1 ? "entry" : "entries") + ".");
+        return true;
     }
 
     public static String activeLocale() {
@@ -229,13 +306,16 @@ public final class IrisLanguage {
         throw new IllegalArgumentException("Unsupported Iris message key: " + key.id());
     }
 
-    private static LocalizationCandidate loadCandidate(File root, String locale) throws Exception {
+    private static LocalizationCandidate loadCandidate(
+            File root,
+            String locale,
+            LocaleHotloadSnapshot snapshot
+    ) throws Exception {
         File folder = new File(root, "languages/overrides");
         Files.createDirectories(folder.toPath());
         List<LocaleOverlay> overlays = new ArrayList<>(2);
-        File override = overrideFile(root, locale);
-        if (override.exists()) {
-            overlays.add(loadFileOverlay(override, locale));
+        if (!snapshot.missing()) {
+            overlays.add(parseOverlay(snapshot.file().getPath(), locale, snapshot.content()));
         }
 
         if (!CATALOG.englishLocale().equals(locale)) {
@@ -267,17 +347,6 @@ public final class IrisLanguage {
             }
             return parseOverlay("bundled:" + resourceName, normalizedLocale, new String(bytes, StandardCharsets.UTF_8));
         }
-    }
-
-    private static LocaleOverlay loadFileOverlay(File override, String locale) throws Exception {
-        if (!override.isFile()) {
-            throw new IllegalArgumentException("Locale override is not a regular file: " + override.getPath());
-        }
-        if (override.length() > MAX_LOCALE_BYTES) {
-            throw new IllegalArgumentException("Locale override is too large: " + override.getPath());
-        }
-        String raw = Files.readString(override.toPath(), StandardCharsets.UTF_8);
-        return parseOverlay(override.getPath(), locale, raw);
     }
 
     private static LocaleOverlay parseOverlay(String source, String locale, String raw) {
@@ -461,11 +530,92 @@ public final class IrisLanguage {
         return new File(new File(root, "languages/overrides"), normalizeLocale(locale) + ".json").getAbsoluteFile();
     }
 
-    private static long signature(File file) {
-        if (file == null || !file.exists()) {
-            return 0L;
+    static LocaleHotloadSnapshot captureHotloadSnapshot(File file, String locale) throws IOException {
+        File resolvedFile = Objects.requireNonNull(file, "Locale override file cannot be null").getAbsoluteFile();
+        String resolvedLocale = normalizeLocale(locale);
+        BasicFileAttributes before;
+        try {
+            before = Files.readAttributes(resolvedFile.toPath(), BasicFileAttributes.class);
+        } catch (NoSuchFileException failure) {
+            return LocaleHotloadSnapshot.missing(resolvedFile, resolvedLocale);
         }
-        return file.lastModified() * 31L + file.length();
+        if (!before.isRegularFile()) {
+            throw new IllegalArgumentException("Locale override is not a regular file: " + resolvedFile.getPath());
+        }
+        if (before.size() > MAX_LOCALE_BYTES) {
+            throw new IllegalArgumentException("Locale override is too large: " + resolvedFile.getPath());
+        }
+
+        byte[] bytes;
+        try (InputStream input = Files.newInputStream(resolvedFile.toPath())) {
+            bytes = input.readNBytes((int) MAX_LOCALE_BYTES + 1);
+        } catch (NoSuchFileException failure) {
+            return null;
+        }
+        if (bytes.length > MAX_LOCALE_BYTES) {
+            throw new IllegalArgumentException("Locale override is too large: " + resolvedFile.getPath());
+        }
+
+        BasicFileAttributes after;
+        try {
+            after = Files.readAttributes(resolvedFile.toPath(), BasicFileAttributes.class);
+        } catch (NoSuchFileException failure) {
+            return null;
+        }
+        if (!sameIdentity(before, after) || bytes.length != after.size()) {
+            return null;
+        }
+
+        String content;
+        try {
+            content = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException failure) {
+            throw new IOException("Locale override is not valid UTF-8: " + resolvedFile.getPath(), failure);
+        }
+        return LocaleHotloadSnapshot.present(resolvedFile, resolvedLocale, content, sha256(bytes));
+    }
+
+    private static SnapshotCapture captureForReload(File file, String locale) {
+        try {
+            LocaleHotloadSnapshot snapshot = captureHotloadSnapshot(file, locale);
+            if (snapshot == null) {
+                return new SnapshotCapture(
+                        null,
+                        new IOException("Locale override changed while being read: " + file.getPath())
+                );
+            }
+            return new SnapshotCapture(snapshot, null);
+        } catch (Exception failure) {
+            return new SnapshotCapture(null, failure);
+        }
+    }
+
+    private static boolean sameIdentity(BasicFileAttributes before, BasicFileAttributes after) {
+        return before.isRegularFile() == after.isRegularFile()
+                && before.size() == after.size()
+                && before.lastModifiedTime().equals(after.lastModifiedTime())
+                && Objects.equals(before.fileKey(), after.fileKey());
+    }
+
+    private static String sha256(byte[] content) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(content));
+        } catch (NoSuchAlgorithmException failure) {
+            throw new IllegalStateException("SHA-256 is unavailable", failure);
+        }
+    }
+
+    private static void reportCaptureFailure(File file, Exception failure) {
+        String detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+        String failureKey = file.getAbsolutePath() + ":" + failure.getClass().getName() + ":" + detail;
+        if (Objects.equals(failureKey, lastCaptureFailureKey)) {
+            return;
+        }
+        lastCaptureFailureKey = failureKey;
+        IrisLogging.error("Failed to capture stable locale override " + file.getPath() + ": " + detail);
+        IrisLogging.reportError(failure);
+        failure.printStackTrace();
     }
 
     private static void reportRejectedReload(String locale, LocalizationReloadResult result) {
@@ -488,5 +638,8 @@ public final class IrisLanguage {
     }
 
     private record PlainMemo(LocalizationSnapshot snapshot, Map<String, String> values) {
+    }
+
+    private record SnapshotCapture(LocaleHotloadSnapshot snapshot, Exception failure) {
     }
 }

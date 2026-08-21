@@ -100,13 +100,17 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
-    public void sourceBeardAdjustmentsPrepareTerrainAcrossDeclaredSteps() {
+    public void sourceBeardAdjustmentsPrepareOnlyAtTheSurfaceStructuresStep() {
         assertTrue(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
                 TerrainAdjustment.BEARD_THIN, GenerationStep.Decoration.SURFACE_STRUCTURES));
-        assertTrue(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
+        assertFalse(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
                 TerrainAdjustment.BEARD_BOX, GenerationStep.Decoration.FLUID_SPRINGS));
-        assertTrue(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
+        assertFalse(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
                 TerrainAdjustment.BEARD_THIN, GenerationStep.Decoration.UNDERGROUND_STRUCTURES));
+        assertFalse(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
+                TerrainAdjustment.BEARD_BOX, GenerationStep.Decoration.UNDERGROUND_DECORATION));
+        assertFalse(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
+                TerrainAdjustment.BEARD_THIN, GenerationStep.Decoration.STRONGHOLDS));
     }
 
     @Test
@@ -117,6 +121,31 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 TerrainAdjustment.ENCAPSULATE, GenerationStep.Decoration.SURFACE_STRUCTURES));
         assertFalse(NativeStructureSurfaceFitter.shouldPrepareSurfaceTerrain(
                 TerrainAdjustment.NONE, GenerationStep.Decoration.FLUID_SPRINGS));
+    }
+
+    @Test
+    public void shallowUndergroundBeardBoxDoesNotMutateTheTopSurface() throws Exception {
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(0, 1, 0, Blocks.DEEPSLATE_BRICKS.defaultBlockState())))),
+                new BoundingBox(0, 67, 0, 0, 74, 0), 1, Rotation.NONE);
+        Structure structure = new DesertPyramidStructure(
+                new Structure.StructureSettings(
+                        HolderSet.empty(), Map.of(),
+                        GenerationStep.Decoration.UNDERGROUND_DECORATION,
+                        TerrainAdjustment.BEARD_BOX));
+        StructureStart start = new StructureStart(
+                structure, new ChunkPos(0, 0), 0,
+                new PiecesContainer(List.of(piece)));
+        BoundingBox area = new BoundingBox(0, 48, 0, 0, 80, 0);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 64);
+        Map<BlockPos, BlockState> before = new HashMap<>(blocks);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                (x, z) -> 64);
+
+        assertEquals(before, blocks);
     }
 
     @Test
@@ -158,85 +187,70 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
-    public void beardBoxUsesTheFullRigidHeightWhileBeardThinUsesTheGroundPlane() {
-        NativeStructureSurfaceFitter.SurfaceAnchor thin =
-                new NativeStructureSurfaceFitter.SurfaceAnchor(0, 4, 0, 4, 64, 2);
-        NativeStructureSurfaceFitter.SurfaceAnchor box =
-                new NativeStructureSurfaceFitter.SurfaceAnchor(
-                        0, 4, 0, 4, 64, 2, 65, 90);
-
-        assertEquals(80, NativeStructureSurfaceFitter.resolveSurfaceTarget(
-                List.of(thin), 2, 2, 80));
-        assertEquals(64, NativeStructureSurfaceFitter.resolveSurfaceTarget(
-                List.of(box), 2, 2, 80));
-    }
-
-    @Test
-    public void beardInfluenceBeginsAtGroundYRatherThanTheSurfaceBlock() {
+    public void sourceSurfaceAnchorMeetsOneBlockBelowTheAuthoredGroundPlane() {
         BoundingBox bounds = new BoundingBox(0, 64, 0, 4, 90, 4);
-        NativeStructureSurfaceFitter.SurfaceAnchor thin =
-                NativeStructureSurfaceFitter.surfaceAnchor(
-                        bounds, 68, 2, TerrainAdjustment.BEARD_THIN);
-        NativeStructureSurfaceFitter.SurfaceAnchor box =
-                NativeStructureSurfaceFitter.surfaceAnchor(
-                        bounds, 68, 2, TerrainAdjustment.BEARD_BOX);
+        NativeStructureSurfaceFitter.SurfaceAnchor anchor =
+                NativeStructureSurfaceFitter.surfaceAnchor(bounds, 68, 2);
 
-        assertEquals(67, thin.meetY());
-        assertEquals(0, thin.verticalDistance(68));
-        assertEquals(1, thin.verticalDistance(67));
-        assertEquals(0, box.verticalDistance(68));
-        assertEquals(1, box.verticalDistance(67));
-        assertEquals(0, box.verticalDistance(90));
-        assertEquals(1, box.verticalDistance(91));
+        assertEquals(67, anchor.meetY());
+        assertEquals(0, anchor.minX());
+        assertEquals(4, anchor.maxX());
+        assertEquals(0, anchor.minZ());
+        assertEquals(4, anchor.maxZ());
     }
 
     @Test
-    public void rigidFootprintsRaiseTerrainAcrossGapsLargerThanTheBeardKernel() {
+    public void rigidFootprintsBoundTerrainAcrossGapsLargerThanTheBeardKernel() {
         NativeStructureSurfaceFitter.SurfaceAnchor rigid = anchor(72, 2);
         NativeStructureSurfaceFitter.SurfaceAnchor junction = anchor(72, 1);
 
-        assertEquals(72, NativeStructureSurfaceFitter.resolveSurfaceTarget(
+        assertEquals(46, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(rigid), 2, 2, 40));
-        assertEquals(40, NativeStructureSurfaceFitter.resolveSurfaceTarget(
+        assertEquals(46, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(junction), 2, 2, 40));
     }
 
     @Test
-    public void elevatedRigidFootprintsBlendIntoAHorizontalRescueTaper() {
-        int originalY = 40;
-        int kernelEdge = NativeStructureSurfaceFitter.resolveSurfaceTarget(
-                List.of(anchor(51, 2)), 5, 2, originalY);
-        int gapThirteen = NativeStructureSurfaceFitter.resolveSurfaceTarget(
-                List.of(anchor(52, 2)), 5, 2, originalY);
-        int gapEighteen = NativeStructureSurfaceFitter.resolveSurfaceTarget(
-                List.of(anchor(57, 2)), 5, 2, originalY);
-        int gapTwentyFour = NativeStructureSurfaceFitter.resolveSurfaceTarget(
-                List.of(anchor(63, 2)), 5, 2, originalY);
+    public void beardSkirtBoundsAndGradesUpwardAndDownwardSymmetrically() {
+        int originalY = 64;
+        NativeStructureSurfaceFitter.SurfaceAnchor high = anchor(96, 2);
+        NativeStructureSurfaceFitter.SurfaceAnchor low = anchor(32, 2);
+        int[] raised = new int[13];
+        int[] lowered = new int[13];
+        for (int outset = 0; outset <= 12; outset++) {
+            int x = 4 + outset;
+            raised[outset] = NativeStructureSurfaceFitter.resolveSurfaceTarget(
+                    List.of(high), x, 2, originalY);
+            lowered[outset] = NativeStructureSurfaceFitter.resolveSurfaceTarget(
+                    List.of(low), x, 2, originalY);
+        }
 
-        assertEquals(originalY, kernelEdge);
-        assertTrue(gapThirteen >= kernelEdge);
-        assertTrue(gapEighteen > gapThirteen);
-        assertTrue(gapTwentyFour > gapEighteen);
-        assertTrue(gapTwentyFour < 63);
-        assertEquals(originalY, NativeStructureSurfaceFitter.resolveSurfaceTarget(
-                List.of(anchor(63, 2)), 16, 2, originalY));
-        assertEquals(originalY, NativeStructureSurfaceFitter.resolveSurfaceTarget(
-                List.of(anchor(63, 1)), 5, 2, originalY));
-        assertEquals(80, NativeStructureSurfaceFitter.resolveSurfaceTarget(
-                List.of(anchor(64, 2)), 5, 2, 80));
+        assertArrayEquals(
+                new int[]{70, 69, 68, 67, 67, 66, 66, 65, 65, 64, 64, 64, 64},
+                raised);
+        assertArrayEquals(
+                new int[]{58, 59, 60, 61, 61, 62, 62, 63, 63, 64, 64, 64, 64},
+                lowered);
+        for (int outset = 0; outset <= 12; outset++) {
+            assertEquals(raised[outset] - originalY, originalY - lowered[outset]);
+        }
     }
 
     @Test
-    public void projectedCenterAndRigidChildrenShareTerrainSupportAcrossTheAssembly() {
+    public void projectedCenterAndRigidChildrenUseProcessedFoundationCells() throws Exception {
         Structure structure = new DesertPyramidStructure(
                 new Structure.StructureSettings(
                         HolderSet.empty(), Map.of(),
                         GenerationStep.Decoration.SURFACE_STRUCTURES,
                         TerrainAdjustment.BEARD_BOX));
-        PoolElementStructurePiece center = rigidPiece(
-                new BoundingBox(0, 71, 0, 3, 80, 3), 1);
-        PoolElementStructurePiece child = rigidPiece(
-                new BoundingBox(10, 65, 0, 13, 76, 3), 7);
+        PoolElementStructurePiece center = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(1, 1, 1, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 71, 0, 3, 80, 3), 1, Rotation.NONE);
+        PoolElementStructurePiece child = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(1, 7, 1, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(10, 65, 0, 13, 76, 3), 7, Rotation.NONE);
         StructureStart start = new StructureStart(
                 structure, new ChunkPos(0, 0), 0,
                 new PiecesContainer(List.of(center, child)));
@@ -244,8 +258,8 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         Map<BlockPos, BlockState> blocks = new HashMap<>();
         for (int x = area.minX(); x <= area.maxX(); x++) {
             for (int z = area.minZ(); z <= area.maxZ(); z++) {
-                put(blocks, x, 63, z, Blocks.DIRT.defaultBlockState());
-                put(blocks, x, 64, z, Blocks.GRASS_BLOCK.defaultBlockState());
+                put(blocks, x, 64, z, Blocks.DIRT.defaultBlockState());
+                put(blocks, x, 65, z, Blocks.GRASS_BLOCK.defaultBlockState());
             }
         }
 
@@ -255,21 +269,66 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                         new IrisStructureTerrain().setMode(IrisStructureTerrainMode.SOURCE)));
         NativeStructureSurfaceFitter.prepareSurfaceStructures(
                 world(blocks), area, targets,
-                (x, z) -> 64);
+                (x, z) -> 65);
 
         assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 1, 71, 1));
         assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 11, 71, 1));
         assertEquals(Blocks.DIRT.defaultBlockState(), state(blocks, 11, 70, 1));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 2, 65, 2));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 12, 65, 2));
     }
 
     @Test
-    public void terrainMatchingFootprintsRaiseAndLowerOnlyLowestSolidColumns() throws Exception {
+    public void sparseRigidFootprintsIgnoreAirAndSolidsAboveTheGroundPlane() throws Exception {
+        StructureTemplate sparseTemplate = template(List.of(
+                block(0, 1, 0, Blocks.COBBLESTONE.defaultBlockState()),
+                block(15, 1, 0, Blocks.AIR.defaultBlockState()),
+                block(30, 5, 0, Blocks.STONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(sparseTemplate),
+                new BoundingBox(0, 68, 0, 30, 76, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(
+                List.of(piece), TerrainAdjustment.BEARD_THIN);
+        BoundingBox area = new BoundingBox(0, 52, 0, 30, 80, 0);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 64);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                (x, z) -> 64);
+
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 68, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 15, 64, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 30, 64, 0));
+    }
+
+    @Test
+    public void extremeRigidFoundationGapDoesNotCreateATerrainPillar() throws Exception {
+        StructureTemplate template = template(List.of(
+                block(0, 1, 0, Blocks.COBBLESTONE.defaultBlockState())));
+        PoolElementStructurePiece piece = rigidTemplatePiece(
+                new InlineSinglePoolElement(template),
+                new BoundingBox(0, 90, 0, 0, 96, 0), 1, Rotation.NONE);
+        StructureStart start = rigidSurfaceStart(
+                List.of(piece), TerrainAdjustment.BEARD_THIN);
+        BoundingBox area = new BoundingBox(0, 30, 0, 0, 100, 0);
+        Map<BlockPos, BlockState> blocks = flatTerrain(area, 40);
+
+        NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                world(blocks), area, List.of(surfaceTarget(start)),
+                (x, z) -> 40);
+
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 46, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 47, 0));
+        assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 0, 89, 0));
+    }
+
+    @Test
+    public void terrainMatchingFootprintsFollowProcessedLowestSolidColumns() throws Exception {
         StructureTemplate pathTemplate = template(List.of(
                 block(0, 0, 0, Blocks.AIR.defaultBlockState()),
-                block(0, 1, 0, Blocks.DIRT_PATH.defaultBlockState()),
+                block(0, 2, 0, Blocks.DIRT.defaultBlockState()),
                 block(15, 0, 0, Blocks.AIR.defaultBlockState()),
-                block(30, 0, 0, Blocks.AIR.defaultBlockState()),
-                block(30, 1, 0, Blocks.DIRT_PATH.defaultBlockState()),
+                block(30, 0, 0, Blocks.DIRT.defaultBlockState()),
                 block(45, 0, 0, Blocks.DANDELION.defaultBlockState())));
         InlineSinglePoolElement element = new InlineSinglePoolElement(
                 pathTemplate, List.of(), StructureTemplatePool.Projection.TERRAIN_MATCHING);
@@ -290,8 +349,8 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
                 world(blocks), area, List.of(surfaceTarget(start)),
                 (x, z) -> x == 0 ? 60 : x == 30 ? 72 : 64);
 
-        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 68, 0));
-        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 30, 68, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 0, 61, 0));
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 30, 71, 0));
         assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 30, 72, 0));
         assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), state(blocks, 15, 64, 0));
         assertEquals(Blocks.AIR.defaultBlockState(), state(blocks, 15, 65, 0));
@@ -770,10 +829,10 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
-    public void surfaceAnchorIsFlushInsideAndUnchangedAtRadius() {
+    public void surfaceAnchorCapsInsideAndIsUnchangedAtRadius() {
         NativeStructureSurfaceFitter.SurfaceAnchor anchor = anchor(72, 2);
 
-        assertEquals(72, NativeStructureSurfaceFitter.resolveSurfaceTarget(
+        assertEquals(70, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(anchor), 2, 2, 64));
         assertEquals(64, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(anchor), 16, 2, 64));
@@ -786,7 +845,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         NativeStructureSurfaceFitter.SurfaceAnchor raised = anchor(68, 2);
         NativeStructureSurfaceFitter.SurfaceAnchor lowered = anchor(64, 2);
 
-        assertEquals(64, NativeStructureSurfaceFitter.resolveSurfaceTarget(
+        assertEquals(65, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(raised), 10, 2, 64));
         assertEquals(67, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(lowered), 10, 2, 68));
@@ -1197,16 +1256,20 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
     }
 
     @Test
-    public void stackedRigidPiecesPreserveTheLowerAuthoredSurface() {
+    public void stackedRigidPiecesPreserveTheLowerProcessedFoundation() throws Exception {
         Structure structure = new DesertPyramidStructure(
                 new Structure.StructureSettings(
                         HolderSet.empty(), Map.of(),
                         GenerationStep.Decoration.SURFACE_STRUCTURES,
                         TerrainAdjustment.BEARD_BOX));
-        PoolElementStructurePiece lower = rigidPiece(
-                new BoundingBox(0, 62, 0, 4, 65, 4), 1);
-        PoolElementStructurePiece upper = rigidPiece(
-                new BoundingBox(0, 66, 0, 4, 78, 4), 1);
+        PoolElementStructurePiece lower = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(2, 1, 2, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 62, 0, 4, 65, 4), 1, Rotation.NONE);
+        PoolElementStructurePiece upper = rigidTemplatePiece(
+                new InlineSinglePoolElement(template(List.of(
+                        block(2, 1, 2, Blocks.COBBLESTONE.defaultBlockState())))),
+                new BoundingBox(0, 66, 0, 4, 78, 4), 1, Rotation.NONE);
         StructureStart start = new StructureStart(
                 structure, new ChunkPos(0, 0), 0,
                 new PiecesContainer(List.of(upper, lower)));
@@ -1236,7 +1299,7 @@ public class NativeStructurePostProcessorSurfaceTerrainTest {
         NativeStructureSurfaceFitter.SurfaceAnchor adjacent =
                 new NativeStructureSurfaceFitter.SurfaceAnchor(5, 9, 0, 4, 70, 2);
 
-        assertEquals(65, NativeStructureSurfaceFitter.resolveSurfaceTarget(
+        assertEquals(69, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(adjacent), 4, 2, 64));
         assertEquals(66, NativeStructureSurfaceFitter.resolveSurfaceTarget(
                 List.of(local, adjacent), 4, 2, 64));

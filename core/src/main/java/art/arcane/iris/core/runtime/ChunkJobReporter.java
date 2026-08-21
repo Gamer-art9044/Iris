@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.runtime;
 
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.spi.IrisLogging;
@@ -109,8 +110,9 @@ public final class ChunkJobReporter {
     }
 
     private void startReporter() {
-        boolean player = sender.isPlayer() && sender.player() != null;
-        BossBar bossBar = player
+        boolean showBossBar = sender.isPlayer() && sender.player() != null
+                && IrisSettings.get().getGeneral().isProgressBossBar();
+        BossBar bossBar = showBossBar
                 ? Bukkit.createBossBar(IrisLanguage.text(
                         RuntimeProgressMessages.CHUNK_BOSSBAR_WORKING,
                         MessageArgument.trusted("title", title)

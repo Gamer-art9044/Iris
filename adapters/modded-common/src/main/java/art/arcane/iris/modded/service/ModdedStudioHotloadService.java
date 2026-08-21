@@ -43,6 +43,7 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -81,6 +82,9 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
         executor = null;
         if (active != null) {
             active.shutdownNow();
+        }
+        for (Watch watch : watches.values()) {
+            watch.close();
         }
         watches.clear();
     }
@@ -172,7 +176,13 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
         }
         if (!watches.isEmpty()) {
             Set<String> keep = seen == null ? Set.of() : seen;
-            watches.keySet().removeIf((String key) -> !keep.contains(key));
+            watches.entrySet().removeIf((Map.Entry<String, Watch> entry) -> {
+                if (keep.contains(entry.getKey())) {
+                    return false;
+                }
+                entry.getValue().close();
+                return true;
+            });
         }
     }
 
@@ -212,6 +222,7 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
     private void poll(String dimensionId, Watch watch, IrisModdedChunkGenerator generator, Engine engine) {
         try {
             if (watch.engine != engine) {
+                watch.close();
                 watch.engine = engine;
                 watch.folder = new ReactiveFolder(
                         engine.getData().getDataFolder(),
@@ -241,6 +252,7 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
             LOGGER.info("Iris studio hotload {} pack={} {}ms", dimensionId, engine.getDimension().getLoadKey(), System.currentTimeMillis() - start);
         } catch (Throwable e) {
             LOGGER.error("Iris studio hotload failed for {}", dimensionId, e);
+            throw new IllegalStateException("Iris studio hotload failed for " + dimensionId, e);
         }
     }
 
@@ -272,5 +284,14 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
         private final AtomicBoolean busy = new AtomicBoolean(false);
         private volatile Engine engine;
         private volatile ReactiveFolder folder;
+
+        private void close() {
+            ReactiveFolder active = folder;
+            folder = null;
+            if (active != null) {
+                active.clear();
+            }
+            engine = null;
+        }
     }
 }

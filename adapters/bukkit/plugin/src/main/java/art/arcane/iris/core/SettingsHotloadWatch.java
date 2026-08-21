@@ -21,9 +21,12 @@ package art.arcane.iris.core;
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.volmlib.util.hotload.ConfigHotloadEngine;
-import art.arcane.volmlib.util.io.IO;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.List;
 
 /**
@@ -31,6 +34,8 @@ import java.util.List;
  * {@link ConfigHotloadEngine} is built from and drains the touched-file queue.
  */
 public final class SettingsHotloadWatch {
+    private static final int MAX_SETTINGS_BYTES = 2 * 1024 * 1024;
+
     private final File settingsFile;
 
     public SettingsHotloadWatch(File settingsFile) {
@@ -46,13 +51,17 @@ public final class SettingsHotloadWatch {
             return;
         }
 
-        for (File file : engine.pollTouchedFiles()) {
-            engine.processFileChange(file, ignored -> {
-                IrisSettings.invalidate();
-                IrisSettings.get();
-                IrisLanguage.reload();
-                return true;
-            }, ignored -> Iris.info("Hotloaded settings.json "));
+        for (ConfigHotloadEngine.StableContentSnapshot snapshot : engine.pollTouchedSnapshots()) {
+            if ("missing".equals(snapshot.signature())) {
+                engine.processSnapshotChange(snapshot, ignored -> true, null);
+                Iris.warn("settings.json was removed; retaining the last valid runtime settings.");
+                continue;
+            }
+            engine.processSnapshotChange(
+                    snapshot,
+                    stable -> applySettingsSnapshot(stable.file(), stable.normalizedContent()),
+                    ignored -> Iris.info("Hotloaded settings.json ")
+            );
         }
         IrisLanguage.update();
     }
@@ -76,8 +85,12 @@ public final class SettingsHotloadWatch {
             return null;
         }
 
-        try {
-            return IO.readAll(file);
+        try (InputStream input = Files.newInputStream(file.toPath())) {
+            byte[] content = input.readNBytes(MAX_SETTINGS_BYTES + 1);
+            if (content.length > MAX_SETTINGS_BYTES) {
+                throw new IOException("Settings exceed " + MAX_SETTINGS_BYTES + " bytes: " + file);
+            }
+            return new String(content, StandardCharsets.UTF_8);
         } catch (Throwable ex) {
             Iris.warn("Failed to read settings file %s: %s%s",
                     file.getAbsolutePath(),
@@ -94,5 +107,20 @@ public final class SettingsHotloadWatch {
         }
 
         return text.replace("\r\n", "\n").trim();
+    }
+
+    private boolean applySettingsSnapshot(File file, String content) {
+        if (content == null) {
+            return false;
+        }
+        try {
+            return IrisSettings.applyHotloadSnapshot(content, IrisLanguage::reload);
+        } catch (RuntimeException failure) {
+            Iris.warn("Rejected invalid settings hotload from %s: %s",
+                    file.getAbsolutePath(),
+                    failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage());
+            Iris.reportError(failure);
+            return false;
+        }
     }
 }

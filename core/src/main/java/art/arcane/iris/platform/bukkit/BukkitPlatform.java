@@ -18,6 +18,7 @@
 
 package art.arcane.iris.platform.bukkit;
 
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.nms.MinecraftVersion;
 import art.arcane.iris.engine.object.IrisPosition;
@@ -161,6 +162,9 @@ public final class BukkitPlatform implements IrisPlatform {
     }
 
     public static void showProgressLane(Player player, String laneId, String title, double progress, long staleMillis) {
+        if (!IrisSettings.get().getGeneral().isProgressBossBar()) {
+            return;
+        }
         hudLanes().show(player, laneId, title, progress, BarColor.BLUE, BarStyle.SOLID, staleMillis);
     }
 

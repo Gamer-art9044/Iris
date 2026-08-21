@@ -1,5 +1,6 @@
 package art.arcane.iris.core.service;
 
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.PackDownloadMessages;
 import art.arcane.iris.core.pack.PackDownloader;
@@ -246,15 +247,17 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
 
     private void renderHudPulse(HudSnapshot snapshot) {
         try {
-            BukkitPlatform.hudLanes().show(
-                    player,
-                    hudLaneId,
-                    snapshot.line(),
-                    snapshot.progress(),
-                    BarColor.BLUE,
-                    BarStyle.SEGMENTED_20,
-                    1_500L
-            );
+            if (IrisSettings.get().getGeneral().isProgressBossBar()) {
+                BukkitPlatform.hudLanes().show(
+                        player,
+                        hudLaneId,
+                        snapshot.line(),
+                        snapshot.progress(),
+                        BarColor.BLUE,
+                        BarStyle.SEGMENTED_20,
+                        1_500L
+                );
+            }
             sender.sendAction(snapshot.line());
         } catch (RuntimeException failure) {
             disableHud(failure);
@@ -310,15 +313,17 @@ final class PackDownloadProgressReporter implements PackDownloader.DownloadProgr
         Runnable retiredCleanup = () -> retireHudLane(cleaned);
         Runnable display = () -> {
             try {
-                BukkitPlatform.hudLanes().show(
-                        player,
-                        hudLaneId,
-                        message,
-                        progress,
-                        color,
-                        BarStyle.SOLID,
-                        4_000L
-                );
+                if (IrisSettings.get().getGeneral().isProgressBossBar()) {
+                    BukkitPlatform.hudLanes().show(
+                            player,
+                            hudLaneId,
+                            message,
+                            progress,
+                            color,
+                            BarStyle.SOLID,
+                            4_000L
+                    );
+                }
                 sender.sendAction(message);
             } finally {
                 if (!J.runEntity(player, cleanup, HUD_TERMINAL_TICKS, retiredCleanup)) {

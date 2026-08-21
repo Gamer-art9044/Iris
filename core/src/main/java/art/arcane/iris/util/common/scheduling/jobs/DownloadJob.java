@@ -30,8 +30,8 @@ import java.net.URI;
 
 public class DownloadJob implements Job {
     private final DL.Download download;
-    private int tw;
-    private int cw;
+    private volatile int tw;
+    private volatile int cw;
 
     public DownloadJob(String url, File destination) throws MalformedURLException {
         tw = 1;

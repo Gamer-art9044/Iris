@@ -112,9 +112,9 @@ public class VillageImporterBundleTest {
     }
 
     @Test
-    public void nativeMaximumDistanceControlsIrisAssemblyRadius() {
+    public void registeredJigsawMetadataIncludesAncientCitySourceAndAssemblyContract() {
         Map<String, Object> structure = VillageImporter.structureJson(
-                "minecraft:village_plains",
+                "minecraft:ancient_city",
                 "village/pool/minecraft/start",
                 6,
                 81
@@ -122,8 +122,10 @@ public class VillageImporterBundleTest {
 
         assertEquals(6, structure.get("maxDepth"));
         assertEquals(6, structure.get("maxSizeChunks"));
+        assertEquals("STRUCTURE_PIECE", structure.get("placeMode"));
         assertEquals(IrisJigsawBranchFailurePolicy.TERMINATE_BRANCH.name(),
                 structure.get("branchFailurePolicy"));
+        assertEquals("minecraft:ancient_city", structure.get("vanillaSource"));
     }
 
     private StructureResourceBundle bundle(String objectContent) {

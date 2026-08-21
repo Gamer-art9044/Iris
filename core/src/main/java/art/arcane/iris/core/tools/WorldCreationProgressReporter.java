@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.tools;
 
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.spi.IrisLogging;
@@ -78,7 +79,8 @@ final class WorldCreationProgressReporter {
 
     static WorldCreationProgressReporter start(VolmitSender sender, String worldName) {
         WorldCreationProgressReporter reporter = new WorldCreationProgressReporter(sender, worldName);
-        if (sender.isPlayer() && sender.player() != null) {
+        if (sender.isPlayer() && sender.player() != null
+                && IrisSettings.get().getGeneral().isProgressBossBar()) {
             try {
                 J.sfut(reporter::initializePlayerHud).get(5L, TimeUnit.SECONDS);
             } catch (Throwable failure) {

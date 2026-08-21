@@ -1,5 +1,6 @@
 package art.arcane.iris.core.localization;
 
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.localization.LocaleOverlay;
 import art.arcane.volmlib.util.localization.LocalizationValidationResult;
@@ -35,6 +36,7 @@ import java.util.stream.Stream;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 public class IrisLanguageTest {
@@ -235,6 +237,26 @@ public class IrisLanguageTest {
                         MessageArgument.untrusted("permission", "iris.all")
                 )
         );
+    }
+
+    @Test
+    public void rejectedCandidateLocaleLeavesPreviousSettingsAndLanguageActive() {
+        IrisSettings previous = IrisSettings.settings;
+        IrisSettings live = new IrisSettings();
+        live.getGeneral().setLanguage("en_US");
+        IrisSettings.settings = live;
+        try {
+            boolean applied = IrisSettings.applyHotloadSnapshot(
+                    "{\"general\":{\"language\":\"../invalid\"}}",
+                    IrisLanguage::reload
+            );
+
+            assertFalse(applied);
+            assertSame(live, IrisSettings.settings);
+            assertEquals("en_US", IrisLanguage.activeLocale());
+        } finally {
+            IrisSettings.settings = previous;
+        }
     }
 
     @Test

@@ -23,7 +23,7 @@ import art.arcane.volmlib.util.collection.KList;
 public class JobCollection implements Job {
     private final String name;
     private final KList<Job> jobs;
-    private String status;
+    private volatile String status;
 
     public JobCollection(String name, Job... jobs) {
         this(name, new KList<>(jobs));

@@ -2,6 +2,7 @@ package art.arcane.iris.core.commands;
 
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.core.runtime.StudioOpenCoordinator;
 import art.arcane.iris.core.runtime.jigsaw.JigsawPlanarArchetype;
@@ -960,6 +961,11 @@ public class CommandJigsaw implements DirectorExecutor {
         Throwable failure = unwrapCompletionFailure(throwable == null
                 ? new IllegalStateException("Studio open completed without a result")
                 : throwable);
+        if (isExpectedOpenDenial(failure)) {
+            Iris.warn("Jigsaw Studio open for '%s' was denied: %s",
+                    structureKey, failure.getMessage());
+            return;
+        }
         Iris.reportError("Failed to open Jigsaw Studio for '" + structureKey + "'.", failure);
         sendError(commandSender, "Jigsaw Studio open failed: " + failure.getMessage());
     }
@@ -1020,6 +1026,10 @@ public class CommandJigsaw implements DirectorExecutor {
             current = current.getCause();
         }
         return current;
+    }
+
+    static boolean isExpectedOpenDenial(Throwable failure) {
+        return unwrapCompletionFailure(failure) instanceof BrokenPackException;
     }
 
     private void sendError(String message) {

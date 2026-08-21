@@ -63,7 +63,6 @@ art/arcane/iris/core/service/ExternalDataSVC.java
 art/arcane/iris/core/service/GlobalCacheSVC.java
 art/arcane/iris/core/service/JigsawStudioMarkerParser.java
 art/arcane/iris/core/service/JigsawStudioMenuController.java
-art/arcane/iris/core/service/JigsawStudioBoundsRenderer.java
 art/arcane/iris/core/service/JigsawStudioPreviewRenderer.java
 art/arcane/iris/core/service/JigsawStudioService.java
 art/arcane/iris/core/service/JigsawStudioToolCodec.java

@@ -33,6 +33,7 @@ public final class NativeStructureSurfaceFitter {
     private static final double SURFACE_TERRAIN_FALLOFF = 2.0;
     private static final long SURFACE_TERRAIN_INFLUENCE_SCALE = 1_000_000L;
     private static final int SURFACE_TERRAIN_RADIUS = 12;
+    private static final int MAX_SOURCE_SURFACE_DELTA = 6;
     private static final int MAX_SURFACE_TEMPLATE_CELLS = 4_194_304;
     private static final Set<String> WARNED_SOURCE_BUDGET =
             ConcurrentHashMap.newKeySet();
@@ -113,8 +114,9 @@ public final class NativeStructureSurfaceFitter {
 
     static boolean shouldPrepareSurfaceTerrain(TerrainAdjustment adjustment,
                                                GenerationStep.Decoration step) {
-        return adjustment == TerrainAdjustment.BEARD_THIN
-                || adjustment == TerrainAdjustment.BEARD_BOX;
+        return step == GenerationStep.Decoration.SURFACE_STRUCTURES
+                && (adjustment == TerrainAdjustment.BEARD_THIN
+                || adjustment == TerrainAdjustment.BEARD_BOX);
     }
 
     static int surfaceTerrainRadius() {
@@ -131,50 +133,27 @@ public final class NativeStructureSurfaceFitter {
         int localTargetY = originalY;
         SurfaceAnchor selectedLocal = null;
         long totalInfluence = 0L;
-        long weightedMeetY = 0L;
+        long weightedTargetY = 0L;
         long maximumInfluence = 0L;
         for (SurfaceAnchor anchor : anchors) {
             int outX = IrisObjectVacuum.outset(worldX, anchor.minX(), anchor.maxX());
             int outZ = IrisObjectVacuum.outset(worldZ, anchor.minZ(), anchor.maxZ());
             boolean containsColumn = outX == 0 && outZ == 0;
-            if (containsColumn && anchor.strength() > 1 && originalY < anchor.meetY()) {
-                if (precedes(anchor, selectedLocal)) {
-                    localTargetY = anchor.meetY();
-                    selectedLocal = anchor;
-                }
+            long distanceSquared = (long) outX * outX + (long) outZ * outZ;
+            long radiusSquared = (long) SURFACE_TERRAIN_RADIUS * SURFACE_TERRAIN_RADIUS;
+            if (distanceSquared > radiusSquared) {
                 continue;
             }
-            int verticalDistance = anchor.verticalDistance(originalY);
-            long horizontalDistanceSquared = (long) outX * outX + (long) outZ * outZ;
-            long distanceSquared = (long) outX * outX + (long) outZ * outZ
-                    + (long) verticalDistance * verticalDistance;
-            double factor = 0D;
-            long radiusSquared = (long) SURFACE_TERRAIN_RADIUS * SURFACE_TERRAIN_RADIUS;
-            if (distanceSquared <= radiusSquared) {
-                double distance = Math.sqrt(distanceSquared);
-                factor = Math.pow(
-                        1D - distance / SURFACE_TERRAIN_RADIUS, SURFACE_TERRAIN_FALLOFF);
-            }
-            if (anchor.strength() > 1 && originalY < anchor.meetY()
-                    && verticalDistance > SURFACE_TERRAIN_RADIUS
-                    && horizontalDistanceSquared <= radiusSquared) {
-                double horizontalDistance = Math.sqrt(horizontalDistanceSquared);
-                double horizontalFactor = Math.pow(
-                        1D - horizontalDistance / SURFACE_TERRAIN_RADIUS,
-                        SURFACE_TERRAIN_FALLOFF);
-                double rescueProgress = Math.min(1D,
-                        (verticalDistance - SURFACE_TERRAIN_RADIUS)
-                                / (double) SURFACE_TERRAIN_RADIUS);
-                double rescueWeight = rescueProgress * rescueProgress
-                        * (3D - 2D * rescueProgress);
-                factor = Math.max(factor, horizontalFactor * rescueWeight);
-            }
+            double distance = Math.sqrt(distanceSquared);
+            double factor = Math.pow(
+                    1D - distance / SURFACE_TERRAIN_RADIUS, SURFACE_TERRAIN_FALLOFF);
             if (factor <= 0D) {
                 continue;
             }
+            int boundedTargetY = boundedSurfaceTarget(originalY, anchor.meetY());
             if (containsColumn) {
                 if (precedes(anchor, selectedLocal)) {
-                    localTargetY = anchor.meetY();
+                    localTargetY = boundedTargetY;
                     selectedLocal = anchor;
                 }
                 continue;
@@ -185,19 +164,35 @@ public final class NativeStructureSurfaceFitter {
             }
             long weightedInfluence = influence * Math.max(1, anchor.strength());
             totalInfluence += weightedInfluence;
-            weightedMeetY += weightedInfluence * anchor.meetY();
+            weightedTargetY += weightedInfluence * boundedTargetY;
             maximumInfluence = Math.max(maximumInfluence, influence);
         }
         if (selectedLocal != null) {
-            return new SurfaceResolution(localTargetY, selectedLocal.strength() > 1);
+            return new SurfaceResolution(
+                    localTargetY,
+                    selectedLocal.strength() > 1
+                            && localTargetY == selectedLocal.meetY());
         }
         if (totalInfluence == 0L) {
             return new SurfaceResolution(originalY, false);
         }
-        double blendedMeetY = weightedMeetY / (double) totalInfluence;
+        double blendedTargetY = weightedTargetY / (double) totalInfluence;
         double factor = maximumInfluence / (double) SURFACE_TERRAIN_INFLUENCE_SCALE;
         return new SurfaceResolution(
-                (int) Math.round(originalY + ((blendedMeetY - originalY) * factor)), false);
+                blendSurfaceTarget(originalY, blendedTargetY, factor), false);
+    }
+
+    private static int boundedSurfaceTarget(int originalY, int meetY) {
+        int delta = Math.max(
+                -MAX_SOURCE_SURFACE_DELTA,
+                Math.min(MAX_SOURCE_SURFACE_DELTA, meetY - originalY));
+        return originalY + delta;
+    }
+
+    private static int blendSurfaceTarget(int originalY, double targetY, double factor) {
+        double delta = (targetY - originalY) * factor;
+        int magnitude = (int) Math.round(Math.abs(delta));
+        return originalY + (delta < 0D ? -magnitude : magnitude);
     }
 
     private static boolean precedes(SurfaceAnchor candidate, SurfaceAnchor selected) {
@@ -235,12 +230,16 @@ public final class NativeStructureSurfaceFitter {
                 area.maxX() + SURFACE_TERRAIN_RADIUS, area.maxY(),
                 area.maxZ() + SURFACE_TERRAIN_RADIUS);
         List<SurfaceAnchor> anchors = new ArrayList<>();
+        Set<StructureStart> seenStarts = Collections.newSetFromMap(
+                new IdentityHashMap<>());
         for (NativeStructureTerrainIntegrator.TerrainTarget target : targets) {
             if (!requiresSourceSurfaceTerrain(target)) {
                 continue;
             }
             StructureStart start = target.start();
-            TerrainAdjustment adjustment = start.getStructure().terrainAdaptation();
+            if (!seenStarts.add(start)) {
+                continue;
+            }
             BoundingBox firstBounds = start.getPieces().getFirst().getBoundingBox();
             BlockPos firstCenter = firstBounds.getCenter();
             BlockPos referencePosition = new BlockPos(
@@ -251,19 +250,15 @@ public final class NativeStructureSurfaceFitter {
                 if (piece instanceof PoolElementStructurePiece poolPiece) {
                     StructureTemplatePool.Projection projection =
                             poolPiece.getElement().getProjection();
-                    if (projection == StructureTemplatePool.Projection.RIGID) {
-                        BoundingBox bounds = poolPiece.getBoundingBox();
-                        anchors.add(surfaceAnchor(
-                                bounds, bounds.minY() + poolPiece.getGroundLevelDelta(),
-                                2, adjustment));
-                    } else if (!budgetExceeded
-                            && projection == StructureTemplatePool.Projection.TERRAIN_MATCHING
+                    if (!budgetExceeded
+                            && (projection == StructureTemplatePool.Projection.RIGID
+                            || projection == StructureTemplatePool.Projection.TERRAIN_MATCHING)
                             && intersectsHorizontally(poolPiece.getBoundingBox(), influenceArea)) {
                         try {
                             List<SurfaceAnchor> pieceAnchors = new ArrayList<>();
-                            addTerrainMatchingSurfaceAnchors(
+                            addProcessedSurfaceAnchors(
                                     world, influenceArea, poolPiece, referencePosition,
-                                    adjustment, budget, pieceAnchors);
+                                    projection, budget, pieceAnchors);
                             anchors.addAll(pieceAnchors);
                         } catch (TemplateBudgetExceeded ignored) {
                             budgetExceeded = true;
@@ -274,22 +269,22 @@ public final class NativeStructureSurfaceFitter {
                         anchors.add(new SurfaceAnchor(
                                 junction.getSourceX(), junction.getSourceX(),
                                 junction.getSourceZ(), junction.getSourceZ(),
-                                junction.getSourceGroundY() - 1, 1,
-                                junction.getSourceGroundY(), junction.getSourceGroundY()));
+                                junction.getSourceGroundY() - 1, 1));
                     }
                     continue;
                 }
                 BoundingBox bounds = piece.getBoundingBox();
-                anchors.add(surfaceAnchor(bounds, bounds.minY(), 2, adjustment));
+                anchors.add(surfaceAnchor(bounds, bounds.minY(), 2));
             }
         }
         return List.copyOf(anchors);
     }
 
-    private static void addTerrainMatchingSurfaceAnchors(
+    private static void addProcessedSurfaceAnchors(
             WorldGenLevel world, BoundingBox influenceArea,
             PoolElementStructurePiece piece, BlockPos referencePosition,
-            TerrainAdjustment adjustment, TemplateCellBudget budget,
+            StructureTemplatePool.Projection projection,
+            TemplateCellBudget budget,
             List<SurfaceAnchor> anchors) {
         NativeStructureTemplateOccupancy.OccupancyResult occupancy =
                 NativeStructureTemplateOccupancy.resolve(
@@ -299,14 +294,21 @@ public final class NativeStructureSurfaceFitter {
         if (!occupancy.resolved()) {
             return;
         }
-        int groundY = piece.getBoundingBox().minY() + piece.getGroundLevelDelta();
+        int maximumFoundationY = piece.getBoundingBox().minY()
+                + piece.getGroundLevelDelta();
         Map<Long, NativeStructureTemplateOccupancy.LowestCell> lowest =
                 NativeStructureTemplateOccupancy.lowestProcessedSolidCells(occupancy.cells());
         for (NativeStructureTemplateOccupancy.LowestCell cell : lowest.values()) {
             budget.consume(1);
+            if (projection == StructureTemplatePool.Projection.RIGID
+                    && cell.y() > maximumFoundationY) {
+                continue;
+            }
+            int groundY = projection == StructureTemplatePool.Projection.RIGID
+                    ? maximumFoundationY : cell.y();
             BoundingBox column = new BoundingBox(
                     cell.x(), groundY, cell.z(), cell.x(), groundY, cell.z());
-            anchors.add(surfaceAnchor(column, groundY, 2, adjustment));
+            anchors.add(surfaceAnchor(column, groundY, 2));
         }
     }
 
@@ -318,7 +320,7 @@ public final class NativeStructureSurfaceFitter {
         if (WARNED_SOURCE_BUDGET.add(structureId)) {
             IrisLogging.warn("Native structure SOURCE fitting for '"
                     + structureId + "' exceeded its bounded template budget; "
-                    + "skipping remaining terrain-matching footprints for this start");
+                    + "skipping remaining processed footprints for this start");
         }
     }
 
@@ -462,16 +464,9 @@ public final class NativeStructureSurfaceFitter {
         return first.surfaceY() <= second.surfaceY() ? first : second;
     }
 
-    static SurfaceAnchor surfaceAnchor(BoundingBox bounds, int groundY, int strength,
-                                       TerrainAdjustment adjustment) {
-        int meetY = groundY - 1;
-        if (adjustment == TerrainAdjustment.BEARD_BOX) {
-            return new SurfaceAnchor(
-                    bounds.minX(), bounds.maxX(), bounds.minZ(), bounds.maxZ(),
-                    meetY, strength, groundY, bounds.maxY());
-        }
+    static SurfaceAnchor surfaceAnchor(BoundingBox bounds, int groundY, int strength) {
         return new SurfaceAnchor(bounds.minX(), bounds.maxX(), bounds.minZ(), bounds.maxZ(),
-                meetY, strength, groundY, groundY);
+                groundY - 1, strength);
     }
 
     static boolean requiresSurfaceTerrain(StructureStart start) {
@@ -498,8 +493,8 @@ public final class NativeStructureSurfaceFitter {
                 && target.start() != null && target.start().isValid()
                 && target.terrain().resolvedMode() == IrisStructureTerrainMode.SOURCE
                 && shouldPrepareSurfaceTerrain(
-                target.start().getStructure().terrainAdaptation(),
-                target.start().getStructure().step());
+                        target.start().getStructure().terrainAdaptation(),
+                        target.start().getStructure().step());
     }
 
     private static void fitSurfaceTerrain(WorldGenLevel world, BoundingBox area,
@@ -823,16 +818,7 @@ public final class NativeStructureSurfaceFitter {
         return state.isSolid() && !NativeStructureVegetationClearer.isTreeBlock(state);
     }
 
-    record SurfaceAnchor(int minX, int maxX, int minZ, int maxZ, int meetY, int strength,
-                         int minInfluenceY, int maxInfluenceY) {
-        SurfaceAnchor(int minX, int maxX, int minZ, int maxZ, int meetY, int strength) {
-            this(minX, maxX, minZ, maxZ, meetY, strength, meetY + 1, meetY + 1);
-        }
-
-        int verticalDistance(int y) {
-            return IrisObjectVacuum.outset(y, minInfluenceY, maxInfluenceY);
-        }
-
+    record SurfaceAnchor(int minX, int maxX, int minZ, int maxZ, int meetY, int strength) {
     }
 
     private record SurfaceMaterials(BlockState surface, BlockState subsurface) {

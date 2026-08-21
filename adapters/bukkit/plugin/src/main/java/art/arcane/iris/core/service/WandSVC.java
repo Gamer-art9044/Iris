@@ -101,7 +101,7 @@ public class WandSVC implements IrisService {
             var latch = new CountDownLatch(1);
             var holder = Iris.tickets.getHolder(p.getWorld());
             new Job() {
-                private int i;
+                private volatile int i;
                 private Chunk chunk;
 
                 @Override

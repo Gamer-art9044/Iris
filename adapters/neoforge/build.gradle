@@ -31,7 +31,7 @@ file('../../gradle.properties').withInputStream { InputStream stream -> rootProp
 String irisVersion = providers.gradleProperty('irisVersion').getOrElse(rootProperties.getProperty('irisVersion', '4.0.0-26.2'))
 String minecraftVersion = providers.gradleProperty('minecraftVersion').getOrElse(rootProperties.getProperty('minecraftVersion', '26.2'))
 String neoForgeVersion = providers.gradleProperty('neoForgeVersion').getOrElse(rootProperties.getProperty('neoForgeVersion', '26.2.0.59'))
-String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate').getOrElse(rootProperties.getProperty('volmLibCoordinate', 'com.github.VolmitSoftware:VolmLib:5486ac97ad6d6833e27275dc768222d377721522'))
+String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate').getOrElse(rootProperties.getProperty('volmLibCoordinate', 'com.github.VolmitSoftware:VolmLib:e6574cf814b3dd670385a4d632a63fde2038e186'))
 Closure<String> irisArtifactName = { String platform, String targetVersion ->
     return "Iris v${project.version} [${platform}] ${targetVersion}.jar"
 }

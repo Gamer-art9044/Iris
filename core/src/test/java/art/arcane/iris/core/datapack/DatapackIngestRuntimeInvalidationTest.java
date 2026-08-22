@@ -11,7 +11,7 @@ public class DatapackIngestRuntimeInvalidationTest {
     @Test
     public void everyPublicMutationInvalidatesLoadedRuntimeBeforeLocking() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java"));
+                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java")).replace("\r\n", "\n");
 
         assertInvalidatesBeforeLock(source, "public static Report ingest(");
         assertInvalidatesBeforeLock(source, "public static ReapplyOutcome reapplyFromStaging(");
@@ -21,7 +21,7 @@ public class DatapackIngestRuntimeInvalidationTest {
     @Test
     public void noChangeChecksRestoreWhileChangedIngestRemainsRestartBound() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java"));
+                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java")).replace("\r\n", "\n");
         int ingest = source.indexOf("public static Report ingest(");
         int unlock = source.indexOf("TRANSACTION_LOCK.unlock();", ingest);
         int restore = source.indexOf(

@@ -56,7 +56,7 @@ public class PackExportClosureTest {
     @Test
     public void bothPackagersExportSpawnersMarkersAndTheFullEntityGraph() throws Exception {
         String bukkit = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/project/IrisPackageCompiler.java"));
+                "src/main/java/art/arcane/iris/core/project/IrisPackageCompiler.java")).replace("\r\n", "\n");
         assertTrue("Bukkit packager must write spawners/", bukkit.contains("\"spawners/\""));
         assertTrue("Bukkit packager must write markers/", bukkit.contains("\"markers/\""));
         assertTrue("Bukkit packager must export region objects alongside biome objects",
@@ -64,7 +64,7 @@ public class PackExportClosureTest {
         assertTrue("Bukkit packager must export entity loot tables", bukkit.contains("getLoot().getTables()"));
 
         String modded = Files.readString(Path.of(
-                "../adapters/modded-common/src/main/java/art/arcane/iris/modded/command/ModdedStudioCommands.java"));
+                "../adapters/modded-common/src/main/java/art/arcane/iris/modded/command/ModdedStudioCommands.java")).replace("\r\n", "\n");
         assertTrue("modded packager must write spawners/", modded.contains("\"spawners\""));
         assertTrue("modded packager must write markers/", modded.contains("\"markers\""));
         assertTrue("modded packager must include initial spawns", modded.contains("getInitialSpawns"));

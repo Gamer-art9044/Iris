@@ -13,7 +13,7 @@ public class StudioSVCWorldPackFeedbackContractTest {
     public void persistentPackCopyUsesLocalizedStyledOperatorFeedback() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/service/StudioSVC.java"
-        ));
+        )).replace("\r\n", "\n");
 
         assertEquals(1, occurrences(source, "STUDIO_S_V_C_PACK_COPY_REQUIRES_ASYNC_THREAD"));
         assertEquals(2, occurrences(source, "STUDIO_S_V_C_PACK_INSTALL_FAILED"));

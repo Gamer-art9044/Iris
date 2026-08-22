@@ -25,7 +25,7 @@ import static org.junit.Assert.assertTrue;
 public class IrisChunkGeneratorFailureContractTest {
     @Test
     public void structureLocateDoesNotCatchAndFallThroughToAnotherImplementation() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int locateStart = source.indexOf("public @Nullable Pair<BlockPos, Holder<Structure>> findNearestMapStructure");
         int locateEnd = source.indexOf("private HolderSet<Structure> filterReachableStructures", locateStart);
         String locate = source.substring(locateStart, locateEnd);
@@ -51,7 +51,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void structureGenerationAbortsInsteadOfLoggingAndContinuing() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int adjustmentStart = source.indexOf("private void adjustGeneratedStructures");
         int adjustmentEnd = source.indexOf("public ChunkGeneratorStructureState createState", adjustmentStart);
         String adjustment = source.substring(adjustmentStart, adjustmentEnd);
@@ -83,7 +83,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void heightmapRuntimeReadsAreGenerationLeased() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
 
         assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_heightmaps\")"));
         assertTrue(source.contains("engine.acquireGenerationLease(\"bukkit_nms_base_height\")"));
@@ -93,7 +93,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void structureReferenceRepairIsGenerationLeased() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int referencesStart = source.indexOf("public void createReferences");
         int referencesEnd = source.indexOf("public CompletableFuture<ChunkAccess> createBiomes", referencesStart);
         String references = source.substring(referencesStart, referencesEnd);
@@ -116,7 +116,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void structureGenerationAcquiresBootstrapGateBeforeUsingPublishedState() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int generationStart = source.indexOf("public void createStructures(");
         int generationEnd = source.indexOf("private void adjustGeneratedStructures", generationStart);
         String generation = source.substring(generationStart, generationEnd);
@@ -144,7 +144,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void nativeRingBootstrapTracksTheExactMinecraftFutures() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int initializeStart = source.indexOf("private CompletableFuture<Void> initializeStructureState(");
         int initializeEnd = source.indexOf("private Map<?, ?> structureRingPositions", initializeStart);
         String initialize = source.substring(initializeStart, initializeEnd);
@@ -169,7 +169,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void standardActivationClaimsTheExactPublishedStateBeforeInitialization() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int activationStart = source.indexOf("CompletableFuture<Void> activateStudioStructureState(");
         int activationEnd = source.indexOf(
                 "private CompletableFuture<Void> startStructureStateBootstrap", activationStart);
@@ -195,7 +195,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void terrainWritesPrimeTheWorldgenHeightmapsForEveryChunk() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int fillStart = source.indexOf("public CompletableFuture<ChunkAccess> fillFromNoise");
         int fillEnd = source.indexOf("public WeightedList<MobSpawnSettings.SpawnerData> getMobsAt", fillStart);
         String fill = source.substring(fillStart, fillEnd);
@@ -221,7 +221,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void fillFromNoiseLeaseSpansTheDelegateAndHeightmapPipeline() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int fillStart = source.indexOf("public CompletableFuture<ChunkAccess> fillFromNoise");
         int fillEnd = source.indexOf("private static boolean isCancellationFailure", fillStart);
         String fill = source.substring(fillStart, fillEnd);
@@ -324,7 +324,7 @@ public class IrisChunkGeneratorFailureContractTest {
         CompletionException failure = assertThrows(CompletionException.class, transformed::join);
         assertTrue(failure.getCause() instanceof CancellationException);
 
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         String cancellation = method(
                 source,
                 "private static boolean isCancellationFailure",
@@ -335,7 +335,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void noiseAdmissionCanPrepareStudioBeforeAcquiringTheGenerationLease() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         String fill = method(
                 source,
                 "public CompletableFuture<ChunkAccess> fillFromNoise",
@@ -356,7 +356,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void everyTopLevelMoonriseStageEntersTheFairGateBeforeItsGenerationLease() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         String structures = method(source, "public void createStructures(", "private void adjustGeneratedStructures");
         String references = method(source, "public void createReferences(", "public CompletableFuture<ChunkAccess> createBiomes");
         String biomes = method(source, "public CompletableFuture<ChunkAccess> createBiomes", "public void buildSurface");
@@ -388,7 +388,7 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue("Worldgen heightmap priming must be shared with the modded loaders through "
                 + nativegen, Files.isRegularFile(shared));
 
-        String heightmaps = Files.readString(shared);
+        String heightmaps = Files.readString(shared).replace("\r\n", "\n");
 
         assertTrue(heightmaps.contains("package art.arcane.iris.nativegen;"));
         assertTrue(heightmaps.contains("public static void primeTerrain("));
@@ -396,14 +396,14 @@ public class IrisChunkGeneratorFailureContractTest {
         assertFalse(heightmaps.contains("org.bukkit"));
         assertFalse(heightmaps.contains("craftbukkit"));
 
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
 
         assertTrue(source.contains("import art.arcane.iris.nativegen.WorldgenTerrainHeightmaps;"));
     }
 
     @Test
     public void onlySidecarOwnedInjectedStartsUsePersistedPlacementPolicy() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int placementStart = source.indexOf("private void placeVanillaStructures");
         int placementEnd = source.indexOf("private static String nativeStructureBatchContext", placementStart);
         String placement = source.substring(placementStart, placementEnd);
@@ -414,9 +414,9 @@ public class IrisChunkGeneratorFailureContractTest {
         int adjustmentEnd = source.indexOf("public ChunkGeneratorStructureState createState", adjustmentStart);
         String adjustment = source.substring(adjustmentStart, adjustmentEnd);
         Path nativegen = Path.of(System.getProperty("iris.nativeStructurePostProcessorSource")).getParent();
-        String factory = Files.readString(nativegen.resolve("NativeStructureFactory.java"));
-        String injector = Files.readString(nativegen.resolve("NativeStructureStartInjector.java"));
-        String recovery = Files.readString(nativegen.resolve("NativeStructureOwnershipRecovery.java"));
+        String factory = Files.readString(nativegen.resolve("NativeStructureFactory.java")).replace("\r\n", "\n");
+        String injector = Files.readString(nativegen.resolve("NativeStructureStartInjector.java")).replace("\r\n", "\n");
+        String recovery = Files.readString(nativegen.resolve("NativeStructureOwnershipRecovery.java")).replace("\r\n", "\n");
         int ownershipRecord = injector.indexOf("NativeStructureOwnershipStore.record(");
         int startPublication = injector.indexOf(
                 "context.structureManager().setStartForStructure(", ownershipRecord);
@@ -476,7 +476,7 @@ public class IrisChunkGeneratorFailureContractTest {
 
     @Test
     public void vanillaChunkGenerationMobsUseTheVisibleBiomesVanillaDerivative() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int spawnStart = source.indexOf("public void spawnOriginalMobs");
         int spawnEnd = source.indexOf("private static WeightedList", spawnStart);
         String spawn = source.substring(spawnStart, spawnEnd);

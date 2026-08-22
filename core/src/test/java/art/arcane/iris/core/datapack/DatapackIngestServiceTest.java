@@ -249,7 +249,7 @@ public class DatapackIngestServiceTest {
     @Test
     public void startupChecksCheapCacheContextBeforeHashingManagedDatapacks() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java"));
+                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java")).replace("\r\n", "\n");
         int validation = source.indexOf("public static StartupValidationOutcome validateOnStartup()");
         int cacheRead = source.indexOf("readStartupValidationCache", validation);
         int contextCheck = source.indexOf("startupValidationContextMatches(", cacheRead);
@@ -266,7 +266,7 @@ public class DatapackIngestServiceTest {
     @Test
     public void unchangedPostStartupMaintenanceReturnsBeforeFingerprinting() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java"));
+                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java")).replace("\r\n", "\n");
         int refresh = source.indexOf(
                 "refreshStartupValidationAfterMaintenance(boolean maintenanceChanged)");
         int unchangedGuard = source.indexOf("if (!maintenanceChanged)", refresh);
@@ -806,7 +806,7 @@ public class DatapackIngestServiceTest {
     @Test
     public void directoryHashRestatsAttributesAndVolumeBeforeOpeningEachFile() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java"));
+                "src/main/java/art/arcane/iris/core/datapack/DatapackIngestService.java")).replace("\r\n", "\n");
         int method = source.indexOf("private static String directoryHash(File root)");
         int entries = source.indexOf("List<Path> entries = new ArrayList<>()", method);
         int loop = source.indexOf("for (Path entry : entries)", entries);

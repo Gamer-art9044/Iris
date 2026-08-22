@@ -13,7 +13,7 @@ public class NMSBindingPlacementFailureContractTest {
     @Test
     public void structurePlacementPropagatesRuntimeFailuresWithContext() throws IOException {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
-        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java"));
+        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf("public int[] placeStructure(");
         int methodEnd = source.indexOf("\n    @Override", methodStart + 1);
         String method = source.substring(methodStart, methodEnd);

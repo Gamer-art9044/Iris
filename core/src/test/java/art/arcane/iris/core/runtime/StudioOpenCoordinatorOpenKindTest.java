@@ -65,7 +65,7 @@ public class StudioOpenCoordinatorOpenKindTest {
     @Test
     public void studioTimingSeparatesOrderedLifecyclePhases() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int previous = -1;
         for (String phase : List.of(
                 "resolve_dimension_and_cleanup",
@@ -87,7 +87,7 @@ public class StudioOpenCoordinatorOpenKindTest {
     @Test
     public void structureStateActivatesAfterStandardTeleportBeforeFinalization() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int entryReady = source.indexOf(
                 "entryLoadFuture.get(STUDIO_ENTRY_LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)");
         int teleport = source.indexOf(
@@ -121,7 +121,7 @@ public class StudioOpenCoordinatorOpenKindTest {
     @Test
     public void failedOpenMarshalsRetainedStateAbandonmentToTheServerScheduler() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf(
                 "private void abandonStudioEntryBootstrap(World world, Throwable failure)");
         int methodEnd = source.indexOf("private void deferFailedOpenCleanup", methodStart);
@@ -135,7 +135,7 @@ public class StudioOpenCoordinatorOpenKindTest {
     @Test
     public void queuedRestartDefersFailedOpenCleanupWithoutAcquiringALiveCloseLease() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int openCatch = source.indexOf("} catch (Throwable e) {");
         int restartCheck = source.indexOf(
                 ".active(LifecycleOperationCoordinator.Domain.SERVER_LIFECYCLE)",
@@ -160,7 +160,7 @@ public class StudioOpenCoordinatorOpenKindTest {
     @Test
     public void openFinalizerReturnsToTheServerThreadBeforeCompletion() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int finalizerCall = source.indexOf("runOpenFinalizer(request.onDone(), world);");
         int futureCompletion = source.indexOf(
                 "future.complete(new StudioOpenResult(world, safeEntry))", finalizerCall);

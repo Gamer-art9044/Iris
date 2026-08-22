@@ -14,7 +14,7 @@ public class NMSBindingStructureFailureContractTest {
     @Test
     public void structureRegistryHooksThrowInsteadOfReturningEmptyOnFailure() throws IOException {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
-        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java"));
+        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
         List<String> methodNames = List.of(
                 "getStructureKeys",
                 "getStructureSetKeys",

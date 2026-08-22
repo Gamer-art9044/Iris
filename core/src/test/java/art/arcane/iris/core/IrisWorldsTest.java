@@ -97,7 +97,7 @@ public class IrisWorldsTest {
      */
     @Test
     public void oneUnusableWorldIsExcludedInsteadOfFailingTheWholeRegistry() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/IrisWorlds.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/IrisWorlds.java")).replace("\r\n", "\n");
 
         int accessor = source.indexOf("public static IrisWorlds get()");
         int accessorEnd = source.indexOf("public synchronized void put(", accessor);

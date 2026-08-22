@@ -87,7 +87,7 @@ public class JigsawStudioLifecycleTest {
     @Test
     public void committedStudioActivationDisablesNaturalMobSpawning() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/service/JigsawStudioService.java"));
+                "src/main/java/art/arcane/iris/core/service/JigsawStudioService.java")).replace("\r\n", "\n");
         int registerStart = source.indexOf("public void register(");
         int commitStart = source.indexOf("public void activationCommitted(", registerStart);
         int commitEnd = source.indexOf("public void markChunkGenerated(", commitStart);

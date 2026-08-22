@@ -12,7 +12,7 @@ public class NMSBindingServerLevelAdviceContractTest {
     @Test
     public void serverLevelAdviceSupportsCurrentSpigotAndPaperConstructorLayouts() throws Exception {
         String source = Files.readString(
-                Path.of(System.getProperty("iris.nmsBindingSource")));
+                Path.of(System.getProperty("iris.nmsBindingSource"))).replace("\r\n", "\n");
         String transformer = section(
                 source,
                 "public boolean injectBukkit()",
@@ -35,7 +35,7 @@ public class NMSBindingServerLevelAdviceContractTest {
     @Test
     public void currentSpigotStorageAccessReceivesManagedIdentityBeforeConstruction() throws Exception {
         String source = Files.readString(
-                Path.of(System.getProperty("iris.nmsBindingSource")));
+                Path.of(System.getProperty("iris.nmsBindingSource"))).replace("\r\n", "\n");
         String transformer = section(
                 source,
                 "public boolean injectBukkit()",
@@ -68,7 +68,7 @@ public class NMSBindingServerLevelAdviceContractTest {
     @Test
     public void ownedWorldPublishesItsManagedIdentityAndRuntimeStemTogether() throws Exception {
         String source = Files.readString(
-                Path.of(System.getProperty("iris.nmsBindingSource")));
+                Path.of(System.getProperty("iris.nmsBindingSource"))).replace("\r\n", "\n");
         String advice = section(
                 source,
                 "private static class ServerLevelAdvice",

@@ -18,7 +18,7 @@ import static org.junit.Assert.assertTrue;
 public class NMSBindingCurrentPaperWorldDataContractTest {
     @Test
     public void bindingDelegatesWithoutLinkingPaperSavedDataClasses() throws Exception {
-        String bindingSource = Files.readString(bindingSourcePath());
+        String bindingSource = Files.readString(bindingSourcePath()).replace("\r\n", "\n");
         String writer = section(
                 bindingSource,
                 "public void writeCurrentPaperWorldData(",
@@ -43,7 +43,7 @@ public class NMSBindingCurrentPaperWorldDataContractTest {
 
     @Test
     public void stagesAllCurrentPaperWorldDataFromLiveServerState() throws Exception {
-        String writer = Files.readString(writerSourcePath());
+        String writer = Files.readString(writerSourcePath()).replace("\r\n", "\n");
 
         assertTrue(writer.contains("WorldReplacementSeed.copyWithAuthoritativeSeed("));
         assertTrue(writer.contains("UUID metadataUuid = UUID.randomUUID()"));
@@ -69,7 +69,7 @@ public class NMSBindingCurrentPaperWorldDataContractTest {
 
     @Test
     public void capturesOnlyLiveLevelOverridesOnTheGlobalThread() throws Exception {
-        String source = Files.readString(writerSourcePath());
+        String source = Files.readString(writerSourcePath()).replace("\r\n", "\n");
         String capture = section(
                 source,
                 "private static PaperLevelOverrides captureLevelOverrides(",

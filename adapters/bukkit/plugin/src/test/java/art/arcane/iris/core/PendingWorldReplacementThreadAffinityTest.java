@@ -135,8 +135,8 @@ public class PendingWorldReplacementThreadAffinityTest {
     @Test
     public void bukkitAccessIsConfinedToTheGlobalCaptureStage() throws Exception {
         String managerSource = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java"));
-        String irisSource = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java"));
+                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java")).replace("\r\n", "\n");
+        String irisSource = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java")).replace("\r\n", "\n");
         String startup = method(managerSource, "public void verifyLoadedPublishedWorlds()");
         String worldLoad = method(managerSource, "public void onWorldLoad(WorldLoadEvent event)");
         String discovery = method(managerSource, "private void discoverLoadedPublishedWorlds()");
@@ -167,10 +167,10 @@ public class PendingWorldReplacementThreadAffinityTest {
     @Test
     public void paperLoginHookIsIsolatedFromAlwaysLoadedSpigotClasses() throws Exception {
         String managerSource = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java"));
-        String irisSource = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java"));
+                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java")).replace("\r\n", "\n");
+        String irisSource = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java")).replace("\r\n", "\n");
         String listenerSource = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java"));
+                "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java")).replace("\r\n", "\n");
         String registration = method(managerSource, "public void registerPlatformEntryListener()");
 
         assertFalse(managerSource.contains("import io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent"));
@@ -186,9 +186,9 @@ public class PendingWorldReplacementThreadAffinityTest {
     @Test
     public void redirectedPlayerReceiptSurvivesUntilTheMaterializedPositionIsSaved() throws Exception {
         String managerSource = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java"));
+                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java")).replace("\r\n", "\n");
         String listenerSource = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java"));
+                "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java")).replace("\r\n", "\n");
         String preparation = method(
                 managerSource,
                 "ReplacementEntryRedirect prepareReplacementEntry(UUID playerId, Location savedLocation, boolean newPlayer)"
@@ -215,9 +215,9 @@ public class PendingWorldReplacementThreadAffinityTest {
     @Test
     public void replacementSpawnIsPersistedBeforeFinalMarkerRetirement() throws Exception {
         String managerSource = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java"));
+                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java")).replace("\r\n", "\n");
         String listenerSource = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java"));
+                "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java")).replace("\r\n", "\n");
         String preparation = method(managerSource, "private void prepareOverworldEntry(World world)");
         String persistence = method(managerSource, "private CompletableFuture<Location> persistOverworldSpawn(Location safeEntry)");
         String retirement = method(

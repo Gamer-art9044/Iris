@@ -163,7 +163,7 @@ public class StudioSVCWorldPackPublishTest {
     @Test
     public void replaceExistingRejectsSymbolicTargetBeforePublication() throws Exception {
         String sourceCode = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/service/StudioSVC.java"));
+                "src/main/java/art/arcane/iris/core/service/StudioSVC.java")).replace("\r\n", "\n");
         int install = sourceCode.indexOf("private IrisDimension installIntoDirectory(");
         int initialTargetSafety = sourceCode.indexOf(
                 "requireSafePublicationTarget(target, replaceExisting)",
@@ -296,7 +296,7 @@ public class StudioSVCWorldPackPublishTest {
     @Test
     public void replacementKeepsTargetUnauthorizedThroughPublishedFingerprintWindow() throws Exception {
         String sourceCode = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/service/StudioSVC.java"));
+                "src/main/java/art/arcane/iris/core/service/StudioSVC.java")).replace("\r\n", "\n");
         int install = sourceCode.indexOf("private IrisDimension installIntoDirectory(");
         int beginMutation = sourceCode.indexOf("PackValidationRegistry.beginRootMutation(target)", install);
         int publish = sourceCode.indexOf("AtomicDirectoryPublisher.publish(stage, target)", beginMutation);

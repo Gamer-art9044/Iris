@@ -10,7 +10,7 @@ import static org.junit.Assert.assertTrue;
 public class NMSBindingShutdownBoundaryContractTest {
     @Test
     public void shutdownBoundaryUsesPaperFullyShutdownStateAndServerThread() throws Exception {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource"))).replace("\r\n", "\n");
         String boundary = section(source, "public boolean awaitServerShutdownBoundary", "public KMap<Material, List<BlockProperty>> getBlockProperties");
 
         assertTrue(boundary.contains("ServerShutdownBoundary.await("));

@@ -145,6 +145,6 @@ public class DiagnosticSeverityPolicyTest {
     }
 
     private static String read(String relativePath) throws IOException {
-        return Files.readString(Path.of("src/main/java/art/arcane/iris").resolve(relativePath));
+        return Files.readString(Path.of("src/main/java/art/arcane/iris").resolve(relativePath)).replace("\r\n", "\n");
     }
 }

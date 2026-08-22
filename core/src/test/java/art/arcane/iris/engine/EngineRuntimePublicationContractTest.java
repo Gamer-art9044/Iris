@@ -12,7 +12,7 @@ public class EngineRuntimePublicationContractTest {
     @Test
     public void worldManagerStartsOnlyAfterTheRuntimeSessionIsReady() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/engine/EngineRuntimeBuilder.java"));
+                "src/main/java/art/arcane/iris/engine/EngineRuntimeBuilder.java")).replace("\r\n", "\n");
         int publishStart = source.indexOf("void publishRuntime(");
         int publishEnd = source.indexOf("private void scheduleRuntimeTasks", publishStart);
         String publish = source.substring(publishStart, publishEnd);
@@ -27,7 +27,7 @@ public class EngineRuntimePublicationContractTest {
     @Test
     public void failedManagerStartClosesAdmissionBeforeRuntimeCleanup() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/engine/EngineRuntimeBuilder.java"));
+                "src/main/java/art/arcane/iris/engine/EngineRuntimeBuilder.java")).replace("\r\n", "\n");
         int publishStart = source.indexOf("void publishRuntime(");
         int publishEnd = source.indexOf("private void scheduleRuntimeTasks", publishStart);
         String publish = source.substring(publishStart, publishEnd);

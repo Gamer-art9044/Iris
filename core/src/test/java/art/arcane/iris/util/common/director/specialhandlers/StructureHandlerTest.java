@@ -235,7 +235,7 @@ public class StructureHandlerTest {
     public void completionUsesOneReachabilitySnapshotAndLocatableKeys() throws IOException {
         Path sourcePath = Path.of(
                 "src/main/java/art/arcane/iris/util/common/director/specialhandlers/StructureHandler.java");
-        String source = Files.readString(sourcePath);
+        String source = Files.readString(sourcePath).replace("\r\n", "\n");
         int methodStart = source.indexOf("public KList<String> getPossibilities()");
         int methodEnd = source.indexOf("@Override\n    public String toString", methodStart);
         String method = source.substring(methodStart, methodEnd);

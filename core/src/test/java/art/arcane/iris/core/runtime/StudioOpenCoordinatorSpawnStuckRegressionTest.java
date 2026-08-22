@@ -34,7 +34,7 @@ public class StudioOpenCoordinatorSpawnStuckRegressionTest {
     @Test
     public void paperEntryChunkLoadIsAsyncBeforeTheRetentionTicket() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int asyncLoad = source.indexOf("requested = WorldRuntimeControlService.get().requestChunkAsync(");
         int urgentFlag = source.indexOf("true);", asyncLoad);
         int retentionTicket = source.indexOf("world.addPluginChunkTicket", asyncLoad);
@@ -47,7 +47,7 @@ public class StudioOpenCoordinatorSpawnStuckRegressionTest {
     @Test
     public void foliaRetainsItsNonBlockingTicketBootstrapPath() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"));
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int foliaBranch = source.indexOf("if (!J.isFolia())");
         int retentionSchedule = source.indexOf(
                 "return scheduleEntryChunkRetention(world, chunkX, chunkZ);",

@@ -51,7 +51,7 @@ public class CommandIrisDownloadContractTest {
     public void commandDelegatesAcceptedDownloadsWithoutRawPreamble() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/commands/CommandIris.java"
-        ));
+        )).replace("\r\n", "\n");
         String download = method(source, "public void download(");
 
         assertTrue(download.contains("downloadBuiltIn(sender(), builtInPack)"));

@@ -223,7 +223,7 @@ public class NativeStructurePostProcessorEncaseTest {
 
     @Test
     public void encaseFillRunsBeforeNativePlacement() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int prepareTerrain = source.indexOf("NativeStructurePostProcessor.prepareTerrain(");
         int placementLoop = source.indexOf("for (NativePlacementGroup group : placementGroups)", prepareTerrain);
         int placement = source.indexOf("placeVanillaStructure(world, structureManager, random", placementLoop);

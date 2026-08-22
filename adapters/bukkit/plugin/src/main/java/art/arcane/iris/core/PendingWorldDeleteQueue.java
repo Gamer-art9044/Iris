@@ -316,6 +316,12 @@ public final class PendingWorldDeleteQueue implements WorldDeletionQueue {
     }
 
     private static void forceDirectory(Path directory) throws IOException {
+        // A directory can only be opened and fsynced on a POSIX filesystem; Windows rejects the
+        // open outright. Matches DirectoryDurability and DatapackIngestService, which already
+        // skip the barrier there.
+        if (!Files.getFileStore(directory).supportsFileAttributeView("posix")) {
+            return;
+        }
         try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
             channel.force(true);
         }

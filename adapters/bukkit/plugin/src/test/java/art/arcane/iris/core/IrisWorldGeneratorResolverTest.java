@@ -80,7 +80,7 @@ public class IrisWorldGeneratorResolverTest {
     @Test
     public void startupValidationPublishesFingerprintBoundExactRootResults() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java"));
+                "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java")).replace("\r\n", "\n");
         int validateAll = source.indexOf("public void validateAllPacks()");
         int snapshot = source.indexOf("ServerConfigurator.computePackContentSnapshot(packsRoot)", validateAll);
         int perPackFingerprint = source.indexOf("contentSnapshot.packContents()", snapshot);
@@ -191,7 +191,7 @@ public class IrisWorldGeneratorResolverTest {
     @Test
     public void configuredWorldResolutionUsesOnlyFrozenWorldLocalSnapshot() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java"));
+                "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java")).replace("\r\n", "\n");
         int resolverStart = source.indexOf("private ChunkGenerator resolveFrozenWorldGenerator(");
         int resolverEnd = source.indexOf("private record FreshValidation", resolverStart);
         String resolver = source.substring(resolverStart, resolverEnd);
@@ -227,7 +227,7 @@ public class IrisWorldGeneratorResolverTest {
     @Test
     public void ownedWorldSnapshotFailureStopsStartupAndRethrows() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java"));
+                "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java")).replace("\r\n", "\n");
         int resolverStart = source.indexOf("public ChunkGenerator resolveDefaultWorldGenerator(");
         int resolverEnd = source.indexOf("private ChunkGenerator resolveFrozenWorldGenerator(", resolverStart);
         String resolver = source.substring(resolverStart, resolverEnd);

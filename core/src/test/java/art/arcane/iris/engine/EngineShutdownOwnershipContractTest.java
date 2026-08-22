@@ -12,7 +12,7 @@ public class EngineShutdownOwnershipContractTest {
     @Test
     public void ownershipCloseMustSucceedBeforeMantleRelease() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/engine/EngineShutdownSequence.java"));
+                "src/main/java/art/arcane/iris/engine/EngineShutdownSequence.java")).replace("\r\n", "\n");
         int ownershipClose = source.indexOf("NativeStructureOwnershipStore.close(engine)");
         int ownershipGate = source.indexOf("if (ownershipFailure == null)", ownershipClose);
         int mantleRelease = source.indexOf("releaseMantle(failure)", ownershipGate);
@@ -25,7 +25,7 @@ public class EngineShutdownOwnershipContractTest {
     @Test
     public void failedConstructionKeepsMantleOpenWhileOwnershipWritesRemain() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/engine/EngineShutdownSequence.java"));
+                "src/main/java/art/arcane/iris/engine/EngineShutdownSequence.java")).replace("\r\n", "\n");
         int cleanupStart = source.indexOf("void cleanupFailedConstruction");
         int cleanupEnd = source.indexOf("Throwable closeAssembly", cleanupStart);
         String cleanup = source.substring(cleanupStart, cleanupEnd);

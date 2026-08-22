@@ -55,7 +55,7 @@ public class MultiverseCoreLinkTest {
 
     @Test
     public void registrationDoesNotRewriteTheRecordedMultiverseName() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/link/MultiverseCoreLink.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/link/MultiverseCoreLink.java")).replace("\r\n", "\n");
 
         assertFalse("worlds are created under the startup name, so the recorded name needs no correction",
                 source.contains("setLegacyWorldName"));

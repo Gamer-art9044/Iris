@@ -118,7 +118,7 @@ public class CommandJigsawContractTest {
     @Test
     public void committedActivationStartsInitialEvaluationBeforePlayerBinding() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/commands/CommandJigsaw.java"));
+                "src/main/java/art/arcane/iris/core/commands/CommandJigsaw.java")).replace("\r\n", "\n");
         int commit = source.indexOf("JigsawStudioActivation.commit(staged)");
         int evaluation = source.indexOf(
                 "studioService.activationCommitted(world, request.requestId())",
@@ -361,7 +361,7 @@ public class CommandJigsawContractTest {
     @Test
     public void pieceCreateUsesResolvedWorkcellCapacityInsteadOfLayoutDefault() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/commands/CommandJigsaw.java"));
+                "src/main/java/art/arcane/iris/core/commands/CommandJigsaw.java")).replace("\r\n", "\n");
         int pieceCommands = source.indexOf("public static class CommandJigsawPiece");
         int create = source.indexOf("public void create(", pieceCommands);
         int add = source.indexOf("public void add(", create);
@@ -513,7 +513,7 @@ public class CommandJigsawContractTest {
     @Test
     public void exportSourceAcquiresStudioLeaseBeforeStaticLeaseAndReleasesBothPaths() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/commands/CommandJigsaw.java"));
+                "src/main/java/art/arcane/iris/core/commands/CommandJigsaw.java")).replace("\r\n", "\n");
         int serviceLease = source.indexOf("studioService.tryBeginExport(requestId, playerId)");
         int staticLease = source.indexOf("beginExport(playerId, destination)", serviceLease);
         int dispatch = source.indexOf("J.a(() -> runExport(operation))", staticLease);

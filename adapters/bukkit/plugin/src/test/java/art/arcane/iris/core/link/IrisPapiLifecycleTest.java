@@ -14,7 +14,9 @@ public class IrisPapiLifecycleTest {
     private static final String TEARDOWN = "private void teardownPapi() {";
 
     private static String source() throws Exception {
-        return Files.readString(PLUGIN_SOURCE);
+        // The assertions below match against literals written with \n, so a CRLF checkout has to
+        // be folded first or every multi-line expectation misses.
+        return Files.readString(PLUGIN_SOURCE).replace("\r\n", "\n");
     }
 
     private static String body(String declaration) throws Exception {
@@ -127,6 +129,6 @@ public class IrisPapiLifecycleTest {
 
     private static String installerSource() throws Exception {
         return java.nio.file.Files.readString(java.nio.file.Path.of(
-                "src/main/java/art/arcane/iris/core/link/IrisPapiInstaller.java"));
+                "src/main/java/art/arcane/iris/core/link/IrisPapiInstaller.java")).replace("\r\n", "\n");
     }
 }

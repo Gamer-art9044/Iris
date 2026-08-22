@@ -176,6 +176,42 @@ tasks.register('iris', Copy) {
     }
 }
 
+tasks.register('buildSwiftSwamp') {
+    group = 'iris'
+    description = 'Builds every platform jar and drops them in the local BUILDS output directory.'
+    outputs.upToDateWhen { false }
+    dependsOn('iris', 'verifyModdedArtifacts')
+    doLast {
+        File swiftSwampOut = file('C://VolmitSoftware/BUILDS')
+        copy {
+            from(layout.buildDirectory.file("consumer/${bukkitArtifactName}"))
+            into(swiftSwampOut)
+            rename { String ignored -> 'Iris.jar' }
+        }
+        copy {
+            from(layout.projectDirectory.file("adapters/fabric/build/libs/${fabricArtifactName}"))
+            into(swiftSwampOut)
+            rename { String ignored -> 'Iris-Fabric.jar' }
+        }
+        copy {
+            from(layout.projectDirectory.file("adapters/forge/build/libs/${forgeArtifactName}"))
+            into(swiftSwampOut)
+            rename { String ignored -> 'Iris-Forge.jar' }
+        }
+        copy {
+            from(layout.projectDirectory.file("adapters/neoforge/build/libs/${neoForgeArtifactName}"))
+            into(swiftSwampOut)
+            rename { String ignored -> 'Iris-Neoforge.jar' }
+        }
+        println('')
+        println('=== Iris buildSwiftSwamp -> ' + swiftSwampOut + ' ===')
+        ['Iris.jar', 'Iris-Fabric.jar', 'Iris-Forge.jar', 'Iris-Neoforge.jar'].each { String jar ->
+            File produced = new File(swiftSwampOut, jar)
+            println(String.format('  %-24s %8d KB', jar, (long) (produced.length() / 1024)))
+        }
+    }
+}
+
 tasks.register('buildBukkit', Copy) {
     group = 'iris'
     dependsOn('jar')
@@ -668,6 +704,7 @@ allprojects {
     }
 
     repositories {
+        mavenLocal()
         mavenCentral()
         maven { url = uri('https://repo.papermc.io/repository/maven-public/') }
         maven { url = uri('https://repo.codemc.org/repository/maven-public/') }

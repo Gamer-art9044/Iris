@@ -354,7 +354,7 @@ public class NMSBindingDatapackStructureScopeTest {
     @Test
     public void standardPublishesOneDeferredStateWhileJigsawPublishesInitializedEmptyState() throws IOException {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
-        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java"));
+        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf("public DatapackStructureScopeResult scopeDatapackStructures(");
         int methodEnd = source.indexOf("\n    @Override\n    public void completeStudioStructureBootstrap", methodStart);
 
@@ -392,7 +392,7 @@ public class NMSBindingDatapackStructureScopeTest {
     @Test
     public void standardCompletionActivatesTheAlreadyPublishedStateWithoutReplacingIt() throws IOException {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
-        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java"));
+        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf("public void completeStudioStructureBootstrap(World world)");
         int methodEnd = source.indexOf("\n    @Override\n    public void abandonStudioStructureBootstrap", methodStart);
 
@@ -411,7 +411,7 @@ public class NMSBindingDatapackStructureScopeTest {
     @Test
     public void injectionVerifiesTheCanonicalPaperGeneratorBeforeStructureRetargeting() throws IOException {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
-        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java"));
+        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf("public void inject(long seed, Engine engine, World world)");
         int methodEnd = source.indexOf("\n    @Override\n    public DatapackStructureScopeResult", methodStart);
 
@@ -432,7 +432,7 @@ public class NMSBindingDatapackStructureScopeTest {
     @Test
     public void structureStateRecreationUsesTheWorldOwnedSpigotConfiguration() throws IOException {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
-        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java"));
+        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf("private ChunkGeneratorStructureState createStructureState(");
         int methodEnd = source.indexOf(
                 "\n    private void initializeAndPublishStructureState(", methodStart);

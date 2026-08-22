@@ -78,7 +78,7 @@ public class CommandIrisCreateOverwriteContractTest {
     public void createAndReplaceUseLocalizedStyledMissingDimensionFeedback() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/commands/CommandIris.java"
-        ));
+        )).replace("\r\n", "\n");
 
         assertEquals(2, occurrences(source, "COMMAND_IRIS_DIMENSION_NOT_FOUND"));
         assertEquals(2, occurrences(source, "COMMAND_IRIS_INSTALL_PACK_AND_RESTART"));

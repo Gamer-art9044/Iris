@@ -2152,7 +2152,12 @@ public final class DatapackIngestService {
         if (fileKey != null) {
             return "key:" + fileKey;
         }
-        return "";
+        // Windows exposes no inode-equivalent for a directory, and returning nothing here fails
+        // the identity gate closed, which disables legacy staging replacement on that platform
+        // outright. Creation time is the one stable discriminator the filesystem still offers: a
+        // directory swapped in at the same path brings its own, so a swap is still caught. It is
+        // a weaker guarantee than an inode, so it is only ever the fallback.
+        return "created:" + attributes.creationTime();
     }
 
     private static boolean pathExists(Path path, String purpose) throws IOException {

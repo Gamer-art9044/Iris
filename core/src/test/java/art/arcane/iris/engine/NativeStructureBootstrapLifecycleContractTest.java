@@ -12,7 +12,7 @@ public class NativeStructureBootstrapLifecycleContractTest {
     @Test
     public void closeWaitsBeforeLifecycleMutationAndGenerationSeal() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/engine/EngineShutdownSequence.java"));
+                "src/main/java/art/arcane/iris/engine/EngineShutdownSequence.java")).replace("\r\n", "\n");
         int closeStart = source.indexOf("void close()");
         int closeEnd = source.indexOf("void cleanupFailedConstruction", closeStart);
         String close = source.substring(closeStart, closeEnd);
@@ -28,7 +28,7 @@ public class NativeStructureBootstrapLifecycleContractTest {
     @Test
     public void fullAndComplexHotloadWaitBeforeLifecycleMutationAndGenerationSeal() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/engine/EngineHotloader.java"));
+                "src/main/java/art/arcane/iris/engine/EngineHotloader.java")).replace("\r\n", "\n");
         int complexStart = source.indexOf("void hotloadComplex()");
         int fullStart = source.indexOf("void hotloadSilently()", complexStart);
         String complex = source.substring(complexStart, fullStart);
@@ -52,7 +52,7 @@ public class NativeStructureBootstrapLifecycleContractTest {
     @Test
     public void ringBootstrapStartsUnderTheSameLifecycleLock() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/engine/IrisEngine.java"));
+                "src/main/java/art/arcane/iris/engine/IrisEngine.java")).replace("\r\n", "\n");
         int start = source.indexOf("public CompletableFuture<Void> startNativeStructureBootstrap(");
         int end = source.indexOf("void awaitNativeStructureBootstrap", start);
         String method = source.substring(start, end);
@@ -68,7 +68,7 @@ public class NativeStructureBootstrapLifecycleContractTest {
     @Test
     public void studioVolumeQueriesStayOutsideCachesUntilTheBootstrapGateReleases() throws IOException {
         String engineSource = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/engine/IrisEngine.java"));
+                "src/main/java/art/arcane/iris/engine/IrisEngine.java")).replace("\r\n", "\n");
         int queryStart = engineSource.indexOf(
                 "public KList<NativeStructureVolume> getNativeStructureVolumes(");
         int queryEnd = engineSource.indexOf(
@@ -77,7 +77,7 @@ public class NativeStructureBootstrapLifecycleContractTest {
         int setterEnd = engineSource.indexOf("public IrisEngineData getEngineData()", queryEnd);
         String setter = engineSource.substring(queryEnd, setterEnd);
         String generatorSource = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/engine/platform/BukkitChunkGenerator.java"));
+                "src/main/java/art/arcane/iris/engine/platform/BukkitChunkGenerator.java")).replace("\r\n", "\n");
         int releaseStart = generatorSource.indexOf("public void endStudioEntryBootstrap()");
         int releaseEnd = generatorSource.indexOf(
                 "public boolean isStudioEntryBootstrapActive()", releaseStart);

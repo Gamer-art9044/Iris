@@ -387,7 +387,7 @@ public class ServerConfiguratorDatapackFingerprintTest {
     @Test
     public void recoveryRunsBeforeRestoredFingerprintReuseHashFallbackAndCompilation() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/ServerConfigurator.java"));
+                "src/main/java/art/arcane/iris/core/ServerConfigurator.java")).replace("\r\n", "\n");
         int installIfChanged = source.indexOf("installDataPacksIfChanged(boolean fullInstall)");
         int recovery = source.indexOf("DatapackIngestService.reapplyFromStaging", installIfChanged);
         int restored = source.indexOf("restoredCompilerInputFingerprint()", recovery);
@@ -407,7 +407,7 @@ public class ServerConfiguratorDatapackFingerprintTest {
     @Test
     public void studioTimingSeparatesRecoveryFingerprintCompilationAndTotal() throws Exception {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/ServerConfigurator.java"));
+                "src/main/java/art/arcane/iris/core/ServerConfigurator.java")).replace("\r\n", "\n");
         int timedInstall = source.indexOf("BiConsumer<String, Long> timingConsumer");
         int recovery = source.indexOf("\"datapack_external_recovery\"", timedInstall);
         int fingerprint = source.indexOf("\"datapack_compiler_input_fingerprint\"", recovery);

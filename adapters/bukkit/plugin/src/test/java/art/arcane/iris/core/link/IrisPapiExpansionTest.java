@@ -215,7 +215,7 @@ public class IrisPapiExpansionTest {
     @Test
     public void thePlaceholderPathNeverTouchesTheEngineOrAPluginStatic() throws Exception {
         for (String file : List.of("IrisPapiExpansion.java", "IrisPapiState.java", "IrisPapiWorldView.java")) {
-            String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/link/" + file));
+            String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/link/" + file)).replace("\r\n", "\n");
 
             assertFalse(file + " must not import the engine", source.contains("art.arcane.iris.engine."));
             assertFalse(file + " must not reach into the toolbelt", source.contains("IrisToolbelt"));

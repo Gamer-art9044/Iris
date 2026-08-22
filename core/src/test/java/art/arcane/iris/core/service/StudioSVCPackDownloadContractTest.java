@@ -15,7 +15,7 @@ import static org.junit.Assert.assertTrue;
 public class StudioSVCPackDownloadContractTest {
     @Test
     public void downloadsUseReporterCompletionWithoutMutatingLiveDatapacks() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/service/StudioSVC.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/service/StudioSVC.java")).replace("\r\n", "\n");
 
         assertTrue(source.contains("reporter.succeed(result);"));
         assertFalse(method(source, "public void downloadBuiltIn(VolmitSender sender, String key)")
@@ -26,7 +26,7 @@ public class StudioSVCPackDownloadContractTest {
 
     @Test
     public void downloadLeaseIsAcquiredBeforeUnconditionalIoDispatch() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/service/StudioSVC.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/service/StudioSVC.java")).replace("\r\n", "\n");
         int mutationStart = source.indexOf("private void runPackMutation(");
         int mutationEnd = source.indexOf("private void executePackMutation(", mutationStart);
         String runPackMutation = source.substring(mutationStart, mutationEnd);
@@ -47,7 +47,7 @@ public class StudioSVCPackDownloadContractTest {
 
     @Test
     public void acceptedDownloadsRouteFeedbackProgressAndTerminalStatesThroughReporter() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/service/StudioSVC.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/service/StudioSVC.java")).replace("\r\n", "\n");
         String builtIn = method(source, "public void downloadBuiltIn(VolmitSender sender, String key)");
         String remote = method(source, "public void downloadUrl(VolmitSender sender, String url)");
         String execute = method(source, "private void executePackMutation(");
@@ -64,7 +64,7 @@ public class StudioSVCPackDownloadContractTest {
 
     @Test
     public void shutdownClosesAdmissionAndDrainsTrackedDownloadBeforeServiceTeardown() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/service/StudioSVC.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/service/StudioSVC.java")).replace("\r\n", "\n");
         String onDisable = method(source, "public void onDisable()");
         String quiesce = method(source, "public void quiesceDownloadsForShutdown()");
 

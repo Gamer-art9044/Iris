@@ -186,7 +186,7 @@ public class PackDownloadProgressReporterTest {
     public void playerHudAlwaysShowsLoaderLaneAndActionBarWithCleanup() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/service/PackDownloadProgressReporter.java"
-        ));
+        )).replace("\r\n", "\n");
 
         assertFalse(source.contains("HudSlotRequest"));
         assertFalse(source.contains("HudSurface"));

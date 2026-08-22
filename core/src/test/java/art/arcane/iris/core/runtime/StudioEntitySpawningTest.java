@@ -21,7 +21,7 @@ public class StudioEntitySpawningTest {
     @Test
     public void studioWorldRulesEnableVanillaMobSpawning() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/runtime/WorldRuntimeControlService.java"));
+                "src/main/java/art/arcane/iris/core/runtime/WorldRuntimeControlService.java")).replace("\r\n", "\n");
         int helperStart = source.indexOf("static void enableStudioEntitySpawning");
         int helperEnd = source.indexOf("public boolean applyNoonTimeLock", helperStart);
         String helper = source.substring(helperStart, helperEnd);
@@ -38,7 +38,7 @@ public class StudioEntitySpawningTest {
     @Test
     public void generalStudioUsesAPlayerModeEligibleForNaturalSpawning() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/project/IrisProject.java"));
+                "src/main/java/art/arcane/iris/core/project/IrisProject.java")).replace("\r\n", "\n");
 
         assertFalse(source.contains("GameMode.SPECTATOR"));
         assertTrue(source.contains("GameMode.CREATIVE"));

@@ -54,7 +54,8 @@ public class MissingWorldStorageLogTest {
 
         assertEquals(2, emitted.size());
         assertTrue(emitted.get(0), emitted.get(0).contains("world_iris_gone"));
-        assertTrue(emitted.get(0), emitted.get(0).contains("/srv/world/dimensions/iris/gone"));
+        assertTrue(emitted.get(0),
+                emitted.get(0).contains(Path.of("/srv/world/dimensions/iris/gone").toString()));
     }
 
     @Test
@@ -80,7 +81,8 @@ public class MissingWorldStorageLogTest {
 
         assertTrue(MissingWorldStorageLog.hasWarned("world_iris_husk"));
         assertEquals(2, emitted.size());
-        assertTrue(emitted.get(0), emitted.get(0).contains("/srv/world/dimensions/iris/husk"));
+        assertTrue(emitted.get(0),
+                emitted.get(0).contains(Path.of("/srv/world/dimensions/iris/husk").toString()));
         assertTrue(emitted.get(1), emitted.get(1).contains("world_iris_husk"));
         assertFalse("an empty folder is deleted, not restored", emitted.get(1).contains("Restore"));
     }

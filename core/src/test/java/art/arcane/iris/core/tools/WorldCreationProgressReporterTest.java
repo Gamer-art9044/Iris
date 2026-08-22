@@ -62,7 +62,7 @@ public class WorldCreationProgressReporterTest {
     public void bukkitHudMutationIsMarshalledOffTheAsyncReporterThread() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/tools/WorldCreationProgressReporter.java"
-        ));
+        )).replace("\r\n", "\n");
 
         assertEquals(1, occurrences(source, "Bukkit.createBossBar("));
         assertTrue(source.contains("J.sfut(reporter::initializePlayerHud)"));

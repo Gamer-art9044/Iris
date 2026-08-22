@@ -11,7 +11,7 @@ import static org.junit.Assert.assertTrue;
 public class IrisCreatorProgressContractTest {
     @Test
     public void persistentCreateReportsTheWholeLifecycleInsteadOfOnlySpawnChunks() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/tools/IrisCreator.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/tools/IrisCreator.java")).replace("\r\n", "\n");
 
         int startReporter = source.indexOf("WorldCreationProgressReporter.start(sender, name)");
         int resolve = source.indexOf("0.02D, \"resolve_dimension\"", startReporter);

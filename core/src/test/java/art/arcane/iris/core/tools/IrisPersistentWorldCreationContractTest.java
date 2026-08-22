@@ -11,7 +11,7 @@ import static org.junit.Assert.assertTrue;
 public class IrisPersistentWorldCreationContractTest {
     @Test
     public void productionCreateFreezesIntoCurrentPlatformStorageBeforeWorldCreation() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/tools/IrisCreator.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/tools/IrisCreator.java")).replace("\r\n", "\n");
         int createStart = source.indexOf("private World createReserved(");
         int createEnd = source.indexOf("static Player createTeleportTarget(", createStart);
         String create = source.substring(createStart, createEnd);
@@ -39,7 +39,7 @@ public class IrisPersistentWorldCreationContractTest {
 
     @Test
     public void persistentCreatorPreservesConfiguredNameAndCanonicalIdentity() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/tools/IrisWorldCreator.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/core/tools/IrisWorldCreator.java")).replace("\r\n", "\n");
         int createStart = source.indexOf("public WorldCreator create()");
         int createEnd = source.indexOf("private World.Environment findEnvironment()", createStart);
         String create = source.substring(createStart, createEnd);
@@ -61,7 +61,7 @@ public class IrisPersistentWorldCreationContractTest {
     public void publicBukkitBackendRebuildKeepsExactFallbackWorldName() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/lifecycle/WorldLifecycleRequest.java"
-        ));
+        )).replace("\r\n", "\n");
         int rebuildStart = source.indexOf("public WorldCreator toWorldCreator()");
         int rebuildEnd = source.indexOf("return creator;", rebuildStart);
         String rebuild = source.substring(rebuildStart, rebuildEnd);

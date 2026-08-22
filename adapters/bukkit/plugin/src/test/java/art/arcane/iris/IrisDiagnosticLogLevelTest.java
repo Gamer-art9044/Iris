@@ -47,7 +47,7 @@ public class IrisDiagnosticLogLevelTest {
      */
     @Test
     public void adapterSideWarningsCarryTheSameSeverityAsCoreWarnings() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java")).replace("\r\n", "\n");
 
         String warn = method(source, "public static void warn(String format, Object... objs)");
         assertTrue(warn, warn.contains("diagnostic(Level.WARNING"));
@@ -60,7 +60,7 @@ public class IrisDiagnosticLogLevelTest {
 
     @Test
     public void theCoreLogBridgeRoutesDiagnosticsToThePluginLogger() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java"));
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java")).replace("\r\n", "\n");
         String bridge = method(source, "private static void bridgeLog(LogLevel level, String message)");
 
         assertTrue(bridge, bridge.contains("diagnosticLevel(target)"));

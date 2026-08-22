@@ -12,7 +12,7 @@ public class NMSBindingTileDeserializeContractTest {
     @Test
     public void ownedRegionTileDataMergesBeforeScheduledFallback() throws IOException {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
-        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java"));
+        String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf("public void deserializeTile(");
         int methodEnd = source.indexOf("\n    private void merge(", methodStart);
         String method = source.substring(methodStart, methodEnd);

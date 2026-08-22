@@ -70,7 +70,7 @@ public class ProgressBossBarToggleTest {
     }
 
     private String source(String relativePath) throws Exception {
-        return Files.readString(Path.of("src/main/java/art/arcane/iris").resolve(relativePath));
+        return Files.readString(Path.of("src/main/java/art/arcane/iris").resolve(relativePath)).replace("\r\n", "\n");
     }
 
     private void withProgressBossBar(boolean enabled, Runnable body) {

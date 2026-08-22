@@ -1,0 +1,16 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'art.arcane'
+version = rootProject.version
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    archiveBaseName.set('iris-spi')
+}

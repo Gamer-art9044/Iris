@@ -1,0 +1,547 @@
+/*
+ * Iris is a World Generator for Minecraft Bukkit Servers
+ * Copyright (c) 2022 Arcane Arts (Volmit Software)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package art.arcane.iris.engine;
+
+import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.gui.PregeneratorJob;
+import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.engine.object.IRare;
+import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisEntitySpawn;
+import art.arcane.iris.engine.object.IrisPosition;
+import art.arcane.iris.engine.object.IrisSpawner;
+import art.arcane.iris.engine.platform.EngineBukkitOps;
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
+import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.util.common.plugin.Chunks;
+import art.arcane.iris.util.common.scheduling.J;
+import art.arcane.volmlib.util.bukkit.WorldIdentity;
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.format.Form;
+import art.arcane.volmlib.util.math.PowerOfTwoCoordinates;
+import art.arcane.volmlib.util.math.Position2;
+import art.arcane.volmlib.util.math.RNG;
+import lombok.Data;
+import org.bukkit.Chunk;
+import org.bukkit.World;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Ambient and marker entity spawning for a Bukkit Iris world. Every count and spawn hops onto the
+ * thread that owns the data it reads (global for whole-world scans, entity for Folia candidate
+ * scans, region for the chunk being populated) and spawning is paused whenever a count could not
+ * be completed, so an incomplete saturation reading can never authorize a spawn.
+ */
+final class WorldEntitySpawner {
+    private final IrisWorldManager manager;
+    private final AtomicInteger actuallySpawned = new AtomicInteger();
+    private final AtomicBoolean entityCountWarningReported = new AtomicBoolean();
+    private final AtomicBoolean entityCountErrorReported = new AtomicBoolean();
+    private int cooldown = 0;
+
+    WorldEntitySpawner(IrisWorldManager manager) {
+        this.manager = manager;
+    }
+
+    boolean onAsyncTick() {
+        if (manager.getEngine().isClosing() || manager.getEngine().isClosed()) {
+            return false;
+        }
+
+        if (isPregenActiveForThisWorld()) {
+            J.sleep(500);
+            return false;
+        }
+
+        actuallySpawned.set(0);
+
+        if (!manager.getEngine().getWorld().hasPlatformWorld()) {
+            IrisLogging.debug("Can't spawn. No real world");
+            J.sleep(5000);
+            return false;
+        }
+
+        if (manager.cl.flip()) {
+            try {
+                World realWorld = BukkitWorldBinding.world(manager.getEngine().getWorld());
+                if (realWorld == null) {
+                    manager.entityCount = 0;
+                    manager.entityCountValid = false;
+                } else if (J.isFolia()) {
+                    Integer count = getFoliaLivingEntityCount(realWorld);
+                    if (count != null) {
+                        manager.entityCount = count;
+                        manager.entityCountValid = true;
+                        resetEntityCountFailures();
+                    } else {
+                        manager.entityCountValid = false;
+                    }
+                } else {
+                    CompletableFuture<Integer> future = new CompletableFuture<>();
+                    boolean scheduled = J.runGlobal(() -> {
+                        try {
+                            int count = 0;
+                            for (Entity entity : realWorld.getEntities()) {
+                                if (entity instanceof LivingEntity && !entity.isDead()) {
+                                    count++;
+                                }
+                            }
+                            future.complete(count);
+                        } catch (Throwable ex) {
+                            future.completeExceptionally(ex);
+                        }
+                    });
+                    if (scheduled) {
+                        manager.entityCount = future.get(2, TimeUnit.SECONDS);
+                        manager.entityCountValid = true;
+                        resetEntityCountFailures();
+                    } else {
+                        reportEntityCountFailure("Unable to schedule the global entity count; pausing Iris entity spawning until a complete count is available.", null);
+                    }
+                }
+            } catch (InterruptedException e) {
+                manager.entityCountValid = false;
+                Thread.currentThread().interrupt();
+                return false;
+            } catch (TimeoutException e) {
+                reportEntityCountFailure("Timed out while counting entities; pausing Iris entity spawning until a complete count is available.", null);
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                reportEntityCountFailure("Failed to count entities; pausing Iris entity spawning until a complete count is available.", cause);
+            } catch (Throwable e) {
+                reportEntityCountFailure("Failed to count entities; pausing Iris entity spawning until a complete count is available.", e);
+            }
+        }
+
+        if (!manager.entityCountValid) {
+            return false;
+        }
+
+        double epx = manager.getEntitySaturation();
+        if (epx > IrisSettings.get().getWorld().getTargetSpawnEntitiesPerChunk()) {
+            IrisLogging.debug("Can't spawn. The entity per chunk ratio is at " + Form.pc(epx, 2) + " > 100% (total entities " + manager.entityCount + ")");
+            J.sleep(5000);
+            return false;
+        }
+
+        int spawnBuffer = RNG.r.i(2, 12);
+        World world = BukkitWorldBinding.world(manager.getEngine().getWorld());
+        if (world == null) {
+            return false;
+        }
+
+        Position2[] cc = manager.chunkMaintenance.getLoadedChunkPositionsSnapshot(world);
+        while (spawnBuffer-- > 0) {
+            if (manager.getEngine().isClosing() || manager.getEngine().isClosed()) {
+                return actuallySpawned.get() > 0;
+            }
+
+            if (cc.length == 0) {
+                IrisLogging.debug("Can't spawn. No chunks!");
+                return false;
+            }
+
+            Position2 c = cc[RNG.r.nextInt(cc.length)];
+            if (!spawnChunkSafely(world, c.getX(), c.getZ(), false)) {
+                return actuallySpawned.get() > 0;
+            }
+        }
+
+        return actuallySpawned.get() > 0;
+    }
+
+    boolean isPregenActiveForThisWorld() {
+        World world = BukkitWorldBinding.world(manager.getEngine().getWorld());
+        if (world == null) {
+            return false;
+        }
+
+        if (IrisToolbelt.isWorldMaintenanceActive(world)) {
+            return true;
+        }
+
+        PregeneratorJob job = PregeneratorJob.getInstance();
+        if (job == null) {
+            return false;
+        }
+
+        return job.targetsWorldIdentity(WorldIdentity.serialize(world));
+    }
+
+    private Integer getFoliaLivingEntityCount(World world) {
+        CompletableFuture<List<Player>> playerFuture = new CompletableFuture<>();
+        boolean scheduled = J.runGlobal(() -> {
+            try {
+                playerFuture.complete(new ArrayList<>(world.getPlayers()));
+            } catch (Throwable e) {
+                playerFuture.completeExceptionally(e);
+            }
+        });
+        if (!scheduled) {
+            reportEntityCountFailure("Unable to schedule the Folia player snapshot; pausing Iris entity spawning until a complete count is available.", null);
+            return null;
+        }
+
+        List<Player> players;
+        try {
+            players = playerFuture.get(2, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            manager.entityCountValid = false;
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (TimeoutException e) {
+            reportEntityCountFailure("Timed out while reading the Folia player snapshot; pausing Iris entity spawning until a complete count is available.", null);
+            return null;
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            reportEntityCountFailure("Failed to read the Folia player snapshot; pausing Iris entity spawning until a complete count is available.", cause);
+            return null;
+        }
+
+        Map<String, Entity> candidates = new ConcurrentHashMap<>();
+        AtomicBoolean incomplete = new AtomicBoolean();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        CountDownLatch latch = new CountDownLatch(players.size());
+        for (Player player : players) {
+            if (player == null) {
+                latch.countDown();
+                continue;
+            }
+
+            if (!J.runEntity(player, () -> {
+                try {
+                    if (!player.isOnline() || !world.equals(player.getWorld())) {
+                        return;
+                    }
+                    candidates.put(player.getUniqueId().toString(), player);
+                    for (Entity nearby : player.getNearbyEntities(64, 64, 64)) {
+                        if (nearby != null) {
+                            candidates.put(nearby.getUniqueId().toString(), nearby);
+                        }
+                    }
+                } catch (Throwable e) {
+                    incomplete.set(true);
+                    failure.compareAndSet(null, e);
+                } finally {
+                    latch.countDown();
+                }
+            })) {
+                incomplete.set(true);
+                latch.countDown();
+            }
+        }
+
+        if (!awaitEntityTasks(latch, 2, TimeUnit.SECONDS) || incomplete.get()) {
+            if (!Thread.currentThread().isInterrupted()) {
+                reportEntityCountFailure("The Folia entity candidate scan was incomplete; pausing Iris entity spawning until a complete count is available.", failure.get());
+            }
+            return null;
+        }
+
+        AtomicInteger count = new AtomicInteger();
+        incomplete.set(false);
+        failure.set(null);
+        CountDownLatch entityLatch = new CountDownLatch(candidates.size());
+        for (Entity entity : candidates.values()) {
+            if (!J.runEntity(entity, () -> {
+                try {
+                    if (entity instanceof LivingEntity && world.equals(entity.getWorld()) && !entity.isDead()) {
+                        count.incrementAndGet();
+                    }
+                } catch (Throwable e) {
+                    incomplete.set(true);
+                    failure.compareAndSet(null, e);
+                } finally {
+                    entityLatch.countDown();
+                }
+            })) {
+                incomplete.set(true);
+                entityLatch.countDown();
+            }
+        }
+
+        if (!awaitEntityTasks(entityLatch, 2, TimeUnit.SECONDS) || incomplete.get()) {
+            if (!Thread.currentThread().isInterrupted()) {
+                reportEntityCountFailure("The Folia entity validation scan was incomplete; pausing Iris entity spawning until a complete count is available.", failure.get());
+            }
+            return null;
+        }
+
+        return count.get();
+    }
+
+    static boolean awaitEntityTasks(CountDownLatch latch, long timeout, TimeUnit unit) {
+        try {
+            return latch.await(timeout, unit);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private boolean spawnChunkSafely(World world, int chunkX, int chunkZ, boolean initial) {
+        if (world == null) {
+            return false;
+        }
+
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        AtomicBoolean failureReported = new AtomicBoolean();
+        future.whenComplete((ignored, failure) -> {
+            if (failure != null) {
+                reportSpawnFailure(chunkX, chunkZ, failure, failureReported);
+            }
+        });
+        boolean scheduled;
+        try {
+            scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
+                try {
+                    if (!world.isChunkLoaded(chunkX, chunkZ) || !Chunks.isSafe(world, chunkX, chunkZ)) {
+                        future.complete(null);
+                        return;
+                    }
+
+                    spawnIn(world.getChunkAt(chunkX, chunkZ), initial);
+                    future.complete(null);
+                } catch (Throwable e) {
+                    future.completeExceptionally(e);
+                }
+            });
+        } catch (Throwable e) {
+            IrisLogging.reportError("Failed to schedule an Iris entity spawn for chunk " + chunkX + "," + chunkZ + ".", e);
+            return false;
+        }
+
+        if (!scheduled) {
+            IrisLogging.debug("Skipped Iris entity spawning because the region task was not accepted for chunk " + chunkX + "," + chunkZ + ".");
+            return false;
+        }
+
+        try {
+            future.get(5, TimeUnit.SECONDS);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (TimeoutException e) {
+            IrisLogging.warn("Timed out waiting for Iris entity spawning in chunk %d,%d; deferring the remaining spawn buffer.", chunkX, chunkZ);
+            return false;
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            reportSpawnFailure(chunkX, chunkZ, cause, failureReported);
+            return false;
+        }
+    }
+
+    private void reportEntityCountFailure(String message, Throwable error) {
+        manager.entityCountValid = false;
+        if (error != null) {
+            if (entityCountErrorReported.compareAndSet(false, true)) {
+                IrisLogging.reportError(message, error);
+            }
+            return;
+        }
+
+        if (entityCountWarningReported.compareAndSet(false, true)) {
+            IrisLogging.warn(message);
+        }
+    }
+
+    private void resetEntityCountFailures() {
+        entityCountWarningReported.set(false);
+        entityCountErrorReported.set(false);
+    }
+
+    private void reportSpawnFailure(int chunkX, int chunkZ, Throwable failure, AtomicBoolean failureReported) {
+        if (!failureReported.compareAndSet(false, true)) {
+            return;
+        }
+        Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+        IrisLogging.reportError("Failed to spawn Iris entities in chunk " + chunkX + "," + chunkZ + ".", cause);
+    }
+
+    void spawnIn(Chunk c, boolean initial) {
+        if (manager.getEngine().isClosed()) {
+            return;
+        }
+
+        if (!isEntitySpawningEnabledForCurrentWorld()) {
+            return;
+        }
+
+        IrisComplex complex = manager.getEngine().getComplex();
+        if (complex == null) {
+            return;
+        }
+
+        if (IrisSettings.get().getWorld().isMarkerEntitySpawningSystem()) {
+            manager.markerScanner.forEachMarkerSpawner(c, (block, spawners) -> {
+                IrisSpawner s = new KList<>(spawners).getRandom();
+                if (s == null) {
+                    return;
+                }
+
+                spawn(block, s, false);
+                J.runRegion(c.getWorld(), c.getX(), c.getZ(), manager.managedTask(
+                        "bukkit_world_manager_marker_spawn_followup",
+                        () -> manager.chunkMaintenance.raiseInitialSpawnMarkerFlag(c.getWorld(), c.getX(), c.getZ(),
+                                () -> spawn(block, s, true))));
+            });
+        }
+
+        if (!IrisSettings.get().getWorld().isAmbientEntitySpawningSystem()) {
+            return;
+        }
+
+        //@builder
+        Predicate<IrisSpawner> filter = i -> i.canSpawn(manager.getEngine(), c.getX(), c.getZ());
+        ChunkCounter counter = new ChunkCounter(c.getEntities());
+
+        IrisBiome biome = EngineBukkitOps.getSurfaceBiome(manager.getEngine(), c);
+        IrisEntitySpawn v = spawnRandomly(Stream.concat(manager.getData().getSpawnerLoader()
+                                .loadAll(manager.getDimension().getEntitySpawners())
+                                .shuffleCopy(RNG.r)
+                                .stream()
+                                .filter(filter)
+                                .filter((i) -> i.isValid(biome)),
+                        Stream.concat(manager.getData()
+                                        .getSpawnerLoader()
+                                        .loadAll(manager.getEngine().getRegion(PowerOfTwoCoordinates.chunkToBlock(c.getX()), PowerOfTwoCoordinates.chunkToBlock(c.getZ())).getEntitySpawners())
+                                        .shuffleCopy(RNG.r)
+                                        .stream()
+                                        .filter(filter),
+                                manager.getData().getSpawnerLoader()
+                                        .loadAll(manager.getEngine().getSurfaceBiome(PowerOfTwoCoordinates.chunkToBlock(c.getX()), PowerOfTwoCoordinates.chunkToBlock(c.getZ())).getEntitySpawners())
+                                        .shuffleCopy(RNG.r)
+                                        .stream()
+                                        .filter(filter)))
+                .filter(counter)
+                .flatMap((i) -> stream(i, initial))
+                .collect(Collectors.toList()))
+                .getRandom();
+        //@done
+        if (v == null || v.getReferenceSpawner() == null)
+            return;
+
+        spawn(c, v);
+    }
+
+    private void spawn(Chunk c, IrisEntitySpawn i) {
+        IrisSpawner ref = i.getReferenceSpawner();
+        int s = i.spawn(manager.getEngine(), c, RNG.r);
+        actuallySpawned.addAndGet(s);
+        if (s > 0) {
+            ref.spawn(manager.getEngine(), c.getX(), c.getZ());
+        }
+    }
+
+    private void spawn(IrisPosition pos, IrisEntitySpawn i) {
+        IrisSpawner ref = i.getReferenceSpawner();
+        if (!ref.canSpawn(manager.getEngine(), PowerOfTwoCoordinates.blockToChunkFloor(pos.getX()), PowerOfTwoCoordinates.blockToChunkFloor(pos.getZ())))
+            return;
+
+        int s = i.spawn(manager.getEngine(), pos, RNG.r);
+        actuallySpawned.addAndGet(s);
+        if (s > 0) {
+            ref.spawn(manager.getEngine(), PowerOfTwoCoordinates.blockToChunkFloor(pos.getX()), PowerOfTwoCoordinates.blockToChunkFloor(pos.getZ()));
+        }
+    }
+
+    void spawn(IrisPosition block, IrisSpawner spawner, boolean initial) {
+        if (manager.getEngine().isClosed()) {
+            return;
+        }
+
+        if (spawner == null) {
+            return;
+        }
+
+        KList<IrisEntitySpawn> s = initial ? spawner.getInitialSpawns() : spawner.getSpawns();
+        if (s.isEmpty()) {
+            return;
+        }
+
+        IrisEntitySpawn ss = spawnRandomly(s).getRandom();
+        ss.setReferenceSpawner(spawner);
+        ss.setReferenceMarker(spawner.getReferenceMarker());
+        spawn(block, ss);
+    }
+
+    private Stream<IrisEntitySpawn> stream(IrisSpawner s, boolean initial) {
+        for (IrisEntitySpawn i : initial ? s.getInitialSpawns() : s.getSpawns()) {
+            i.setReferenceSpawner(s);
+            i.setReferenceMarker(s.getReferenceMarker());
+        }
+
+        return (initial ? s.getInitialSpawns() : s.getSpawns()).stream();
+    }
+
+    boolean isEntitySpawningEnabledForCurrentWorld() {
+        if (!manager.getEngine().isStudio()) {
+            return true;
+        }
+
+        return IrisSettings.get().getStudio().isEntitySpawning();
+    }
+
+    private KList<IrisEntitySpawn> spawnRandomly(List<IrisEntitySpawn> types) {
+        return IRare.expandWeighted(types);
+    }
+
+    @Data
+    private static class ChunkCounter implements Predicate<IrisSpawner> {
+        private final Entity[] entities;
+        private transient int index = 0;
+        private transient int count = 0;
+
+        @Override
+        public boolean test(IrisSpawner spawner) {
+            int max = spawner.getMaxEntitiesPerChunk();
+            if (max <= count)
+                return false;
+
+            while (index < entities.length) {
+                if (entities[index++] instanceof LivingEntity) {
+                    if (++count >= max)
+                        return false;
+                }
+            }
+
+            return true;
+        }
+    }
+}

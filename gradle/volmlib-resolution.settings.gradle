@@ -1,0 +1,98 @@
+/*
+ * Iris is a World Generator for Minecraft Servers
+ * Copyright (c) 2026 Arcane Arts (Volmit Software)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Shared VolmLib source resolution, applied by every Iris settings file:
+ *
+ *   root            settings.gradle
+ *   adapters/fabric settings.gradle
+ *   adapters/forge  settings.gradle
+ *   adapters/neoforge settings.gradle
+ *
+ * Apply with an explicit File so the path never depends on the invocation directory:
+ *
+ *   apply from: new File(settingsDir, 'gradle/volmlib-resolution.settings.gradle')                   // root
+ *   apply from: new File(settingsDir, '../../gradle/volmlib-resolution.settings.gradle').canonicalFile // adapters
+ *
+ * `settingsDir` resolves against the *including* build, so the upward search for a sibling
+ * VolmLib checkout works from the repo root and from a nested adapter build alike.
+ *
+ * Behaviour:
+ *   -PuseLocalVolmLib=false           disables source substitution (CI uses this).
+ *   -PlocalVolmLibDirectory=<path>    explicit VolmLib checkout (relative paths resolve
+ *                                     against the including build's settings directory).
+ *   VOLMLIB_DIR=<path>                same, via environment.
+ *   otherwise                         walk up from settingsDir looking for a `VolmLib` directory
+ *                                     that contains a settings script.
+ *
+ * When nothing is found the build falls back to the published `volmLibCoordinate` from
+ * gradle.properties.
+ */
+
+import java.io.File
+
+boolean irisHasVolmLibSettings(File directory) {
+    if (directory == null) {
+        return false
+    }
+
+    new File(directory, 'settings.gradle.kts').exists() || new File(directory, 'settings.gradle').exists()
+}
+
+File irisResolveLocalVolmLibDirectory() {
+    String configuredPath = providers.gradleProperty('localVolmLibDirectory')
+        .orElse(providers.environmentVariable('VOLMLIB_DIR'))
+        .orNull
+    if (configuredPath != null && !configuredPath.isBlank()) {
+        File configuredDirectory = new File(configuredPath)
+        if (!configuredDirectory.isAbsolute()) {
+            configuredDirectory = new File(settingsDir, configuredPath)
+        }
+        if (irisHasVolmLibSettings(configuredDirectory)) {
+            return configuredDirectory
+        }
+    }
+
+    File currentDirectory = settingsDir
+    while (currentDirectory != null) {
+        File candidate = new File(currentDirectory, 'VolmLib')
+        if (irisHasVolmLibSettings(candidate)) {
+            return candidate
+        }
+
+        currentDirectory = currentDirectory.parentFile
+    }
+
+    null
+}
+
+boolean irisUseLocalVolmLib = providers.gradleProperty('useLocalVolmLib')
+    .orElse('true')
+    .map { String value -> value.equalsIgnoreCase('true') }
+    .get()
+File irisLocalVolmLibDirectory = irisResolveLocalVolmLibDirectory()
+
+if (irisUseLocalVolmLib && irisLocalVolmLibDirectory != null) {
+    includeBuild(irisLocalVolmLibDirectory) {
+        dependencySubstitution {
+            substitute(module('com.github.VolmitSoftware:VolmLib')).using(project(':shared'))
+            substitute(module('com.github.VolmitSoftware.VolmLib:shared')).using(project(':shared'))
+            substitute(module('com.github.VolmitSoftware.VolmLib:volmlib-shared')).using(project(':shared'))
+        }
+    }
+}

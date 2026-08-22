@@ -1,0 +1,225 @@
+package art.arcane.iris.engine.mantle.components;
+
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.mantle.EngineMantle;
+import art.arcane.iris.engine.mantle.MantleComponent;
+import art.arcane.iris.engine.mantle.MantlePass;
+import art.arcane.iris.engine.mantle.MatterGenerator;
+import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisGeneratorStyle;
+import art.arcane.iris.engine.object.IrisObject;
+import art.arcane.iris.engine.object.IrisObjectPlacement;
+import art.arcane.iris.engine.object.IrisObjectRotation;
+import art.arcane.iris.engine.object.IrisObjectScale;
+import art.arcane.iris.engine.object.IrisObjectTranslate;
+import art.arcane.iris.engine.object.IrisProceduralObjects;
+import art.arcane.iris.engine.object.IrisProceduralPlacement;
+import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.engine.object.IrisVacuumSettings;
+import art.arcane.iris.engine.object.NoiseStyle;
+import art.arcane.iris.engine.object.ObjectPlaceMode;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.PlatformRegistries;
+import art.arcane.iris.util.common.math.IrisBlockVector;
+import art.arcane.iris.util.project.context.ChunkContext;
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.mantle.runtime.Mantle;
+import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
+import art.arcane.volmlib.util.matter.Matter;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
+
+public class MantleObjectComponentBoundaryRadiusTest {
+    @Rule
+    public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+    @Before
+    public void bindPlatform() {
+        IrisPlatforms.unbind();
+        PlatformBlockState block = mock(PlatformBlockState.class);
+        PlatformRegistries registries = mock(PlatformRegistries.class);
+        when(registries.block(anyString())).thenReturn(block);
+        IrisPlatform platform = mock(IrisPlatform.class);
+        when(platform.registries()).thenReturn(registries);
+        IrisPlatforms.bind(platform);
+    }
+
+    @After
+    public void unbindPlatform() {
+        IrisPlatforms.unbind();
+    }
+
+    @Test
+    public void verticalRotationAndTranslationExpandHorizontalReach() {
+        IrisObjectPlacement placement = new IrisObjectPlacement()
+                .setRotation(IrisObjectRotation.of(90, 0, 0))
+                .setTranslate(new IrisObjectTranslate().setX(3).setY(4));
+
+        assertEquals(53, MantleObjectComponent.calculatePlacementReach(new IrisBlockVector(5, 48, 7), placement));
+    }
+
+    @Test
+    public void scaleWarpAndVacuumExpandPlacementReach() {
+        IrisObjectPlacement placement = new IrisObjectPlacement()
+                .setScale(new IrisObjectScale().setSize(2D))
+                .setWarp(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).setMultiplier(10D))
+                .setMode(ObjectPlaceMode.VACUUM)
+                .setVacuumSettings(new IrisVacuumSettings().setRadius(12));
+
+        assertEquals(43, MantleObjectComponent.calculatePlacementReach(new IrisBlockVector(5, 4, 3), placement));
+    }
+
+    @Test
+    public void proceduralTreeTransformsContributeToRadius() {
+        IrisObjectPlacement placement = new IrisObjectPlacement()
+                .setRotation(IrisObjectRotation.of(90, 0, 0))
+                .setTranslate(new IrisObjectTranslate().setX(3).setY(4));
+        IrisData data = mock(IrisData.class);
+        IrisProceduralPlacement proceduralPlacement = mock(IrisProceduralPlacement.class);
+        when(proceduralPlacement.getVariantObjects(data)).thenReturn(new KList<>(new IrisObject(5, 48, 7)));
+        when(proceduralPlacement.asPlacement()).thenReturn(placement);
+        IrisProceduralObjects proceduralObjects = mock(IrisProceduralObjects.class);
+        when(proceduralObjects.isEmpty()).thenReturn(false);
+        when(proceduralObjects.getAllPlacements()).thenReturn(new KList<>(proceduralPlacement));
+        IrisRegion region = mock(IrisRegion.class);
+        when(region.getObjects()).thenReturn(new KList<>());
+        when(region.getProceduralObjects()).thenReturn(proceduralObjects);
+        IrisDimension dimension = mock(IrisDimension.class);
+        when(dimension.getAllRegions(any())).thenReturn(new KList<>(region));
+        when(dimension.getReachableBiomes(any())).thenReturn(new KList<>());
+        Engine engine = mock(Engine.class);
+        when(engine.getDimension()).thenReturn(dimension);
+        EngineMantle engineMantle = mock(EngineMantle.class);
+        when(engineMantle.getEngine()).thenReturn(engine);
+        when(engineMantle.getData()).thenReturn(data);
+
+        assertEquals(53, new MantleObjectComponent(engineMantle).getRadius());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void translatedTreeSchedulesDistantOwnerChunks() throws Exception {
+        File objectFile = temporaryFolder.newFile("tree.iob");
+        try (DataOutputStream output = new DataOutputStream(new FileOutputStream(objectFile))) {
+            output.writeInt(1);
+            output.writeInt(1);
+            output.writeInt(1);
+        }
+
+        IrisObjectPlacement placement = new IrisObjectPlacement()
+                .setPlace(new KList<>("test/tree"))
+                .setTranslate(new IrisObjectTranslate().setX(32));
+        IrisBiome biome = new IrisBiome().setObjects(new KList<>(placement));
+        IrisDimension dimension = mock(IrisDimension.class);
+        when(dimension.isUseMantle()).thenReturn(true);
+        when(dimension.getAllRegions(any())).thenReturn(new KList<>());
+        when(dimension.getReachableBiomes(any())).thenReturn(new KList<>(biome));
+
+        ResourceLoader<IrisObject> objectLoader = mock(ResourceLoader.class);
+        when(objectLoader.findFile("test/tree")).thenReturn(objectFile);
+        IrisData data = mock(IrisData.class);
+        when(data.getObjectLoader()).thenReturn(objectLoader);
+
+        EngineMantle engineMantle = mock(EngineMantle.class);
+        Engine engine = mock(Engine.class);
+        when(engine.getDimension()).thenReturn(dimension);
+        when(engine.getMantle()).thenReturn(engineMantle);
+        when(engineMantle.getEngine()).thenReturn(engine);
+        when(engineMantle.getData()).thenReturn(data);
+
+        MantleObjectComponent component = spy(new MantleObjectComponent(engineMantle));
+        assertEquals(33, component.getRadius());
+        int chunkRadius = Math.ceilDiv(component.getRadius(), 16);
+        assertEquals(3, chunkRadius);
+
+        Mantle<Matter> mantle = mock(Mantle.class);
+        MantleChunk<Matter> chunk = mock(MantleChunk.class);
+        when(mantle.getChunk(anyInt(), anyInt())).thenReturn(chunk);
+        when(chunk.use()).thenReturn(chunk);
+        doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(1);
+            task.run();
+            return null;
+        }).when(chunk).raiseFlagSuspend(any(), any(Runnable.class));
+
+        List<String> generatedChunks = new ArrayList<>();
+        doAnswer(invocation -> {
+            int chunkX = invocation.getArgument(1);
+            int chunkZ = invocation.getArgument(2);
+            generatedChunks.add(chunkX + "," + chunkZ);
+            return null;
+        }).when(component).generateLayer(any(), anyInt(), anyInt(), any());
+
+        TestMatterGenerator generator = new TestMatterGenerator(new GeneratorOptions(engine, mantle, component, chunkRadius));
+        generator.generateMatter(0, 0, false, mock(ChunkContext.class));
+
+        assertTrue(generatedChunks.contains("-2,0"));
+        assertTrue(generatedChunks.contains("2,0"));
+    }
+
+    private static final class TestMatterGenerator implements MatterGenerator {
+        private final Engine engine;
+        private final Mantle<Matter> mantle;
+        private final List<MantlePass> components;
+        private final int radius;
+
+        private TestMatterGenerator(GeneratorOptions options) {
+            this.engine = options.engine();
+            this.mantle = options.mantle();
+            this.components = List.of(new MantlePass(List.of(options.component()), options.radius(), 0));
+            this.radius = options.radius();
+        }
+
+        @Override
+        public Engine getEngine() {
+            return engine;
+        }
+
+        @Override
+        public Mantle<Matter> getMantle() {
+            return mantle;
+        }
+
+        @Override
+        public int getRadius() {
+            return radius;
+        }
+
+        @Override
+        public int getRealRadius() {
+            return 0;
+        }
+
+        @Override
+        public List<MantlePass> getComponents() {
+            return components;
+        }
+    }
+
+    private record GeneratorOptions(Engine engine, Mantle<Matter> mantle, MantleComponent component, int radius) {
+    }
+}

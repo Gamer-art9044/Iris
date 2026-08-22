@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "art.arcane.iris.modded.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "EntityPersistenceMixin",
+    "LivingEntityLootMixin",
+    "MobAwarenessMixin",
+    "StructureTemplatePaletteConcurrencyMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

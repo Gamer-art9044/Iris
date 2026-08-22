@@ -1,0 +1,95 @@
+plugins {
+    id 'application'
+}
+
+group = 'art.arcane'
+version = rootProject.version
+
+application {
+    mainClass = 'art.arcane.iris.probe.ClassloadProbe'
+}
+
+String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
+    .orElse('com.github.VolmitSoftware:VolmLib:e6574cf814b3dd670385a4d632a63fde2038e186')
+    .get()
+
+dependencies {
+    implementation(project(':core'))
+    compileOnly(libs.spigot)
+    testImplementation('junit:junit:4.13.2')
+    testImplementation(volmLibCoordinate) {
+        transitive = false
+    }
+    compileOnly(volmLibCoordinate) {
+        transitive = false
+    }
+    runtimeOnly(libs.paralithic)
+    runtimeOnly(libs.gson)
+    runtimeOnly(libs.lru)
+    runtimeOnly(libs.commons.io)
+    runtimeOnly(libs.commons.lang3)
+    runtimeOnly(libs.fastutil)
+    runtimeOnly(libs.caffeine)
+    runtimeOnly(libs.lz4)
+    runtimeOnly(libs.zip)
+    runtimeOnly(libs.guava)
+    runtimeOnly(libs.sentry)
+    runtimeOnly(libs.oshi)
+    runtimeOnly(libs.byteBuddy.core)
+    runtimeOnly(libs.byteBuddy.agent)
+}
+
+tasks.named('run', JavaExec).configure {
+    args(project(':core').layout.buildDirectory.dir('classes/java/main').get().asFile.absolutePath)
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+    dependsOn(':core:compileJava')
+}
+
+tasks.named('test').configure {
+    dependsOn(':core:compileJava')
+}
+
+Provider<String> probePack = providers.gradleProperty('probePack')
+Provider<String> probeDimension = providers.gradleProperty('probeDimension')
+Provider<String> probeWarmupChunks = providers.gradleProperty('probeWarmupChunks').orElse('256')
+Provider<String> probeMeasuredChunks = providers.gradleProperty('probeMeasuredChunks').orElse('1024')
+Provider<String> probeCenterChunkX = providers.gradleProperty('probeCenterChunkX').orElse('2048')
+Provider<String> probeCenterChunkZ = providers.gradleProperty('probeCenterChunkZ').orElse('2048')
+
+tasks.register('genProbe', JavaExec) {
+    group = 'verification'
+    description = 'Constructs a real Iris engine over a real pack and generates chunks into buffers on a Bukkit-free JVM.'
+    mainClass = 'art.arcane.iris.probe.GenerationProbe'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+    dependsOn(':core:compileJava')
+    doFirst {
+        if (!probePack.isPresent() || probePack.get().isBlank()) {
+            throw new GradleException('genProbe requires -PprobePack=/absolute/path/to/pack')
+        }
+        if (!probeDimension.isPresent() || probeDimension.get().isBlank()) {
+            throw new GradleException('genProbe requires -PprobeDimension=<dimension-key>')
+        }
+        args(
+            probePack.get(),
+            probeDimension.get(),
+            probeWarmupChunks.get(),
+            probeMeasuredChunks.get(),
+            probeCenterChunkX.get(),
+            probeCenterChunkZ.get())
+    }
+}
+
+String deserializationPack = providers.gradleProperty('deserializationPack')
+    .orElse(project.file('src/main/resources/deserialization-pack').absolutePath)
+    .get()
+
+tasks.register('deserializationProbe', JavaExec) {
+    group = 'verification'
+    description = 'Deserializes entity, spawner and loot pack content through the real Iris Gson loaders on a Bukkit-free JVM to keep Bukkit-typed pack-model fields dead.'
+    mainClass = 'art.arcane.iris.probe.DeserializationProbe'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+    args(deserializationPack)
+    dependsOn(':core:compileJava')
+}

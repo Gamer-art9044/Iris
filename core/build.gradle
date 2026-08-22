@@ -1,0 +1,390 @@
+import io.github.slimjar.resolver.data.Mirror
+import org.gradle.api.Task
+import org.gradle.api.tasks.Copy
+import org.gradle.api.tasks.TaskProvider
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.jvm.tasks.Jar
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+
+import java.net.URI
+import java.nio.charset.StandardCharsets
+
+/*
+ * Iris is a World Generator for Minecraft Bukkit Servers
+ * Copyright (c) 2021 Arcane Arts (Volmit Software)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+plugins {
+    id 'java'
+    id 'java-library'
+    alias(libs.plugins.shadow)
+    alias(libs.plugins.sentry)
+    alias(libs.plugins.slimjar)
+}
+
+def lib = 'art.arcane.iris.util'
+String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
+    .orElse('com.github.VolmitSoftware:VolmLib:e6574cf814b3dd670385a4d632a63fde2038e186')
+    .get()
+String sentryAuthToken = findProperty('sentry.auth.token') as String ?: System.getenv('SENTRY_AUTH_TOKEN')
+boolean hasSentryAuthToken = sentryAuthToken != null && !sentryAuthToken.isBlank()
+
+/**
+ * Dependencies.
+ *
+ * Provided or classpath dependencies are not shaded and are available on the runtime classpath
+ *
+ * Shaded dependencies are not available at runtime, nor are they available on mvn central so they
+ * need to be shaded into the jar (increasing binary size)
+ *
+ * Dynamically loaded dependencies are defined in the plugin.yml (updating these must be updated in the
+ * plugin.yml also, otherwise they wont be available). These do not increase binary size). Only declare
+ * these dependencies if they are available on mvn central.
+ */
+dependencies {
+    api(project(':spi'))
+
+    // Provided or Classpath
+    compileOnly(libs.lombok)
+    annotationProcessor(libs.lombok)
+    compileOnly(libs.paper.api)
+    compileOnly(libs.log4j.api)
+    compileOnly(libs.log4j.core)
+    compileOnly(libs.guava)
+
+    // Third Party Integrations
+    compileOnly(libs.nexo)
+    compileOnly(libs.itemsadder)
+    compileOnly(libs.score)
+    compileOnly(libs.mmoitems)
+    compileOnly(libs.mythiclib)
+    compileOnly(libs.eco)
+    compileOnly(libs.mythic)
+    compileOnly(libs.mythicCrucible)
+    compileOnly(libs.kgenerators) {
+        transitive = false
+    }
+    compileOnly(libs.multiverseCore)
+    compileOnly(libs.craftengine.core)
+    compileOnly(libs.craftengine.bukkit)
+
+    // Shaded
+    implementation('de.crazydev22.slimjar.helper:spigot:2.1.9')
+    implementation(volmLibCoordinate) {
+        transitive = false
+    }
+    implementation(libs.gson)
+    implementation(libs.lru)
+    implementation(libs.caffeine)
+
+    // Dynamically Loaded
+    slim(libs.paralithic)
+    slim(libs.paperlib)
+    slim(libs.adventure.api)
+    slim(libs.adventure.minimessage)
+    slim(libs.adventure.platform)
+    slim(libs.bstats)
+    slim(libs.sentry)
+
+    slim(libs.commons.io)
+    slim(libs.commons.lang3)
+    slim(libs.oshi)
+    slim(libs.lz4)
+    slim(libs.fastutil)
+    slim(libs.zip) {
+        exclude(group: 'org.slf4j', module: 'slf4j-api')
+    }
+    slim(libs.asm)
+    slim(libs.byteBuddy.core)
+    slim(libs.byteBuddy.agent)
+    slim(libs.dom4j)
+    slim(libs.jaxen)
+
+    testImplementation('junit:junit:4.13.2')
+    testImplementation('org.mockito:mockito-core:5.23.0')
+    testImplementation(libs.paper.api)
+    testRuntimeOnly(libs.paper.api)
+    testImplementation(libs.multiverseCore)
+}
+
+tasks.named('test').configure {
+    maxHeapSize = '1g'
+    systemProperty('iris.packBenchmarkingSource', file('src/main/java/art/arcane/iris/core/tools/IrisPackBenchmarking.java').absolutePath)
+    systemProperty('iris.irisToolbeltSource', file('src/main/java/art/arcane/iris/core/tools/IrisToolbelt.java').absolutePath)
+    systemProperty('iris.irisCreatorSource', file('src/main/java/art/arcane/iris/core/tools/IrisCreator.java').absolutePath)
+    systemProperty('iris.bukkitChunkGeneratorSource', file('src/main/java/art/arcane/iris/engine/platform/BukkitChunkGenerator.java').absolutePath)
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+sentry {
+    url = 'http://sentry.volmit.com:8080'
+    autoInstallation.enabled = false
+    includeSourceContext = true
+
+    org = 'sentry'
+    projectName = 'iris'
+    authToken = sentryAuthToken
+}
+
+slimJar {
+    mirrors = [
+        new Mirror(
+            URI.create('https://maven-central.storage-download.googleapis.com/maven2').toURL(),
+            URI.create('https://repo.maven.apache.org/maven2/').toURL()
+        )
+    ]
+
+    relocate('com.dfsek.paralithic', "${lib}.paralithic")
+    relocate('io.papermc.lib', "${lib}.paper")
+    relocate('net.kyori', "${lib}.kyori")
+    relocate('org.bstats', "${lib}.metrics")
+    relocate('io.sentry', "${lib}.sentry")
+    relocate('org.apache.maven', "${lib}.maven")
+    relocate('org.codehaus.plexus', "${lib}.plexus")
+    relocate('org.eclipse.sisu', "${lib}.sisu")
+    relocate('org.eclipse.aether', "${lib}.aether")
+    relocate('com.google.inject', "${lib}.guice")
+    relocate('org.dom4j', "${lib}.dom4j")
+    relocate('org.jaxen', "${lib}.jaxen")
+    relocate('com.github.benmanes.caffeine', "${lib}.caffeine")
+}
+
+def embeddedAgentJar = project(':core:agent').tasks.named('jar', Jar)
+def templateSource = file('src/main/templates')
+def templateDest = layout.buildDirectory.dir('generated/sources/templates')
+def generateTemplates = tasks.register('generateTemplates', Copy) {
+    inputs.properties([
+        environment: providers.provider {
+            if (project.hasProperty('release')) {
+                return 'production'
+            }
+            if (project.hasProperty('argghh')) {
+                return 'Argghh!'
+            }
+            return 'development'
+        },
+        commit: providers.provider {
+            String commitId = null
+            Exception failure = null
+            try {
+                Process process = new ProcessBuilder('git', '-C', rootProject.projectDir.absolutePath, 'rev-parse', 'HEAD')
+                        .redirectErrorStream(true)
+                        .start()
+                String output = new String(process.inputStream.readAllBytes(), StandardCharsets.UTF_8).trim()
+                int exitCode = process.waitFor()
+                if (exitCode == 0) {
+                    commitId = output
+                } else {
+                    failure = new GradleException("git rev-parse exited with code ${exitCode}: ${output}")
+                }
+            } catch (Exception ex) {
+                failure = ex
+            }
+
+            if (commitId != null && commitId.length() == 40) {
+                return commitId
+            }
+
+            logger.error('Git commit hash not found', failure)
+            return 'unknown'
+        },
+        minecraftVersion: providers.gradleProperty('minecraftVersion'),
+    ])
+
+    from(templateSource)
+    into(templateDest)
+    rename { String fileName -> "art/arcane/iris/${fileName}" }
+    expand(inputs.properties)
+}
+
+tasks.named('compileJava', JavaCompile).configure {
+    /**
+     * We need parameter meta for the decree command system
+     */
+    options.compilerArgs.add('-parameters')
+    options.compilerArgs.addAll(['--add-modules', 'jdk.incubator.vector'])
+    options.encoding = 'UTF-8'
+    options.debugOptions.debugLevel = 'none'
+    // lombok.config decides how equals/hashCode/toString are generated (fields, never getters), so editing it
+    // changes this module's bytecode. Gradle does not know that on its own and would serve a stale up-to-date
+    // build until something else in the module changed.
+    inputs.file(rootProject.file('lombok.config'))
+        .withPropertyName('lombokConfig')
+        .withPathSensitivity(PathSensitivity.NONE)
+}
+
+tasks.named('test', Test).configure {
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+    classpath = files('src/main/resources') + classpath
+}
+
+configurations.matching { it.name.startsWith('slim') }.all { }
+
+List<String> requestedTasks = gradle.startParameter.taskNames
+boolean runningOnlyTestTasks = !requestedTasks.isEmpty()
+    && requestedTasks.every { String taskName -> taskName.toLowerCase().contains('test') }
+if (runningOnlyTestTasks) {
+    TaskProvider<Task> processResourcesTask = tasks.named('processResources')
+    tasks.named('classes').configure { Task classesTask ->
+        Set<Object> dependencies = new LinkedHashSet<Object>(classesTask.getDependsOn())
+        dependencies.removeIf { Object dependency ->
+            if (dependency instanceof TaskProvider) {
+                return ((TaskProvider<?>) dependency).name == processResourcesTask.name
+            }
+            if (dependency instanceof Task) {
+                return ((Task) dependency).name == processResourcesTask.name
+            }
+            String dependencyName = String.valueOf(dependency)
+            return dependencyName == 'processResources' || dependencyName.endsWith(':processResources')
+        }
+        classesTask.setDependsOn(dependencies)
+    }
+    processResourcesTask.configure { Task task ->
+        task.enabled = false
+    }
+}
+
+// VolmLib packages that Iris forked into art.arcane.iris.util.project.* or replaced outright. Every
+// class in each of these packages is unreachable from every other class shipped in the Bukkit jar,
+// and none of them is a reflective target: Matter.read() resolves only matter/slices, JarScanner
+// only walks Iris' own packages, and the remaining VolmLib Class.forName calls name Bukkit/NMS or
+// runtime-downloaded types. Package granularity is deliberate - a partially used package stays whole.
+// verifyBukkitArtifact re-derives the reference graph over the shipped jar and fails on any dangling
+// reference, so an exclude that stops being dead is a build failure rather than a runtime crash.
+List<String> supersededVolmLibPackages = [
+    'art/arcane/volmlib/util/noise/**',
+    'art/arcane/volmlib/util/stream/ProceduralStream.class',
+    'art/arcane/volmlib/util/stream/BasicStream.class',
+    'art/arcane/volmlib/util/stream/arithmetic/**',
+    'art/arcane/volmlib/util/stream/convert/**',
+    'art/arcane/volmlib/util/stream/interpolation/**',
+    'art/arcane/volmlib/util/stream/sources/**',
+    'art/arcane/volmlib/util/stream/utility/**',
+    'art/arcane/volmlib/util/uniques/**',
+    'art/arcane/volmlib/util/bukkit/json/**',
+    'art/arcane/volmlib/util/bukkit/registry/**',
+    'art/arcane/volmlib/util/director/visual/**',
+    'art/arcane/volmlib/util/value/**',
+    'art/arcane/volmlib/util/api/**',
+    'art/arcane/volmlib/util/entity/**'
+]
+
+// Annotation-only artifacts pulled in transitively by Gson and Caffeine. Their types appear solely
+// in annotation attributes, which the JVM skips silently when the type is absent, so nothing loads
+// or links against them at runtime.
+List<String> annotationOnlyArtifacts = [
+    'com/google/errorprone/**',
+    'org/jspecify/**'
+]
+
+// Publisher metadata for the shaded dependencies. Nothing reads these at runtime.
+List<String> dependencyBuildMetadata = [
+    'META-INF/maven/**',
+    'META-INF/proguard/**',
+    'META-INF/versions/*/OSGI-INF/**'
+]
+
+tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar).configure {
+    dependsOn(embeddedAgentJar)
+    mergeServiceFiles()
+    // minimize() stays off. Caffeine reaches its 520 generated cache and node classes through
+    // MethodHandles.Lookup.findClass on a computed name, and the VolmLib command, GUI and hotload
+    // surfaces are only referenced from :adapters:bukkit:plugin, which is merged into the artifact
+    // after this task runs. Both would be stripped as unreachable. Excluding them from minimization
+    // leaves it reaching ~25KB of Gson internals, which is not worth a mode that fails silently.
+    relocate('io.github.slimjar', "${lib}.slimjar")
+    exclude('modules/loader-agent.isolated-jar')
+    exclude(supersededVolmLibPackages)
+    exclude(annotationOnlyArtifacts)
+    exclude(dependencyBuildMetadata)
+    from(embeddedAgentJar.map { it.archiveFile }) {
+        rename { String ignored -> 'agent.jar' }
+    }
+}
+
+tasks.named('sentryCollectSourcesJava').configure {
+    dependsOn(generateTemplates)
+}
+
+tasks.named('generateSentryBundleIdJava').configure {
+    dependsOn(generateTemplates)
+}
+
+tasks.matching { Task task ->
+    task.name.startsWith('sentry') || task.name.startsWith('generateSentry')
+}.configureEach {
+    onlyIf {
+        hasSentryAuthToken
+    }
+}
+
+rootProject.tasks.matching {
+    it.name == 'prepareKotlinBuildScriptModel'
+}.configureEach {
+    dependsOn(generateTemplates)
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir(generateTemplates.map { it.outputs })
+        }
+    }
+}
+
+tasks.register('bukkitPurityRatchet') {
+    group = 'verification'
+    description = 'Fails if files outside core/purity-allowlist.txt import org.bukkit (the allowlist only shrinks).'
+    File allowlistFile = project.file('purity-allowlist.txt')
+    File sourceRoot = project.file('src/main/java')
+    inputs.file(allowlistFile)
+    inputs.dir(sourceRoot)
+    doLast {
+        Set<String> allowed = allowlistFile.readLines().findAll { String line -> !line.isBlank() }.toSet()
+        List<String> offenders = new ArrayList<>()
+        List<String> coupled = new ArrayList<>()
+        sourceRoot.eachFileRecurse { File f ->
+            if (!f.name.endsWith('.java')) {
+                return
+            }
+            if (f.text.contains('org.bukkit')) {
+                String rel = sourceRoot.toPath().relativize(f.toPath()).toString()
+                coupled.add(rel)
+                if (!allowed.contains(rel)) {
+                    offenders.add(rel)
+                }
+            }
+        }
+        if (!offenders.isEmpty()) {
+            throw new GradleException("Bukkit purity ratchet violated - new org.bukkit coupling in:\n  " + offenders.join('\n  ') + "\nDecouple these files or (only with strong justification) add them to core/purity-allowlist.txt")
+        }
+        int shrunk = allowed.size() - coupled.size()
+        if (shrunk > 0) {
+            println("Purity ratchet: " + coupled.size() + " coupled files (" + shrunk + " fewer than allowlist - consider tightening core/purity-allowlist.txt)")
+        } else {
+            println("Purity ratchet: " + coupled.size() + " coupled files (at allowlist ceiling)")
+        }
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn('bukkitPurityRatchet')
+}

@@ -1,0 +1,1273 @@
+/*
+ * Iris is a World Generator for Minecraft Bukkit Servers
+ * Copyright (c) 2022 Arcane Arts (Volmit Software)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package art.arcane.iris;
+
+import art.arcane.iris.engine.IrisEngineEffects;
+import art.arcane.iris.engine.IrisWorldManager;
+
+import art.arcane.iris.engine.framework.EngineComponentCleanup;
+import art.arcane.iris.engine.framework.EngineEffectsProvider;
+import art.arcane.iris.engine.framework.EnginePlatformHooks;
+import art.arcane.iris.engine.framework.EngineWorldManagerProvider;
+import art.arcane.iris.core.splash.IrisSplashComposer;
+import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.IrisStartupValidation;
+import art.arcane.iris.core.IrisStartupAdmissionListener;
+import art.arcane.iris.core.BukkitWorldReconciler;
+import art.arcane.iris.core.IrisWorldGeneratorResolver;
+import art.arcane.iris.core.IrisWorldStorage;
+import art.arcane.iris.core.PendingWorldDeleteQueue;
+import art.arcane.iris.core.PendingWorldReplacementManager;
+import art.arcane.iris.core.SettingsHotloadWatch;
+import art.arcane.iris.core.ServerConfigurator;
+import art.arcane.iris.core.datapack.DatapackIngestService;
+import art.arcane.iris.core.datapack.DatapackIngestService.StartupValidationOutcome;
+import art.arcane.iris.core.lifecycle.ManagedWorldLoader;
+import art.arcane.iris.core.lifecycle.MissingWorldStorageLog;
+import art.arcane.iris.core.lifecycle.PaperLibBootstrap;
+import art.arcane.iris.core.lifecycle.WorldLifecycleService;
+import art.arcane.iris.core.runtime.BukkitEnginePlatformHooks;
+import art.arcane.iris.core.runtime.WorldDeletionQueue;
+import art.arcane.iris.core.runtime.WorldRuntimeControlService;
+import art.arcane.iris.api.terrain.IrisTerrainService;
+import art.arcane.iris.core.link.IrisPapiInstaller;
+import art.arcane.iris.core.link.IrisPapiListener;
+import art.arcane.iris.core.link.IrisPapiState;
+import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.link.MultiverseCoreLink;
+import art.arcane.iris.core.nms.INMS;
+import art.arcane.iris.core.gui.BukkitGuiHost;
+import art.arcane.iris.core.gui.PregeneratorJob;
+import art.arcane.iris.core.service.BoardSVC;
+import art.arcane.iris.core.service.CommandSVC;
+import art.arcane.iris.core.service.DatapackStructureScopeSVC;
+import art.arcane.iris.core.service.EditSVC;
+import art.arcane.iris.core.service.EntityRiseSVC;
+import art.arcane.iris.core.service.ExternalDataSVC;
+import art.arcane.iris.core.service.GlobalCacheSVC;
+import art.arcane.iris.core.service.IrisApiEventSVC;
+import art.arcane.iris.core.service.IrisEngineSVC;
+import art.arcane.iris.core.service.IrisIntegrationService;
+import art.arcane.iris.core.service.IrisProtocolService;
+import art.arcane.iris.core.service.IrisTerrainSVC;
+import art.arcane.iris.core.service.JigsawStudioService;
+import art.arcane.iris.core.service.LogFilterSVC;
+import art.arcane.iris.core.service.MultiverseSVC;
+import art.arcane.iris.core.service.ObjectSVC;
+import art.arcane.iris.core.service.ObjectStudioSaveService;
+import art.arcane.iris.core.service.PreservationSVC;
+import art.arcane.iris.core.service.StudioSVC;
+import art.arcane.iris.core.service.TreeFellerSVC;
+import art.arcane.iris.core.service.TreeSVC;
+import art.arcane.iris.core.service.WandSVC;
+import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.engine.EnginePanic;
+import art.arcane.iris.engine.framework.BlockEditAccess;
+import art.arcane.iris.engine.framework.PreservationRegistry;
+import art.arcane.iris.engine.framework.TreeBlockMaterial;
+import art.arcane.iris.engine.object.IrisCompat;
+import art.arcane.iris.core.safeguard.IrisSafeguard;
+import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
+import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.IrisServices;
+import art.arcane.iris.spi.LogLevel;
+import art.arcane.volmlib.integration.ReloadAware;
+import art.arcane.volmlib.util.bukkit.papi.PlaceholderRegistration;
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.collection.KMap;
+import art.arcane.volmlib.util.exceptions.IrisException;
+import art.arcane.iris.util.common.format.C;
+import art.arcane.volmlib.util.function.NastyRunnable;
+import art.arcane.volmlib.util.hotload.ConfigHotloadEngine;
+import art.arcane.volmlib.util.hud.HudActionBar;
+import art.arcane.volmlib.util.hud.HudBossBarLane;
+import art.arcane.volmlib.util.io.IO;
+import art.arcane.volmlib.util.io.InstanceState;
+import art.arcane.volmlib.util.math.M;
+import art.arcane.volmlib.util.math.RNG;
+import art.arcane.iris.util.common.misc.Bindings;
+import art.arcane.iris.util.common.misc.ServerProperties;
+import art.arcane.iris.util.common.misc.SlimJar;
+import art.arcane.iris.util.common.parallel.MultiBurst;
+import art.arcane.iris.util.common.plugin.IrisService;
+import art.arcane.iris.util.common.plugin.VolmitPlugin;
+import art.arcane.iris.util.common.plugin.VolmitSender;
+import art.arcane.iris.util.common.plugin.chunk.ChunkTickets;
+import art.arcane.iris.util.common.scheduling.J;
+import art.arcane.iris.util.simd.SimdSupport;
+import art.arcane.volmlib.util.scheduling.Queue;
+import art.arcane.volmlib.util.scheduling.ShurikenQueue;
+import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
+import org.bukkit.event.Event;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.Listener;
+import org.bukkit.generator.BiomeProvider;
+import org.bukkit.generator.ChunkGenerator;
+import org.bukkit.plugin.IllegalPluginAccessException;
+import org.bukkit.plugin.Plugin;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.PrintWriter;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+@SuppressWarnings("CanBeFinal")
+public class Iris extends VolmitPlugin implements Listener, ReloadAware {
+    private static final long SERVER_SHUTDOWN_BOUNDARY_TIMEOUT_SECONDS = 300L;
+    private static final long SERVER_STOP_PREGEN_TIMEOUT_MILLIS = 30000L;
+    private static final Queue<Runnable> syncJobs = new ShurikenQueue<>();
+
+    static {
+        System.setProperty("iris.cache.fast", "true");
+    }
+
+    public static Iris instance;
+    public static Bindings.Adventure audiences;
+    public static MultiverseCoreLink linkMultiverseCore;
+    public static IrisCompat compat;
+    public static ConfigHotloadEngine configHotloadEngine;
+    public static ChunkTickets tickets;
+    private static VolmitSender sender;
+    private static Thread shutdownHook;
+    private static final StackWalker DEBUG_STACK_WALKER = StackWalker.getInstance();
+    static {
+        try {
+            InstanceState.updateInstanceId();
+        } catch (Throwable ex) {
+            System.err.println("[Iris] Failed to update instance id: " + ex.getClass().getSimpleName()
+                    + (ex.getMessage() == null ? "" : " - " + ex.getMessage()));
+            ex.printStackTrace();
+        }
+    }
+
+    private static final Object TEARDOWN_LOCK = new Object();
+    private final AtomicBoolean alreadyDrained = new AtomicBoolean(false);
+    private final AtomicBoolean postStopFinisherStarted = new AtomicBoolean(false);
+    private final AtomicBoolean serverStopTeardownDeferred = new AtomicBoolean(false);
+    private final AtomicBoolean servicesDisabled = new AtomicBoolean(false);
+    private final AtomicBoolean sharedRuntimeClosed = new AtomicBoolean(false);
+    private final AtomicBoolean terminalCleanupCompleted = new AtomicBoolean(false);
+    private volatile PlaceholderRegistration papiRegistration;
+    private volatile IrisPapiListener papiListener;
+    private volatile IrisPapiState papiState;
+    private KMap<Class<? extends IrisService>, IrisService> services;
+    // Copy-on-write: mutated on the main thread during enable() and iterated by the JVM
+    // shutdown-hook thread during teardown; a plain list would CME and abort the teardown.
+    private final List<IrisService> enabledServices = new CopyOnWriteArrayList<>();
+    private final List<PlatformChunkGenerator> deferredShutdownGenerators = new CopyOnWriteArrayList<>();
+    private final IrisWorldGeneratorResolver generatorResolver = new IrisWorldGeneratorResolver(this);
+    private final BukkitWorldReconciler worldReconciler = new BukkitWorldReconciler(this);
+    private final PendingWorldDeleteQueue pendingWorldDeletes = new PendingWorldDeleteQueue(this);
+    private final PendingWorldReplacementManager pendingWorldReplacements = new PendingWorldReplacementManager(this);
+    private volatile SettingsHotloadWatch settingsHotloadWatch;
+    private volatile Thread serverLifecycleThread;
+
+    public static VolmitSender getSender() {
+        if (sender == null) {
+            sender = new VolmitSender(Bukkit.getConsoleSender());
+            sender.setTag(instance.getTag());
+        }
+        return sender;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T service(Class<T> c) {
+        return (T) instance.services.get(c);
+    }
+
+    public static void callEvent(Event e) {
+        Runnable dispatcher = () -> {
+            try {
+                Bukkit.getPluginManager().callEvent(e);
+            } catch (Throwable ex) {
+                reportError("Event dispatch failed for \"" + e.getEventName() + "\".", ex);
+                if (ex instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                if (ex instanceof Error error) {
+                    throw error;
+                }
+                throw new IllegalStateException(ex);
+            }
+        };
+        if (!e.isAsynchronous()) {
+            J.s(dispatcher);
+        } else {
+            dispatcher.run();
+        }
+    }
+
+    static boolean isConcreteImplementation(Class<?> candidate, Class<?> requiredType) {
+        int modifiers = candidate.getModifiers();
+        return requiredType.isAssignableFrom(candidate)
+                && !candidate.isInterface()
+                && !Modifier.isAbstract(modifiers);
+    }
+
+    public static void sq(Runnable r) {
+        synchronized (syncJobs) {
+            syncJobs.queue(r);
+        }
+    }
+
+    public static File getTemp() {
+        return instance.getDataFolder("cache", "temp");
+    }
+
+    public static void msg(String string) {
+        try {
+            getSender().sendMessage(string);
+        } catch (Throwable e) {
+            try {
+                instance.getLogger().info(instance.getTag() + IrisLogging.clean(string));
+            } catch (Throwable inner) {
+                System.err.println("[Iris] Failed to emit log message: " + inner.getMessage());
+                inner.printStackTrace(System.err);
+            }
+        }
+    }
+
+    /**
+     * A warning raised here is the same kind of thing as one raised in core, so it takes the same route: the
+     * plugin logger at WARNING, where a log scan of logs/latest.log finds it.
+     */
+    public static void warn(String format, Object... objs) {
+        diagnostic(Level.WARNING, safeFormat(format, objs));
+    }
+
+    public static void error(String format, Object... objs) {
+        diagnostic(Level.SEVERE, safeFormat(format, objs));
+    }
+
+    public static void debug(String string) {
+        if (!IrisSettings.get().getGeneral().isDebug()) {
+            return;
+        }
+
+        StackWalker.StackFrame frame = null;
+        try {
+            frame = DEBUG_STACK_WALKER.walk(stream -> stream.skip(1).findFirst().orElse(null));
+        } catch (Throwable ignored) {
+        }
+
+        if (frame == null) {
+            debug("Origin", -1, string);
+            return;
+        }
+
+        String className = frame.getClassName();
+        String[] cc = className == null ? new String[0] : className.split("\\Q.\\E");
+        int line = frame.getLineNumber();
+
+        if (cc.length > 5) {
+            debug(cc[3] + "/" + cc[4] + "/" + cc[cc.length - 1], line, string);
+            return;
+        }
+
+        if (cc.length > 4) {
+            debug(cc[3] + "/" + cc[4], line, string);
+            return;
+        }
+
+        if (cc.length > 0) {
+            debug(cc[cc.length - 1], line, string);
+            return;
+        }
+
+        debug("Origin", line, string);
+    }
+
+    public static void debug(String category, int line, String string) {
+        if (!IrisSettings.get().getGeneral().isDebug()) {
+            return;
+        }
+        if (IrisSettings.get().getGeneral().isUseConsoleCustomColors()) {
+            msg("<gradient:#095fe0:#a848db>" + category + " <#bf3b76>" + line + "<reset> " + C.LIGHT_PURPLE + string.replaceAll("\\Q<\\E", "[").replaceAll("\\Q>\\E", "]"));
+        } else {
+            msg(C.BLUE + category + ":" + C.AQUA + line + C.RESET + C.LIGHT_PURPLE + " " + string.replaceAll("\\Q<\\E", "[").replaceAll("\\Q>\\E", "]"));
+
+        }
+    }
+
+    public static void verbose(String string) {
+        debug(string);
+    }
+
+    public static void success(String string) {
+        msg(C.IRIS + string);
+    }
+
+    public static void info(String format, Object... args) {
+        msg(C.WHITE + safeFormat(format, args));
+    }
+
+    private static String safeFormat(String format, Object... args) {
+        return IrisLogging.format(format, args);
+    }
+
+    public static void later(NastyRunnable object) {
+        try {
+            J.a(() -> {
+                try {
+                    object.run();
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    Iris.reportError(e);
+                }
+            }, RNG.r.i(100, 1200));
+        } catch (IllegalPluginAccessException ex) {
+            Iris.verbose("Skipping deferred task registration because plugin access is unavailable: "
+                    + ex.getClass().getSimpleName()
+                    + (ex.getMessage() == null ? "" : " - " + ex.getMessage()));
+        }
+    }
+
+    public static int jobCount() {
+        return syncJobs.size();
+    }
+
+    public static void clearQueues() {
+        synchronized (syncJobs) {
+            syncJobs.clear();
+        }
+    }
+
+    public static int getJavaVersion() {
+        String version = System.getProperty("java.version");
+        if (version.startsWith("1.")) {
+            version = version.substring(2, 3);
+        } else {
+            int dot = version.indexOf(".");
+            if (dot != -1) {
+                version = version.substring(0, dot);
+            }
+        }
+        return Integer.parseInt(version);
+    }
+
+    public static String getJava() {
+        String javaRuntimeName = System.getProperty("java.vm.name");
+        String javaRuntimeVendor = System.getProperty("java.vendor");
+        String javaRuntimeVersion = System.getProperty("java.vm.version");
+        return String.format("%s %s (build %s)", javaRuntimeName, javaRuntimeVendor, javaRuntimeVersion);
+    }
+
+    public static void reportErrorChunk(int x, int z, Throwable e, String extra) {
+        if (IrisSettings.get().getGeneral().isDebug()) {
+            File f = instance.getDataFile("debug", "chunk-errors", "chunk." + x + "." + z + ".txt");
+
+            if (!f.exists()) {
+                J.attempt(() -> {
+                    PrintWriter pw = new PrintWriter(f);
+                    pw.println("Thread: " + Thread.currentThread().getName());
+                    pw.println("First: " + new Date(M.ms()));
+                    e.printStackTrace(pw);
+                    pw.close();
+                });
+            }
+
+            Iris.debug("Chunk " + x + "," + z + " Exception Logged: " + e.getClass().getSimpleName() + ": " + C.RESET + "" + C.LIGHT_PURPLE + e.getMessage());
+        }
+    }
+
+    public static void reportError(Throwable e) {
+        if (e == null) {
+            return;
+        }
+
+        Bindings.capture(e);
+        boolean debug = false;
+        if (instance != null) {
+            try {
+                IrisSettings currentSettings = IrisSettings.settings != null ? IrisSettings.settings : IrisSettings.get();
+                debug = currentSettings != null && currentSettings.getGeneral().isDebug();
+            } catch (Throwable ignored) {
+                debug = false;
+            }
+        }
+
+        if (debug) {
+            String n = e.getClass().getCanonicalName() + "-" + e.getStackTrace()[0].getClassName() + "-" + e.getStackTrace()[0].getLineNumber();
+
+            if (e.getCause() != null) {
+                n += "-" + e.getCause().getStackTrace()[0].getClassName() + "-" + e.getCause().getStackTrace()[0].getLineNumber();
+            }
+
+            File f = instance.getDataFile("debug", "caught-exceptions", n + ".txt");
+
+            if (!f.exists()) {
+                J.attempt(() -> {
+                    PrintWriter pw = new PrintWriter(f);
+                    pw.println("Thread: " + Thread.currentThread().getName());
+                    pw.println("First: " + new Date(M.ms()));
+                    e.printStackTrace(pw);
+                    pw.close();
+                });
+            }
+
+            Iris.debug("Exception Logged: " + e.getClass().getSimpleName() + ": " + C.RESET + "" + C.LIGHT_PURPLE + e.getMessage());
+        }
+    }
+
+    public static void reportError(String context, Throwable e) {
+        Throwable error = e == null ? new IllegalStateException("Unknown Iris failure") : e;
+        String message = context == null || context.isBlank() ? "Unhandled Iris failure." : context;
+
+        try {
+            if (instance != null) {
+                Iris.error(message);
+            } else {
+                System.err.println("[Iris] " + message);
+            }
+        } catch (Throwable inner) {
+            System.err.println("[Iris] " + message);
+            inner.printStackTrace(System.err);
+        }
+
+        reportError(error);
+        error.printStackTrace(System.err);
+    }
+
+    public static void dump() {
+        try {
+            File fi = Iris.instance.getDataFile("dump", "td-" + new java.sql.Date(M.ms()) + ".txt");
+            FileOutputStream fos = new FileOutputStream(fi);
+            Map<Thread, StackTraceElement[]> f = Thread.getAllStackTraces();
+            PrintWriter pw = new PrintWriter(fos);
+            for (Thread i : f.keySet()) {
+                pw.println("========================================");
+                pw.println("Thread: '" + i.getName() + "' ID: " + i.threadId() + " STATUS: " + i.getState().name());
+
+                for (StackTraceElement j : f.get(i)) {
+                    pw.println("    @ " + j.toString());
+                }
+
+                pw.println("========================================");
+                pw.println();
+                pw.println();
+            }
+            pw.println("[%%__USER__%%,%%__RESOURCE__%%,%%__PRODUCT__%%,%%__BUILTBYBIT__%%]");
+
+            pw.close();
+            Iris.info("DUMPED! See " + fi.getAbsolutePath());
+        } catch (Throwable e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void panic() {
+        EnginePanic.panic();
+    }
+
+    public static void addPanic(String s, String v) {
+        EnginePanic.add(s, v);
+    }
+
+    public Iris() {
+        instance = this;
+        BukkitPlatform.hostPlugin(this);
+        BukkitPlatform.hostConsoleSender(Iris::getSender);
+        BukkitPlatform.hostBridge(new BukkitPlatform.HostBridge(
+                Iris::bridgeLog,
+                Iris::msg,
+                Iris::reportError,
+                (event) -> Iris.callEvent((org.bukkit.event.Event) event),
+                () -> Iris.instance.getDataFolder(),
+                (path) -> Iris.instance.getDataFile(path),
+                () -> Iris.instance.getJarFile(),
+                () -> Iris.instance.getIrisVersion(),
+                () -> Iris.instance.getMCVersion()));
+        SlimJar.load();
+    }
+
+    private static void bridgeLog(LogLevel level, String message) {
+        LogLevel target = level == null ? LogLevel.INFO : level;
+        Level diagnostic = diagnosticLevel(target);
+        if (diagnostic != null) {
+            diagnostic(diagnostic, message);
+            return;
+        }
+        if (target == LogLevel.DEBUG) {
+            Iris.debug(message);
+            return;
+        }
+        Iris.info(message);
+    }
+
+    /**
+     * The java.util.logging level a message keeps, or null when it belongs on the console sender path.
+     * <p>
+     * Core states a severity and every other adapter honours it; on Bukkit a coloured line through the
+     * console sender reaches the terminal but not the instance's logs/latest.log, so a WARN-level scan of
+     * that file never saw a single core warning. Diagnostics go to the plugin logger at their own level
+     * instead, and NOTICE carries the handful of lifecycle lines that have to land there too. Player-facing
+     * text still goes through {@code IrisLogging.msg}.
+     */
+    static Level diagnosticLevel(LogLevel level) {
+        return switch (level) {
+            case NOTICE -> Level.INFO;
+            case WARN -> Level.WARNING;
+            case ERROR -> Level.SEVERE;
+            case DEBUG, INFO -> null;
+        };
+    }
+
+    private static void diagnostic(Level level, String message) {
+        String line = IrisLogging.clean(message);
+        Iris plugin = instance;
+        if (plugin != null) {
+            try {
+                plugin.getLogger().log(level, line);
+                return;
+            } catch (Throwable unavailable) {
+                // Paper runs the bootstrap before a plugin logger exists; the streams below are all there is.
+            }
+        }
+        if (level.intValue() >= Level.WARNING.intValue()) {
+            System.err.println("[Iris] " + line);
+            return;
+        }
+        System.out.println("[Iris] " + line);
+    }
+
+    /**
+     * @return false when the bootstrap was aborted (unsupported server version); the caller
+     * must bail out of onEnable without touching any further setup.
+     */
+    private boolean enable() {
+        if (!INMS.isBound()) {
+            Throwable bindFailure = INMS.bindFailure();
+            Iris.error("Iris cannot start: " + (bindFailure == null
+                    ? "no NMS binding is available for this server version."
+                    : bindFailure.getMessage()));
+            // Deferred one tick: disablePlugin from inside onEnable re-enters onDisable
+            // synchronously and the loader then continues registering the half-enabled plugin.
+            J.s(() -> Bukkit.getPluginManager().disablePlugin(this), 1);
+            return false;
+        }
+        alreadyDrained.set(false);
+        postStopFinisherStarted.set(false);
+        serverStopTeardownDeferred.set(false);
+        servicesDisabled.set(false);
+        sharedRuntimeClosed.set(false);
+        terminalCleanupCompleted.set(false);
+        deferredShutdownGenerators.clear();
+        MultiBurst.burst.reopen();
+        MultiBurst.ioBurst.reopen();
+        IrisLanguage.initialize();
+        PaperLibBootstrap.install();
+        SimdSupport.install();
+        services = new KMap<>();
+        setupAudience();
+        BukkitPlatform.hostHud(new HudActionBar(this), new HudBossBarLane());
+        Bindings.setupSentry();
+        // Explicit, ordered service list: the previous reflective jar scan gave hash-ordered
+        // enable/disable and paid a full-jar class sweep at boot. Infrastructure first,
+        // engine/world services next, commands last.
+        List<IrisService> orderedServices = List.of(
+                new PreservationSVC(),
+                new GlobalCacheSVC(),
+                new LogFilterSVC(),
+                new ExternalDataSVC(),
+                new EditSVC(),
+                new ObjectSVC(),
+                new ObjectStudioSaveService(),
+                new JigsawStudioService(),
+                new StudioSVC(),
+                new DatapackStructureScopeSVC(),
+                new IrisEngineSVC(),
+                new IrisTerrainSVC(),
+                new TreeSVC(),
+                new TreeFellerSVC(),
+                new EntityRiseSVC(),
+                new WandSVC(),
+                new BoardSVC(),
+                new IrisIntegrationService(),
+                new MultiverseSVC(),
+                new IrisProtocolService(),
+                new IrisApiEventSVC(),
+                new CommandSVC()
+        );
+        for (IrisService i : orderedServices) {
+            Class<? extends IrisService> serviceType = i.getClass().asSubclass(IrisService.class);
+            services.put(serviceType, i);
+            IrisServices.register(serviceType, i);
+        }
+        IrisServices.register(BlockEditAccess.class, services.get(EditSVC.class));
+        IrisServices.register(PreservationRegistry.class, services.get(PreservationSVC.class));
+        compat = IrisCompat.configured(getDataFile("compat.json"));
+        IrisServices.register(IrisCompat.class, compat);
+        ServerConfigurator.configure();
+        StartupValidationOutcome datapackValidation = DatapackIngestService.validateOnStartup();
+        if (datapackValidation == StartupValidationOutcome.READY) {
+            generatorResolver.validateAllPacks();
+        }
+        IrisSafeguard.execute();
+        getSender().setTag(getTag());
+        // A cosmetic banner must never abort the bootstrap.
+        J.attempt(this::splash);
+        IrisSafeguard.printReports();
+        IrisSafeguard.printFooter();
+        // Paper's bootstrap runs before any plugin logger exists, so orphan-storage warnings raised there
+        // never reach logs/latest.log. Replay them once now that the platform log is up.
+        MissingWorldStorageLog.replayToPlatformLog();
+        tickets = new ChunkTickets();
+        linkMultiverseCore = new MultiverseCoreLink();
+        IrisServices.register(MultiverseCoreLink.class, linkMultiverseCore);
+        IrisServices.register(EngineComponentCleanup.class, (EngineComponentCleanup) BukkitPlatform::unregisterListener);
+        IrisServices.register(EngineEffectsProvider.class, (EngineEffectsProvider) IrisEngineEffects::new);
+        IrisServices.register(EnginePlatformHooks.class, new BukkitEnginePlatformHooks());
+        IrisServices.register(EngineWorldManagerProvider.class,
+                (EngineWorldManagerProvider) IrisWorldManager::new);
+        IrisServices.register(WorldDeletionQueue.class, pendingWorldDeletes);
+        IrisServices.register(ManagedWorldLoader.class, (ManagedWorldLoader) this::loadManagedWorld);
+        SettingsHotloadWatch watch = new SettingsHotloadWatch(getDataFile("settings.json"));
+        settingsHotloadWatch = watch;
+        configHotloadEngine = new ConfigHotloadEngine(
+                watch::isSettingsFile,
+                watch::knownSettingsFiles,
+                watch::readSettingsContent,
+                watch::normalizeSettingsContent
+        );
+        configHotloadEngine.configure(500L, 3_000L, List.of(watch.settingsFile()), List.of());
+        // Stale-temp cleanup must complete before services enable: StudioSVC.onEnable downloads
+        // packs through cache/temp on an async thread, and a concurrent delete of that folder
+        // truncated pack imports mid-copy (partial packs/<key> without dimensions/).
+        IO.delete(getTemp());
+        // One throwing service must not abort the bootstrap: the steps after this loop
+        // (listeners, shutdown hook, replacement journals) are the safety-critical ones.
+        // Only services that actually enabled get listeners and a later onDisable.
+        enabledServices.clear();
+        for (IrisService service : orderedServices) {
+            try {
+                service.onEnable();
+                enabledServices.add(service);
+            } catch (Throwable e) {
+                // A service failure is NOT a datapack validation failure: the admission gate
+                // must never lock every login over a broken cosmetic service. Log loudly,
+                // continue degraded, and clean up whatever the partial onEnable started
+                // (a failed service is excluded from the teardown loop).
+                Iris.reportError("Failed to enable " + service.getClass().getSimpleName() + "; continuing with a degraded runtime.", e);
+                try {
+                    service.onDisable();
+                } catch (Throwable cleanup) {
+                    Iris.reportError("Failed to clean up partially enabled " + service.getClass().getSimpleName() + ".", cleanup);
+                }
+            }
+        }
+        for (IrisService service : enabledServices) {
+            try {
+                registerListener(service);
+            } catch (Throwable e) {
+                Iris.reportError("Failed to register listener for " + service.getClass().getSimpleName() + ".", e);
+            }
+        }
+        addShutdownHook();
+        pendingWorldReplacements.processPendingStartupReplacements();
+        pendingWorldDeletes.processPendingStartupWorldDeletes();
+
+        if (J.isFolia() && IrisStartupValidation.isReady()) {
+            J.s(() -> worldReconciler.checkForBukkitWorlds(s -> true), 1);
+        }
+
+        J.s(() -> {
+            pendingWorldReplacements.captureVanillaLevelContext();
+            pendingWorldReplacements.verifyLoadedPublishedWorlds();
+            J.a(this::bstats);
+            J.ar(() -> settingsHotloadWatch.checkConfigHotload(configHotloadEngine), 10);
+            J.sr(this::tickQueue, 0);
+            J.s(this::setupPapi);
+            if (IrisStartupValidation.isReady()) {
+                J.a(DatapackIngestService::runPostStartupTasks, 60);
+                autoStartStudio();
+            }
+            if (!J.isFolia() && IrisStartupValidation.isReady()) {
+                worldReconciler.checkForBukkitWorlds(s -> true);
+            }
+            IrisToolbelt.retainMantleDataForSlice(String.class.getCanonicalName());
+            // The mantle stores block values as PlatformBlockState, so a BlockData retention can never
+            // match a slice type; the block-state slice is deliberately never retainable (regenerable, huge).
+            IrisToolbelt.retainMantleDataForSlice(TreeBlockMaterial.class.getCanonicalName());
+        });
+        return true;
+    }
+
+    public void addShutdownHook() {
+        removeShutdownHook();
+        serverLifecycleThread = Thread.currentThread();
+        shutdownHook = new Thread(this::runShutdownHook, "Iris-ShutdownHook");
+        try {
+            Runtime.getRuntime().addShutdownHook(shutdownHook);
+        } catch (IllegalStateException ex) {
+            Iris.debug("Skipping shutdown hook registration because JVM shutdown is already in progress.");
+        }
+    }
+
+    /**
+     * The static-field guard in addShutdownHook is dead across a plugin reload (fresh
+     * classloader, fresh static), so onDisable must deregister the hook explicitly or each
+     * reload stacks another hook pinning the previous plugin classloader for the JVM's life.
+     */
+    public void removeShutdownHook() {
+        Thread hook = shutdownHook;
+        shutdownHook = null;
+        if (hook == null) {
+            return;
+        }
+        try {
+            Runtime.getRuntime().removeShutdownHook(hook);
+        } catch (IllegalStateException ignored) {
+            Iris.debug("Skipping shutdown hook removal because JVM shutdown is already in progress.");
+        }
+    }
+
+    public BukkitWorldReconciler worldReconciler() {
+        return worldReconciler;
+    }
+
+    /**
+     * The load every integration goes through. {@code /iris load} and the Multiverse guard both land here,
+     * so a world loaded from outside Iris still gets the keyed creator, the pack's environment and the
+     * bukkit.yml reconciliation that make it an Iris world rather than a vanilla one under the same name.
+     */
+    private CompletableFuture<ManagedWorldLoader.ManagedWorldLoad> loadManagedWorld(String configuredWorldName) {
+        return worldReconciler.loadWorld(ServerProperties.BUKKIT_YML, configuredWorldName)
+                .thenApply(result -> new ManagedWorldLoader.ManagedWorldLoad(result.succeeded(), result.message()));
+    }
+
+    public PendingWorldReplacementManager pendingWorldReplacements() {
+        return pendingWorldReplacements;
+    }
+
+    private void autoStartStudio() {
+        if (IrisSettings.get().getStudio().isAutoStartDefaultStudio()) {
+            Iris.info("Starting up auto Studio!");
+            try {
+                Player r = new KList<>(getServer().getOnlinePlayers()).getRandom();
+                Iris.service(StudioSVC.class).open(r != null ? new VolmitSender(r) : getSender(), 1337, IrisSettings.get().getGenerator().getDefaultWorldType(), (w) -> {
+                    J.s(() -> {
+                        final Location spawn = w.getSpawnLocation();
+                        for (Player i : getServer().getOnlinePlayers()) {
+                            final Runnable playerTask = () -> {
+                                i.setGameMode(GameMode.CREATIVE);
+                                BukkitPlatform.teleportAsync(i, spawn);
+                            };
+                            if (!J.runEntity(i, playerTask)) {
+                                playerTask.run();
+                            }
+                        }
+                    });
+                });
+            } catch (IrisException e) {
+                reportError(e);
+            }
+        }
+    }
+
+    private void setupAudience() {
+        try {
+            audiences = new Bindings.Adventure(this);
+            BukkitPlatform.hostAudiences(audiences);
+        } catch (Throwable e) {
+            e.printStackTrace();
+            IrisSettings.get().getGeneral().setUseConsoleCustomColors(false);
+            IrisSettings.get().getGeneral().setUseCustomColorsIngame(false);
+            Iris.error("Failed to setup Adventure API... No custom colors :(");
+        }
+    }
+
+    public void onEnable() {
+        IrisPlatforms.bind(new BukkitPlatform());
+        IrisStartupValidation.begin();
+        Bukkit.getPluginManager().registerEvents(new IrisStartupAdmissionListener(), this);
+        Bukkit.getPluginManager().registerEvents(pendingWorldReplacements, this);
+        pendingWorldReplacements.registerPlatformEntryListener();
+        boolean enabled;
+        try {
+            enabled = enable();
+        } catch (Throwable failure) {
+            refuseVanillaFallback(failure);
+            throw failure;
+        }
+        if (!enabled) {
+            refuseVanillaFallback(null);
+            return;
+        }
+        BukkitGuiHost.install();
+        // super.onEnable() already registers this instance as a listener.
+        super.onEnable();
+    }
+
+    /**
+     * Stops a server whose Iris worlds would otherwise be generated by the vanilla generator.
+     * <p>
+     * A disabled Iris gets no {@code getDefaultWorldGenerator} call at all, so the server falls back to
+     * vanilla for every world bukkit.yml points at Iris and writes vanilla terrain into their region files.
+     * There is no Bukkit API that refuses a world at that point, so the server is stopped instead. This is
+     * damage control, not prevention: level creation runs in the same startup step that enables plugins, so
+     * spawn chunks of the affected worlds can still be written before the stop takes effect. The prevention
+     * lives in IrisBootstrap, which refuses startup before any level is created.
+     */
+    private static void refuseVanillaFallback(Throwable failure) {
+        File levelRoot;
+        try {
+            levelRoot = IrisWorldStorage.levelRoot();
+        } catch (Throwable unavailable) {
+            return;
+        }
+        if (!IrisWorldStorage.hasManagedWorldStorage(levelRoot)) {
+            return;
+        }
+        Iris.error("Iris did not enable and this server has Iris worlds; stopping the server before they generate vanilla terrain.");
+        if (failure != null) {
+            Iris.reportError("Iris enable failed", failure);
+        }
+        try {
+            Bukkit.shutdown();
+        } catch (Throwable unavailable) {
+            Iris.error("Could not stop the server: " + unavailable.getClass().getSimpleName());
+        }
+    }
+
+    public void onDisable() {
+        teardownPapi();
+        boolean serverStopping = IrisToolbelt.isServerStopping();
+        if (serverStopping) {
+            quiesceRuntimeForServerShutdown("onDisable");
+            startPostStopFinisher();
+        } else {
+            teardownRuntime("onDisable", 30L);
+            removeShutdownHook();
+        }
+        if (BukkitPlatform.hasHud()) {
+            BukkitPlatform.hudBar().shutdown();
+            BukkitPlatform.hudLanes().shutdown();
+        }
+        if (configHotloadEngine != null) {
+            configHotloadEngine.clear();
+            configHotloadEngine = null;
+        }
+        // super.onDisable() cancels plugin tasks and unregisters every listener.
+        super.onDisable();
+        if (!serverStopping) {
+            finishTerminalCleanup();
+        }
+    }
+
+    @Override
+    public void onPreUnload(ReloadAware.PreUnloadReason reason) {
+        teardownPapi();
+        if (IrisToolbelt.isServerStopping()) {
+            quiesceRuntimeForServerShutdown("pre-unload:" + reason);
+            startPostStopFinisher();
+            Iris.info("Pre-unload hook deferred generator teardown until Paper closes its chunk schedulers.");
+            return;
+        }
+        if (alreadyDrained.get()) {
+            Iris.info("Pre-unload hook skipped; Iris already drained.");
+            return;
+        }
+        Iris.info("BileTools pre-unload hook fired (" + reason + "). Freezing all Iris worlds.");
+        drainOnce("pre-unload:" + reason, 45L);
+    }
+
+    /**
+     * Drains the world generators exactly once. Serialized against the JVM shutdown hook so a
+     * second caller cannot rip the pools or services out from under an in-flight drain.
+     */
+    private void drainOnce(String reason, long timeoutSeconds) {
+        synchronized (TEARDOWN_LOCK) {
+            if (alreadyDrained.compareAndSet(false, true)) {
+                drainWorldGenerators(reason, timeoutSeconds);
+            }
+        }
+    }
+
+    /**
+     * Full teardown: generators, then services, then the shared pools and the service map.
+     * Both onDisable and the JVM shutdown hook route through here; whichever runs second is a no-op.
+     */
+    private void teardownRuntime(String reason, long timeoutSeconds) {
+        synchronized (TEARDOWN_LOCK) {
+            if (alreadyDrained.compareAndSet(false, true)) {
+                drainWorldGenerators(reason, timeoutSeconds);
+            }
+
+            if (services != null && servicesDisabled.compareAndSet(false, true)) {
+                // Only services whose onEnable actually completed; disabling a service that
+                // never initialized runs teardown against uninitialized state.
+                for (IrisService service : enabledServices) {
+                    try {
+                        service.onDisable();
+                    } catch (Throwable e) {
+                        Iris.reportError("Failed to disable " + service.getClass().getSimpleName() + ".", e);
+                    }
+                }
+            }
+
+            if (!sharedRuntimeClosed.compareAndSet(false, true)) {
+                return;
+            }
+
+            J.attempt(MultiBurst.burst::close);
+            J.attempt(MultiBurst.ioBurst::close);
+            clearQueues();
+            IrisServices.clear();
+        }
+    }
+
+    private void quiesceRuntimeForServerShutdown(String reason) {
+        serverStopTeardownDeferred.set(true);
+        JigsawStudioService jigsawStudioService = IrisServices.getOrNull(JigsawStudioService.class);
+        if (jigsawStudioService != null) {
+            try {
+                jigsawStudioService.quiesceForServerShutdown();
+            } catch (Throwable e) {
+                Iris.reportError("Failed to quiesce Jigsaw Studio before server shutdown.", e);
+            }
+        }
+        StudioSVC studioService = IrisServices.getOrNull(StudioSVC.class);
+        if (studioService != null) {
+            studioService.quiesceDownloadsForShutdown();
+        }
+
+        try {
+            PregeneratorJob.shutdownAndWait(SERVER_STOP_PREGEN_TIMEOUT_MILLIS);
+        } catch (Throwable e) {
+            Iris.reportError("Failed to quiesce the Iris pregenerator before server shutdown.", e);
+        }
+
+        for (World world : Bukkit.getWorlds()) {
+            PlatformChunkGenerator generator = IrisToolbelt.access(world);
+            if (generator == null) {
+                continue;
+            }
+            IrisToolbelt.beginWorldMaintenance(world, reason, true);
+            if (!deferredShutdownGenerators.contains(generator)) {
+                deferredShutdownGenerators.add(generator);
+            }
+            generator.quiesceForServerShutdown();
+        }
+    }
+
+    private void startPostStopFinisher() {
+        if (!postStopFinisherStarted.compareAndSet(false, true)) {
+            return;
+        }
+        Thread activeServerThread = serverLifecycleThread;
+        if (activeServerThread == null) {
+            Iris.warn("Iris could not start its post-stop runtime finisher because the server lifecycle thread is unavailable.");
+            return;
+        }
+
+        Thread finisher = new Thread(() -> {
+            if (!awaitServerThreadTermination(activeServerThread)) {
+                return;
+            }
+            finishDeferredRuntimeTeardown("post-server-stop", 30L);
+        }, "Iris-PostStop-Finisher");
+        finisher.setDaemon(false);
+        finisher.start();
+    }
+
+    static boolean awaitServerThreadTermination(Thread serverThread) {
+        if (serverThread == null || serverThread == Thread.currentThread()) {
+            return false;
+        }
+        try {
+            serverThread.join();
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Iris.reportError("Iris post-stop runtime finisher was interrupted.", e);
+            return false;
+        }
+    }
+
+    private void runShutdownHook() {
+        if (!awaitServerShutdownBoundary()) {
+            Iris.warn("Iris skipped JVM-hook runtime teardown because Paper did not reach its post-world-close boundary.");
+            return;
+        }
+        finishDeferredRuntimeTeardown("shutdown-hook", 30L);
+    }
+
+    private boolean awaitServerShutdownBoundary() {
+        if (!INMS.isBound()) {
+            return true;
+        }
+        try {
+            return INMS.get().awaitServerShutdownBoundary(
+                    SERVER_SHUTDOWN_BOUNDARY_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS
+            );
+        } catch (Throwable e) {
+            Iris.reportError("Failed to await Paper's post-world-close shutdown boundary.", e);
+            return false;
+        }
+    }
+
+    private void finishDeferredRuntimeTeardown(String reason, long timeoutSeconds) {
+        teardownRuntime(reason, timeoutSeconds);
+        finishTerminalCleanup();
+    }
+
+    private void finishTerminalCleanup() {
+        if (!terminalCleanupCompleted.compareAndSet(false, true)) {
+            return;
+        }
+        J.attempt(() -> INMS.get().uninjectBukkit());
+        try {
+            runPostShutdown();
+        } catch (Throwable e) {
+            Iris.reportError("Failed to run Iris post-shutdown cleanup.", e);
+        } finally {
+            IrisPlatforms.unbind();
+        }
+    }
+
+    private void drainWorldGenerators(String reason, long timeoutSeconds) {
+        List<World> irisWorlds = new ArrayList<>();
+        List<PlatformChunkGenerator> generators = new ArrayList<>();
+        if (serverStopTeardownDeferred.get()) {
+            generators.addAll(deferredShutdownGenerators);
+        } else {
+            for (World world : Bukkit.getWorlds()) {
+                PlatformChunkGenerator generator = IrisToolbelt.access(world);
+                if (generator != null) {
+                    irisWorlds.add(world);
+                    generators.add(generator);
+                }
+            }
+        }
+        if (generators.isEmpty()) {
+            Iris.info("No Iris worlds to freeze.");
+            return;
+        }
+
+        for (World world : irisWorlds) {
+            IrisToolbelt.beginWorldMaintenance(world, reason, true);
+        }
+
+        J.attempt(PregeneratorJob::shutdownInstance);
+
+        List<CompletableFuture<Void>> closes = new ArrayList<>();
+        for (PlatformChunkGenerator generator : generators) {
+            try {
+                closes.add(generator.closeAsync());
+            } catch (Throwable t) {
+                Iris.reportError(t);
+            }
+        }
+
+        if (closes.isEmpty()) return;
+
+        try {
+            CompletableFuture.allOf(closes.toArray(new CompletableFuture<?>[0]))
+                    .get(timeoutSeconds, TimeUnit.SECONDS);
+            Iris.info("All Iris chunk generators parked. Safe to unload.");
+        } catch (TimeoutException e) {
+            Iris.warn("Iris generator drain timed out after " + timeoutSeconds + "s; unload proceeding anyway.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Iris.warn("Iris generator drain interrupted; unload proceeding.");
+        } catch (ExecutionException e) {
+            Iris.reportError(e.getCause() == null ? e : e.getCause());
+        }
+    }
+
+    private void setupPapi() {
+        if (!PlaceholderRegistration.isPlaceholderApiEnabled()) {
+            return;
+        }
+
+        IrisPapiState state = new IrisPapiState(() -> IrisServices.getOrNull(IrisTerrainService.class));
+        PlaceholderRegistration registration = new PlaceholderRegistration(getLogger());
+
+        if (!IrisPapiInstaller.install(registration, state, getLogger())) {
+            return;
+        }
+
+        IrisPapiListener listener = new IrisPapiListener(state);
+
+        try {
+            Bukkit.getPluginManager().registerEvents(listener, this);
+        } catch (Throwable failure) {
+            registration.unregister();
+            Iris.warn("Failed to attach the Iris PlaceholderAPI listener: "
+                    + failure.getClass().getName() + ": " + failure.getMessage());
+            return;
+        }
+
+        papiState = state;
+        papiListener = listener;
+        papiRegistration = registration;
+    }
+
+    private void teardownPapi() {
+        IrisPapiListener listener = papiListener;
+        papiListener = null;
+
+        if (listener != null) {
+            HandlerList.unregisterAll(listener);
+        }
+
+        PlaceholderRegistration registration = papiRegistration;
+        papiRegistration = null;
+
+        if (registration != null) {
+            registration.unregister();
+        }
+
+        IrisPapiState state = papiState;
+        papiState = null;
+
+        if (state != null) {
+            state.clear();
+        }
+    }
+
+    @Override
+    public void start() {
+
+    }
+
+    @Override
+    public void stop() {
+
+    }
+
+    @Override
+    public String getTag(String subTag) {
+        return IrisSafeguard.mode().tag(subTag);
+    }
+
+    private void tickQueue() {
+        synchronized (Iris.syncJobs) {
+            if (!Iris.syncJobs.hasNext()) {
+                return;
+            }
+
+            long ms = M.ms();
+
+            while (Iris.syncJobs.hasNext() && M.ms() - ms < 25) {
+                try {
+                    Iris.syncJobs.next().run();
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    Iris.reportError(e);
+                }
+            }
+        }
+    }
+
+    private void bstats() {
+        if (IrisSettings.get().getGeneral().isPluginMetrics()) {
+            Bindings.setupBstats(this);
+        }
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        return super.onCommand(sender, command, label, args);
+    }
+
+    public void imsg(CommandSender s, String msg) {
+        s.sendMessage(C.IRIS + "[" + C.DARK_GRAY + "Iris" + C.IRIS + "]" + C.GRAY + ": " + msg);
+    }
+
+    @Nullable
+    @Override
+    public BiomeProvider getDefaultBiomeProvider(@NotNull String worldName, @Nullable String id) {
+        return generatorResolver.resolveDefaultBiomeProvider(worldName, id, () -> super.getDefaultBiomeProvider(worldName, id));
+    }
+
+    @Nullable
+    @Override
+    public ChunkGenerator getDefaultWorldGenerator(@NotNull String worldName, @Nullable String id) {
+        return generatorResolver.resolveDefaultWorldGenerator(worldName, id);
+    }
+
+    public void splash() {
+        Iris.info("Custom Biomes: " + INMS.get().countCustomBiomes());
+        printPacks();
+
+        IrisSafeguard.mode().trySplash();
+    }
+
+    private void printPacks() {
+        File packFolder = Iris.service(StudioSVC.class).getWorkspaceFolder();
+        for (String line : IrisSplashComposer.composePackLines(packFolder, Iris::reportError)) {
+            Iris.info(line);
+        }
+    }
+
+    public int getIrisVersion() {
+        String input = Iris.instance.getDescription().getVersion();
+        int hyphenIndex = input.indexOf('-');
+        if (hyphenIndex != -1) {
+            String result = input.substring(0, hyphenIndex);
+            result = result.replaceAll("\\.", "");
+            return Integer.parseInt(result);
+        }
+        return -1;
+    }
+
+    public int getMCVersion() {
+        try {
+            String version = Bukkit.getVersion();
+            Matcher matcher = Pattern.compile("\\(MC: ([\\d.]+)\\)").matcher(version);
+            if (matcher.find()) {
+                version = matcher.group(1).replaceAll("\\.", "");
+                long versionNumber = Long.parseLong(version);
+                if (versionNumber > Integer.MAX_VALUE) {
+                    return -1;
+                }
+                return (int) versionNumber;
+            }
+            return -1;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+}

@@ -1,0 +1,54 @@
+package art.arcane.iris.engine.mantle.components;
+
+import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.volmlib.util.matter.MatterCavern;
+import org.junit.Test;
+
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+public class MantleObjectComponentCaveAnchorTest {
+    @Test
+    public void biomeOwnedPlacementsRejectForeignCaveBands() {
+        IrisBiome frozen = biome("carving/ice");
+        IrisBiome deepDark = biome("carving/standard-deepdark");
+        IrisBiome surface = biome("frozen/ice-spikes");
+
+        assertFalse(MantleObjectComponent.caveAnchorBiomeConflicts(frozen, surface, "carving/ice"));
+        assertTrue(MantleObjectComponent.caveAnchorBiomeConflicts(deepDark, surface, "carving/ice"));
+        assertFalse(MantleObjectComponent.caveAnchorBiomeConflicts(deepDark, surface, null));
+    }
+
+    @Test
+    public void dryPlacementsRejectFluidAndDefaultLavaCells() {
+        MatterCavern air = new MatterCavern(true, "", (byte) 0);
+        MatterCavern water = new MatterCavern(true, "", (byte) 1);
+        MatterCavern lava = new MatterCavern(true, "", (byte) 2);
+
+        assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(false, water, 20, 8));
+        assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(false, lava, 20, 8));
+        assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(false, air, 8, 8));
+        assertTrue(MantleObjectComponent.acceptsCaveAnchorFluid(false, air, 9, 8));
+    }
+
+    @Test
+    public void explicitWetAndForcedAirPlacementsRemainEligible() {
+        MatterCavern water = new MatterCavern(true, "", (byte) 1);
+        MatterCavern forcedAir = new MatterCavern(true, "", (byte) 3);
+
+        assertTrue(MantleObjectComponent.acceptsCaveAnchorFluid(true, water, 20, 8));
+        assertTrue(MantleObjectComponent.acceptsCaveAnchorFluid(false, forcedAir, 0, 8));
+        assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
+                true,
+                new MatterCavern(false, "", (byte) 0),
+                20,
+                8
+        ));
+    }
+
+    private static IrisBiome biome(String loadKey) {
+        IrisBiome biome = new IrisBiome();
+        biome.setLoadKey(loadKey);
+        return biome;
+    }
+}

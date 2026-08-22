@@ -1,0 +1,35 @@
+name: ${name}
+version: ${version}
+main: ${main}
+folia-supported: true
+load: STARTUP
+softdepend:
+  - PlaceholderAPI
+  - CraftEngine
+  - Nexo
+  - ItemsAdder
+  - SCore
+  - ExecutableItems
+  - MythicLib
+  - MMOItems
+  - eco
+  - EcoItems
+  - MythicMobs
+  - MythicCrucible
+  - KGenerators
+  - WorldEdit
+loadbefore: [ Multiverse-Core ]
+authors: [ cyberpwn, NextdoorPsycho, Vatuu ]
+website: VolmitSoftware.com
+description: More than a Dimension!
+commands:
+  iris:
+    aliases: [ ir, irs ]
+permissions:
+  iris.all:
+    description: Allows use of the full /iris command tree (worlds, studio, pregen, packs, developer tools).
+    default: op
+  iris.treefeller:
+    description: Allows survival players to fell Iris-managed trees with an axe.
+    default: op
+api-version: '${apiVersion}'

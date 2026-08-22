@@ -45,15 +45,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 
 public final class IrisLanguage {
     private static final long MAX_LOCALE_BYTES = 2L * 1024L * 1024L;
-    private static final long HOTLOAD_CONTENT_STABILITY_NANOS = TimeUnit.MILLISECONDS.toNanos(250L);
-    private static final long HOTLOAD_DELETION_GRACE_NANOS = TimeUnit.SECONDS.toNanos(3L);
-    private static final long HOTLOAD_COOLDOWN_NANOS = TimeUnit.SECONDS.toNanos(3L);
     private static final int MAX_REPORTED_ISSUES = 12;
     private static final Pattern LOCALE_NAME = Pattern.compile("[A-Za-z0-9_-]+");
     private static final Pattern LEGACY_COLOR = Pattern.compile("(?i)\\u00a7[0-9A-FK-ORX]");
@@ -68,17 +66,9 @@ public final class IrisLanguage {
      * new snapshot and the whole memo is discarded. Bounded by the catalog size.
      */
     private static final AtomicReference<PlainMemo> PLAIN_MEMO = new AtomicReference<>(null);
-    private static final LocaleHotloadGate HOTLOAD_GATE = new LocaleHotloadGate(
-            new LocaleHotloadGate.Timing(
-                    HOTLOAD_CONTENT_STABILITY_NANOS,
-                    HOTLOAD_DELETION_GRACE_NANOS,
-                    HOTLOAD_COOLDOWN_NANOS
-            )
-    );
-
+    private static final CopyOnWriteArrayList<BiConsumer<File, String>> MANUAL_RELOAD_LISTENERS =
+            new CopyOnWriteArrayList<>();
     private static volatile File dataFolder;
-    private static volatile String lastCaptureFailureKey;
-    private static volatile String lastInvalidHotloadLocale;
     private static volatile String activeLocale = CATALOG.englishLocale();
 
     private IrisLanguage() {
@@ -113,10 +103,22 @@ public final class IrisLanguage {
         }
         IrisSettings.IrisSettingsGeneral general = resolvedCandidate.getGeneral();
         String locale = general == null ? CATALOG.englishLocale() : general.getLanguage();
-        return reload(root, locale);
+        return reloadResolved(root, locale, false);
     }
 
     public static synchronized boolean reload(File root, String locale) {
+        return reloadResolved(root, locale, true);
+    }
+
+    public static void addManualReloadListener(BiConsumer<File, String> listener) {
+        MANUAL_RELOAD_LISTENERS.add(Objects.requireNonNull(listener, "Manual reload listener cannot be null"));
+    }
+
+    public static void removeManualReloadListener(BiConsumer<File, String> listener) {
+        MANUAL_RELOAD_LISTENERS.remove(listener);
+    }
+
+    private static boolean reloadResolved(File root, String locale, boolean notifyManualReload) {
         File resolvedRoot = root == null ? null : root.getAbsoluteFile();
         if (resolvedRoot == null) {
             throw new IllegalArgumentException("Iris locale data folder cannot be null");
@@ -126,7 +128,6 @@ public final class IrisLanguage {
             requestedLocale = normalizeLocale(locale);
         } catch (RuntimeException exception) {
             dataFolder = resolvedRoot;
-            HOTLOAD_GATE.reset(null);
             IrisLogging.error("Rejected locale setting '" + locale + "'; continuing with " + activeLocale + ".");
             IrisLogging.reportError(exception);
             exception.printStackTrace();
@@ -135,17 +136,77 @@ public final class IrisLanguage {
 
         File override = overrideFile(resolvedRoot, requestedLocale);
         SnapshotCapture capture = captureForReload(override, requestedLocale);
+        boolean applied = applyReload(resolvedRoot, requestedLocale, capture);
+        if (applied && notifyManualReload) {
+            notifyManualReload(capture.snapshot());
+        }
+        return applied;
+    }
+
+    public static synchronized boolean reloadOverride(File override, String rawContent) {
+        File root = dataFolder;
+        if (root == null && IrisPlatforms.isBound()) {
+            root = IrisPlatforms.get().dataFolder();
+        }
+        if (root == null || override == null) {
+            return false;
+        }
+
+        String configured = configuredLocale();
+        String requestedLocale;
+        try {
+            requestedLocale = normalizeLocale(configured);
+        } catch (RuntimeException exception) {
+            IrisLogging.error("Rejected locale setting '" + configured + "'; continuing with " + activeLocale + ".");
+            IrisLogging.reportError(exception);
+            exception.printStackTrace();
+            return false;
+        }
+
+        File expected = overrideFile(root, requestedLocale);
+        if (!expected.equals(override.getAbsoluteFile())) {
+            return true;
+        }
+
+        LocaleHotloadSnapshot snapshot = rawContent == null
+                ? LocaleHotloadSnapshot.missing(expected, requestedLocale)
+                : LocaleHotloadSnapshot.present(
+                        expected,
+                        requestedLocale,
+                        rawContent,
+                        sha256(rawContent.getBytes(StandardCharsets.UTF_8))
+                );
+        return applyReload(root.getAbsoluteFile(), requestedLocale, new SnapshotCapture(snapshot, null));
+    }
+
+    public static boolean isActiveOverrideFile(File file) {
+        if (file == null) {
+            return false;
+        }
+        File root = dataFolder;
+        if (root == null && IrisPlatforms.isBound()) {
+            root = IrisPlatforms.get().dataFolder();
+        }
+        if (root == null) {
+            return false;
+        }
+        try {
+            return overrideFile(root, configuredLocale()).equals(file.getAbsoluteFile());
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private static boolean applyReload(File root, String requestedLocale, SnapshotCapture capture) {
         LocalizationReloadResult result;
         if (capture.failure() == null) {
-            result = MANAGER.reload(() -> loadCandidate(resolvedRoot, requestedLocale, capture.snapshot()));
+            result = MANAGER.reload(() -> loadCandidate(root, requestedLocale, capture.snapshot()));
         } else {
             result = MANAGER.reload(() -> {
                 throw capture.failure();
             });
         }
-        dataFolder = resolvedRoot;
-        HOTLOAD_GATE.reset(capture.snapshot());
-        lastCaptureFailureKey = null;
+        dataFolder = root;
         if (!result.applied()) {
             reportRejectedReload(requestedLocale, result);
             return false;
@@ -158,56 +219,18 @@ public final class IrisLanguage {
         return true;
     }
 
-    public static synchronized boolean update() {
-        File root = dataFolder;
-        if (root == null) {
-            return initialize();
-        }
-        String locale;
-        try {
-            locale = normalizeLocale(configuredLocale());
-        } catch (RuntimeException exception) {
-            String invalidLocale = configuredLocale();
-            if (Objects.equals(lastInvalidHotloadLocale, invalidLocale)) {
-                return false;
+    private static void notifyManualReload(LocaleHotloadSnapshot snapshot) {
+        for (BiConsumer<File, String> listener : MANUAL_RELOAD_LISTENERS) {
+            try {
+                listener.accept(snapshot.file(), snapshot.content());
+            } catch (RuntimeException failure) {
+                IrisLogging.error("Failed to acknowledge a manual locale reload: "
+                        + failure.getClass().getSimpleName()
+                        + (failure.getMessage() == null ? "" : " - " + failure.getMessage()));
+                IrisLogging.reportError(failure);
+                failure.printStackTrace();
             }
-            lastInvalidHotloadLocale = invalidLocale;
-            return reload(root, invalidLocale);
         }
-        lastInvalidHotloadLocale = null;
-        File expected = overrideFile(root, locale);
-        LocaleHotloadSnapshot snapshot;
-        try {
-            snapshot = captureHotloadSnapshot(expected, locale);
-        } catch (IOException | RuntimeException failure) {
-            HOTLOAD_GATE.unavailable();
-            reportCaptureFailure(expected, failure);
-            return false;
-        }
-        if (snapshot == null) {
-            HOTLOAD_GATE.unavailable();
-            return true;
-        }
-        lastCaptureFailureKey = null;
-
-        LocaleHotloadGate.Attempt attempt = HOTLOAD_GATE.observe(snapshot, System.nanoTime());
-        if (attempt == null) {
-            return true;
-        }
-
-        LocalizationReloadResult result = MANAGER.reload(() -> loadCandidate(root, locale, attempt.snapshot()));
-        boolean applied = result.applied();
-        HOTLOAD_GATE.complete(attempt, System.nanoTime(), applied);
-        if (!applied) {
-            reportRejectedReload(locale, result);
-            return false;
-        }
-
-        activeLocale = locale;
-        int warnings = result.validation().warnings().size();
-        IrisLogging.info("Loaded locale " + locale + " with " + warnings + " fallback "
-                + (warnings == 1 ? "entry" : "entries") + ".");
-        return true;
     }
 
     public static String activeLocale() {
@@ -604,18 +627,6 @@ public final class IrisLanguage {
         } catch (NoSuchAlgorithmException failure) {
             throw new IllegalStateException("SHA-256 is unavailable", failure);
         }
-    }
-
-    private static void reportCaptureFailure(File file, Exception failure) {
-        String detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
-        String failureKey = file.getAbsolutePath() + ":" + failure.getClass().getName() + ":" + detail;
-        if (Objects.equals(failureKey, lastCaptureFailureKey)) {
-            return;
-        }
-        lastCaptureFailureKey = failureKey;
-        IrisLogging.error("Failed to capture stable locale override " + file.getPath() + ": " + detail);
-        IrisLogging.reportError(failure);
-        failure.printStackTrace();
     }
 
     private static void reportRejectedReload(String locale, LocalizationReloadResult result) {

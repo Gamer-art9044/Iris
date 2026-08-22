@@ -39,6 +39,7 @@ import art.arcane.volmlib.util.math.Position2;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.MatterMarker;
 
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
@@ -61,10 +62,14 @@ final class IrisObjectPlacementRunner {
     }
 
     int place(int x, int yv, int z, IObjectPlacer oplacer, IrisObjectPlacement config, RNG rng, BiConsumer<BlockPosition, PlatformBlockState> listener, CarveResult c, IrisData rdata) {
+        Objects.requireNonNull(oplacer, "Object placer is required.");
+        Objects.requireNonNull(config, "Object placement config is required.");
+        Objects.requireNonNull(rng, "Object placement RNG is required.");
+        Objects.requireNonNull(rdata, "Object placement data is required.");
         IObjectPlacer placer = config.getHeightmap() != null ? new HeightmapObjectPlacer(rng, x, yv, z, config, oplacer) : oplacer;
 
         boolean evaluateSlopeCondition = !config.isForcePlace() && !config.getSlopeCondition().isDefault();
-        if (rdata != null && (evaluateSlopeCondition || config.isRotateTowardsSlope())) {
+        if (evaluateSlopeCondition || config.isRotateTowardsSlope()) {
             Engine placementEngine = requireSlopeEngine(placer);
             if (evaluateSlopeCondition &&
                     !config.getSlopeCondition().isValid(placementEngine.getComplex().getSlopeStream().get(x, z))) {
@@ -108,7 +113,7 @@ final class IrisObjectPlacementRunner {
         }
 
         if (config.isSmartBore()) {
-            IrisObjectShaping.ensureSmartBored(self, placer.isDebugSmartBore());
+            IrisObjectShaping.ensureSmartBored(self);
         }
 
         boolean warped = !config.getWarp().isFlat();
@@ -148,6 +153,8 @@ final class IrisObjectPlacementRunner {
         int xx, zz;
         int yrand = config.getTranslate().getYRandom();
         yrand = yrand > 0 ? rng.i(0, yrand) : yrand < 0 ? rng.i(yrand, 0) : yrand;
+        int warpMargin = warped ? (int) Math.ceil(Math.abs(config.getWarp().getMultiplier()) / 2D) : 0;
+        TransformedBounds placementBounds = transformedBounds(spin, translating, translateOffset, ceilingHang, warpMargin);
         boolean bail = false;
 
         if (config.isFromBottom()) {
@@ -168,14 +175,10 @@ final class IrisObjectPlacementRunner {
                     }
                 }
             } else if (config.getMode().equals(ObjectPlaceMode.MAX_HEIGHT) || config.getMode().equals(ObjectPlaceMode.STILT)) {
-                IrisBlockVector offset = new IrisBlockVector(config.getTranslate().getX(), config.getTranslate().getY(), config.getTranslate().getZ());
-                IrisBlockVector rotatedDimensions = config.getRotation().rotate(new IrisBlockVector(self.getW(), self.getH(), self.getD()), spinx, spiny, spinz).clone();
-                int xLength = (rotatedDimensions.getBlockX() / 2) + offset.getBlockX();
-                int minX = Math.min(x - xLength, x + xLength);
-                int maxX = Math.max(x - xLength, x + xLength);
-                int zLength = (rotatedDimensions.getBlockZ() / 2) + offset.getBlockZ();
-                int minZ = Math.min(z - zLength, z + zLength);
-                int maxZ = Math.max(z - zLength, z + zLength);
+                int minX = x + placementBounds.minX();
+                int maxX = x + placementBounds.maxX();
+                int minZ = z + placementBounds.minZ();
+                int maxZ = z + placementBounds.maxZ();
                 for (int i = minX; i <= maxX; i++) {
                     for (int ii = minZ; ii <= maxZ; ii++) {
                         int h = placer.getHighest(i, ii, self.getLoader(), config.isUnderwater()) + rty;
@@ -190,17 +193,12 @@ final class IrisObjectPlacementRunner {
                     }
                 }
             } else if (config.getMode().equals(ObjectPlaceMode.FAST_MAX_HEIGHT) || config.getMode().equals(ObjectPlaceMode.FAST_STILT)) {
-                IrisBlockVector offset = new IrisBlockVector(config.getTranslate().getX(), config.getTranslate().getY(), config.getTranslate().getZ());
-                IrisBlockVector rotatedDimensions = config.getRotation().rotate(new IrisBlockVector(self.getW(), self.getH(), self.getD()), spinx, spiny, spinz).clone();
-
-                int xRadius = (rotatedDimensions.getBlockX() / 2);
-                int xLength = xRadius + offset.getBlockX();
-                int minX = Math.min(x - xLength, x + xLength);
-                int maxX = Math.max(x - xLength, x + xLength);
-                int zRadius = (rotatedDimensions.getBlockZ() / 2);
-                int zLength = zRadius + offset.getBlockZ();
-                int minZ = Math.min(z - zLength, z + zLength);
-                int maxZ = Math.max(z - zLength, z + zLength);
+                int minX = x + placementBounds.minX();
+                int maxX = x + placementBounds.maxX();
+                int minZ = z + placementBounds.minZ();
+                int maxZ = z + placementBounds.maxZ();
+                int xRadius = Math.max(0, (maxX - minX) / 2);
+                int zRadius = Math.max(0, (maxZ - minZ) / 2);
 
                 for (int i = minX; i <= maxX; i += Math.abs(xRadius) + 1) {
                     for (int ii = minZ; ii <= maxZ; ii += Math.abs(zRadius) + 1) {
@@ -216,16 +214,11 @@ final class IrisObjectPlacementRunner {
                     }
                 }
             } else if (config.getMode().equals(ObjectPlaceMode.MIN_HEIGHT) || config.getMode() == ObjectPlaceMode.MIN_STILT) {
-                y = rdata.getEngine().getHeight() + 1;
-                IrisBlockVector offset = new IrisBlockVector(config.getTranslate().getX(), config.getTranslate().getY(), config.getTranslate().getZ());
-                IrisBlockVector rotatedDimensions = config.getRotation().rotate(new IrisBlockVector(self.getW(), self.getH(), self.getD()), spinx, spiny, spinz).clone();
-
-                int xLength = (rotatedDimensions.getBlockX() / 2) + offset.getBlockX();
-                int minX = Math.min(x - xLength, x + xLength);
-                int maxX = Math.max(x - xLength, x + xLength);
-                int zLength = (rotatedDimensions.getBlockZ() / 2) + offset.getBlockZ();
-                int minZ = Math.min(z - zLength, z + zLength);
-                int maxZ = Math.max(z - zLength, z + zLength);
+                y = requireDataEngine(rdata, "minimum-height mode").getHeight() + 1;
+                int minX = x + placementBounds.minX();
+                int maxX = x + placementBounds.maxX();
+                int minZ = z + placementBounds.minZ();
+                int maxZ = z + placementBounds.maxZ();
                 for (int i = minX; i <= maxX; i++) {
                     for (int ii = minZ; ii <= maxZ; ii++) {
                         int h = placer.getHighest(i, ii, self.getLoader(), config.isUnderwater()) + rty;
@@ -241,18 +234,13 @@ final class IrisObjectPlacementRunner {
                     }
                 }
             } else if (config.getMode().equals(ObjectPlaceMode.FAST_MIN_HEIGHT) || config.getMode() == ObjectPlaceMode.FAST_MIN_STILT) {
-                y = rdata.getEngine().getHeight() + 1;
-                IrisBlockVector offset = new IrisBlockVector(config.getTranslate().getX(), config.getTranslate().getY(), config.getTranslate().getZ());
-                IrisBlockVector rotatedDimensions = config.getRotation().rotate(new IrisBlockVector(self.getW(), self.getH(), self.getD()), spinx, spiny, spinz).clone();
-
-                int xRadius = (rotatedDimensions.getBlockX() / 2);
-                int xLength = xRadius + offset.getBlockX();
-                int minX = Math.min(x - xLength, x + xLength);
-                int maxX = Math.max(x - xLength, x + xLength);
-                int zRadius = (rotatedDimensions.getBlockZ() / 2);
-                int zLength = zRadius + offset.getBlockZ();
-                int minZ = Math.min(z - zLength, z + zLength);
-                int maxZ = Math.max(z - zLength, z + zLength);
+                y = requireDataEngine(rdata, "fast minimum-height mode").getHeight() + 1;
+                int minX = x + placementBounds.minX();
+                int maxX = x + placementBounds.maxX();
+                int minZ = z + placementBounds.minZ();
+                int maxZ = z + placementBounds.maxZ();
+                int xRadius = Math.max(0, (maxX - minX) / 2);
+                int zRadius = Math.max(0, (maxZ - minZ) / 2);
 
                 for (int i = minX; i <= maxX; i += Math.abs(xRadius) + 1) {
                     for (int ii = minZ; ii <= maxZ; ii += Math.abs(zRadius) + 1) {
@@ -352,18 +340,23 @@ final class IrisObjectPlacementRunner {
             return -1;
         }
 
-        int warpMargin = warped ? (int) Math.ceil(Math.abs(config.getWarp().getMultiplier()) / 2D) : 0;
         if (!rawStructurePiece && nativeStructureVetoes(placer, config, spin, translating, translateOffset, ceilingHang,
                 yv < 0 && config.getMode() == ObjectPlaceMode.PAINT, warpMargin, x, y + yrand, z)) {
             return -1;
         }
 
+        boolean paint = yv < 0 && config.getMode() == ObjectPlaceMode.PAINT;
+        WorldBounds worldBounds = null;
+        if (config.isBore() || (!config.isForcePlace() && !rawStructurePiece
+                && (!config.getAllowedCollisions().isEmpty() || !config.getForbiddenCollisions().isEmpty()))) {
+            worldBounds = resolveWorldBounds(placer, config, placementBounds, paint, x, y + yrand, z);
+        }
+
         if (!config.isForcePlace() && !rawStructurePiece && (!config.getAllowedCollisions().isEmpty() || !config.getForbiddenCollisions().isEmpty())) {
-            Engine engine = rdata.getEngine();
-            IrisBlockVector offset = new IrisBlockVector(config.getTranslate().getX(), config.getTranslate().getY(), config.getTranslate().getZ());
-            for (int i = x - Math.floorDiv(self.w, 2) + (int) offset.getX(); i <= x + Math.floorDiv(self.w, 2) - (self.w % 2 == 0 ? 1 : 0) + (int) offset.getX(); i++) {
-                for (int j = y - Math.floorDiv(self.h, 2)  + (int) offset.getY(); j <= y + Math.floorDiv(self.h, 2) - (self.h % 2 == 0 ? 1 : 0) + (int) offset.getY(); j++) {
-                    for (int k = z - Math.floorDiv(self.d, 2) + (int) offset.getZ(); k <= z + Math.floorDiv(self.d, 2) - (self.d % 2 == 0 ? 1 : 0) + (int) offset.getZ(); k++) {
+            Engine engine = requireDataEngine(rdata, "collision settings");
+            for (int i = worldBounds.minX(); i <= worldBounds.maxX(); i++) {
+                for (int j = worldBounds.minY(); j <= worldBounds.maxY(); j++) {
+                    for (int k = worldBounds.minZ(); k <= worldBounds.maxZ(); k++) {
                         PlacedObject p = engine.getObjectPlacement(i, j, k);
                         if (p == null) continue;
                         IrisObject o = p.getObject();
@@ -379,11 +372,12 @@ final class IrisObjectPlacementRunner {
             }
         }
 
+        y += yrand;
+
         if (config.isBore()) {
-            IrisBlockVector offset = new IrisBlockVector(config.getTranslate().getX(), config.getTranslate().getY(), config.getTranslate().getZ());
-            for (int i = x - Math.floorDiv(self.w, 2) + (int) offset.getX(); i <= x + Math.floorDiv(self.w, 2) - (self.w % 2 == 0 ? 1 : 0) + (int) offset.getX(); i++) {
-                for (int j = y - Math.floorDiv(self.h, 2) - config.getBoreExtendMinY() + (int) offset.getY(); j <= y + Math.floorDiv(self.h, 2) + config.getBoreExtendMaxY() - (self.h % 2 == 0 ? 1 : 0) + (int) offset.getY(); j++) {
-                    for (int k = z - Math.floorDiv(self.d, 2) + (int) offset.getZ(); k <= z + Math.floorDiv(self.d, 2) - (self.d % 2 == 0 ? 1 : 0) + (int) offset.getZ(); k++) {
+            for (int i = worldBounds.minX(); i <= worldBounds.maxX(); i++) {
+                for (int j = worldBounds.minY() - config.getBoreExtendMinY(); j <= worldBounds.maxY() + config.getBoreExtendMaxY(); j++) {
+                    for (int k = worldBounds.minZ(); k <= worldBounds.maxZ(); k++) {
                         placer.set(i, j, k, IrisObject.States.AIR);
                     }
                 }
@@ -394,7 +388,6 @@ final class IrisObjectPlacementRunner {
         int topLayer = Integer.MIN_VALUE;
         int vacuumLowest = Integer.MAX_VALUE;
         int vacuumHighest = Integer.MIN_VALUE;
-        y += yrand;
         self.readLock.lock();
 
         KMap<IrisBlockVector, String> markers = null;
@@ -407,7 +400,7 @@ final class IrisObjectPlacementRunner {
 
             if (config.getMarkers().isNotEmpty() && placer.getEngine() != null) {
                 markers = new KMap<>();
-                var list = StreamSupport.stream(blocks.keys().spliterator(), false)
+                KList<IrisBlockVector> list = StreamSupport.stream(blocks.keys().spliterator(), false)
                         .collect(KList.collector());
                 // Marker selection persists into the mantle, so it must be seed-deterministic.
                 // Derive a side stream keyed on the placement position instead of consuming the
@@ -476,6 +469,10 @@ final class IrisObjectPlacementRunner {
                     d = IrisObject.States.AIR;
                 }
 
+                if (placer.isDebugSmartBore() && IrisObject.States.VAIR.equals(d)) {
+                    d = IrisObject.States.VAIR_DEBUG;
+                }
+
                 PlatformBlockState data = d;
                 IrisBlockVector i = g.clone();
                 spin.rotate(i);
@@ -536,18 +533,6 @@ final class IrisObjectPlacementRunner {
                     yy = (int) Math.round(i.getY()) + Math.floorDiv(self.h, 2) + placer.getHighest(xx, zz, self.getLoader(), config.isUnderwater());
                 }
 
-                if (heightmap != null) {
-                    Position2 pos = new Position2(xx, zz);
-
-                    if (!heightmap.containsKey(pos)) {
-                        heightmap.put(pos, yy);
-                    }
-
-                    if (heightmap.get(pos) < yy) {
-                        heightmap.put(pos, yy);
-                    }
-                }
-
                 if (config.isMeld() && !rawStructurePiece && !placer.isSolid(xx, yy, zz)) {
                     continue;
                 }
@@ -569,6 +554,13 @@ final class IrisObjectPlacementRunner {
 
                 if (data.isCustom() || place) {
                     placer.set(xx, yy, zz, data);
+                    if (heightmap != null) {
+                        Position2 pos = new Position2(xx, zz);
+                        Integer currentHeight = heightmap.get(pos);
+                        if (currentHeight == null || currentHeight < yy) {
+                            heightmap.put(pos, yy);
+                        }
+                    }
                     if (tile != null) {
                         placer.setTile(xx, yy, zz, tile);
                     }
@@ -586,9 +578,6 @@ final class IrisObjectPlacementRunner {
                     }
                 }
             }
-        } catch (Throwable e) {
-            e.printStackTrace();
-            IrisLogging.reportError(e);
         } finally {
             self.readLock.unlock();
         }
@@ -832,14 +821,8 @@ final class IrisObjectPlacementRunner {
         }
 
         if (vacuuming && vacuumLowest != Integer.MAX_VALUE && placer.getEngine() != null) {
-            IrisBlockVector rotDim = config.getRotation().rotate(new IrisBlockVector(self.getW(), self.getH(), self.getD()), spinx, spiny, spinz).clone();
-            int lowX = IrisObjectVacuum.footprintLow(rotDim.getBlockX());
-            int highX = IrisObjectVacuum.footprintHigh(rotDim.getBlockX());
-            int lowZ = IrisObjectVacuum.footprintLow(rotDim.getBlockZ());
-            int highZ = IrisObjectVacuum.footprintHigh(rotDim.getBlockZ());
-            int centerX = x + config.getTranslate().getX();
-            int centerZ = z + config.getTranslate().getZ();
-            vacuumTerrain(placer, config, centerX, centerZ, lowX, highX, lowZ, highZ, vacuumLowest, vacuumHighest);
+            vacuumTerrain(placer, config, x, z, placementBounds.minX(), placementBounds.maxX(),
+                    placementBounds.minZ(), placementBounds.maxZ(), vacuumLowest, vacuumHighest);
         }
 
         if (heightmap != null) {
@@ -864,10 +847,91 @@ final class IrisObjectPlacementRunner {
         return !wouldReplace && (rawStructurePiece || !air);
     }
 
+    private TransformedBounds transformedBounds(SpinKernel spin, boolean translating, IrisBlockVector translateOffset,
+                                                boolean ceilingHang, int margin) {
+        int sourceMinX = -self.getCenter().getBlockX();
+        int sourceMaxX = self.getW() - self.getCenter().getBlockX() - 1;
+        int sourceMinY = -self.getCenter().getBlockY();
+        int sourceMaxY = self.getH() - self.getCenter().getBlockY() - 1;
+        int sourceMinZ = -self.getCenter().getBlockZ();
+        int sourceMaxZ = self.getD() - self.getCenter().getBlockZ() - 1;
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+
+        for (int xCorner = 0; xCorner < 2; xCorner++) {
+            int sourceX = xCorner == 0 ? sourceMinX : sourceMaxX;
+            for (int yCorner = 0; yCorner < 2; yCorner++) {
+                int sourceY = yCorner == 0 ? sourceMinY : sourceMaxY;
+                for (int zCorner = 0; zCorner < 2; zCorner++) {
+                    int sourceZ = zCorner == 0 ? sourceMinZ : sourceMaxZ;
+                    IrisBlockVector corner = new IrisBlockVector(sourceX, sourceY, sourceZ);
+                    spin.rotate(corner);
+                    if (ceilingHang) {
+                        corner.setY(-corner.getBlockY());
+                    }
+                    if (translating) {
+                        corner.add(translateOffset);
+                    }
+                    int transformedX = (int) Math.round(corner.getX());
+                    int transformedY = (int) Math.round(corner.getY());
+                    int transformedZ = (int) Math.round(corner.getZ());
+                    minX = Math.min(minX, transformedX);
+                    maxX = Math.max(maxX, transformedX);
+                    minY = Math.min(minY, transformedY);
+                    maxY = Math.max(maxY, transformedY);
+                    minZ = Math.min(minZ, transformedZ);
+                    maxZ = Math.max(maxZ, transformedZ);
+                }
+            }
+        }
+
+        return new TransformedBounds(minX - margin, maxX + margin, minY, maxY, minZ - margin, maxZ + margin);
+    }
+
+    private WorldBounds resolveWorldBounds(IObjectPlacer placer, IrisObjectPlacement config, TransformedBounds bounds,
+                                           boolean paint, int x, int y, int z) {
+        int minX = x + bounds.minX();
+        int maxX = x + bounds.maxX();
+        int minZ = z + bounds.minZ();
+        int maxZ = z + bounds.maxZ();
+        if (!paint) {
+            return new WorldBounds(minX, maxX, y + bounds.minY(), y + bounds.maxY(), minZ, maxZ);
+        }
+
+        int minimumSurface = Integer.MAX_VALUE;
+        int maximumSurface = Integer.MIN_VALUE;
+        for (int worldX = minX; worldX <= maxX; worldX++) {
+            for (int worldZ = minZ; worldZ <= maxZ; worldZ++) {
+                int surface = placer.getHighest(worldX, worldZ, self.getLoader(), config.isUnderwater());
+                minimumSurface = Math.min(minimumSurface, surface);
+                maximumSurface = Math.max(maximumSurface, surface);
+            }
+        }
+        int paintOffset = Math.floorDiv(self.h, 2);
+        return new WorldBounds(minX, maxX, minimumSurface + bounds.minY() + paintOffset,
+                maximumSurface + bounds.maxY() + paintOffset, minZ, maxZ);
+    }
+
     private static Engine requireSlopeEngine(IObjectPlacer placer) {
+        return requirePlacementEngine(placer, "slope settings");
+    }
+
+    private static Engine requirePlacementEngine(IObjectPlacer placer, String feature) {
         Engine engine = placer.getEngine();
         if (engine == null) {
-            throw new IllegalStateException("Object placement slope settings require an active Iris engine for the target world.");
+            throw new IllegalStateException("Object placement requires an active Iris engine for " + feature + ".");
+        }
+        return engine;
+    }
+
+    private static Engine requireDataEngine(IrisData data, String feature) {
+        Engine engine = data.getEngine();
+        if (engine == null) {
+            throw new IllegalStateException("Object placement requires active Iris data for " + feature + ".");
         }
         return engine;
     }
@@ -1228,5 +1292,11 @@ final class IrisObjectPlacementRunner {
                 }
             }
         }
+    }
+
+    private record TransformedBounds(int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
+    }
+
+    private record WorldBounds(int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
     }
 }

@@ -41,7 +41,7 @@ final class IrisObjectShaping {
     private IrisObjectShaping() {
     }
 
-    static void ensureSmartBored(IrisObject self, boolean debug) {
+    static void ensureSmartBored(IrisObject self) {
         if (self.smartBored) {
             return;
         }
@@ -53,15 +53,15 @@ final class IrisObjectShaping {
             if (self.smartBored) {
                 return;
             }
-            ensureSmartBoredLocked(self, debug);
+            ensureSmartBoredLocked(self);
         } finally {
             self.writeLock.unlock();
         }
     }
 
-    private static void ensureSmartBoredLocked(IrisObject self, boolean debug) {
+    private static void ensureSmartBoredLocked(IrisObject self) {
         PrecisionStopwatch p = PrecisionStopwatch.start();
-        PlatformBlockState vair = debug ? IrisObject.States.VAIR_DEBUG : IrisObject.States.VAIR;
+        PlatformBlockState vair = IrisObject.States.VAIR;
         AtomicInteger applied = new AtomicInteger();
         IrisBlockVector max = new IrisBlockVector(Double.MIN_VALUE, Double.MIN_VALUE, Double.MIN_VALUE);
         IrisBlockVector min = new IrisBlockVector(Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE);

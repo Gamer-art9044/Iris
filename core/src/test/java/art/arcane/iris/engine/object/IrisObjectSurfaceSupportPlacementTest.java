@@ -200,7 +200,7 @@ public class IrisObjectSurfaceSupportPlacementTest {
         IllegalStateException error = assertThrows(IllegalStateException.class,
                 () -> place(placer, placement, SURFACE_Y));
 
-        assertTrue(error.getMessage().contains("require an active Iris engine"));
+        assertTrue(error.getMessage().contains("requires an active Iris engine"));
         assertTrue(placer.written().isEmpty());
         verify(data, never()).getEngine();
     }

@@ -96,7 +96,6 @@ import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.function.NastyRunnable;
-import art.arcane.volmlib.util.hotload.ConfigHotloadEngine;
 import art.arcane.volmlib.util.hud.HudActionBar;
 import art.arcane.volmlib.util.hud.HudBossBarLane;
 import art.arcane.volmlib.util.io.IO;
@@ -165,7 +164,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     public static Bindings.Adventure audiences;
     public static MultiverseCoreLink linkMultiverseCore;
     public static IrisCompat compat;
-    public static ConfigHotloadEngine configHotloadEngine;
     public static ChunkTickets tickets;
     private static VolmitSender sender;
     private static Thread shutdownHook;
@@ -663,13 +661,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         IrisServices.register(ManagedWorldLoader.class, (ManagedWorldLoader) this::loadManagedWorld);
         SettingsHotloadWatch watch = new SettingsHotloadWatch(getDataFile("settings.json"));
         settingsHotloadWatch = watch;
-        configHotloadEngine = new ConfigHotloadEngine(
-                watch::isSettingsFile,
-                watch::knownSettingsFiles,
-                watch::readSettingsContent,
-                watch::normalizeSettingsContent
-        );
-        configHotloadEngine.configure(500L, 3_000L, List.of(watch.settingsFile()), List.of());
         // Stale-temp cleanup must complete before services enable: StudioSVC.onEnable downloads
         // packs through cache/temp on an async thread, and a concurrent delete of that folder
         // truncated pack imports mid-copy (partial packs/<key> without dimensions/).
@@ -714,7 +705,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             pendingWorldReplacements.captureVanillaLevelContext();
             pendingWorldReplacements.verifyLoadedPublishedWorlds();
             J.a(this::bstats);
-            J.ar(() -> settingsHotloadWatch.checkConfigHotload(configHotloadEngine), 10);
+            J.ar(watch::checkConfigHotload, 10);
             J.sr(this::tickQueue, 0);
             J.s(this::setupPapi);
             if (IrisStartupValidation.isReady()) {
@@ -883,9 +874,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             BukkitPlatform.hudBar().shutdown();
             BukkitPlatform.hudLanes().shutdown();
         }
-        if (configHotloadEngine != null) {
-            configHotloadEngine.clear();
-            configHotloadEngine = null;
+        SettingsHotloadWatch activeSettingsHotloadWatch = settingsHotloadWatch;
+        settingsHotloadWatch = null;
+        if (activeSettingsHotloadWatch != null) {
+            activeSettingsHotloadWatch.close();
         }
         // super.onDisable() cancels plugin tasks and unregisters every listener.
         super.onDisable();

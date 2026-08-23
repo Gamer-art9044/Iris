@@ -22,6 +22,7 @@ public class IrisStartupValidationTest {
         IrisStartupValidation.disable();
 
         assertTrue(IrisStartupValidation.isReady());
+        assertFalse(IrisStartupValidation.isRestartRequired());
         assertTrue(IrisStartupValidation.denialReason().isEmpty());
         IrisStartupValidation.requireWorldCreationReady();
     }
@@ -31,6 +32,7 @@ public class IrisStartupValidationTest {
         IrisStartupValidation.begin();
 
         assertFalse(IrisStartupValidation.isReady());
+        assertFalse(IrisStartupValidation.isRestartRequired());
         assertTrue(IrisStartupValidation.denialReason().orElseThrow().contains("external datapacks"));
         try {
             IrisStartupValidation.requireWorldCreationReady();
@@ -71,6 +73,7 @@ public class IrisStartupValidationTest {
         IrisStartupValidation.markPacksReady();
 
         assertFalse(IrisStartupValidation.isReady());
+        assertTrue(IrisStartupValidation.isRestartRequired());
         assertEquals("restart required for registry load", IrisStartupValidation.denialReason().orElseThrow());
     }
 

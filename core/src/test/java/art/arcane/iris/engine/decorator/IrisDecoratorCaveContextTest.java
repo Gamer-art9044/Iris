@@ -1,6 +1,7 @@
 package art.arcane.iris.engine.decorator;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.SeedManager;
 import art.arcane.iris.engine.object.InferredType;
@@ -10,6 +11,7 @@ import art.arcane.iris.engine.object.IrisDecorator;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.hunk.Hunk;
+import art.arcane.iris.util.project.stream.ProceduralStream;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -31,6 +33,11 @@ public class IrisDecoratorCaveContextTest {
         IrisDimension dimension = mock(IrisDimension.class);
         doReturn(63).when(dimension).getFluidHeight();
         doReturn(dimension).when(engine).getDimension();
+        IrisComplex complex = mock(IrisComplex.class);
+        ProceduralStream<Double> fluidStream = mock(ProceduralStream.class);
+        doReturn(complex).when(engine).getComplex();
+        doReturn(fluidStream).when(complex).getRiverWaterSurfaceStream();
+        doReturn(63D).when(fluidStream).get(anyDouble(), anyDouble());
 
         IrisDecorator decorator = mock(IrisDecorator.class);
         doReturn(true).when(decorator).passesChanceGate(any(), anyDouble(), anyDouble(), any());

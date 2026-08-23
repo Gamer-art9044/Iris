@@ -29,6 +29,18 @@ public class IrisStartupOrderingTest {
                 "generatorResolver.validateAllPacks();");
     }
 
+    @Test
+    public void restartRequiredStartupTerminatesAfterPluginInitialization() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("iris.startupSource")));
+        String onEnable = section(source, "public void onEnable()", "public void onDisable()");
+
+        assertOrdered(onEnable,
+                "BukkitGuiHost.install();",
+                "super.onEnable();",
+                "IrisStartupValidation.isRestartRequired()",
+                "ServerConfigurator.restartAtStartupBoundary(restartReason);");
+    }
+
     private static String section(String source, String startMarker, String endMarker) {
         int start = source.indexOf(startMarker);
         int end = source.indexOf(endMarker, start);

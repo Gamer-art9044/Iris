@@ -98,6 +98,7 @@ public class IrisShoreLineDecoratorTest {
         IrisSlopeClip slope = mock(IrisSlopeClip.class);
         PlatformBlockState decorant = mock(PlatformBlockState.class);
         ProceduralStream<Double> heightStream = mock(ProceduralStream.class);
+        ProceduralStream<Double> fluidStream = mock(ProceduralStream.class);
 
         when(engine.getCacheID()).thenReturn(1);
         when(engine.getSeedManager()).thenReturn(seedManager);
@@ -107,7 +108,9 @@ public class IrisShoreLineDecoratorTest {
         when(engine.getComplex()).thenReturn(complex);
         when(complex.getFluidHeight()).thenReturn((double) FLUID_HEIGHT);
         when(complex.getHeightStream()).thenReturn(heightStream);
+        when(complex.getRiverWaterSurfaceStream()).thenReturn(fluidStream);
         when(heightStream.get(anyDouble(), anyDouble())).thenReturn((double) FLUID_HEIGHT - 1);
+        when(fluidStream.get(anyDouble(), anyDouble())).thenReturn((double) FLUID_HEIGHT);
         when(engine.getData()).thenReturn(data);
         when(biome.getDecoratorBucket(IrisDecorationPart.SHORE_LINE))
                 .thenReturn(new IrisDecorator[]{decorator});

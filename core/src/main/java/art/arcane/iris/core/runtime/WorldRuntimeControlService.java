@@ -21,6 +21,7 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Levelled;
 import org.bukkit.block.data.Waterlogged;
 import org.bukkit.entity.Player;
 import org.bukkit.event.world.TimeSkipEvent;
@@ -430,6 +431,62 @@ public final class WorldRuntimeControlService {
         return null;
     }
 
+    static Location findTopSafeStudioLocation(World world, Location source) {
+        Location dryLocation = findTopSafeLocation(world, source);
+        if (dryLocation != null) {
+            return dryLocation;
+        }
+
+        int sourceX = source.getBlockX();
+        int sourceZ = source.getBlockZ();
+        int chunkX = sourceX >> 4;
+        int chunkZ = sourceZ >> 4;
+        if (!world.isChunkLoaded(chunkX, chunkZ)) {
+            return null;
+        }
+
+        int minimumFloorY = world.getMinHeight();
+        int maximumFloorY = world.getMaxHeight() - 3;
+        if (minimumFloorY > maximumFloorY) {
+            return null;
+        }
+
+        int minimumX = chunkX << 4;
+        int minimumZ = chunkZ << 4;
+        int maximumX = minimumX + 15;
+        int maximumZ = minimumZ + 15;
+        for (int radius = 0; radius <= MAX_SAFE_ENTRY_HORIZONTAL_RADIUS; radius++) {
+            for (int offsetX = -radius; offsetX <= radius; offsetX++) {
+                for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
+                    if (Math.max(Math.abs(offsetX), Math.abs(offsetZ)) != radius) {
+                        continue;
+                    }
+
+                    int x = sourceX + offsetX;
+                    int z = sourceZ + offsetZ;
+                    if (x < minimumX || x > maximumX || z < minimumZ || z > maximumZ) {
+                        continue;
+                    }
+
+                    Location waterLocation = findSafeWaterSurfaceLocationInColumn(
+                            world,
+                            x,
+                            z,
+                            minimumFloorY,
+                            maximumFloorY,
+                            source.getYaw(),
+                            source.getPitch()
+                    );
+                    if (waterLocation != null) {
+                        return waterLocation;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static Location findSafeLocationInColumn(
             World world,
             int x,
@@ -456,6 +513,48 @@ public final class WorldRuntimeControlService {
         }
 
         return null;
+    }
+
+    private static Location findSafeWaterSurfaceLocationInColumn(
+            World world,
+            int x,
+            int z,
+            int minimumFloorY,
+            int maximumFloorY,
+            float yaw,
+            float pitch
+    ) {
+        int surfaceY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+        if (surfaceY <= minimumFloorY || surfaceY > maximumFloorY) {
+            return null;
+        }
+
+        Block surface = world.getBlockAt(x, surfaceY, z);
+        if (!isStableWater(surface)) {
+            return null;
+        }
+
+        Block support = world.getBlockAt(x, surfaceY - 1, z);
+        if (!isStableWater(support) && !isSafeFloor(support)) {
+            return null;
+        }
+
+        Block feet = world.getBlockAt(x, surfaceY + 1, z);
+        Block head = world.getBlockAt(x, surfaceY + 2, z);
+        if (!isClearEntryBlock(feet) || !isClearEntryBlock(head)) {
+            return null;
+        }
+
+        return new Location(world, x + BLOCK_CENTER, surfaceY + 1D, z + BLOCK_CENTER, yaw, pitch);
+    }
+
+    private static boolean isStableWater(Block block) {
+        if (block.getType() != Material.WATER || !block.isLiquid()) {
+            return false;
+        }
+
+        BlockData blockData = block.getBlockData();
+        return blockData instanceof Levelled levelled && levelled.getLevel() == 0;
     }
 
     private static boolean isSafeFloor(Block block) {

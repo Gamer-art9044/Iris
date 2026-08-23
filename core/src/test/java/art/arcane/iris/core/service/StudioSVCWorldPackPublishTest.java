@@ -416,6 +416,34 @@ public class StudioSVCWorldPackPublishTest {
         assertEquals("second", second.join());
     }
 
+    @Test
+    public void externallyCompletedTransitionStillHoldsTheQueueUntilItsOperationSettles() {
+        StudioSVC.StudioTransitionQueue transitions = new StudioSVC.StudioTransitionQueue();
+        CompletableFuture<String> firstGate = new CompletableFuture<>();
+        CompletableFuture<String> secondGate = new CompletableFuture<>();
+        List<String> events = new ArrayList<>();
+
+        CompletableFuture<String> first = transitions.submit(() -> {
+            events.add("first-start");
+            return firstGate;
+        });
+        CompletableFuture<String> second = transitions.submit(() -> {
+            events.add("second-start");
+            return secondGate;
+        });
+
+        assertTrue(first.completeExceptionally(new IllegalStateException("public timeout")));
+        assertEquals(List.of("first-start"), events);
+        assertFalse(second.isDone());
+
+        firstGate.complete("late-first");
+        assertEquals(List.of("first-start", "second-start"), events);
+        assertFalse(second.isDone());
+
+        secondGate.complete("second");
+        assertEquals("second", second.join());
+    }
+
     private static void writeValidPack(Path packRoot) throws Exception {
         Files.createDirectories(packRoot.resolve("dimensions"));
         Files.createDirectories(packRoot.resolve("regions"));

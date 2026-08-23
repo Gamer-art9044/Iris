@@ -1,6 +1,7 @@
 package art.arcane.iris.core;
 
 import art.arcane.iris.Iris;
+import art.arcane.iris.core.lifecycle.WorldLifecycleStaging;
 import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
@@ -22,11 +23,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Random;
+import java.util.function.Supplier;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -39,8 +43,10 @@ public class IrisWorldGeneratorResolverTest {
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @After
-    public void clearValidationRegistry() {
+    public void clearValidationState() {
         PackValidationRegistry.clear();
+        IrisStartupValidation.disable();
+        WorldLifecycleStaging.clearAll("world_nether");
     }
 
     @Test
@@ -234,7 +240,9 @@ public class IrisWorldGeneratorResolverTest {
 
         int plotSquaredProbe = resolver.indexOf("isPlotSquaredGeneratorDiscoveryProbe(worldName, id)");
         int probe = resolver.indexOf("isGeneratorDiscoveryProbe(worldName, id)", plotSquaredProbe);
-        int readiness = resolver.indexOf("IrisStartupValidation.requireWorldCreationReady()");
+        int denial = resolver.indexOf("IrisStartupValidation.denialReason()", probe);
+        int failClosed = resolver.indexOf("IrisFailClosedChunkGenerator.startupLock(", denial);
+        int staged = resolver.indexOf("WorldLifecycleStaging.consumeGenerator(worldName)", failClosed);
         int duplicateGuard = resolver.indexOf("requireWorldKeyAvailable(worldName, worldKey)");
         int ownership = resolver.indexOf("requireOwnedWorld(worldName, levelRoot, worldKey)");
         int frozen = resolver.indexOf("return resolveFrozenWorldGenerator(", ownership);
@@ -245,8 +253,10 @@ public class IrisWorldGeneratorResolverTest {
 
         assertTrue(plotSquaredProbe >= 0);
         assertTrue(probe > plotSquaredProbe);
-        assertTrue(readiness > probe);
-        assertTrue(duplicateGuard > readiness);
+        assertTrue(denial > probe);
+        assertTrue(failClosed > denial);
+        assertTrue(staged > failClosed);
+        assertTrue(duplicateGuard > staged);
         assertTrue(ownership > duplicateGuard);
         assertTrue(frozen > ownership);
         assertTrue(failureCapture > frozen);
@@ -302,6 +312,8 @@ public class IrisWorldGeneratorResolverTest {
         try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
              MockedStatic<Iris> iris = mockStatic(Iris.class)) {
             bukkit.when(() -> Bukkit.getWorld("world")).thenReturn(mock(World.class));
+            IrisStartupValidation.begin();
+            IrisStartupValidation.requireRestart("restart boundary");
 
             ChunkGenerator probe = new IrisWorldGeneratorResolver(null)
                     .resolveDefaultWorldGenerator("world", "");
@@ -312,6 +324,95 @@ public class IrisWorldGeneratorResolverTest {
                     IllegalStateException.class,
                     () -> probe.generateNoise(mock(WorldInfo.class), new Random(), 0, 0, null));
             assertTrue(refusal.getMessage(), refusal.getMessage().contains("'world'"));
+            assertTrue(refusal.getMessage(), refusal.getMessage().contains("discovery probe"));
+        }
+    }
+
+    @Test
+    public void restartRequiredDefaultWorldCannotFallBackToVanilla() {
+        ChunkGenerator stagedGenerator = mock(ChunkGenerator.class);
+        ChunkGenerator vanillaFallback = mock(ChunkGenerator.class);
+        WorldLifecycleStaging.stageGenerator("world_nether", stagedGenerator, null);
+        IrisStartupValidation.begin();
+        IrisStartupValidation.requireRestart("updated external datapacks require restart");
+
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            bukkit.when(() -> Bukkit.getWorld("world_nether")).thenReturn(null);
+
+            ChunkGenerator selected = craftBukkitGeneratorOrFallback(
+                    () -> new IrisWorldGeneratorResolver(null)
+                            .resolveDefaultWorldGenerator("world_nether", "underworld"),
+                    vanillaFallback
+            );
+
+            assertNotSame(vanillaFallback, selected);
+            assertNotSame(stagedGenerator, selected);
+            assertSame(stagedGenerator, WorldLifecycleStaging.consumeGenerator("world_nether"));
+            WorldInfo worldInfo = mock(WorldInfo.class);
+            Random random = new Random();
+            assertFalse(selected.shouldGenerateNoise());
+            assertFalse(selected.shouldGenerateNoise(worldInfo, random, 0, 0));
+            assertFalse(selected.shouldGenerateSurface());
+            assertFalse(selected.shouldGenerateSurface(worldInfo, random, 0, 0));
+            assertFalse(selected.shouldGenerateBedrock());
+            assertFalse(selected.shouldGenerateCaves());
+            assertFalse(selected.shouldGenerateCaves(worldInfo, random, 0, 0));
+            assertFalse(selected.shouldGenerateDecorations());
+            assertFalse(selected.shouldGenerateDecorations(worldInfo, random, 0, 0));
+            assertFalse(selected.shouldGenerateMobs());
+            assertFalse(selected.shouldGenerateMobs(worldInfo, random, 0, 0));
+            assertFalse(selected.shouldGenerateStructures());
+            assertFalse(selected.shouldGenerateStructures(worldInfo, random, 0, 0));
+            IllegalStateException refusal = assertThrows(
+                    IllegalStateException.class,
+                    () -> selected.generateNoise(
+                            worldInfo,
+                            random,
+                            0,
+                            0,
+                            mock(ChunkGenerator.ChunkData.class)
+                    )
+            );
+            assertTrue(refusal.getMessage(), refusal.getMessage().contains("world_nether"));
+            assertTrue(refusal.getMessage(), refusal.getMessage().contains("updated external datapacks require restart"));
+        }
+    }
+
+    @Test
+    public void everyBlockingStartupStateReturnsFailClosedGenerator() {
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            IrisStartupValidation.begin();
+            assertStartupStateFailsClosed("world_pending", "external datapacks");
+
+            IrisStartupValidation.begin();
+            IrisStartupValidation.markDatapacksInvalid("invalid external datapack state");
+            assertStartupStateFailsClosed("world_datapack_invalid", "invalid external datapack state");
+
+            IrisStartupValidation.begin();
+            IrisStartupValidation.markDatapacksReady();
+            IrisStartupValidation.markPacksInvalid(List.of("invalid dimension pack state"));
+            assertStartupStateFailsClosed("world_pack_invalid", "invalid dimension pack state");
+        }
+    }
+
+    @Test
+    public void readyStartupStillConsumesStagedGenerator() {
+        ChunkGenerator stagedGenerator = mock(ChunkGenerator.class);
+        WorldLifecycleStaging.stageGenerator("world_nether", stagedGenerator, null);
+        IrisStartupValidation.begin();
+        IrisStartupValidation.markDatapacksReady();
+        IrisStartupValidation.markPacksReady();
+
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<Iris> iris = mockStatic(Iris.class)) {
+            bukkit.when(() -> Bukkit.getWorld("world_nether")).thenReturn(null);
+
+            ChunkGenerator selected = new IrisWorldGeneratorResolver(null)
+                    .resolveDefaultWorldGenerator("world_nether", "underworld");
+
+            assertSame(stagedGenerator, selected);
         }
     }
 
@@ -435,5 +536,39 @@ public class IrisWorldGeneratorResolverTest {
                 packRoot.resolve("biomes/biome.json"),
                 "{\"name\":\"Biome\"}",
                 StandardCharsets.UTF_8);
+    }
+
+    private static void assertStartupStateFailsClosed(String worldName, String expectedReason) {
+        ChunkGenerator vanillaFallback = mock(ChunkGenerator.class);
+        ChunkGenerator selected = craftBukkitGeneratorOrFallback(
+                () -> new IrisWorldGeneratorResolver(null)
+                        .resolveDefaultWorldGenerator(worldName, "overworld"),
+                vanillaFallback
+        );
+        assertNotSame(vanillaFallback, selected);
+        IllegalStateException refusal = assertThrows(
+                IllegalStateException.class,
+                () -> selected.generateNoise(
+                        mock(WorldInfo.class),
+                        new Random(),
+                        0,
+                        0,
+                        mock(ChunkGenerator.ChunkData.class)
+                )
+        );
+        assertTrue(refusal.getMessage(), refusal.getMessage().contains(worldName));
+        assertTrue(refusal.getMessage(), refusal.getMessage().contains(expectedReason));
+    }
+
+    private static ChunkGenerator craftBukkitGeneratorOrFallback(
+            Supplier<ChunkGenerator> resolution,
+            ChunkGenerator fallback
+    ) {
+        try {
+            ChunkGenerator selected = resolution.get();
+            return selected == null ? fallback : selected;
+        } catch (Throwable ignoredGeneratorFailure) {
+            return fallback;
+        }
     }
 }

@@ -1,5 +1,6 @@
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.object.IrisNativeStructure;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -9,6 +10,7 @@ import art.arcane.iris.engine.object.IrisStructureTerrain;
 import art.arcane.iris.engine.object.IrisStructureTerrainMode;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.engine.object.StructureDistribution;
+import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 import org.junit.Test;
@@ -20,6 +22,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class NativeStructurePlacementPlannerTest {
@@ -110,6 +113,20 @@ public class NativeStructurePlacementPlannerTest {
 
         placement.setUnderground(true).setMinHeight(-40).setMaxHeight(-20);
         assertNotNull(NativeStructurePlacementPlanner.planAt(engine, placement, 0, 0));
+    }
+
+    @Test
+    public void submergedCheckUsesTheColumnRiverHead() {
+        Engine engine = engine(77L, -64, 384, 66);
+        IrisComplex complex = mock(IrisComplex.class);
+        @SuppressWarnings("unchecked")
+        ProceduralStream<Double> riverHead = mock(ProceduralStream.class);
+        when(engine.getComplex()).thenReturn(complex);
+        when(complex.getRiverWaterSurfaceStream()).thenReturn(riverHead);
+        when(riverHead.get(8, 8)).thenReturn(68D);
+
+        assertTrue(NativeStructurePlacementPlanner.isSubmerged(engine, 8, 8));
+        verify(riverHead).get(8, 8);
     }
 
     @Test

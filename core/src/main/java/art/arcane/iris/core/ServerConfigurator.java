@@ -124,6 +124,7 @@ public class ServerConfigurator {
                     && pinLoadedDatapackCompilerInputs()
                     && pinLoadedDatapackRegistryRequirements();
             if (result.restartRequired()) {
+                requireDatapackRestart();
                 IrisLogging.warn("Iris datapack changes require another server restart before worlds can use them.");
             }
         }
@@ -1018,6 +1019,24 @@ public class ServerConfigurator {
             }, 100);
             Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "restart");
         }));
+    }
+
+    public static void restartAtStartupBoundary(String reason) {
+        String restartReason = reason == null || reason.isBlank()
+                ? "Iris startup validation requires a restart."
+                : reason.trim();
+        IrisLogging.warn(restartReason + " Restarting server before default worlds are loaded.");
+        try {
+            Bukkit.restart();
+        } catch (Throwable failure) {
+            IrisLogging.reportError("Unable to restart the server at the Iris startup boundary.", failure);
+        }
+        IrisLogging.error("The immediate Iris startup restart returned unexpectedly; stopping the server instead.");
+        try {
+            Bukkit.shutdown();
+        } catch (Throwable failure) {
+            IrisLogging.reportError("Unable to stop the server after the Iris startup restart returned.", failure);
+        }
     }
 
     public static boolean verifyDataPackInstalled(IrisDimension dimension) {

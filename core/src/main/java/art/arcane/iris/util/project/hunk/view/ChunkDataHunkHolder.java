@@ -76,7 +76,11 @@ public class ChunkDataHunkHolder extends AtomicHunk<PlatformBlockState> {
     }
 
     public void apply() {
-        if (INMS.get().applyChunkDataBlocks(chunk, this)) {
+        applyTo(chunk);
+    }
+
+    public void applyTo(ChunkData target) {
+        if (INMS.get().applyChunkDataBlocks(target, this)) {
             return;
         }
 
@@ -95,7 +99,7 @@ public class ChunkDataHunkHolder extends AtomicHunk<PlatformBlockState> {
                         block = custom.getBase();
                     }
                     if (block == null) {
-                        flushRun(x, z, runStart, y, activeBlock);
+                        flushRun(target, x, z, runStart, y, activeBlock);
                         activeBlock = null;
                         runStart = -1;
                         continue;
@@ -105,27 +109,27 @@ public class ChunkDataHunkHolder extends AtomicHunk<PlatformBlockState> {
                         continue;
                     }
 
-                    flushRun(x, z, runStart, y, activeBlock);
+                    flushRun(target, x, z, runStart, y, activeBlock);
                     activeBlock = block;
                     runStart = y;
                 }
 
-                flushRun(x, z, runStart, height, activeBlock);
+                flushRun(target, x, z, runStart, height, activeBlock);
             }
         }
     }
 
-    private void flushRun(int x, int z, int startY, int endY, BlockData block) {
+    private void flushRun(ChunkData target, int x, int z, int startY, int endY, BlockData block) {
         if (block == null || startY < 0 || endY <= startY) {
             return;
         }
 
-        int minY = chunk.getMinHeight();
+        int minY = target.getMinHeight();
         if (endY - startY == 1) {
-            chunk.setBlock(x, startY + minY, z, block);
+            target.setBlock(x, startY + minY, z, block);
             return;
         }
 
-        chunk.setRegion(x, startY + minY, z, x + 1, endY + minY, z + 1, block);
+        target.setRegion(x, startY + minY, z, x + 1, endY + minY, z + 1, block);
     }
 }

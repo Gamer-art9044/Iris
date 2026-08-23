@@ -184,6 +184,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     private final AtomicBoolean serverStopTeardownDeferred = new AtomicBoolean(false);
     private final AtomicBoolean servicesDisabled = new AtomicBoolean(false);
     private final AtomicBoolean sharedRuntimeClosed = new AtomicBoolean(false);
+    private final AtomicBoolean startupBoundaryRestart = new AtomicBoolean(false);
     private final AtomicBoolean terminalCleanupCompleted = new AtomicBoolean(false);
     private volatile PlaceholderRegistration papiRegistration;
     private volatile IrisPapiListener papiListener;
@@ -588,6 +589,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         serverStopTeardownDeferred.set(false);
         servicesDisabled.set(false);
         sharedRuntimeClosed.set(false);
+        startupBoundaryRestart.set(false);
         terminalCleanupCompleted.set(false);
         deferredShutdownGenerators.clear();
         MultiBurst.burst.reopen();
@@ -827,6 +829,12 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         BukkitGuiHost.install();
         // super.onEnable() already registers this instance as a listener.
         super.onEnable();
+        if (IrisStartupValidation.isRestartRequired()) {
+            String restartReason = IrisStartupValidation.denialReason()
+                    .orElse("Iris startup validation requires a restart.");
+            startupBoundaryRestart.set(true);
+            ServerConfigurator.restartAtStartupBoundary(restartReason);
+        }
     }
 
     /**
@@ -863,7 +871,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     public void onDisable() {
         teardownPapi();
         boolean serverStopping = IrisToolbelt.isServerStopping();
-        if (serverStopping) {
+        boolean restartingAtStartupBoundary = startupBoundaryRestart.get();
+        if (restartingAtStartupBoundary) {
+            teardownRuntime("startup-boundary-restart", 30L);
+        } else if (serverStopping) {
             quiesceRuntimeForServerShutdown("onDisable");
             startPostStopFinisher();
         } else {
@@ -881,7 +892,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
         // super.onDisable() cancels plugin tasks and unregisters every listener.
         super.onDisable();
-        if (!serverStopping) {
+        if (!serverStopping || restartingAtStartupBoundary) {
             finishTerminalCleanup();
         }
     }
@@ -1017,6 +1028,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     }
 
     private void runShutdownHook() {
+        if (startupBoundaryRestart.get()) {
+            finishDeferredRuntimeTeardown("startup-boundary-restart-hook", 30L);
+            return;
+        }
         if (!awaitServerShutdownBoundary()) {
             Iris.warn("Iris skipped JVM-hook runtime teardown because Paper did not reach its post-world-close boundary.");
             return;

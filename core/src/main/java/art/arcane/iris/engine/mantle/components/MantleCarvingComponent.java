@@ -104,20 +104,19 @@ public class MantleCarvingComponent extends IrisMantleComponent {
         PrecisionStopwatch resolveStopwatch = PrecisionStopwatch.start();
         List<WeightedProfile> weightedProfiles = resolveWeightedProfiles(x, z, complex, resolverState);
         getEngineMantle().getEngine().getMetrics().getCarveResolve().put(resolveStopwatch.getMilliseconds());
-        int fluidHeight = getDimension().getFluidHeight();
-        int[] surfaceFluidBoundaryStartY = blendScratch.surfaceFluidBoundaryStartY;
+        long[] surfaceFluidBoundaries = blendScratch.surfaceFluidBoundaries;
         SurfaceFluidBoundaryPlan.fill(
                 chunkSurfaceHeights,
                 blendScratch.fieldSurfaceHeights,
                 blendScratch.fieldHasFluid,
+                blendScratch.fieldFluidHeights,
                 FIELD_SIZE,
                 BLEND_RADIUS,
-                fluidHeight,
-                surfaceFluidBoundaryStartY
+                surfaceFluidBoundaries
         );
         CaveFluidSupportPlan fluidSupportPlan = new CaveFluidSupportPlan();
         for (WeightedProfile weightedProfile : weightedProfiles) {
-            carveProfile(weightedProfile, writer, x, z, chunkSurfaceHeights, surfaceFluidBoundaryStartY, fluidSupportPlan);
+            carveProfile(weightedProfile, writer, x, z, chunkSurfaceHeights, surfaceFluidBoundaries, fluidSupportPlan);
         }
 
         UpperDimensionContext upperCtx = getEngineMantle().getEngine().getUpperContext();
@@ -132,8 +131,7 @@ public class MantleCarvingComponent extends IrisMantleComponent {
                     chunkSurfaceHeights,
                     maxSurfaceBreakDepth(weightedProfiles),
                     writer.getMantle().getWorldHeight() - 1,
-                    surfaceFluidBoundaryStartY,
-                    fluidHeight
+                    surfaceFluidBoundaries
             );
         }
     }
@@ -148,11 +146,11 @@ public class MantleCarvingComponent extends IrisMantleComponent {
 
     @ChunkCoordinates
     private void carveProfile(WeightedProfile weightedProfile, MantleWriter writer, int cx, int cz,
-                              int[] chunkSurfaceHeights, int[] surfaceFluidBoundaryStartY,
+                              int[] chunkSurfaceHeights, long[] surfaceFluidBoundaries,
                               CaveFluidSupportPlan fluidSupportPlan) {
         IrisCaveCarver3D carver = getCarver(weightedProfile.profile);
         carver.carve(writer, cx, cz, weightedProfile.columnWeights, MIN_WEIGHT, THRESHOLD_PENALTY,
-                weightedProfile.worldYRange, chunkSurfaceHeights, surfaceFluidBoundaryStartY, null, fluidSupportPlan);
+                weightedProfile.worldYRange, chunkSurfaceHeights, surfaceFluidBoundaries, null, fluidSupportPlan);
     }
 
     private void carveUpperTerrain(UpperDimensionContext upperCtx, List<WeightedProfile> normalProfiles,
@@ -475,7 +473,9 @@ public class MantleCarvingComponent extends IrisMantleComponent {
 
     private void prefillProfileFieldSamples(int startX, int startZ, IrisComplex complex, BlendScratch blendScratch) {
         fillFieldHeights(complex.getHeightStream(), startX, startZ, blendScratch.fieldSurfaceHeights);
-        fillFieldFluidPresence(complex.getFluidStream(), startX, startZ, blendScratch.fieldHasFluid);
+        fillFieldHeights(complex.getRiverWaterSurfaceStream(), startX, startZ, blendScratch.fieldFluidHeights);
+        fillFieldFluidPresence(complex.getFluidStream(), startX, startZ, blendScratch.fieldSurfaceHeights,
+                blendScratch.fieldFluidHeights, blendScratch.fieldHasFluid);
         fillFieldObjects(complex.getRegionStream(), startX, startZ, blendScratch.fieldRegions);
         fillFieldObjects(complex.getTrueBiomeStream(), startX, startZ, blendScratch.fieldSurfaceBiomes);
         fillFieldObjects(complex.getCaveBiomeStream(), startX, startZ, blendScratch.fieldCaveBiomes);
@@ -499,11 +499,20 @@ public class MantleCarvingComponent extends IrisMantleComponent {
         }
     }
 
-    private void fillFieldFluidPresence(ProceduralStream<PlatformBlockState> stream, int startX, int startZ, boolean[] target) {
+    private void fillFieldFluidPresence(
+            ProceduralStream<PlatformBlockState> stream,
+            int startX,
+            int startZ,
+            double[] surfaceHeights,
+            double[] fluidHeights,
+            boolean[] target
+    ) {
         for (int fieldX = 0; fieldX < FIELD_SIZE; fieldX++) {
             int worldX = startX + fieldX;
             for (int fieldZ = 0; fieldZ < FIELD_SIZE; fieldZ++) {
-                target[(fieldX * FIELD_SIZE) + fieldZ] = B.isFluid(stream.get(worldX, startZ + fieldZ));
+                int fieldIndex = (fieldX * FIELD_SIZE) + fieldZ;
+                target[fieldIndex] = B.isFluid(stream.get(worldX, startZ + fieldZ))
+                        && Math.round(surfaceHeights[fieldIndex]) < Math.round(fluidHeights[fieldIndex]);
             }
         }
     }
@@ -697,12 +706,13 @@ public class MantleCarvingComponent extends IrisMantleComponent {
         private final IdentityHashMap<IrisCaveProfile, Boolean> activeProfiles = new IdentityHashMap<>();
         private final List<IrisCaveProfile> profileOrder = new ArrayList<>();
         private final double[] fieldSurfaceHeights = new double[FIELD_SIZE * FIELD_SIZE];
+        private final double[] fieldFluidHeights = new double[FIELD_SIZE * FIELD_SIZE];
         private final boolean[] fieldHasFluid = new boolean[FIELD_SIZE * FIELD_SIZE];
+        private final long[] surfaceFluidBoundaries = new long[CHUNK_AREA];
         private final IrisRegion[] fieldRegions = new IrisRegion[FIELD_SIZE * FIELD_SIZE];
         private final IrisBiome[] fieldSurfaceBiomes = new IrisBiome[FIELD_SIZE * FIELD_SIZE];
         private final IrisBiome[] fieldCaveBiomes = new IrisBiome[FIELD_SIZE * FIELD_SIZE];
         private final int[] chunkSurfaceHeights = new int[CHUNK_AREA];
-        private final int[] surfaceFluidBoundaryStartY = new int[CHUNK_AREA];
         private final double[] chunkSurfaceHeightSamples = new double[CHUNK_AREA];
     }
 }

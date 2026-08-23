@@ -44,7 +44,6 @@ import art.arcane.iris.util.common.parallel.BurstExecutor;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.format.Form;
-import art.arcane.volmlib.util.function.Function2;
 import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.math.M;
@@ -80,7 +79,6 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
-import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 import art.arcane.iris.core.localization.IrisLanguage;
@@ -246,9 +244,8 @@ public final class ModdedStudioCommands {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_UNKNOWN_GENERATOR_PACK, MessageArgument.untrusted("generatorKey", generatorKey), MessageArgument.untrusted("value", engine.getDimension().getLoadKey())));
             return 0;
         }
-        long mixedSeed = new RNG(seed).nextParallelRNG(3245).lmax();
-        Supplier<Function2<Double, Double, Double>> supplier = () -> (Double x, Double z) -> generator.getHeight(x, z, mixedSeed);
-        NoiseExplorerGUI.launch(supplier, generatorKey.trim());
+        String selectedGeneratorKey = generatorKey.trim();
+        NoiseExplorerGUI.launchGeneratorKey(selectedGeneratorKey, generator, seed);
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_OPENING_NOISE_EXPLORER_GENERATOR_SEED, MessageArgument.untrusted("value", generatorKey.trim()), MessageArgument.untrusted("seed", seed)));
         return 1;
     }

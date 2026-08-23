@@ -79,6 +79,11 @@ public final class IrisStartupValidation {
         return isReady(snapshot);
     }
 
+    public static boolean isRestartRequired() {
+        Snapshot current = snapshot;
+        return current.enforced() && current.datapacks() == ValidationState.RESTART_REQUIRED;
+    }
+
     public static Optional<String> denialReason() {
         Snapshot current = snapshot;
         if (!current.enforced() || isReady(current)) {

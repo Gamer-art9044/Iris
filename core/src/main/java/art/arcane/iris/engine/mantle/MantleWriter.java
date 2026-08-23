@@ -31,6 +31,7 @@ import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.IrisGeneratorStyle;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.TileData;
+import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.volmlib.util.function.Function3;
@@ -181,6 +182,10 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         if (chunk == null) return;
 
         Matter matter = chunk.getOrCreate(y >> 4);
+        if ((t instanceof PlatformBlockState || t instanceof MatterCavern)
+                && hasProtectedHydrology(matter, x, y, z)) {
+            return;
+        }
         if (t instanceof PlatformBlockState) {
             clearDeferredPlacement(matter, x, y, z);
         }
@@ -206,6 +211,9 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         }
 
         Matter matter = chunk.getOrCreate(y >> 4);
+        if (hasProtectedHydrology(matter, x, y, z)) {
+            return false;
+        }
         MatterCavern existing = matter.<MatterCavern>slice(MatterCavern.class).get(x & 15, y & 15, z & 15);
         if (existing != null) {
             return false;
@@ -226,6 +234,9 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         }
 
         Matter matter = chunk.getOrCreate(y >> 4);
+        if (hasProtectedHydrology(matter, x, y, z)) {
+            return false;
+        }
         if (matter.hasSlice(PlatformBlockState.class)) {
             matter.<PlatformBlockState>getSlice(PlatformBlockState.class).set(x & 15, y & 15, z & 15, null);
         }
@@ -248,6 +259,9 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
                     + x + "," + y + "," + z);
         }
         Matter matter = chunk.getOrCreate(y >> 4);
+        if (hasProtectedHydrology(matter, x, y, z)) {
+            return;
+        }
         if (matter.hasSlice(PlatformBlockState.class)) {
             matter.<PlatformBlockState>getSlice(PlatformBlockState.class).set(x & 15, y & 15, z & 15, null);
         }
@@ -269,6 +283,9 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         }
         Matter matter = chunk.get(section);
         if (matter == null) {
+            return;
+        }
+        if (hasProtectedHydrology(matter, x, y, z)) {
             return;
         }
         if (matter.hasSlice(PlatformBlockState.class)) {
@@ -328,7 +345,20 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         if (matter == null || !matter.hasSlice(type)) {
             return;
         }
+        if ((type == PlatformBlockState.class || type == MatterCavern.class)
+                && hasProtectedHydrology(matter, x, y, z)) {
+            return;
+        }
         matter.getSlice(type).set(x & 15, y & 15, z & 15, null);
+    }
+
+    private static boolean hasProtectedHydrology(Matter matter, int x, int y, int z) {
+        if (!matter.hasSlice(RiverCaveHydrology.class)) {
+            return false;
+        }
+        RiverCaveHydrology hydrology = matter.<RiverCaveHydrology>getSlice(RiverCaveHydrology.class)
+                .get(x & 15, y & 15, z & 15);
+        return hydrology != null && hydrology.protectsPlacement();
     }
 
     private static void clearDeferredPlacement(Matter matter, int x, int y, int z) {
@@ -425,6 +455,10 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
 
     @Override
     public boolean isCarved(int x, int y, int z) {
+        RiverCaveHydrology hydrology = getDataIfPresent(x, y, z, RiverCaveHydrology.class);
+        if (hydrology != null) {
+            return hydrology.carves();
+        }
         return getDataIfPresent(x, y, z, MatterCavern.class) != null;
     }
 
@@ -449,15 +483,28 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
             }
 
             Matter matter = chunk.get(section);
-            if (matter == null || !matter.hasSlice(MatterCavern.class)) {
+            if (matter == null) {
                 continue;
             }
 
-            MatterSlice<MatterCavern> slice = matter.getSlice(MatterCavern.class);
+            MatterSlice<MatterCavern> cavernSlice = matter.hasSlice(MatterCavern.class)
+                    ? matter.getSlice(MatterCavern.class)
+                    : null;
+            MatterSlice<RiverCaveHydrology> hydrologySlice = matter.hasSlice(RiverCaveHydrology.class)
+                    ? matter.getSlice(RiverCaveHydrology.class)
+                    : null;
+            if (cavernSlice == null && hydrologySlice == null) {
+                continue;
+            }
             int sectionBaseY = section << 4;
             int sectionMaxY = Math.min(cappedHeight, sectionBaseY + 16);
             for (int y = sectionBaseY; y < sectionMaxY; y++) {
-                if (slice.get(localX, y & 15, localZ) != null) {
+                RiverCaveHydrology hydrology = hydrologySlice == null
+                        ? null
+                        : hydrologySlice.get(localX, y & 15, localZ);
+                if (hydrology != null) {
+                    carvedColumn[y] = hydrology.carves() ? (byte) 1 : 0;
+                } else if (cavernSlice != null && cavernSlice.get(localX, y & 15, localZ) != null) {
                     carvedColumn[y] = 1;
                 }
             }

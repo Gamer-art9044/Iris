@@ -239,7 +239,7 @@ public interface INMSBinding {
             IrisImportedStructureControl importedStructures
     ) throws NoSuchFieldException, IllegalAccessException;
 
-    void completeStudioStructureBootstrap(World world) throws NoSuchFieldException, IllegalAccessException;
+    CompletableFuture<Void> completeStudioStructureBootstrap(World world) throws NoSuchFieldException, IllegalAccessException;
 
     void abandonStudioStructureBootstrap(World world);
 

@@ -34,6 +34,10 @@ public interface MantleComponent extends Comparable<MantleComponent> {
 
     int getRadius();
 
+    default int getInputRadius() {
+        return 0;
+    }
+
     default IrisData getData() {
         return getEngineMantle().getData();
     }

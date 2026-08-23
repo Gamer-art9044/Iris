@@ -25,8 +25,8 @@ public class SurfaceFluidBoundaryPlanTest {
 
         int boundaryY = fixture.boundary(8, 8);
         assertEquals(60, boundaryY);
-        assertFalse(SurfaceFluidBoundaryPlan.protects(fixture.boundaryStartY, fixture.index(8, 8), 59, FLUID_HEIGHT));
-        assertTrue(SurfaceFluidBoundaryPlan.protects(fixture.boundaryStartY, fixture.index(8, 8), 60, FLUID_HEIGHT));
+        assertFalse(SurfaceFluidBoundaryPlan.protects(fixture.boundaries, fixture.index(8, 8), 59));
+        assertTrue(SurfaceFluidBoundaryPlan.protects(fixture.boundaries, fixture.index(8, 8), 60));
     }
 
     @Test
@@ -38,10 +38,10 @@ public class SurfaceFluidBoundaryPlanTest {
 
         int columnIndex = fixture.index(8, 8);
         assertEquals(61, fixture.boundary(8, 8));
-        assertFalse(SurfaceFluidBoundaryPlan.protects(fixture.boundaryStartY, columnIndex, 60, FLUID_HEIGHT));
-        assertTrue(SurfaceFluidBoundaryPlan.protects(fixture.boundaryStartY, columnIndex, 61, FLUID_HEIGHT));
-        assertTrue(SurfaceFluidBoundaryPlan.protects(fixture.boundaryStartY, columnIndex, 64, FLUID_HEIGHT));
-        assertFalse(SurfaceFluidBoundaryPlan.protects(fixture.boundaryStartY, columnIndex, 65, FLUID_HEIGHT));
+        assertFalse(SurfaceFluidBoundaryPlan.protects(fixture.boundaries, columnIndex, 60));
+        assertTrue(SurfaceFluidBoundaryPlan.protects(fixture.boundaries, columnIndex, 61));
+        assertTrue(SurfaceFluidBoundaryPlan.protects(fixture.boundaries, columnIndex, 64));
+        assertFalse(SurfaceFluidBoundaryPlan.protects(fixture.boundaries, columnIndex, 65));
     }
 
     @Test
@@ -94,11 +94,26 @@ public class SurfaceFluidBoundaryPlanTest {
                 new int[CHUNK_SIZE * CHUNK_SIZE],
                 new double[FIELD_SIZE * FIELD_SIZE],
                 new boolean[FIELD_SIZE * FIELD_SIZE],
+                new double[FIELD_SIZE * FIELD_SIZE],
                 FIELD_SIZE,
                 0,
-                FLUID_HEIGHT,
-                new int[CHUNK_SIZE * CHUNK_SIZE]
+                new long[CHUNK_SIZE * CHUNK_SIZE]
         ));
+    }
+
+    @Test
+    public void terracedReservoirProtectsOnlyToItsLocalHead() {
+        Fixture fixture = new Fixture();
+        fixture.setFieldSurface(7, 8, 60D);
+        fixture.setFieldFluidHeight(7, 8, 67D);
+
+        fixture.resolve();
+
+        int columnIndex = fixture.index(8, 8);
+        assertEquals(61, fixture.boundary(8, 8));
+        assertEquals(67, fixture.boundaryEnd(8, 8));
+        assertTrue(SurfaceFluidBoundaryPlan.protects(fixture.boundaries, columnIndex, 67));
+        assertFalse(SurfaceFluidBoundaryPlan.protects(fixture.boundaries, columnIndex, 68));
     }
 
     private void assertEdgeBoundary(int localX, int localZ, int neighborLocalX, int neighborLocalZ) {
@@ -111,12 +126,14 @@ public class SurfaceFluidBoundaryPlanTest {
     private static final class Fixture {
         private final int[] chunkSurfaceHeights = new int[CHUNK_SIZE * CHUNK_SIZE];
         private final double[] fieldSurfaceHeights = new double[FIELD_SIZE * FIELD_SIZE];
+        private final double[] fieldFluidHeights = new double[FIELD_SIZE * FIELD_SIZE];
         private final boolean[] fieldHasFluid = new boolean[FIELD_SIZE * FIELD_SIZE];
-        private final int[] boundaryStartY = new int[CHUNK_SIZE * CHUNK_SIZE];
+        private final long[] boundaries = new long[CHUNK_SIZE * CHUNK_SIZE];
 
         private Fixture() {
             Arrays.fill(chunkSurfaceHeights, 70);
             Arrays.fill(fieldSurfaceHeights, 70D);
+            Arrays.fill(fieldFluidHeights, FLUID_HEIGHT);
             Arrays.fill(fieldHasFluid, true);
         }
 
@@ -137,20 +154,30 @@ public class SurfaceFluidBoundaryPlanTest {
             fieldHasFluid[(fieldX * FIELD_SIZE) + fieldZ] = hasFluid;
         }
 
+        private void setFieldFluidHeight(int localX, int localZ, double fluidHeight) {
+            int fieldX = localX + PADDING;
+            int fieldZ = localZ + PADDING;
+            fieldFluidHeights[(fieldX * FIELD_SIZE) + fieldZ] = fluidHeight;
+        }
+
         private void resolve() {
             SurfaceFluidBoundaryPlan.fill(
                     chunkSurfaceHeights,
                     fieldSurfaceHeights,
                     fieldHasFluid,
+                    fieldFluidHeights,
                     FIELD_SIZE,
                     PADDING,
-                    FLUID_HEIGHT,
-                    boundaryStartY
+                    boundaries
             );
         }
 
         private int boundary(int localX, int localZ) {
-            return boundaryStartY[index(localX, localZ)];
+            return SurfaceFluidBoundaryPlan.startY(boundaries[index(localX, localZ)]);
+        }
+
+        private int boundaryEnd(int localX, int localZ) {
+            return SurfaceFluidBoundaryPlan.endY(boundaries[index(localX, localZ)]);
         }
 
         private int index(int localX, int localZ) {

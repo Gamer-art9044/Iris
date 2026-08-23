@@ -4,6 +4,9 @@ import art.arcane.iris.core.nms.INMSBinding;
 import org.bukkit.World;
 import org.junit.Test;
 
+import java.util.concurrent.CompletableFuture;
+
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -28,6 +31,19 @@ public class NMSBinding1XWorldGenerationTest {
         assertFalse(INMSBinding.class.getMethod("getReachableStructureKeys", World.class).isDefault());
         assertFalse(INMSBinding.class.getMethod("getStructureBiomeKeys", String.class).isDefault());
         assertFalse(INMSBinding.class.getMethod("getPossibleBiomeKeys", World.class).isDefault());
+    }
+
+    @Test
+    public void limitedBindingReportsCompletedStudioStructureBootstrap() throws NoSuchMethodException {
+        NMSBinding1X binding = new NMSBinding1X();
+
+        CompletableFuture<Void> completion = binding.completeStudioStructureBootstrap(null);
+
+        assertEquals(CompletableFuture.class, INMSBinding.class
+                .getMethod("completeStudioStructureBootstrap", World.class)
+                .getReturnType());
+        assertTrue(completion.isDone());
+        assertFalse(completion.isCompletedExceptionally());
     }
 
     @Test

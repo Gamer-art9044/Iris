@@ -24,13 +24,19 @@ import art.arcane.iris.engine.framework.Engine;
 
 import javax.swing.JFrame;
 import java.awt.Desktop;
+import java.awt.EventQueue;
 import java.awt.GraphicsEnvironment;
 import java.awt.desktop.QuitResponse;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class GuiHost {
     private static final AtomicBoolean DESKTOP_QUIT_GUARD_INSTALLED = new AtomicBoolean(false);
+    private static final Set<JFrame> MANAGED_FRAMES = ConcurrentHashMap.newKeySet();
     private static volatile Provider provider = new Provider() {
     };
     private static volatile boolean desktopSuppressed = false;
@@ -78,6 +84,13 @@ public final class GuiHost {
 
     public static void prepareFrame(JFrame frame) {
         frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        MANAGED_FRAMES.add(frame);
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent event) {
+                MANAGED_FRAMES.remove(frame);
+            }
+        });
         prepareServerDesktop();
     }
 
@@ -96,15 +109,20 @@ public final class GuiHost {
             if (!desktop.isSupported(Desktop.Action.APP_QUIT_HANDLER)) {
                 return;
             }
-            desktop.setQuitHandler((event, response) -> cancelDesktopQuit(response));
+            desktop.setQuitHandler((event, response) -> closeDesktopWindowsAndCancelQuit(response));
         } catch (Throwable error) {
             IrisLogging.reportError(error);
             IrisLogging.info("Unable to install the Iris desktop quit guard; use the server stop command instead of macOS Quit");
         }
     }
 
-    static void cancelDesktopQuit(QuitResponse response) {
+    static void closeDesktopWindowsAndCancelQuit(QuitResponse response) {
         response.cancelQuit();
+        EventQueue.invokeLater(() -> {
+            for (JFrame frame : MANAGED_FRAMES) {
+                frame.dispose();
+            }
+        });
     }
 
     /**

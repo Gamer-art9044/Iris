@@ -168,6 +168,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1295,16 +1296,16 @@ public class NMSBinding implements INMSBinding {
     }
 
     @Override
-    public void completeStudioStructureBootstrap(World world) throws NoSuchFieldException, IllegalAccessException {
+    public CompletableFuture<Void> completeStudioStructureBootstrap(World world) throws NoSuchFieldException, IllegalAccessException {
         ServerLevel level = ((CraftWorld) world).getHandle();
         ChunkMap chunkMap = level.getChunkSource().chunkMap;
         IrisChunkGenerator generator = requireIrisGenerator(level.getChunkSource().getGenerator());
         IrisChunkGenerator.StudioStructureState retained =
                 generator.retainedStudioStructureState(level, chunkMap);
         if (retained == null) {
-            return;
+            return CompletableFuture.completedFuture(null);
         }
-        generator.activateStudioStructureState(retained);
+        return generator.activateStudioStructureState(retained);
     }
 
     @Override

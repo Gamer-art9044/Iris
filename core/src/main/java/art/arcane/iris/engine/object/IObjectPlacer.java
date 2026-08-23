@@ -50,6 +50,17 @@ public interface IObjectPlacer {
 
     int getFluidHeight();
 
+    default int getFluidHeight(int x, int z) {
+        Engine engine = getEngine();
+        if (engine == null || engine.getComplex() == null) {
+            return getFluidHeight();
+        }
+        int coordinateShift = getFluidHeight() - engine.getDimension().getFluidHeight();
+        return coordinateShift + (int) Math.round(
+                engine.getComplex().getRiverWaterSurfaceStream().get(x, z)
+        );
+    }
+
     boolean isDebugSmartBore();
 
     void setTile(int xx, int yy, int zz, TileData tile);

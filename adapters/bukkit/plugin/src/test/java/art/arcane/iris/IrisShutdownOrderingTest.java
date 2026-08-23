@@ -31,12 +31,17 @@ public class IrisShutdownOrderingTest {
                 "public void quiesceForServerShutdown()", "public boolean isStudio()");
 
         assertOrdered(onDisable,
-                "if (serverStopping)",
+                "startupBoundaryRestart.get()",
+                "teardownRuntime(\"startup-boundary-restart\", 30L)",
+                "else if (serverStopping)",
                 "quiesceRuntimeForServerShutdown(\"onDisable\")",
                 "startPostStopFinisher()",
-                "else",
+                "} else {",
                 "teardownRuntime(\"onDisable\", 30L)");
         assertOrdered(shutdownHook,
+                "startupBoundaryRestart.get()",
+                "finishDeferredRuntimeTeardown(\"startup-boundary-restart-hook\", 30L)",
+                "return;",
                 "awaitServerShutdownBoundary()",
                 "finishDeferredRuntimeTeardown(\"shutdown-hook\", 30L)");
         assertOrdered(finisher,

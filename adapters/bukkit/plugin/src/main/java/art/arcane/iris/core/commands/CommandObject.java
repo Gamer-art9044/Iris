@@ -250,7 +250,9 @@ public class CommandObject implements DirectorExecutor {
 
             @Override
             public int getFluidHeight() {
-                return 63;
+                return targetEngine == null
+                        ? 63
+                        : targetEngine.getMinHeight() + targetEngine.getDimension().getFluidHeight();
             }
 
             @Override

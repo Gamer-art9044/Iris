@@ -2,8 +2,15 @@ package art.arcane.iris.core.service;
 
 import art.arcane.iris.api.terrain.IrisColumnField;
 import art.arcane.iris.api.terrain.IrisColumnQuery;
+import art.arcane.iris.api.terrain.IrisRiverState;
 import art.arcane.iris.api.terrain.IrisSurfaceKind;
 import art.arcane.iris.api.terrain.IrisTerrainService;
+import art.arcane.iris.engine.river.RiverEdgeId;
+import art.arcane.iris.engine.river.RiverNodeId;
+import art.arcane.iris.engine.river.RiverRouteState;
+import art.arcane.iris.engine.river.RiverSample;
+import art.arcane.iris.engine.river.RiverSection;
+import art.arcane.iris.engine.river.runtime.IrisRiverSurfaceSample;
 import art.arcane.iris.util.common.plugin.IrisService;
 import org.bukkit.World;
 import org.junit.Test;
@@ -82,9 +89,7 @@ public class IrisTerrainSVCTest {
         IrisTerrainSVC service = new IrisTerrainSVC();
         AtomicInteger sinkCalls = new AtomicInteger();
 
-        boolean answered = service.sampleColumns(null, SMALL,
-                (int blockX, int blockZ, int surfaceHeight, IrisSurfaceKind kind, String biomeKey)
-                        -> sinkCalls.incrementAndGet());
+        boolean answered = service.sampleColumns(null, SMALL, sample -> sinkCalls.incrementAndGet());
 
         assertFalse(answered);
         assertEquals(0, sinkCalls.get());
@@ -96,5 +101,39 @@ public class IrisTerrainSVCTest {
 
         assertFalse(service.sampleColumns(null, null, null));
         assertFalse(service.sampleColumns(null, SMALL, null));
+    }
+
+    @Test
+    public void riverRouteStatesMapToThePublicDiagnosticStates() {
+        assertEquals(IrisRiverState.NONE, IrisTerrainSVC.riverState(
+                new IrisRiverSurfaceSample(RiverSample.none(), 70D, 70D, 70D, false, false)
+        ));
+        assertEquals(IrisRiverState.WET, IrisTerrainSVC.riverState(river(RiverRouteState.WET)));
+        assertEquals(IrisRiverState.DRY, IrisTerrainSVC.riverState(river(RiverRouteState.DRY)));
+        assertEquals(IrisRiverState.NONE, IrisTerrainSVC.riverState(river(RiverRouteState.SUPPRESSED)));
+    }
+
+    private static IrisRiverSurfaceSample river(RiverRouteState state) {
+        RiverSection section = switch (state) {
+            case WET -> RiverSection.CHANNEL;
+            case DRY -> RiverSection.DRY_CHANNEL;
+            case SUPPRESSED -> RiverSection.NONE;
+        };
+        RiverSample sample = new RiverSample(
+                true,
+                state,
+                section,
+                0D,
+                0.5D,
+                1D,
+                1,
+                1,
+                8D,
+                4D,
+                3D,
+                false,
+                RiverEdgeId.of(new RiverNodeId(0, 0), new RiverNodeId(1, 0))
+        );
+        return new IrisRiverSurfaceSample(sample, 70D, 60D, 63D, false, state == RiverRouteState.WET);
     }
 }

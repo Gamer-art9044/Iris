@@ -59,7 +59,7 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
     private static final IrisObjectRotation ROTATION_NONE = IrisObjectRotation.of(0, 0, 0);
 
     public MantleFloatingObjectComponent(EngineMantle engineMantle) {
-        super(engineMantle, ReservedFlag.FLOATING_OBJECT, 2);
+        super(engineMantle, ReservedFlag.FLOATING_OBJECT, 3);
     }
 
     @Override

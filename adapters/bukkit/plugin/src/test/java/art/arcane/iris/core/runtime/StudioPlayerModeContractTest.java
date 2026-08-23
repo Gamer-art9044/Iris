@@ -21,4 +21,19 @@ public class StudioPlayerModeContractTest {
         assertTrue(plugin.contains("GameMode.CREATIVE"));
         assertTrue(commands.contains("GameMode.CREATIVE"));
     }
+
+    @Test
+    public void tpStudioUsesThePreparedCoordinatorEntry() throws IOException {
+        String commands = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/commands/CommandStudio.java")).replace("\r\n", "\n");
+        int methodStart = commands.indexOf("public void tpstudio()");
+        int methodEnd = commands.indexOf("\n    @Director", methodStart);
+        String method = commands.substring(methodStart, methodEnd);
+
+        assertTrue(method.contains("StudioSVC studioService = Iris.service(StudioSVC.class)"));
+        assertTrue(method.contains("studioService.teleportToActiveProject(player)"));
+        assertFalse(method.contains("getActiveProject()"));
+        assertFalse(method.contains("BukkitPlatform.teleportAsync"));
+        assertFalse(method.contains("BukkitWorldBinding.spawnLocation"));
+    }
 }

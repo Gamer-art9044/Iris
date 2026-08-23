@@ -16,7 +16,6 @@ import art.arcane.iris.core.tools.IrisCreator;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
-import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.exceptions.IrisException;
@@ -55,6 +54,7 @@ import java.util.function.Supplier;
 public final class StudioOpenCoordinator {
     private static final long STUDIO_CLOSE_TIMEOUT_SECONDS = 120L;
     private static final long STUDIO_ENTRY_LOAD_TIMEOUT_SECONDS = 30L;
+    private static final long STUDIO_ENTRY_RELEASE_TIMEOUT_SECONDS = 15L;
     private static final long STUDIO_STRUCTURE_ACTIVATION_TIMEOUT_SECONDS = 30L;
     private static final long STUDIO_ENTRY_CLEANUP_BOUNDARY_SECONDS = 120L;
     private static volatile StudioOpenCoordinator instance;
@@ -103,10 +103,115 @@ public final class StudioOpenCoordinator {
         return closeWorldCoordinated(provider, worldName, world, true, project);
     }
 
+    public CompletableFuture<Boolean> teleportPlayerToProject(
+            IrisProject project,
+            Player player,
+            AtomicBoolean admission,
+            long deadlineNanos
+    ) {
+        if (project == null || player == null) {
+            return CompletableFuture.completedFuture(false);
+        }
+        AtomicBoolean activeAdmission = Objects.requireNonNull(
+                admission,
+                "Studio teleport admission");
+        if (!isStudioTeleportAdmitted(activeAdmission, deadlineNanos)) {
+            return studioTeleportDeadlineFailure("entry loading");
+        }
+        PlatformChunkGenerator provider = project.getActiveProvider();
+        if (provider == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Studio runtime provider is unavailable."));
+        }
+        World world = BukkitWorldBinding.world(provider.getTarget().getWorld());
+        if (world == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Studio world is not loaded."));
+        }
+        Location entryAnchor = WorldRuntimeControlService.get().resolveEntryAnchor(world);
+        if (entryAnchor == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Studio entry anchor could not be resolved."));
+        }
+        EntryChunkResolution entryResolution = loadEntryChunk(world, entryAnchor);
+        CompletableFuture<Boolean> teleportOperation = beforeStudioTeleportDeadline(
+                entryResolution.chunk(),
+                activeAdmission,
+                deadlineNanos,
+                "entry loading")
+                .thenCompose(ignored -> {
+                    if (!isStudioTeleportAdmitted(activeAdmission, deadlineNanos)) {
+                        return studioTeleportDeadlineFailure("safe-entry resolution");
+                    }
+                    return beforeStudioTeleportDeadline(
+                            entryResolution.safeEntry(),
+                            activeAdmission,
+                            deadlineNanos,
+                            "safe-entry resolution");
+                })
+                .thenCompose(entry -> {
+                    if (entry == null) {
+                        return CompletableFuture.failedFuture(new IllegalStateException(
+                                "Studio entry point could not be resolved."));
+                    }
+                    if (System.nanoTime() >= deadlineNanos
+                            || !activeAdmission.compareAndSet(true, false)) {
+                        return studioTeleportDeadlineFailure("native teleport delegation");
+                    }
+                    CompletableFuture<Boolean> teleport =
+                            WorldRuntimeControlService.get().teleport(player, entry);
+                    if (teleport == null) {
+                        return CompletableFuture.failedFuture(new IllegalStateException(
+                                "Studio native teleport returned no completion future."));
+                    }
+                    return teleport;
+                });
+        return teleportOperation;
+    }
+
+    private <T> CompletableFuture<T> beforeStudioTeleportDeadline(
+            CompletableFuture<T> stage,
+            AtomicBoolean admission,
+            long deadlineNanos,
+            String stageName
+    ) {
+        if (stage == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Studio " + stageName + " returned no completion future."));
+        }
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        if (!admission.get() || remainingNanos <= 0L) {
+            return studioTeleportDeadlineFailure(stageName);
+        }
+        CompletableFuture<T> bounded = new CompletableFuture<>();
+        stage.whenComplete((value, failure) -> {
+            if (failure == null) {
+                bounded.complete(value);
+            } else {
+                bounded.completeExceptionally(failure);
+            }
+        });
+        CompletableFuture.delayedExecutor(remainingNanos, TimeUnit.NANOSECONDS)
+                .execute(() -> bounded.completeExceptionally(new TimeoutException(
+                        "Studio teleport deadline expired during " + stageName + ".")));
+        return bounded;
+    }
+
+    private boolean isStudioTeleportAdmitted(AtomicBoolean admission, long deadlineNanos) {
+        return admission.get() && System.nanoTime() < deadlineNanos;
+    }
+
+    private <T> CompletableFuture<T> studioTeleportDeadlineFailure(String stageName) {
+        return CompletableFuture.failedFuture(new TimeoutException(
+                "Studio teleport deadline expired before " + stageName + "."));
+    }
+
     private void executeOpen(StudioOpenRequest request, CompletableFuture<StudioOpenResult> future) {
         World world = null;
         PlatformChunkGenerator provider = null;
         CompletableFuture<Void> entryLoadFuture = null;
+        CompletableFuture<Void> entryUseFuture = null;
+        CompletableFuture<Boolean> nativeTeleportFuture = null;
         try {
             long openStart = System.nanoTime();
             long t = openStart;
@@ -158,35 +263,75 @@ public final class StudioOpenCoordinator {
             }
             t = logStudioPhase(request, "resolve_entry_anchor", t, openStart);
 
-            updateStage(request, "load_entry_chunk", 0.80D);
-            int entryChunkX = entryAnchor.getBlockX() >> 4;
-            int entryChunkZ = entryAnchor.getBlockZ() >> 4;
-            try {
-                entryLoadFuture = loadEntryChunk(world, entryChunkX, entryChunkZ);
-                entryLoads.register(request.worldName(), entryLoadFuture);
-                entryLoadFuture.get(STUDIO_ENTRY_LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
-                throw new IllegalStateException("Studio entry chunk did not load in time at "
-                        + entryChunkX + "," + entryChunkZ + " — chunk system may be stalled.", e);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("Studio entry chunk load was interrupted at "
-                        + entryChunkX + "," + entryChunkZ + ".", e);
+            long entryPrecomputeStartedAt = System.nanoTime();
+            CompletableFuture<Void> preparedEntryChunks = CompletableFuture.completedFuture(null);
+            if (requiresLoadedEntry(request)) {
+                if (!(provider instanceof BukkitChunkGenerator bukkitGenerator)) {
+                    throw new IllegalStateException(
+                            "Studio runtime provider cannot prepare its entry chunks.");
+                }
+                preparedEntryChunks = bukkitGenerator.prepareStudioEntryChunks(
+                        world,
+                        entryAnchor.getBlockX() >> 4,
+                        entryAnchor.getBlockZ() >> 4
+                );
             }
-            t = logStudioPhase(request, "load_entry_chunk", t, openStart);
 
-            updateStage(request, "resolve_safe_entry", 0.84D);
-            Location safeEntry;
-            try {
-                safeEntry = WorldRuntimeControlService.get().resolveSafeEntry(world, entryAnchor)
-                        .get(5L, TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
-                throw new IllegalStateException("Studio entry point resolution timed out — region thread may be stalled.");
+            updateStage(request, "prepare_structure_rings", 0.79D);
+            endStudioEntryBootstrap(world, provider);
+            t = logStudioPhase(request, "prepare_structure_rings", t, openStart);
+
+            if (requiresLoadedEntry(request)) {
+                try {
+                    preparedEntryChunks.get(
+                            STUDIO_ENTRY_LOAD_TIMEOUT_SECONDS,
+                            TimeUnit.SECONDS
+                    );
+                } catch (TimeoutException e) {
+                    throw new IllegalStateException(
+                            "Studio entry chunk precompute did not finish in time.", e);
+                }
+                t = logOverlappedStudioPhase(
+                        request,
+                        "prepare_entry_chunks",
+                        entryPrecomputeStartedAt,
+                        openStart
+                );
             }
-            if (safeEntry == null) {
-                throw new IllegalStateException("Studio entry point could not be resolved for world \"" + request.worldName() + "\".");
+
+            Location safeEntry = entryAnchor;
+            if (requiresLoadedEntry(request)) {
+                updateStage(request, "load_entry_chunk", 0.80D);
+                int entryChunkX = entryAnchor.getBlockX() >> 4;
+                int entryChunkZ = entryAnchor.getBlockZ() >> 4;
+                EntryChunkResolution entryResolution = loadEntryChunk(world, entryAnchor);
+                CompletableFuture<Void> useSettlement = new CompletableFuture<>();
+                entryUseFuture = useSettlement;
+                entryLoadFuture = entryResolution.safeEntry().thenCompose(ignored -> useSettlement);
+                entryLoads.register(request.worldName(), entryLoadFuture);
+                try {
+                    entryResolution.chunk().get(STUDIO_ENTRY_LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                } catch (TimeoutException e) {
+                    throw new IllegalStateException("Studio entry chunk did not load in time at "
+                            + entryChunkX + "," + entryChunkZ + " — chunk system may be stalled.", e);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Studio entry chunk load was interrupted at "
+                            + entryChunkX + "," + entryChunkZ + ".", e);
+                }
+                t = logStudioPhase(request, "load_entry_chunk", t, openStart);
+
+                updateStage(request, "resolve_safe_entry", 0.84D);
+                try {
+                    safeEntry = entryResolution.safeEntry().get(5L, TimeUnit.SECONDS);
+                } catch (TimeoutException e) {
+                    throw new IllegalStateException("Studio entry point resolution timed out — region thread may be stalled.");
+                }
+                if (safeEntry == null) {
+                    throw new IllegalStateException("Studio entry point could not be resolved for world \"" + request.worldName() + "\".");
+                }
+                t = logStudioPhase(request, "resolve_safe_entry", t, openStart);
             }
-            t = logStudioPhase(request, "resolve_safe_entry", t, openStart);
 
             if (request.openKind().teleportThroughStandardEntry()
                     && request.playerName() != null
@@ -199,7 +344,12 @@ public final class StudioOpenCoordinator {
 
                 Boolean teleported;
                 try {
-                    teleported = WorldRuntimeControlService.get().teleport(player, safeEntry).get(60L, TimeUnit.SECONDS);
+                    nativeTeleportFuture = WorldRuntimeControlService.get().teleport(player, safeEntry);
+                    if (nativeTeleportFuture == null) {
+                        throw new IllegalStateException(
+                                "Studio native teleport returned no completion future.");
+                    }
+                    teleported = nativeTeleportFuture.get(60L, TimeUnit.SECONDS);
                 } catch (TimeoutException e) {
                     throw new IllegalStateException("Studio teleport timed out — destination region may still be generating.");
                 }
@@ -208,8 +358,6 @@ public final class StudioOpenCoordinator {
                 }
                 t = logStudioPhase(request, "teleport_standard_entry", t, openStart);
             }
-
-            endStudioEntryBootstrap(world, provider);
 
             updateStage(request, "finalize_open", 1.00D);
             if (request.project() != null) {
@@ -221,11 +369,17 @@ public final class StudioOpenCoordinator {
             runOpenFinalizer(request.onDone(), world);
             t = logStudioPhase(request, "finalize_open", t, openStart);
 
+            settleEntryUseAfterOperation(entryUseFuture, nativeTeleportFuture);
+            if (entryLoadFuture != null) {
+                entryLoadFuture.get(STUDIO_ENTRY_RELEASE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            }
+
             IrisLogging.info("Studio open: " + world.getName() + " ready in "
                     + elapsedMillis(openStart) + "ms");
             entryLoads.release(request.worldName(), entryLoadFuture);
             future.complete(new StudioOpenResult(world, safeEntry));
         } catch (Throwable e) {
+            settleEntryUseAfterOperation(entryUseFuture, nativeTeleportFuture);
             abandonStudioEntryBootstrap(world, e);
             IrisLogging.reportError("Studio open failed for world \"" + request.worldName() + "\".", e);
             if (!request.retainOnFailure()) {
@@ -262,9 +416,21 @@ public final class StudioOpenCoordinator {
                                 + request.worldName() + "\".", unwrapFailure(cleanupError));
                     }
                 }
+            } else if (entryLoadFuture != null) {
+                entryLoads.releaseAfterSuccessfulCompletion(
+                        request.worldName(),
+                        entryLoadFuture,
+                        entryLoadFuture);
             }
             future.completeExceptionally(e);
         }
+    }
+
+    static boolean requiresLoadedEntry(StudioOpenRequest request) {
+        Objects.requireNonNull(request, "Studio open request");
+        return request.openKind().teleportThroughStandardEntry()
+                && request.playerName() != null
+                && !request.playerName().isBlank();
     }
 
     private void deferFailedOpenCleanupToRestart(
@@ -278,7 +444,12 @@ public final class StudioOpenCoordinator {
                     worldName,
                     new IllegalStateException("Studio cleanup deferred across the queued server restart."));
         }
-        entryLoads.release(worldName, entryLoadFuture);
+        if (entryLoadFuture != null) {
+            entryLoads.releaseAfterSuccessfulCompletion(
+                    worldName,
+                    entryLoadFuture,
+                    entryLoadFuture);
+        }
     }
 
     private boolean transientWorldStorageExists(String worldName) {
@@ -301,6 +472,22 @@ public final class StudioOpenCoordinator {
                 request.openKind().name().toLowerCase(Locale.ROOT),
                 phase,
                 TimeUnit.NANOSECONDS.toMillis(now - t),
+                TimeUnit.NANOSECONDS.toMillis(now - openStart));
+        return now;
+    }
+
+    private long logOverlappedStudioPhase(
+            StudioOpenRequest request,
+            String phase,
+            long phaseStart,
+            long openStart
+    ) {
+        long now = System.nanoTime();
+        IrisLogging.info("[Studio timing] world=%s kind=%s phase=%s duration=%dms cumulative=%dms",
+                request.worldName(),
+                request.openKind().name().toLowerCase(Locale.ROOT),
+                phase,
+                TimeUnit.NANOSECONDS.toMillis(now - phaseStart),
                 TimeUnit.NANOSECONDS.toMillis(now - openStart));
         return now;
     }
@@ -331,14 +518,12 @@ public final class StudioOpenCoordinator {
                 duration);
     }
 
-    private CompletableFuture<Void> loadEntryChunk(World world, int chunkX, int chunkZ) {
-        if (!J.isFolia()) {
-            return loadEntryChunkAsync(world, chunkX, chunkZ);
-        }
-        return scheduleEntryChunkRetention(world, chunkX, chunkZ);
-    }
-
-    private CompletableFuture<Void> loadEntryChunkAsync(World world, int chunkX, int chunkZ) {
+    private EntryChunkResolution loadEntryChunk(World world, Location entryAnchor) {
+        int chunkX = entryAnchor.getBlockX() >> 4;
+        int chunkZ = entryAnchor.getBlockZ() >> 4;
+        CompletableFuture<Chunk> chunkFuture = new CompletableFuture<>();
+        CompletableFuture<Location> safeEntryFuture = new CompletableFuture<>();
+        EntryChunkResolution resolution = new EntryChunkResolution(chunkFuture, safeEntryFuture);
         CompletableFuture<Chunk> requested;
         try {
             requested = WorldRuntimeControlService.get().requestChunkAsync(
@@ -348,56 +533,67 @@ public final class StudioOpenCoordinator {
                     true,
                     true);
         } catch (Throwable throwable) {
-            return CompletableFuture.failedFuture(throwable);
+            failEntryResolution(resolution, throwable);
+            return resolution;
         }
         if (requested == null) {
-            return CompletableFuture.failedFuture(new IllegalStateException(
+            failEntryResolution(resolution, new IllegalStateException(
                     "Entry-chunk async request did not return a future at " + chunkX + "," + chunkZ + "."));
+            return resolution;
         }
-        return requested.thenCompose(chunk -> {
-            if (chunk == null) {
-                return CompletableFuture.failedFuture(new IllegalStateException(
-                        "Entry-chunk async request returned no chunk at " + chunkX + "," + chunkZ + "."));
+        requested.whenComplete((chunk, failure) -> {
+            if (failure != null) {
+                failEntryResolution(resolution, failure);
+                return;
             }
-            return scheduleEntryChunkRetention(world, chunkX, chunkZ);
+            if (chunk == null) {
+                failEntryResolution(resolution, new IllegalStateException(
+                        "Entry-chunk async request returned no chunk at " + chunkX + "," + chunkZ + "."));
+                return;
+            }
+            Runnable resolve = () -> {
+                chunkFuture.complete(chunk);
+                try {
+                    Location safeEntry = WorldRuntimeControlService.findTopSafeStudioLocation(world, entryAnchor);
+                    safeEntryFuture.complete(safeEntry);
+                } catch (Throwable resolutionFailure) {
+                    failEntryResolution(resolution, resolutionFailure);
+                }
+            };
+            try {
+                if (J.isOwnedByCurrentRegion(world, chunkX, chunkZ)) {
+                    resolve.run();
+                    return;
+                }
+                if (!J.runRegion(world, chunkX, chunkZ, resolve)) {
+                    failEntryResolution(resolution, new IllegalStateException(
+                            "Failed to resolve the entry chunk on its owning region at "
+                                    + chunkX + "," + chunkZ + "."));
+                }
+            } catch (Throwable schedulingFailure) {
+                failEntryResolution(resolution, schedulingFailure);
+            }
         });
+        return resolution;
     }
 
-    private CompletableFuture<Void> scheduleEntryChunkRetention(World world, int chunkX, int chunkZ) {
-        CompletableFuture<Void> loaded = new CompletableFuture<>();
-        try {
-            J.s(() -> retainAndConfirmEntryChunk(world, chunkX, chunkZ)
-                    .whenComplete((ignored, throwable) -> complete(loaded, throwable)));
-        } catch (Throwable throwable) {
-            loaded.completeExceptionally(throwable);
-        }
-        return loaded;
+    private void failEntryResolution(EntryChunkResolution resolution, Throwable failure) {
+        resolution.chunk().completeExceptionally(failure);
+        resolution.safeEntry().completeExceptionally(failure);
     }
 
-    private CompletableFuture<Void> retainAndConfirmEntryChunk(World world, int chunkX, int chunkZ) {
-        CompletableFuture<Void> confirmed = new CompletableFuture<>();
-        try {
-            world.addPluginChunkTicket(
-                    chunkX,
-                    chunkZ,
-                    BukkitPlatform.plugin());
-        } catch (Throwable throwable) {
-            confirmed.completeExceptionally(throwable);
-            return confirmed;
-        }
-        if (!J.runRegion(world, chunkX, chunkZ, () -> confirmed.complete(null))) {
-            confirmed.completeExceptionally(new IllegalStateException(
-                    "Failed to confirm entry-chunk region at " + chunkX + "," + chunkZ + "."));
-        }
-        return confirmed;
-    }
-
-    private void complete(CompletableFuture<Void> target, Throwable throwable) {
-        if (throwable == null) {
-            target.complete(null);
+    private void settleEntryUseAfterOperation(
+            CompletableFuture<Void> entryUseFuture,
+            CompletableFuture<?> operation
+    ) {
+        if (entryUseFuture == null) {
             return;
         }
-        target.completeExceptionally(throwable);
+        if (operation == null) {
+            entryUseFuture.complete(null);
+            return;
+        }
+        operation.whenComplete((ignored, failure) -> entryUseFuture.complete(null));
     }
 
     private void endStudioEntryBootstrap(World world, PlatformChunkGenerator provider) {
@@ -405,19 +601,28 @@ public final class StudioOpenCoordinator {
             throw new IllegalStateException("Studio runtime provider cannot finish its entry bootstrap.");
         }
         AtomicBoolean activationClaim = new AtomicBoolean(true);
-        CompletableFuture<Void> activation = J.sfut(() -> {
+        CompletableFuture<CompletableFuture<Void>> scheduledActivation = J.sfut(() -> {
             if (!activationClaim.compareAndSet(true, false)) {
                 INMS.get().abandonStudioStructureBootstrap(world);
-                return;
+                return CompletableFuture.failedFuture(new IllegalStateException(
+                        "Studio native structure activation was cancelled before it began."));
             }
             try {
-                INMS.get().completeStudioStructureBootstrap(world);
-                bukkitGenerator.endStudioEntryBootstrap();
+                CompletableFuture<Void> nativeActivation =
+                        INMS.get().completeStudioStructureBootstrap(world);
+                if (nativeActivation == null) {
+                    return CompletableFuture.failedFuture(new IllegalStateException(
+                            "Studio native structure activation returned no completion future."));
+                }
+                return nativeActivation;
             } catch (ReflectiveOperationException e) {
-                throw new IllegalStateException(
-                        "Studio native structure state could not be activated after entry bootstrap.", e);
+                return CompletableFuture.failedFuture(new IllegalStateException(
+                        "Studio native structure state could not be activated after entry bootstrap.", e));
             }
         });
+        CompletableFuture<Void> activation = scheduledActivation
+                .thenCompose(nativeActivation -> nativeActivation)
+                .thenCompose(ignored -> J.sfut(bukkitGenerator::endStudioEntryBootstrap));
         try {
             activation.get(STUDIO_STRUCTURE_ACTIVATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
@@ -910,7 +1115,7 @@ public final class StudioOpenCoordinator {
         };
     }
 
-    private Throwable unwrapFailure(Throwable throwable) {
+    private static Throwable unwrapFailure(Throwable throwable) {
         Throwable cursor = throwable;
         while (cursor instanceof CompletionException || cursor instanceof ExecutionException) {
             if (cursor.getCause() == null) {
@@ -1051,6 +1256,12 @@ public final class StudioOpenCoordinator {
         public boolean successful() {
             return failureCause == null;
         }
+    }
+
+    private record EntryChunkResolution(
+            CompletableFuture<Chunk> chunk,
+            CompletableFuture<Location> safeEntry
+    ) {
     }
 
     static final class EntryLoadRegistry {

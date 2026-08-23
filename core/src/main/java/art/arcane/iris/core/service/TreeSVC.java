@@ -207,7 +207,7 @@ public class TreeSVC implements IrisService {
 
             @Override
             public int getFluidHeight() {
-                return worldAccess.getEngine().getDimension().getFluidHeight();
+                return worldFluidHeight(engine);
             }
 
             @Override
@@ -288,6 +288,10 @@ public class TreeSVC implements IrisService {
         if (!J.runAt(event.getLocation(), growTask) && !J.isFolia()) {
             J.s(growTask);
         }
+    }
+
+    static int worldFluidHeight(Engine engine) {
+        return engine.getMinHeight() + engine.getDimension().getFluidHeight();
     }
 
     /**

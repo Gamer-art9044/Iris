@@ -32,28 +32,31 @@ public class StudioOpenCoordinatorSpawnStuckRegressionTest {
     }
 
     @Test
-    public void paperEntryChunkLoadIsAsyncBeforeTheRetentionTicket() throws Exception {
+    public void entryChunkLoadUsesTheUrgentAsyncRequestWithoutRetentionTickets() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int asyncLoad = source.indexOf("requested = WorldRuntimeControlService.get().requestChunkAsync(");
         int urgentFlag = source.indexOf("true);", asyncLoad);
-        int retentionTicket = source.indexOf("world.addPluginChunkTicket", asyncLoad);
 
         assertTrue(asyncLoad >= 0);
         assertTrue(urgentFlag > asyncLoad);
-        assertTrue(retentionTicket > asyncLoad);
+        assertFalse(source.contains("addPluginChunkTicket"));
+        assertFalse(source.contains("removePluginChunkTicket"));
     }
 
     @Test
-    public void foliaRetainsItsNonBlockingTicketBootstrapPath() throws Exception {
+    public void foliaUsesTheSameNonBlockingAsyncEntryPath() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
-        int foliaBranch = source.indexOf("if (!J.isFolia())");
-        int retentionSchedule = source.indexOf(
-                "return scheduleEntryChunkRetention(world, chunkX, chunkZ);",
-                foliaBranch);
+        int loadStart = source.indexOf("private EntryChunkResolution loadEntryChunk(");
+        int loadEnd = source.indexOf("private void settleEntryUseAfterOperation(", loadStart);
+        String load = source.substring(loadStart, loadEnd);
 
-        assertTrue(foliaBranch >= 0);
-        assertTrue(retentionSchedule > foliaBranch);
+        assertTrue(load.contains("requestChunkAsync("));
+        assertTrue(load.contains("J.isOwnedByCurrentRegion(world, chunkX, chunkZ)"));
+        assertTrue(load.contains("J.runRegion(world, chunkX, chunkZ"));
+        assertTrue(load.contains("findTopSafeStudioLocation(world, entryAnchor)"));
+        assertFalse(source.contains("resolveSafeEntry(world, entryAnchor)"));
+        assertFalse(load.contains("J.isFolia()"));
     }
 }

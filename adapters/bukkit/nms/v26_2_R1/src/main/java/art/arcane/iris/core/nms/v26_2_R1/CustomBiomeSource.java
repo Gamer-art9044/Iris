@@ -61,6 +61,7 @@ public class CustomBiomeSource extends BiomeSource {
     private final ConcurrentHashMap<Long, Holder<Biome>> noiseBiomeCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Holder<Biome>> structureBiomeCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Holder<Biome>> surfaceStructureBiomeCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Holder<Biome>> naturalSurfaceStructureBiomeCache = new ConcurrentHashMap<>();
     private volatile KMap<String, Holder<Biome>> customBiomes;
     private volatile Map<Biome, Holder<Biome>> vanillaSpawnBiomes;
     private volatile IrisDimension cacheDimension;
@@ -330,8 +331,18 @@ public class CustomBiomeSource extends BiomeSource {
         if (quartStep == 1) {
             return super.findBiomeHorizontal(x, y, z, searchRadius, allowed, random, sampler);
         }
-        return super.findBiomeHorizontal(
-                x, y, z, searchRadius, quartStep, allowed, random, false, sampler);
+        GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_structure_ring_biome");
+        if (lease == null) {
+            throw new IllegalStateException("Iris structure ring biome lookup was rejected during an engine transition");
+        }
+        try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!isRuntimeAvailable()) {
+                throw new IllegalStateException("Iris structure ring biome lookup has no active engine runtime");
+            }
+            ensureCachesCurrent();
+            return findNaturalSurfaceBiomeHorizontal(
+                    x, y, z, searchRadius, quartStep, allowed, random);
+        }
     }
 
     static int horizontalBiomeSearchQuartStep(int blockY, int searchRadius) {
@@ -389,6 +400,60 @@ public class CustomBiomeSource extends BiomeSource {
         return resolvedSurfaceHolder;
     }
 
+    private Pair<BlockPos, Holder<Biome>> findNaturalSurfaceBiomeHorizontal(
+            int x,
+            int y,
+            int z,
+            int searchRadius,
+            int quartStep,
+            Predicate<Holder<Biome>> allowed,
+            RandomSource random
+    ) {
+        int centerQuartX = QuartPos.fromBlock(x);
+        int centerQuartZ = QuartPos.fromBlock(z);
+        int quartRadius = QuartPos.fromBlock(searchRadius);
+        Pair<BlockPos, Holder<Biome>> selected = null;
+        int matches = 0;
+        for (int radius = 0; radius <= quartRadius; radius += quartStep) {
+            for (int offsetZ = -radius; offsetZ <= radius; offsetZ += quartStep) {
+                for (int offsetX = -radius; offsetX <= radius; offsetX += quartStep) {
+                    int quartX = centerQuartX + offsetX;
+                    int quartZ = centerQuartZ + offsetZ;
+                    Holder<Biome> holder = getNaturalSurfaceStructureBiomeHolder(quartX, quartZ);
+                    if (!allowed.test(holder)) {
+                        continue;
+                    }
+                    if (selected == null || random.nextInt(matches + 1) == 0) {
+                        selected = Pair.of(new BlockPos(
+                                QuartPos.toBlock(quartX),
+                                y,
+                                QuartPos.toBlock(quartZ)), holder);
+                    }
+                    matches++;
+                }
+            }
+        }
+        return selected;
+    }
+
+    private Holder<Biome> getNaturalSurfaceStructureBiomeHolder(int x, int z) {
+        long columnKey = packColumnKey(x, z);
+        Holder<Biome> cachedHolder = naturalSurfaceStructureBiomeCache.get(columnKey);
+        if (cachedHolder != null) {
+            return cachedHolder;
+        }
+        Holder<Biome> resolvedHolder = resolveNaturalSurfaceStructureBiomeHolder(x, z);
+        Holder<Biome> existingHolder = naturalSurfaceStructureBiomeCache.putIfAbsent(
+                columnKey, resolvedHolder);
+        if (existingHolder != null) {
+            return existingHolder;
+        }
+        if (naturalSurfaceStructureBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
+            naturalSurfaceStructureBiomeCache.clear();
+        }
+        return resolvedHolder;
+    }
+
     private boolean isGuaranteedSurfaceBiome(int quartY) {
         if (engine == null || engine.isClosed() || engine.getComplex() == null) {
             return false;
@@ -416,34 +481,64 @@ public class CustomBiomeSource extends BiomeSource {
         return holder;
     }
 
+    private Holder<Biome> resolveNaturalSurfaceStructureBiomeHolder(int x, int z) {
+        int blockX = x << 2;
+        int blockZ = z << 2;
+        IrisBiome irisBiome = engine.getComplex().getNaturalTrueBiomeStream().get(blockX, blockZ);
+        if (irisBiome == null) {
+            throw new IllegalStateException("Iris returned no natural structure biome at block "
+                    + blockX + "," + blockZ);
+        }
+        Holder<Biome> holder = resolveBiomeHolder(biomeRegistry, irisBiome.getStructureDerivativeKey());
+        if (holder == null) {
+            throw new IllegalStateException("Iris natural structure biome derivative '"
+                    + irisBiome.getStructureDerivativeKey() + "' is not registered at block "
+                    + blockX + "," + blockZ);
+        }
+        return holder;
+    }
+
     public Holder<Biome> getVisibleNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
         GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_visible_biome");
         if (lease == null) {
             throw new IllegalStateException("Iris visible biome lookup was rejected during an engine transition");
         }
         try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-            if (!isRuntimeAvailable()) {
-                throw new IllegalStateException("Iris visible biome lookup has no active engine runtime");
-            }
-            ensureCachesCurrent();
-            long cacheKey = packNoiseKey(x, y, z);
-            Holder<Biome> cachedHolder = noiseBiomeCache.get(cacheKey);
-            if (cachedHolder != null) {
-                return cachedHolder;
-            }
-
-            Holder<Biome> resolvedHolder = resolveVisibleBiomeHolder(x, y, z);
-            Holder<Biome> existingHolder = noiseBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
-            if (existingHolder != null) {
-                return existingHolder;
-            }
-
-            if (noiseBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
-                noiseBiomeCache.clear();
-            }
-
-            return resolvedHolder;
+            prepareVisibleBiomeBatch();
+            return getVisibleNoiseBiomeWithActiveGenerationLease(x, y, z, sampler);
         }
+    }
+
+    void prepareVisibleBiomeBatch() {
+        if (!isRuntimeAvailable()) {
+            throw new IllegalStateException("Iris visible biome lookup has no active engine runtime");
+        }
+        ensureCachesCurrent();
+    }
+
+    Holder<Biome> getVisibleNoiseBiomeWithActiveGenerationLease(
+            int x,
+            int y,
+            int z,
+            Climate.Sampler sampler
+    ) {
+        long cacheKey = packNoiseKey(x, y, z);
+        Holder<Biome> cachedHolder = noiseBiomeCache.get(cacheKey);
+        if (cachedHolder != null) {
+            return cachedHolder;
+        }
+
+        Holder<Biome> resolvedHolder = resolveVisibleBiomeHolder(x, y, z);
+        Holder<Biome> existingHolder = noiseBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
+        if (existingHolder != null) {
+            return existingHolder;
+        }
+
+        if (noiseBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
+            noiseBiomeCache.clear();
+        }
+
+        return resolvedHolder;
     }
 
     private GenerationSessionLease tryAcquireGenerationLease(String operation) {
@@ -482,6 +577,7 @@ public class CustomBiomeSource extends BiomeSource {
             noiseBiomeCache.clear();
             structureBiomeCache.clear();
             surfaceStructureBiomeCache.clear();
+            naturalSurfaceStructureBiomeCache.clear();
             customBiomes = refreshedCustomBiomes;
             vanillaSpawnBiomes = refreshedSpawnBiomes;
             cacheDimension = dimension;
@@ -573,11 +669,20 @@ public class CustomBiomeSource extends BiomeSource {
             return null;
         }
 
+        return createBiomeResolution(irisBiome, underground, blockX, blockY, blockZ);
+    }
+
+    private BiomeResolution createBiomeResolution(
+            IrisBiome irisBiome,
+            boolean underground,
+            int blockX,
+            int blockY,
+            int blockZ
+    ) {
         RNG noiseRng = new RNG(seed
                 ^ (((long) blockX) * 341873128712L)
                 ^ (((long) blockY) * 132897987541L)
                 ^ (((long) blockZ) * 42317861L));
-
         return new BiomeResolution(irisBiome, underground, blockX, blockY, blockZ, noiseRng);
     }
 

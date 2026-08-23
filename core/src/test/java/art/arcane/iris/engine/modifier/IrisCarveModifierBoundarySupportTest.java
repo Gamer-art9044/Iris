@@ -10,6 +10,7 @@ import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterCavern;
+import art.arcane.volmlib.util.matter.MatterSlice;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import org.junit.Test;
 
@@ -45,9 +46,20 @@ public class IrisCarveModifierBoundarySupportTest {
         doReturn(engine).when(modifier).getEngine();
 
         MantleChunk<Matter> mantleChunk = mock(MantleChunk.class);
-        doReturn(new MatterCavern(true, "custom/floor", (byte) 0))
-                .when(mantleChunk).get(1, 6, 2, MatterCavern.class);
-        doReturn(null).when(mantleChunk).get(1, 42, 2, MatterCavern.class);
+        Matter floorMatter = mock(Matter.class);
+        Matter ceilingMatter = mock(Matter.class);
+        MatterSlice<MatterCavern> floorSlice = mock(MatterSlice.class);
+        MatterSlice<MatterCavern> ceilingSlice = mock(MatterSlice.class);
+        doReturn(true).when(mantleChunk).exists(0);
+        doReturn(true).when(mantleChunk).exists(2);
+        doReturn(floorMatter).when(mantleChunk).get(0);
+        doReturn(ceilingMatter).when(mantleChunk).get(2);
+        doReturn(true).when(floorMatter).hasSlice(MatterCavern.class);
+        doReturn(true).when(ceilingMatter).hasSlice(MatterCavern.class);
+        doReturn(floorSlice).when(floorMatter).getSlice(MatterCavern.class);
+        doReturn(ceilingSlice).when(ceilingMatter).getSlice(MatterCavern.class);
+        doReturn(new MatterCavern(true, "custom/floor", (byte) 0)).when(floorSlice).get(1, 6, 2);
+        doReturn(null).when(ceilingSlice).get(1, 10, 2);
 
         Long2ObjectOpenHashMap<IrisBiome> caveBiomeCache = new Long2ObjectOpenHashMap<>();
         Map<String, IrisBiome> customBiomeCache = new HashMap<>();

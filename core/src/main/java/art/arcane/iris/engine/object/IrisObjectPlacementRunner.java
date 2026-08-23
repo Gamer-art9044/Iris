@@ -332,7 +332,8 @@ final class IrisObjectPlacementRunner {
             return -1;
         }
 
-        if (!config.isForcePlace() && !rawStructurePiece && config.isUnderwater() && y + rty + ty >= placer.getFluidHeight()) {
+        if (!config.isForcePlace() && !rawStructurePiece && config.isUnderwater()
+                && y + rty + ty >= placer.getFluidHeight(x, z)) {
             return -1;
         }
 

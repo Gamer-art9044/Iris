@@ -15,6 +15,7 @@ import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.iris.util.project.stream.ProceduralStream;
+import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.matter.MatterCavern;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import org.junit.AfterClass;
@@ -73,6 +74,7 @@ public class IrisCarveModifierInferenceIsolationTest {
         Method paintBoundaryZone = IrisCarveModifier.class.getDeclaredMethod(
                 "paintBoundaryZone",
                 Hunk.class,
+                MantleChunk.class,
                 CarveWallBuffer.class,
                 int.class,
                 int.class,
@@ -88,6 +90,7 @@ public class IrisCarveModifierInferenceIsolationTest {
         paintBoundaryZone.invoke(
                 modifier,
                 mock(Hunk.class),
+                mock(MantleChunk.class),
                 walls,
                 0,
                 0,

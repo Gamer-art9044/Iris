@@ -7,6 +7,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.data.Levelled;
 import org.bukkit.block.data.Waterlogged;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.VoxelShape;
@@ -78,7 +79,7 @@ public class WorldRuntimeControlServiceSafeEntryTest {
     }
 
     @Test
-    public void searchesOnlyTheOwnedChunkForNearbySolidGround() {
+    public void studioPrefersNearbyDryGroundWithinTheOwnedChunk() {
         World world = loadedWorld(0, 0);
         Block water = block(Material.WATER, true, true);
         Block stone = block(Material.STONE, false, false, FULL_BLOCK);
@@ -98,7 +99,7 @@ public class WorldRuntimeControlServiceSafeEntryTest {
         }).when(world).getBlockAt(anyInt(), anyInt(), anyInt());
 
         Location source = new Location(world, 0.5D, 63D, 0.5D);
-        Location result = WorldRuntimeControlService.findTopSafeLocation(world, source);
+        Location result = WorldRuntimeControlService.findTopSafeStudioLocation(world, source);
 
         assertNotNull(result);
         assertEquals(1, result.getBlockX());
@@ -179,15 +180,16 @@ public class WorldRuntimeControlServiceSafeEntryTest {
     }
 
     @Test
-    public void returnsNullForWaterOnlyChunkAndBoundsVerticalSearch() {
+    public void genericSafeEntryStillRejectsWaterOnlyChunks() {
         World world = loadedWorld(0, 0);
         Block water = block(Material.WATER, true, true);
+        Block air = block(Material.AIR, false, true);
         AtomicInteger lowestReadY = new AtomicInteger(Integer.MAX_VALUE);
         doReturn(62).when(world).getHighestBlockYAt(anyInt(), anyInt(), eq(HeightMap.MOTION_BLOCKING_NO_LEAVES));
         doAnswer(invocation -> {
             int y = invocation.getArgument(1);
             lowestReadY.accumulateAndGet(y, Math::min);
-            return water;
+            return y <= 62 ? water : air;
         }).when(world).getBlockAt(anyInt(), anyInt(), anyInt());
 
         Location source = new Location(world, 0.5D, 63D, 0.5D);
@@ -195,6 +197,98 @@ public class WorldRuntimeControlServiceSafeEntryTest {
 
         assertNull(result);
         assertEquals(-1, lowestReadY.get());
+    }
+
+    @Test
+    public void studioFallsBackAboveWaterSurfaceAfterExhaustingDryCandidates() {
+        World world = loadedWorld(0, 0);
+        Block water = waterBlock(0);
+        Block air = block(Material.AIR, false, true);
+        doReturn(62).when(world).getHighestBlockYAt(anyInt(), anyInt(), eq(HeightMap.MOTION_BLOCKING_NO_LEAVES));
+        doAnswer(invocation -> {
+            int y = invocation.getArgument(1);
+            return y <= 62 ? water : air;
+        }).when(world).getBlockAt(anyInt(), anyInt(), anyInt());
+
+        Location source = new Location(world, 0.5D, 63D, 0.5D);
+        Location result = WorldRuntimeControlService.findTopSafeStudioLocation(world, source);
+
+        assertNotNull(result);
+        assertEquals(0, result.getBlockX());
+        assertEquals(63, result.getBlockY());
+        assertEquals(0, result.getBlockZ());
+    }
+
+    @Test
+    public void studioDoesNotFallBackAboveLavaSurface() {
+        World world = loadedWorld(0, 0);
+        Block lava = block(Material.LAVA, true, true);
+        Block air = block(Material.AIR, false, true);
+        doReturn(62).when(world).getHighestBlockYAt(anyInt(), anyInt(), eq(HeightMap.MOTION_BLOCKING_NO_LEAVES));
+        doAnswer(invocation -> {
+            int y = invocation.getArgument(1);
+            return y == 62 ? lava : air;
+        }).when(world).getBlockAt(anyInt(), anyInt(), anyInt());
+
+        Location source = new Location(world, 0.5D, 63D, 0.5D);
+        Location result = WorldRuntimeControlService.findTopSafeStudioLocation(world, source);
+
+        assertNull(result);
+    }
+
+    @Test
+    public void studioRejectsWaterSurfaceWithoutClearHeadroom() {
+        World world = loadedWorld(0, 0);
+        Block water = waterBlock(0);
+        Block air = block(Material.AIR, false, true);
+        Block stone = block(Material.STONE, false, false, FULL_BLOCK);
+        doReturn(62).when(world).getHighestBlockYAt(anyInt(), anyInt(), eq(HeightMap.MOTION_BLOCKING_NO_LEAVES));
+        doAnswer(invocation -> {
+            int y = invocation.getArgument(1);
+            if (y <= 62) {
+                return water;
+            }
+            return y == 64 ? stone : air;
+        }).when(world).getBlockAt(anyInt(), anyInt(), anyInt());
+
+        Location source = new Location(world, 0.5D, 63D, 0.5D);
+        Location result = WorldRuntimeControlService.findTopSafeStudioLocation(world, source);
+
+        assertNull(result);
+    }
+
+    @Test
+    public void studioRejectsFlowingWaterSurface() {
+        World world = loadedWorld(0, 0);
+        Block flowingWater = waterBlock(1);
+        Block air = block(Material.AIR, false, true);
+        doReturn(62).when(world).getHighestBlockYAt(anyInt(), anyInt(), eq(HeightMap.MOTION_BLOCKING_NO_LEAVES));
+        doAnswer(invocation -> {
+            int y = invocation.getArgument(1);
+            return y <= 62 ? flowingWater : air;
+        }).when(world).getBlockAt(anyInt(), anyInt(), anyInt());
+
+        Location source = new Location(world, 0.5D, 63D, 0.5D);
+        Location result = WorldRuntimeControlService.findTopSafeStudioLocation(world, source);
+
+        assertNull(result);
+    }
+
+    @Test
+    public void studioRejectsUnsupportedShallowWaterSurface() {
+        World world = loadedWorld(0, 0);
+        Block water = waterBlock(0);
+        Block air = block(Material.AIR, false, true);
+        doReturn(62).when(world).getHighestBlockYAt(anyInt(), anyInt(), eq(HeightMap.MOTION_BLOCKING_NO_LEAVES));
+        doAnswer(invocation -> {
+            int y = invocation.getArgument(1);
+            return y == 62 ? water : air;
+        }).when(world).getBlockAt(anyInt(), anyInt(), anyInt());
+
+        Location source = new Location(world, 0.5D, 63D, 0.5D);
+        Location result = WorldRuntimeControlService.findTopSafeStudioLocation(world, source);
+
+        assertNull(result);
     }
 
     @Test
@@ -233,6 +327,14 @@ public class WorldRuntimeControlServiceSafeEntryTest {
         Block block = block(material, false, false, boundingBoxes);
         Waterlogged blockData = mock(Waterlogged.class);
         doReturn(true).when(blockData).isWaterlogged();
+        doReturn(blockData).when(block).getBlockData();
+        return block;
+    }
+
+    private static Block waterBlock(int level) {
+        Block block = block(Material.WATER, true, true);
+        Levelled blockData = mock(Levelled.class);
+        doReturn(level).when(blockData).getLevel();
         doReturn(blockData).when(block).getBlockData();
         return block;
     }

@@ -27,6 +27,8 @@ import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.mantle.components.MantleObjectComponent;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
+import art.arcane.iris.engine.river.cave.RiverCaveHydrologyStorage;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.data.B;
@@ -102,7 +104,7 @@ public interface EngineMantle extends MatterGenerator {
     }
 
     default int getHighest(int x, int z, IrisData data, boolean ignoreFluid) {
-        return ignoreFluid ? trueHeight(x, z) : Math.max(trueHeight(x, z), getEngine().getDimension().getFluidHeight());
+        return ignoreFluid ? trueHeight(x, z) : Math.max(trueHeight(x, z), getFluidHeight(x, z));
     }
 
     default int trueHeight(int x, int z) {
@@ -110,6 +112,10 @@ public interface EngineMantle extends MatterGenerator {
     }
 
     default boolean isCarved(int x, int h, int z) {
+        RiverCaveHydrology hydrology = RiverCaveHydrologyStorage.getIfPresent(getMantle(), x, h, z);
+        if (hydrology != null) {
+            return hydrology.carves();
+        }
         return getMantle().get(x, h, z, MatterCavern.class) != null;
     }
 
@@ -125,11 +131,15 @@ public interface EngineMantle extends MatterGenerator {
     }
 
     default boolean isUnderwater(int x, int z) {
-        return getHighest(x, z, true) <= getFluidHeight();
+        return getHighest(x, z, true) < getFluidHeight(x, z);
     }
 
     default int getFluidHeight() {
         return getEngine().getDimension().getFluidHeight();
+    }
+
+    default int getFluidHeight(int x, int z) {
+        return (int) Math.round(getComplex().getRiverWaterSurfaceStream().get(x, z));
     }
 
     default boolean isDebugSmartBore() {

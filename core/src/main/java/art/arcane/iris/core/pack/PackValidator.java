@@ -76,6 +76,9 @@ public final class PackValidator {
         }
 
         PackDimensionValidator.validateDimensions(packFolder, dimensionFiles, blockingErrors, warnings);
+        PackRiverValidator.Validation riverValidation = PackRiverValidator.validate(packFolder, dimensionFiles);
+        addDistinct(blockingErrors, riverValidation.errors());
+        addDistinct(warnings, riverValidation.warnings());
         blockingErrors.addAll(PackCaveProfileValidator.validateLegacyFields(packFolder));
         PackLootValidator.LootGraphIssues lootIssues = PackLootValidator.validateLootGraph(packFolder);
         addDistinct(blockingErrors, lootIssues.errors());

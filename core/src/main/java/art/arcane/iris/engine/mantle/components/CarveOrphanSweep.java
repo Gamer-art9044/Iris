@@ -61,15 +61,14 @@ public final class CarveOrphanSweep {
             int[] surfaceHeights,
             int maxSurfaceBreakDepth,
             int worldCeilingY,
-            int[] surfaceFluidBoundaryStartY,
-            int fluidHeight
+            long[] surfaceFluidBoundaries
     ) {
         if (chunk == null) {
             return 0;
         }
 
         return sweep(surfaceHeights, maxSurfaceBreakDepth, 0, worldCeilingY,
-                new MantleCarveAccess(chunk, surfaceFluidBoundaryStartY, fluidHeight));
+                new MantleCarveAccess(chunk, surfaceFluidBoundaries));
     }
 
     public static int sweep(int[] surfaceHeights, int maxSurfaceBreakDepth, int worldFloorY, int worldCeilingY, CarveAccess access) {
@@ -229,15 +228,13 @@ public final class CarveOrphanSweep {
 
     private static final class MantleCarveAccess implements CarveAccess {
         private final MantleChunk<Matter> chunk;
-        private final int[] surfaceFluidBoundaryStartY;
-        private final int fluidHeight;
+        private final long[] surfaceFluidBoundaries;
         private MatterSlice<MatterCavern> cachedSlice;
         private int cachedSectionIndex = -1;
 
-        private MantleCarveAccess(MantleChunk<Matter> chunk, int[] surfaceFluidBoundaryStartY, int fluidHeight) {
+        private MantleCarveAccess(MantleChunk<Matter> chunk, long[] surfaceFluidBoundaries) {
             this.chunk = chunk;
-            this.surfaceFluidBoundaryStartY = surfaceFluidBoundaryStartY;
-            this.fluidHeight = fluidHeight;
+            this.surfaceFluidBoundaries = surfaceFluidBoundaries;
         }
 
         @Override
@@ -261,7 +258,7 @@ public final class CarveOrphanSweep {
         @Override
         public boolean isProtected(int localX, int y, int localZ) {
             int columnIndex = PowerOfTwoCoordinates.packLocal16(localX, localZ);
-            return SurfaceFluidBoundaryPlan.protects(surfaceFluidBoundaryStartY, columnIndex, y, fluidHeight);
+            return SurfaceFluidBoundaryPlan.protects(surfaceFluidBoundaries, columnIndex, y);
         }
 
         @Override

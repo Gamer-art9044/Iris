@@ -642,7 +642,10 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_create_biomes");
              GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_biomes");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-            ichunkaccess.fillBiomesFromNoise(customBiomeSource::getVisibleNoiseBiome, randomstate.sampler());
+            customBiomeSource.prepareVisibleBiomeBatch();
+            ichunkaccess.fillBiomesFromNoise(
+                    customBiomeSource::getVisibleNoiseBiomeWithActiveGenerationLease,
+                    randomstate.sampler());
             return CompletableFuture.completedFuture(ichunkaccess);
         }
     }

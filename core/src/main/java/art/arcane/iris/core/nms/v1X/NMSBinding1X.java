@@ -49,6 +49,7 @@ import org.bukkit.inventory.ItemStack;
 import java.awt.Color;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.StreamSupport;
 
 public class NMSBinding1X implements INMSBinding {
@@ -117,7 +118,8 @@ public class NMSBinding1X implements INMSBinding {
     }
 
     @Override
-    public void completeStudioStructureBootstrap(World world) {
+    public CompletableFuture<Void> completeStudioStructureBootstrap(World world) {
+        return CompletableFuture.completedFuture(null);
     }
 
     @Override

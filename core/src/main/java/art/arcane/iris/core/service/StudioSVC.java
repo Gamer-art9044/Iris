@@ -59,6 +59,7 @@ import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.common.scheduling.J;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
+import org.bukkit.entity.Player;
 
 import java.io.File;
 import java.io.IOException;
@@ -82,6 +83,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -93,6 +95,7 @@ import art.arcane.volmlib.util.localization.MessageArgument;
 public class StudioSVC implements IrisService {
     public static final String WORKSPACE_NAME = "packs";
     private static final long DOWNLOAD_SHUTDOWN_POLL_SECONDS = 15L;
+    private static final long STUDIO_PLAYER_TELEPORT_TIMEOUT_SECONDS = 10L;
     private static final Pattern PROJECT_NAME = Pattern.compile("[a-z0-9_-]+");
     private static final AtomicCache<Integer> counter = new AtomicCache<>();
     private final StudioTransitionQueue studioTransitions = new StudioTransitionQueue();
@@ -472,6 +475,28 @@ public class StudioSVC implements IrisService {
 
     public boolean isProjectOpen() {
         return activeProject != null && activeProject.isOpen();
+    }
+
+    public CompletableFuture<Boolean> teleportToActiveProject(Player player) {
+        Player target = Objects.requireNonNull(player, "Studio teleport player");
+        AtomicBoolean admission = new AtomicBoolean(true);
+        long deadlineNanos = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(STUDIO_PLAYER_TELEPORT_TIMEOUT_SECONDS);
+        CompletableFuture<Boolean> transition = studioTransitions.submit(() -> {
+            IrisProject project = activeProject;
+            if (project == null || !project.isOpen()) {
+                return CompletableFuture.failedFuture(new IllegalStateException(
+                        "No active Studio project is available for teleport."));
+            }
+            return StudioOpenCoordinator.get().teleportPlayerToProject(
+                    project,
+                    target,
+                    admission,
+                    deadlineNanos);
+        });
+        transition.orTimeout(STUDIO_PLAYER_TELEPORT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        transition.whenComplete((ignored, failure) -> admission.set(false));
+        return transition;
     }
 
     public void open(VolmitSender sender, String dimm) {

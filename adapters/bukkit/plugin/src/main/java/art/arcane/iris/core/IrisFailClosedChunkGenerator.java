@@ -31,22 +31,21 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Random;
 
-/**
- * Answer to a generator-plugin discovery probe.
- * <p>
- * Multiverse-Core calls {@code getDefaultWorldGenerator} with an empty dimension id and the name of
- * an already loaded world purely to find out whether a plugin is a generator plugin, then throws the
- * returned instance away. A non-null answer keeps Iris in {@code /mv generators} and in Multiverse's
- * generator tab-completion without Multiverse logging a warning block on every boot.
- * <p>
- * Nothing here can build terrain: every generation entry point refuses, so an instance that escapes
- * the probe fails loudly instead of silently producing vanilla chunks.
- */
-final class IrisProbeChunkGenerator extends ChunkGenerator {
-    private final String worldName;
+final class IrisFailClosedChunkGenerator extends ChunkGenerator {
+    private final String refusalMessage;
 
-    IrisProbeChunkGenerator(String worldName) {
-        this.worldName = Objects.requireNonNull(worldName, "worldName");
+    private IrisFailClosedChunkGenerator(String refusalMessage) {
+        this.refusalMessage = Objects.requireNonNull(refusalMessage, "refusalMessage");
+    }
+
+    static IrisFailClosedChunkGenerator discoveryProbe(String worldName) {
+        return new IrisFailClosedChunkGenerator("Iris generator-discovery probe for '" + worldName
+                + "' was asked to generate terrain. Iris worlds are created with /iris create.");
+    }
+
+    static IrisFailClosedChunkGenerator startupLock(String worldName, String denialReason) {
+        return new IrisFailClosedChunkGenerator("Iris generation for '" + worldName
+                + "' remains locked: " + denialReason);
     }
 
     @Override
@@ -85,6 +84,11 @@ final class IrisProbeChunkGenerator extends ChunkGenerator {
     }
 
     @Override
+    public boolean canSpawn(@NotNull World world, int x, int z) {
+        throw refusal();
+    }
+
+    @Override
     public List<BlockPopulator> getDefaultPopulators(@NotNull World world) {
         throw refusal();
     }
@@ -94,8 +98,72 @@ final class IrisProbeChunkGenerator extends ChunkGenerator {
         throw refusal();
     }
 
+    @Override
+    public boolean shouldGenerateNoise() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateNoise(@NotNull WorldInfo worldInfo, @NotNull Random random, int x, int z) {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateSurface() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateSurface(@NotNull WorldInfo worldInfo, @NotNull Random random, int x, int z) {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateBedrock() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateCaves() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateCaves(@NotNull WorldInfo worldInfo, @NotNull Random random, int x, int z) {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateDecorations() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateDecorations(@NotNull WorldInfo worldInfo, @NotNull Random random, int x, int z) {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateMobs() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateMobs(@NotNull WorldInfo worldInfo, @NotNull Random random, int x, int z) {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateStructures() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldGenerateStructures(@NotNull WorldInfo worldInfo, @NotNull Random random, int x, int z) {
+        return false;
+    }
+
     private IllegalStateException refusal() {
-        return new IllegalStateException("Iris generator-discovery probe for '" + worldName
-                + "' was asked to generate terrain. Iris worlds are created with /iris create.");
+        return new IllegalStateException(refusalMessage);
     }
 }

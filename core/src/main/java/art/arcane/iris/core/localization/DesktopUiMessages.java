@@ -10,7 +10,6 @@ public final class DesktopUiMessages {
     public static final TextKey VISION_VIEW = TextKey.of("iris.desktop.vision.view", "View:");
     public static final TextKey VISION_GRID = TextKey.of("iris.desktop.vision.grid", "Grid");
     public static final TextKey VISION_FOLLOW = TextKey.of("iris.desktop.vision.follow", "Follow");
-    public static final TextKey VISION_LOW_QUALITY_SHORT = TextKey.of("iris.desktop.vision.low_quality_short", "LQ");
     public static final TextKey VISION_REFRESHING = TextKey.of("iris.desktop.vision.refreshing", "Refreshing");
     public static final TextKey VISION_FPS = TextKey.of("iris.desktop.vision.fps", "{fps} FPS");
     public static final TextKey VISION_ZOOM_RESET = TextKey.of("iris.desktop.vision.zoom_reset", "Zoom reset");
@@ -19,8 +18,6 @@ public final class DesktopUiMessages {
     public static final TextKey VISION_FOLLOWING = TextKey.of("iris.desktop.vision.following", "Following {player}");
     public static final TextKey VISION_NO_PLAYER = TextKey.of("iris.desktop.vision.no_player", "No player in world");
     public static final TextKey VISION_FOLLOW_DISABLED = TextKey.of("iris.desktop.vision.follow_disabled", "Follow disabled");
-    public static final TextKey VISION_LOW_QUALITY = TextKey.of("iris.desktop.vision.low_quality", "Low quality");
-    public static final TextKey VISION_HIGH_QUALITY = TextKey.of("iris.desktop.vision.high_quality", "High quality");
     public static final TextKey VISION_STATUS_LEFT = TextKey.of("iris.desktop.vision.status_left", "{mode}  |  {bpp} bpp  |  {width} x {height} blocks");
     public static final TextKey VISION_STATUS_RIGHT = TextKey.of("iris.desktop.vision.status_right", "X: {x}  Z: {z}  |  {fps} FPS");
     public static final TextKey VISION_ENTITY_POSITION = TextKey.of("iris.desktop.vision.entity_position", "Position: {x}, {y}, {z}");
@@ -31,8 +28,8 @@ public final class DesktopUiMessages {
     public static final TextKey VISION_BIOME_KEY = TextKey.of("iris.desktop.vision.biome_key", "Key: {key}");
     public static final TextKey VISION_BIOME_FILE = TextKey.of("iris.desktop.vision.biome_file", "File: {file}");
     public static final TextKey VISION_VELOCITY = TextKey.of("iris.desktop.vision.velocity", "Velocity: {velocity}");
-    public static final TextKey VISION_TILES = TextKey.of("iris.desktop.vision.tiles", "Tiles: {high} HD / {low} LQ");
-    public static final TextKey VISION_WORKERS = TextKey.of("iris.desktop.vision.workers", "Workers: {high} HD / {low} LQ");
+    public static final TextKey VISION_TILES = TextKey.of("iris.desktop.vision.tiles", "Atlas pages: {ready} / {total} exact");
+    public static final TextKey VISION_WORKERS = TextKey.of("iris.desktop.vision.workers", "Workers: {active} active / {queued} queued");
     public static final TextKey VISION_CENTER = TextKey.of("iris.desktop.vision.center", "Center: {x}, {z}");
     public static final TextKey VISION_HELP_TOGGLE = TextKey.of("iris.desktop.vision.help.toggle", "Toggle help");
     public static final TextKey VISION_HELP_REFRESH = TextKey.of("iris.desktop.vision.help.refresh", "Refresh tiles");
@@ -40,7 +37,6 @@ public final class DesktopUiMessages {
     public static final TextKey VISION_HELP_ZOOM = TextKey.of("iris.desktop.vision.help.zoom", "Zoom in/out");
     public static final TextKey VISION_HELP_RESET_ZOOM = TextKey.of("iris.desktop.vision.help.reset_zoom", "Reset zoom");
     public static final TextKey VISION_HELP_CYCLE_MODE = TextKey.of("iris.desktop.vision.help.cycle_mode", "Cycle render mode");
-    public static final TextKey VISION_HELP_QUALITY = TextKey.of("iris.desktop.vision.help.quality", "Toggle tile quality");
     public static final TextKey VISION_HELP_FPS = TextKey.of("iris.desktop.vision.help.fps", "Toggle 30/60 FPS");
     public static final TextKey VISION_HELP_GRID = TextKey.of("iris.desktop.vision.help.grid", "Toggle grid");
     public static final TextKey VISION_HELP_BIOME = TextKey.of("iris.desktop.vision.help.biome", "Detailed biome info");
@@ -53,6 +49,7 @@ public final class DesktopUiMessages {
     public static final TextKey VISION_MODE_BIOME_SEA = TextKey.of("iris.desktop.vision.mode.biome_sea", "Biome sea");
     public static final TextKey VISION_MODE_REGION = TextKey.of("iris.desktop.vision.mode.region", "Region");
     public static final TextKey VISION_MODE_CAVE_LAND = TextKey.of("iris.desktop.vision.mode.cave_land", "Cave land");
+    public static final TextKey VISION_MODE_RIVER = TextKey.of("iris.desktop.vision.mode.river", "River network");
     public static final TextKey VISION_MODE_HEIGHT = TextKey.of("iris.desktop.vision.mode.height", "Height");
     public static final TextKey VISION_MODE_OBJECT_LOAD = TextKey.of("iris.desktop.vision.mode.object_load", "Object load");
     public static final TextKey VISION_MODE_DECORATOR_LOAD = TextKey.of("iris.desktop.vision.mode.decorator_load", "Decorator load");
@@ -95,17 +92,17 @@ public final class DesktopUiMessages {
     public static final TextKey PREGEN_MEMORY = TextKey.of("iris.desktop.pregen.memory", "Memory: {used} ({usage}) Pressure: {pressure}/s");
 
     private static final List<MessageKey> KEYS = List.of(
-            VISION_TITLE, VISION_VIEW, VISION_GRID, VISION_FOLLOW, VISION_LOW_QUALITY_SHORT,
+            VISION_TITLE, VISION_VIEW, VISION_GRID, VISION_FOLLOW,
             VISION_REFRESHING, VISION_FPS, VISION_ZOOM_RESET, VISION_GRID_ENABLED, VISION_GRID_DISABLED,
-            VISION_FOLLOWING, VISION_NO_PLAYER, VISION_FOLLOW_DISABLED, VISION_LOW_QUALITY, VISION_HIGH_QUALITY,
+            VISION_FOLLOWING, VISION_NO_PLAYER, VISION_FOLLOW_DISABLED,
             VISION_STATUS_LEFT, VISION_STATUS_RIGHT, VISION_ENTITY_POSITION, VISION_ENTITY_HEALTH,
             VISION_BLOCK_POSITION, VISION_CHUNK_POSITION, VISION_REGION_POSITION, VISION_BIOME_KEY,
             VISION_BIOME_FILE, VISION_VELOCITY, VISION_TILES, VISION_WORKERS, VISION_CENTER,
             VISION_HELP_TOGGLE, VISION_HELP_REFRESH, VISION_HELP_FOLLOW, VISION_HELP_ZOOM,
-            VISION_HELP_RESET_ZOOM, VISION_HELP_CYCLE_MODE, VISION_HELP_QUALITY, VISION_HELP_FPS,
+            VISION_HELP_RESET_ZOOM, VISION_HELP_CYCLE_MODE, VISION_HELP_FPS,
             VISION_HELP_GRID, VISION_HELP_BIOME, VISION_HELP_TELEPORT, VISION_HELP_EDITOR, VISION_OPENED,
             VISION_TELEPORTING, VISION_MODE_BIOME, VISION_MODE_BIOME_LAND, VISION_MODE_BIOME_SEA,
-            VISION_MODE_REGION, VISION_MODE_CAVE_LAND, VISION_MODE_HEIGHT, VISION_MODE_OBJECT_LOAD,
+            VISION_MODE_REGION, VISION_MODE_CAVE_LAND, VISION_MODE_RIVER, VISION_MODE_HEIGHT, VISION_MODE_OBJECT_LOAD,
             VISION_MODE_DECORATOR_LOAD, VISION_MODE_CONTINENT, VISION_MODE_LAYER_LOAD, NOISE_TITLE,
             NOISE_TITLE_GENERATOR, NOISE_SEARCH, NOISE_STATUS, NOISE_CATEGORY_CUSTOM,
             NOISE_CATEGORY_PACK_GENERATORS, NOISE_CATEGORY_SIMPLEX, NOISE_CATEGORY_PERLIN,

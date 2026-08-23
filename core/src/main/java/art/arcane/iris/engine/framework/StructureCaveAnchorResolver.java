@@ -3,6 +3,8 @@ package art.arcane.iris.engine.framework;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisStructureAnchorMode;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
+import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
+import art.arcane.iris.engine.river.cave.RiverCaveHydrologyStorage;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.MatterCavern;
 
@@ -286,10 +288,12 @@ public final class StructureCaveAnchorResolver {
             int mantleY,
             int blockZ
     ) {
+        RiverCaveHydrology hydrology = hydrologyAt(engine, blockX, mantleY, blockZ);
         MatterCavern cavern = cavernAt(engine, blockX, mantleY, blockZ);
         return acceptsAnchorFluid(
                 placement.isUnderwater(),
                 cavern,
+                hydrology,
                 mantleY,
                 engine.getDimension().getCaveLavaHeight());
     }
@@ -300,6 +304,19 @@ public final class StructureCaveAnchorResolver {
             int mantleY,
             int defaultLavaHeight
     ) {
+        return acceptsAnchorFluid(underwater, cavern, null, mantleY, defaultLavaHeight);
+    }
+
+    static boolean acceptsAnchorFluid(
+            boolean underwater,
+            MatterCavern cavern,
+            RiverCaveHydrology hydrology,
+            int mantleY,
+            int defaultLavaHeight
+    ) {
+        if (hydrology != null && hydrology.protectsPlacement()) {
+            return false;
+        }
         if (cavern == null || !cavern.isCavern()) {
             return false;
         }
@@ -313,7 +330,15 @@ public final class StructureCaveAnchorResolver {
     }
 
     private static MatterCavern cavernAt(Engine engine, int blockX, int mantleY, int blockZ) {
-        return engine.getMantle().getMantle().get(blockX, mantleY, blockZ, MatterCavern.class);
+        MatterCavern baseline = engine.getMantle().getMantle()
+                .get(blockX, mantleY, blockZ, MatterCavern.class);
+        RiverCaveHydrology hydrology = hydrologyAt(engine, blockX, mantleY, blockZ);
+        return hydrology == null ? baseline : hydrology.asCavern();
+    }
+
+    private static RiverCaveHydrology hydrologyAt(Engine engine, int blockX, int mantleY, int blockZ) {
+        return RiverCaveHydrologyStorage.getIfPresent(
+                engine.getMantle().getMantle(), blockX, mantleY, blockZ);
     }
 
     static int toMantleY(int worldY, int worldMinHeight) {

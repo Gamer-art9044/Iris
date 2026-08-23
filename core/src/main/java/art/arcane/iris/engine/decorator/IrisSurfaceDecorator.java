@@ -58,7 +58,7 @@ public class IrisSurfaceDecorator extends IrisEngineDecorator {
     @BlockCoordinates
     public void decorate(int x, int z, int realX, int realX1, int realX_1, int realZ, int realZ1, int realZ_1,
                          Hunk<PlatformBlockState> data, IrisBiome biome, InferredType inferredType, int height, int max) {
-        int fluidHeight = getDimension().getFluidHeight();
+        int fluidHeight = (int) Math.round(getComplex().getRiverWaterSurfaceStream().get(realX, realZ));
         if (inferredType == InferredType.SHORE && height < fluidHeight) {
             return;
         }

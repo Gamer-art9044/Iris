@@ -18,7 +18,6 @@
 
 package art.arcane.iris.core.commands;
 
-import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.Iris;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisSettings;
@@ -47,7 +46,6 @@ import art.arcane.iris.engine.object.IrisNoiseGenerator;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.object.NoiseStyle;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
@@ -62,7 +60,6 @@ import art.arcane.volmlib.util.director.annotations.Director;
 import art.arcane.volmlib.util.director.annotations.Param;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
-import art.arcane.volmlib.util.function.Function2;
 import art.arcane.volmlib.util.function.NoiseProvider;
 import art.arcane.iris.util.project.interpolation.InterpolationMethod;
 import art.arcane.volmlib.util.io.IO;
@@ -102,7 +99,6 @@ import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.BukkitCommandMessages;
@@ -264,8 +260,8 @@ public class CommandStudio implements DirectorExecutor {
             return;
         }
 
-        Supplier<Function2<Double, Double, Double>> supplier = () -> (x, z) -> generator.getHeight(x, z, new RNG(seed).nextParallelRNG(3245).lmax());
-        NoiseExplorerGUI.launch(supplier, "Custom Generator");
+        String generatorKey = generator.getLoadKey();
+        NoiseExplorerGUI.launchGeneratorKey(generatorKey, generator, seed);
     }
 
     @Director(description = "Show loot if a chest were right here", descriptionKey = "iris.director.commandstudio.director.show_loot_if_chest_were_right_here", origin = DirectorOrigin.PLAYER, sync = true)
@@ -648,7 +644,8 @@ public class CommandStudio implements DirectorExecutor {
 
     @Director(description = "Teleport to the active studio world", descriptionKey = "iris.director.commandstudio.director.teleport_active_studio_world", aliases = "stp", origin = DirectorOrigin.PLAYER, sync = true)
     public void tpstudio() {
-        if (!Iris.service(StudioSVC.class).isProjectOpen()) {
+        StudioSVC studioService = Iris.service(StudioSVC.class);
+        if (!studioService.isProjectOpen()) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_NO_STUDIO_WORLD_IS_OPEN));
             return;
         }
@@ -660,13 +657,16 @@ public class CommandStudio implements DirectorExecutor {
 
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_SENDING_YOU_STUDIO_WORLD));
         Player player = player();
-        IrisWorld studioWorld = Iris.service(StudioSVC.class)
-                .getActiveProject()
-                .getActiveProvider()
-                .getTarget()
-                .getWorld();
-        BukkitPlatform.teleportAsync(player, BukkitWorldBinding.spawnLocation(studioWorld))
-                .thenRun(() -> player.setGameMode(GameMode.CREATIVE));
+        studioService.teleportToActiveProject(player)
+                .whenComplete((teleported, failure) -> {
+                    if (failure != null) {
+                        Iris.reportError("Studio teleport failed for player \"" + player.getName() + "\".", failure);
+                        return;
+                    }
+                    if (Boolean.TRUE.equals(teleported)) {
+                        J.runEntity(player, () -> player.setGameMode(GameMode.CREATIVE));
+                    }
+                });
     }
 
     @Director(description = "Update your dimension projects VSCode workspace", descriptionKey = "iris.director.commandstudio.director.update_your_dimension_projects_vscode_workspace")

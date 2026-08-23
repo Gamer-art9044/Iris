@@ -356,7 +356,9 @@ public class NMSBindingDatapackStructureScopeTest {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
         String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf("public DatapackStructureScopeResult scopeDatapackStructures(");
-        int methodEnd = source.indexOf("\n    @Override\n    public void completeStudioStructureBootstrap", methodStart);
+        int methodEnd = source.indexOf(
+                "\n    @Override\n    public CompletableFuture<Void> completeStudioStructureBootstrap",
+                methodStart);
 
         assertTrue(methodStart >= 0);
         assertTrue(methodEnd > methodStart);
@@ -390,19 +392,21 @@ public class NMSBindingDatapackStructureScopeTest {
     }
 
     @Test
-    public void standardCompletionActivatesTheAlreadyPublishedStateWithoutReplacingIt() throws IOException {
+    public void standardCompletionReturnsTheExactActivationFutureWithoutReplacingState() throws IOException {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
         String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
-        int methodStart = source.indexOf("public void completeStudioStructureBootstrap(World world)");
+        int methodStart = source.indexOf("public CompletableFuture<Void> completeStudioStructureBootstrap(World world)");
         int methodEnd = source.indexOf("\n    @Override\n    public void abandonStudioStructureBootstrap", methodStart);
 
         assertTrue(methodStart >= 0);
         assertTrue(methodEnd > methodStart);
         String method = source.substring(methodStart, methodEnd);
         int retained = method.indexOf("generator.retainedStudioStructureState(level, chunkMap)");
-        int activation = method.indexOf("generator.activateStudioStructureState(retained);");
+        int emptyCompletion = method.indexOf("return CompletableFuture.completedFuture(null);");
+        int activation = method.indexOf("return generator.activateStudioStructureState(retained);");
 
         assertTrue(retained >= 0);
+        assertTrue(emptyCompletion > retained);
         assertTrue(activation > retained);
         assertFalse(method.contains("stateField.set("));
         assertFalse(method.contains("retained.fullState()"));

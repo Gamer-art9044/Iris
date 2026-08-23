@@ -14,6 +14,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class StructurePlacementScopeTest {
@@ -34,13 +36,21 @@ public class StructurePlacementScopeTest {
         caveBiome.getStructures().add(invalidCaveScopePlacement);
         IrisRegion region = new IrisRegion();
         region.getStructures().add(regionPlacement);
-        IrisDimension dimension = new IrisDimension();
-        dimension.getStructures().add(dimensionPlacement);
-        dimension.getStructures().add(cavePlacement);
-
         Engine engine = mock(Engine.class, RETURNS_DEEP_STUBS);
         IrisComplex complex = engine.getComplex();
+        IrisDimension dimension = mock(IrisDimension.class);
+        KList<IrisStructurePlacement> dimensionStructures = new KList<>();
+        dimensionStructures.add(dimensionPlacement);
+        dimensionStructures.add(cavePlacement);
+        KList<IrisRegion> allRegions = new KList<>();
+        allRegions.add(region);
+        KList<IrisBiome> allBiomes = new KList<>();
+        allBiomes.add(surfaceBiome);
+        allBiomes.add(caveBiome);
         when(engine.getDimension()).thenReturn(dimension);
+        when(engine.getAllBiomes()).thenReturn(allBiomes);
+        when(dimension.getStructures()).thenReturn(dimensionStructures);
+        when(dimension.getAllRegions(engine)).thenReturn(allRegions);
         when(complex.getTrueBiomeStream().get(8, 8)).thenReturn(surfaceBiome);
         when(complex.getCaveBiomeStream().get(8, 8)).thenReturn(caveBiome);
         when(complex.getRegionStream().get(8, 8)).thenReturn(region);
@@ -53,5 +63,27 @@ public class StructurePlacementScopeTest {
         assertTrue(placements.contains(regionPlacement));
         assertTrue(placements.contains(dimensionPlacement));
         assertFalse(placements.contains(invalidCaveScopePlacement));
+    }
+
+    @Test
+    public void dimensionOnlyPlacementsDoNotResolveRiverInclusiveBiomeScopes() {
+        IrisStructurePlacement dimensionPlacement = new IrisStructurePlacement();
+        Engine engine = mock(Engine.class, RETURNS_DEEP_STUBS);
+        IrisComplex complex = engine.getComplex();
+        IrisDimension dimension = mock(IrisDimension.class);
+        KList<IrisStructurePlacement> dimensionStructures = new KList<>();
+        dimensionStructures.add(dimensionPlacement);
+        when(engine.getDimension()).thenReturn(dimension);
+        when(engine.getAllBiomes()).thenReturn(new KList<>());
+        when(dimension.getStructures()).thenReturn(dimensionStructures);
+        when(dimension.getAllRegions(engine)).thenReturn(new KList<>());
+
+        KList<IrisStructurePlacement> placements = StructurePlacementScope.placementsAt(engine, 0, 0);
+
+        assertEquals(1, placements.size());
+        assertTrue(placements.contains(dimensionPlacement));
+        verify(complex.getTrueBiomeStream(), never()).get(8, 8);
+        verify(complex.getCaveBiomeStream(), never()).get(8, 8);
+        verify(complex.getRegionStream(), never()).get(8, 8);
     }
 }

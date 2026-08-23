@@ -67,10 +67,6 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         getEngine().getMetrics().getTerrain().put(p.getMilliseconds());
     }
 
-    private int fluidOrHeight(int height) {
-        return Math.max(getDimension().getFluidHeight(), height);
-    }
-
     /**
      * This is calling 1/16th of a chunk x/z slice. It is a plane from sky to bedrock 1 thick in the x direction.
      *
@@ -92,8 +88,6 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         IrisData data = getData();
         IrisComplex complex = getComplex();
         RNG localRng = rng;
-        int fluidHeight = dimension.getFluidHeight();
-        int clampedFluidHeight = Math.min(chunkHeight, fluidHeight);
         boolean bedrockEnabled = dimension.isBedrock();
         boolean hideOres = dimension.isHideOresForHiddenOre();
         ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
@@ -114,7 +108,11 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
             IrisBiome biome = biomeCache.get(xf, zf);
             IrisRegion region = regionCache.get(xf, zf);
             int he = Math.min(chunkHeight, context.getRoundedHeight(xf, zf));
-            int hf = Math.max(clampedFluidHeight, he);
+            int surfaceFluidHeight = Math.min(
+                    chunkHeight,
+                    (int) Math.round(complex.getRiverWaterSurfaceStream().get(realX, realZ))
+            );
+            int hf = Math.max(surfaceFluidHeight, he);
             if (hf < 0) {
                 continue;
             }

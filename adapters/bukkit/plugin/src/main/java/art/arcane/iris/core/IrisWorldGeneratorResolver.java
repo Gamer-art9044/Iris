@@ -349,9 +349,14 @@ public final class IrisWorldGeneratorResolver {
         }
         if (isGeneratorDiscoveryProbe(worldName, id)) {
             Iris.debug("Generator discovery probe for loaded world " + worldName);
-            return new IrisProbeChunkGenerator(worldName);
+            return IrisFailClosedChunkGenerator.discoveryProbe(worldName);
         }
-        IrisStartupValidation.requireWorldCreationReady();
+        Optional<String> startupDenial = IrisStartupValidation.denialReason();
+        if (startupDenial.isPresent()) {
+            Iris.warn("Keeping configured Iris world '" + worldName
+                    + "' generation-locked: " + startupDenial.get());
+            return IrisFailClosedChunkGenerator.startupLock(worldName, startupDenial.get());
+        }
         ChunkGenerator stagedGenerator = WorldLifecycleStaging.consumeGenerator(worldName);
         if (stagedGenerator != null) {
             Iris.debug("Using staged runtime generator for " + worldName);

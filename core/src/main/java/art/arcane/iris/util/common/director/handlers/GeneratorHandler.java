@@ -23,7 +23,7 @@ import art.arcane.iris.util.common.director.specialhandlers.RegistrantHandler;
 
 public class GeneratorHandler extends RegistrantHandler<IrisGenerator> {
     public GeneratorHandler() {
-        super(IrisGenerator.class, false);
+        super(IrisGenerator.class, true);
     }
 
     @Override

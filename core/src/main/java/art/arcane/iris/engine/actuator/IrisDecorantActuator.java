@@ -27,6 +27,8 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedActuator;
 import art.arcane.iris.engine.framework.EngineDecorator;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.river.RiverRouteState;
+import art.arcane.iris.engine.river.runtime.IrisRiverSurfaceSample;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
@@ -64,6 +66,12 @@ public class IrisDecorantActuator extends EngineAssignedActuator<PlatformBlockSt
         seaFloorDecorator = new IrisSeaFloorDecorator(getEngine());
     }
 
+    static boolean shouldDecorateShoreline(IrisRiverSurfaceSample sample, int height) {
+        return !sample.subterranean()
+                && height == Math.round(sample.waterSurfaceY())
+                && (!sample.river().present() || sample.river().state() != RiverRouteState.DRY);
+    }
+
     @BlockCoordinates
     @Override
     public void onActuate(int x, int z, Hunk<PlatformBlockState> output, boolean multicore, ChunkContext context) {
@@ -86,23 +94,25 @@ public class IrisDecorantActuator extends EngineAssignedActuator<PlatformBlockSt
                 height = context.getRoundedHeight(i, j);
                 biome = context.getBiome().get(i, j);
                 cave = shouldRay ? context.getCave().get(i, j) : null;
+                IrisRiverSurfaceSample riverSurface = getComplex().getRiverSurfaceStream().get(realX, realZ);
+                int surfaceFluidHeight = (int) Math.round(riverSurface.waterSurfaceY());
 
                 if (biome.getDecorators().isEmpty() && (cave == null || cave.getDecorators().isEmpty())) {
                     continue;
                 }
 
-                if (height < getDimension().getFluidHeight() && PREDICATE_SOLID.test(output.get(i, height, j))
+                if (height < surfaceFluidHeight && PREDICATE_SOLID.test(output.get(i, height, j))
                         && height + 1 < output.getHeight() && B.isWater(output.get(i, height + 1, j))) {
                     getSeaSurfaceDecorator().decorate(i, j,
                             realX, Math.round(i + 1), Math.round(x + i - 1),
                             realZ, Math.round(z + j + 1), Math.round(z + j - 1),
-                            output, biome, getDimension().getFluidHeight(), getEngine().getHeight());
+                            output, biome, surfaceFluidHeight, getEngine().getHeight());
                     getSeaFloorDecorator().decorate(i, j,
                             realX, realZ, output, biome, height + 1,
-                            getDimension().getFluidHeight() + 1);
+                            surfaceFluidHeight + 1);
                 }
 
-                if (height == getDimension().getFluidHeight()) {
+                if (shouldDecorateShoreline(riverSurface, height)) {
                     getShoreLineDecorator().decorate(i, j,
                             realX, Math.round(x + i + 1), Math.round(x + i - 1),
                             realZ, Math.round(z + j + 1), Math.round(z + j - 1),

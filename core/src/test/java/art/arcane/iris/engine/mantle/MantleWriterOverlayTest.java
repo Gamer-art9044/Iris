@@ -1,6 +1,8 @@
 package art.arcane.iris.engine.mantle;
 
 import art.arcane.iris.core.link.Identifier;
+import art.arcane.iris.engine.river.cave.RiverCaveAction;
+import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -15,6 +17,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -30,9 +33,11 @@ public class MantleWriterOverlayTest {
 
     private MantleWriter writer;
     private Matter matter;
+    private MantleChunk<Matter> chunk;
     private MatterSlice<PlatformBlockState> blockSlice;
     private MatterSlice<Identifier> identifierSlice;
     private MatterSlice<MatterCavern> cavernSlice;
+    private MatterSlice<RiverCaveHydrology> hydrologySlice;
 
     @Before
     @SuppressWarnings("unchecked")
@@ -47,22 +52,28 @@ public class MantleWriterOverlayTest {
 
         EngineMantle engineMantle = mock(EngineMantle.class);
         Mantle<Matter> mantle = mock(Mantle.class);
-        MantleChunk<Matter> chunk = mock(MantleChunk.class);
+        chunk = mock(MantleChunk.class);
         matter = mock(Matter.class);
         blockSlice = mock(MatterSlice.class);
         identifierSlice = mock(MatterSlice.class);
         cavernSlice = mock(MatterSlice.class);
+        hydrologySlice = mock(MatterSlice.class);
 
         when(mantle.getWorldHeight()).thenReturn(64);
         when(mantle.getChunk(0, 0)).thenReturn(chunk);
         when(chunk.use()).thenReturn(chunk);
         when(chunk.getOrCreate(0)).thenReturn(matter);
+        when(chunk.exists(0)).thenReturn(true);
+        when(chunk.get(0)).thenReturn(matter);
         when(matter.hasSlice(PlatformBlockState.class)).thenReturn(true);
         when(matter.hasSlice(Identifier.class)).thenReturn(true);
+        when(matter.hasSlice(MatterCavern.class)).thenReturn(true);
         when(matter.getSlice(PlatformBlockState.class)).thenReturn(blockSlice);
         when(matter.getSlice(Identifier.class)).thenReturn(identifierSlice);
+        when(matter.getSlice(MatterCavern.class)).thenReturn(cavernSlice);
         doReturn(blockSlice).when(matter).slice(PlatformBlockState.class);
         doReturn(cavernSlice).when(matter).slice(MatterCavern.class);
+        doReturn(hydrologySlice).when(matter).getSlice(RiverCaveHydrology.class);
 
         writer = new MantleWriter(engineMantle, mantle, 0, 0, 0, false);
     }
@@ -104,5 +115,42 @@ public class MantleWriterOverlayTest {
 
         verify(identifierSlice).set(X, Y, Z, null);
         verify(blockSlice).set(X, Y, Z, replacement);
+    }
+
+    @Test
+    public void protectedHydrologyRejectsLaterBlockAndCavernWrites() {
+        PlatformBlockState replacement = mock(PlatformBlockState.class);
+        MatterCavern cavern = new MatterCavern(true, "", (byte) 3);
+        when(matter.hasSlice(RiverCaveHydrology.class)).thenReturn(true);
+        when(hydrologySlice.get(X, Y, Z))
+                .thenReturn(RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD));
+
+        writer.setData(X, Y, Z, replacement);
+        assertFalse(writer.carveDataIfAbsent(X, Y, Z, cavern));
+        writer.setForcedCarve(X, Y, Z, cavern);
+
+        verify(blockSlice, never()).set(X, Y, Z, replacement);
+        verify(blockSlice, never()).set(X, Y, Z, null);
+        verify(identifierSlice, never()).set(X, Y, Z, null);
+        verify(cavernSlice, never()).set(X, Y, Z, cavern);
+    }
+
+    @Test
+    public void hydrologyOverridesBaselineCarvedQueriesWithoutChangingIt() {
+        MatterCavern baseline = new MatterCavern(true, "", (byte) 0);
+        when(matter.hasSlice(RiverCaveHydrology.class)).thenReturn(true);
+        when(cavernSlice.get(X, Y, Z)).thenReturn(baseline);
+        when(hydrologySlice.get(X, Y, Z))
+                .thenReturn(RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD));
+        when(hydrologySlice.get(X, Y + 1, Z))
+                .thenReturn(RiverCaveHydrology.of(RiverCaveAction.DRY_AIR));
+
+        assertFalse(writer.isCarved(X, Y, Z));
+        assertTrue(writer.isCarved(X, Y + 1, Z));
+
+        byte[] column = writer.getCarvedColumn(X, Z, Y + 2);
+        assertEquals(0, column[Y]);
+        assertEquals(1, column[Y + 1]);
+        assertEquals(0, baseline.getLiquid());
     }
 }

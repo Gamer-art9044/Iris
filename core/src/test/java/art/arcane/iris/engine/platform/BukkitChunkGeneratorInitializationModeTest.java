@@ -55,4 +55,5 @@ public class BukkitChunkGeneratorInitializationModeTest {
         assertFalse(BukkitChunkGenerator.shouldPersistWorldRegistration(true));
         assertTrue(BukkitChunkGenerator.shouldPersistWorldRegistration(false));
     }
+
 }

@@ -1,6 +1,7 @@
 package art.arcane.iris.util.common.misc;
 
 
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.format.Form;
@@ -53,7 +54,7 @@ public class getHardware {
             String cpuModel = processor.getProcessorIdentifier().getName();
             return cpuModel.isEmpty() ? "Unknown CPU Model" : cpuModel;
         } catch (Exception e) {
-            e.printStackTrace();
+            logProbeFailure("CPU model", e);
             return "Unknown CPU Model";
         }
     }
@@ -67,7 +68,7 @@ public class getHardware {
             temps.add("Fan Speeds: " + Arrays.toString(systemInfo.getHardware().getSensors().getFanSpeeds()));
             return temps.copy();
         } catch (Exception e) {
-            e.printStackTrace();
+            logProbeFailure("sensors", e);
         }
         return null;
     }
@@ -83,7 +84,7 @@ public class getHardware {
             }
             return gpus.copy();
         } catch (Exception e) {
-            e.printStackTrace();
+            logProbeFailure("graphics cards", e);
         }
         return null;
     }
@@ -117,7 +118,7 @@ public class getHardware {
             }
             return systemDisks.copy();
         } catch (Exception e) {
-            e.printStackTrace();
+            logProbeFailure("disks", e);
         }
         return null;
     }
@@ -140,7 +141,7 @@ public class getHardware {
             }
             return systemPowerSources.copy();
         } catch (Exception e) {
-            e.printStackTrace();
+            logProbeFailure("power sources", e);
         }
         return null;
     }
@@ -159,7 +160,7 @@ public class getHardware {
             }
             return systemEDID.copy();
         } catch (Exception e) {
-            e.printStackTrace();
+            logProbeFailure("displays", e);
         }
         return null;
     }
@@ -177,8 +178,13 @@ public class getHardware {
             }
             return interfaces.copy();
         } catch (Exception e) {
-            e.printStackTrace();
+            logProbeFailure("network interfaces", e);
         }
         return null;
+    }
+
+    private static void logProbeFailure(String component, Exception failure) {
+        IrisLogging.debug("Hardware " + component + " probe failed: " + failure.getClass().getSimpleName()
+                + (failure.getMessage() == null ? "" : " - " + failure.getMessage()));
     }
 }

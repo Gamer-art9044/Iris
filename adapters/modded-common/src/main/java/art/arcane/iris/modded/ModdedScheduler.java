@@ -21,8 +21,6 @@ package art.arcane.iris.modded;
 import art.arcane.iris.spi.PlatformScheduler;
 import art.arcane.iris.spi.PlatformWorld;
 import net.minecraft.server.MinecraftServer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,7 +39,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class ModdedScheduler implements PlatformScheduler {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int ASYNC_MAX_THREADS = Math.max(4, Runtime.getRuntime().availableProcessors());
     private static final long ASYNC_KEEP_ALIVE_SECONDS = 30L;
     private static final int ASYNC_BACKLOG_WARN = 8192;
@@ -85,10 +82,10 @@ public final class ModdedScheduler implements PlatformScheduler {
                 rejectionAwareTask.reject();
             }
             if (executor.isShutdown()) {
-                LOGGER.debug("Iris async task dropped: scheduler is shut down");
+                ModdedIrisLog.debug("Iris async task dropped: scheduler is shut down");
                 return;
             }
-            LOGGER.error("Iris async task rejected by the executor (queued={} active={})",
+            ModdedIrisLog.error("Iris async task rejected by the executor (queued={} active={})",
                     executor.getQueue().size(), executor.getActiveCount());
         };
     }
@@ -217,7 +214,7 @@ public final class ModdedScheduler implements PlatformScheduler {
         if (now - last < ASYNC_BACKLOG_WARN_INTERVAL_MILLIS || !lastBacklogWarnAt.compareAndSet(last, now)) {
             return;
         }
-        LOGGER.warn("Iris async backlog {} tasks (threads={}); async work is falling behind", queued, executor.getPoolSize());
+        ModdedIrisLog.warn("Iris async backlog {} tasks (threads={}); async work is falling behind", queued, executor.getPoolSize());
     }
 
     private void drain() {
@@ -262,7 +259,7 @@ public final class ModdedScheduler implements PlatformScheduler {
         try {
             task.run();
         } catch (Throwable error) {
-            LOGGER.error("Iris scheduled task failed", error);
+            ModdedIrisLog.error("Iris scheduled task failed", error);
         }
     }
 

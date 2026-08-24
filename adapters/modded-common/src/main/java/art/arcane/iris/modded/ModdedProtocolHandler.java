@@ -19,6 +19,7 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.protocol.EngineResolver;
+import art.arcane.iris.core.protocol.IrisCursorRequestService;
 import art.arcane.iris.core.protocol.IrisProtocolServer;
 import art.arcane.iris.core.protocol.IrisSession;
 import art.arcane.iris.core.protocol.IrisSessionRegistry;
@@ -30,8 +31,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.chunk.ChunkGenerator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
 import java.util.UUID;
@@ -43,7 +42,6 @@ public final class ModdedProtocolHandler {
             | IrisProtocol.CAPABILITY_CURSOR
             | IrisProtocol.CAPABILITY_STUDIO;
     private static final int DIMENSION_SYNC_INTERVAL_TICKS = 5;
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
 
     private static final ConcurrentHashMap<String, Engine> SESSION_ENGINES = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, String> SESSION_LEVELS = new ConcurrentHashMap<>();
@@ -53,6 +51,7 @@ public final class ModdedProtocolHandler {
     private static volatile IrisSessionRegistry registry;
     private static volatile IrisProtocolServer protocolServer;
     private static volatile ModdedProtocolTransport transport;
+    private static volatile IrisCursorRequestService cursorRequests;
     private static volatile IrisVisionRequestService visionRequests;
     private static int dimensionSyncTicks;
 
@@ -80,11 +79,14 @@ public final class ModdedProtocolHandler {
             return engine == null || engine.isClosed() ? null : engine;
         };
         protocol.setEngineResolver(engineResolver);
+        IrisCursorRequestService cursorService = IrisCursorRequestService.create(engineResolver, sessionRegistry);
+        protocol.setCursorInfoHandler(cursorService);
         IrisVisionRequestService visionService = IrisVisionRequestService.create(engineResolver, sessionRegistry);
         protocol.setVisionTileHandler(visionService);
         registry = sessionRegistry;
         transport = serverTransport;
         protocolServer = protocol;
+        cursorRequests = cursorService;
         visionRequests = visionService;
         IrisServices.register(IrisProtocolServer.class, protocol);
         if (server.getPlayerList() == null) {
@@ -98,10 +100,14 @@ public final class ModdedProtocolHandler {
     public static void stop() {
         IrisServices.remove(IrisProtocolServer.class);
         IrisSessionRegistry current = registry;
+        IrisCursorRequestService cursor = cursorRequests;
         IrisVisionRequestService vision = visionRequests;
         if (current != null) {
             for (IrisSession session : current.all()) {
                 current.unregister(session.id());
+                if (cursor != null) {
+                    cursor.clearSession(session.id());
+                }
                 if (vision != null) {
                     vision.clearSession(session.id());
                 }
@@ -114,6 +120,7 @@ public final class ModdedProtocolHandler {
         registry = null;
         protocolServer = null;
         transport = null;
+        cursorRequests = null;
         visionRequests = null;
     }
 
@@ -146,6 +153,10 @@ public final class ModdedProtocolHandler {
         IrisSessionRegistry current = registry;
         if (current != null) {
             current.unregister(sessionId);
+        }
+        IrisCursorRequestService cursor = cursorRequests;
+        if (cursor != null) {
+            cursor.clearSession(sessionId);
         }
         IrisVisionRequestService vision = visionRequests;
         if (vision != null) {
@@ -229,7 +240,7 @@ public final class ModdedProtocolHandler {
             Engine engine = generator.engineIfBound();
             return engine == null || engine.isClosed() ? null : engine;
         } catch (Throwable failure) {
-            LOGGER.error("Iris dimension status engine lookup failed for {}", level.dimension().identifier(), failure);
+            ModdedIrisLog.error("Iris dimension status engine lookup failed for {}", level.dimension().identifier(), failure);
             return null;
         }
     }

@@ -605,7 +605,6 @@ public final class IrisEngineSVC implements IrisService {
     private static void reportFailure(String message, Throwable exception) {
         IrisLogging.reportError(exception);
         IrisLogging.error("EngineSVC: " + message);
-        exception.printStackTrace();
     }
 
     private final class Registered {

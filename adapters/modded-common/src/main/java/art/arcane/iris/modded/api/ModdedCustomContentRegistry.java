@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.api;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.modded.ModdedBlockResolution;
 import net.minecraft.core.BlockPos;
@@ -25,8 +26,6 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.state.BlockState;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -57,7 +56,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * next provider.
  */
 public final class ModdedCustomContentRegistry {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final List<ModdedDataProvider> PROVIDERS = new CopyOnWriteArrayList<>();
     private static final Map<String, BlockState> CUSTOM_BLOCKS = new ConcurrentHashMap<>();
     private static volatile boolean scanned = false;
@@ -77,14 +75,14 @@ public final class ModdedCustomContentRegistry {
         }
         Identifier identifier = Identifier.tryParse(namespace + ":" + key);
         if (identifier == null) {
-            LOGGER.warn("Iris custom block data registration rejected invalid id {}:{}", namespace, key);
+            ModdedIrisLog.warn("Iris custom block data registration rejected invalid id {}:{}", namespace, key);
             return;
         }
         BlockState parsed;
         try {
             parsed = ModdedBlockResolution.strictParse(state).handle();
         } catch (Throwable error) {
-            LOGGER.error("Iris custom block data '{}:{}' has unparseable state '{}'", namespace, key, state, error);
+            ModdedIrisLog.error("Iris custom block data '{}:{}' has unparseable state '{}'", namespace, key, state, error);
             return;
         }
         DiscoveryBatch activeBatch = discoveryBatch;
@@ -93,7 +91,7 @@ public final class ModdedCustomContentRegistry {
         } else {
             activeBatch.customBlocks.put(identifier.toString(), parsed);
         }
-        LOGGER.info("Iris registered custom block data {}:{} -> {}", namespace, key, state);
+        ModdedIrisLog.info("Iris registered custom block data {}:{} -> {}", namespace, key, state);
     }
 
     /**
@@ -112,7 +110,7 @@ public final class ModdedCustomContentRegistry {
         }
         for (ModdedDataProvider existing : PROVIDERS) {
             if (existing.modId().equals(provider.modId())) {
-                LOGGER.warn("Iris custom content provider for '{}' already registered; ignoring duplicate", provider.modId());
+                ModdedIrisLog.warn("Iris custom content provider for '{}' already registered; ignoring duplicate", provider.modId());
                 return;
             }
         }
@@ -120,9 +118,9 @@ public final class ModdedCustomContentRegistry {
         try {
             provider.init();
         } catch (Throwable error) {
-            LOGGER.error("Iris custom content provider '{}' failed to initialize", provider.modId(), error);
+            ModdedIrisLog.error("Iris custom content provider '{}' failed to initialize", provider.modId(), error);
         }
-        LOGGER.info("Iris registered custom content provider '{}'", provider.modId());
+        ModdedIrisLog.info("Iris registered custom content provider '{}'", provider.modId());
     }
 
     /**
@@ -159,7 +157,7 @@ public final class ModdedCustomContentRegistry {
             CUSTOM_BLOCKS.putAll(batch.customBlocks);
             scanned = true;
             for (ModdedDataProvider provider : batch.additions) {
-                LOGGER.info("Iris registered custom content provider '{}'", provider.modId());
+                ModdedIrisLog.info("Iris registered custom content provider '{}'", provider.modId());
             }
             return new Discovery(previousProviders, previousCustomBlocks,
                     previousDiscoveryComplete, true);
@@ -171,7 +169,7 @@ public final class ModdedCustomContentRegistry {
                     failure.addSuppressed(rollbackFailure);
                 }
             }
-            LOGGER.warn("Iris custom content provider discovery failed at {}",
+            ModdedIrisLog.warn("Iris custom content provider discovery failed at {}",
                     providerIdentity(failingProvider), failure);
             if (failure instanceof RuntimeException runtimeException) {
                 throw runtimeException;
@@ -242,7 +240,7 @@ public final class ModdedCustomContentRegistry {
             try {
                 types = provider.getTypes(type);
             } catch (Throwable error) {
-                LOGGER.error("Iris custom content provider '{}' failed listing {} types", provider.modId(), type, error);
+                ModdedIrisLog.error("Iris custom content provider '{}' failed listing {} types", provider.modId(), type, error);
                 continue;
             }
             if (types == null) {
@@ -288,7 +286,7 @@ public final class ModdedCustomContentRegistry {
                     return resolved;
                 }
             } catch (Throwable error) {
-                LOGGER.error("Iris custom content provider '{}' failed resolving block {}", provider.modId(), key, error);
+                ModdedIrisLog.error("Iris custom content provider '{}' failed resolving block {}", provider.modId(), key, error);
             }
         }
         return null;
@@ -302,7 +300,7 @@ public final class ModdedCustomContentRegistry {
     public static void processBlockPlacement(Engine engine, ServerLevel level, BlockPos position, String key) {
         Identifier base = parseIdentifier(key);
         if (base == null) {
-            LOGGER.warn("Iris deferred custom block placement rejected invalid id {}", key);
+            ModdedIrisLog.warn("Iris deferred custom block placement rejected invalid id {}", key);
             return;
         }
         Map<String, String> state = parseState(key);
@@ -314,11 +312,11 @@ public final class ModdedCustomContentRegistry {
                 provider.processBlockPlacement(new ModdedBlockPlacementContext(
                         engine, level, position.immutable(), base, state, level.getBlockState(position)));
             } catch (Throwable error) {
-                LOGGER.error("Iris custom content provider '{}' failed post-placement for {} at {}", provider.modId(), key, position, error);
+                ModdedIrisLog.error("Iris custom content provider '{}' failed post-placement for {} at {}", provider.modId(), key, position, error);
             }
             return;
         }
-        LOGGER.warn("Iris deferred custom block placement has no provider for {}", key);
+        ModdedIrisLog.warn("Iris deferred custom block placement has no provider for {}", key);
     }
 
     /**
@@ -343,7 +341,7 @@ public final class ModdedCustomContentRegistry {
                     return entity;
                 }
             } catch (Throwable error) {
-                LOGGER.error("Iris custom content provider '{}' failed spawning mob {}", provider.modId(), key, error);
+                ModdedIrisLog.error("Iris custom content provider '{}' failed spawning mob {}", provider.modId(), key, error);
             }
         }
         return null;
@@ -439,7 +437,7 @@ public final class ModdedCustomContentRegistry {
                     "Iris custom content provider returned a null mod id");
             for (ModdedDataProvider existing : providers) {
                 if (modId.equals(existing.modId())) {
-                    LOGGER.warn("Iris custom content provider for '{}' already registered; ignoring duplicate", modId);
+                    ModdedIrisLog.warn("Iris custom content provider for '{}' already registered; ignoring duplicate", modId);
                     return;
                 }
             }

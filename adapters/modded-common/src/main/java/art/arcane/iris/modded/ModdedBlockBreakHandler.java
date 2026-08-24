@@ -43,14 +43,11 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ModdedBlockBreakHandler {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final ConcurrentHashMap<BreakKey, PendingBreak> PENDING = new ConcurrentHashMap<>();
 
     private ModdedBlockBreakHandler() {
@@ -72,7 +69,7 @@ public final class ModdedBlockBreakHandler {
         if (scheduler == null) {
             // finishPending is the only thing that evicts an unconsumed entry. With no scheduler there is no
             // sweep, so an entry inserted here would leak for the rest of the server uptime.
-            LOGGER.debug("Iris skipped block-break provenance at {},{},{}: scheduler unavailable",
+            ModdedIrisLog.debug("Iris skipped block-break provenance at {},{},{}: scheduler unavailable",
                     position.getX(), position.getY(), position.getZ());
             return;
         }
@@ -150,7 +147,7 @@ public final class ModdedBlockBreakHandler {
         try {
             return evaluate(level, position, pending);
         } catch (Throwable error) {
-            LOGGER.error("Iris block-break processing failed at {},{},{} in {}", position.getX(), position.getY(), position.getZ(),
+            ModdedIrisLog.error("Iris block-break processing failed at {},{},{} in {}", position.getX(), position.getY(), position.getZ(),
                     level.dimension().identifier(), error);
             return Result.empty();
         }
@@ -182,7 +179,7 @@ public final class ModdedBlockBreakHandler {
         try {
             return evaluateDrops(level, position, brokenState, engine);
         } catch (Throwable error) {
-            LOGGER.error("Iris managed block-drop processing failed at {},{},{} in {}", position.getX(), position.getY(), position.getZ(),
+            ModdedIrisLog.error("Iris managed block-drop processing failed at {},{},{} in {}", position.getX(), position.getY(), position.getZ(),
                     level.dimension().identifier(), error);
             return Result.empty();
         }
@@ -315,7 +312,7 @@ public final class ModdedBlockBreakHandler {
         try {
             return irisGenerator.commandEngine();
         } catch (Throwable error) {
-            LOGGER.error("Iris could not resolve the engine for a block break in {}", level.dimension().identifier(), error);
+            ModdedIrisLog.error("Iris could not resolve the engine for a block break in {}", level.dimension().identifier(), error);
             return null;
         }
     }

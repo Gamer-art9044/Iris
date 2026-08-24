@@ -21,8 +21,6 @@ package art.arcane.iris.modded;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -31,7 +29,6 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ModdedPrimaryWorldRouter {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int TICK_INTERVAL = 20;
 
     private static final Set<UUID> routed = ConcurrentHashMap.newKeySet();
@@ -96,7 +93,7 @@ public final class ModdedPrimaryWorldRouter {
                 ModdedDimensionManager.teleport(player, server, primary, player.getX(), Double.MIN_VALUE, player.getZ());
                 routed.add(id);
             } catch (Throwable e) {
-                LOGGER.error("Iris failed to route player {} to primary world '{}'", id, primary, e);
+                ModdedIrisLog.error("Iris failed to route player {} to primary world '{}'", id, primary, e);
             }
         }
     }

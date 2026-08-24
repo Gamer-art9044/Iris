@@ -10,13 +10,15 @@ import static org.junit.Assert.assertFalse;
 
 public class StudioSVCWorldPackFeedbackContractTest {
     @Test
-    public void persistentPackCopyUsesLocalizedStyledOperatorFeedback() throws Exception {
+    public void persistentPackCopyUsesLifecycleProgressWithoutLegacySnapshotFeedback() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/service/StudioSVC.java"
         )).replace("\r\n", "\n");
 
         assertEquals(1, occurrences(source, "STUDIO_S_V_C_PACK_COPY_REQUIRES_ASYNC_THREAD"));
         assertEquals(2, occurrences(source, "STUDIO_S_V_C_PACK_INSTALL_FAILED"));
+        assertFalse(source.contains("STUDIO_S_V_C_INSTALLING_PACKAGE"));
+        assertFalse(source.contains("Publishing snapshot"));
         assertFalse(source.contains("sender.sendMessage(\"Iris refused to copy a pack"));
         assertFalse(source.contains("sender.sendMessage(\"Failed to install studio pack"));
     }

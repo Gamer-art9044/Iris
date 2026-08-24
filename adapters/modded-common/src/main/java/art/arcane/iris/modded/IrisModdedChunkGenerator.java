@@ -82,8 +82,6 @@ import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.Arrays;
@@ -98,7 +96,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntBinaryOperator;
 
 public final class IrisModdedChunkGenerator extends ChunkGenerator {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     // Vanilla-shaped fallback for an unbound generator (matches IrisDimension defaults). getMinY,
     // getSeaLevel and getGenDepth are called from world creation and client screens, so they must
     // answer without disk I/O and without throwing before a level is bound.
@@ -368,7 +365,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         // Bind time: a feature-order cycle is reported here, once, and degrades to features-off. Non-waiting for
         // the same reason as repointAndBind: this method owns the generator monitor.
         importedFeatures.prepareWithoutWaiting(bound);
-        LOGGER.info("Iris bound {}: chunk system {}", level.dimension().identifier(), ModdedGenPool.describeChunkSystem());
+        ModdedIrisLog.info("Iris bound {}: chunk system {}", level.dimension().identifier(), ModdedGenPool.describeChunkSystem());
     }
 
     private Engine bindEngine(ServerLevel level) {
@@ -601,7 +598,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         try {
             heightMetadata = configuredPack().metadata();
         } catch (Throwable e) {
-            LOGGER.warn("Iris generator '{}' could not pre-resolve pack heights for {}:{}: {}",
+            ModdedIrisLog.warn("Iris generator '{}' could not pre-resolve pack heights for {}:{}: {}",
                     dimensionKey, activePack, activeDimensionKey, e.toString());
         }
     }
@@ -726,7 +723,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         Engine generationEngine = engine();
         ChunkPos pos = chunk.getPos();
         lastChunkGenAt = System.currentTimeMillis();
-        LOGGER.debug("Iris generating chunk {},{}", pos.x(), pos.z());
+        ModdedIrisLog.debug("Iris generating chunk {},{}", pos.x(), pos.z());
 
         PlatformBlockState air = IrisPlatforms.get().registries().air();
 
@@ -744,7 +741,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         try (GenerationSessionLease lease = generationEngine.acquireGenerationLease("modded_chunk_pipeline");
              IrisContext.Scope ignored = IrisContext.open(generationEngine, lease.sessionId(), null)) {
             if (announced.compareAndSet(false, true)) {
-                LOGGER.info("Iris generating {} through IrisModdedChunkGenerator (dim={} first chunk {},{})",
+                ModdedIrisLog.info("Iris generating {} through IrisModdedChunkGenerator (dim={} first chunk {},{})",
                         dimensionKey, generationEngine.getDimension().getLoadKey(), pos.x(), pos.z());
             }
             int dimMinY = generationEngine.getMinHeight();
@@ -763,14 +760,14 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             return chunk;
         } catch (GenerationSessionException e) {
             if (generationEngine.isClosing() || e.isExpectedTeardown()) {
-                LOGGER.debug("Iris chunk {},{} skipped: engine sealed for hotload/teardown", pos.x(), pos.z());
+                ModdedIrisLog.debug("Iris chunk {},{} skipped: engine sealed for hotload/teardown", pos.x(), pos.z());
                 throw new IllegalStateException(
                         "Iris chunk generation was rejected during an engine transition.", e);
             }
-            LOGGER.error("Iris failed to generate chunk {},{}", pos.x(), pos.z(), e);
+            ModdedIrisLog.error("Iris failed to generate chunk {},{}", pos.x(), pos.z(), e);
             throw new IllegalStateException("Iris generation failed for chunk " + pos.x() + "," + pos.z(), e);
         } catch (Throwable e) {
-            LOGGER.error("Iris failed to generate chunk {},{}", pos.x(), pos.z(), e);
+            ModdedIrisLog.error("Iris failed to generate chunk {},{}", pos.x(), pos.z(), e);
             throw new IllegalStateException("Iris generation failed for chunk " + pos.x() + "," + pos.z(), e);
         }
     }

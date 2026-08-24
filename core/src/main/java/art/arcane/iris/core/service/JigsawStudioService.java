@@ -362,7 +362,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             evaluations.remove(displacedRequestId);
             previewRenderer.removeRequest(displacedRequestId);
         }
-        IrisLogging.info("Jigsaw Studio authoring registered: world=%s structure=%s bays=%d",
+        IrisLogging.debug("Jigsaw Studio authoring registered: world=%s structure=%s bays=%d",
                 world.getName(), activeGenerator.getSession().structureKey(), activeGenerator.getLayout().bays().size());
         scheduleInitialEvaluation(next);
         scheduleOnlinePlayers(world.getUID());
@@ -460,7 +460,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
         previewRenderer.forgetRequest(request.requestId());
         JigsawStudioActivation.deactivate(request.packKey(), request.requestId());
         clearWorldPlayerContexts(world.getUID());
-        IrisLogging.info("Jigsaw Studio authoring unregistered: world=%s", world.getName());
+        IrisLogging.debug("Jigsaw Studio authoring unregistered: world=%s", world.getName());
     }
 
     private void scheduleUnregisterRetry(World world, UUID requestId) {
@@ -2385,7 +2385,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             request.source().invalidateStructureResources();
             message(player, "Deleted Jigsaw project '" + request.structureKey() + "' and "
                     + result.removedResourceCount() + " owned resource(s).");
-            IrisLogging.info("Jigsaw Studio project deleted: structure=%s resources=%d",
+            IrisLogging.debug("Jigsaw Studio project deleted: structure=%s resources=%d",
                     request.structureKey(), result.removedResourceCount());
         } catch (Throwable exception) {
             IrisLogging.reportError(exception);
@@ -6086,7 +6086,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
             if (unchanged) {
                 scheduleEvaluation(studio);
             }
-            IrisLogging.info("Jigsaw Studio saved: structure=%s piece=%s object=%s connectors=%d status=%s",
+            IrisLogging.debug("Jigsaw Studio saved: structure=%s piece=%s object=%s connectors=%d status=%s",
                     request.structureKey(), coordinator.saveIdentity().variantKey(), assembly.objectKey(),
                     connectors.size(), result.status());
         } catch (Throwable exception) {

@@ -22,7 +22,9 @@ import art.arcane.iris.engine.river.RiverRouteState;
 import art.arcane.iris.engine.river.RiverAnchor;
 import art.arcane.iris.engine.river.RiverRoutingContext;
 import art.arcane.iris.engine.river.RiverTerrainNodeSample;
+import art.arcane.iris.engine.river.RiverTopologyComplexity;
 import art.arcane.iris.engine.river.RiverTerrainSourceSample;
+import art.arcane.iris.engine.river.RiverWidthProfile;
 import art.arcane.iris.util.project.interpolation.NoiseBounds;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.iris.util.project.stream.interpolation.Interpolated;
@@ -40,6 +42,82 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 
 public class IrisRiverRuntimeTest {
+    @Test
+    public void tunnelCrossSectionRoundsAndNoiseModulatesBothSurfaces() {
+        assertEquals(62, IrisRiverRuntime.shapedTunnelBedY(70, 64D, 1D, 2D));
+        assertEquals(69, IrisRiverRuntime.shapedTunnelBedY(70, 64D, 0D, 2D));
+        assertEquals(65, IrisRiverRuntime.shapedTunnelBedY(70, 64D, 1D, -1D));
+        assertEquals(77, IrisRiverRuntime.shapedTunnelCeilingY(70, 4D, 1D, 3D));
+        assertEquals(70, IrisRiverRuntime.shapedTunnelCeilingY(70, 4D, 0D, 3D));
+        assertEquals(71, IrisRiverRuntime.shapedTunnelCeilingY(70, 4D, 0.5D, -2D));
+    }
+
+    @Test
+    public void widenedTunnelHaloAccountsForMaximumConfiguredMultiplier() {
+        assertEquals(17, RiverTopologyComplexity.tunnelHalo(7D, 4D, 2D));
+        assertEquals(2500L, RiverTopologyComplexity.tunnelSampleColumns(7D, 4D, 2D));
+    }
+
+    @Test
+    public void tunnelWidthMultiplierWidensOnlySubterraneanFootprint() {
+        IrisRiverNetwork narrowConfiguration = configuration(false);
+        narrowConfiguration.getTerrain()
+                .setMaxChannelWidth(4D)
+                .setMaxBankWidth(0D)
+                .setBankWidth(range(0D))
+                .setMaxIncision(10)
+                .setTunnelMouthBlend(0D)
+                .setTunnelWidthMultiplier(range(1D));
+        IrisRiverNetwork wideConfiguration = configuration(false);
+        wideConfiguration.getTerrain()
+                .setMaxChannelWidth(4D)
+                .setMaxBankWidth(0D)
+                .setBankWidth(range(0D))
+                .setMaxIncision(10)
+                .setTunnelMouthBlend(0D)
+                .setTunnelWidthMultiplier(range(4D));
+
+        try (IrisRiverRuntime narrow = runtime(
+                narrowConfiguration,
+                constantHeight(100D),
+                constantLandBiome(),
+                new IrisRegion(),
+                true,
+                false
+        ); IrisRiverRuntime wide = runtime(
+                wideConfiguration,
+                constantHeight(100D),
+                constantLandBiome(),
+                new IrisRegion(),
+                true,
+                false
+        )) {
+            int narrowTunnelColumns = 0;
+            int wideTunnelColumns = 0;
+            int narrowSurfaceColumns = 0;
+            int wideSurfaceColumns = 0;
+            for (int x = -128; x < 128; x += 2) {
+                for (int z = -128; z < 128; z += 2) {
+                    if (narrow.sampleTunnel(x, z) != null) {
+                        narrowTunnelColumns++;
+                    }
+                    if (wide.sampleTunnel(x, z) != null) {
+                        wideTunnelColumns++;
+                    }
+                    if (narrow.sample(x, z).river().present()) {
+                        narrowSurfaceColumns++;
+                    }
+                    if (wide.sample(x, z).river().present()) {
+                        wideSurfaceColumns++;
+                    }
+                }
+            }
+
+            assertTrue(wideTunnelColumns > narrowTunnelColumns * 2);
+            assertEquals(narrowSurfaceColumns, wideSurfaceColumns);
+        }
+    }
+
     @Test
     public void terminalTaperUsesMeasuredReachLength() {
         assertEquals(1D, IrisRiverRuntime.terminalWeight(40, 200D, 0.8D), 0D);
@@ -182,6 +260,50 @@ public class IrisRiverRuntimeTest {
             assertEquals(2, oceanSamples.get());
             assertEquals(2, biomeSamples.get());
             assertEquals(2, regionSamples.get());
+        }
+    }
+
+    @Test
+    public void oceanIntentOnlyTerminatesRiversWhereTheNaturalSurfaceIsSubmerged() {
+        IrisRiverNetwork configuration = configuration(false);
+        configuration.getTopology().setTerrainHeightWeight(0D);
+        IrisBiome oceanBiome = new IrisBiome().setInferredType(InferredType.SEA);
+        IrisRegion region = new IrisRegion();
+        ProceduralStream<Double> height = ProceduralStream.ofDouble((x, z) -> x < 0D ? 50D : 200D);
+        ProceduralStream<Boolean> oceanIntent = ProceduralStream.of(
+                (x, z) -> true,
+                Interpolated.BOOLEAN
+        );
+        ProceduralStream<IrisBiome> biomes = ProceduralStream.of(
+                (x, z) -> oceanBiome,
+                Interpolated.of(value -> 0D, value -> oceanBiome)
+        );
+        ProceduralStream<IrisRegion> regions = ProceduralStream.of(
+                (x, z) -> region,
+                Interpolated.of(value -> 0D, value -> region)
+        );
+
+        try (IrisRiverRuntime runtime = new IrisRiverRuntime(new IrisRiverRuntimeContext(
+                4829759234L,
+                configuration,
+                mock(IrisData.class),
+                63,
+                true,
+                true,
+                false,
+                false,
+                false,
+                (x, z) -> new NoiseBounds(0D, 512D),
+                height,
+                ProceduralStream.ofDouble((x, z) -> 0D),
+                oceanIntent,
+                biomes,
+                regions
+        ))) {
+            assertTrue(runtime.sampleNode(-1, 0).ocean());
+            assertFalse(runtime.sampleNode(1, 0).ocean());
+            assertTrue(runtime.sampleSource(-1, 0).ocean());
+            assertFalse(runtime.sampleSource(1, 0).ocean());
         }
     }
 
@@ -569,6 +691,42 @@ public class IrisRiverRuntimeTest {
     }
 
     @Test
+    public void cliffTransitionClassifiesOpenAndSolidColumnsIndependently() {
+        IrisRiverNetwork configuration = configuration(false);
+        configuration.getTerrain()
+                .setMaxIncision(10)
+                .setTunnelMouthBlend(2D);
+        ProceduralStream<Double> height = ProceduralStream.ofDouble((x, z) -> x < 0D ? 50D : 100D);
+
+        try (IrisRiverRuntime runtime = runtime(
+                configuration,
+                height,
+                constantLandBiome(),
+                new IrisRegion(),
+                true,
+                false
+        )) {
+            boolean transitionFound = false;
+            for (int z = -2048; z <= 2048 && !transitionFound; z++) {
+                IrisRiverSurfaceSample open = runtime.sample(-1, z);
+                IrisRiverSurfaceSample solid = runtime.sample(0, z);
+                IrisRiverTunnelSample tunnel = runtime.sampleTunnel(0, z);
+                if (open.river().present()
+                        && solid.river().present()
+                        && open.river().reachId().equals(solid.river().reachId())
+                        && open.surfaceFluid()
+                        && tunnel != null) {
+                    assertFalse(open.subterranean());
+                    assertTrue(solid.subterranean());
+                    transitionFound = true;
+                }
+            }
+
+            assertTrue(transitionFound);
+        }
+    }
+
+    @Test
     public void terracedWaterUsesFixedInteriorPoolsAndPreservesNodeHeads() {
         IrisRiverNetwork configuration = configuration(false);
         configuration.getWater()
@@ -635,6 +793,7 @@ public class IrisRiverRuntimeTest {
                 1,
                 1,
                 4D,
+                RiverWidthProfile.constant(4D),
                 2D,
                 4D,
                 true,

@@ -213,7 +213,6 @@ public class StudioSVC implements IrisService {
         IrisData previousData = IrisData.getLoaded(target.toFile()).orElse(null);
         IrisData createdData = null;
         boolean refreshedPreviousData = false;
-        sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_INSTALLING_PACKAGE, MessageArgument.untrusted("name", String.valueOf(source.getFileName())), MessageArgument.untrusted("loadKey", String.valueOf(dimensionKey))));
         try {
             if (parent == null) {
                 throw new IOException("World pack target has no parent: " + target);
@@ -556,10 +555,23 @@ public class StudioSVC implements IrisService {
     }
 
     public void open(VolmitSender sender, long seed, String dimm, Consumer<World> onDone) throws IrisException {
+        open(sender, seed, dimm, StudioOpenCoordinator.StudioOpenKind.STANDARD, onDone);
+    }
+
+    public void open(
+            VolmitSender sender,
+            long seed,
+            String dimm,
+            StudioOpenCoordinator.StudioOpenKind openKind,
+            Consumer<World> onDone
+    ) throws IrisException {
         if (reportPackAdmissionFailure(sender, dimm) != null) {
             return;
         }
-        studioTransitions.submit(() -> replaceActiveProject(sender, seed, dimm, onDone))
+        StudioOpenCoordinator.StudioOpenKind requiredOpenKind = Objects.requireNonNull(
+                openKind,
+                "Studio open kind");
+        studioTransitions.submit(() -> replaceActiveProject(sender, seed, dimm, requiredOpenKind, onDone))
                 .whenComplete((ignored, throwable) -> {
                     if (throwable == null) {
                         return;
@@ -650,6 +662,7 @@ public class StudioSVC implements IrisService {
             VolmitSender sender,
             long seed,
             String dimension,
+            StudioOpenCoordinator.StudioOpenKind openKind,
             Consumer<World> onDone
     ) {
         return closeActiveProjectForReplacement(sender).handle((closeResult, closeThrowable) -> {
@@ -678,7 +691,7 @@ public class StudioSVC implements IrisService {
             }
             return true;
         }).thenCompose(closed -> closed
-                ? beginStudioOpen(sender, seed, dimension, onDone)
+                ? beginStudioOpen(sender, seed, dimension, openKind, onDone)
                 : CompletableFuture.completedFuture(null));
     }
 
@@ -686,6 +699,7 @@ public class StudioSVC implements IrisService {
             VolmitSender sender,
             long seed,
             String dimension,
+            StudioOpenCoordinator.StudioOpenKind openKind,
             Consumer<World> onDone
     ) {
         IrisProject project = new IrisProject(new File(getWorkspaceFolder(), dimension));
@@ -695,7 +709,7 @@ public class StudioSVC implements IrisService {
             opening = project.open(
                     sender,
                     seed,
-                    StudioOpenCoordinator.StudioOpenKind.STANDARD,
+                    openKind,
                     onDone);
         } catch (IrisException e) {
             if (activeProject == project) {

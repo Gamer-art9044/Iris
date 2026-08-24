@@ -103,10 +103,9 @@ public class IrisPackBenchmarking {
                 writer.write("  - Highest CPS: " + findHighest(cps) + "\n");
                 writer.write("  - Lowest CPS: " + findLowest(cps) + "\n");
                 writer.write("-----------------\n");
-                IrisLogging.info("Finished generating a report!");
+                IrisLogging.debug("Finished generating an Iris pack benchmark report.");
             } catch (IOException e) {
-                IrisLogging.error("An error occurred writing to the file.");
-                e.printStackTrace();
+                IrisLogging.reportError("Failed to write the Iris pack benchmark report.", e);
             }
 
             J.sfut(() -> {
@@ -135,8 +134,7 @@ public class IrisPackBenchmarking {
 
             stopwatch.end();
         } catch (Exception e) {
-            IrisLogging.error("Something has gone wrong!");
-            e.printStackTrace();
+            IrisLogging.reportError("Iris pack benchmarking failed.", e);
         }
     }
 

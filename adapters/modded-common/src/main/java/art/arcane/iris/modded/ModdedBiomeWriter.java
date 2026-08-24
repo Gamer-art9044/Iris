@@ -29,8 +29,6 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.biome.Biome;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,7 +37,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 public final class ModdedBiomeWriter implements PlatformBiomeWriter {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String VANILLA_FALLBACK_KEY = "minecraft:plains";
     private static final int MAX_CACHED_IDS = 4096;
     /** NUL cannot occur in a pack or registry key, so the composite cache key stays unambiguous. */
@@ -61,7 +58,7 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
             return 0;
         }
         if (key == null) {
-            LOGGER.warn("Iris biome writer got a null biome key; falling back to {}", VANILLA_FALLBACK_KEY);
+            ModdedIrisLog.warn("Iris biome writer got a null biome key; falling back to {}", VANILLA_FALLBACK_KEY);
             return fallbackId(registry);
         }
 
@@ -217,7 +214,7 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
 
     private void reportMissingServer(String operation, String fallback) {
         if (serverMissingReported.compareAndSet(false, true)) {
-            LOGGER.warn("Iris cannot {} before the Minecraft server is available; {}", operation, fallback);
+            ModdedIrisLog.warn("Iris cannot {} before the Minecraft server is available; {}", operation, fallback);
         }
     }
 

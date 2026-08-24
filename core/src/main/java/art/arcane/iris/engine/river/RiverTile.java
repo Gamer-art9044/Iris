@@ -117,13 +117,27 @@ public final class RiverTile {
     }
 
     public RiverSample sample(double x, double z) {
+        return sampleExpanded(x, z, 0D);
+    }
+
+    public RiverSample sampleExpanded(double x, double z, double additionalRadius) {
+        if (!Double.isFinite(additionalRadius) || additionalRadius < 0D) {
+            throw new IllegalArgumentException("Additional river sample radius must be finite and non-negative");
+        }
         RiverReach nearestReach = null;
         double nearestDistanceSquared = Double.POSITIVE_INFINITY;
         double nearestAlongReach = 0.0;
-        for (RiverReach reach : indexedReaches(x, z)) {
-            ClosestPoint closest = closestPoint(reach.polyline(), x, z);
-            double outerRadius = reach.width() * 0.5 + reach.bankWidth();
-            if (closest.distanceSquared() > outerRadius * outerRadius) {
+        List<RiverReach> candidates = additionalRadius == 0D
+                ? indexedReaches(x, z)
+                : indexedReaches(
+                        x - additionalRadius,
+                        z - additionalRadius,
+                        x + additionalRadius,
+                        z + additionalRadius
+                );
+        for (RiverReach reach : candidates) {
+            ClosestPoint closest = closestCoveringPoint(reach, x, z, additionalRadius);
+            if (closest == null) {
                 continue;
             }
             if (closest.distanceSquared() < nearestDistanceSquared
@@ -162,15 +176,14 @@ public final class RiverTile {
                 queryMaximumX,
                 queryMaximumZ
         )) {
-            ClosestPoint closest = closestPoint(
-                    reach.polyline(),
+            ClosestPoint closest = closestCoveringPoint(
+                    reach,
                     queryMinimumX,
                     queryMinimumZ,
                     queryMaximumX,
                     queryMaximumZ
             );
-            double outerRadius = reach.width() * 0.5 + reach.bankWidth();
-            if (closest.distanceSquared() > outerRadius * outerRadius) {
+            if (closest == null) {
                 continue;
             }
             if (closest.distanceSquared() < nearestDistanceSquared
@@ -196,7 +209,8 @@ public final class RiverTile {
     ) {
 
         double distance = StrictMath.sqrt(nearestDistanceSquared);
-        double channelRadius = nearestReach.width() * 0.5;
+        double localWidth = nearestReach.widthAt(nearestAlongReach);
+        double channelRadius = localWidth * 0.5;
         RiverSection section = section(nearestReach, distance, channelRadius);
         double carveWeight = carveWeight(distance, channelRadius, nearestReach.bankWidth());
         return new RiverSample(
@@ -208,7 +222,7 @@ public final class RiverTile {
                 carveWeight,
                 nearestReach.flow(),
                 nearestReach.order(),
-                nearestReach.width(),
+                localWidth,
                 nearestReach.bankWidth(),
                 nearestReach.depth(),
                 nearestReach.terminal(),
@@ -302,190 +316,252 @@ public final class RiverTile {
         return 1.0 - smooth;
     }
 
-    private static ClosestPoint closestPoint(RiverPolyline polyline, double x, double z) {
+    private static ClosestPoint closestCoveringPoint(
+            RiverReach reach,
+            double x,
+            double z,
+            double additionalRadius
+    ) {
+        RiverPolyline polyline = reach.polyline();
+        if (polyline.length() == 0D) {
+            double distanceSquared = squared(x - polyline.x(0)) + squared(z - polyline.z(0));
+            double radius = reach.widthAt(0D) * 0.5D + reach.bankWidth() + additionalRadius;
+            return distanceSquared <= radius * radius ? new ClosestPoint(distanceSquared, 0D) : null;
+        }
         double nearest = Double.POSITIVE_INFINITY;
         double nearestAlong = 0.0;
         for (int point = 0; point < polyline.size() - 1; point++) {
-            SegmentPoint segmentPoint = segmentPoint(
-                    polyline.x(point),
-                    polyline.z(point),
-                    polyline.x(point + 1),
-                    polyline.z(point + 1),
-                    x,
-                    z
-            );
-            if (segmentPoint.distanceSquared() < nearest) {
-                nearest = segmentPoint.distanceSquared();
-                double segmentLength = polyline.cumulativeLength(point + 1) - polyline.cumulativeLength(point);
-                double alongLength = polyline.cumulativeLength(point) + segmentLength * segmentPoint.t();
-                nearestAlong = polyline.length() == 0.0 ? 0.0 : alongLength / polyline.length();
+            double segmentStartAlong = polyline.cumulativeLength(point) / polyline.length();
+            double segmentEndAlong = polyline.cumulativeLength(point + 1) / polyline.length();
+            double segmentAlongSpan = segmentEndAlong - segmentStartAlong;
+            if (segmentAlongSpan == 0D) {
+                continue;
+            }
+            double deltaX = polyline.x(point + 1) - polyline.x(point);
+            double deltaZ = polyline.z(point + 1) - polyline.z(point);
+            for (int profileIndex = 0; profileIndex < reach.widthProfile().size() - 1; profileIndex++) {
+                double profileStart = reach.widthProfile().position(profileIndex);
+                double profileEnd = reach.widthProfile().position(profileIndex + 1);
+                double overlapStart = StrictMath.max(segmentStartAlong, profileStart);
+                double overlapEnd = StrictMath.min(segmentEndAlong, profileEnd);
+                if (overlapStart > overlapEnd) {
+                    continue;
+                }
+                double intervalStart = (overlapStart - segmentStartAlong) / segmentAlongSpan;
+                double intervalEnd = (overlapEnd - segmentStartAlong) / segmentAlongSpan;
+                double widthSlope = (reach.widthProfile().width(profileIndex + 1)
+                        - reach.widthProfile().width(profileIndex)) / (profileEnd - profileStart);
+                double radiusBase = (reach.widthProfile().width(profileIndex)
+                        + widthSlope * (segmentStartAlong - profileStart)) * 0.5D
+                        + reach.bankWidth()
+                        + additionalRadius;
+                double radiusSlope = widthSlope * segmentAlongSpan * 0.5D;
+                ClosestPoint candidate = coveringPoint(
+                        intervalStart,
+                        intervalEnd,
+                        deltaX,
+                        polyline.x(point) - x,
+                        deltaZ,
+                        polyline.z(point) - z,
+                        radiusSlope,
+                        radiusBase,
+                        segmentStartAlong,
+                        segmentAlongSpan
+                );
+                if (candidate != null && candidate.distanceSquared() < nearest) {
+                    nearest = candidate.distanceSquared();
+                    nearestAlong = candidate.alongReach();
+                }
             }
         }
-        return new ClosestPoint(nearest, nearestAlong);
+        return Double.isFinite(nearest) ? new ClosestPoint(nearest, nearestAlong) : null;
     }
 
-    private static ClosestPoint closestPoint(
-            RiverPolyline polyline,
+    private static ClosestPoint closestCoveringPoint(
+            RiverReach reach,
             double minimumX,
             double minimumZ,
             double maximumX,
             double maximumZ
     ) {
-        double nearest = Double.POSITIVE_INFINITY;
-        double nearestAlong = 0.0;
-        for (int point = 0; point < polyline.size() - 1; point++) {
-            SegmentPoint segmentPoint = segmentRectanglePoint(
-                    polyline.x(point),
-                    polyline.z(point),
-                    polyline.x(point + 1),
-                    polyline.z(point + 1),
+        RiverPolyline polyline = reach.polyline();
+        if (polyline.length() == 0D) {
+            double distanceSquared = pointRectangleDistanceSquared(
+                    polyline.x(0),
+                    polyline.z(0),
                     minimumX,
                     minimumZ,
                     maximumX,
                     maximumZ
             );
-            if (segmentPoint.distanceSquared() < nearest) {
-                nearest = segmentPoint.distanceSquared();
-                double segmentLength = polyline.cumulativeLength(point + 1) - polyline.cumulativeLength(point);
-                double alongLength = polyline.cumulativeLength(point) + segmentLength * segmentPoint.t();
-                nearestAlong = polyline.length() == 0.0 ? 0.0 : alongLength / polyline.length();
+            double radius = reach.widthAt(0D) * 0.5D + reach.bankWidth();
+            return distanceSquared <= radius * radius ? new ClosestPoint(distanceSquared, 0D) : null;
+        }
+        double nearest = Double.POSITIVE_INFINITY;
+        double nearestAlong = 0.0;
+        for (int point = 0; point < polyline.size() - 1; point++) {
+            double segmentStartAlong = polyline.cumulativeLength(point) / polyline.length();
+            double segmentEndAlong = polyline.cumulativeLength(point + 1) / polyline.length();
+            double segmentAlongSpan = segmentEndAlong - segmentStartAlong;
+            if (segmentAlongSpan == 0D) {
+                continue;
+            }
+            double startX = polyline.x(point);
+            double startZ = polyline.z(point);
+            double deltaX = polyline.x(point + 1) - startX;
+            double deltaZ = polyline.z(point + 1) - startZ;
+            for (int profileIndex = 0; profileIndex < reach.widthProfile().size() - 1; profileIndex++) {
+                double profileStart = reach.widthProfile().position(profileIndex);
+                double profileEnd = reach.widthProfile().position(profileIndex + 1);
+                double overlapStart = StrictMath.max(segmentStartAlong, profileStart);
+                double overlapEnd = StrictMath.min(segmentEndAlong, profileEnd);
+                if (overlapStart > overlapEnd) {
+                    continue;
+                }
+                double intervalStart = (overlapStart - segmentStartAlong) / segmentAlongSpan;
+                double intervalEnd = (overlapEnd - segmentStartAlong) / segmentAlongSpan;
+                double widthSlope = (reach.widthProfile().width(profileIndex + 1)
+                        - reach.widthProfile().width(profileIndex)) / (profileEnd - profileStart);
+                double radiusBase = (reach.widthProfile().width(profileIndex)
+                        + widthSlope * (segmentStartAlong - profileStart)) * 0.5D + reach.bankWidth();
+                double radiusSlope = widthSlope * segmentAlongSpan * 0.5D;
+                double cursor = intervalStart;
+                do {
+                    double next = intervalEnd;
+                    next = nextCrossing(startX, deltaX, minimumX, cursor, next);
+                    next = nextCrossing(startX, deltaX, maximumX, cursor, next);
+                    next = nextCrossing(startZ, deltaZ, minimumZ, cursor, next);
+                    next = nextCrossing(startZ, deltaZ, maximumZ, cursor, next);
+                    double middle = (cursor + next) * 0.5D;
+                    double middleX = startX + deltaX * middle;
+                    double middleZ = startZ + deltaZ * middle;
+                    double distanceSlopeX = middleX < minimumX || middleX > maximumX ? deltaX : 0D;
+                    double distanceBaseX = middleX < minimumX
+                            ? startX - minimumX
+                            : middleX > maximumX ? startX - maximumX : 0D;
+                    double distanceSlopeZ = middleZ < minimumZ || middleZ > maximumZ ? deltaZ : 0D;
+                    double distanceBaseZ = middleZ < minimumZ
+                            ? startZ - minimumZ
+                            : middleZ > maximumZ ? startZ - maximumZ : 0D;
+                    ClosestPoint candidate = coveringPoint(
+                            cursor,
+                            next,
+                            distanceSlopeX,
+                            distanceBaseX,
+                            distanceSlopeZ,
+                            distanceBaseZ,
+                            radiusSlope,
+                            radiusBase,
+                            segmentStartAlong,
+                            segmentAlongSpan
+                    );
+                    if (candidate != null && candidate.distanceSquared() < nearest) {
+                        nearest = candidate.distanceSquared();
+                        nearestAlong = candidate.alongReach();
+                    }
+                    cursor = next;
+                } while (cursor < intervalEnd);
             }
         }
-        return new ClosestPoint(nearest, nearestAlong);
+        return Double.isFinite(nearest) ? new ClosestPoint(nearest, nearestAlong) : null;
     }
 
-    private static SegmentPoint segmentPoint(
-            double startX,
-            double startZ,
-            double endX,
-            double endZ,
-            double x,
-            double z
+    private static ClosestPoint coveringPoint(
+            double intervalStart,
+            double intervalEnd,
+            double distanceSlopeX,
+            double distanceBaseX,
+            double distanceSlopeZ,
+            double distanceBaseZ,
+            double radiusSlope,
+            double radiusBase,
+            double segmentStartAlong,
+            double segmentAlongSpan
     ) {
-        double deltaX = endX - startX;
-        double deltaZ = endZ - startZ;
-        double lengthSquared = deltaX * deltaX + deltaZ * deltaZ;
-        if (lengthSquared == 0.0) {
-            return new SegmentPoint(squared(x - startX) + squared(z - startZ), 0.0);
+        double distanceQuadratic = squared(distanceSlopeX) + squared(distanceSlopeZ);
+        double distanceLinear = 2D * (distanceSlopeX * distanceBaseX + distanceSlopeZ * distanceBaseZ);
+        double distanceConstant = squared(distanceBaseX) + squared(distanceBaseZ);
+        double coverageQuadratic = distanceQuadratic - squared(radiusSlope);
+        double coverageLinear = distanceLinear - 2D * radiusSlope * radiusBase;
+        double coverageConstant = distanceConstant - squared(radiusBase);
+        double distancePosition = distanceQuadratic == 0D
+                ? intervalStart
+                : clamp(-distanceLinear / (2D * distanceQuadratic), intervalStart, intervalEnd);
+        if (quadraticValue(coverageQuadratic, coverageLinear, coverageConstant, distancePosition) <= 0D) {
+            return new ClosestPoint(
+                    StrictMath.max(0D, quadraticValue(
+                            distanceQuadratic,
+                            distanceLinear,
+                            distanceConstant,
+                            distancePosition
+                    )),
+                    segmentStartAlong + segmentAlongSpan * distancePosition
+            );
         }
-        double projection = ((x - startX) * deltaX + (z - startZ) * deltaZ) / lengthSquared;
-        double t = StrictMath.max(0.0, StrictMath.min(1.0, projection));
-        double nearestX = startX + deltaX * t;
-        double nearestZ = startZ + deltaZ * t;
-        return new SegmentPoint(squared(x - nearestX) + squared(z - nearestZ), t);
+        double coveragePosition = intervalStart;
+        double minimumCoverage = quadraticValue(
+                coverageQuadratic,
+                coverageLinear,
+                coverageConstant,
+                coveragePosition
+        );
+        double endCoverage = quadraticValue(coverageQuadratic, coverageLinear, coverageConstant, intervalEnd);
+        if (endCoverage < minimumCoverage) {
+            minimumCoverage = endCoverage;
+            coveragePosition = intervalEnd;
+        }
+        if (coverageQuadratic > 0D) {
+            double vertex = clamp(-coverageLinear / (2D * coverageQuadratic), intervalStart, intervalEnd);
+            double vertexCoverage = quadraticValue(coverageQuadratic, coverageLinear, coverageConstant, vertex);
+            if (vertexCoverage < minimumCoverage) {
+                minimumCoverage = vertexCoverage;
+                coveragePosition = vertex;
+            }
+        }
+        if (minimumCoverage > 0D) {
+            return null;
+        }
+        double uncovered = distancePosition;
+        double covered = coveragePosition;
+        for (int iteration = 0; iteration < 40; iteration++) {
+            double middle = (uncovered + covered) * 0.5D;
+            if (quadraticValue(coverageQuadratic, coverageLinear, coverageConstant, middle) <= 0D) {
+                covered = middle;
+            } else {
+                uncovered = middle;
+            }
+        }
+        return new ClosestPoint(
+                StrictMath.max(0D, quadraticValue(
+                        distanceQuadratic,
+                        distanceLinear,
+                        distanceConstant,
+                        covered
+                )),
+                segmentStartAlong + segmentAlongSpan * covered
+        );
     }
 
-    private static SegmentPoint segmentRectanglePoint(
-            double startX,
-            double startZ,
-            double endX,
-            double endZ,
-            double minimumX,
-            double minimumZ,
-            double maximumX,
-            double maximumZ
+    private static double nextCrossing(
+            double start,
+            double delta,
+            double boundary,
+            double cursor,
+            double currentNext
     ) {
-        double intersectionPosition = segmentRectangleIntersectionPosition(
-                startX,
-                startZ,
-                endX,
-                endZ,
-                minimumX,
-                minimumZ,
-                maximumX,
-                maximumZ
-        );
-        if (!Double.isNaN(intersectionPosition)) {
-            return new SegmentPoint(0.0, intersectionPosition);
+        if (delta == 0D) {
+            return currentNext;
         }
-
-        double nearestDistanceSquared = pointRectangleDistanceSquared(
-                startX,
-                startZ,
-                minimumX,
-                minimumZ,
-                maximumX,
-                maximumZ
-        );
-        double nearestPosition = 0.0;
-        double endDistanceSquared = pointRectangleDistanceSquared(
-                endX,
-                endZ,
-                minimumX,
-                minimumZ,
-                maximumX,
-                maximumZ
-        );
-        if (endDistanceSquared < nearestDistanceSquared) {
-            nearestDistanceSquared = endDistanceSquared;
-            nearestPosition = 1.0;
-        }
-
-        SegmentPoint corner = segmentPoint(startX, startZ, endX, endZ, minimumX, minimumZ);
-        if (corner.distanceSquared() < nearestDistanceSquared) {
-            nearestDistanceSquared = corner.distanceSquared();
-            nearestPosition = corner.t();
-        }
-        corner = segmentPoint(startX, startZ, endX, endZ, minimumX, maximumZ);
-        if (corner.distanceSquared() < nearestDistanceSquared) {
-            nearestDistanceSquared = corner.distanceSquared();
-            nearestPosition = corner.t();
-        }
-        corner = segmentPoint(startX, startZ, endX, endZ, maximumX, minimumZ);
-        if (corner.distanceSquared() < nearestDistanceSquared) {
-            nearestDistanceSquared = corner.distanceSquared();
-            nearestPosition = corner.t();
-        }
-        corner = segmentPoint(startX, startZ, endX, endZ, maximumX, maximumZ);
-        if (corner.distanceSquared() < nearestDistanceSquared) {
-            nearestDistanceSquared = corner.distanceSquared();
-            nearestPosition = corner.t();
-        }
-        return new SegmentPoint(nearestDistanceSquared, nearestPosition);
+        double crossing = (boundary - start) / delta;
+        return crossing > cursor && crossing < currentNext ? crossing : currentNext;
     }
 
-    private static double segmentRectangleIntersectionPosition(
-            double startX,
-            double startZ,
-            double endX,
-            double endZ,
-            double minimumX,
-            double minimumZ,
-            double maximumX,
-            double maximumZ
-    ) {
-        double minimumPosition = 0.0;
-        double maximumPosition = 1.0;
-        double deltaX = endX - startX;
-        if (deltaX == 0.0) {
-            if (startX < minimumX || startX > maximumX) {
-                return Double.NaN;
-            }
-        } else {
-            double first = (minimumX - startX) / deltaX;
-            double second = (maximumX - startX) / deltaX;
-            minimumPosition = StrictMath.max(minimumPosition, StrictMath.min(first, second));
-            maximumPosition = StrictMath.min(maximumPosition, StrictMath.max(first, second));
-            if (minimumPosition > maximumPosition) {
-                return Double.NaN;
-            }
-        }
+    private static double quadraticValue(double quadratic, double linear, double constant, double value) {
+        return (quadratic * value + linear) * value + constant;
+    }
 
-        double deltaZ = endZ - startZ;
-        if (deltaZ == 0.0) {
-            if (startZ < minimumZ || startZ > maximumZ) {
-                return Double.NaN;
-            }
-        } else {
-            double first = (minimumZ - startZ) / deltaZ;
-            double second = (maximumZ - startZ) / deltaZ;
-            minimumPosition = StrictMath.max(minimumPosition, StrictMath.min(first, second));
-            maximumPosition = StrictMath.min(maximumPosition, StrictMath.max(first, second));
-            if (minimumPosition > maximumPosition) {
-                return Double.NaN;
-            }
-        }
-        return minimumPosition;
+    private static double clamp(double value, double minimum, double maximum) {
+        return StrictMath.max(minimum, StrictMath.min(maximum, value));
     }
 
     private static double pointRectangleDistanceSquared(
@@ -616,6 +692,4 @@ public final class RiverTile {
     private record ClosestPoint(double distanceSquared, double alongReach) {
     }
 
-    private record SegmentPoint(double distanceSquared, double t) {
-    }
 }

@@ -34,6 +34,7 @@ import art.arcane.iris.engine.river.RiverTerrainSampler;
 import art.arcane.iris.engine.river.RiverTerminalPolicy;
 import art.arcane.iris.engine.river.RiverTile;
 import art.arcane.iris.engine.river.RiverTileCache;
+import art.arcane.iris.engine.river.RiverTopologyComplexity;
 import art.arcane.iris.util.project.interpolation.NoiseBounds;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.stream.ProceduralStream;
@@ -65,6 +66,9 @@ public final class IrisRiverRuntime implements AutoCloseable {
     private static final long BIOME_NOISE_SALT = 0x2FFD72DBD01ADFB7L;
     private static final long CAVE_ENTRY_NOISE_SALT = 0xB8E1AFED6A267E96L;
     private static final long CAVE_ENTRY_GATE_SALT = 0xBA7C9045F12C7F99L;
+    private static final long TUNNEL_FLOOR_NOISE_SALT = 0x8CB92BA72F3D8DD7L;
+    private static final long TUNNEL_ROOF_NOISE_SALT = 0xDB4F0B9175AE2165L;
+    private static final long TUNNEL_WIDTH_NOISE_SALT = 0xC6EF372FE94F82BEL;
     private static final long FLOODED_CAVE_BIOME_SALT = 0x24A19947B3916CF7L;
     private static final long TERMINAL_CAVE_ANCHOR_SALT = 0x9E3779B97F4A7C15L;
     private static final int TILE_CACHE_SIZE = 32;
@@ -86,6 +90,7 @@ public final class IrisRiverRuntime implements AutoCloseable {
     private final ProceduralStream<IrisRegion> region;
     private final IrisRiverTerrain terrain;
     private final IrisRiverWater water;
+    private final IrisRiverCaves caves;
     private final CNG sourceNoise;
     private final CNG continuationNoise;
     private final CNG incisionNoise;
@@ -97,6 +102,9 @@ public final class IrisRiverRuntime implements AutoCloseable {
     private final CNG bedNoise;
     private final CNG biomeNoise;
     private final CNG caveEntryNoise;
+    private final CNG tunnelFloorNoise;
+    private final CNG tunnelRoofNoise;
+    private final CNG tunnelWidthNoise;
     private final art.arcane.iris.engine.river.RiverNetwork network;
     private final RuntimeTerrainSampler terrainSampler;
     private final RiverTileCache tileCache;
@@ -121,7 +129,13 @@ public final class IrisRiverRuntime implements AutoCloseable {
         naturalBiome = context.naturalBiome();
         region = context.region();
         terrain = Objects.requireNonNull(configuration.getTerrain());
+        RiverTopologyComplexity.requireSafeTunnelPlan(
+                terrain.getMaxChannelWidth(),
+                maximumTunnelWidthMultiplier(terrain),
+                terrain.getTunnelMouthBlend()
+        );
         water = Objects.requireNonNull(configuration.getWater());
+        caves = configuration.getCaves() == null ? new IrisRiverCaves() : configuration.getCaves();
         IrisRiverTopology topology = Objects.requireNonNull(configuration.getTopology());
         sourceNoise = noise(topology.getSource(), SOURCE_NOISE_SALT);
         continuationNoise = noise(topology.getContinuation(), CONTINUATION_NOISE_SALT);
@@ -133,7 +147,10 @@ public final class IrisRiverRuntime implements AutoCloseable {
         meanderNoise = noise(terrain.getMeanderStyle(), MEANDER_NOISE_SALT);
         bedNoise = noise(terrain.getBedRoughnessStyle(), BED_NOISE_SALT);
         biomeNoise = noise(configuration.getBiomes().getSelectionStyle(), BIOME_NOISE_SALT);
-        caveEntryNoise = noise(caveSettings().getEntry(), CAVE_ENTRY_NOISE_SALT);
+        caveEntryNoise = noise(caves.getEntry(), CAVE_ENTRY_NOISE_SALT);
+        tunnelFloorNoise = noise(terrain.getTunnelFloorStyle(), TUNNEL_FLOOR_NOISE_SALT);
+        tunnelRoofNoise = noise(terrain.getTunnelRoofStyle(), TUNNEL_ROOF_NOISE_SALT);
+        tunnelWidthNoise = noise(terrain.getTunnelWidthMultiplier(), TUNNEL_WIDTH_NOISE_SALT);
         settingsCache = new ConcurrentHashMap<>();
         biomePoolCache = new ConcurrentHashMap<>();
         RiverNetworkOptions options = options(topology, terrain);
@@ -190,34 +207,98 @@ public final class IrisRiverRuntime implements AutoCloseable {
     }
 
     public IrisRiverTunnelSample sampleTunnel(double x, double z) {
-        ResolvedRiverColumn column = resolveColumn(x, z);
-        if (column == null
-                || !column.subterranean()
-                || column.river().state() != RiverRouteState.WET
-                || column.river().section() != RiverSection.CHANNEL) {
+        double mouthBlend = terrain.getTunnelMouthBlend();
+        double maximumMultiplier = maximumTunnelWidthMultiplier(terrain);
+        double maximumExtraRadius = terrain.getMaxChannelWidth() * 0.5D * (maximumMultiplier - 1D)
+                + mouthBlend;
+        RiverTile tile = tileAt(x, z);
+        RiverSample river = tile.sampleExpanded(x, z, maximumExtraRadius);
+        if (!river.present() || river.state() != RiverRouteState.WET) {
             return null;
         }
-        double channelRadius = column.river().width() * 0.5D;
+        double widthMultiplier = styled(
+                terrain.getTunnelWidthMultiplier(),
+                tunnelWidthNoise,
+                (int) StrictMath.round(x),
+                (int) StrictMath.round(z),
+                1D
+        );
+        double channelRadius = river.width() * 0.5D * widthMultiplier;
+        if (river.distance() > channelRadius + mouthBlend) {
+            return null;
+        }
+        ResolvedRiverColumn column = resolveColumn(x, z, tile, river);
+        if (!column.subterranean()) {
+            return null;
+        }
+        if (isTunnelMouth(column, mouthBlend)) {
+            channelRadius += mouthBlend;
+        }
+        if (column.river().distance() > channelRadius) {
+            return null;
+        }
         double normalizedDistance = channelRadius <= 0D
                 ? 1D
                 : clamp01(column.river().distance() / channelRadius);
-        double roofProfile = StrictMath.sqrt(Math.max(0D, 1D - normalizedDistance * normalizedDistance));
-        int bedY = (int) Math.round(column.bedHeight());
+        double profile = StrictMath.sqrt(Math.max(0D, 1D - normalizedDistance * normalizedDistance));
         int waterHeadY = (int) Math.round(column.waterSurfaceY());
-        int ceilingY = waterHeadY + (int) StrictMath.ceil(caveSettings().getDryHeadroom() * roofProfile);
-        if (bedY >= waterHeadY) {
-            return null;
-        }
+        double floorOffset = tunnelFloorNoise.fitDouble(
+                -terrain.getTunnelFloorVariation(),
+                terrain.getTunnelFloorVariation(),
+                x,
+                z
+        );
+        int bedY = shapedTunnelBedY(waterHeadY, column.bedHeight(), profile, floorOffset);
+        double roofOffset = tunnelRoofNoise.fitDouble(
+                -terrain.getTunnelRoofVariation(),
+                terrain.getTunnelRoofVariation(),
+                x,
+                z
+        );
+        int ceilingY = shapedTunnelCeilingY(
+                waterHeadY, caves.getDryHeadroom(), profile, roofOffset);
         return new IrisRiverTunnelSample(column.river(), bedY, waterHeadY, ceilingY);
     }
 
+    static int shapedTunnelBedY(
+            int waterHeadY,
+            double baseBedY,
+            double profile,
+            double floorOffset
+    ) {
+        double baseDepth = Math.max(1D, waterHeadY - baseBedY);
+        double shapedDepth = Math.max(1D, (baseDepth + floorOffset) * clamp01(profile));
+        return waterHeadY - Math.max(1, (int) StrictMath.ceil(shapedDepth));
+    }
+
+    static int shapedTunnelCeilingY(
+            int waterHeadY,
+            double dryHeadroom,
+            double profile,
+            double roofOffset
+    ) {
+        double shapedHeadroom = Math.max(
+                0D,
+                (Math.max(0D, dryHeadroom) + roofOffset) * clamp01(profile)
+        );
+        return waterHeadY + (int) StrictMath.ceil(shapedHeadroom);
+    }
+
     private ResolvedRiverColumn resolveColumn(double x, double z) {
-        double sampledNaturalHeight = naturalHeight.get(x, z);
+        return resolveColumn(x, z, 0D);
+    }
+
+    private ResolvedRiverColumn resolveColumn(double x, double z, double additionalRadius) {
         RiverTile tile = tileAt(x, z);
-        RiverSample river = tile.sample(x, z);
+        RiverSample river = tile.sampleExpanded(x, z, additionalRadius);
         if (!river.present()) {
             return null;
         }
+        return resolveColumn(x, z, tile, river);
+    }
+
+    private ResolvedRiverColumn resolveColumn(double x, double z, RiverTile tile, RiverSample river) {
+        double sampledNaturalHeight = naturalHeight.get(x, z);
         RiverReach reach = tile.reach(river.reachId());
         IrisRegion sampledRegion = region.get(x, z);
         IrisBiome sampledBiome = naturalBiome.get(x, z);
@@ -229,6 +310,12 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 ? waterSurfaceY - river.depth() + bedRoughness(x, z)
                 : sampledNaturalHeight - river.depth() + bedRoughness(x, z);
         double maximumIncision = Math.max(0D, terrain.getMaxIncision() * settings.maxIncisionMultiplier());
+        double cappedSurface = incisedHeight(
+                sampledNaturalHeight,
+                bedHeight,
+                1D,
+                maximumIncision
+        );
         return new ResolvedRiverColumn(
                 river,
                 reach,
@@ -236,14 +323,27 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 waterSurfaceY,
                 bedHeight,
                 maximumIncision,
-                isSubterraneanSegment(reach, river.alongReach())
+                boreMantleActive
+                        && river.state() == RiverRouteState.WET
+                        && Math.round(cappedSurface) >= Math.round(waterSurfaceY)
         );
     }
 
-    private boolean isSubterraneanSegment(RiverReach reach, double alongReach) {
-        if (!boreMantleActive || reach.state() != RiverRouteState.WET) {
+    private boolean isTunnelMouth(ResolvedRiverColumn column, double mouthBlend) {
+        if (mouthBlend <= 0D) {
             return false;
         }
+        double length = column.reach().polyline().length();
+        if (length <= 0D) {
+            return false;
+        }
+        double offset = mouthBlend / length;
+        double alongReach = column.river().alongReach();
+        return !isCenterlineSubterranean(column.reach(), clamp01(alongReach - offset))
+                || !isCenterlineSubterranean(column.reach(), clamp01(alongReach + offset));
+    }
+
+    private boolean isCenterlineSubterranean(RiverReach reach, double alongReach) {
         CenterlinePosition center = centerlinePosition(reach, alongReach);
         IrisRegion sampledRegion = region.get(center.x(), center.z());
         IrisBiome sampledBiome = naturalBiome.get(center.x(), center.z());
@@ -363,12 +463,23 @@ public final class IrisRiverRuntime implements AutoCloseable {
     }
 
     public IrisRiverCaves caveSettings() {
-        IrisRiverCaves caves = configuration.getCaves();
-        return caves == null ? new IrisRiverCaves() : caves;
+        return caves;
     }
 
     public double maximumChannelWidth() {
         return terrain.getMaxChannelWidth();
+    }
+
+    public double maximumTunnelWidthMultiplier() {
+        return maximumTunnelWidthMultiplier(terrain);
+    }
+
+    public double tunnelMouthBlend() {
+        return terrain.getTunnelMouthBlend();
+    }
+
+    public int maximumTunnelHeadroom() {
+        return caves.getDryHeadroom() + (int) StrictMath.ceil(terrain.getTunnelRoofVariation());
     }
 
     public boolean acceptsCaveAnchor(RiverAnchor anchor) {
@@ -408,6 +519,9 @@ public final class IrisRiverRuntime implements AutoCloseable {
             if (!caveEntryEligible(caves, stableId, position.x(), position.z())) {
                 continue;
             }
+            if (!isCaveAnchorSourceable(position.x(), position.z())) {
+                continue;
+            }
             if (index == anchor.index()) {
                 return stableId == anchor.stableId() && accepted < caves.getMaximumPerReach();
             }
@@ -417,6 +531,17 @@ public final class IrisRiverRuntime implements AutoCloseable {
             }
         }
         return false;
+    }
+
+    private boolean isCaveAnchorSourceable(double x, double z) {
+        IrisRiverSurfaceSample surface = sample(x, z);
+        if (surface.river().present()
+                && surface.river().state() == RiverRouteState.WET
+                && surface.river().section() == RiverSection.CHANNEL
+                && surface.surfaceFluid()) {
+            return true;
+        }
+        return sampleTunnel(x, z) != null;
     }
 
     public boolean isTerminalCaveAnchor(RiverAnchor anchor) {
@@ -490,6 +615,8 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 .minimumSourcesPerTile(topology.getMinimumSourcesPerTile())
                 .downstreamCandidateLimit(Math.max(1, Math.min(8, topology.getSinkSearchReaches() + 1)))
                 .routingBasinCells(topology.getRoutingBasinCells())
+                .routingDeviationScaleCells(topology.getRoutingDeviationScaleCells())
+                .routingDeviationStrengthCells(topology.getRoutingDeviationStrengthCells())
                 .routingPlateauHeight(topology.getRoutingPlateauHeight())
                 .hydraulicBaseHeight(fluidHeight)
                 .requireOcean(topology.isRequireOcean())
@@ -498,7 +625,10 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 .dryChannelChance(dryChance)
                 .terrainHeightWeight(topology.getTerrainHeightWeight())
                 .routingNoiseWeight(0D)
-                .flowAlignmentWeight(topology.getRoutingNoiseWeight())
+                .flowAlignmentWeight(topology.getFlowAlignmentWeight())
+                .confluenceWeight(topology.getConfluenceWeight())
+                .branchSoftCap(topology.getBranchSoftCap())
+                .branchChildShrinkFactor(topology.getBranchChildShrinkFactor())
                 .oceanAttraction(topology.getOceanAttraction())
                 .channelWidth(mid(riverTerrain.getChannelWidth(), 12D))
                 .bankWidth(mid(riverTerrain.getBankWidth(), 8D))
@@ -792,11 +922,29 @@ public final class IrisRiverRuntime implements AutoCloseable {
         }
         double minimum = Math.min(range.getMin(), range.getMax());
         double maximum = Math.max(range.getMin(), range.getMax());
+        if (minimum == maximum) {
+            return minimum;
+        }
         return noise.fitDouble(minimum, maximum, x, z);
     }
 
     private static double maximumReachRadius(IrisRiverTopology topology, IrisRiverTerrain riverTerrain) {
-        return riverTerrain.getMaxChannelWidth() * 0.5D + riverTerrain.getMaxBankWidth();
+        double surfaceRadius = riverTerrain.getMaxChannelWidth() * 0.5D
+                + riverTerrain.getMaxBankWidth();
+        double tunnelRadius = riverTerrain.getMaxChannelWidth() * 0.5D
+                * maximumTunnelWidthMultiplier(riverTerrain)
+                + riverTerrain.getTunnelMouthBlend();
+        return Math.max(surfaceRadius, tunnelRadius);
+    }
+
+    private static double maximumTunnelWidthMultiplier(IrisRiverTerrain riverTerrain) {
+        IrisStyledRange configured = riverTerrain.getTunnelWidthMultiplier();
+        if (configured == null
+                || !Double.isFinite(configured.getMin())
+                || !Double.isFinite(configured.getMax())) {
+            return 1D;
+        }
+        return Math.max(1D, Math.max(configured.getMin(), configured.getMax()));
     }
 
     private static double clamp01(double value) {
@@ -820,12 +968,14 @@ public final class IrisRiverRuntime implements AutoCloseable {
 
         @Override
         public RiverTerrainNodeSample sampleNode(int blockX, int blockZ) {
+            boolean oceanIntent = Boolean.TRUE.equals(naturalOcean.get(blockX, blockZ));
             boolean naturalHeightRequired = topology.getTerrainHeightWeight() > 0D
-                    || water.getMode() != IrisRiverWaterMode.SEA_LEVEL;
+                    || water.getMode() != IrisRiverWaterMode.SEA_LEVEL
+                    || oceanIntent;
             double sampledNaturalHeight = naturalHeightRequired
                     ? naturalHeight.get(blockX, blockZ)
                     : fluidHeight;
-            boolean sampledOcean = Boolean.TRUE.equals(naturalOcean.get(blockX, blockZ));
+            boolean sampledOcean = oceanIntent && isSubmergedOutlet(sampledNaturalHeight);
             IrisRegion sampledRegion = region.get(blockX, blockZ);
             IrisBiome sampledBiome = biomeRiverOverridesPossible ? naturalBiome.get(blockX, blockZ) : null;
             EffectiveRiverSettings settings = settingsFor(sampledRegion, sampledBiome);
@@ -846,7 +996,7 @@ public final class IrisRiverRuntime implements AutoCloseable {
             return new RiverTerrainSourceSample(
                     chanceMultiplier,
                     settings.routingPolicy() != IrisRiverRoutingPolicy.BLOCK,
-                    Boolean.TRUE.equals(naturalOcean.get(blockX, blockZ))
+                    isSubmergedOceanIntent(blockX, blockZ)
             );
         }
 
@@ -857,7 +1007,16 @@ public final class IrisRiverRuntime implements AutoCloseable {
 
         @Override
         public boolean isOcean(int blockX, int blockZ) {
-            return Boolean.TRUE.equals(naturalOcean.get(blockX, blockZ));
+            return isSubmergedOceanIntent(blockX, blockZ);
+        }
+
+        private boolean isSubmergedOceanIntent(int blockX, int blockZ) {
+            return Boolean.TRUE.equals(naturalOcean.get(blockX, blockZ))
+                    && isSubmergedOutlet(naturalHeight.get(blockX, blockZ));
+        }
+
+        private boolean isSubmergedOutlet(double sampledNaturalHeight) {
+            return Math.round(sampledNaturalHeight) < Math.round(fluidHeight);
         }
 
         @Override
@@ -996,6 +1155,24 @@ public final class IrisRiverRuntime implements AutoCloseable {
         public double channelWidth(RiverRoutingContext context, double fallback) {
             EffectiveRiverSettings settings = settingsAt(context.midpointX(), context.midpointZ());
             return styled(terrain.getChannelWidth(), widthNoise, context.midpointX(), context.midpointZ(), fallback)
+                    * settings.widthMultiplier();
+        }
+
+        @Override
+        public double channelWidth(
+                RiverRoutingContext context,
+                double x,
+                double z,
+            double fallback
+        ) {
+            EffectiveRiverSettings settings = settingsAt(x, z);
+            return styled(
+                    terrain.getChannelWidth(),
+                    widthNoise,
+                    (int) StrictMath.round(x),
+                    (int) StrictMath.round(z),
+                    fallback
+            )
                     * settings.widthMultiplier();
         }
 

@@ -146,7 +146,7 @@ public final class IrisClient {
             case IrisMessage.VisionTile visionTile -> TILES.onVisionTile(visionTile);
             case IrisMessage.VisionMarkers visionMarkers -> MARKERS.onMarkers(visionMarkers);
             case IrisMessage.PregenRegionDelta delta -> REGIONS.onDelta(delta, PREGEN.activeJobId());
-            case IrisMessage.StudioHotload hotload -> TOASTS.enqueueHotload(hotload.packKey(), hotload.changedFiles(), hotload.failed(), hotload.message());
+            case IrisMessage.StudioHotload hotload -> onStudioHotload(hotload);
             case IrisMessage.Toast toast -> TOASTS.enqueue(toast.kind(), toast.title(), toast.body());
             default -> {
             }
@@ -166,5 +166,30 @@ public final class IrisClient {
             CURSOR.clear();
             REGIONS.clear();
         }
+    }
+
+    private static void onStudioHotload(IrisMessage.StudioHotload hotload) {
+        if (shouldInvalidateForHotload(DIMENSION.status(), hotload)) {
+            TILES.clear();
+            MARKERS.clear();
+            CURSOR.clear();
+        }
+        TOASTS.enqueueHotload(
+                hotload.packKey(),
+                hotload.changedFiles(),
+                hotload.failed(),
+                hotload.message()
+        );
+    }
+
+    static boolean shouldInvalidateForHotload(
+            IrisMessage.DimensionStatus status,
+            IrisMessage.StudioHotload hotload
+    ) {
+        return status != null
+                && status.irisWorld()
+                && hotload != null
+                && !hotload.failed()
+                && status.packKey().equals(hotload.packKey());
     }
 }

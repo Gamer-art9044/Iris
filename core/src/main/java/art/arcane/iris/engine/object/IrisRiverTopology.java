@@ -47,6 +47,16 @@ public class IrisRiverTopology {
     @Desc("The spacing of deterministic drainage-basin sinks in routing cells. Larger values produce longer trunks and wider tributary trees.")
     private int routingBasinCells = 64;
 
+    @MinNumber(8)
+    @MaxNumber(256)
+    @Desc("The wavelength in routing cells of the smooth domain warp applied to drainage distance.")
+    private int routingDeviationScaleCells = 24;
+
+    @MinNumber(0)
+    @MaxNumber(32)
+    @Desc("The maximum drainage-domain displacement in routing cells. Zero keeps straight radial basin gradients.")
+    private double routingDeviationStrengthCells = 0D;
+
     @MinNumber(1)
     @MaxNumber(64)
     @Desc("The horizontal basin-distance span in routing cells per one block of terraced water rise.")
@@ -71,6 +81,26 @@ public class IrisRiverTopology {
     @MaxNumber(1024)
     @Desc("The maximum routing-cost contribution from routingStyle.")
     private double routingNoiseWeight = 24D;
+
+    @MinNumber(0)
+    @MaxNumber(1024)
+    @Desc("The penalty for choosing a downstream edge that does not follow the local routingStyle tangent.")
+    private double flowAlignmentWeight = 24D;
+
+    @MinNumber(0)
+    @MaxNumber(1024)
+    @Desc("The deterministic attraction toward shared downstream nodes. Larger values form stronger tributary trees and confluences.")
+    private double confluenceWeight = 0D;
+
+    @MinNumber(1)
+    @MaxNumber(8)
+    @Desc("The number of upstream children a graph node accepts before additional branches begin shrinking probabilistically.")
+    private int branchSoftCap = 4;
+
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("The multiplicative survival factor for each child beyond branchSoftCap. Recursive generations remain unbounded by depth.")
+    private double branchChildShrinkFactor = 0.35D;
 
     @MinNumber(0)
     @MaxNumber(16)

@@ -27,7 +27,6 @@ import art.arcane.volmlib.util.exceptions.IrisException;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import lombok.Data;
-import org.bukkit.GameMode;
 import org.bukkit.World;
 
 import java.io.File;
@@ -45,6 +44,7 @@ public class IrisProject {
     private File path;
     private String name;
     private PlatformChunkGenerator activeProvider;
+    private StudioOpenCoordinator.StudioOpenKind activeOpenKind;
 
     public IrisProject(File path) {
         this.path = path;
@@ -132,10 +132,6 @@ public class IrisProject {
                     return;
                 }
 
-                if (sender.isPlayer() && sender.player() != null) {
-                    J.runEntity(sender.player(), () -> sender.player().setGameMode(GameMode.CREATIVE));
-                }
-                activeProvider = IrisToolbelt.access(result.world());
                 maintenanceWorld = result.world();
                 if (maintenanceWorld != null) {
                     IrisToolbelt.beginWorldMaintenance(maintenanceWorld, "studio-open");

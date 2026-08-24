@@ -107,7 +107,7 @@ public class ObjectStudioSaveService implements IrisService {
 
         String packKey = engine.getDimension() == null ? null : engine.getDimension().getLoadKey();
         studios.put(world.getUID(), new ActiveStudio(world.getUID(), layout, objectsDirs, packKey));
-        IrisLogging.info("Object Studio live-save registered: world=%s cells=%d packs=%d",
+        IrisLogging.debug("Object Studio live-save registered: world=%s cells=%d packs=%d",
                 world.getName(), layout.cells().size(), objectsDirs.size());
     }
 
@@ -118,7 +118,7 @@ public class ObjectStudioSaveService implements IrisService {
             if (removed.packKey != null) {
                 ObjectStudioActivation.deactivate(removed.packKey);
             }
-            IrisLogging.info("Object Studio live-save unregistered: world=%s", world.getName());
+            IrisLogging.debug("Object Studio live-save unregistered: world=%s", world.getName());
         }
     }
 
@@ -147,7 +147,7 @@ public class ObjectStudioSaveService implements IrisService {
         }
 
         player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVING_X_X, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())), MessageArgument.untrusted("w", String.valueOf(cell.w())), MessageArgument.untrusted("h", String.valueOf(cell.h())), MessageArgument.untrusted("d", String.valueOf(cell.d()))));
-        IrisLogging.info("Object Studio save triggered by %s for %s/%s", player.getName(), cell.pack(), cell.key());
+        IrisLogging.debug("Object Studio save triggered by %s for %s/%s", player.getName(), cell.pack(), cell.key());
         J.runRegion(world, cell.chunkMinX(), cell.chunkMinZ(), () -> {
             try {
                 captureAndSave(studio, world, cell, player);
@@ -192,7 +192,7 @@ public class ObjectStudioSaveService implements IrisService {
             double targetY = cell.originY() + cell.h() + 2.0D;
             Location location = new Location(world, targetX, targetY, targetZ);
             J.runEntity(player, () -> PaperLib.teleportAsync(player, location));
-            IrisLogging.info("Object Studio goto: %s -> %s at %.0f,%.0f,%.0f",
+            IrisLogging.debug("Object Studio goto: %s -> %s at %.0f,%.0f,%.0f",
                     player.getName(), objectKey, location.getX(), location.getY(), location.getZ());
             return true;
         }
@@ -266,7 +266,7 @@ public class ObjectStudioSaveService implements IrisService {
                     parent.mkdirs();
                 }
                 snapshot.write(targetFile);
-                IrisLogging.info("Object Studio saved: %s/%s (%dx%dx%d)",
+                IrisLogging.debug("Object Studio saved: %s/%s (%dx%dx%d)",
                         cell.pack(), cell.key(), cell.w(), cell.h(), cell.d());
                 if (notify != null) {
                     J.runEntity(notify, () -> notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVED, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())))));

@@ -39,8 +39,6 @@ import net.minecraft.server.packs.PathPackResources;
 import net.minecraft.server.packs.repository.Pack;
 import net.minecraft.server.packs.repository.PackSource;
 import net.minecraft.server.packs.repository.RepositorySource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -67,7 +65,6 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 public final class ModdedForcedDatapack {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String PACK_ID = "iris_worldgen";
     private static final String PACK_FOLDER = "iris";
     private static final String HASH_FILE_NAME = "packs.hash";
@@ -111,7 +108,7 @@ public final class ModdedForcedDatapack {
                 return requireReadablePack(current.directory());
             } catch (RuntimeException unreadable) {
                 published = null;
-                LOGGER.error("Iris could not read the published forced datapack at {}; regenerating",
+                ModdedIrisLog.error("Iris could not read the published forced datapack at {}; regenerating",
                         current.directory(), unreadable);
             }
         }
@@ -125,19 +122,19 @@ public final class ModdedForcedDatapack {
                 reason = "stale cache (hash changed)";
             } else {
                 if (hash.isEmpty() && STALE_SERVE_LOGGED.compareAndSet(false, true)) {
-                    LOGGER.warn("Iris cannot hash the installed packs; serving the last generated forced datapack from {} unverified",
+                    ModdedIrisLog.warn("Iris cannot hash the installed packs; serving the last generated forced datapack from {} unverified",
                             state.directory());
                 }
                 try {
                     return requireReadablePack(state.directory());
                 } catch (RuntimeException unreadable) {
                     published = null;
-                    LOGGER.error("Iris could not read the published forced datapack at {}; regenerating",
+                    ModdedIrisLog.error("Iris could not read the published forced datapack at {}; regenerating",
                             state.directory(), unreadable);
                 }
                 reason = "unreadable published pack";
             }
-            LOGGER.info("Iris forced datapack cache is unusable ({}); generating it once now", reason);
+            ModdedIrisLog.info("Iris forced datapack cache is unusable ({}); generating it once now", reason);
             return buildPack();
         }
     }
@@ -151,11 +148,11 @@ public final class ModdedForcedDatapack {
         if (packs.isEmpty()) {
             return;
         }
-        LOGGER.error("===============================================================");
-        LOGGER.error("Iris forced datapack '{}' was never loaded by this server.", PACK_ID);
-        LOGGER.error("{} installed pack(s) at {} contributed no dimension types or custom biomes.", packs.size(), packsRoot);
-        LOGGER.error("Datapack source injection failed for this loader (mixin/event not applied), so world creation will fail and restarting will not fix it.");
-        LOGGER.error("===============================================================");
+        ModdedIrisLog.error("===============================================================");
+        ModdedIrisLog.error("Iris forced datapack '{}' was never loaded by this server.", PACK_ID);
+        ModdedIrisLog.error("{} installed pack(s) at {} contributed no dimension types or custom biomes.", packs.size(), packsRoot);
+        ModdedIrisLog.error("Datapack source injection failed for this loader (mixin/event not applied), so world creation will fail and restarting will not fix it.");
+        ModdedIrisLog.error("===============================================================");
     }
 
     public static Path datapackRoot() {
@@ -172,7 +169,7 @@ public final class ModdedForcedDatapack {
         } catch (RuntimeException | Error generationFailure) {
             Path lastKnownGood = packDirectory();
             if (Files.isRegularFile(lastKnownGood.resolve("pack.mcmeta"))) {
-                LOGGER.error("Iris kept the last known-good generated datapack after regeneration failed",
+                ModdedIrisLog.error("Iris kept the last known-good generated datapack after regeneration failed",
                         generationFailure);
                 return requireReadablePack(lastKnownGood);
             }
@@ -201,7 +198,7 @@ public final class ModdedForcedDatapack {
             try {
                 return write();
             } catch (Throwable e) {
-                LOGGER.error("Iris failed to generate the forced startup datapack", e);
+                ModdedIrisLog.error("Iris failed to generate the forced startup datapack", e);
                 if (e instanceof RuntimeException runtimeException) {
                     throw runtimeException;
                 }
@@ -222,10 +219,10 @@ public final class ModdedForcedDatapack {
             String currentHash = packsHashOrEmpty();
             PublishedState state = publishedState();
             if (state != null && !currentHash.isEmpty() && state.packsHash().equals(currentHash)) {
-                LOGGER.debug("Iris forced datapack is current ({}); skipping regeneration", reason);
+                ModdedIrisLog.debug("Iris forced datapack is current ({}); skipping regeneration", reason);
                 return false;
             }
-            LOGGER.info("Iris regenerating the forced datapack ({})", reason);
+            ModdedIrisLog.info("Iris regenerating the forced datapack ({})", reason);
             regenerate();
             return true;
         }
@@ -240,7 +237,7 @@ public final class ModdedForcedDatapack {
             try {
                 regenerateIfStale(reason);
             } catch (Throwable failure) {
-                LOGGER.error("Iris forced datapack regeneration failed ({})", reason, failure);
+                ModdedIrisLog.error("Iris forced datapack regeneration failed ({})", reason, failure);
             }
         };
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
@@ -301,7 +298,7 @@ public final class ModdedForcedDatapack {
         try {
             return Files.readString(hashFile, StandardCharsets.UTF_8).trim();
         } catch (IOException unreadable) {
-            LOGGER.warn("Iris could not read the forced datapack hash at {}", hashFile, unreadable);
+            ModdedIrisLog.warn("Iris could not read the forced datapack hash at {}", hashFile, unreadable);
             return "";
         }
     }
@@ -332,7 +329,7 @@ public final class ModdedForcedDatapack {
         try {
             hash = packsHash();
         } catch (IOException | RuntimeException failure) {
-            LOGGER.warn("Iris could not hash the installed packs directory", failure);
+            ModdedIrisLog.warn("Iris could not hash the installed packs directory", failure);
             hash = "";
         }
         packsHashMemo = new HashMemo(hash, now);
@@ -412,9 +409,9 @@ public final class ModdedForcedDatapack {
         if (!presetIds.isEmpty()) {
             writeWorldPresetTag(stagingDirectory, presetIds);
         }
-        LOGGER.info("Iris forced startup datapack staged: {} pack(s), {} world preset(s), {} custom biome(s) at {}", packCount, presetIds.size(), countBiomes(seenBiomes), stagingDirectory);
+        ModdedIrisLog.info("Iris forced startup datapack staged: {} pack(s), {} world preset(s), {} custom biome(s) at {}", packCount, presetIds.size(), countBiomes(seenBiomes), stagingDirectory);
         if (packCount == 0) {
-            LOGGER.warn("Iris installed NO worldgen packs into the forced datapack - custom biomes and their colors will NOT generate. Install a pack with /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>, then restart before creating an Iris world.");
+            ModdedIrisLog.warn("Iris installed NO worldgen packs into the forced datapack - custom biomes and their colors will NOT generate. Install a pack with /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>, then restart before creating an Iris world.");
         }
     }
 
@@ -425,13 +422,13 @@ public final class ModdedForcedDatapack {
         try {
             validation = PackValidator.validateForDatapackBootstrap(sourcePack);
         } catch (Throwable validationFailure) {
-            LOGGER.error("Iris excluded pack '{}' from Create World because validation failed",
+            ModdedIrisLog.error("Iris excluded pack '{}' from Create World because validation failed",
                     sourcePack.getName(), validationFailure);
             rethrowIfUnrecoverable(validationFailure);
             return false;
         }
         if (!validation.isLoadable()) {
-            LOGGER.error("Iris excluded pack '{}' from Create World: {} blocking validation error(s); first error: {}",
+            ModdedIrisLog.error("Iris excluded pack '{}' from Create World: {} blocking validation error(s); first error: {}",
                     sourcePack.getName(), validation.getBlockingErrors().size(),
                     validation.getBlockingErrors().getFirst());
             return false;
@@ -447,7 +444,7 @@ public final class ModdedForcedDatapack {
         try {
             installed = installPack(sourcePack, fixer, packFolders, packBiomes, packPresetIds);
         } catch (Throwable installationFailure) {
-            LOGGER.error("Iris excluded pack '{}' from Create World because datapack serialization failed",
+            ModdedIrisLog.error("Iris excluded pack '{}' from Create World because datapack serialization failed",
                     sourcePack.getName(), installationFailure);
             rethrowIfUnrecoverable(installationFailure);
             installed = false;
@@ -465,7 +462,7 @@ public final class ModdedForcedDatapack {
             try {
                 clean(packStagingDirectory);
             } catch (Throwable cleanupFailure) {
-                LOGGER.warn("Iris could not remove temporary datapack staging for pack '{}'",
+                ModdedIrisLog.warn("Iris could not remove temporary datapack staging for pack '{}'",
                         sourcePack.getName(), cleanupFailure);
             }
         }
@@ -728,7 +725,7 @@ public final class ModdedForcedDatapack {
             try {
                 clean(backupDirectory);
             } catch (Throwable cleanupError) {
-                LOGGER.warn("Iris published the forced datapack but could not remove backup {}",
+                ModdedIrisLog.warn("Iris published the forced datapack but could not remove backup {}",
                         backupDirectory, cleanupError);
             }
         }

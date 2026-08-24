@@ -27,12 +27,21 @@ public class StudioOpenCoordinatorOpenKindTest {
     }
 
     @Test
-    public void bothStudioKindsReuseOnlyAnUnchangedLoadedRuntime() {
+    public void allStudioKindsReuseOnlyAnUnchangedLoadedRuntime() {
         for (StudioOpenCoordinator.StudioOpenKind kind : StudioOpenCoordinator.StudioOpenKind.values()) {
             assertEquals(
                     IrisCreator.DatapackPreparation.REUSE_LOADED_RUNTIME_IF_READY,
                     kind.datapackPreparation());
         }
+    }
+
+    @Test
+    public void objectStudioOwnsWorkspaceWithoutUsingTheStandardEntry() {
+        StudioOpenCoordinator.StudioOpenKind kind = StudioOpenCoordinator.StudioOpenKind.OBJECT;
+
+        assertTrue(kind.openWorkspace());
+        assertFalse(kind.teleportThroughStandardEntry());
+        assertTrue(kind.prepareGeneratorState());
     }
 
     @Test
@@ -63,22 +72,6 @@ public class StudioOpenCoordinatorOpenKindTest {
     }
 
     @Test
-    public void onlyAStandardPlayerOpenLoadsTheEntry() {
-        assertTrue(StudioOpenCoordinator.requiresLoadedEntry(request(
-                StudioOpenCoordinator.StudioOpenKind.STANDARD,
-                "Magic_Psycho")));
-        assertFalse(StudioOpenCoordinator.requiresLoadedEntry(request(
-                StudioOpenCoordinator.StudioOpenKind.STANDARD,
-                null)));
-        assertFalse(StudioOpenCoordinator.requiresLoadedEntry(request(
-                StudioOpenCoordinator.StudioOpenKind.STANDARD,
-                "   ")));
-        assertFalse(StudioOpenCoordinator.requiresLoadedEntry(request(
-                StudioOpenCoordinator.StudioOpenKind.JIGSAW,
-                "Magic_Psycho")));
-    }
-
-    @Test
     public void activeStudioTeleportIsSerializedAndBoundedBeforeNativeDelegation() throws Exception {
         String coordinator = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"))
@@ -103,42 +96,57 @@ public class StudioOpenCoordinatorOpenKindTest {
         int nativeClaim = coordinatorMethod.indexOf(
                 "activeAdmission.compareAndSet(true, false)");
         int nativeDelegation = coordinatorMethod.indexOf(
-                "WorldRuntimeControlService.get().teleport(player, entry)");
+                "WorldRuntimeControlService.get().teleportInMode(player, entry, GameMode.SPECTATOR)");
 
         assertTrue(transitionAdmission >= 0);
         assertTrue(projectCapture > transitionAdmission);
         assertTrue(publicDeadline > projectCapture);
         assertTrue(admissionClose > publicDeadline);
         assertTrue(serviceMethod.contains("deadlineNanos"));
-        assertTrue(coordinatorMethod.contains("beforeStudioTeleportDeadline("));
-        assertTrue(coordinatorMethod.contains("CompletableFuture<T> bounded = new CompletableFuture<>()"));
         assertTrue(coordinatorMethod.contains(
-                "CompletableFuture.delayedExecutor(remainingNanos, TimeUnit.NANOSECONDS)"));
-        assertFalse(coordinatorMethod.contains("stage.orTimeout("));
-        assertTrue(coordinatorMethod.contains("EntryChunkResolution entryResolution"));
-        assertFalse(coordinatorMethod.contains("addPluginChunkTicket("));
-        assertFalse(coordinatorMethod.contains("removePluginChunkTicket("));
+                "WorldRuntimeControlService.get().resolveEntryAnchor(world, provider)"));
+        assertTrue(coordinatorMethod.contains(
+                "project.getActiveOpenKind() == StudioOpenKind.STANDARD"));
+        assertFalse(coordinatorMethod.contains("requestChunkAsync("));
+        assertFalse(coordinatorMethod.contains("getHighestBlockYAt("));
         assertTrue(nativeClaim >= 0);
         assertTrue(nativeDelegation > nativeClaim);
     }
 
     @Test
-    public void entryLoadUsesOnlyTheUrgentExactChunkRequest() throws Exception {
+    public void standardEntryDelegatesWithoutAnExplicitChunkOrSurfaceLookup() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"))
                 .replace("\r\n", "\n");
-        int loadStart = source.indexOf("private EntryChunkResolution loadEntryChunk(");
-        int loadEnd = source.indexOf("private void settleEntryUseAfterOperation(", loadStart);
-        String load = source.substring(loadStart, loadEnd);
 
-        assertTrue(load.contains("requestChunkAsync("));
-        assertTrue(load.contains("true,\n                    true"));
-        assertTrue(load.contains("J.isOwnedByCurrentRegion(world, chunkX, chunkZ)"));
-        assertTrue(load.contains("J.runRegion(world, chunkX, chunkZ"));
-        assertTrue(load.contains("WorldRuntimeControlService.findTopSafeStudioLocation(world, entryAnchor)"));
+        assertTrue(source.contains("Location entryLocation = entryAnchor;"));
+        assertFalse(source.contains("prepareStudioEntryChunks("));
+        assertFalse(source.contains("findStudioEntryLocation"));
+        assertFalse(source.contains("EntryChunkResolution"));
         assertFalse(source.contains("resolveSafeEntry(world, entryAnchor)"));
-        assertFalse(source.contains("addPluginChunkTicket("));
-        assertFalse(source.contains("removePluginChunkTicket("));
+        assertFalse(source.contains("getHighestBlockYAt("));
+    }
+
+    @Test
+    public void standardEntryBindsSpectatorToTheNativeTeleport() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"))
+                .replace("\r\n", "\n");
+        String runtime = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/runtime/WorldRuntimeControlService.java"))
+                .replace("\r\n", "\n");
+        int mode = runtime.indexOf("modeRestore.apply(gameMode)");
+        int teleport = runtime.indexOf("teleporter.teleport(player, location)", mode);
+
+        assertTrue(source.contains("WorldRuntimeControlService.get().teleportInMode("));
+        int openKind = source.indexOf("request.project().setActiveOpenKind(request.openKind())");
+        int provider = source.indexOf("request.project().setActiveProvider(provider)", openKind);
+        assertTrue(openKind >= 0);
+        assertTrue(provider > openKind);
+        assertTrue(source.contains("project.setActiveOpenKind(null)"));
+        assertTrue(mode >= 0);
+        assertTrue(teleport > mode);
+        assertTrue(runtime.contains("modeRestore.restore()"));
     }
 
     @Test
@@ -153,9 +161,6 @@ public class StudioOpenCoordinatorOpenKindTest {
                 "prepare_generator",
                 "resolve_entry_anchor",
                 "prepare_structure_rings",
-                "prepare_entry_chunks",
-                "load_entry_chunk",
-                "resolve_safe_entry",
                 "teleport_standard_entry",
                 "finalize_open")) {
             int current = source.indexOf("\"" + phase + "\"", previous + 1);
@@ -166,18 +171,16 @@ public class StudioOpenCoordinatorOpenKindTest {
     }
 
     @Test
-    public void structureStateActivatesBeforeTheRealEntryChunkLoads() throws Exception {
+    public void structureStateCompletesBeforeImmediateNativeTeleport() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int completionCall = source.indexOf("endStudioEntryBootstrap(world, provider)");
-        int entryReady = source.indexOf(
-                "entryResolution.chunk().get(STUDIO_ENTRY_LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)", completionCall);
         int teleport = source.indexOf(
-                "WorldRuntimeControlService.get().teleport(player, safeEntry)", entryReady);
+                "WorldRuntimeControlService.get().teleportInMode(", completionCall);
         int finalizeOpen = source.indexOf(
                 "updateStage(request, \"finalize_open\", 1.00D)", teleport);
         int futureComplete = source.indexOf(
-                "future.complete(new StudioOpenResult(world, safeEntry))", finalizeOpen);
+                "future.complete(new StudioOpenResult(world, entryLocation))", finalizeOpen);
         int methodStart = source.indexOf(
                 "private void endStudioEntryBootstrap(World world, PlatformChunkGenerator provider)");
         int methodEnd = source.indexOf("private void abandonStudioEntryBootstrap", methodStart);
@@ -188,8 +191,8 @@ public class StudioOpenCoordinatorOpenKindTest {
         int gateRelease = method.indexOf("bukkitGenerator::endStudioEntryBootstrap");
 
         assertTrue(completionCall >= 0);
-        assertTrue(entryReady > completionCall);
-        assertTrue(teleport > entryReady);
+        assertTrue(teleport > completionCall);
+        assertFalse(source.contains("preparedEntryChunks"));
         assertTrue(finalizeOpen > teleport);
         assertTrue(futureComplete > finalizeOpen);
         assertTrue(scheduled >= 0);
@@ -208,7 +211,7 @@ public class StudioOpenCoordinatorOpenKindTest {
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf(
                 "private void abandonStudioEntryBootstrap(World world, Throwable failure)");
-        int methodEnd = source.indexOf("private void deferFailedOpenCleanup", methodStart);
+        int methodEnd = source.indexOf("private CompletableFuture<Void> cleanupFailedOpen", methodStart);
         String method = source.substring(methodStart, methodEnd);
 
         assertTrue(method.contains("if (J.isPrimaryThread())"));
@@ -247,7 +250,7 @@ public class StudioOpenCoordinatorOpenKindTest {
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int finalizerCall = source.indexOf("runOpenFinalizer(request.onDone(), world);");
         int futureCompletion = source.indexOf(
-                "future.complete(new StudioOpenResult(world, safeEntry))", finalizerCall);
+                "future.complete(new StudioOpenResult(world, entryLocation))", finalizerCall);
         int methodStart = source.indexOf(
                 "private void runOpenFinalizer(Consumer<World> finalizer, World world)");
         int methodEnd = source.indexOf("private long elapsedMillis", methodStart);
@@ -259,22 +262,5 @@ public class StudioOpenCoordinatorOpenKindTest {
         assertTrue(method.contains("J.sfut(() -> finalizer.accept(world))"));
         assertTrue(method.contains(
                 "completion.get(STUDIO_STRUCTURE_ACTIVATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)"));
-    }
-
-    private static StudioOpenCoordinator.StudioOpenRequest request(
-            StudioOpenCoordinator.StudioOpenKind openKind,
-            String playerName
-    ) {
-        return new StudioOpenCoordinator.StudioOpenRequest(
-                "overworld",
-                null,
-                null,
-                1337L,
-                "iris-test",
-                playerName,
-                openKind,
-                false,
-                null,
-                null);
     }
 }

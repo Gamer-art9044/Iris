@@ -99,6 +99,7 @@ public class MantleRiverHydrologyComponentTest {
                 0,
                 0,
                 1,
+                2,
                 (minimumX, minimumZ, maximumX, maximumZ) -> riverSample(
                         RiverRouteState.WET,
                         RiverSection.CHANNEL
@@ -116,9 +117,10 @@ public class MantleRiverHydrologyComponentTest {
     }
 
     @Test
-    public void buriedChannelCapsBeforeAnUnrelatedCave() {
+    public void buriedChannelCutsIntoCaveWhileGuardingItsWaterline() {
         TestVoxelView view = new TestVoxelView();
         view.set(new CavePosition(1, 12, 0), CaveVoxel.CAVE_AIR);
+        view.set(new CavePosition(1, 14, 0), CaveVoxel.CAVE_AIR);
         IrisRiverTunnelSample tunnel = new IrisRiverTunnelSample(
                 riverSample(RiverRouteState.WET, RiverSection.CHANNEL),
                 10,
@@ -131,6 +133,72 @@ public class MantleRiverHydrologyComponentTest {
                 0,
                 0,
                 1,
+                2,
+                (minimumX, minimumZ, maximumX, maximumZ) -> riverSample(
+                        RiverRouteState.WET,
+                        RiverSection.CHANNEL
+                ),
+                (x, z) -> x == 0 && z == 0 ? tunnel : null,
+                (x, z) -> IrisRiverSurfaceSample.none(70D, 63D)
+        );
+
+        assertEquals(RiverCaveAction.WET_SOURCE, plan.actions().get(new CavePosition(0, 12, 0)));
+        assertEquals(RiverCaveAction.SEAL_GUARD, plan.actions().get(new CavePosition(1, 12, 0)));
+        assertFalse(plan.actions().containsKey(new CavePosition(1, 14, 0)));
+        assertEquals(
+                new CaveVoxelPrecondition(CaveVoxel.CAVE_AIR, false),
+                plan.preconditions().get(new CavePosition(1, 14, 0))
+        );
+        assertTrue(MantleRiverHydrologyComponent.preconditionsHold(view, plan.preconditions()));
+    }
+
+    @Test
+    public void buriedChannelRejectsSurfaceOpenCaveAir() {
+        TestVoxelView view = new TestVoxelView();
+        CavePosition contact = new CavePosition(1, 12, 0);
+        view.set(contact, CaveVoxel.CAVE_AIR);
+        view.open(contact);
+        IrisRiverTunnelSample tunnel = new IrisRiverTunnelSample(
+                riverSample(RiverRouteState.WET, RiverSection.CHANNEL),
+                10,
+                12,
+                14
+        );
+
+        MantleRiverHydrologyComponent.TunnelPlan plan = MantleRiverHydrologyComponent.planTunnels(
+                view,
+                0,
+                0,
+                1,
+                2,
+                (minimumX, minimumZ, maximumX, maximumZ) -> riverSample(
+                        RiverRouteState.WET,
+                        RiverSection.CHANNEL
+                ),
+                (x, z) -> x == 0 && z == 0 ? tunnel : null,
+                (x, z) -> IrisRiverSurfaceSample.none(70D, 63D)
+        );
+
+        assertTrue(plan.actions().isEmpty());
+    }
+
+    @Test
+    public void buriedChannelStillRejectsAnUncontainedFluidCave() {
+        TestVoxelView view = new TestVoxelView();
+        view.set(new CavePosition(1, 12, 0), CaveVoxel.COMPATIBLE_FLUID);
+        IrisRiverTunnelSample tunnel = new IrisRiverTunnelSample(
+                riverSample(RiverRouteState.WET, RiverSection.CHANNEL),
+                10,
+                12,
+                14
+        );
+
+        MantleRiverHydrologyComponent.TunnelPlan plan = MantleRiverHydrologyComponent.planTunnels(
+                view,
+                0,
+                0,
+                1,
+                2,
                 (minimumX, minimumZ, maximumX, maximumZ) -> riverSample(
                         RiverRouteState.WET,
                         RiverSection.CHANNEL
@@ -148,6 +216,8 @@ public class MantleRiverHydrologyComponentTest {
         TestVoxelView view = new TestVoxelView();
         view.set(new CavePosition(1, 11, 0), CaveVoxel.COMPATIBLE_FLUID);
         view.set(new CavePosition(1, 12, 0), CaveVoxel.COMPATIBLE_FLUID);
+        view.set(new CavePosition(1, 13, 0), CaveVoxel.CAVE_AIR);
+        view.set(new CavePosition(1, 14, 0), CaveVoxel.CAVE_AIR);
         IrisRiverTunnelSample tunnel = new IrisRiverTunnelSample(
                 riverSample(RiverRouteState.WET, RiverSection.CHANNEL),
                 10,
@@ -168,6 +238,7 @@ public class MantleRiverHydrologyComponentTest {
                 0,
                 0,
                 1,
+                2,
                 (minimumX, minimumZ, maximumX, maximumZ) -> riverSample(
                         RiverRouteState.WET,
                         RiverSection.CHANNEL
@@ -177,6 +248,7 @@ public class MantleRiverHydrologyComponentTest {
         );
 
         assertEquals(RiverCaveAction.WET_SOURCE, plan.actions().get(new CavePosition(0, 12, 0)));
+        assertEquals(RiverCaveAction.DRY_AIR, plan.actions().get(new CavePosition(0, 14, 0)));
         assertFalse(plan.preconditions().containsKey(new CavePosition(1, 12, 0)));
     }
 
@@ -199,6 +271,7 @@ public class MantleRiverHydrologyComponentTest {
                 0,
                 0,
                 1,
+                2,
                 (minimumX, minimumZ, maximumX, maximumZ) -> riverSample(
                         RiverRouteState.WET,
                         RiverSection.CHANNEL
@@ -344,6 +417,29 @@ public class MantleRiverHydrologyComponentTest {
     }
 
     @Test
+    public void generatedTargetKeepsItsGrottoShellBelowTheRiverBed() {
+        IrisRiverCaves caves = caves()
+                .setDryHeadroom(4)
+                .setGrottoVerticalRadius(6)
+                .setMaxBoreDepth(64);
+        CavePosition entry = new CavePosition(0, 54, 0);
+        int waterHeadY = 48;
+
+        CavePosition target = MantleRiverHydrologyComponent.findGeneratedTarget(
+                new TestVoxelView(),
+                caves,
+                entry,
+                waterHeadY,
+                0,
+                0
+        );
+
+        assertEquals(new CavePosition(0, 46, 0), target);
+        assertTrue(target.y() + caves.getGrottoVerticalRadius() < entry.y());
+        assertTrue(target.y() + caves.getGrottoVerticalRadius() >= waterHeadY + caves.getDryHeadroom());
+    }
+
+    @Test
     public void fluidPolicyMappingPreservesReplaceSemantics() {
         assertEquals(
                 RiverCaveFluidPolicy.REJECT_EXISTING,
@@ -436,6 +532,7 @@ public class MantleRiverHydrologyComponentTest {
                 3,
                 -4,
                 6,
+                2,
                 (minimumX, minimumZ, maximumX, maximumZ) -> {
                     footprintSamples.incrementAndGet();
                     assertEquals(42D, minimumX, 0D);

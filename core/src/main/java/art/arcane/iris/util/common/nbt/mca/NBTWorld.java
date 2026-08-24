@@ -78,10 +78,11 @@ public class NBTWorld {
                         IrisLogging::info,
                         IrisLogging::debug,
                         (message, error) -> {
-                            IrisLogging.error(message);
                             if (error != null) {
-                                error.printStackTrace();
+                                IrisLogging.reportError(message, error);
+                                return;
                             }
+                            IrisLogging.error(message);
                         }
                 ),
                 M::ms,

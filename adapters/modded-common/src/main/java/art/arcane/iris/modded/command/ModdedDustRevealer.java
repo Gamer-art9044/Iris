@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.engine.framework.Engine;
@@ -46,8 +47,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.biome.Biome;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -62,7 +61,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 public final class ModdedDustRevealer {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int MAX_HITS = 2_048;
     private static final int PARTICLE_BATCH_SIZE = 64;
     private static final DustParticleOptions REVEAL_DUST = new DustParticleOptions(0xFFD24A, 1.2F);
@@ -231,7 +229,7 @@ public final class ModdedDustRevealer {
     }
 
     private static void revealFailure(ModdedScheduler scheduler, RevealRun run, Throwable error) {
-        LOGGER.error("Iris dust reveal failed for {} at {}", run.key(), coordinates(run.origin()), error);
+        ModdedIrisLog.error("Iris dust reveal failed for {} at {}", run.key(), coordinates(run.origin()), error);
         scheduler.global(() -> {
             if (ACTIVE_RUNS.remove(run.playerId(), run)) {
                 run.player().sendSystemMessage(Component.literal(
@@ -415,7 +413,7 @@ public final class ModdedDustRevealer {
                 }
             }
         } catch (Throwable error) {
-            LOGGER.error("Iris dust column-object lookup failed at {}, {}, {}",
+            ModdedIrisLog.error("Iris dust column-object lookup failed at {}, {}, {}",
                     x, relativeY + minHeight, z, error);
         }
         return null;
@@ -458,7 +456,7 @@ public final class ModdedDustRevealer {
         try {
             return supplier.get();
         } catch (Throwable error) {
-            LOGGER.error("Iris dust {} failed", operation, error);
+            ModdedIrisLog.error("Iris dust {} failed", operation, error);
             return null;
         }
     }

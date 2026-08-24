@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.service;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.WorldMaintenance;
@@ -37,8 +38,6 @@ import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.io.ReactiveFolder;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import net.minecraft.server.MinecraftServer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.HashSet;
@@ -52,7 +51,6 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ModdedStudioHotloadService implements ModdedTickableService, EnginePlatformHooks {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String STUDIO_DIMENSION_PREFIX = "irisworldgen:studio_";
     private static final long POLL_MILLIS = 250L;
     private static final long CHECK_LATCH_MILLIS = 1_000L;
@@ -237,7 +235,7 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
                 folder.check();
             }
         } catch (Throwable e) {
-            LOGGER.error("Iris studio hotload check failed for {}", dimensionId, e);
+            ModdedIrisLog.error("Iris studio hotload check failed for {}", dimensionId, e);
         }
     }
 
@@ -249,9 +247,9 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
         try {
             engine.hotloadSilently();
             generator.onHotload();
-            LOGGER.info("Iris studio hotload {} pack={} {}ms", dimensionId, engine.getDimension().getLoadKey(), System.currentTimeMillis() - start);
+            ModdedIrisLog.info("Iris studio hotload {} pack={} {}ms", dimensionId, engine.getDimension().getLoadKey(), System.currentTimeMillis() - start);
         } catch (Throwable e) {
-            LOGGER.error("Iris studio hotload failed for {}", dimensionId, e);
+            ModdedIrisLog.error("Iris studio hotload failed for {}", dimensionId, e);
             throw new IllegalStateException("Iris studio hotload failed for " + dimensionId, e);
         }
     }
@@ -275,7 +273,7 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
             IrisData data = engine.getData();
             ModdedWorkspaceGenerator.writeWorkspace(data, data.getDataFolder());
         } catch (Throwable e) {
-            LOGGER.error("Iris {} failed for {}", operation, engine.getDimension().getLoadKey(), e);
+            ModdedIrisLog.error("Iris {} failed for {}", operation, engine.getDimension().getLoadKey(), e);
         }
     }
 

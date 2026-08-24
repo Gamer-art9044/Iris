@@ -85,13 +85,12 @@ public class IrisSettings {
 
     private static IrisSettings read() {
         IrisSettings loaded = new IrisSettings();
-        File s = IrisPlatforms.get().dataFile("settings.json");
+        File s = IrisPlatforms.get().dataFile("iris.json");
 
         if (!s.exists()) {
             try {
                 IO.writeAll(s, new JSONObject(new Gson().toJson(loaded)).toString(4));
             } catch (JSONException | IOException e) {
-                e.printStackTrace();
                 IrisLogging.reportError(e);
             }
 
@@ -106,30 +105,16 @@ public class IrisSettings {
                 loaded = parsed;
             }
 
-            migrateLegacyKeys(loaded, ss);
-
             try {
                 IO.writeAll(s, new JSONObject(new Gson().toJson(loaded)).toString(4));
             } catch (IOException e) {
-                e.printStackTrace();
             }
         } catch (Throwable ee) {
             // IrisLogging.reportError(ee); causes a self-reference & stackoverflow
-            IrisLogging.error("Configuration Error in settings.json! " + ee.getClass().getSimpleName() + ": " + ee.getMessage());
+            IrisLogging.error("Configuration Error in iris.json! " + ee.getClass().getSimpleName() + ": " + ee.getMessage());
         }
 
         return loaded;
-    }
-
-    private static void migrateLegacyKeys(IrisSettings target, String rawJson) {
-        JSONObject root = new JSONObject(rawJson);
-        JSONObject worldObject = root.optJSONObject("world");
-        if (worldObject == null || !worldObject.has("anbientEntitySpawningSystem")) {
-            return;
-        }
-
-        target.getWorld().setAmbientEntitySpawningSystem(worldObject.optBoolean("anbientEntitySpawningSystem", target.getWorld().isAmbientEntitySpawningSystem()));
-        IrisLogging.info("Migrated legacy settings key world.anbientEntitySpawningSystem -> world.ambientEntitySpawningSystem");
     }
 
     public static void invalidate() {
@@ -169,7 +154,6 @@ public class IrisSettings {
             if (parsed == null) {
                 throw new IllegalArgumentException("Iris settings snapshot did not contain an object");
             }
-            migrateLegacyKeys(parsed, rawJson);
         } catch (RuntimeException failure) {
             throw new IllegalArgumentException("Iris settings snapshot is invalid", failure);
         }
@@ -179,12 +163,11 @@ public class IrisSettings {
     }
 
     public void forceSave() {
-        File s = IrisPlatforms.get().dataFile("settings.json");
+        File s = IrisPlatforms.get().dataFile("iris.json");
 
         try {
             IO.writeAll(s, new JSONObject(new Gson().toJson(this)).toString(4));
         } catch (JSONException | IOException e) {
-            e.printStackTrace();
             IrisLogging.reportError(e);
         }
     }
@@ -321,17 +304,18 @@ public class IrisSettings {
     @Data
     public static class IrisSettingsGeneral {
         public String language = "en_US";
+        public boolean metrics = true;
         public boolean commandSounds = true;
         public boolean debug = false;
         public boolean dumpMantleOnError = false;
         public boolean disableNMS = false;
-        public boolean pluginMetrics = true;
         public boolean splashLogoStartup = true;
         public boolean useConsoleCustomColors = true;
         public boolean useCustomColorsIngame = true;
         /**
-         * Boss bar progress loaders for jobs, studio opens, world creation, chunk jobs and pack
-         * downloads. Turning this off keeps the action bar progress line; only the bar goes away.
+         * Boss bars for jobs, Studio opens, chunk jobs, and pack downloads. Ordinary
+         * world creation uses only its action-bar lifecycle meter; creation-time
+         * pregeneration retains its dedicated long-running boss bar.
          */
         public boolean progressBossBar = true;
         public boolean adjustVanillaHeight = false;

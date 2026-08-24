@@ -60,6 +60,6 @@ public final class ModdedSettingsHotloadService implements ModdedTickableService
     }
 
     private static File settingsFile() {
-        return IrisPlatforms.get().dataFile("settings.json");
+        return IrisPlatforms.get().dataFile("iris.json");
     }
 }

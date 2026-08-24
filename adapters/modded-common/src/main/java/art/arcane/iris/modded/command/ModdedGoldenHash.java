@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.runtime.GoldenHashEngine;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.modded.ModdedBlockBuffer;
@@ -29,8 +30,6 @@ import art.arcane.iris.util.project.hunk.Hunk;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,7 +46,6 @@ public final class ModdedGoldenHash {
         VERIFY
     }
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final AtomicBoolean ACTIVE = new AtomicBoolean(false);
 
     private final CommandSourceStack source;
@@ -96,7 +94,7 @@ public final class ModdedGoldenHash {
                 MessageArgument.trusted("threads", Math.max(1, threads)),
                 MessageArgument.untrusted("mode", mode)
         ));
-        LOGGER.info("goldenhash start: dim={} seed={} radius={} threads={} mode={} file={}",
+        ModdedIrisLog.info("goldenhash start: dim={} seed={} radius={} threads={} mode={} file={}",
                 engine.getDimension().getLoadKey(), engine.getSeedManager().getSeed(), boundedRadius, Math.max(1, threads), mode, scan.hashEngine.getGoldenFile().getName());
         Thread thread = new Thread(() -> {
             try {
@@ -182,7 +180,7 @@ public final class ModdedGoldenHash {
 
             @Override
             public void chunkFailed(int chunkX, int chunkZ, Throwable error) {
-                LOGGER.error("goldenhash chunk {},{} failed", chunkX, chunkZ, error);
+                ModdedIrisLog.error("goldenhash chunk {},{} failed", chunkX, chunkZ, error);
                 ModdedGoldenHash.this.fail(IrisLanguage.plain(
                         RuntimeProgressMessages.GOLDEN_CHUNK_FAILED,
                         MessageArgument.trusted("x", chunkX),

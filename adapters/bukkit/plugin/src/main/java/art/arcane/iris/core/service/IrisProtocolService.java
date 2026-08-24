@@ -20,6 +20,7 @@ package art.arcane.iris.core.service;
 
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.protocol.EngineResolver;
+import art.arcane.iris.core.protocol.IrisCursorRequestService;
 import art.arcane.iris.core.protocol.IrisProtocolServer;
 import art.arcane.iris.core.protocol.IrisServerTransport;
 import art.arcane.iris.core.protocol.IrisSession;
@@ -55,6 +56,7 @@ public class IrisProtocolService implements IrisService, PluginMessageListener, 
 
     private IrisSessionRegistry registry;
     private IrisProtocolServer protocolServer;
+    private IrisCursorRequestService cursorService;
     private IrisVisionRequestService visionService;
 
     @Override
@@ -66,6 +68,8 @@ public class IrisProtocolService implements IrisService, PluginMessageListener, 
         protocolServer = new IrisProtocolServer(registry, SERVER_CAPABILITIES, brand(), true);
         EngineResolver engineResolver = IrisProtocolService::resolveEngine;
         protocolServer.setEngineResolver(engineResolver);
+        cursorService = IrisCursorRequestService.create(engineResolver, registry);
+        protocolServer.setCursorInfoHandler(cursorService);
         visionService = IrisVisionRequestService.create(engineResolver, registry);
         protocolServer.setVisionTileHandler(visionService);
         IrisServices.register(IrisProtocolServer.class, protocolServer);
@@ -81,13 +85,22 @@ public class IrisProtocolService implements IrisService, PluginMessageListener, 
         messenger.unregisterIncomingPluginChannel(Iris.instance, IrisProtocol.CHANNEL, this);
         messenger.unregisterOutgoingPluginChannel(Iris.instance, IrisProtocol.CHANNEL);
         IrisSessionRegistry current = registry;
+        IrisCursorRequestService cursor = cursorService;
+        IrisVisionRequestService vision = visionService;
         if (current != null) {
             for (IrisSession session : current.all()) {
                 current.unregister(session.id());
+                if (cursor != null) {
+                    cursor.clearSession(session.id());
+                }
+                if (vision != null) {
+                    vision.clearSession(session.id());
+                }
             }
         }
         registry = null;
         protocolServer = null;
+        cursorService = null;
         visionService = null;
     }
 
@@ -117,6 +130,10 @@ public class IrisProtocolService implements IrisService, PluginMessageListener, 
         }
         String sessionId = event.getPlayer().getUniqueId().toString();
         current.unregister(sessionId);
+        IrisCursorRequestService cursor = cursorService;
+        if (cursor != null) {
+            cursor.clearSession(sessionId);
+        }
         IrisVisionRequestService vision = visionService;
         if (vision != null) {
             vision.clearSession(sessionId);

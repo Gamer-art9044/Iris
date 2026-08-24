@@ -325,7 +325,6 @@ public class IrisEngineMantle implements EngineMantle {
                 panic.add("read.byte.range", start + " " + end);
                 panic.add("read.byte.current", din.count() + "");
                 IrisLogging.reportError(error);
-                error.printStackTrace();
                 panic.panic();
                 TectonicPlate.addError();
             }
@@ -350,7 +349,6 @@ public class IrisEngineMantle implements EngineMantle {
                 panic.add("read.byte.range", start + " " + end);
                 panic.add("read.byte.current", din.count() + "");
                 IrisLogging.reportError(error);
-                error.printStackTrace();
                 panic.panic();
             }
 

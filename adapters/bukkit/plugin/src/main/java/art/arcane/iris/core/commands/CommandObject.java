@@ -24,6 +24,7 @@ import art.arcane.iris.core.link.WorldEditLink;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.runtime.ObjectStudioActivation;
+import art.arcane.iris.core.runtime.StudioOpenCoordinator;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.core.service.ObjectSVC;
 import art.arcane.iris.core.service.StudioSVC;
@@ -171,24 +172,29 @@ public class CommandObject implements DirectorExecutor {
 
         IrisDimension finalHost = hostDimension;
         try {
-            Iris.service(StudioSVC.class).open(commandSender, seed, hostDimension.getLoadKey(), world -> {
-                if (world == null) return;
-                try {
-                    WorldRuntimeControlService.get().applyObjectStudioWorldRules(world);
-                } catch (Throwable e) {
-                    Iris.reportError("Failed to apply object studio world rules for " + world.getName(), e);
-                }
+            Iris.service(StudioSVC.class).open(
+                    commandSender,
+                    seed,
+                    hostDimension.getLoadKey(),
+                    StudioOpenCoordinator.StudioOpenKind.OBJECT,
+                    world -> {
+                        if (world == null) return;
+                        try {
+                            WorldRuntimeControlService.get().applyObjectStudioWorldRules(world);
+                        } catch (Throwable e) {
+                            Iris.reportError("Failed to apply object studio world rules for " + world.getName(), e);
+                        }
 
-                if (commandSender.isPlayer()) {
-                    Player p = commandSender.player();
-                    if (p != null) {
-                        Location target = new Location(world, 0.5D, 66D, 0.5D);
-                        J.runEntity(p, () -> {
-                            BukkitPlatform.teleportAsync(p, target).thenRun(() -> p.setGameMode(GameMode.CREATIVE));
-                        });
-                    }
-                }
-            });
+                        if (commandSender.isPlayer()) {
+                            Player p = commandSender.player();
+                            if (p != null) {
+                                Location target = new Location(world, 0.5D, 66D, 0.5D);
+                                J.runEntity(p, () -> {
+                                    BukkitPlatform.teleportAsync(p, target).thenRun(() -> p.setGameMode(GameMode.CREATIVE));
+                                });
+                            }
+                        }
+                    });
         } catch (Throwable e) {
             Iris.reportError("Failed to open object studio world \"" + finalHost.getLoadKey() + "\".", e);
             commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_OBJECT_FAILED_OPEN_OBJECT_STUDIO, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
@@ -360,7 +366,7 @@ public class CommandObject implements DirectorExecutor {
             o.write(o.getLoadFile());
         } catch (IOException e) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_OBJECT_FAILED_SAVE_OBJECT, MessageArgument.untrusted("value", o.getLoadFile()), MessageArgument.untrusted("value2", String.valueOf(e.getMessage()))));
-            e.printStackTrace();
+            Iris.reportError("Failed to save object " + o.getLoadFile() + ".", e);
         }
     }
 
@@ -426,7 +432,7 @@ public class CommandObject implements DirectorExecutor {
         try {
             IrisConverter.convertSchematics(sender());
         } catch (Exception e) {
-            e.printStackTrace();
+            Iris.reportError("Failed to convert schematics to Iris objects.", e);
         }
 
     }

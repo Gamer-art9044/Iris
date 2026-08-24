@@ -100,7 +100,6 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
                     generated.add(layer.get(random.nextParallelRNG(i + j), (wx + j) / layer.getZoom(), j, (wz - j) / layer.getZoom(), data));
                 } catch (Throwable e) {
                     IrisLogging.reportError(e);
-                    e.printStackTrace();
                 }
             }
 

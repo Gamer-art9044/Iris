@@ -52,10 +52,6 @@ final class MantleRiverCaveVoxelView implements MantleRiverHydrologyComponent.Tu
 
     @Override
     public CaveVoxel voxelAt(CavePosition position) {
-        RiverCaveHydrology hydrology = dataIfPresent(position, RiverCaveHydrology.class);
-        if (hydrology != null && hydrology.carves()) {
-            return hydrology.isWet() ? CaveVoxel.COMPATIBLE_FLUID : CaveVoxel.CAVE_AIR;
-        }
         MatterCavern cavern = dataIfPresent(position, MatterCavern.class);
         if (cavern != null) {
             if (cavern.isLava()) {

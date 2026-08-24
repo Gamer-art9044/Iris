@@ -18,22 +18,15 @@
 
 package art.arcane.iris.core.tools;
 
-import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeProgressMessages;
-import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.localization.TextKey;
-import org.bukkit.Bukkit;
-import org.bukkit.boss.BarColor;
-import org.bukkit.boss.BarStyle;
-import org.bukkit.boss.BossBar;
 
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -56,8 +49,6 @@ final class WorldCreationProgressReporter {
     private final AtomicBoolean playerRenderQueued;
     private final AtomicInteger taskId;
     private final AtomicLong nextConsoleUpdate;
-    private volatile BossBar bossBar;
-    private volatile boolean hudDisabled;
 
     private WorldCreationProgressReporter(VolmitSender sender, String worldName) {
         this.sender = sender;
@@ -72,43 +63,12 @@ final class WorldCreationProgressReporter {
         this.playerRenderQueued = new AtomicBoolean(false);
         this.taskId = new AtomicInteger(-1);
         this.nextConsoleUpdate = new AtomicLong(0L);
-
-        this.bossBar = null;
-        this.hudDisabled = false;
     }
 
     static WorldCreationProgressReporter start(VolmitSender sender, String worldName) {
         WorldCreationProgressReporter reporter = new WorldCreationProgressReporter(sender, worldName);
-        if (sender.isPlayer() && sender.player() != null
-                && IrisSettings.get().getGeneral().isProgressBossBar()) {
-            try {
-                J.sfut(reporter::initializePlayerHud).get(5L, TimeUnit.SECONDS);
-            } catch (Throwable failure) {
-                reporter.hudDisabled = true;
-                J.runGlobal(reporter::releaseHud);
-                IrisLogging.reportError("Failed to initialize world creation progress HUD for \""
-                        + worldName + "\".", failure);
-            }
-        }
         reporter.taskId.set(J.ar(reporter::tick, 3));
         return reporter;
-    }
-
-    private void initializePlayerHud() {
-        if (hudDisabled) {
-            return;
-        }
-        bossBar = Bukkit.createBossBar(
-                IrisLanguage.text(
-                        RuntimeProgressMessages.WORLD_CREATE_BOSSBAR_WORKING,
-                        MessageArgument.untrusted("world", worldName)
-                ),
-                BarColor.BLUE,
-                BarStyle.SEGMENTED_20
-        );
-        bossBar.setProgress(0.01D);
-        bossBar.addPlayer(sender.player());
-        bossBar.setVisible(true);
     }
 
     void update(double progress, String stage) {
@@ -151,29 +111,19 @@ final class WorldCreationProgressReporter {
             if (!terminalRendered.compareAndSet(false, true)) {
                 return;
             }
-            renderTerminal(currentProgress, currentStage, currentDetail, percent, elapsed);
+            renderTerminal(currentProgress, currentStage, currentDetail, elapsed);
             return;
         }
 
         if (sender.isPlayer() && sender.player() != null) {
-            if (hasPlayerHud()) {
-                schedulePlayerRender(() -> renderPlayerProgress(
-                        currentProgress,
-                        currentStage,
-                        currentDetail,
-                        percent,
-                        elapsed
-                ));
-            } else {
-                schedulePlayerRender(() -> sender.sendAction(IrisLanguage.text(
-                        RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION,
-                        MessageArgument.trusted("bar", buildPlayerBar(currentProgress)),
-                        MessageArgument.trusted("percent", percent),
-                        MessageArgument.trusted("stage", currentStage),
-                        MessageArgument.trusted("detail", currentDetail),
-                        MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
-                )));
-            }
+            schedulePlayerRender(() -> sender.sendAction(IrisLanguage.text(
+                    RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION,
+                    MessageArgument.trusted("bar", buildPlayerBar(currentProgress)),
+                    MessageArgument.trusted("percent", percent),
+                    MessageArgument.trusted("stage", currentStage),
+                    MessageArgument.trusted("detail", currentDetail),
+                    MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
+            )));
             return;
         }
 
@@ -192,59 +142,20 @@ final class WorldCreationProgressReporter {
         }
     }
 
-    private void renderPlayerProgress(
-            double currentProgress,
-            String currentStage,
-            String currentDetail,
-            int percent,
-            long elapsed
-    ) {
-        bossBar.setProgress(currentProgress);
-        bossBar.setTitle(IrisLanguage.text(
-                RuntimeProgressMessages.WORLD_CREATE_BOSSBAR_PROGRESS,
-                MessageArgument.untrusted("world", worldName),
-                MessageArgument.trusted("percent", percent),
-                MessageArgument.trusted("stage", currentStage)
-        ));
-
-        sender.sendAction(IrisLanguage.text(
-                RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION,
-                MessageArgument.trusted("bar", buildPlayerBar(currentProgress)),
-                MessageArgument.trusted("percent", percent),
-                MessageArgument.trusted("stage", currentStage),
-                MessageArgument.trusted("detail", currentDetail),
-                MessageArgument.trusted("elapsed", Form.duration(elapsed, 0))
-        ));
-    }
-
     private void renderTerminal(
             double currentProgress,
             String currentStage,
             String currentDetail,
-            int percent,
             long elapsed
     ) {
         if (sender.isPlayer() && sender.player() != null) {
-            if (hasPlayerHud()) {
-                schedulePlayerTerminalRender(() -> renderPlayerTerminal(
-                        currentProgress,
-                        currentStage,
-                        currentDetail,
-                        percent,
-                        elapsed
-                ));
-            } else {
-                schedulePlayerTerminalRender(() -> sender.sendAction(IrisLanguage.text(
-                        failed.get()
-                                ? RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION_FAILED
-                                : RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION_READY,
-                        MessageArgument.trusted("bar", buildPlayerBar(currentProgress)),
-                        MessageArgument.trusted("percent", percent),
-                        MessageArgument.trusted("stage", currentStage),
-                        MessageArgument.trusted("detail", currentDetail),
-                        MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
-                )));
-            }
+            schedulePlayerTerminalRender(() -> sender.sendAction(terminalPlayerMessage(
+                    failed.get(),
+                    currentProgress,
+                    currentStage,
+                    currentDetail,
+                    elapsed
+            )));
             return;
         }
 
@@ -255,48 +166,6 @@ final class WorldCreationProgressReporter {
                 MessageArgument.untrusted("world", worldName),
                 MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
         ));
-    }
-
-    private void renderPlayerTerminal(
-            double currentProgress,
-            String currentStage,
-            String currentDetail,
-            int percent,
-            long elapsed
-    ) {
-        bossBar.setProgress(currentProgress);
-        bossBar.setColor(failed.get() ? BarColor.RED : BarColor.GREEN);
-        bossBar.setTitle(IrisLanguage.text(
-                failed.get()
-                        ? RuntimeProgressMessages.WORLD_CREATE_BOSSBAR_FAILED
-                        : RuntimeProgressMessages.WORLD_CREATE_BOSSBAR_READY,
-                MessageArgument.untrusted("world", worldName),
-                MessageArgument.trusted("percent", percent)
-        ));
-
-        sender.sendAction(IrisLanguage.text(
-                failed.get()
-                        ? RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION_FAILED
-                        : RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION_READY,
-                MessageArgument.trusted("bar", buildPlayerBar(currentProgress)),
-                MessageArgument.trusted("percent", percent),
-                MessageArgument.trusted("stage", currentStage),
-                MessageArgument.trusted("detail", currentDetail),
-                MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
-        ));
-
-        Runnable cleanup = () -> {
-            bossBar.removeAll();
-            bossBar.setVisible(false);
-        };
-        J.runEntity(sender.player(), cleanup, 60, cleanup);
-    }
-
-    private boolean hasPlayerHud() {
-        return !hudDisabled
-                && sender.isPlayer()
-                && sender.player() != null
-                && bossBar != null;
     }
 
     private void schedulePlayerRender(Runnable render) {
@@ -314,24 +183,10 @@ final class WorldCreationProgressReporter {
             return;
         }
         playerRenderQueued.set(false);
-        hudDisabled = true;
-        J.runGlobal(this::releaseHud);
     }
 
     private void schedulePlayerTerminalRender(Runnable render) {
-        if (J.runEntity(sender.player(), render)) {
-            return;
-        }
-        hudDisabled = true;
-        J.runGlobal(this::releaseHud);
-    }
-
-    private void releaseHud() {
-        BossBar activeBossBar = bossBar;
-        if (activeBossBar != null) {
-            activeBossBar.removeAll();
-            activeBossBar.setVisible(false);
-        }
+        J.runEntity(sender.player(), render);
     }
 
     private void cancel() {
@@ -357,6 +212,29 @@ final class WorldCreationProgressReporter {
 
     static String buildConsoleBar(double progress) {
         return buildBar(progress, CONSOLE_BAR_WIDTH, false);
+    }
+
+    static String terminalPlayerMessage(
+            boolean failed,
+            double progress,
+            String stage,
+            String detail,
+            long elapsed
+    ) {
+        if (failed) {
+            return IrisLanguage.text(
+                    RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION_FAILED,
+                    MessageArgument.trusted("bar", buildPlayerBar(progress)),
+                    MessageArgument.trusted("stage", stage),
+                    MessageArgument.trusted("detail", detail),
+                    MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
+            );
+        }
+        return IrisLanguage.text(
+                RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION_READY,
+                MessageArgument.trusted("bar", buildPlayerBar(progress)),
+                MessageArgument.trusted("elapsed", Form.duration(elapsed, 1))
+        );
     }
 
     private static String buildBar(double progress, int width, boolean colored) {

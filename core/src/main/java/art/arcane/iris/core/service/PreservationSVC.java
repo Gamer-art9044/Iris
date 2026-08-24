@@ -63,7 +63,7 @@ public class PreservationSVC implements IrisService, PreservationRegistry {
             p += i.getUsage();
         }
 
-        IrisLogging.info("Cached " + Form.f(s) + " / " + Form.f(m) + " (" + Form.pc(p / mf) + ") from " + caches.size() + " Caches");
+        IrisLogging.debug("Cached " + Form.f(s) + " / " + Form.f(m) + " (" + Form.pc(p / mf) + ") from " + caches.size() + " Caches");
     }
 
     public void dereference() {
@@ -104,7 +104,7 @@ public class PreservationSVC implements IrisService, PreservationRegistry {
                 if (i.isAlive()) {
                     try {
                         i.interrupt();
-                        IrisLogging.info("Shutdown Thread " + i.getName());
+                        IrisLogging.debug("Shutdown Thread " + i.getName());
                     } catch (Throwable e) {
                         IrisLogging.reportError(e);
                     }
@@ -114,7 +114,7 @@ public class PreservationSVC implements IrisService, PreservationRegistry {
             for (ExecutorService i : services) {
                 try {
                     i.shutdownNow();
-                    IrisLogging.info("Shutdown Executor Service " + i);
+                    IrisLogging.debug("Shutdown Executor Service " + i);
                 } catch (Throwable e) {
                     IrisLogging.reportError(e);
                 }

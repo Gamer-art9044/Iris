@@ -22,8 +22,6 @@ import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.storage.LevelResource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
@@ -41,7 +39,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class ModdedDimensionRegistryStore {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String FILE_NAME = "iris-dimensions.json";
     private static final Pattern ID_FIELD = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
 
@@ -68,13 +65,13 @@ public final class ModdedDimensionRegistryStore {
         try {
             return load(file);
         } catch (RuntimeException corrupt) {
-            LOGGER.error("Iris persistent dimension registry at {} is corrupt; quarantining it and continuing boot",
+            ModdedIrisLog.error("Iris persistent dimension registry at {} is corrupt; quarantining it and continuing boot",
                     file, corrupt);
             List<String> lostIds = salvageIds(file);
             if (lostIds.isEmpty()) {
-                LOGGER.error("Iris could not recover any dimension ids from the corrupt registry; re-create the worlds with /iris world create");
+                ModdedIrisLog.error("Iris could not recover any dimension ids from the corrupt registry; re-create the worlds with /iris world create");
             } else {
-                LOGGER.error("Iris lost {} persistent dimension(s) from the corrupt registry: {}",
+                ModdedIrisLog.error("Iris lost {} persistent dimension(s) from the corrupt registry: {}",
                         lostIds.size(), String.join(", ", lostIds));
             }
             quarantine(file);
@@ -93,7 +90,7 @@ public final class ModdedDimensionRegistryStore {
                 }
             }
         } catch (IOException | RuntimeException unreadable) {
-            LOGGER.warn("Iris could not scan the corrupt persistent dimension registry at {} for lost ids", file, unreadable);
+            ModdedIrisLog.warn("Iris could not scan the corrupt persistent dimension registry at {} for lost ids", file, unreadable);
         }
         return ids;
     }
@@ -102,9 +99,9 @@ public final class ModdedDimensionRegistryStore {
         Path broken = file.resolveSibling(FILE_NAME + ".broken-" + System.currentTimeMillis());
         try {
             Files.move(file, broken, StandardCopyOption.REPLACE_EXISTING);
-            LOGGER.error("Iris moved the corrupt persistent dimension registry to {}", broken);
+            ModdedIrisLog.error("Iris moved the corrupt persistent dimension registry to {}", broken);
         } catch (IOException failure) {
-            LOGGER.error("Iris could not quarantine the corrupt persistent dimension registry at {}; delete it by hand",
+            ModdedIrisLog.error("Iris could not quarantine the corrupt persistent dimension registry at {}; delete it by hand",
                     file, failure);
         }
     }
@@ -134,14 +131,14 @@ public final class ModdedDimensionRegistryStore {
                     PersistentDimension previous = deduplicated.putIfAbsent(
                             id, new PersistentDimension(id, pack, dimension, entry.getLong("seed")));
                     if (previous != null) {
-                        LOGGER.warn("Iris persistent dimension registry entry {} in {} duplicates id '{}'; keeping the first",
+                        ModdedIrisLog.warn("Iris persistent dimension registry entry {} in {} duplicates id '{}'; keeping the first",
                                 index, file, id);
                     }
                 } catch (RuntimeException invalidEntry) {
                     if (raw != null) {
                         unparsed.add(raw);
                     }
-                    LOGGER.warn("Iris persistent dimension registry entry {} in {} is invalid ({}); kept verbatim: {}",
+                    ModdedIrisLog.warn("Iris persistent dimension registry entry {} in {} is invalid ({}); kept verbatim: {}",
                             index, file, invalidEntry.getMessage(), raw);
                 }
             }

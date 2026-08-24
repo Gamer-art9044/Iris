@@ -172,9 +172,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         try {
             InstanceState.updateInstanceId();
         } catch (Throwable ex) {
-            System.err.println("[Iris] Failed to update instance id: " + ex.getClass().getSimpleName()
-                    + (ex.getMessage() == null ? "" : " - " + ex.getMessage()));
-            ex.printStackTrace();
+            IrisLogging.reportError("Failed to update the Iris instance id.", ex);
         }
     }
 
@@ -350,7 +348,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 try {
                     object.run();
                 } catch (Throwable e) {
-                    e.printStackTrace();
                     Iris.reportError(e);
                 }
             }, RNG.r.i(100, 1200));
@@ -490,7 +487,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             pw.close();
             Iris.info("DUMPED! See " + fi.getAbsolutePath());
         } catch (Throwable e) {
-            e.printStackTrace();
+            Iris.reportError("Failed to write the Iris thread dump.", e);
         }
     }
 
@@ -661,7 +658,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 (EngineWorldManagerProvider) IrisWorldManager::new);
         IrisServices.register(WorldDeletionQueue.class, pendingWorldDeletes);
         IrisServices.register(ManagedWorldLoader.class, (ManagedWorldLoader) this::loadManagedWorld);
-        SettingsHotloadWatch watch = new SettingsHotloadWatch(getDataFile("settings.json"));
+        SettingsHotloadWatch watch = new SettingsHotloadWatch(getDataFile("iris.json"));
         settingsHotloadWatch = watch;
         // Stale-temp cleanup must complete before services enable: StudioSVC.onEnable downloads
         // packs through cache/temp on an async thread, and a concurrent delete of that folder
@@ -774,7 +771,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     private void autoStartStudio() {
         if (IrisSettings.get().getStudio().isAutoStartDefaultStudio()) {
-            Iris.info("Starting up auto Studio!");
+            Iris.debug("Starting up auto Studio!");
             try {
                 Player r = new KList<>(getServer().getOnlinePlayers()).getRandom();
                 Iris.service(StudioSVC.class).open(r != null ? new VolmitSender(r) : getSender(), 1337, IrisSettings.get().getGenerator().getDefaultWorldType(), (w) -> {
@@ -782,7 +779,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                         final Location spawn = w.getSpawnLocation();
                         for (Player i : getServer().getOnlinePlayers()) {
                             final Runnable playerTask = () -> {
-                                i.setGameMode(GameMode.CREATIVE);
+                                i.setGameMode(GameMode.SPECTATOR);
                                 BukkitPlatform.teleportAsync(i, spawn);
                             };
                             if (!J.runEntity(i, playerTask)) {
@@ -802,10 +799,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             audiences = new Bindings.Adventure(this);
             BukkitPlatform.hostAudiences(audiences);
         } catch (Throwable e) {
-            e.printStackTrace();
             IrisSettings.get().getGeneral().setUseConsoleCustomColors(false);
             IrisSettings.get().getGeneral().setUseCustomColorsIngame(false);
-            Iris.error("Failed to setup Adventure API... No custom colors :(");
+            Iris.reportError("Failed to set up Adventure; custom colors are disabled.", e);
         }
     }
 
@@ -903,14 +899,14 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         if (IrisToolbelt.isServerStopping()) {
             quiesceRuntimeForServerShutdown("pre-unload:" + reason);
             startPostStopFinisher();
-            Iris.info("Pre-unload hook deferred generator teardown until Paper closes its chunk schedulers.");
+            Iris.debug("Pre-unload hook deferred generator teardown until Paper closes its chunk schedulers.");
             return;
         }
         if (alreadyDrained.get()) {
-            Iris.info("Pre-unload hook skipped; Iris already drained.");
+            Iris.debug("Pre-unload hook skipped; Iris already drained.");
             return;
         }
-        Iris.info("BileTools pre-unload hook fired (" + reason + "). Freezing all Iris worlds.");
+        Iris.debug("BileTools pre-unload hook fired (" + reason + "). Freezing all Iris worlds.");
         drainOnce("pre-unload:" + reason, 45L);
     }
 
@@ -1088,7 +1084,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             }
         }
         if (generators.isEmpty()) {
-            Iris.info("No Iris worlds to freeze.");
+            Iris.debug("No Iris worlds to freeze.");
             return;
         }
 
@@ -1112,7 +1108,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         try {
             CompletableFuture.allOf(closes.toArray(new CompletableFuture<?>[0]))
                     .get(timeoutSeconds, TimeUnit.SECONDS);
-            Iris.info("All Iris chunk generators parked. Safe to unload.");
+            Iris.debug("All Iris chunk generators parked. Safe to unload.");
         } catch (TimeoutException e) {
             Iris.warn("Iris generator drain timed out after " + timeoutSeconds + "s; unload proceeding anyway.");
         } catch (InterruptedException e) {
@@ -1201,7 +1197,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 try {
                     Iris.syncJobs.next().run();
                 } catch (Throwable e) {
-                    e.printStackTrace();
                     Iris.reportError(e);
                 }
             }
@@ -1209,7 +1204,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     }
 
     private void bstats() {
-        if (IrisSettings.get().getGeneral().isPluginMetrics()) {
+        if (IrisSettings.get().getGeneral().isMetrics()) {
             Bindings.setupBstats(this);
         }
     }

@@ -505,7 +505,7 @@ public final class GoldenHashEngine {
                         MessageArgument.untrusted("file", diag.getName())
                 ));
             }
-            IrisLogging.info("goldenhash diag: chunk=" + chunkX + "," + chunkZ + " repeatStable=" + diffs.isEmpty() + " -> " + diag.getAbsolutePath());
+            IrisLogging.debug("goldenhash diag: chunk=" + chunkX + "," + chunkZ + " repeatStable=" + diffs.isEmpty() + " -> " + diag.getAbsolutePath());
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             feedback.fail(IrisLanguage.plain(

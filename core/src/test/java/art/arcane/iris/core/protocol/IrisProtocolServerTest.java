@@ -351,6 +351,28 @@ public class IrisProtocolServerTest {
     }
 
     @Test
+    public void visionTileOutsideWorldBoundsIsRejectedBeforeRendering() {
+        RecordingTransport transport = new RecordingTransport();
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        IrisProtocolServer server = new IrisProtocolServer(registry, SERVER_CAPABILITIES, BRAND, true);
+        IrisSession session = new IrisSession("s1", transport);
+        registry.register(session);
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.ClientHello(
+                IrisProtocol.PROTOCOL_VERSION,
+                IrisProtocol.CAPABILITY_VISION)));
+        RecordingVisionHandler handler = new RecordingVisionHandler();
+        server.setVisionTileHandler(handler);
+
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.VisionTileRequest(Integer.MAX_VALUE, 0, 0)));
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.VisionTileRequest(0, Integer.MIN_VALUE, 8)));
+        server.onClientFrame("s1", IrisMessageCodec.encode(new IrisMessage.VisionTileRequest(0, 0, Integer.MAX_VALUE)));
+
+        assertEquals(1, handler.count);
+        assertEquals(2L, server.visionOutOfBoundsCount());
+        assertEquals(1L, server.visionTileForwardedCount());
+    }
+
+    @Test
     public void visionTileRequestBudgetDropsExcessWithinWindow() {
         RecordingTransport transport = new RecordingTransport();
         IrisSessionRegistry registry = new IrisSessionRegistry();

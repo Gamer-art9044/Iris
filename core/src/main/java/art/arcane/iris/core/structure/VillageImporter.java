@@ -1204,7 +1204,6 @@ public final class VillageImporter {
     private static void reportFailure(Throwable failure) {
         IrisLogging.reportError(failure);
         if (shouldPrintFullTrace(failure)) {
-            failure.printStackTrace();
         }
     }
 

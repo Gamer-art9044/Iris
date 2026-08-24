@@ -124,7 +124,6 @@ public final class StructureCaptureImporter {
                     failed++;
                     sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STRUCTURE_CAPTURE_IMPORTER_FAIL_2, MessageArgument.untrusted("key", String.valueOf(key)), MessageArgument.untrusted("error", String.valueOf(e.getMessage()))));
                     IrisLogging.reportError(e);
-                    e.printStackTrace();
                 }
 
                 int processed = imported + skipped + failed;

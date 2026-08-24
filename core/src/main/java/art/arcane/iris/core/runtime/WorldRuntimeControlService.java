@@ -14,6 +14,7 @@ import art.arcane.iris.util.common.scheduling.J;
 import io.papermc.lib.PaperLib;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
+import org.bukkit.GameMode;
 import org.bukkit.GameRule;
 import org.bukkit.HeightMap;
 import org.bukkit.Location;
@@ -21,7 +22,6 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.Levelled;
 import org.bukkit.block.data.Waterlogged;
 import org.bukkit.entity.Player;
 import org.bukkit.event.world.TimeSkipEvent;
@@ -32,10 +32,13 @@ import org.bukkit.util.VoxelShape;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class WorldRuntimeControlService {
     private static final int MAX_SAFE_ENTRY_HORIZONTAL_RADIUS = 15;
@@ -312,16 +315,73 @@ public final class WorldRuntimeControlService {
     }
 
     public CompletableFuture<Boolean> teleport(Player player, Location location) {
+        return scheduleTeleport(player, location, null);
+    }
+
+    public CompletableFuture<Boolean> teleportInMode(
+            Player player,
+            Location location,
+            GameMode gameMode
+    ) {
+        return scheduleTeleport(
+                player,
+                location,
+                Objects.requireNonNull(gameMode, "Teleport game mode"));
+    }
+
+    static CompletableFuture<Boolean> scheduleTeleport(
+            Player player,
+            Location location,
+            GameMode gameMode
+    ) {
+        return scheduleTeleport(player, location, gameMode, PaperLib::teleportAsync);
+    }
+
+    static CompletableFuture<Boolean> scheduleTeleport(
+            Player player,
+            Location location,
+            GameMode gameMode,
+            TeleportExecutor teleporter
+    ) {
         if (player == null || location == null) {
             return CompletableFuture.completedFuture(false);
         }
+        Objects.requireNonNull(teleporter, "teleporter");
 
         CompletableFuture<Boolean> future = new CompletableFuture<>();
+        GameModeRestore modeRestore = new GameModeRestore(player);
+        AtomicReference<CompletableFuture<Boolean>> activeTeleport = new AtomicReference<>();
+        future.whenComplete((success, failure) -> {
+            if (Boolean.TRUE.equals(success)) {
+                return;
+            }
+            CompletableFuture<Boolean> teleport = activeTeleport.get();
+            if (teleport != null && !teleport.isDone()) {
+                teleport.cancel(false);
+            }
+            modeRestore.restore();
+        });
         boolean scheduled = J.runEntity(player, () -> {
             try {
-                CompletableFuture<Boolean> teleportFuture = PaperLib.teleportAsync(player, location);
+                if (future.isDone()) {
+                    return;
+                }
+                if (gameMode != null) {
+                    modeRestore.apply(gameMode);
+                    if (future.isDone()) {
+                        modeRestore.restore();
+                        return;
+                    }
+                }
+                CompletableFuture<Boolean> teleportFuture = teleporter.teleport(player, location);
                 if (teleportFuture == null) {
                     future.complete(false);
+                    return;
+                }
+                activeTeleport.set(teleportFuture);
+                if (future.isDone()) {
+                    teleportFuture.cancel(false);
+                    modeRestore.restore();
                     return;
                 }
 
@@ -332,8 +392,9 @@ public final class WorldRuntimeControlService {
                     }
 
                     if (Boolean.TRUE.equals(success)) {
-                        J.runEntity(player, () -> IrisServices.get(BoardSVC.class).updatePlayer(player));
-                        future.complete(true);
+                        if (future.complete(true)) {
+                            J.runEntity(player, () -> IrisServices.get(BoardSVC.class).updatePlayer(player));
+                        }
                         return;
                     }
 
@@ -344,7 +405,7 @@ public final class WorldRuntimeControlService {
             }
         });
         if (!scheduled) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Failed to schedule teleport for " + player.getName() + "."));
+            future.completeExceptionally(new IllegalStateException("Failed to schedule teleport for " + player.getName() + "."));
         }
 
         return future;
@@ -431,62 +492,6 @@ public final class WorldRuntimeControlService {
         return null;
     }
 
-    static Location findTopSafeStudioLocation(World world, Location source) {
-        Location dryLocation = findTopSafeLocation(world, source);
-        if (dryLocation != null) {
-            return dryLocation;
-        }
-
-        int sourceX = source.getBlockX();
-        int sourceZ = source.getBlockZ();
-        int chunkX = sourceX >> 4;
-        int chunkZ = sourceZ >> 4;
-        if (!world.isChunkLoaded(chunkX, chunkZ)) {
-            return null;
-        }
-
-        int minimumFloorY = world.getMinHeight();
-        int maximumFloorY = world.getMaxHeight() - 3;
-        if (minimumFloorY > maximumFloorY) {
-            return null;
-        }
-
-        int minimumX = chunkX << 4;
-        int minimumZ = chunkZ << 4;
-        int maximumX = minimumX + 15;
-        int maximumZ = minimumZ + 15;
-        for (int radius = 0; radius <= MAX_SAFE_ENTRY_HORIZONTAL_RADIUS; radius++) {
-            for (int offsetX = -radius; offsetX <= radius; offsetX++) {
-                for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
-                    if (Math.max(Math.abs(offsetX), Math.abs(offsetZ)) != radius) {
-                        continue;
-                    }
-
-                    int x = sourceX + offsetX;
-                    int z = sourceZ + offsetZ;
-                    if (x < minimumX || x > maximumX || z < minimumZ || z > maximumZ) {
-                        continue;
-                    }
-
-                    Location waterLocation = findSafeWaterSurfaceLocationInColumn(
-                            world,
-                            x,
-                            z,
-                            minimumFloorY,
-                            maximumFloorY,
-                            source.getYaw(),
-                            source.getPitch()
-                    );
-                    if (waterLocation != null) {
-                        return waterLocation;
-                    }
-                }
-            }
-        }
-
-        return null;
-    }
-
     private static Location findSafeLocationInColumn(
             World world,
             int x,
@@ -513,48 +518,6 @@ public final class WorldRuntimeControlService {
         }
 
         return null;
-    }
-
-    private static Location findSafeWaterSurfaceLocationInColumn(
-            World world,
-            int x,
-            int z,
-            int minimumFloorY,
-            int maximumFloorY,
-            float yaw,
-            float pitch
-    ) {
-        int surfaceY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
-        if (surfaceY <= minimumFloorY || surfaceY > maximumFloorY) {
-            return null;
-        }
-
-        Block surface = world.getBlockAt(x, surfaceY, z);
-        if (!isStableWater(surface)) {
-            return null;
-        }
-
-        Block support = world.getBlockAt(x, surfaceY - 1, z);
-        if (!isStableWater(support) && !isSafeFloor(support)) {
-            return null;
-        }
-
-        Block feet = world.getBlockAt(x, surfaceY + 1, z);
-        Block head = world.getBlockAt(x, surfaceY + 2, z);
-        if (!isClearEntryBlock(feet) || !isClearEntryBlock(head)) {
-            return null;
-        }
-
-        return new Location(world, x + BLOCK_CENTER, surfaceY + 1D, z + BLOCK_CENTER, yaw, pitch);
-    }
-
-    private static boolean isStableWater(Block block) {
-        if (block.getType() != Material.WATER || !block.isLiquid()) {
-            return false;
-        }
-
-        BlockData blockData = block.getBlockData();
-        return blockData instanceof Levelled levelled && levelled.getLevel() == 0;
     }
 
     private static boolean isSafeFloor(Block block) {
@@ -812,5 +775,51 @@ public final class WorldRuntimeControlService {
     private static Object invokeNoArg(Object instance, String methodName) throws ReflectiveOperationException {
         Method method = instance.getClass().getMethod(methodName);
         return method.invoke(instance);
+    }
+
+    @FunctionalInterface
+    interface TeleportExecutor {
+        CompletableFuture<Boolean> teleport(Player player, Location location);
+    }
+
+    private static final class GameModeRestore {
+        private final Player player;
+        private final AtomicBoolean changed;
+        private final AtomicBoolean restored;
+        private GameMode previousMode;
+
+        private GameModeRestore(Player player) {
+            this.player = player;
+            changed = new AtomicBoolean(false);
+            restored = new AtomicBoolean(false);
+        }
+
+        private void apply(GameMode targetMode) {
+            GameMode currentMode = player.getGameMode();
+            if (currentMode == targetMode) {
+                return;
+            }
+            previousMode = currentMode;
+            changed.set(true);
+            player.setGameMode(targetMode);
+        }
+
+        private void restore() {
+            if (!changed.get() || !restored.compareAndSet(false, true)) {
+                return;
+            }
+            Runnable restoration = () -> {
+                try {
+                    player.setGameMode(previousMode);
+                } catch (Throwable failure) {
+                    IrisLogging.reportError("Failed to restore a player's game mode after an unsuccessful teleport.", failure);
+                }
+            };
+            if (!J.runEntity(player, restoration)) {
+                IrisLogging.reportError(
+                        "Failed to restore a player's game mode after an unsuccessful teleport.",
+                        new IllegalStateException("The player entity scheduler rejected the game-mode restoration."));
+            }
+        }
     }
 }

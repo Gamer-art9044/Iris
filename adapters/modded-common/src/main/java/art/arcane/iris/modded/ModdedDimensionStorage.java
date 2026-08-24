@@ -23,8 +23,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.storage.LevelResource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -35,7 +33,6 @@ import java.util.List;
 import java.util.stream.Stream;
 
 public final class ModdedDimensionStorage {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final List<String> CHUNK_DATA_FOLDERS = List.of("region", "entities", "poi", "mantle");
 
     private ModdedDimensionStorage() {
@@ -56,7 +53,7 @@ public final class ModdedDimensionStorage {
                     "Iris failed to completely wipe dimension storage at "
                             + storageFolder.getAbsolutePath(), e);
         }
-        LOGGER.info("Iris wiped dimension storage at {}", storageFolder.getAbsolutePath());
+        ModdedIrisLog.info("Iris wiped dimension storage at {}", storageFolder.getAbsolutePath());
     }
 
     private static void deleteRecursively(Path root) throws IOException {

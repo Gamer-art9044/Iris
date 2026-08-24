@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.IrisMessages;
@@ -51,8 +52,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.chunk.ChunkGenerator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -67,7 +66,6 @@ import java.util.concurrent.TimeUnit;
 import art.arcane.volmlib.util.localization.MessageArgument;
 
 public final class IrisModdedCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final long DOWNLOAD_SHUTDOWN_POLL_SECONDS = 15L;
     private static final Object DOWNLOAD_MONITOR = new Object();
 
@@ -82,7 +80,7 @@ public final class IrisModdedCommands {
         LiteralCommandNode<CommandSourceStack> root = dispatcher.register(ModdedCommandTree.rootTree());
         dispatcher.register(Commands.literal("ir").redirect(root));
         dispatcher.register(Commands.literal("irs").redirect(root));
-        IrisLogging.info("Iris /iris command tree registered");
+        IrisLogging.debug("Iris /iris command tree registered");
     }
 
     public static void openDownloadAdmission() {
@@ -108,7 +106,7 @@ public final class IrisModdedCommands {
             try {
                 if (!execution.await(DOWNLOAD_SHUTDOWN_POLL_SECONDS, TimeUnit.SECONDS) && !warned) {
                     warned = true;
-                    LOGGER.warn(execution.isPublishing()
+                    ModdedIrisLog.warn(execution.isPublishing()
                             ? "Waiting for atomic pack publication to finish before Iris shutdown."
                             : "Waiting for the active pack download to cancel before Iris shutdown.");
                 }
@@ -354,7 +352,7 @@ public final class IrisModdedCommands {
                 accepted = scheduler.asyncIfRunning(execution, execution::cancel);
             } catch (Throwable error) {
                 execution.cancel();
-                LOGGER.error("Iris pack download dispatch failed for {}", target, error);
+                ModdedIrisLog.error("Iris pack download dispatch failed for {}", target, error);
                 fail(source, IrisLanguage.plain(
                         ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
                         MessageArgument.untrusted("pack", target),
@@ -363,7 +361,7 @@ public final class IrisModdedCommands {
             }
             if (!accepted) {
                 execution.cancel();
-                LOGGER.error("Iris pack download dispatch rejected for {} because the scheduler is shut down", target);
+                ModdedIrisLog.error("Iris pack download dispatch rejected for {} because the scheduler is shut down", target);
                 fail(source, IrisLanguage.plain(
                         ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
                         MessageArgument.untrusted("pack", target),
@@ -416,7 +414,7 @@ public final class IrisModdedCommands {
             dispatchDownloadFeedback(source, () -> fail(source, error.getMessage()));
             return;
         } catch (IOException | RuntimeException error) {
-            LOGGER.error("Iris pack download failed for {}", target, error);
+            ModdedIrisLog.error("Iris pack download failed for {}", target, error);
         }
         dispatchDownloadFeedback(source, () -> fail(source, IrisLanguage.plain(
                 ModdedCommandMessages.IRIS_MODDED_COMMANDS_PACK_DOWNLOAD_FAILED_SEE_CONSOLE,
@@ -512,7 +510,7 @@ public final class IrisModdedCommands {
             try {
                 return irisGenerator.commandEngine();
             } catch (Throwable e) {
-                LOGGER.error("Iris engine lookup failed for {}", level.dimension().identifier(), e);
+                ModdedIrisLog.error("Iris engine lookup failed for {}", level.dimension().identifier(), e);
                 return null;
             }
         }

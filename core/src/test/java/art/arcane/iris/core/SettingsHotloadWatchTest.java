@@ -43,7 +43,7 @@ public class SettingsHotloadWatchTest {
     public void setUp() throws Exception {
         previousSettings = IrisSettings.settings;
         dataFolder = temporaryFolder.newFolder("iris-hotload");
-        settingsFile = new File(dataFolder, "settings.json");
+        settingsFile = new File(dataFolder, "iris.json");
         overrideFolder = new File(dataFolder, "languages/overrides");
         Files.createDirectories(overrideFolder.toPath());
         String settings = settings("en_US");

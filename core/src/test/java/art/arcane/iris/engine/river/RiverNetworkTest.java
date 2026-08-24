@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -20,6 +21,8 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class RiverNetworkTest {
+    private static final double TWO_PI_FOR_TESTS = StrictMath.PI * 2D;
+
     @Test
     public void mapsNegativeWorldCoordinatesWithFloorDivision() {
         RiverNetwork network = new RiverNetwork(options(1L).build());
@@ -30,6 +33,28 @@ public class RiverNetworkTest {
         assertEquals(new RiverNodeId(0L, 0L), network.nodeAtWorld(0, 0, terrain).id());
         assertEquals(-1, network.tileXForBlock(-1));
         assertEquals(0, network.tileXForBlock(0));
+    }
+
+    @Test
+    public void expandedSamplingAddsOnlyTheRequestedLateralRadius() {
+        RiverNode from = node(0L, 0L, 0D, 0D);
+        RiverNode to = node(1L, 0L, 100D, 0D);
+        RiverTile tile = new RiverTile(
+                0,
+                0,
+                0,
+                -64,
+                128,
+                64,
+                List.of(reach(from, to, 4D, 1D))
+        );
+
+        assertFalse(tile.sample(50D, 5D).present());
+        RiverSample expanded = tile.sampleExpanded(50D, 5D, 2D);
+        assertTrue(expanded.present());
+        assertEquals(RiverSection.BANK, expanded.section());
+        assertEquals(5D, expanded.distance(), 0D);
+        assertThrows(IllegalArgumentException.class, () -> tile.sampleExpanded(50D, 5D, -1D));
     }
 
     @Test
@@ -139,6 +164,30 @@ public class RiverNetworkTest {
     }
 
     @Test
+    public void recursiveBranchesApplyTheChildSoftCapAtEveryNode() {
+        RiverNetwork network = new RiverNetwork(options(720L)
+                .requireOcean(false)
+                .routingBasinCells(16)
+                .branchSoftCap(4)
+                .branchChildShrinkFactor(0D)
+                .build());
+        RiverTerrainSampler terrain = flatTerrain(false);
+        HashMap<RiverNodeId, Integer> incoming = new HashMap<>();
+        for (long cellX = -24L; cellX <= 24L; cellX++) {
+            for (long cellZ = -24L; cellZ <= 24L; cellZ++) {
+                RiverNode downstream = network.downstream(new RiverNodeId(cellX, cellZ), terrain);
+                if (downstream != null) {
+                    incoming.merge(downstream.id(), 1, Integer::sum);
+                }
+            }
+        }
+
+        assertFalse(incoming.isEmpty());
+        assertTrue(incoming.values().stream().allMatch(children -> children <= 4));
+        assertTrue(incoming.values().stream().anyMatch(children -> children >= 3));
+    }
+
+    @Test
     public void candidateRankingAndTracingDoNotMaterializeMeanderGeometry() {
         RiverNetwork network = new RiverNetwork(options(75L)
                 .requireOcean(false)
@@ -167,8 +216,8 @@ public class RiverNetworkTest {
 
         assertFalse(tile.reaches().isEmpty());
         assertTrue(meanderSamples[0] > 0);
-        assertEquals(0, meanderSamples[0] % 33);
-        assertTrue(meanderSamples[0] / 33 <= 256);
+        assertEquals(0, meanderSamples[0] % 12);
+        assertTrue(meanderSamples[0] / 12 <= 256);
     }
 
     @Test
@@ -330,27 +379,33 @@ public class RiverNetworkTest {
         assertFalse(wet.edges().isEmpty());
 
         RiverNetwork dryNetwork = new RiverNetwork(options(4L).maxRouteReaches(6).build());
-        RiverRoute dry = dryNetwork.trace(source, slopedTerrain(false));
+        RiverTerrainSampler physicalTerminal = new TestTerrain(false) {
+            @Override
+            public boolean allowsReach(RiverRoutingContext context) {
+                return context.from().id().equals(source);
+            }
+        };
+        RiverRoute dry = dryNetwork.trace(source, physicalTerminal);
         assertEquals(RiverRouteState.DRY, dry.state());
         assertFalse(dry.edges().isEmpty());
 
         RiverNetwork suppressedNetwork = new RiverNetwork(
                 options(4L).maxRouteReaches(6).dryChannelChance(0.0).build()
         );
-        RiverRoute suppressed = suppressedNetwork.trace(source, slopedTerrain(false));
+        RiverRoute suppressed = suppressedNetwork.trace(source, physicalTerminal);
         assertEquals(RiverRouteState.SUPPRESSED, suppressed.state());
         assertTrue(suppressed.edges().isEmpty());
     }
 
     @Test
-    public void oceanOptionalRoutesRemainWetAndExposeTerminalState() {
+    public void oceanOptionalRoutesDoNotTurnTheTraceHorizonIntoATerminal() {
         RiverNetwork network = new RiverNetwork(
                 options(41L).maxRouteReaches(3).requireOcean(false).build()
         );
         RiverRoute route = network.trace(new RiverNodeId(0L, 0L), slopedTerrain(false));
         assertEquals(RiverRouteState.WET, route.state());
         assertFalse(route.oceanConnected());
-        assertTrue(route.terminal());
+        assertFalse(route.terminal());
         assertFalse(route.edges().isEmpty());
     }
 
@@ -360,11 +415,21 @@ public class RiverNetworkTest {
         RiverNetwork requiredOcean = new RiverNetwork(options(42L).maxRouteReaches(3).requireOcean(true).build());
         RiverTerrainSampler wetTerminal = new TestTerrain(false) {
             @Override
+            public boolean allowsReach(RiverRoutingContext context) {
+                return context.from().id().equals(source);
+            }
+
+            @Override
             public RiverTerminalPolicy terminalPolicy(int blockX, int blockZ) {
                 return RiverTerminalPolicy.WET;
             }
         };
         RiverTerrainSampler suppressedTerminal = new TestTerrain(false) {
+            @Override
+            public boolean allowsReach(RiverRoutingContext context) {
+                return context.from().id().equals(source);
+            }
+
             @Override
             public RiverTerminalPolicy terminalPolicy(int blockX, int blockZ) {
                 return RiverTerminalPolicy.SUPPRESS;
@@ -376,6 +441,11 @@ public class RiverNetworkTest {
 
         RiverNetwork optionalOcean = new RiverNetwork(options(43L).maxRouteReaches(3).requireOcean(false).build());
         RiverTerrainSampler dryTerminal = new TestTerrain(false) {
+            @Override
+            public boolean allowsReach(RiverRoutingContext context) {
+                return context.from().id().equals(source);
+            }
+
             @Override
             public RiverTerminalPolicy terminalPolicy(int blockX, int blockZ) {
                 return RiverTerminalPolicy.DRY;
@@ -546,10 +616,10 @@ public class RiverNetworkTest {
         );
 
         assertEquals(List.of(
-                -6381557853649488119L,
-                8976828799821705624L,
-                6774369135184562919L,
-                -6208289191927305511L
+                3050685048971830506L,
+                -3861364772874819248L,
+                -8770785170128501517L,
+                6698607697170340377L
         ), actual);
     }
 
@@ -589,6 +659,7 @@ public class RiverNetworkTest {
                 .channelWidth(512D)
                 .maxChannelWidth(512D)
                 .bankWidth(0D)
+                .branchChildShrinkFactor(1D)
                 .meanderStrength(0D)
                 .meanderSubdivisions(1)
                 .build());
@@ -716,6 +787,7 @@ public class RiverNetworkTest {
                 1,
                 1,
                 10.0,
+                RiverWidthProfile.constant(10.0),
                 5.0,
                 3.0,
                 false,
@@ -795,6 +867,7 @@ public class RiverNetworkTest {
                 .maxChannelWidth(10D)
                 .maxBankWidth(3D)
                 .maxDepth(6D)
+                .meanderStrength(0D)
                 .build());
         RiverTerrainSampler styled = new TestTerrain(false) {
             @Override
@@ -833,6 +906,78 @@ public class RiverNetworkTest {
     }
 
     @Test
+    public void channelWidthVariesInsideOneReachAndRemainsSpatiallyQueryable() {
+        RiverNode from = node(0L, 0L, 0D, 0D);
+        RiverNode to = node(1L, 0L, 100D, 0D);
+        RiverWidthProfile profile = new RiverWidthProfile(
+                new double[]{0D, 0.5D, 1D},
+                new double[]{1D, 7D, 1D}
+        );
+        RiverReach reach = new RiverReach(
+                RiverEdgeId.of(from.id(), to.id()),
+                from,
+                to,
+                RiverRouteState.WET,
+                1,
+                1,
+                7D,
+                profile,
+                0D,
+                3D,
+                false,
+                false,
+                new RiverPolyline(new double[]{0D, 100D}, new double[]{0D, 0D})
+        );
+        RiverTile tile = new RiverTile(0, 0, 0, -16, 128, 32, List.of(reach));
+
+        RiverSample narrow = tile.sample(10D, 2D);
+        RiverSample wide = tile.sample(50D, 2D);
+
+        assertFalse(narrow.present());
+        assertTrue(wide.present());
+        assertEquals(7D, wide.width(), 0D);
+        assertEquals(RiverSection.CHANNEL, wide.section());
+    }
+
+    @Test
+    public void foldedReachSamplingFindsFartherCoveringWidthEnvelope() {
+        RiverNode from = node(0L, 0L, 0D, 0D);
+        RiverNode to = node(1L, 0L, 0D, 10D);
+        RiverWidthProfile profile = new RiverWidthProfile(
+                new double[]{0D, 0.48D, 0.53D, 1D},
+                new double[]{1D, 1D, 18D, 18D}
+        );
+        RiverReach reach = new RiverReach(
+                RiverEdgeId.of(from.id(), to.id()),
+                from,
+                to,
+                RiverRouteState.WET,
+                1,
+                1,
+                18D,
+                profile,
+                0D,
+                3D,
+                false,
+                false,
+                new RiverPolyline(
+                        new double[]{0D, 100D, 100D, 0D},
+                        new double[]{0D, 0D, 10D, 10D}
+                )
+        );
+        RiverTile tile = new RiverTile(0, 0, 0, -16, 128, 32, List.of(reach));
+
+        RiverSample point = tile.sample(50D, 2D);
+        RiverSample footprint = tile.sampleFootprint(49D, 1.5D, 51D, 2.5D);
+
+        assertTrue(point.present());
+        assertTrue(point.alongReach() > 0.53D);
+        assertEquals(18D, point.width(), 0.000001D);
+        assertTrue(footprint.present());
+        assertTrue(footprint.alongReach() > 0.53D);
+    }
+
+    @Test
     public void reachFeasibilityReceivesTheFinalPinnedMeanderPolyline() {
         RiverNetwork network = new RiverNetwork(options(62L).meanderStrength(20D).build());
         boolean[] observedMeander = new boolean[1];
@@ -866,12 +1011,191 @@ public class RiverNetworkTest {
     }
 
     @Test
+    public void irisNoiseChangesTheSelectedPersonalityWithoutBreakingItsEnvelope() {
+        double meanderStrength = 20D;
+        RiverNetwork network = new RiverNetwork(options(63L)
+                .siteJitter(0D)
+                .requireOcean(false)
+                .meanderStrength(meanderStrength)
+                .meanderSubdivisions(32)
+                .build());
+        RiverTerrainSampler quietTerrain = new TestTerrain(false) {
+            @Override
+            public double meanderNoise(RiverMeanderContext context) {
+                return 0D;
+            }
+        };
+        RiverTerrainSampler noisyTerrain = new TestTerrain(false) {
+            @Override
+            public double meanderNoise(RiverMeanderContext context) {
+                return StrictMath.sin(context.normalizedPosition() * StrictMath.PI * 7D);
+            }
+        };
+
+        RiverReach quietReach = network.buildTile(0, 0, quietTerrain).reaches().getFirst();
+        RiverReach noisyReach = network.buildTile(0, 0, noisyTerrain).reaches().getFirst();
+        assertEquals(quietReach.id(), noisyReach.id());
+        RiverPolyline quietPolyline = quietReach.polyline();
+        RiverPolyline noisyPolyline = noisyReach.polyline();
+        double deltaX = noisyReach.to().x() - noisyReach.from().x();
+        double deltaZ = noisyReach.to().z() - noisyReach.from().z();
+        double chordLength = StrictMath.hypot(deltaX, deltaZ);
+        boolean changed = false;
+        for (int point = 1; point < noisyPolyline.size() - 1; point++) {
+            double pointX = noisyPolyline.x(point) - noisyReach.from().x();
+            double pointZ = noisyPolyline.z(point) - noisyReach.from().z();
+            double signedOffset = (pointX * deltaZ - pointZ * deltaX) / chordLength;
+            if (Double.doubleToLongBits(noisyPolyline.x(point)) != Double.doubleToLongBits(quietPolyline.x(point))
+                    || Double.doubleToLongBits(noisyPolyline.z(point))
+                    != Double.doubleToLongBits(quietPolyline.z(point))) {
+                changed = true;
+            }
+            assertTrue(StrictMath.abs(signedOffset) <= meanderStrength + 0.0000001D);
+        }
+
+        assertTrue(changed);
+        assertEquals(noisyReach.from().x(), noisyPolyline.x(0), 0D);
+        assertEquals(noisyReach.from().z(), noisyPolyline.z(0), 0D);
+        int last = noisyPolyline.size() - 1;
+        assertEquals(noisyReach.to().x(), noisyPolyline.x(last), 0D);
+        assertEquals(noisyReach.to().z(), noisyPolyline.z(last), 0D);
+    }
+
+    @Test
+    public void reachesSpanBroadAsymmetricCompoundAndRestlessShapeFamilies() {
+        double meanderStrength = 20D;
+        RiverNetwork network = new RiverNetwork(options(64L)
+                .siteJitter(0D)
+                .requireOcean(false)
+                .meanderStrength(meanderStrength)
+                .meanderSubdivisions(48)
+                .build());
+        RiverTerrainSampler terrain = new TestTerrain(false) {
+            @Override
+            public double meanderNoise(RiverMeanderContext context) {
+                return 0D;
+            }
+        };
+
+        HashMap<RiverEdgeId, RiverReach> uniqueReaches = new HashMap<>();
+        for (int tileX = -2; tileX <= 2; tileX++) {
+            for (int tileZ = -2; tileZ <= 2; tileZ++) {
+                for (RiverReach reach : network.buildTile(tileX, tileZ, terrain).reaches()) {
+                    uniqueReaches.putIfAbsent(reach.id(), reach);
+                }
+            }
+        }
+        ArrayList<ReachShape> shapes = new ArrayList<>(uniqueReaches.size());
+        for (RiverReach reach : uniqueReaches.values()) {
+            shapes.add(shapeOf(reach, meanderStrength));
+        }
+        double minimumAmplitude = shapes.stream()
+                .mapToDouble(ReachShape::amplitudeRatio)
+                .min()
+                .orElseThrow();
+        double maximumAmplitude = shapes.stream()
+                .mapToDouble(ReachShape::amplitudeRatio)
+                .max()
+                .orElseThrow();
+        HashSet<Integer> dominantBands = new HashSet<>();
+        HashSet<String> signatures = new HashSet<>();
+        for (ReachShape shape : shapes) {
+            dominantBands.add(shape.dominantBand());
+            signatures.add(
+                    StrictMath.min(6, shape.crossings()) + ":"
+                            + (int) StrictMath.floor(shape.centroid() * 5D) + ":"
+                            + (int) StrictMath.floor(shape.amplitudeRatio() * 5D) + ":"
+                            + shape.dominantBand()
+            );
+        }
+        String diagnostics = shapes.toString();
+        assertTrue(diagnostics, shapes.size() >= 32);
+        assertTrue(diagnostics, shapes.stream().anyMatch(shape -> shape.crossings() <= 1));
+        assertTrue(diagnostics, shapes.stream().anyMatch(shape -> shape.crossings() >= 2 && shape.crossings() <= 4));
+        assertTrue(diagnostics, shapes.stream().anyMatch(shape -> shape.crossings() >= 5));
+        assertTrue(diagnostics, shapes.stream().anyMatch(shape -> shape.centroid() < 0.43D));
+        assertTrue(diagnostics, shapes.stream().anyMatch(shape -> shape.centroid() > 0.57D));
+        assertTrue(diagnostics, maximumAmplitude - minimumAmplitude >= 0.25D);
+        assertTrue(diagnostics, dominantBands.size() >= 3);
+        assertTrue(diagnostics, signatures.size() >= 8);
+    }
+
+    @Test
+    public void drainageDomainWarpChangesRoutesDeterministically() {
+        RiverTerrainSampler terrain = flatTerrain(false);
+        RiverNetwork straight = new RiverNetwork(options(65L)
+                .requireOcean(false)
+                .routingDeviationStrengthCells(0D)
+                .build());
+        RiverNetwork deviated = new RiverNetwork(options(65L)
+                .requireOcean(false)
+                .routingDeviationScaleCells(8)
+                .routingDeviationStrengthCells(4D)
+                .build());
+        boolean changed = false;
+        for (long cellX = -8L; cellX <= 8L; cellX++) {
+            for (long cellZ = -8L; cellZ <= 8L; cellZ++) {
+                RiverNode straightDownstream = straight.downstream(new RiverNodeId(cellX, cellZ), terrain);
+                RiverNode deviatedDownstream = deviated.downstream(new RiverNodeId(cellX, cellZ), terrain);
+                if (!Objects.equals(
+                        straightDownstream == null ? null : straightDownstream.id(),
+                        deviatedDownstream == null ? null : deviatedDownstream.id()
+                )) {
+                    changed = true;
+                }
+                RiverNode repeated = deviated.downstream(new RiverNodeId(cellX, cellZ), terrain);
+                assertEquals(
+                        deviatedDownstream == null ? null : deviatedDownstream.id(),
+                        repeated == null ? null : repeated.id()
+                );
+            }
+        }
+        assertTrue(changed);
+    }
+
+    @Test
+    public void confluenceAttractionChangesDownstreamChoicesDeterministically() {
+        RiverTerrainSampler terrain = flatTerrain(false);
+        RiverNetwork dispersed = new RiverNetwork(options(67L)
+                .requireOcean(false)
+                .confluenceWeight(0D)
+                .build());
+        RiverNetwork branching = new RiverNetwork(options(67L)
+                .requireOcean(false)
+                .confluenceWeight(512D)
+                .build());
+        boolean changed = false;
+        for (long cellX = -8L; cellX <= 8L; cellX++) {
+            for (long cellZ = -8L; cellZ <= 8L; cellZ++) {
+                RiverNodeId id = new RiverNodeId(cellX, cellZ);
+                RiverNode dispersedDownstream = dispersed.downstream(id, terrain);
+                RiverNode branchingDownstream = branching.downstream(id, terrain);
+                if (!Objects.equals(
+                        dispersedDownstream == null ? null : dispersedDownstream.id(),
+                        branchingDownstream == null ? null : branchingDownstream.id()
+                )) {
+                    changed = true;
+                }
+                RiverNode repeated = branching.downstream(id, terrain);
+                assertEquals(
+                        branchingDownstream == null ? null : branchingDownstream.id(),
+                        repeated == null ? null : repeated.id()
+                );
+            }
+        }
+        assertTrue(changed);
+    }
+
+    @Test
     public void optionsRejectNonFiniteOrUnsafeValues() {
         assertThrows(IllegalArgumentException.class, () -> options(10L).sourceChance(Double.NaN).build());
         assertThrows(IllegalArgumentException.class, () -> options(10L).cellSize(0).build());
         assertThrows(IllegalArgumentException.class, () -> options(10L).routingBasinCells(7).build());
         assertThrows(IllegalArgumentException.class, () -> options(10L).routingPlateauHeight(0D).build());
         assertThrows(IllegalArgumentException.class, () -> options(10L).hydraulicBaseHeight(Double.NaN).build());
+        assertThrows(IllegalArgumentException.class, () -> options(10L).confluenceWeight(-1D).build());
+        assertThrows(IllegalArgumentException.class, () -> options(10L).branchSoftCap(0).build());
+        assertThrows(IllegalArgumentException.class, () -> options(10L).branchChildShrinkFactor(1.1D).build());
         assertThrows(IllegalArgumentException.class, () -> options(10L).channelWidth(-1.0).build());
         assertThrows(IllegalArgumentException.class, () -> options(10L)
                 .tileCells(1)
@@ -981,6 +1305,7 @@ public class RiverNetworkTest {
                 1,
                 1,
                 width,
+                RiverWidthProfile.constant(width),
                 bankWidth,
                 3D,
                 false,
@@ -1022,6 +1347,57 @@ public class RiverNetworkTest {
         return hydraulicComparison != 0 ? hydraulicComparison : first.id().compareTo(second.id());
     }
 
+    private static ReachShape shapeOf(RiverReach reach, double meanderStrength) {
+        RiverPolyline polyline = reach.polyline();
+        double deltaX = reach.to().x() - reach.from().x();
+        double deltaZ = reach.to().z() - reach.from().z();
+        double chordLength = StrictMath.hypot(deltaX, deltaZ);
+        double[] offsets = new double[polyline.size()];
+        double maximumOffset = 0D;
+        double weightedPosition = 0D;
+        double totalWeight = 0D;
+        int crossings = 0;
+        int previousSign = 0;
+        for (int point = 0; point < polyline.size(); point++) {
+            double pointX = polyline.x(point) - reach.from().x();
+            double pointZ = polyline.z(point) - reach.from().z();
+            double offset = (pointX * deltaZ - pointZ * deltaX) / chordLength;
+            offsets[point] = offset;
+            double absoluteOffset = StrictMath.abs(offset);
+            maximumOffset = StrictMath.max(maximumOffset, absoluteOffset);
+            double t = (double) point / (polyline.size() - 1);
+            weightedPosition += t * absoluteOffset;
+            totalWeight += absoluteOffset;
+            int sign = absoluteOffset < meanderStrength * 0.05D ? 0 : offset < 0D ? -1 : 1;
+            if (sign != 0 && previousSign != 0 && sign != previousSign) {
+                crossings++;
+            }
+            if (sign != 0) {
+                previousSign = sign;
+            }
+            assertTrue(absoluteOffset <= meanderStrength + 0.0000001D);
+        }
+        int dominantBand = 1;
+        double dominantEnergy = -1D;
+        int samples = offsets.length - 1;
+        for (int frequency = 1; frequency <= 8; frequency++) {
+            double cosine = 0D;
+            double sine = 0D;
+            for (int point = 0; point < samples; point++) {
+                double phase = TWO_PI_FOR_TESTS * frequency * point / samples;
+                cosine += offsets[point] * StrictMath.cos(phase);
+                sine += offsets[point] * StrictMath.sin(phase);
+            }
+            double energy = cosine * cosine + sine * sine;
+            if (energy > dominantEnergy) {
+                dominantEnergy = energy;
+                dominantBand = frequency;
+            }
+        }
+        double centroid = totalWeight <= 0.0000001D ? 0.5D : weightedPosition / totalWeight;
+        return new ReachShape(crossings, maximumOffset / meanderStrength, centroid, dominantBand);
+    }
+
     private static long digest(RiverTile tile) {
         long hash = 0xCBF29CE484222325L;
         for (RiverReach reach : tile.reaches()) {
@@ -1032,6 +1408,10 @@ public class RiverNetworkTest {
             hash = RiverNetwork.mix(hash ^ reach.order());
             hash = RiverNetwork.mix(hash ^ reach.state().ordinal());
             hash = RiverNetwork.mix(hash ^ Double.doubleToLongBits(reach.width()));
+            for (int index = 0; index < reach.widthProfile().size(); index++) {
+                hash = RiverNetwork.mix(hash ^ Double.doubleToLongBits(reach.widthProfile().position(index)));
+                hash = RiverNetwork.mix(hash ^ Double.doubleToLongBits(reach.widthProfile().width(index)));
+            }
             hash = RiverNetwork.mix(hash ^ Double.doubleToLongBits(reach.bankWidth()));
             hash = RiverNetwork.mix(hash ^ Double.doubleToLongBits(reach.depth()));
             hash = RiverNetwork.mix(hash ^ (reach.mouth() ? 1L : 0L));
@@ -1062,6 +1442,7 @@ public class RiverNetworkTest {
         assertEquals(first.flow(), second.flow());
         assertEquals(first.order(), second.order());
         assertEquals(first.width(), second.width(), 0.0);
+        assertEquals(first.widthProfile(), second.widthProfile());
         assertEquals(first.bankWidth(), second.bankWidth(), 0.0);
         assertEquals(first.depth(), second.depth(), 0.0);
         assertEquals(first.mouth(), second.mouth());
@@ -1091,5 +1472,8 @@ public class RiverNetworkTest {
         public boolean isOcean(int blockX, int blockZ) {
             return ocean && blockX >= 224;
         }
+    }
+
+    private record ReachShape(int crossings, double amplitudeRatio, double centroid, int dominantBand) {
     }
 }

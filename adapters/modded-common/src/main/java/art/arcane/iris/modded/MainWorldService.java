@@ -18,8 +18,6 @@
 
 package art.arcane.iris.modded;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -32,7 +30,6 @@ import java.util.Optional;
 import java.util.UUID;
 
 public final class MainWorldService {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String MARKER_NAME = "mainworld.pending";
     private static final String PROPERTIES_NAME = "server.properties";
     /**
@@ -80,12 +77,12 @@ public final class MainWorldService {
             if (!target.equals(currentType)) {
                 writeLevelProperties(properties, target, config.mainWorldSeed());
                 markPending();
-                LOGGER.warn("Iris main world '{}' staged: {} level-type set to {}. Restart again to generate it (this boot still uses the previous overworld; player data is kept).",
+                ModdedIrisLog.warn("Iris main world '{}' staged: {} level-type set to {}. Restart again to generate it (this boot still uses the previous overworld; player data is kept).",
                         pack, properties, target);
                 if (config.mainWorldAutoRestart()) {
-                    LOGGER.warn("Iris mainWorldAutoRestart is enabled; stopping the JVM now with exit status {} so a restart wrapper brings the server back on the new main world.",
+                    ModdedIrisLog.warn("Iris mainWorldAutoRestart is enabled; stopping the JVM now with exit status {} so a restart wrapper brings the server back on the new main world.",
                             AUTO_RESTART_EXIT_STATUS);
-                    LOGGER.warn("Configure the start script to restart the server on exit status {} (status 0 means a clean stop, so it must not be reused for this).",
+                    ModdedIrisLog.warn("Configure the start script to restart the server on exit status {} (status 0 means a clean stop, so it must not be reused for this).",
                             AUTO_RESTART_EXIT_STATUS);
                     System.exit(AUTO_RESTART_EXIT_STATUS);
                 }
@@ -102,16 +99,16 @@ public final class MainWorldService {
                 // bootstrap: there is no prior overworld to move aside, so this is nothing to quarantine, not a
                 // reason to refuse startup.
                 clearPending();
-                LOGGER.warn("Iris main world '{}' had nothing to quarantine: {} does not exist. Continuing boot; the overworld generates as {}.",
+                ModdedIrisLog.warn("Iris main world '{}' had nothing to quarantine: {} does not exist. Continuing boot; the overworld generates as {}.",
                         pack, missing.path(), target);
                 return;
             }
             Path recovery = quarantineVanillaDimensions(worldRoot);
             clearPending();
-            LOGGER.warn("Iris main world '{}' generated fresh: moved the prior overworld/nether/end data from {} to {} so this boot regenerates them as {} (player data kept).",
+            ModdedIrisLog.warn("Iris main world '{}' generated fresh: moved the prior overworld/nether/end data from {} to {} so this boot regenerates them as {} (player data kept).",
                     pack, worldRoot, recovery, target);
         } catch (Throwable e) {
-            LOGGER.error("Iris main world reconciliation failed", e);
+            ModdedIrisLog.error("Iris main world reconciliation failed", e);
             throw new IllegalStateException(
                     "Iris refused startup after main-world reconciliation failed", e);
         }
@@ -119,7 +116,7 @@ public final class MainWorldService {
 
     public static boolean stage(String packRef, long seed) {
         if (ModdedEngineBootstrap.loader().clientEnvironment()) {
-            LOGGER.error("Iris main-world replacement is only available on dedicated servers; use the Create World generator selector in singleplayer");
+            ModdedIrisLog.error("Iris main-world replacement is only available on dedicated servers; use the Create World generator selector in singleplayer");
             return false;
         }
         Path instanceRoot = verifiedInstanceRoot("stage the Iris main world");
@@ -131,7 +128,7 @@ public final class MainWorldService {
             markPending();
             return true;
         } catch (IOException e) {
-            LOGGER.error("Iris failed to stage the main world in server.properties", e);
+            ModdedIrisLog.error("Iris failed to stage the main world in server.properties", e);
             return false;
         }
     }
@@ -140,7 +137,7 @@ public final class MainWorldService {
         try {
             clearPending();
         } catch (IOException e) {
-            LOGGER.error("Iris failed to clear the pending main world marker", e);
+            ModdedIrisLog.error("Iris failed to clear the pending main world marker", e);
         }
     }
 
@@ -156,8 +153,8 @@ public final class MainWorldService {
         if (Files.isRegularFile(workingDirectory.resolve(PROPERTIES_NAME))) {
             return workingDirectory;
         }
-        LOGGER.error("Iris refuses to {}: no {} in the server working directory {}", operation, PROPERTIES_NAME, workingDirectory);
-        LOGGER.error("Iris only edits main-world properties in the directory the dedicated server reads {} from, and it moves no world data outside it. Start the server from its instance directory, or clear mainWorldPack in irisworldgen/modded.json.", PROPERTIES_NAME);
+        ModdedIrisLog.error("Iris refuses to {}: no {} in the server working directory {}", operation, PROPERTIES_NAME, workingDirectory);
+        ModdedIrisLog.error("Iris only edits main-world properties in the directory the dedicated server reads {} from, and it moves no world data outside it. Start the server from its instance directory, or clear mainWorldPack in irisworldgen/modded.json.", PROPERTIES_NAME);
         return null;
     }
 
@@ -305,7 +302,7 @@ public final class MainWorldService {
                 return List.of(arguments.get());
             }
         } catch (RuntimeException unavailable) {
-            LOGGER.debug("Iris could not read the process arguments", unavailable);
+            ModdedIrisLog.debug("Iris could not read the process arguments", unavailable);
         }
         // Whitespace split only: sun.java.command is a flattened string with no quoting information, so a
         // --universe or --world value containing spaces cannot be recovered from it. Deliberately not parsed

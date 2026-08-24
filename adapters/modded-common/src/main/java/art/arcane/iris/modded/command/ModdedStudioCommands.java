@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.gui.GuiHost;
 import art.arcane.iris.core.gui.NoiseExplorerGUI;
@@ -63,8 +64,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Relative;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.zeroturnaround.zip.ZipUtil;
 
 import java.awt.Desktop;
@@ -85,7 +84,6 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedStudioCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
     private static final Pattern PROJECT_NAME = Pattern.compile("[a-z0-9_-]+");
     private static final Pattern STUDIO_ID_SANITIZER = Pattern.compile("[^a-z0-9_-]");
@@ -284,7 +282,7 @@ public final class ModdedStudioCommands {
         try {
             workspace = ModdedWorkspaceGenerator.writeWorkspace(IrisData.get(folder), folder, open);
         } catch (Throwable e) {
-            LOGGER.error("Iris workspace write failed for {}", folder, e);
+            ModdedIrisLog.error("Iris workspace write failed for {}", folder, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_FAILED_WRITE_WORKSPACE, MessageArgument.untrusted("value", folder.getAbsolutePath()), MessageArgument.untrusted("value2", String.valueOf(e.getMessage()))));
             return 0;
         }
@@ -299,7 +297,7 @@ public final class ModdedStudioCommands {
         try {
             Desktop.getDesktop().open(workspace);
         } catch (Throwable e) {
-            LOGGER.error("Iris workspace open failed for {}", workspace, e);
+            ModdedIrisLog.error("Iris workspace open failed for {}", workspace, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_COULD_NOT_OPEN, MessageArgument.untrusted("value", workspace.getName()), MessageArgument.untrusted("value2", e.getClass().getSimpleName())));
             return 0;
         }
@@ -380,8 +378,9 @@ public final class ModdedStudioCommands {
         try {
             File packFolder = new File(ModdedPackCommands.packsRoot(), pack);
             if (!new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
-                server.execute(() -> IrisModdedCommands.fail(source, "Pack '" + pack
-                        + "' is not installed. Use /iris download pack=overworld or pack=underworld, then restart."));
+                server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_REQUIRED_PACK_IS_NOT_INSTALLED_INSTALL_THEN_RESTART,
+                        MessageArgument.untrusted("pack", pack))));
                 return;
             }
             IrisData data = IrisData.get(packFolder);
@@ -393,7 +392,7 @@ public final class ModdedStudioCommands {
             try {
                 ModdedWorkspaceGenerator.writeWorkspace(data, packFolder, true);
             } catch (Throwable workspaceError) {
-                LOGGER.error("Iris workspace write failed for {}", packFolder, workspaceError);
+                ModdedIrisLog.error("Iris workspace write failed for {}", packFolder, workspaceError);
                 server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(
                         ModdedCommandMessages.MODDED_STUDIO_COMMANDS_FAILED_WRITE_WORKSPACE,
                         MessageArgument.untrusted("value", packFolder.getAbsolutePath()),
@@ -407,7 +406,7 @@ public final class ModdedStudioCommands {
                 }
             });
         } catch (Throwable e) {
-            LOGGER.error("Iris studio open failed for {}", pack, e);
+            ModdedIrisLog.error("Iris studio open failed for {}", pack, e);
             server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_OPEN_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e)))));
         }
     }
@@ -417,7 +416,7 @@ public final class ModdedStudioCommands {
         try {
             handle = ModdedDimensionManager.create(server, dimensionId, pack, pack, seed);
         } catch (Throwable e) {
-            LOGGER.error("Iris console studio injection failed for {} ({})", dimensionId, pack, e);
+            ModdedIrisLog.error("Iris console studio injection failed for {} ({})", dimensionId, pack, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_INJECTION_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return;
         }
@@ -430,7 +429,7 @@ public final class ModdedStudioCommands {
                 surface = engine.getMinHeight() + engine.getHeight(8, 8, false) + 2;
             }
         } catch (Throwable e) {
-            LOGGER.error("Iris console studio surface probe failed for {}", dimensionId, e);
+            ModdedIrisLog.error("Iris console studio surface probe failed for {}", dimensionId, e);
         }
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_CONSOLE_STUDIO_OPEN_NOW_RUNS_SEED_TRANSIENT_NOT_WRITTEN_IRIS, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("seed", seed)));
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_ENTER_IT_WITH_EXECUTE_RUN_TP_S_8_5_8, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("surface", surface)));
@@ -447,7 +446,7 @@ public final class ModdedStudioCommands {
         try {
             handle = ModdedDimensionManager.create(server, dimensionId, pack, pack, seed);
         } catch (Throwable e) {
-            LOGGER.error("Iris studio injection failed for {} ({})", dimensionId, pack, e);
+            ModdedIrisLog.error("Iris studio injection failed for {} ({})", dimensionId, pack, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_INJECTION_FAILED_2, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return;
         }
@@ -460,7 +459,7 @@ public final class ModdedStudioCommands {
                 surface = engine.getMinHeight() + engine.getHeight(8, 8, false) + 2;
             }
         } catch (Throwable e) {
-            LOGGER.error("Iris studio surface probe failed for {}", dimensionId, e);
+            ModdedIrisLog.error("Iris studio surface probe failed for {}", dimensionId, e);
         }
         player.teleportTo(studio, 8.5D, surface, 8.5D, java.util.Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_OPEN_NOW_RUNS_SEED_USE_IRIS_STUDIO_CLOSE_WHEN, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("seed", seed)));
@@ -480,7 +479,7 @@ public final class ModdedStudioCommands {
         try {
             ModdedDimensionManager.remove(server, dimensionId, true);
         } catch (Throwable e) {
-            LOGGER.error("Iris studio close failed for {}", dimensionId, e);
+            ModdedIrisLog.error("Iris studio close failed for {}", dimensionId, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_CLOSE_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return 0;
         }
@@ -553,7 +552,7 @@ public final class ModdedStudioCommands {
                 surface = engine.getMinHeight() + engine.getHeight(8, 8, false) + 2;
             }
         } catch (Throwable e) {
-            LOGGER.error("Iris tpstudio surface probe failed", e);
+            ModdedIrisLog.error("Iris tpstudio surface probe failed", e);
         }
         player.teleportTo(studio, 8.5D, surface, 8.5D, java.util.Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_TELEPORTED_YOUR_STUDIO, MessageArgument.untrusted("dimensionId", dimensionId)));
@@ -593,22 +592,23 @@ public final class ModdedStudioCommands {
             try {
                 File templateFolder = new File(packsRoot, template);
                 if (!new File(templateFolder, "dimensions/" + template + ".json").isFile()) {
-                    server.execute(() -> IrisModdedCommands.fail(source, "Template pack '" + template
-                            + "' is not installed. Install its zip with /iris download link=<zip-url>, then restart."));
+                    server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(
+                            ModdedCommandMessages.MODDED_STUDIO_COMMANDS_REQUIRED_PACK_IS_NOT_INSTALLED_INSTALL_THEN_RESTART,
+                            MessageArgument.untrusted("pack", template))));
                     return;
                 }
                 IrisProjectCopier.copyProject(templateFolder, target, template, name);
                 try {
                     ModdedWorkspaceGenerator.writeWorkspace(IrisData.get(target), target);
                 } catch (IOException e) {
-                    LOGGER.error("Iris studio create workspace generation failed for {}", name, e);
+                    ModdedIrisLog.error("Iris studio create workspace generation failed for {}", name, e);
                 }
                 server.execute(() -> {
                     IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_CREATED_PROJECT_AT, MessageArgument.untrusted("name", name), MessageArgument.untrusted("value", target.getAbsolutePath())));
                     IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_EDIT_DIMENSIONS_JSON_REST_PACK_VSCODE_WORKSPACE_WITH_JSON_SCHEMA, MessageArgument.untrusted("name", name)));
                 });
             } catch (Throwable e) {
-                LOGGER.error("Iris studio create failed for {}", name, e);
+                ModdedIrisLog.error("Iris studio create failed for {}", name, e);
                 server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PROJECT_CREATION_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e)))));
             }
         }, "Iris Studio Create");
@@ -630,7 +630,7 @@ public final class ModdedStudioCommands {
                 File result = compilePackage(folder, dimKey);
                 server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACKAGE_COMPILED, MessageArgument.untrusted("value", result.getAbsolutePath()))));
             } catch (Throwable e) {
-                LOGGER.error("Iris package failed for {}", dimKey, e);
+                ModdedIrisLog.error("Iris package failed for {}", dimKey, e);
                 server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACKAGING_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e)))));
             }
         }, "Iris Studio Package");
@@ -728,7 +728,7 @@ public final class ModdedStudioCommands {
                 IO.copyFile(objectFile, new File(folder, "objects/" + objectKey + ".iob"));
                 hashes.append(IO.hash(objectFile));
             } catch (Throwable e) {
-                LOGGER.error("Iris package failed to copy object {}", objectKey, e);
+                ModdedIrisLog.error("Iris package failed to copy object {}", objectKey, e);
             }
         }
 
@@ -793,7 +793,7 @@ public final class ModdedStudioCommands {
             IO.writeAll(new File(folder, category + "/" + key + ".json"), json);
             return IO.hash(json);
         } catch (Throwable e) {
-            LOGGER.error("Iris package failed to write {}/{}", category, key, e);
+            ModdedIrisLog.error("Iris package failed to write {}/{}", category, key, e);
             return "";
         }
     }
@@ -838,7 +838,7 @@ public final class ModdedStudioCommands {
                     IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_RARITY, MessageArgument.untrusted("key", key), MessageArgument.untrusted("rarity", rarity), MessageArgument.untrusted("value", Form.f((double) count.get() / totalTasks * 100, 2))));
                 }));
             } catch (Throwable e) {
-                LOGGER.error("Iris region sampling failed", e);
+                ModdedIrisLog.error("Iris region sampling failed", e);
                 server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_REGION_SAMPLING_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()))));
             }
         }, "Iris Region Sampler");

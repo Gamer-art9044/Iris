@@ -21,6 +21,9 @@ package art.arcane.iris.core.protocol;
 import art.arcane.iris.spi.protocol.IrisProtocol;
 import org.junit.Test;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -48,6 +51,94 @@ public class IrisVisionRequestServiceTest {
 
         assertEquals(overflow, service.droppedSaturatedCount());
         assertEquals(maxPending, service.pendingSize());
+    }
+
+    @Test
+    public void burstUsesAtMostTwoDrainsAndDrainsEveryRetainedRequest() {
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        registerReady(registry, "s1", IrisProtocol.CAPABILITY_VISION);
+        EngineResolver resolver = sessionId -> null;
+        QueuedExecutor executor = new QueuedExecutor();
+        int maxPending = 4;
+        IrisVisionRequestService service = new IrisVisionRequestService(resolver, registry, executor, maxPending);
+
+        for (int index = 0; index < 10; index++) {
+            service.handle("s1", index, 0, 0);
+        }
+
+        assertEquals(2, executor.size());
+        assertEquals(maxPending, service.pendingSize());
+        executor.runAll();
+        assertEquals(0, service.pendingSize());
+        assertEquals(maxPending, service.droppedNoEngineCount());
+    }
+
+    @Test
+    public void duplicateTileRequestsCoalesceWithoutConsumingCapacity() {
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        registerReady(registry, "s1", IrisProtocol.CAPABILITY_VISION);
+        IrisVisionRequestService service = new IrisVisionRequestService(sessionId -> null, registry, DISABLED, 8);
+
+        service.handle("s1", 4, -7, 2);
+        service.handle("s1", 4, -7, 2);
+        service.handle("s1", 4, -7, 2);
+
+        assertEquals(1, service.pendingSize());
+        assertEquals(0L, service.droppedSaturatedCount());
+    }
+
+    @Test
+    public void drainRotatesAcrossSessionsInsteadOfServingOneBurstFirst() {
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        registerReady(registry, "s1", IrisProtocol.CAPABILITY_VISION);
+        registerReady(registry, "s2", IrisProtocol.CAPABILITY_VISION);
+        ArrayList<String> resolutionOrder = new ArrayList<>();
+        EngineResolver resolver = sessionId -> {
+            resolutionOrder.add(sessionId);
+            return null;
+        };
+        QueuedExecutor executor = new QueuedExecutor();
+        IrisVisionRequestService service = new IrisVisionRequestService(resolver, registry, executor, 8);
+
+        service.handle("s1", 0, 0, 0);
+        service.handle("s1", 1, 0, 0);
+        service.handle("s2", 0, 0, 0);
+        service.handle("s2", 1, 0, 0);
+        executor.runAll();
+
+        assertEquals(List.of("s1", "s2", "s1", "s2"), resolutionOrder);
+    }
+
+    @Test
+    public void saturatedSessionCannotExcludeAnotherSession() {
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        registerReady(registry, "noisy", IrisProtocol.CAPABILITY_VISION);
+        registerReady(registry, "other", IrisProtocol.CAPABILITY_VISION);
+        IrisVisionRequestService service = new IrisVisionRequestService(sessionId -> null, registry, DISABLED, 4);
+
+        for (int tile = 0; tile < 20; tile++) {
+            service.handle("noisy", tile, 0, 0);
+        }
+        service.handle("other", 0, 0, 0);
+
+        assertEquals(4, service.pendingSize());
+        service.clearSession("noisy");
+        assertEquals(1, service.pendingSize());
+    }
+
+    @Test
+    public void blankSessionIsRejectedWithoutSchedulingWork() {
+        IrisSessionRegistry registry = new IrisSessionRegistry();
+        QueuedExecutor executor = new QueuedExecutor();
+        IrisVisionRequestService service = new IrisVisionRequestService(sessionId -> null, registry, executor, 8);
+
+        service.handle(null, 0, 0, 0);
+        service.handle("", 0, 0, 0);
+        service.handle("   ", 0, 0, 0);
+
+        assertEquals(3L, service.droppedNoSessionCount());
+        assertEquals(0, service.pendingSize());
+        assertEquals(0, executor.size());
     }
 
     @Test
@@ -155,6 +246,29 @@ public class IrisVisionRequestServiceTest {
         @Override
         public void sendToClient(String sessionId, byte[] frame) {
             sent.incrementAndGet();
+        }
+    }
+
+    private static final class QueuedExecutor implements Executor {
+        private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
+
+        @Override
+        public void execute(Runnable command) {
+            tasks.addLast(command);
+        }
+
+        private int size() {
+            return tasks.size();
+        }
+
+        private void runNext() {
+            tasks.removeFirst().run();
+        }
+
+        private void runAll() {
+            while (!tasks.isEmpty()) {
+                runNext();
+            }
         }
     }
 }

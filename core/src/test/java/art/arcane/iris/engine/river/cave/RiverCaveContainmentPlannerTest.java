@@ -160,8 +160,8 @@ public class RiverCaveContainmentPlannerTest {
         RiverCavePlan rejected = planner.plan(view, source, rejectedSettings);
 
         assertTrue(accepted.accepted());
-        assertEquals(RiverCaveAction.DRY_AIR, accepted.actions().get(position(0, 11, 0)));
-        assertEquals(RiverCaveAction.DRY_AIR, accepted.actions().get(position(0, 12, 0)));
+        assertEquals(RiverCaveAction.FALLING_WATER, accepted.actions().get(position(0, 11, 0)));
+        assertEquals(RiverCaveAction.FALLING_WATER, accepted.actions().get(position(0, 12, 0)));
         assertEquals(RiverCaveRejection.DRY_HEADROOM_LIMIT, rejected.rejection());
     }
 
@@ -341,12 +341,50 @@ public class RiverCaveContainmentPlannerTest {
         RiverCavePlan plan = planner.plan(view, source, settings());
 
         assertTrue(plan.accepted());
-        assertEquals(RiverCaveAction.DRY_AIR, plan.actions().get(position(0, 12, 0)));
+        assertEquals(RiverCaveAction.FALLING_WATER, plan.actions().get(position(0, 12, 0)));
         assertEquals(RiverCaveAction.WET_SOURCE, plan.actions().get(position(0, 8, 0)));
         assertTrue(plan.actions().containsValue(RiverCaveAction.SEAL_GUARD));
         assertEquals(plan.actions().keySet(), plan.baselinePreconditions().keySet());
         assertFalse(plan.actions().containsKey(position(0, 13, 0)));
         assertMutationConnected(plan, source.entry(), source.target());
+    }
+
+    @Test
+    public void generatedGrottoAcceptsItsCompleteSurfaceMouth() {
+        TestVoxelView view = new TestVoxelView();
+        CavePosition[] wetMouth = {
+                position(-1, 12, 0),
+                position(1, 12, 0),
+                position(0, 12, -1),
+                position(0, 12, 1)
+        };
+        CavePosition[] dryMouth = {
+                position(-1, 13, 0),
+                position(1, 13, 0),
+                position(0, 13, -1),
+                position(0, 13, 1)
+        };
+        view.set(CaveVoxel.COMPATIBLE_FLUID, wetMouth);
+        view.set(CaveVoxel.CAVE_AIR, dryMouth);
+        for (CavePosition position : wetMouth) {
+            view.openToSurface(position);
+        }
+        for (CavePosition position : dryMouth) {
+            view.openToSurface(position);
+        }
+        RiverCaveSource source = source(108L, 10, RiverCaveMode.GENERATED_GROTTO, position(0, 8, 0));
+
+        RiverCavePlan plan = planner.plan(view, source, detailedSettings(
+                2,
+                2,
+                RiverCaveGrottoShape.ELLIPSOID,
+                RiverCaveFluidPolicy.ALLOW_COMPATIBLE
+        ));
+
+        assertTrue(plan.rejection().toString(), plan.accepted());
+        for (CavePosition position : wetMouth) {
+            assertEquals(RiverCaveAction.FALLING_WATER, plan.actions().get(position));
+        }
     }
 
     @Test

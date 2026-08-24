@@ -18,11 +18,10 @@
 
 package art.arcane.iris.modded.service;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.MeteredCache;
 import art.arcane.iris.engine.framework.PreservationRegistry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.lang.ref.WeakReference;
 import java.util.List;
@@ -31,7 +30,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ModdedPreservationService implements ModdedService, PreservationRegistry {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final long DEREFERENCE_INTERVAL_MILLIS = 60000L;
 
     private final List<Thread> threads = new CopyOnWriteArrayList<>();
@@ -107,17 +105,17 @@ public final class ModdedPreservationService implements ModdedService, Preservat
             }
             try {
                 thread.interrupt();
-                LOGGER.info("Iris preservation interrupted thread {}", thread.getName());
+                ModdedIrisLog.info("Iris preservation interrupted thread {}", thread.getName());
             } catch (Throwable error) {
-                LOGGER.error("Iris preservation failed to interrupt thread {}", thread.getName(), error);
+                ModdedIrisLog.error("Iris preservation failed to interrupt thread {}", thread.getName(), error);
             }
         }
         for (ExecutorService service : services) {
             try {
                 service.shutdownNow();
-                LOGGER.info("Iris preservation shut down executor {}", service);
+                ModdedIrisLog.info("Iris preservation shut down executor {}", service);
             } catch (Throwable error) {
-                LOGGER.error("Iris preservation failed to shut down executor {}", service, error);
+                ModdedIrisLog.error("Iris preservation failed to shut down executor {}", service, error);
             }
         }
     }

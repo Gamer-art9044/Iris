@@ -43,10 +43,10 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -63,7 +63,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     private final ChronoLatch chunkUpdater;
     private final ChronoLatch chunkDiscovery;
     private final KMap<Long, Future<?>> cleanup = new KMap<>();
-    private final ScheduledExecutorService cleanupService;
+    private final ScheduledThreadPoolExecutor cleanupService;
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     final WorldEntitySpawner entitySpawner = new WorldEntitySpawner(this);
@@ -80,7 +80,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     @Setter(AccessLevel.NONE)
     final WorldTeleportWarmup teleportWarmup = new WorldTeleportWarmup(this);
     private boolean looperStopped;
-    private boolean cleanupServiceStopped;
+    private volatile boolean cleanupServiceStopped;
     volatile int entityCount = 0;
     volatile boolean entityCountValid = false;
     volatile boolean playersPresent = false;
@@ -105,11 +105,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
         cln = new ChronoLatch(60000);
         cl = new ChronoLatch(3000);
         clw = new ChronoLatch(1000, true);
-        cleanupService = Executors.newSingleThreadScheduledExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "Iris Mantle Cleanup " + getTarget().getWorld().name());
-            thread.setPriority(Thread.MIN_PRIORITY);
-            return thread;
-        });
+        cleanupService = createCleanupExecutor(getTarget().getWorld().name());
         looper = new Looper() {
             @Override
             protected long loop() {
@@ -124,6 +120,17 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
         };
         looper.setPriority(Thread.MIN_PRIORITY);
         looper.setName("Iris World Manager " + getTarget().getWorld().name());
+    }
+
+    static ScheduledThreadPoolExecutor createCleanupExecutor(String worldName) {
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1, runnable -> {
+            Thread thread = new Thread(runnable, "Iris Mantle Cleanup " + worldName);
+            thread.setPriority(Thread.MIN_PRIORITY);
+            return thread;
+        });
+        executor.setRemoveOnCancelPolicy(true);
+        executor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+        return executor;
     }
 
     private long runLoop() {
@@ -288,6 +295,10 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
             try {
                 cleanupServiceStopped = true;
                 if (cleanupService != null) {
+                    for (Future<?> future : cleanup.values()) {
+                        future.cancel(false);
+                    }
+                    cleanup.clear();
                     cleanupService.shutdownNow();
                     awaitQuietly(cleanupService);
                 }

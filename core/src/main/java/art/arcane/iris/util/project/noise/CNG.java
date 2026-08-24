@@ -217,7 +217,7 @@ public class CNG {
             r += cng.fit(-1000, 1000, i, i);
         }
 
-        System.out.println(Form.duration(p.getMilliseconds(), 10) + " merged = " + r);
+        IrisLogging.info(Form.duration(p.getMilliseconds(), 10) + " merged = " + r);
     }
 
     public CNG cellularize(RNG seed, double freq) {

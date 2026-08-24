@@ -18,13 +18,12 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -34,7 +33,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ModdedObjectUndo {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int MAX_ENTRIES_PER_OWNER = 32;
     private static final ConcurrentHashMap<UUID, Deque<Entry>> UNDOS = new ConcurrentHashMap<>();
     private static final AtomicBoolean INITIALIZED = new AtomicBoolean(false);
@@ -48,7 +46,7 @@ public final class ModdedObjectUndo {
 
     public static void init() {
         if (INITIALIZED.compareAndSet(false, true)) {
-            LOGGER.info("Iris object undo service ready (bounded to {} paste(s) per player)", MAX_ENTRIES_PER_OWNER);
+            ModdedIrisLog.info("Iris object undo service ready (bounded to {} paste(s) per player)", MAX_ENTRIES_PER_OWNER);
         }
     }
 
@@ -93,7 +91,7 @@ public final class ModdedObjectUndo {
             // dimension id must never have blocks replayed into the dead ServerLevel.
             MinecraftServer server = entry.level().getServer();
             if (server == null || server.getLevel(entry.level().dimension()) != entry.level()) {
-                LOGGER.warn("Iris object undo: skipped a stale entry for removed dimension {}",
+                ModdedIrisLog.warn("Iris object undo: skipped a stale entry for removed dimension {}",
                         entry.level().dimension().identifier());
                 continue;
             }
@@ -103,10 +101,10 @@ public final class ModdedObjectUndo {
                     entry.level().setBlock(block.getKey(), block.getValue(), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
                     writes++;
                 } catch (Throwable e) {
-                    LOGGER.error("Iris object undo: failed to revert a block at {}", block.getKey(), e);
+                    ModdedIrisLog.error("Iris object undo: failed to revert a block at {}", block.getKey(), e);
                 }
             }
-            LOGGER.info("Iris object undo: reverted {} block(s) in {}", writes, entry.level().dimension().identifier());
+            ModdedIrisLog.info("Iris object undo: reverted {} block(s) in {}", writes, entry.level().dimension().identifier());
             reverted++;
         }
         return reverted;

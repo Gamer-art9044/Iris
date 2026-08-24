@@ -20,6 +20,7 @@ package art.arcane.iris.core.pack;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.volmlib.util.format.Form;
@@ -126,7 +127,7 @@ public class IrisPackRepository {
                         try {
                             FileUtils.copyDirectory(work.listFiles()[0], pack);
                         } catch (IOException e) {
-                            e.printStackTrace();
+                            IrisLogging.reportError("Failed to install Iris pack into " + pack + ".", e);
                         }
                     })).execute(sender, whenComplete);
         } else {

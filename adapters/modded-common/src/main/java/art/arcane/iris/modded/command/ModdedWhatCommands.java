@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.IrisMessages;
 import art.arcane.iris.core.localization.ModdedCommandMessages;
@@ -66,8 +67,6 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.storage.loot.LootTable;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -77,7 +76,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 
 public final class ModdedWhatCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE =
             Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
     private static final SuggestionProvider<CommandSourceStack> MARKER_TYPES =
@@ -343,7 +341,7 @@ public final class ModdedWhatCommands {
                         MessageArgument.untrusted("object", object)));
             }
         } catch (Throwable error) {
-            LOGGER.error("Iris object lookup failed for /iris what block at {}, {}, {}",
+            ModdedIrisLog.error("Iris object lookup failed for /iris what block at {}, {}, {}",
                     pos.getX(), pos.getY(), pos.getZ(), error);
         }
     }
@@ -486,7 +484,7 @@ public final class ModdedWhatCommands {
 
     private static void markerFailure(CommandSourceStack source,
                                       ModdedScheduler scheduler, MarkerRun run, Throwable error) {
-        LOGGER.error("Iris marker scan failed for {}", run.marker(), error);
+        ModdedIrisLog.error("Iris marker scan failed for {}", run.marker(), error);
         scheduler.global(() -> {
             if (ACTIVE_MARKER_RUNS.remove(run.playerId(), run)) {
                 IrisModdedCommands.fail(source, IrisLanguage.plain(
@@ -514,7 +512,7 @@ public final class ModdedWhatCommands {
     private static void logLookupFailure(CommandSourceStack source,
                                          String operation, Throwable error,
                                          TextKey message) {
-        LOGGER.error("Iris /what {} lookup failed in {}", operation,
+        ModdedIrisLog.error("Iris /what {} lookup failed in {}", operation,
                 source.getLevel().dimension().identifier(), error);
         IrisModdedCommands.fail(source, IrisLanguage.plain(
                 message,

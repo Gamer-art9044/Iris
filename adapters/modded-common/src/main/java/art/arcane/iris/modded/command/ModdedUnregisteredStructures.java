@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
@@ -31,8 +32,6 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.levelgen.structure.Structure;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.HashSet;
@@ -44,7 +43,6 @@ import java.util.TreeMap;
 import java.util.function.Predicate;
 
 final class ModdedUnregisteredStructures {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
 
     private ModdedUnregisteredStructures() {
     }
@@ -67,13 +65,13 @@ final class ModdedUnregisteredStructures {
                     .filter((ExcludedStructure entry) -> entry.status() == ReportStatus.UNPLACED)
                     .count();
             long hidden = excluded.size() - unregistered - unplaced;
-            LOGGER.info("[Iris goto unregistered] {} structure candidate(s) excluded from /iris goto structure in {}",
+            ModdedIrisLog.info("[Iris goto unregistered] {} structure candidate(s) excluded from /iris goto structure in {}",
                     excluded.size(), dimension);
             for (ExcludedStructure entry : excluded) {
-                LOGGER.info("[Iris goto unregistered] [{}] {} - {}",
+                ModdedIrisLog.info("[Iris goto unregistered] [{}] {} - {}",
                         entry.status().label(), entry.key(), entry.reason());
             }
-            LOGGER.info("[Iris goto unregistered] Inventory scope is the live registry, this pack's "
+            ModdedIrisLog.info("[Iris goto unregistered] Inventory scope is the live registry, this pack's "
                     + "nativeStructures placements, and structureLoader editable resources. This is deterministic "
                     + "eligibility analysis and performs no chunk search; absent unmanaged datapack resources "
                     + "cannot be inferred after registry loading.");
@@ -82,7 +80,7 @@ final class ModdedUnregisteredStructures {
                     + unregistered + " unregistered, " + unplaced + " unplaced).");
             return 1;
         } catch (Throwable error) {
-            LOGGER.error("Iris failed to build the excluded structure report for {}",
+            ModdedIrisLog.error("Iris failed to build the excluded structure report for {}",
                     level.dimension().identifier(), error);
             IrisModdedCommands.fail(source,
                     "Iris could not build the excluded structure report; see the server console.");

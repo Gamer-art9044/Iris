@@ -18,6 +18,9 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.nms.datapack.DataVersion;
+import art.arcane.volmlib.util.json.JSONObject;
+
 import java.util.Objects;
 
 public record IrisDimensionRuntimeContract(
@@ -58,6 +61,7 @@ public record IrisDimensionRuntimeContract(
         IrisDimensionRuntimeContract actual = expected(active, namespace);
         IrisDimensionRuntimeContract proposed = expected(replacement, namespace);
         proposed.requireExact(runtimeName, actual);
+        requireGeneratedTypeCompatible(runtimeName, active, replacement);
     }
 
     public int maxHeight() {
@@ -94,5 +98,36 @@ public record IrisDimensionRuntimeContract(
                 + ", but the loaded runtime uses " + actualTypeKey + " with range " + actualRange
                 + " and logical height " + actualLogical
                 + ". Generation was refused before any chunk writes. Restart after installing the exact Iris dimension type; terrain clipping is not allowed.");
+    }
+
+    private static void requireGeneratedTypeCompatible(
+            String runtimeName,
+            IrisDimension active,
+            IrisDimension replacement
+    ) {
+        if (!Objects.equals(active.getEnvironment(), replacement.getEnvironment())) {
+            throw hotloadMismatch(runtimeName, active, replacement);
+        }
+
+        JSONObject activeType = effectiveDimensionType(active);
+        JSONObject replacementType = effectiveDimensionType(replacement);
+        if (!replacementType.similar(activeType)) {
+            throw hotloadMismatch(runtimeName, active, replacement);
+        }
+    }
+
+    private static JSONObject effectiveDimensionType(IrisDimension dimension) {
+        return new JSONObject(dimension.getDimensionType().toJson(DataVersion.getLatest().get()));
+    }
+
+    private static IrisDimensionContractException hotloadMismatch(
+            String runtimeName,
+            IrisDimension active,
+            IrisDimension replacement
+    ) {
+        return new IrisDimensionContractException(runtimeName
+                + " cannot hotload a changed dimension environment or generated dimension type. The active environment is "
+                + active.getEnvironment() + " and the replacement environment is " + replacement.getEnvironment()
+                + ". Close and reopen Studio after changing environment, dimensionOptions, or fullbright values that alter the generated type.");
     }
 }

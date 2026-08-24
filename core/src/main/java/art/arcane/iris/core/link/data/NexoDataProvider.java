@@ -14,6 +14,7 @@ import art.arcane.iris.core.nms.container.BlockProperty;
 import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.core.service.ExternalDataSVC;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.iris.util.common.data.IrisCustomData;
 import org.bukkit.block.Block;
@@ -82,7 +83,7 @@ public class NexoDataProvider extends ExternalDataProvider {
         try {
             return builder.build();
         } catch (Exception e) {
-            e.printStackTrace();
+            IrisLogging.reportError("Failed to build Nexo item data for " + itemId + ".", e);
             throw new MissingResourceException("Failed to find ItemData!", itemId.namespace(), itemId.key());
         }
     }

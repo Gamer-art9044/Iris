@@ -183,10 +183,6 @@ public final class BukkitCommandMessagesExtended {
             "iris.bukkit.commandiris.install_pack_and_restart",
             C.YELLOW + "Install it with " + C.AQUA + "{command}" + C.YELLOW + " and restart the server."
     );
-    public static final TextKey COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTARTING_SERVER_GENERATE_LOAD = TextKey.of(
-            "iris.bukkit.commandiris.world_staging_completed_restarting_server_generate_load",
-            C.GREEN + "World staging completed. Iris is restarting the server to generate/load \"" + "{worldName}" + "\"."
-    );
     public static final TextKey COMMAND_IRIS_EXCEPTION_RAISED_DURING_CREATION_SEE_CONSOLE_MORE_DETAILS = TextKey.of(
             "iris.bukkit.commandiris.exception_raised_during_creation_see_console_more_details",
             C.RED + "Exception raised during creation. See the console for more details."
@@ -194,26 +190,6 @@ public final class BukkitCommandMessagesExtended {
     public static final TextKey COMMAND_IRIS_SUCCESSFULLY_CREATED_YOUR_WORLD = TextKey.of(
             "iris.bukkit.commandiris.successfully_created_your_world",
             C.GREEN + "Successfully created your world!"
-    );
-    public static final TextKey COMMAND_IRIS_RUNTIME_WORLD_CREATION_IS_DISABLED_ON_FOLIA = TextKey.of(
-            "iris.bukkit.commandiris.runtime_world_creation_is_disabled_on_folia",
-            C.YELLOW + "Runtime world creation is disabled on Folia."
-    );
-    public static final TextKey COMMAND_IRIS_PREPARING_WORLD_FILES_BUKKIT_YML_NEXT_STARTUP = TextKey.of(
-            "iris.bukkit.commandiris.preparing_world_files_bukkit_yml_next_startup",
-            C.YELLOW + "Preparing world files and bukkit.yml for next startup..."
-    );
-    public static final TextKey COMMAND_IRIS_FAILED_STAGE_WORLD_FILES_DIMENSION = TextKey.of(
-            "iris.bukkit.commandiris.failed_stage_world_files_dimension",
-            C.RED + "Failed to stage world files for dimension \"" + "{value}" + "\"."
-    );
-    public static final TextKey COMMAND_IRIS_STAGED_IRIS_WORLD_WITH_GENERATOR_IRIS_SEED = TextKey.of(
-            "iris.bukkit.commandiris.staged_iris_world_with_generator_iris_seed",
-            C.GREEN + "Staged Iris world \"" + "{name}" + "\" with generator Iris:" + "{value}" + " and seed " + "{seed}" + "."
-    );
-    public static final TextKey COMMAND_IRIS_FAILED_UPDATE_BUKKIT_YML = TextKey.of(
-            "iris.bukkit.commandiris.failed_update_bukkit_yml",
-            C.RED + "Failed to update bukkit.yml: " + "{value}"
     );
     public static final TextKey COMMAND_IRIS_SPECIFIED_PLAYER_DOES_NOT_EXIST = TextKey.of(
             "iris.bukkit.commandiris.specified_player_does_not_exist",
@@ -326,10 +302,6 @@ public final class BukkitCommandMessagesExtended {
     public static final TextKey COMMAND_IRIS_LOADING_WORLD = TextKey.of(
             "iris.bukkit.commandiris.loading_world",
             C.GREEN + "Loading world: " + "{logicalWorldName}"
-    );
-    public static final TextKey COMMAND_IRIS_FOLIA_CANNOT_LOAD_NEW_WORLDS_AT_RUNTIME_RESTART_SERVER_LOAD = TextKey.of(
-            "iris.bukkit.commandiris.folia_cannot_load_new_worlds_at_runtime_restart_server_load",
-            C.YELLOW + "Folia cannot load new worlds at runtime. Restart the server to load \"" + "{logicalWorldName}" + "\"."
     );
     public static final TextKey COMMAND_IRIS_LOADED_SUCCESSFULLY = TextKey.of(
             "iris.bukkit.commandiris.loaded_successfully",
@@ -874,14 +846,8 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_IRIS_TRY_ONE_OVERWORLD_VANILLA_FLAT_THEEND,
             COMMAND_IRIS_DIMENSION_NOT_FOUND,
             COMMAND_IRIS_INSTALL_PACK_AND_RESTART,
-            COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTARTING_SERVER_GENERATE_LOAD,
             COMMAND_IRIS_EXCEPTION_RAISED_DURING_CREATION_SEE_CONSOLE_MORE_DETAILS,
             COMMAND_IRIS_SUCCESSFULLY_CREATED_YOUR_WORLD,
-            COMMAND_IRIS_RUNTIME_WORLD_CREATION_IS_DISABLED_ON_FOLIA,
-            COMMAND_IRIS_PREPARING_WORLD_FILES_BUKKIT_YML_NEXT_STARTUP,
-            COMMAND_IRIS_FAILED_STAGE_WORLD_FILES_DIMENSION,
-            COMMAND_IRIS_STAGED_IRIS_WORLD_WITH_GENERATOR_IRIS_SEED,
-            COMMAND_IRIS_FAILED_UPDATE_BUKKIT_YML,
             COMMAND_IRIS_SPECIFIED_PLAYER_DOES_NOT_EXIST,
             COMMAND_IRIS_IRIS_V_BY_VOLMIT_SOFTWARE,
             COMMAND_IRIS_TO,
@@ -910,7 +876,6 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_IRIS_IS_NOT_IRIS_WORLD,
             COMMAND_IRIS_COULD_NOT_DETERMINE_IRIS_DIMENSION,
             COMMAND_IRIS_LOADING_WORLD,
-            COMMAND_IRIS_FOLIA_CANNOT_LOAD_NEW_WORLDS_AT_RUNTIME_RESTART_SERVER_LOAD,
             COMMAND_IRIS_LOADED_SUCCESSFULLY,
             COMMAND_IRIS_THIS_IS_NOT_IRIS_WORLD_IRIS_WORLDS_3,
             COMMAND_IRIS_EVACUATING_WORLD,

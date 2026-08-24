@@ -224,7 +224,6 @@ public class IrisEngine implements Engine {
                 StructureIndexService.writeOnce(getData());
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
-                e.printStackTrace();
             }
             IrisLogging.notice("Engine init: " + target.getWorld().name() + "/" + target.getDimension().getLoadKey() + " seed=" + getSeedManager().getSeed());
             _t0 = M.ms();
@@ -653,7 +652,6 @@ public class IrisEngine implements Engine {
         failing = true;
         IrisLogging.error(error);
         IrisLogging.reportError(e);
-        e.printStackTrace();
     }
 
     @Override

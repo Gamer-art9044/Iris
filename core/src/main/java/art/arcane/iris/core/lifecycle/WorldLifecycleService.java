@@ -208,9 +208,11 @@ public final class WorldLifecycleService {
             return worldsProviderBackend;
         }
 
-        if (request.studio() && capabilities.serverFamily().isPaperLike()) {
+        if (capabilities.regionizedRuntime()
+                || capabilities.serverFamily() == ServerFamily.FOLIA
+                || (request.studio() && capabilities.serverFamily().isPaperLike())) {
             if (!paperLikeRuntimeBackend.supports(request, capabilities)) {
-                throw new IllegalStateException("World lifecycle backend paper_like_runtime is unavailable for studio create on "
+                throw new IllegalStateException("World lifecycle backend paper_like_runtime is unavailable for runtime create on "
                         + capabilities.serverFamily().id() + ": " + capabilities.paperLikeResolution());
             }
             return paperLikeRuntimeBackend;

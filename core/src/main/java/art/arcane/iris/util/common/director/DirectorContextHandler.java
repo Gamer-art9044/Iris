@@ -17,7 +17,6 @@ public interface DirectorContextHandler<T> extends DirectorContextHandlerType<T,
                 h -> ((DirectorContextHandler<?>) h).getType(),
                 e -> {
                     IrisLogging.reportError(e);
-                    e.printStackTrace();
                 });
     }
 }

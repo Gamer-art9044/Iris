@@ -154,7 +154,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.awt.Color;
 import java.io.File;
-import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -1572,8 +1571,7 @@ public class NMSBinding implements INMSBinding {
                 injected.set(true);
                 return true;
             } catch (Throwable e) {
-                IrisLogging.error(C.RED + "Failed to inject Bukkit");
-                e.printStackTrace();
+                IrisLogging.reportError(C.RED + "Failed to inject Bukkit", e);
                 ResettableClassFileTransformer partialServerLevel = serverLevelTransformer;
                 ResettableClassFileTransformer partialStorageAccess = levelStorageAccessTransformer;
                 serverLevelTransformer = null;
@@ -1627,20 +1625,10 @@ public class NMSBinding implements INMSBinding {
                 try {
                     transformer.reset(Agent.getInstrumentation(), AgentBuilder.RedefinitionStrategy.RETRANSFORMATION);
                 } catch (Throwable e) {
-                    IrisLogging.error(C.RED + "Failed to remove Bukkit world lifecycle injection");
-                    e.printStackTrace();
+                    IrisLogging.reportError(C.RED + "Failed to remove Bukkit world lifecycle injection", e);
                 }
             }
         }
-    }
-
-    @Override
-    public void writeCurrentPaperWorldData(
-            Path sourceWorldDirectory,
-            Path targetWorldDirectory,
-            long seed
-    ) throws IOException {
-        CurrentPaperWorldDataWriter.write(sourceWorldDirectory, targetWorldDirectory, seed);
     }
 
     @Override

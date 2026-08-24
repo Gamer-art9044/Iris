@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.pack.PackValidationRegistry;
@@ -42,8 +43,6 @@ import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.IdentifierArgument;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -57,7 +56,6 @@ import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedWorldCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
     private static final String DEFAULT_NAMESPACE = "irisworldgen";
     private static final long DEFAULT_SEED = 1337L;
@@ -174,8 +172,9 @@ public final class ModdedWorldCommands {
         if (packFolder.isDirectory()) {
             return enableInstalled(source, server, dimensionId, pack, packDimension, seed);
         }
-        IrisModdedCommands.fail(source, "Pack '" + pack
-                + "' is not installed. Use /iris download pack=overworld or pack=underworld, then restart.");
+        IrisModdedCommands.fail(source, IrisLanguage.plain(
+                ModdedCommandMessages.MODDED_WORLD_COMMANDS_REQUIRED_PACK_IS_NOT_INSTALLED_INSTALL_THEN_RESTART,
+                MessageArgument.untrusted("pack", pack)));
         return 0;
     }
 
@@ -189,7 +188,7 @@ public final class ModdedWorldCommands {
         try {
             ModdedDimensionManager.createPersistent(server, dimensionId, pack, packDimension, seed);
         } catch (Throwable e) {
-            LOGGER.error("Iris world injection failed for {} (pack={} dim={})", dimensionId, pack, packDimension, e);
+            ModdedIrisLog.error("Iris world injection failed for {} (pack={} dim={})", dimensionId, pack, packDimension, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_FAILED_INJECT_IRIS_WORLD, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return 0;
         }
@@ -220,7 +219,7 @@ public final class ModdedWorldCommands {
         try {
             ModdedDimensionManager.createPersistent(server, dimensionId, pack, packDimension, seed);
         } catch (Throwable e) {
-            LOGGER.error("Iris primary world injection failed for {} (pack={} dim={})", dimensionId, pack, packDimension, e);
+            ModdedIrisLog.error("Iris primary world injection failed for {} (pack={} dim={})", dimensionId, pack, packDimension, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_FAILED_INJECT_IRIS_PRIMARY_WORLD, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return 0;
         }
@@ -265,8 +264,9 @@ public final class ModdedWorldCommands {
         if (packFolder.isDirectory()) {
             return applyMainWorld(source, pack, packDimension, packRaw, seed);
         }
-        IrisModdedCommands.fail(source, "Pack '" + pack
-                + "' is not installed. Use /iris download pack=overworld or pack=underworld, then restart.");
+        IrisModdedCommands.fail(source, IrisLanguage.plain(
+                ModdedCommandMessages.MODDED_WORLD_COMMANDS_REQUIRED_PACK_IS_NOT_INSTALLED_INSTALL_THEN_RESTART,
+                MessageArgument.untrusted("pack", pack)));
         return 0;
     }
 
@@ -279,7 +279,7 @@ public final class ModdedWorldCommands {
                 return 0;
             }
         } catch (Throwable e) {
-            LOGGER.error("Iris main world pack load failed for {} (dim={})", pack, packDimension, e);
+            ModdedIrisLog.error("Iris main world pack load failed for {} (dim={})", pack, packDimension, e);
             if (PackValidationRegistry.get(pack) == null) {
                 IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_PACK_IS_NOT_READY_YET_STILL_LOADING_VALIDATING_TRY_COMMAND, MessageArgument.untrusted("pack", pack)));
                 return 0;
@@ -384,7 +384,7 @@ public final class ModdedWorldCommands {
         try {
             removed = ModdedDimensionManager.removePersistent(server, dimensionId, wipeStorage);
         } catch (Throwable e) {
-            LOGGER.error("Iris world removal failed for {}", dimensionId, e);
+            ModdedIrisLog.error("Iris world removal failed for {}", dimensionId, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_FAILED_REMOVE_IRIS_WORLD, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
             return 0;
         }

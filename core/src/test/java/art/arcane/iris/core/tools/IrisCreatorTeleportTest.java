@@ -26,6 +26,8 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 public class IrisCreatorTeleportTest {
     @Test
@@ -50,7 +52,7 @@ public class IrisCreatorTeleportTest {
         Chunk chunk = mock(Chunk.class);
         WorldRuntimeControlService runtimeControl = mock(WorldRuntimeControlService.class);
         Location anchor = new Location(world, 32.5D, 80D, -15.5D);
-        Location safeEntry = new Location(world, 32.5D, 94D, -15.5D);
+        Location safeEntry = new Location(world, 33.5D, 91D, -14.5D);
         doReturn(anchor).when(runtimeControl).resolveEntryAnchor(world);
         doReturn(CompletableFuture.completedFuture(chunk))
                 .when(runtimeControl).requestChunkAsync(world, 2, -1, true);
@@ -67,6 +69,7 @@ public class IrisCreatorTeleportTest {
         order.verify(runtimeControl).requestChunkAsync(world, 2, -1, true);
         order.verify(runtimeControl).resolveSafeEntry(world, anchor);
         order.verify(runtimeControl).teleport(player, safeEntry);
+        verifyNoMoreInteractions(runtimeControl);
     }
 
     @Test
@@ -89,7 +92,22 @@ public class IrisCreatorTeleportTest {
     }
 
     @Test
-    public void teleportSenderToCreatedWorld_failsWhenSafeEntryCannotResolve() {
+    public void teleportSenderToCreatedWorld_failsWhenEntryAnchorCannotResolve() {
+        Player player = mock(Player.class);
+        World world = mock(World.class);
+        WorldRuntimeControlService runtimeControl = mock(WorldRuntimeControlService.class);
+        doReturn("irisworld").when(world).getName();
+        doReturn(null).when(runtimeControl).resolveEntryAnchor(world);
+
+        CompletableFuture<Boolean> result = IrisCreator.teleportSenderToCreatedWorld(player, world, runtimeControl);
+
+        assertThrows(CompletionException.class, result::join);
+        verify(runtimeControl).resolveEntryAnchor(world);
+        verifyNoMoreInteractions(runtimeControl);
+    }
+
+    @Test
+    public void teleportSenderToCreatedWorld_failsWhenNoSafeEntryExists() {
         Player player = mock(Player.class);
         World world = mock(World.class);
         WorldRuntimeControlService runtimeControl = mock(WorldRuntimeControlService.class);
@@ -104,6 +122,11 @@ public class IrisCreatorTeleportTest {
         CompletableFuture<Boolean> result = IrisCreator.teleportSenderToCreatedWorld(player, world, runtimeControl);
 
         assertThrows(CompletionException.class, result::join);
+        InOrder order = inOrder(runtimeControl);
+        order.verify(runtimeControl).resolveEntryAnchor(world);
+        order.verify(runtimeControl).requestChunkAsync(world, 0, 0, true);
+        order.verify(runtimeControl).resolveSafeEntry(world, anchor);
+        verifyNoMoreInteractions(runtimeControl);
     }
 
     @Test

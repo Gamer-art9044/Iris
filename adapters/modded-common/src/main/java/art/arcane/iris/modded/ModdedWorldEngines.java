@@ -31,8 +31,6 @@ import art.arcane.iris.modded.command.ModdedGuiHost;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.storage.LevelResource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -42,7 +40,6 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ModdedWorldEngines {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final ConcurrentHashMap<ServerLevel, Engine> ENGINES = new ConcurrentHashMap<>();
 
     private ModdedWorldEngines() {
@@ -64,7 +61,7 @@ public final class ModdedWorldEngines {
         try {
             evictOrThrow(level);
         } catch (Throwable e) {
-            LOGGER.error("Iris engine evict close failed for {}", level.dimension().identifier(), e);
+            ModdedIrisLog.error("Iris engine evict close failed for {}", level.dimension().identifier(), e);
         }
     }
 
@@ -80,7 +77,7 @@ public final class ModdedWorldEngines {
         }
         // The GUI host holds strong Engine/ServerLevel references with no other remove path.
         ModdedGuiHost.unbind(removed[0]);
-        LOGGER.info("Iris engine evicted for {}", level.dimension().identifier());
+        ModdedIrisLog.info("Iris engine evicted for {}", level.dimension().identifier());
     }
 
     static Engine prepareReplacement(ServerLevel level, String pack, String dimensionKey, long seedOverride) {
@@ -111,7 +108,7 @@ public final class ModdedWorldEngines {
         IrisData data = IrisData.openRuntime(packDir);
         IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
         if (dimension == null) {
-            LOGGER.error("Iris pack '{}' at {} does not contain dimension '{}' (expected dimensions/{}.json). Install a matching Iris pack and restart.",
+            ModdedIrisLog.error("Iris pack '{}' at {} does not contain dimension '{}' (expected dimensions/{}.json). Install a matching Iris pack and restart.",
                     pack, packDir.getAbsolutePath(), dimensionKey, dimensionKey);
             throw new IllegalStateException("Iris dimension '" + dimensionKey + "' missing from pack " + packDir.getAbsolutePath());
         }
@@ -142,7 +139,7 @@ public final class ModdedWorldEngines {
             throw failure;
         }
 
-        LOGGER.info("Iris engine up for {}: pack={} dim={} seed={} height={}..{}",
+        ModdedIrisLog.info("Iris engine up for {}: pack={} dim={} seed={} height={}..{}",
                 level.dimension().identifier(), packDir.getAbsolutePath(), dimension.getLoadKey(), seed, dimension.getMinHeight(), dimension.getMaxHeight());
         return engine;
     }
@@ -182,11 +179,11 @@ public final class ModdedWorldEngines {
             return packDir;
         }
 
-        LOGGER.error("===============================================================");
-        LOGGER.error("Iris pack '{}' is not installed.", pack);
-        LOGGER.error("Expected a pack folder at: {}", packDir.getAbsolutePath());
-        LOGGER.error("Install an Iris pack there (the folder must contain dimensions/{}.json) and restart the server.", dimensionKey);
-        LOGGER.error("===============================================================");
+        ModdedIrisLog.error("===============================================================");
+        ModdedIrisLog.error("Iris pack '{}' is not installed.", pack);
+        ModdedIrisLog.error("Expected a pack folder at: {}", packDir.getAbsolutePath());
+        ModdedIrisLog.error("Install an Iris pack there (the folder must contain dimensions/{}.json) and restart the server.", dimensionKey);
+        ModdedIrisLog.error("===============================================================");
         throw new IllegalStateException("Iris pack not installed: " + packDir.getAbsolutePath());
     }
 
@@ -215,9 +212,9 @@ public final class ModdedWorldEngines {
                                 + level.dimension().identifier());
                     }
                 }
-                LOGGER.info("Iris engine closed for {}", level.dimension().identifier());
+                ModdedIrisLog.info("Iris engine closed for {}", level.dimension().identifier());
             } catch (Throwable e) {
-                LOGGER.error("Iris engine close failed for {}", level.dimension().identifier(), e);
+                ModdedIrisLog.error("Iris engine close failed for {}", level.dimension().identifier(), e);
                 if (failure == null) {
                     failure = e;
                 } else if (e != failure) {

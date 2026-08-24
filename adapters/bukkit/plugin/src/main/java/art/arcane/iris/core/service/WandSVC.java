@@ -51,6 +51,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemFlag;
@@ -61,17 +62,29 @@ import org.bukkit.util.BlockVector;
 import org.bukkit.util.Vector;
 
 import java.awt.Color;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static art.arcane.iris.util.common.data.registry.Particles.CRIT_MAGIC;
 import static art.arcane.iris.util.common.data.registry.Particles.REDSTONE;
 
 public class WandSVC implements IrisService {
     private static final int MS_PER_TICK = Integer.parseInt(System.getProperty("iris.ms_per_tick", "30"));
+    private static final int PLAYER_RESCAN_INTERVAL_TICKS = 100;
 
     private static ItemStack dust;
     private static ItemStack wand;
+
+    private final Map<UUID, Player> activePlayers = new ConcurrentHashMap<>();
+    private final AtomicBoolean playerRescanScheduled = new AtomicBoolean(false);
+    private volatile boolean enabled;
+    private int taskId = -1;
+    private int ticksUntilPlayerRescan = 0;
 
     public static void pasteSchematic(IrisObject s, Location at) {
         s.place(at);
@@ -174,7 +187,6 @@ public class WandSVC implements IrisService {
 
             return s;
         } catch (Throwable e) {
-            e.printStackTrace();
             Iris.reportError(e);
         }
 
@@ -196,7 +208,6 @@ public class WandSVC implements IrisService {
 
             return WorldMatter.createMatter(p.getName(), f[0], f[1]);
         } catch (Throwable e) {
-            e.printStackTrace();
             Iris.reportError(e);
         }
 
@@ -307,8 +318,18 @@ public class WandSVC implements IrisService {
     }
 
     public static Location[] getCuboidFromItem(ItemStack is) {
+        if (is == null) {
+            return new Location[]{null, null};
+        }
         ItemMeta im = is.getItemMeta();
-        return new Location[]{stringToLocation(im.getLore().get(0)), stringToLocation(im.getLore().get(1))};
+        if (im == null) {
+            return new Location[]{null, null};
+        }
+        List<String> lore = im.getLore();
+        if (lore == null || lore.size() < 2) {
+            return new Location[]{null, null};
+        }
+        return new Location[]{stringToLocation(lore.get(0)), stringToLocation(lore.get(1))};
     }
 
     public static Location[] getCuboid(Player p) {
@@ -343,30 +364,47 @@ public class WandSVC implements IrisService {
      * @return True if it is
      */
     public static boolean isWand(ItemStack is) {
-        if (is == null || is.getItemMeta() == null) {
+        if (is == null) {
             return false;
         }
-        Byte marker = is.getItemMeta().getPersistentDataContainer().get(wandKey(), PersistentDataType.BYTE);
-        if (marker != null && marker == (byte) 1) {
+        ItemMeta meta = is.getItemMeta();
+        if (meta == null) {
+            return false;
+        }
+        Byte marker = meta.getPersistentDataContainer().get(wandKey(), PersistentDataType.BYTE);
+        if (marker != null && marker.byteValue() == 1) {
             return true;
         }
-        return is.getType().equals(wand.getType()) &&
-                is.getItemMeta().getDisplayName().equals(wand.getItemMeta().getDisplayName()) &&
-                is.getItemMeta().getEnchants().equals(wand.getItemMeta().getEnchants()) &&
-                is.getItemMeta().getItemFlags().equals(wand.getItemMeta().getItemFlags());
+        ItemStack template = wand;
+        if (template == null || !is.getType().equals(template.getType())) {
+            return false;
+        }
+        ItemMeta templateMeta = template.getItemMeta();
+        return templateMeta != null
+                && Objects.equals(meta.getDisplayName(), templateMeta.getDisplayName())
+                && meta.getEnchants().equals(templateMeta.getEnchants())
+                && meta.getItemFlags().equals(templateMeta.getItemFlags());
     }
 
     @Override
     public void onEnable() {
         wand = createWand();
         dust = createDust();
-
-        J.ar(this::tickAll, 0);
+        enabled = true;
+        activePlayers.clear();
+        ticksUntilPlayerRescan = 0;
+        taskId = J.ar(this::tickAll, 1);
     }
 
     @Override
     public void onDisable() {
-
+        enabled = false;
+        if (taskId != -1) {
+            J.car(taskId);
+            taskId = -1;
+        }
+        activePlayers.clear();
+        playerRescanScheduled.set(false);
     }
 
     /**
@@ -375,11 +413,16 @@ public class WandSVC implements IrisService {
      */
     private void tickAll() {
         try {
-            J.runGlobal(() -> {
-                for (Player p : Bukkit.getOnlinePlayers()) {
-                    J.runEntity(p, () -> tick(p));
-                }
-            });
+            if (!enabled) {
+                return;
+            }
+            if (ticksUntilPlayerRescan-- <= 0) {
+                ticksUntilPlayerRescan = PLAYER_RESCAN_INTERVAL_TICKS;
+                rescanPlayers();
+            }
+            for (Player player : activePlayers.values()) {
+                J.runEntity(player, () -> tick(player));
+            }
         } catch (Throwable e) {
             Iris.reportError(e);
         }
@@ -387,18 +430,51 @@ public class WandSVC implements IrisService {
 
     public void tick(Player p) {
         try {
-            try {
-                if ((IrisSettings.get().getWorld().worldEditWandCUI && isHoldingWand(p)) || isWand(p.getInventory().getItemInMainHand())) {
-                    Location[] d = getCuboid(p);
-                    if (d == null || d[0] == null || d[1] == null) return;
-                    new WandSelection(new Cuboid(d[0], d[1]), p).draw();
-                }
-            } catch (Throwable e) {
-                Iris.reportError(e);
+            if (!p.isOnline()) {
+                activePlayers.remove(p.getUniqueId(), p);
+                return;
             }
+            Location[] selection = getCuboid(p);
+            if (!hasCompleteSelection(selection)) {
+                activePlayers.remove(p.getUniqueId(), p);
+                return;
+            }
+            new WandSelection(new Cuboid(selection[0], selection[1]), p).draw();
         } catch (Throwable e) {
-            e.printStackTrace();
+            Iris.reportError(e);
         }
+    }
+
+    private void rescanPlayers() {
+        if (!playerRescanScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        if (!J.runGlobal(() -> {
+            try {
+                if (!enabled) {
+                    return;
+                }
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    J.runEntity(player, () -> refreshPlayer(player));
+                }
+            } finally {
+                playerRescanScheduled.set(false);
+            }
+        })) {
+            playerRescanScheduled.set(false);
+        }
+    }
+
+    private void refreshPlayer(Player player) {
+        if (enabled && player.isOnline() && hasCompleteSelection(getCuboid(player))) {
+            activePlayers.put(player.getUniqueId(), player);
+            return;
+        }
+        activePlayers.remove(player.getUniqueId(), player);
+    }
+
+    private static boolean hasCompleteSelection(Location[] selection) {
+        return selection != null && selection.length >= 2 && selection[0] != null && selection[1] != null;
     }
 
     /**
@@ -492,6 +568,7 @@ public class WandSVC implements IrisService {
             return;
         try {
             if (isHoldingIrisWand(e.getPlayer())) {
+                activePlayers.put(e.getPlayer().getUniqueId(), e.getPlayer());
                 if (e.getAction().equals(Action.LEFT_CLICK_BLOCK)) {
                     e.setCancelled(true);
                     e.getPlayer().getInventory().setItemInMainHand(update(true, Objects.requireNonNull(e.getClickedBlock()).getLocation(), e.getPlayer().getInventory().getItemInMainHand()));
@@ -515,6 +592,11 @@ public class WandSVC implements IrisService {
         } catch (Throwable xx) {
             Iris.reportError(xx);
         }
+    }
+
+    @EventHandler
+    public void on(PlayerQuitEvent event) {
+        activePlayers.remove(event.getPlayer().getUniqueId());
     }
 
     /**

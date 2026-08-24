@@ -24,11 +24,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public final class ModdedModConfig {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Object LOCK = new Object();
     private static volatile ModdedModConfig instance;
 
@@ -128,7 +125,7 @@ public final class ModdedModConfig {
                     json.optLong("mainWorldSeed", defaults.mainWorldSeed),
                     json.optBoolean("mainWorldAutoRestart", defaults.mainWorldAutoRestart));
         } catch (RuntimeException | IOException e) {
-            LOGGER.error("Iris modded config at {} is invalid; using defaults", file, e);
+            ModdedIrisLog.error("Iris modded config at {} is invalid; using defaults", file, e);
             return defaults;
         }
     }
@@ -145,7 +142,7 @@ public final class ModdedModConfig {
             Files.createDirectories(file.getParent());
             Files.writeString(file, json.toString(4), StandardCharsets.UTF_8);
         } catch (IOException e) {
-            LOGGER.error("Iris failed to write modded config at {}", file, e);
+            ModdedIrisLog.error("Iris failed to write modded config at {}", file, e);
         }
     }
 }

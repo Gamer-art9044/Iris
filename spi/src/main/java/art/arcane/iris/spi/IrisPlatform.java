@@ -203,6 +203,7 @@ public interface IrisPlatform {
      * stack trace on stderr.
      */
     default void reportError(String context, Throwable error) {
+        log(LogLevel.ERROR, context == null || context.isBlank() ? "Unhandled Iris failure." : context);
         reportError(error);
         if (error != null) {
             error.printStackTrace(System.err);

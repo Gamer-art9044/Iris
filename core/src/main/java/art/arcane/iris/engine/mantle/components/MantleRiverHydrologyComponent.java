@@ -15,6 +15,7 @@ import art.arcane.iris.engine.river.RiverAnchor;
 import art.arcane.iris.engine.river.RiverRouteState;
 import art.arcane.iris.engine.river.RiverSample;
 import art.arcane.iris.engine.river.RiverSection;
+import art.arcane.iris.engine.river.RiverTopologyComplexity;
 import art.arcane.iris.engine.river.cave.CavePosition;
 import art.arcane.iris.engine.river.cave.CaveVoxel;
 import art.arcane.iris.engine.river.cave.CaveVoxelPrecondition;
@@ -223,7 +224,11 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
     }
 
     static int tunnelHalo(IrisRiverRuntime runtime) {
-        return Math.max(1, (int) StrictMath.ceil(runtime.maximumChannelWidth() * 0.5D) + 1);
+        return RiverTopologyComplexity.tunnelHalo(
+                runtime.maximumChannelWidth(),
+                runtime.maximumTunnelWidthMultiplier(),
+                runtime.tunnelMouthBlend()
+        );
     }
 
     static int waterHeadY(IrisRiverSurfaceSample sample, IrisRiverCaves caves) {
@@ -261,6 +266,7 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             int chunkX,
             int chunkZ,
             int halo,
+            int dryHeadroom,
             FootprintSampler footprintSampler,
             TunnelSampler tunnelSampler,
             SurfaceSampler surfaceSampler
@@ -286,13 +292,25 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             return TunnelPlan.empty();
         }
 
-        Map<CavePosition, RiverCaveAction> candidateActions = mergeActions(solidColumns);
-        ArrayList<TunnelColumn> containedColumns = new ArrayList<>(solidColumns.size());
-        for (TunnelColumn column : solidColumns) {
-            if (isTunnelColumnContained(view, column, candidateActions.keySet(), surfaceSampler)) {
-                containedColumns.add(column);
+        ArrayList<TunnelColumn> containedColumns = new ArrayList<>(solidColumns);
+        boolean changed;
+        do {
+            changed = false;
+            Set<CavePosition> candidateActions = mergeActions(containedColumns).keySet();
+            for (int index = containedColumns.size() - 1; index >= 0; index--) {
+                TunnelColumn column = containedColumns.get(index);
+                if (!isTunnelColumnContained(
+                        view,
+                        column,
+                        candidateActions,
+                        dryHeadroom,
+                        surfaceSampler
+                )) {
+                    containedColumns.remove(index);
+                    changed = true;
+                }
             }
-        }
+        } while (changed && !containedColumns.isEmpty());
         Map<CavePosition, RiverCaveAction> actions = mergeActions(containedColumns);
         LinkedHashMap<CavePosition, CaveVoxelPrecondition> preconditions = new LinkedHashMap<>();
         for (CavePosition position : actions.keySet()) {
@@ -302,15 +320,32 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             ));
         }
         for (CavePosition position : List.copyOf(actions.keySet())) {
+            RiverCaveAction action = actions.get(position);
             for (int[] offset : NEIGHBORS) {
                 CavePosition neighbor = offset(position, offset);
-                if (actions.containsKey(neighbor)
-                        || !view.isInWorld(neighbor)
-                        || view.voxelAt(neighbor) != CaveVoxel.SOLID) {
+                if (actions.containsKey(neighbor) || !view.isInWorld(neighbor)) {
+                    continue;
+                }
+                CaveVoxel neighborVoxel = view.voxelAt(neighbor);
+                boolean sealsSolidBoundary = neighborVoxel == CaveVoxel.SOLID;
+                boolean sealsCaveWaterline = action == RiverCaveAction.WET_SOURCE
+                        && neighborVoxel == CaveVoxel.CAVE_AIR;
+                if (!sealsSolidBoundary && !sealsCaveWaterline) {
+                    if (action == RiverCaveAction.DRY_AIR
+                            && neighborVoxel == CaveVoxel.CAVE_AIR
+                            && !view.isOpenToSurface(neighbor)) {
+                        preconditions.putIfAbsent(
+                                neighbor,
+                                new CaveVoxelPrecondition(CaveVoxel.CAVE_AIR, false)
+                        );
+                    }
                     continue;
                 }
                 actions.putIfAbsent(neighbor, RiverCaveAction.SEAL_GUARD);
-                preconditions.putIfAbsent(neighbor, new CaveVoxelPrecondition(CaveVoxel.SOLID, false));
+                preconditions.putIfAbsent(neighbor, new CaveVoxelPrecondition(
+                        neighborVoxel,
+                        view.isOpenToSurface(neighbor)
+                ));
             }
         }
         return new TunnelPlan(Map.copyOf(actions), Map.copyOf(preconditions));
@@ -332,7 +367,7 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
                     ? RiverCaveAction.WET_SOURCE
                     : RiverCaveAction.DRY_AIR;
             if (!view.isInWorld(position)
-                    || (view.voxelAt(position) != CaveVoxel.SOLID
+                    || (!canCarveTunnelVoxel(view, position)
                     && !matchesPublishedAction(view, position, action))) {
                 return null;
             }
@@ -345,6 +380,7 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             CaveVoxelView view,
             TunnelColumn column,
             Set<CavePosition> candidateActions,
+            int dryHeadroom,
             SurfaceSampler surfaceSampler
     ) {
         for (CavePosition position : column.actions().keySet()) {
@@ -356,7 +392,11 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
                 if (!view.isInWorld(neighbor)) {
                     return false;
                 }
-                if (view.voxelAt(neighbor) == CaveVoxel.SOLID || isSurfaceMouth(neighbor, surfaceSampler)) {
+                CaveVoxel neighborVoxel = view.voxelAt(neighbor);
+                if (neighborVoxel == CaveVoxel.SOLID
+                        || (neighborVoxel == CaveVoxel.CAVE_AIR
+                        && !view.isOpenToSurface(neighbor))
+                        || isSurfaceMouth(neighbor, dryHeadroom, surfaceSampler)) {
                     continue;
                 }
                 return false;
@@ -365,14 +405,24 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
         return true;
     }
 
-    private static boolean isSurfaceMouth(CavePosition position, SurfaceSampler surfaceSampler) {
+    private static boolean canCarveTunnelVoxel(CaveVoxelView view, CavePosition position) {
+        CaveVoxel voxel = view.voxelAt(position);
+        return voxel == CaveVoxel.SOLID
+                || (voxel == CaveVoxel.CAVE_AIR && !view.isOpenToSurface(position));
+    }
+
+    private static boolean isSurfaceMouth(
+            CavePosition position,
+            int dryHeadroom,
+            SurfaceSampler surfaceSampler
+    ) {
         IrisRiverSurfaceSample sample = surfaceSampler.sample(position.x(), position.z());
         if (!isWetChannelBed(sample) || sample.subterranean()) {
             return false;
         }
         int bedY = (int) Math.round(sample.terrainHeight());
         int headY = (int) Math.round(sample.waterSurfaceY());
-        return position.y() > bedY && position.y() <= headY;
+        return position.y() > bedY && position.y() <= headY + Math.max(0, dryHeadroom);
     }
 
     private static Map<CavePosition, RiverCaveAction> mergeActions(List<TunnelColumn> columns) {
@@ -423,6 +473,7 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
                     chunkX,
                     chunkZ,
                     tunnelHalo(runtime),
+                    runtime.maximumTunnelHeadroom(),
                     runtime::sampleFootprint,
                     runtime::sampleTunnel,
                     runtime::sample
@@ -470,11 +521,16 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
         int x = (int) StrictMath.floor(anchor.x());
         int z = (int) StrictMath.floor(anchor.z());
         IrisRiverSurfaceSample sample = runtime.sample(x, z);
-        if (!isWetChannelBed(sample)) {
+        IrisRiverTunnelSample tunnel = runtime.sampleTunnel(x, z);
+        if (!isWetChannelBed(sample) && tunnel == null) {
             return null;
         }
-        int bedY = (int) Math.round(sample.terrainHeight());
-        int headY = waterHeadY(sample, caves);
+        int bedY = tunnel == null
+                ? (int) Math.round(sample.terrainHeight())
+                : tunnel.bedY();
+        int headY = tunnel == null
+                ? waterHeadY(sample, caves)
+                : tunnel.waterHeadY() + caves.getWaterLevelOffset();
         int entryY = Math.max(bedY, headY);
         CavePosition entry = new CavePosition(x, entryY, z);
         if (!view.isInWorld(entry)) {
@@ -548,7 +604,10 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             int offsetX,
             int offsetZ
     ) {
-        int preferredY = headY + caves.getDryHeadroom() - caves.getGrottoVerticalRadius();
+        int preferredY = Math.min(
+                headY + caves.getDryHeadroom() - caves.getGrottoVerticalRadius(),
+                entry.y() - caves.getGrottoVerticalRadius() - 1
+        );
         int maximumY = Math.min(Math.min(entry.y() - 1, headY), preferredY);
         int minimumY = Math.max(1, entry.y() - caves.getMaxBoreDepth());
         for (int y = maximumY; y >= minimumY; y--) {

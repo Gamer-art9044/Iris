@@ -62,6 +62,15 @@ public interface RiverTerrainSampler {
         return fallback;
     }
 
+    default double channelWidth(
+            RiverRoutingContext context,
+            double x,
+            double z,
+            double fallback
+    ) {
+        return channelWidth(context, fallback);
+    }
+
     default double bankWidth(RiverRoutingContext context, double fallback) {
         return fallback;
     }

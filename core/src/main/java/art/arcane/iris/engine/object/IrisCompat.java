@@ -72,7 +72,6 @@ public class IrisCompat {
                     def.getItemFilters().add(i);
                 }
             } catch (Throwable e) {
-                e.printStackTrace();
                 IrisLogging.reportError(e);
             }
         }

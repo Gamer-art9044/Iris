@@ -36,12 +36,12 @@ public class StudioEntitySpawningTest {
     }
 
     @Test
-    public void generalStudioUsesAPlayerModeEligibleForNaturalSpawning() throws IOException {
+    public void standardStudioDefaultsToSpectatorMode() throws IOException {
         String source = Files.readString(Path.of(
-                "src/main/java/art/arcane/iris/core/project/IrisProject.java")).replace("\r\n", "\n");
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
 
-        assertFalse(source.contains("GameMode.SPECTATOR"));
-        assertTrue(source.contains("GameMode.CREATIVE"));
+        assertTrue(source.contains("request.openKind().teleportThroughStandardEntry()"));
+        assertTrue(source.contains("GameMode.SPECTATOR"));
     }
 
     @Test

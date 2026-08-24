@@ -68,7 +68,6 @@ final class EngineTickRegistry {
                 engine.tickRandomPlayer();
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
-                e.printStackTrace();
             }
         }
     }

@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.iris.engine.framework.Engine;
@@ -51,8 +52,6 @@ import net.minecraft.world.entity.Relative;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.structure.Structure;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
 import java.util.Set;
@@ -64,7 +63,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 
 final class ModdedLocateCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final long LOCATE_TIMEOUT_MS = 120000L;
     private static final int NATIVE_STRUCTURE_LOCATE_RADIUS = 100;
     private static final ConcurrentHashMap<UUID, CompletableFuture<Position2>> ACTIVE_LOCATE_REQUESTS = new ConcurrentHashMap<>();
@@ -260,7 +258,7 @@ final class ModdedLocateCommands {
                 server.execute(() -> teleportToStructure(source, level, player, targetX, targetY, targetZ,
                         "Iris-placed structure " + key));
             } catch (Throwable e) {
-                LOGGER.error("Iris structure locate failed for {}", key, e);
+                ModdedIrisLog.error("Iris structure locate failed for {}", key, e);
                 server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_SEARCH_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()))));
             }
         }, "Iris Structure Locator");
@@ -302,7 +300,7 @@ final class ModdedLocateCommands {
             teleportToStructure(source, level, player, targetX, targetY, targetZ,
                     "native structure " + target.key());
         } catch (Throwable e) {
-            LOGGER.error("Native structure locate failed for {}", target.key(), e);
+            ModdedIrisLog.error("Native structure locate failed for {}", target.key(), e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_SEARCH_NATIVE_STRUCTURE_FAILED, MessageArgument.untrusted("value", target.key()), MessageArgument.untrusted("value2", e.getClass().getSimpleName())));
         }
     }
@@ -518,7 +516,7 @@ final class ModdedLocateCommands {
             return;
         }
         if (failure != null) {
-            LOGGER.error("Iris locate failed for {}", label, failure);
+            ModdedIrisLog.error("Iris locate failed for {}", label, failure);
             server.execute(() -> {
                 if (ACTIVE_LOCATE_REQUESTS.remove(playerId, search)) {
                     IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_SEARCH_FAILED_2, MessageArgument.untrusted("failure", failure)));

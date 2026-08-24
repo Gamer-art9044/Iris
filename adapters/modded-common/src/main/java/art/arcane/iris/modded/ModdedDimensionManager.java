@@ -46,8 +46,6 @@ import net.minecraft.world.level.storage.DerivedLevelData;
 import net.minecraft.world.level.storage.LevelStorageSource;
 import net.minecraft.world.level.storage.ServerLevelData;
 import net.minecraft.world.level.storage.WorldData;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -60,7 +58,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 public final class ModdedDimensionManager {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Object LOCK = new Object();
     private static final ConcurrentHashMap<String, Handle> HANDLES = new ConcurrentHashMap<>();
     private static final TicketType TELEPORT_WARM_TICKET = new TicketType(TicketType.NO_TIMEOUT,
@@ -137,7 +134,7 @@ public final class ModdedDimensionManager {
                 if (present == null || !(present.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator)) {
                     throw new IllegalStateException("Iris cannot inject dimension '" + dimensionId + "': a non-Iris level with that id is already loaded");
                 }
-                LOGGER.warn("Iris dimension '{}' is already present in the running server; reusing it", dimensionId);
+                ModdedIrisLog.warn("Iris dimension '{}' is already present in the running server; reusing it", dimensionId);
                 generator.repointAndBind(present, pack, packDimensionKey, seed);
                 Handle handle = new Handle(dimensionId, pack, packDimensionKey, seed, present, generator);
                 HANDLES.put(dimensionId, handle);
@@ -147,10 +144,10 @@ public final class ModdedDimensionManager {
             try {
                 Handle handle = inject(server, serverAccess, dimensionId, key, pack, packDimensionKey, seed);
                 HANDLES.put(dimensionId, handle);
-                LOGGER.info("Iris injected runtime dimension '{}' (pack={} dim={} seed={})", dimensionId, pack, packDimensionKey, seed);
+                ModdedIrisLog.info("Iris injected runtime dimension '{}' (pack={} dim={} seed={})", dimensionId, pack, packDimensionKey, seed);
                 return handle;
             } catch (Throwable e) {
-                LOGGER.error("Iris failed to inject runtime dimension '{}' (pack={} dim={} seed={})", dimensionId, pack, packDimensionKey, seed, e);
+                ModdedIrisLog.error("Iris failed to inject runtime dimension '{}' (pack={} dim={} seed={})", dimensionId, pack, packDimensionKey, seed, e);
                 throw new IllegalStateException("Iris runtime dimension injection failed for " + dimensionId, e);
             }
         }
@@ -233,11 +230,11 @@ public final class ModdedDimensionManager {
                 if (wipeStorage) {
                     ModdedDimensionStorage.wipe(server, key);
                 }
-                LOGGER.info("Iris removed runtime dimension '{}'", dimensionId);
+                ModdedIrisLog.info("Iris removed runtime dimension '{}'", dimensionId);
                 return true;
             } catch (Throwable e) {
                 rollbackRemoval(server, serverAccess, key, level, generator, generatorUnbound, e);
-                LOGGER.error("Iris failed to remove runtime dimension '{}'", dimensionId, e);
+                ModdedIrisLog.error("Iris failed to remove runtime dimension '{}'", dimensionId, e);
                 throw new IllegalStateException("Iris runtime dimension removal failed for " + dimensionId, e);
             }
         }
@@ -256,7 +253,7 @@ public final class ModdedDimensionManager {
             if (rollbackFailure != failure) {
                 failure.addSuppressed(rollbackFailure);
             }
-            LOGGER.error("Iris failed to restore the engine for retained runtime dimension '{}'",
+            ModdedIrisLog.error("Iris failed to restore the engine for retained runtime dimension '{}'",
                     key.identifier(), rollbackFailure);
         }
     }
@@ -282,7 +279,7 @@ public final class ModdedDimensionManager {
                 .whenComplete((Object result, Throwable error) -> server.execute(() -> {
                     level.getChunkSource().removeTicketWithRadius(TELEPORT_WARM_TICKET, chunkPos, 1);
                     if (error != null) {
-                        LOGGER.warn("Iris chunk warm for teleport into '{}' at {},{} failed: {}", dimensionId, chunkPos.x(), chunkPos.z(), error.toString());
+                        ModdedIrisLog.warn("Iris chunk warm for teleport into '{}' at {},{} failed: {}", dimensionId, chunkPos.x(), chunkPos.z(), error.toString());
                     }
                     ServerPlayer target = server.getPlayerList().getPlayer(playerId);
                     if (target == null) {
@@ -325,7 +322,7 @@ public final class ModdedDimensionManager {
             }
             return dimension;
         } catch (Throwable e) {
-            LOGGER.error("Iris could not load pack '{}' dimension '{}' for dimension type resolution",
+            ModdedIrisLog.error("Iris could not load pack '{}' dimension '{}' for dimension type resolution",
                     pack, packDimensionKey, e);
             if (e instanceof Error fatalError) {
                 throw fatalError;
@@ -401,19 +398,19 @@ public final class ModdedDimensionManager {
             }
         } catch (Throwable cleanupError) {
             failure.addSuppressed(cleanupError);
-            LOGGER.error("Iris failed to remove a partially injected level for {}", key.identifier(), cleanupError);
+            ModdedIrisLog.error("Iris failed to remove a partially injected level for {}", key.identifier(), cleanupError);
         }
         try {
             generator.unbindEngine(level);
         } catch (Throwable cleanupError) {
             failure.addSuppressed(cleanupError);
-            LOGGER.error("Iris failed to close a partially bound engine for {}", key.identifier(), cleanupError);
+            ModdedIrisLog.error("Iris failed to close a partially bound engine for {}", key.identifier(), cleanupError);
         }
         try {
             level.close();
         } catch (Throwable cleanupError) {
             failure.addSuppressed(cleanupError);
-            LOGGER.error("Iris failed to close a partially injected level for {}", key.identifier(), cleanupError);
+            ModdedIrisLog.error("Iris failed to close a partially injected level for {}", key.identifier(), cleanupError);
         }
     }
 

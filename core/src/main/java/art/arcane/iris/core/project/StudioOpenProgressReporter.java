@@ -189,8 +189,6 @@ final class StudioOpenProgressReporter {
             case "create_world" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_CREATE_WORLD);
             case "apply_world_rules" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_APPLY_WORLD_RULES);
             case "prepare_generator" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_PREPARE_GENERATOR);
-            case "request_entry_chunk" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_REQUEST_ENTRY_CHUNK);
-            case "resolve_safe_entry" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_RESOLVE_SAFE_ENTRY);
             case "teleport_player" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_TELEPORT_PLAYER);
             case "finalize_open" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_FINALIZE_OPEN);
             case "cleanup" -> IrisLanguage.text(RuntimeProgressMessages.STUDIO_STAGE_CLEANUP);

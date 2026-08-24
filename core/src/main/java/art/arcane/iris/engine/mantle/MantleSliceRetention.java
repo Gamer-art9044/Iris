@@ -46,7 +46,7 @@ public final class MantleSliceRetention {
             return;
         }
         if (retained.add(className)) {
-            IrisLogging.info("Mantle slice retained across chunk cleanup: " + className);
+            IrisLogging.debug("Mantle slice retained across chunk cleanup: " + className);
         }
     }
 

@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.TreePlausibilizeBatch;
 import art.arcane.iris.core.tools.TreePlausibilizer;
@@ -54,8 +55,6 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -74,7 +73,6 @@ import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedObjectCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
     private static final long MAX_SAVE_VOLUME = 500000L;
     private static final long MAX_AUTOSELECT_VOLUME = 100000L;
@@ -313,7 +311,7 @@ public final class ModdedObjectCommands {
             try {
                 object.write(file);
             } catch (IOException e) {
-                LOGGER.error("Iris object save failed for {}", file.getAbsolutePath(), e);
+                ModdedIrisLog.error("Iris object save failed for {}", file.getAbsolutePath(), e);
                 if (finalClaimed) {
                     // Never leave a 0-byte claim file permanently blocking non-overwrite saves.
                     file.delete();
@@ -332,7 +330,7 @@ public final class ModdedObjectCommands {
                 tileNote.append(" (").append(tilesSkipped[0]).append(" tile state(s) could not be captured)");
             }
             server.execute(() -> IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_SAVED_OBJECTS_IOB_X_X_BLOCK_S, MessageArgument.untrusted("value", engine.getData().getDataFolder().getName()), MessageArgument.untrusted("name", name), MessageArgument.untrusted("w", w), MessageArgument.untrusted("h", h), MessageArgument.untrusted("d", d), MessageArgument.untrusted("value2", object.getBlocks().size()), MessageArgument.untrusted("tileNote", tileNote))));
-            LOGGER.info("Iris object save: {} {}x{}x{} blocks={} tilesSaved={} tilesSkipped={} -> {}", name, w, h, d, object.getBlocks().size(), tilesSaved[0], tilesSkipped[0], file.getAbsolutePath());
+            ModdedIrisLog.info("Iris object save: {} {}x{}x{} blocks={} tilesSaved={} tilesSkipped={} -> {}", name, w, h, d, object.getBlocks().size(), tilesSaved[0], tilesSkipped[0], file.getAbsolutePath());
         });
         return 1;
     }
@@ -378,7 +376,7 @@ public final class ModdedObjectCommands {
             String blockKey = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
             return ModdedTileData.capture(blockKey, snbt);
         } catch (Throwable e) {
-            LOGGER.error("Iris tile capture failed at {} {} {}", pos.getX(), pos.getY(), pos.getZ(), e);
+            ModdedIrisLog.error("Iris tile capture failed at {} {} {}", pos.getX(), pos.getY(), pos.getZ(), e);
             return null;
         }
     }
@@ -391,7 +389,7 @@ public final class ModdedObjectCommands {
         try {
             object = IrisData.loadAnyObject(key, engine == null ? null : engine.getData());
         } catch (Throwable e) {
-            LOGGER.error("Iris object load failed for {}", key, e);
+            ModdedIrisLog.error("Iris object load failed for {}", key, e);
         }
         if (object == null || object.getBlocks().size() == 0) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_UNKNOWN_EMPTY_OBJECT, MessageArgument.untrusted("key", key)));
@@ -419,7 +417,7 @@ public final class ModdedObjectCommands {
         try {
             object.place(target.getX(), target.getY() + object.getCenter().getY(), target.getZ(), placer, placement, new RNG(), null);
         } catch (Throwable e) {
-            LOGGER.error("Iris paste failed for {}", key, e);
+            ModdedIrisLog.error("Iris paste failed for {}", key, e);
             ModdedObjectUndo.record(player == null ? ModdedObjectUndo.CONSOLE : player.getUUID(), level, placer.undoSnapshot());
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_PASTE_FAILED_PARTIAL_CHANGES_RECORDED_UNDO, MessageArgument.untrusted("value", e.getClass().getSimpleName())));
             return 0;
@@ -428,7 +426,7 @@ public final class ModdedObjectCommands {
         ModdedObjectUndo.record(owner, level, placer.undoSnapshot());
         String tileNote = tileNote(placer);
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_PLACED_AT_ROT_WRITE_S_NON_AIR, MessageArgument.untrusted("key", key), MessageArgument.untrusted("value", target.getX()), MessageArgument.untrusted("value2", target.getY()), MessageArgument.untrusted("value3", target.getZ()), MessageArgument.untrusted("rotation", rotation), MessageArgument.untrusted("value4", placer.writes()), MessageArgument.untrusted("value5", placer.nonAirWrites()), MessageArgument.untrusted("tileNote", tileNote)));
-        LOGGER.info("Iris paste: {} at {},{},{} rot={} writes={} nonAir={} tilesRestored={} tilesSkipped={}",
+        ModdedIrisLog.info("Iris paste: {} at {},{},{} rot={} writes={} nonAir={} tilesRestored={} tilesSkipped={}",
                 key, target.getX(), target.getY(), target.getZ(), rotation, placer.writes(), placer.nonAirWrites(), placer.restoredTiles(), placer.skippedTiles());
         return placer.writes() > 0 ? 1 : 0;
     }
@@ -608,7 +606,7 @@ public final class ModdedObjectCommands {
         try {
             object = IrisData.loadAnyObject(key, engine == null ? null : engine.getData());
         } catch (Throwable e) {
-            LOGGER.error("Iris object load failed for {}", key, e);
+            ModdedIrisLog.error("Iris object load failed for {}", key, e);
         }
         if (object == null) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_UNKNOWN_OBJECT, MessageArgument.untrusted("key", key)));
@@ -648,7 +646,7 @@ public final class ModdedObjectCommands {
         try {
             object = IrisData.loadAnyObject(key, engine == null ? null : engine.getData());
         } catch (Throwable e) {
-            LOGGER.error("Iris object load failed for {}", key, e);
+            ModdedIrisLog.error("Iris object load failed for {}", key, e);
         }
         if (object == null) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_UNKNOWN_OBJECT_2, MessageArgument.untrusted("key", key)));
@@ -665,7 +663,7 @@ public final class ModdedObjectCommands {
         try {
             object.write(file);
         } catch (IOException e) {
-            LOGGER.error("Iris object shrink save failed for {}", file.getAbsolutePath(), e);
+            ModdedIrisLog.error("Iris object shrink save failed for {}", file.getAbsolutePath(), e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_OBJECT_COMMANDS_FAILED_SAVE_OBJECT_2, MessageArgument.untrusted("value", file.getName()), MessageArgument.untrusted("value2", String.valueOf(e.getMessage()))));
             return 0;
         }

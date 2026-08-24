@@ -79,12 +79,27 @@ public class PackRiverValidatorTest {
                       "minimumSourcesPerTile": 2,
                       "sinkSearchReaches": 8,
                       "routingBasinCells": 7,
+                      "routingDeviationScaleCells": 7,
+                      "routingDeviationStrengthCells": 33,
                       "routingPlateauHeight": 0,
+                      "flowAlignmentWeight": 1025,
+                      "confluenceWeight": -1,
+                      "branchSoftCap": 9,
+                      "branchChildShrinkFactor": 2,
                       "routingStyle": {"zoom": 0}
                     },
                     "terrain": {
                       "channelWidth": {"min": 40, "max": 12},
-                      "depth": {}
+                      "depth": {},
+                      "tunnelWidthMultiplier": {"min": 0.5, "max": 9},
+                      "tunnelMouthBlend": 17,
+                      "tunnelFloorVariation": 9,
+                      "tunnelRoofVariation": 17,
+                      "tunnelFloorStyle": {"zoom": 0},
+                      "tunnelRoofStyle": {"zoom": 0}
+                    },
+                    "caves": {
+                      "parentBiomeInheritance": 2
                     }
                   }
                 }
@@ -96,10 +111,24 @@ public class PackRiverValidatorTest {
         assertContains(result.errors(), "rivers.topology.minimumSourcesPerTile must not exceed tileCells squared.");
         assertContains(result.errors(), "rivers.topology.sinkSearchReaches must be at most 7");
         assertContains(result.errors(), "rivers.topology.routingBasinCells must be at least 8");
+        assertContains(result.errors(), "rivers.topology.routingDeviationScaleCells must be at least 8");
+        assertContains(result.errors(), "rivers.topology.routingDeviationStrengthCells must be at most 32");
         assertContains(result.errors(), "rivers.topology.routingPlateauHeight must be at least 1");
+        assertContains(result.errors(), "rivers.topology.flowAlignmentWeight must be at most 1024");
+        assertContains(result.errors(), "rivers.topology.confluenceWeight must be at least 0");
+        assertContains(result.errors(), "rivers.topology.branchSoftCap must be at most 8");
+        assertContains(result.errors(), "rivers.topology.branchChildShrinkFactor must be at most 1");
         assertContains(result.errors(), "rivers.topology.routingStyle.zoom must be at least");
         assertContains(result.errors(), "rivers.terrain.channelWidth.min must not exceed");
         assertContains(result.errors(), "rivers.terrain.depth must set min and max explicitly.");
+        assertContains(result.errors(), "rivers.terrain.tunnelWidthMultiplier.min must be at least 1");
+        assertContains(result.errors(), "rivers.terrain.tunnelWidthMultiplier.max must be at most 8");
+        assertContains(result.errors(), "rivers.terrain.tunnelMouthBlend must be at most 16");
+        assertContains(result.errors(), "rivers.terrain.tunnelFloorVariation must be at most 8");
+        assertContains(result.errors(), "rivers.terrain.tunnelRoofVariation must be at most 16");
+        assertContains(result.errors(), "rivers.terrain.tunnelFloorStyle.zoom must be at least");
+        assertContains(result.errors(), "rivers.terrain.tunnelRoofStyle.zoom must be at least");
+        assertContains(result.errors(), "rivers.caves.parentBiomeInheritance must be at most 1");
     }
 
     @Test
@@ -178,6 +207,27 @@ public class PackRiverValidatorTest {
     }
 
     @Test
+    public void rejectsTunnelFootprintsAboveDerivedHydrologyBudget() throws Exception {
+        File pack = pack("""
+                {
+                  "regions": ["region"],
+                  "rivers": {
+                    "enabled": true,
+                    "terrain": {
+                      "maxChannelWidth": 2048,
+                      "tunnelMouthBlend": 16
+                    }
+                  }
+                }
+                """);
+
+        PackRiverValidator.Validation result = validate(pack);
+
+        assertContains(result.errors(), "exceeds the safe derived hydrology budget");
+        assertContains(result.errors(), "columns per generated chunk");
+    }
+
+    @Test
     public void rejectsMissingBiomeReferencesAndWarnsAboutInferredRoles() throws Exception {
         File pack = pack("""
                 {
@@ -197,6 +247,44 @@ public class PackRiverValidatorTest {
         assertContains(result.errors(), "references missing biome 'missing'");
         assertContains(result.warnings(), "inferred river role SEA");
         assertContains(result.warnings(), "inferred river role SHORE");
+    }
+
+    @Test
+    public void netherRiverBiomesKeepNetherDerivativesWithoutOverworldRoleWarnings() throws Exception {
+        File pack = pack("""
+                {
+                  "environment": "NETHER",
+                  "regions": ["region"],
+                  "rivers": {
+                    "enabled": true,
+                    "biomes": {
+                      "channel": ["biome"],
+                      "bank": ["biome"]
+                    }
+                  }
+                }
+                """);
+        write(pack, "biomes/biome.json", """
+                {
+                  "name": "Nether River",
+                  "derivative": "minecraft:basalt_deltas",
+                  "vanillaDerivative": "minecraft:basalt_deltas"
+                }
+                """);
+        write(pack, "regions/region.json", """
+                {
+                  "landBiomes": ["biome"],
+                  "riverOverride": {
+                    "channelBiomes": ["biome"],
+                    "bankBiomes": ["biome"]
+                  }
+                }
+                """);
+
+        PackRiverValidator.Validation result = validate(pack);
+
+        assertFalse(result.errors().toString(), contains(result.errors(), "biome"));
+        assertFalse(result.warnings().toString(), contains(result.warnings(), "inferred river role"));
     }
 
     @Test

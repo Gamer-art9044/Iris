@@ -95,7 +95,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
 
         boolean trace = IrisSettings.get().getGeneral().isDebug();
         if (trace) {
-            IrisLogging.info("[StructTrace] ORIGIN chunk=" + cx + "," + cz + " structures=" + placement.getStructures()
+            IrisLogging.debug("[StructTrace] ORIGIN chunk=" + cx + "," + cz + " structures=" + placement.getStructures()
                     + " anchor=" + placement.resolvedAnchor() + " band=" + placement.getMinHeight() + ".." + placement.getMaxHeight());
         }
 
@@ -108,7 +108,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
         RNG rng = resolved.rng();
         int baseY = resolved.baseY();
         if (trace) {
-            IrisLogging.info("[StructTrace] ASSEMBLED chunk=" + cx + "," + cz + " key=" + key + " baseY=" + baseY + " pieces=" + pieces.size());
+            IrisLogging.debug("[StructTrace] ASSEMBLED chunk=" + cx + "," + cz + " key=" + key + " baseY=" + baseY + " pieces=" + pieces.size());
         }
 
         if (!placement.isAnchoredUnderground()) {

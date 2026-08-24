@@ -1,5 +1,6 @@
 package art.arcane.iris.modded.service;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.service.tree.TreeDefinitionIndex;
 import art.arcane.iris.core.service.tree.TreeMarkerTraversal;
@@ -23,8 +24,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.List;
@@ -38,7 +37,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
 public final class ModdedTreeFellerService implements ModdedTickableService {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final ThreadLocal<Integer> BREAK_PROBE_DEPTH = ThreadLocal.withInitial(() -> 0);
 
     private final AtomicBoolean enabled = new AtomicBoolean();
@@ -245,7 +243,7 @@ public final class ModdedTreeFellerService implements ModdedTickableService {
                         (x, y, z) -> markerAt(prepared.engine(), prepared.minimumY(), x, y, z)
                 );
             } catch (Throwable error) {
-                LOGGER.error("Iris modded tree-feller discovery failed", error);
+                ModdedIrisLog.error("Iris modded tree-feller discovery failed", error);
                 discovery = new TreeMarkerTraversal.Discovery(List.of(), false);
             }
             TreeMarkerTraversal.Discovery resolved = discovery;

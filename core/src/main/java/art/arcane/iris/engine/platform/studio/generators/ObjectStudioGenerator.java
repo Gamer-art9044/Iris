@@ -267,7 +267,7 @@ public class ObjectStudioGenerator extends EnginedStudioGenerator {
 
             int cellCount = layout.cells().size();
             IrisBlockVector worldExtent = computeExtent(layout);
-            IrisLogging.info("Object Studio layout built: %d cells from %d pack(s), extent %d x %d blocks",
+            IrisLogging.debug("Object Studio layout built: %d cells from %d pack(s), extent %d x %d blocks",
                     cellCount, sources.size(), worldExtent.getBlockX(), worldExtent.getBlockZ());
         }
     }

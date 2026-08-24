@@ -10,7 +10,6 @@ import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import art.arcane.volmlib.util.scheduling.FoliaScheduler;
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
@@ -472,12 +471,8 @@ final class WorldLifecycleSupport {
     ) {
         String worldName = world.getName();
         try {
-            try {
+            if (capabilities.minecraftServer() == null || capabilities.removeLevelMethod() == null) {
                 return CompletableFuture.completedFuture(Bukkit.unloadWorld(world, save));
-            } catch (UnsupportedOperationException unsupported) {
-                if (capabilities.minecraftServer() == null || capabilities.removeLevelMethod() == null) {
-                    return CompletableFuture.failedFuture(unsupported);
-                }
             }
 
             if (!announceManualWorldUnload(world)) {
@@ -489,8 +484,9 @@ final class WorldLifecycleSupport {
             }
             Method getHandleMethod = world.getClass().getMethod("getHandle");
             Object serverLevel = getHandleMethod.invoke(world);
-            CompletableFuture<Boolean> operation = closeServerLevelAsync(world, serverLevel)
-                    .thenCompose(unused -> detachServerLevelAsync(capabilities, serverLevel, world))
+            CompletableFuture<Boolean> operation = detachServerLevelAsync(capabilities, serverLevel, world)
+                    .thenCompose(unused -> drainChunkTasksAsync(world, serverLevel))
+                    .thenCompose(unused -> closeServerLevelAsync(world, serverLevel))
                     .thenApply(unused -> WorldIdentity.resolve(WorldIdentity.key(world)).isEmpty());
             return contextualizeUnloadFailure(worldName, operation);
         } catch (Throwable e) {
@@ -527,13 +523,30 @@ final class WorldLifecycleSupport {
             boolean save
     ) {
         CompletableFuture<Boolean> callbackFuture = new CompletableFuture<>();
-        Consumer<Boolean> callback = unloaded -> callbackFuture.complete(Boolean.TRUE.equals(unloaded));
+        Consumer<Object> callback = unloaded -> {
+            try {
+                callbackFuture.complete(asyncUnloadSucceeded(unloaded));
+            } catch (Throwable failure) {
+                callbackFuture.completeExceptionally(unwrap(failure));
+            }
+        };
         try {
             unloadWorldAsyncMethod.invoke(bukkitServer, world, save, callback);
         } catch (Throwable e) {
             callbackFuture.completeExceptionally(unwrap(e));
         }
         return callbackFuture;
+    }
+
+    private static boolean asyncUnloadSucceeded(Object result) throws ReflectiveOperationException {
+        if (result instanceof Boolean unloaded) {
+            return unloaded;
+        }
+        if (result == null) {
+            return false;
+        }
+        Method isSuccessMethod = result.getClass().getMethod("isSuccess");
+        return Boolean.TRUE.equals(isSuccessMethod.invoke(result));
     }
 
     private static CompletableFuture<Boolean> contextualizeUnloadFailure(
@@ -569,33 +582,59 @@ final class WorldLifecycleSupport {
             return CompletableFuture.completedFuture(null);
         }
 
-        if (!J.isFolia()) {
+        Runnable closeTask = () -> {
             try {
                 closeMethod.invoke(serverLevel);
-                return CompletableFuture.completedFuture(null);
             } catch (Throwable e) {
-                return CompletableFuture.failedFuture(unwrap(e));
+                throw new RuntimeException(unwrap(e));
             }
+        };
+        return runGlobalAsync(closeTask).orTimeout(90L, TimeUnit.SECONDS);
+    }
+
+    private static CompletableFuture<Void> drainChunkTasksAsync(World world, Object serverLevel) {
+        Method schedulerMethod;
+        try {
+            schedulerMethod = CapabilityResolution.resolveMethod(
+                    serverLevel.getClass(),
+                    "moonrise$getChunkTaskScheduler",
+                    method -> method.getParameterCount() == 0
+            );
+        } catch (Throwable e) {
+            return CompletableFuture.failedFuture(unwrap(e));
+        }
+        if (schedulerMethod == null) {
+            return CompletableFuture.completedFuture(null);
         }
 
-        Location spawn = world.getSpawnLocation();
-        int chunkX = spawn == null ? 0 : spawn.getBlockX() >> 4;
-        int chunkZ = spawn == null ? 0 : spawn.getBlockZ() >> 4;
-        CompletableFuture<Void> closeFuture = new CompletableFuture<>();
-        boolean scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
+        return J.afut(() -> {
             try {
-                closeMethod.invoke(serverLevel);
-                closeFuture.complete(null);
+                Object scheduler = schedulerMethod.invoke(serverLevel);
+                Method haltMethod = CapabilityResolution.resolveMethod(
+                        scheduler.getClass(),
+                        "halt",
+                        method -> {
+                            Class<?>[] parameters = method.getParameterTypes();
+                            return parameters.length == 2
+                                    && boolean.class.equals(parameters[0])
+                                    && long.class.equals(parameters[1]);
+                        }
+                );
+                if (haltMethod == null) {
+                    return;
+                }
+                Object halted = haltMethod.invoke(
+                        scheduler,
+                        true,
+                        TimeUnit.SECONDS.toNanos(90L));
+                if (halted instanceof Boolean complete && !complete) {
+                    throw new IllegalStateException(
+                            "Chunk scheduler drain timed out for world \"" + world.getName() + "\".");
+                }
             } catch (Throwable e) {
-                closeFuture.completeExceptionally(unwrap(e));
+                throw new RuntimeException(unwrap(e));
             }
-        });
-        if (!scheduled) {
-            return CompletableFuture.failedFuture(new IllegalStateException(
-                    "Failed to schedule region close task for world \"" + world.getName() + "\"."
-            ));
-        }
-        return closeFuture.orTimeout(90L, TimeUnit.SECONDS);
+        }).orTimeout(90L, TimeUnit.SECONDS);
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

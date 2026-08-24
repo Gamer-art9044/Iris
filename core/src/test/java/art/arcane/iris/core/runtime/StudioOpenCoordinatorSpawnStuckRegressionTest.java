@@ -11,10 +11,10 @@ import static org.junit.Assert.assertTrue;
 
 public class StudioOpenCoordinatorSpawnStuckRegressionTest {
     @Test
-    public void waitForSafeEntryRetryLoopIsRemoved() {
+    public void legacySafeEntryRetryLoopIsRemoved() {
         boolean found = Arrays.stream(StudioOpenCoordinator.class.getDeclaredMethods())
                 .anyMatch(m -> m.getName().equals("waitForSafeEntry"));
-        assertFalse("waitForSafeEntry retry loop must be removed — it burns up to 120s on ocean columns", found);
+        assertFalse("waitForSafeEntry retry loop must remain removed", found);
     }
 
     @Test
@@ -32,31 +32,23 @@ public class StudioOpenCoordinatorSpawnStuckRegressionTest {
     }
 
     @Test
-    public void entryChunkLoadUsesTheUrgentAsyncRequestWithoutRetentionTickets() throws Exception {
+    public void entryTeleportDoesNotIssueASecondChunkRequest() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
-        int asyncLoad = source.indexOf("requested = WorldRuntimeControlService.get().requestChunkAsync(");
-        int urgentFlag = source.indexOf("true);", asyncLoad);
 
-        assertTrue(asyncLoad >= 0);
-        assertTrue(urgentFlag > asyncLoad);
-        assertFalse(source.contains("addPluginChunkTicket"));
-        assertFalse(source.contains("removePluginChunkTicket"));
+        assertTrue(source.contains("WorldRuntimeControlService.get().teleportInMode("));
+        assertFalse(source.contains("prepareStudioEntryChunks("));
+        assertFalse(source.contains("requestChunkAsync("));
     }
 
     @Test
-    public void foliaUsesTheSameNonBlockingAsyncEntryPath() throws Exception {
+    public void foliaEntryPathNeverReadsTerrainOnARegionThread() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
-        int loadStart = source.indexOf("private EntryChunkResolution loadEntryChunk(");
-        int loadEnd = source.indexOf("private void settleEntryUseAfterOperation(", loadStart);
-        String load = source.substring(loadStart, loadEnd);
 
-        assertTrue(load.contains("requestChunkAsync("));
-        assertTrue(load.contains("J.isOwnedByCurrentRegion(world, chunkX, chunkZ)"));
-        assertTrue(load.contains("J.runRegion(world, chunkX, chunkZ"));
-        assertTrue(load.contains("findTopSafeStudioLocation(world, entryAnchor)"));
+        assertTrue(source.contains("resolveEntryAnchor(world, provider)"));
+        assertFalse(source.contains("findStudioEntryLocation"));
+        assertFalse(source.contains("getHighestBlockYAt("));
         assertFalse(source.contains("resolveSafeEntry(world, entryAnchor)"));
-        assertFalse(load.contains("J.isFolia()"));
     }
 }

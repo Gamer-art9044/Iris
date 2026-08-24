@@ -130,7 +130,6 @@ public final class IrisLanguage {
             dataFolder = resolvedRoot;
             IrisLogging.error("Rejected locale setting '" + locale + "'; continuing with " + activeLocale + ".");
             IrisLogging.reportError(exception);
-            exception.printStackTrace();
             return false;
         }
 
@@ -159,7 +158,6 @@ public final class IrisLanguage {
         } catch (RuntimeException exception) {
             IrisLogging.error("Rejected locale setting '" + configured + "'; continuing with " + activeLocale + ".");
             IrisLogging.reportError(exception);
-            exception.printStackTrace();
             return false;
         }
 
@@ -214,7 +212,7 @@ public final class IrisLanguage {
 
         activeLocale = requestedLocale;
         int warnings = result.validation().warnings().size();
-        IrisLogging.info("Loaded locale " + requestedLocale + " with " + warnings + " fallback "
+        IrisLogging.debug("Loaded locale " + requestedLocale + " with " + warnings + " fallback "
                 + (warnings == 1 ? "entry" : "entries") + ".");
         return true;
     }
@@ -228,7 +226,6 @@ public final class IrisLanguage {
                         + failure.getClass().getSimpleName()
                         + (failure.getMessage() == null ? "" : " - " + failure.getMessage()));
                 IrisLogging.reportError(failure);
-                failure.printStackTrace();
             }
         }
     }
@@ -641,7 +638,6 @@ public final class IrisLanguage {
         }
         if (result.failure() != null) {
             IrisLogging.reportError(result.failure());
-            result.failure().printStackTrace();
         }
     }
 

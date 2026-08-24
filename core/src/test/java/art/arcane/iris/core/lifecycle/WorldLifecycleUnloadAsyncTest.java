@@ -10,6 +10,8 @@ import org.junit.Test;
 import org.mockito.MockedStatic;
 
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
@@ -58,6 +60,40 @@ public class WorldLifecycleUnloadAsyncTest {
     }
 
     @Test
+    public void paperLikeManualUnloadDetachesBeforeOffThreadChunkDrain() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/lifecycle/WorldLifecycleSupport.java"))
+                .replace("\r\n", "\n");
+        int unloadStart = source.indexOf("private static CompletableFuture<Boolean> unloadWorldWithoutAsyncApi(");
+        int unloadEnd = source.indexOf("static boolean announceManualWorldUnload", unloadStart);
+        String unloadMethod = source.substring(unloadStart, unloadEnd);
+        int capabilityFallback = unloadMethod.indexOf(
+                "capabilities.minecraftServer() == null || capabilities.removeLevelMethod() == null");
+        int bukkitUnload = unloadMethod.indexOf("Bukkit.unloadWorld(world, save)", capabilityFallback);
+        int detach = unloadMethod.indexOf("detachServerLevelAsync(capabilities, serverLevel, world)");
+        int drain = unloadMethod.indexOf("drainChunkTasksAsync(world, serverLevel)");
+        int close = unloadMethod.indexOf("closeServerLevelAsync(world, serverLevel)");
+        int closeStart = source.indexOf("private static CompletableFuture<Void> closeServerLevelAsync(");
+        int closeEnd = source.indexOf("private static CompletableFuture<Void> drainChunkTasksAsync(", closeStart);
+        String closeMethod = source.substring(closeStart, closeEnd);
+        int drainStart = closeEnd;
+        int drainEnd = source.indexOf("private static void removeWorldFromCraftServerMap", drainStart);
+        String drainMethod = source.substring(drainStart, drainEnd);
+
+        assertTrue(capabilityFallback >= 0);
+        assertTrue(bukkitUnload > capabilityFallback);
+        assertTrue(detach > bukkitUnload);
+        assertTrue(drain > detach);
+        assertTrue(close > drain);
+        assertTrue(drainMethod.contains("return J.afut(() ->"));
+        assertTrue(drainMethod.contains("\"moonrise$getChunkTaskScheduler\""));
+        assertTrue(drainMethod.contains("\"halt\""));
+        assertTrue(closeMethod.contains("return runGlobalAsync(closeTask)"));
+        assertFalse(closeMethod.contains("J.afut("));
+        assertFalse(closeMethod.contains("J.runRegion("));
+    }
+
+    @Test
     public void reflectedAsyncUnloadWaitsForTrueCallback() throws Exception {
         CallbackServer server = new CallbackServer();
         Method unloadMethod = CallbackServer.class.getMethod(
@@ -98,6 +134,49 @@ public class WorldLifecycleUnloadAsyncTest {
 
         assertFalse(result.isDone());
         server.complete(false);
+        assertFalse(result.join());
+    }
+
+    @Test
+    public void reflectedAsyncUnloadAcceptsCanvasResultCallback() throws Exception {
+        CanvasCallbackServer server = new CanvasCallbackServer();
+        Method unloadMethod = CanvasCallbackServer.class.getMethod(
+                "unloadWorldAsync",
+                World.class,
+                boolean.class,
+                Consumer.class
+        );
+
+        CompletableFuture<Boolean> result = WorldLifecycleSupport.invokeAsyncUnload(
+                server,
+                unloadMethod,
+                mock(World.class),
+                true
+        );
+
+        assertFalse(result.isDone());
+        server.complete(CanvasUnloadResult.SUCCESS);
+        assertTrue(result.join());
+    }
+
+    @Test
+    public void reflectedAsyncUnloadMapsCanvasFailureResultToFalse() throws Exception {
+        CanvasCallbackServer server = new CanvasCallbackServer();
+        Method unloadMethod = CanvasCallbackServer.class.getMethod(
+                "unloadWorldAsync",
+                World.class,
+                boolean.class,
+                Consumer.class
+        );
+
+        CompletableFuture<Boolean> result = WorldLifecycleSupport.invokeAsyncUnload(
+                server,
+                unloadMethod,
+                mock(World.class),
+                false
+        );
+
+        server.complete(CanvasUnloadResult.FAILURE);
         assertFalse(result.join());
     }
 
@@ -229,6 +308,27 @@ public class WorldLifecycleUnloadAsyncTest {
     public static final class FailingServer {
         public void unloadWorldAsync(World world, boolean save, Consumer<Boolean> callback) {
             throw new IllegalStateException("unload failed");
+        }
+    }
+
+    public static final class CanvasCallbackServer {
+        private Consumer<CanvasUnloadResult> callback;
+
+        public void unloadWorldAsync(World world, boolean save, Consumer<CanvasUnloadResult> callback) {
+            this.callback = callback;
+        }
+
+        private void complete(CanvasUnloadResult result) {
+            callback.accept(result);
+        }
+    }
+
+    public enum CanvasUnloadResult {
+        SUCCESS,
+        FAILURE;
+
+        public boolean isSuccess() {
+            return this == SUCCESS;
         }
     }
 

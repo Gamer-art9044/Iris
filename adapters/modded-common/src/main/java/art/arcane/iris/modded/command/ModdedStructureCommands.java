@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.structure.StructureIndexService;
 import art.arcane.iris.engine.framework.Engine;
@@ -40,8 +41,6 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.List;
@@ -53,7 +52,6 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedStructureCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
 
     private static final SuggestionProvider<CommandSourceStack> IRIS_STRUCTURE_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestIrisStructureKeys(context, builder);
@@ -213,7 +211,7 @@ public final class ModdedStructureCommands {
                 piece.getObject().place(piece.getX(), piece.getY(), piece.getZ(), placer, config, rng, null, null, data);
             }
         } catch (Throwable e) {
-            LOGGER.error("Iris structure place failed for {}", key, e);
+            ModdedIrisLog.error("Iris structure place failed for {}", key, e);
             ModdedObjectUndo.record(owner, level, placer.undoSnapshot());
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STRUCTURE_COMMANDS_PLACE_FAILED_PARTIAL_CHANGES_RECORDED_UNDO, MessageArgument.untrusted("value", e.getClass().getSimpleName())));
             return 0;

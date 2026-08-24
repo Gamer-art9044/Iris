@@ -5,6 +5,8 @@ import org.junit.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -42,15 +44,46 @@ public class DiagnosticSeverityPolicyTest {
         assertLoggedWith("core/pregenerator/PregenMantleBackpressure.java", "Pregen mantle backpressure: ", "info");
         assertLoggedWith("core/pregenerator/PregenMantleBackpressure.java", "Pregen heap pressure: pausing generation", "info");
         assertLoggedWith("core/pregenerator/MantleHeapPressure.java", "Iris heap remained at", "info");
-        assertLoggedWith("core/pregenerator/methods/AsyncPregenMethod.java", "is still pending after", "info");
+        assertLoggedWith("core/pregenerator/methods/AsyncPregenMethod.java", "is still pending after", "debug");
     }
 
     @Test
-    public void probesOnOptionalDependenciesAreNotWarnings() {
+    public void generationTracingStaysAtDebugLevel() {
+        assertLoggedWith("engine/mantle/components/MantleObjectComponent.java", "Regen object layer start:", "debug");
+        assertLoggedWith("engine/mantle/components/MantleObjectComponent.java", "Goldendebug object attempt:", "debug");
+        assertLoggedWith("engine/mantle/components/GoldenDebugObjectPlacer.java", "Goldendebug query:", "debug");
+        assertLoggedWith("engine/mantle/components/IrisStructureComponent.java", "[StructTrace] ORIGIN", "debug");
+    }
+
+    @Test
+    public void coreProductionDoesNotWriteDirectlyToProcessStreams() throws IOException {
+        try (Stream<Path> files = Files.walk(Path.of("src/main/java"))) {
+            List<Path> bypasses = files
+                    .filter(path -> path.toString().endsWith(".java"))
+                    .filter(path -> {
+                        try {
+                            String source = Files.readString(path);
+                            return source.contains("System.out")
+                                    || source.contains("System.err")
+                                    || source.contains(".printStackTrace();");
+                        } catch (IOException unreadable) {
+                            throw new IllegalStateException(unreadable);
+                        }
+                    })
+                    .toList();
+            assertTrue(bypasses.toString(), bypasses.isEmpty());
+        }
+    }
+
+    @Test
+    public void probesOnOptionalDependenciesAreNotWarnings() throws IOException {
         assertLoggedWith("core/link/MultiverseCoreLink.java", "is not reachable; Iris world settings", "info");
         assertLoggedWith("core/link/MultiverseCoreLink.java", "Multiverse will record the live name", "info");
         assertLoggedWith("core/gui/GuiHost.java", "Unable to install the Iris desktop quit guard", "info");
-        assertLoggedWith("util/common/misc/SlimJar.java", "Failed to inject the library loader", "info");
+        String slimJar = read("util/common/misc/SlimJar.java");
+        assertTrue(slimJar.contains("debug(plugin, \"Failed to inject the library loader"));
+        assertTrue(slimJar.contains("if (DEBUG)"));
+        assertTrue(slimJar.contains("plugin.getLogger().info(\"[DEBUG] \" + message)"));
     }
 
     /**

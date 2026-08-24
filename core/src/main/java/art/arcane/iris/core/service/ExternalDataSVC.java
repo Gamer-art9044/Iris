@@ -66,7 +66,7 @@ public class ExternalDataSVC implements IrisService {
 
     @Override
     public void onEnable() {
-        IrisLogging.info("Loading ExternalDataProvider...");
+        IrisLogging.debug("Loading ExternalDataProvider...");
         // enable() registers every enabled service as a listener; self-registration here
         // doubled every handler invocation.
 
@@ -147,7 +147,8 @@ public class ExternalDataSVC implements IrisService {
     public Optional<ItemStack> getItemStack(Identifier key, KMap<String, Object> customNbt) {
         Optional<ExternalDataProvider> provider = activeProviders.stream().filter(p -> p.isValidProvider(key, DataType.ITEM)).findFirst();
         if (provider.isEmpty()) {
-            IrisLogging.warn("No matching Provider found for modded material \"%s\"!", key);
+            IrisLogging.warnOnce("external-provider:item:" + key,
+                    "No matching Provider found for modded material \"%s\"!", key);
             return Optional.empty();
         }
         try {
@@ -161,7 +162,8 @@ public class ExternalDataSVC implements IrisService {
     public void processUpdate(Engine engine, Block block, Identifier blockId) {
         Optional<ExternalDataProvider> provider = activeProviders.stream().filter(p -> p.isValidProvider(blockId, DataType.BLOCK)).findFirst();
         if (provider.isEmpty()) {
-            IrisLogging.warn("No matching Provider found for modded material \"%s\"!", blockId);
+            IrisLogging.warnOnce("external-provider:block:" + blockId,
+                    "No matching Provider found for modded material \"%s\"!", blockId);
             return;
         }
         provider.get().processUpdate(engine, block, blockId);
@@ -170,7 +172,8 @@ public class ExternalDataSVC implements IrisService {
     public Entity spawnMob(Location location, Identifier mobId) {
         Optional<ExternalDataProvider> provider = activeProviders.stream().filter(p -> p.isValidProvider(mobId, DataType.ENTITY)).findFirst();
         if (provider.isEmpty()) {
-            IrisLogging.warn("No matching Provider found for modded mob \"%s\"!", mobId);
+            IrisLogging.warnOnce("external-provider:mob:" + mobId,
+                    "No matching Provider found for modded mob \"%s\"!", mobId);
             return null;
         }
         try {
@@ -243,7 +246,7 @@ public class ExternalDataSVC implements IrisService {
             Class<?> rawProviderClass = Class.forName(definition.className(), true, ExternalDataSVC.class.getClassLoader());
             Class<? extends ExternalDataProvider> providerClass = rawProviderClass.asSubclass(ExternalDataProvider.class);
             ExternalDataProvider provider = providerClass.getDeclaredConstructor().newInstance();
-            IrisLogging.info(definition.pluginId() + " found, loading " + providerClass.getSimpleName() + "...");
+            IrisLogging.debug(definition.pluginId() + " found, loading " + providerClass.getSimpleName() + "...");
             activateProvider(provider);
         } catch (Throwable error) {
             IrisLogging.reportError("Failed to create Iris external data provider " + definition.className() + ".", error);
@@ -263,7 +266,7 @@ public class ExternalDataSVC implements IrisService {
                 providers.add(provider);
             }
             activeProviders.add(provider);
-            IrisLogging.info("Enabled ExternalDataProvider for %s.", provider.getPluginId());
+            IrisLogging.debug("Enabled ExternalDataProvider for %s.", provider.getPluginId());
         } catch (Throwable error) {
             IrisLogging.reportError("Failed to enable Iris external data provider " + provider.getPluginId() + ".", error);
         }

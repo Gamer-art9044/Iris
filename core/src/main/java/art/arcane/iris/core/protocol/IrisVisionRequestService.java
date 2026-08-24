@@ -26,8 +26,12 @@ import art.arcane.iris.spi.protocol.IrisMessage;
 import art.arcane.iris.spi.protocol.IrisProtocol;
 
 import java.util.ArrayDeque;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -37,7 +41,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class IrisVisionRequestService implements VisionTileRequestHandler {
-    private static final int DEFAULT_MAX_PENDING = 64;
+    private static final int DEFAULT_MAX_PENDING = 8_192;
+    private static final int MAX_PENDING_PER_SESSION = 8;
+    private static final int MAX_DRAIN_WORKERS = 2;
     private static final long SHED_LOG_INTERVAL_MILLIS = 60_000L;
     private static final int SEQUENCE_WRAP_GUARD = Integer.MAX_VALUE - 1024;
 
@@ -45,7 +51,11 @@ public final class IrisVisionRequestService implements VisionTileRequestHandler 
     private final IrisSessionRegistry registry;
     private final Executor executor;
     private final int maxPending;
-    private final ArrayDeque<PendingRequest> pending;
+    private final LinkedHashMap<String, LinkedHashMap<TileKey, PendingRequest>> pendingBySession;
+    private final ArrayDeque<String> sessionOrder;
+    private final Set<String> scheduledSessions;
+    private final AtomicInteger activeDrains;
+    private int pendingCount;
     /**
      * One counter per session, not one per (session, tile, zoom). The client only ever compares sequences
      * within a single tile key, so a session-wide monotonic counter satisfies the "newer wins" contract in
@@ -63,7 +73,10 @@ public final class IrisVisionRequestService implements VisionTileRequestHandler 
         this.registry = Objects.requireNonNull(registry, "session registry");
         this.executor = Objects.requireNonNull(executor, "executor");
         this.maxPending = Math.max(1, maxPending);
-        this.pending = new ArrayDeque<>();
+        this.pendingBySession = new LinkedHashMap<>();
+        this.sessionOrder = new ArrayDeque<>();
+        this.scheduledSessions = new HashSet<>();
+        this.activeDrains = new AtomicInteger(0);
         this.sequences = new ConcurrentHashMap<>();
         this.nextShedLogAt = new AtomicLong(0L);
         this.droppedSaturated = new AtomicLong(0L);
@@ -91,20 +104,42 @@ public final class IrisVisionRequestService implements VisionTileRequestHandler 
 
     @Override
     public void handle(String sessionId, int tileX, int tileZ, int zoomLevel) {
-        PendingRequest request = new PendingRequest(sessionId, tileX, tileZ, zoomLevel);
+        if (sessionId == null || sessionId.isBlank()) {
+            droppedNoSession.incrementAndGet();
+            return;
+        }
+        TileKey tileKey = new TileKey(tileX, tileZ, zoomLevel);
+        PendingRequest request = new PendingRequest(sessionId, tileKey);
         int shed = 0;
-        synchronized (pending) {
-            while (pending.size() >= maxPending) {
-                pending.pollFirst();
+        synchronized (pendingBySession) {
+            LinkedHashMap<TileKey, PendingRequest> sessionPending = pendingBySession.get(sessionId);
+            if (sessionPending != null && sessionPending.containsKey(tileKey)) {
+                sessionPending.put(tileKey, request);
+                scheduleDrains();
+                return;
+            }
+            if (sessionPending != null
+                    && sessionPending.size() >= Math.min(MAX_PENDING_PER_SESSION, maxPending)) {
+                removeOldest(sessionPending);
+                pendingCount--;
                 shed++;
             }
-            pending.addLast(request);
+            while (pendingCount >= maxPending) {
+                shedOnePendingSession();
+                shed++;
+            }
+            sessionPending = pendingBySession.computeIfAbsent(sessionId, ignored -> new LinkedHashMap<>());
+            sessionPending.put(tileKey, request);
+            pendingCount++;
+            if (scheduledSessions.add(sessionId)) {
+                sessionOrder.addLast(sessionId);
+            }
         }
         if (shed > 0) {
             droppedSaturated.addAndGet(shed);
             logShed();
         }
-        executor.execute(this::drainOne);
+        scheduleDrains();
     }
 
     /**
@@ -112,12 +147,18 @@ public final class IrisVisionRequestService implements VisionTileRequestHandler 
      * disconnects or unregisters so neither structure grows with the player count over a server's uptime.
      */
     public void clearSession(String sessionId) {
-        if (sessionId == null || sessionId.isEmpty()) {
+        if (sessionId == null || sessionId.isBlank()) {
             return;
         }
         sequences.remove(sessionId);
-        synchronized (pending) {
-            pending.removeIf((PendingRequest request) -> sessionId.equals(request.sessionId()));
+        synchronized (pendingBySession) {
+            LinkedHashMap<TileKey, PendingRequest> removed = pendingBySession.remove(sessionId);
+            if (removed != null) {
+                pendingCount -= removed.size();
+            }
+            if (scheduledSessions.remove(sessionId)) {
+                sessionOrder.removeIf(sessionId::equals);
+            }
         }
     }
 
@@ -138,20 +179,103 @@ public final class IrisVisionRequestService implements VisionTileRequestHandler 
     }
 
     public int pendingSize() {
-        synchronized (pending) {
-            return pending.size();
+        synchronized (pendingBySession) {
+            return pendingCount;
         }
     }
 
-    private void drainOne() {
-        PendingRequest request;
-        synchronized (pending) {
-            request = pending.pollFirst();
+    private void scheduleDrains() {
+        while (true) {
+            int active = activeDrains.get();
+            synchronized (pendingBySession) {
+                if (pendingCount <= active || active >= MAX_DRAIN_WORKERS) {
+                    return;
+                }
+            }
+            if (!activeDrains.compareAndSet(active, active + 1)) {
+                continue;
+            }
+            try {
+                executor.execute(this::drainPending);
+            } catch (RuntimeException failure) {
+                activeDrains.decrementAndGet();
+                IrisLogging.reportError(failure);
+                return;
+            }
         }
-        if (request == null) {
+    }
+
+    private void drainPending() {
+        try {
+            while (true) {
+                PendingRequest request = pollNextRequest();
+                if (request == null) {
+                    return;
+                }
+                try {
+                    process(request);
+                } catch (Throwable failure) {
+                    IrisLogging.reportError(failure);
+                }
+            }
+        } finally {
+            activeDrains.decrementAndGet();
+            scheduleDrains();
+        }
+    }
+
+    private PendingRequest pollNextRequest() {
+        synchronized (pendingBySession) {
+            while (true) {
+                String sessionId = sessionOrder.pollFirst();
+                if (sessionId == null) {
+                    return null;
+                }
+                scheduledSessions.remove(sessionId);
+                LinkedHashMap<TileKey, PendingRequest> sessionPending = pendingBySession.get(sessionId);
+                if (sessionPending == null || sessionPending.isEmpty()) {
+                    pendingBySession.remove(sessionId);
+                    continue;
+                }
+                PendingRequest request = removeOldest(sessionPending);
+                pendingCount--;
+                if (sessionPending.isEmpty()) {
+                    pendingBySession.remove(sessionId);
+                } else if (scheduledSessions.add(sessionId)) {
+                    sessionOrder.addLast(sessionId);
+                }
+                return request;
+            }
+        }
+    }
+
+    private void shedOnePendingSession() {
+        String selectedSession = null;
+        int selectedSize = 0;
+        for (Map.Entry<String, LinkedHashMap<TileKey, PendingRequest>> entry : pendingBySession.entrySet()) {
+            if (entry.getValue().size() > selectedSize) {
+                selectedSession = entry.getKey();
+                selectedSize = entry.getValue().size();
+            }
+        }
+        if (selectedSession == null) {
             return;
         }
-        process(request);
+        LinkedHashMap<TileKey, PendingRequest> selected = pendingBySession.get(selectedSession);
+        removeOldest(selected);
+        pendingCount--;
+        if (selected.isEmpty()) {
+            pendingBySession.remove(selectedSession);
+            if (scheduledSessions.remove(selectedSession)) {
+                sessionOrder.removeIf(selectedSession::equals);
+            }
+        }
+    }
+
+    private static PendingRequest removeOldest(LinkedHashMap<TileKey, PendingRequest> requests) {
+        Map.Entry<TileKey, PendingRequest> oldest = requests.entrySet().iterator().next();
+        requests.remove(oldest.getKey());
+        return oldest.getValue();
     }
 
     private void process(PendingRequest request) {
@@ -166,7 +290,13 @@ public final class IrisVisionRequestService implements VisionTileRequestHandler 
             return;
         }
         int sequence = nextSequence(request);
-        List<IrisMessage.VisionTile> chunks = IrisTileEncoder.encode(engine, request.tileX(), request.tileZ(), request.zoomLevel(), sequence);
+        List<IrisMessage.VisionTile> chunks = IrisTileEncoder.encode(
+                engine,
+                request.tile().tileX(),
+                request.tile().tileZ(),
+                request.tile().zoomLevel(),
+                sequence
+        );
         for (IrisMessage.VisionTile chunk : chunks) {
             session.send(chunk);
         }
@@ -189,6 +319,9 @@ public final class IrisVisionRequestService implements VisionTileRequestHandler 
         IrisLogging.warn("vision: request queue saturated at " + maxPending + ", shed " + droppedSaturated.get() + " total");
     }
 
-    private record PendingRequest(String sessionId, int tileX, int tileZ, int zoomLevel) {
+    private record TileKey(int tileX, int tileZ, int zoomLevel) {
+    }
+
+    private record PendingRequest(String sessionId, TileKey tile) {
     }
 }

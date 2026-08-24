@@ -7,6 +7,7 @@ public final class RiverTopologyComplexity {
     public static final long MAXIMUM_SOURCE_WINDOW_CELLS = 65_536L;
     public static final long MAXIMUM_ROUTE_SCAN_STEPS = 65_536L;
     public static final long MAXIMUM_BUCKET_WRITES_PER_REACH = 1_048_576L;
+    public static final long MAXIMUM_TUNNEL_SAMPLE_COLUMNS = 65_536L;
     private static final int SPATIAL_BUCKET_SIZE = 64;
 
     private RiverTopologyComplexity() {
@@ -80,6 +81,70 @@ public final class RiverTopologyComplexity {
         List<String> violations = estimate.violations();
         if (!violations.isEmpty()) {
             throw new IllegalArgumentException(String.join(" ", violations));
+        }
+    }
+
+    public static int tunnelHalo(
+            double maximumChannelWidth,
+            double maximumTunnelWidthMultiplier,
+            double tunnelMouthBlend
+    ) {
+        if (!Double.isFinite(maximumChannelWidth) || maximumChannelWidth <= 0D
+                || !Double.isFinite(maximumTunnelWidthMultiplier) || maximumTunnelWidthMultiplier < 1D
+                || !Double.isFinite(tunnelMouthBlend) || tunnelMouthBlend < 0D) {
+            throw new IllegalArgumentException("River tunnel dimensions must be finite and valid");
+        }
+        return Math.max(
+                1,
+                (int) StrictMath.ceil(
+                        maximumChannelWidth * 0.5D * maximumTunnelWidthMultiplier + tunnelMouthBlend
+                ) + 1
+        );
+    }
+
+    public static long tunnelSampleColumns(
+            double maximumChannelWidth,
+            double maximumTunnelWidthMultiplier,
+            double tunnelMouthBlend
+    ) {
+        long axis = 16L + 2L * tunnelHalo(
+                maximumChannelWidth,
+                maximumTunnelWidthMultiplier,
+                tunnelMouthBlend
+        );
+        return saturatedMultiply(axis, axis);
+    }
+
+    public static String tunnelPlanViolation(
+            double maximumChannelWidth,
+            double maximumTunnelWidthMultiplier,
+            double tunnelMouthBlend
+    ) {
+        long columns = tunnelSampleColumns(
+                maximumChannelWidth,
+                maximumTunnelWidthMultiplier,
+                tunnelMouthBlend
+        );
+        if (columns <= MAXIMUM_TUNNEL_SAMPLE_COLUMNS) {
+            return null;
+        }
+        return "River tunnel planning may sample " + columns
+                + " columns per generated chunk, above the safe limit of " + MAXIMUM_TUNNEL_SAMPLE_COLUMNS
+                + "; reduce maxChannelWidth, tunnelWidthMultiplier.max, or tunnelMouthBlend.";
+    }
+
+    public static void requireSafeTunnelPlan(
+            double maximumChannelWidth,
+            double maximumTunnelWidthMultiplier,
+            double tunnelMouthBlend
+    ) {
+        String violation = tunnelPlanViolation(
+                maximumChannelWidth,
+                maximumTunnelWidthMultiplier,
+                tunnelMouthBlend
+        );
+        if (violation != null) {
+            throw new IllegalArgumentException(violation);
         }
     }
 

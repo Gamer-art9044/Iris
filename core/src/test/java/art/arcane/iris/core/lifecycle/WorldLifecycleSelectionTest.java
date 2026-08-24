@@ -84,11 +84,11 @@ public class WorldLifecycleSelectionTest {
     }
 
     @Test
-    public void persistentCreateFallsBackToBukkitBackendOnFoliaWithoutRuntime() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.FOLIA, true, false, false));
+    public void persistentCreateFailsClosedOnFoliaWithoutRuntime() {
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.FOLIA, false, false, false));
         WorldLifecycleRequest request = new WorldLifecycleRequest("persistent", NamespacedKey.minecraft("persistent"), World.Environment.NORMAL, null, null, null, true, false, 1337L, false, false, WorldLifecycleCaller.CREATE);
 
-        assertEquals("bukkit_public", service.selectCreateBackend(request).backendName());
+        assertThrows(IllegalStateException.class, () -> service.selectCreateBackend(request));
     }
 
     @Test

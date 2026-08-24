@@ -1043,13 +1043,9 @@ public final class ModdedCommandMessages {
             "iris.modded.moddedstudiocommands.creating_project_from_template",
             "Creating project '" + "{name}" + "' from template '" + "{template}" + "'..."
     );
-    public static final TextKey MODDED_STUDIO_COMMANDS_TEMPLATE_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS = TextKey.of(
-            "iris.modded.moddedstudiocommands.template_is_not_installed_downloading_irisdimensions",
-            "Template '" + "{template}" + "' is not installed; downloading IrisDimensions/" + "{template2}" + "..."
-    );
-    public static final TextKey MODDED_STUDIO_COMMANDS_TEMPLATE_COULD_NOT_BE_DOWNLOADED_INSTALL_PACK_WITH_DIMENSIONS_JSON = TextKey.of(
-            "iris.modded.moddedstudiocommands.template_could_not_be_downloaded_install_pack_with_dimensions_json",
-            "Template '" + "{template}" + "' could not be downloaded; install a pack with dimensions/" + "{template2}" + ".json first."
+    public static final TextKey MODDED_STUDIO_COMMANDS_REQUIRED_PACK_IS_NOT_INSTALLED_INSTALL_THEN_RESTART = TextKey.of(
+            "iris.modded.moddedstudiocommands.required_pack_is_not_installed_install_then_restart",
+            "Required pack '" + "{pack}" + "' is not installed. Install it with /iris download, then restart."
     );
     public static final TextKey MODDED_STUDIO_COMMANDS_CREATED_PROJECT_AT = TextKey.of(
             "iris.modded.moddedstudiocommands.created_project_at",
@@ -1095,13 +1091,9 @@ public final class ModdedCommandMessages {
             "iris.modded.moddedstudiocommands.region_sampling_failed",
             "Region sampling failed: " + "{value}"
     );
-    public static final TextKey MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS = TextKey.of(
-            "iris.modded.moddedworldcommands.pack_is_not_installed_downloading_irisdimensions",
-            "Pack '" + "{pack}" + "' is not installed; downloading IrisDimensions/" + "{pack2}" + "..."
-    );
-    public static final TextKey MODDED_WORLD_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_INSTALL_IT_WITH = TextKey.of(
-            "iris.modded.moddedworldcommands.pack_could_not_be_downloaded_check_name_install_it_with",
-            "Pack '" + "{pack}" + "' could not be downloaded; check the name or install it with /iris download " + "{pack2}" + "."
+    public static final TextKey MODDED_WORLD_COMMANDS_REQUIRED_PACK_IS_NOT_INSTALLED_INSTALL_THEN_RESTART = TextKey.of(
+            "iris.modded.moddedworldcommands.required_pack_is_not_installed_install_then_restart",
+            "Required pack '" + "{pack}" + "' is not installed. Install it with /iris download, then restart."
     );
     public static final TextKey MODDED_WORLD_COMMANDS_FAILED_INJECT_IRIS_WORLD = TextKey.of(
             "iris.modded.moddedworldcommands.failed_inject_iris_world",
@@ -1138,14 +1130,6 @@ public final class ModdedCommandMessages {
     public static final TextKey MODDED_WORLD_COMMANDS_INVALID_SEED_USE_NUMBER_RANDOM = TextKey.of(
             "iris.modded.moddedworldcommands.invalid_seed_use_number_random",
             "Invalid seed '" + "{seedRaw}" + "'. Use a number or 'random'."
-    );
-    public static final TextKey MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS_2 = TextKey.of(
-            "iris.modded.moddedworldcommands.pack_is_not_installed_downloading_irisdimensions_2",
-            "Pack '" + "{pack}" + "' is not installed; downloading IrisDimensions/" + "{pack2}" + "..."
-    );
-    public static final TextKey MODDED_WORLD_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_INSTALL_IT_WITH_2 = TextKey.of(
-            "iris.modded.moddedworldcommands.pack_could_not_be_downloaded_check_name_install_it_with_2",
-            "Pack '" + "{pack}" + "' could not be downloaded; check the name or install it with /iris download " + "{pack2}" + "."
     );
     public static final TextKey MODDED_WORLD_COMMANDS_PACK_IS_NOT_READY_YET_STILL_LOADING_VALIDATING_TRY_COMMAND = TextKey.of(
             "iris.modded.moddedworldcommands.pack_is_not_ready_yet_still_loading_validating_try_command",
@@ -1512,8 +1496,7 @@ public final class ModdedCommandMessages {
             MODDED_STUDIO_COMMANDS_INVALID_PROJECT_NAME_ALLOWED_Z_0_9,
             MODDED_STUDIO_COMMANDS_PACK_ALREADY_EXISTS_AT,
             MODDED_STUDIO_COMMANDS_CREATING_PROJECT_FROM_TEMPLATE,
-            MODDED_STUDIO_COMMANDS_TEMPLATE_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS,
-            MODDED_STUDIO_COMMANDS_TEMPLATE_COULD_NOT_BE_DOWNLOADED_INSTALL_PACK_WITH_DIMENSIONS_JSON,
+            MODDED_STUDIO_COMMANDS_REQUIRED_PACK_IS_NOT_INSTALLED_INSTALL_THEN_RESTART,
             MODDED_STUDIO_COMMANDS_CREATED_PROJECT_AT,
             MODDED_STUDIO_COMMANDS_EDIT_DIMENSIONS_JSON_REST_PACK_VSCODE_WORKSPACE_WITH_JSON_SCHEMA,
             MODDED_STUDIO_COMMANDS_PROJECT_CREATION_FAILED,
@@ -1525,8 +1508,7 @@ public final class ModdedCommandMessages {
             MODDED_STUDIO_COMMANDS_SAMPLING_REGION_DISTRIBUTION_X_CHUNKS_AROUND_YOU,
             MODDED_STUDIO_COMMANDS_RARITY,
             MODDED_STUDIO_COMMANDS_REGION_SAMPLING_FAILED,
-            MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS,
-            MODDED_WORLD_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_INSTALL_IT_WITH,
+            MODDED_WORLD_COMMANDS_REQUIRED_PACK_IS_NOT_INSTALLED_INSTALL_THEN_RESTART,
             MODDED_WORLD_COMMANDS_FAILED_INJECT_IRIS_WORLD,
             MODDED_WORLD_COMMANDS_CREATED_IRIS_WORLD_FROM_PACK_DIMENSION_SEED,
             MODDED_WORLD_COMMANDS_IT_IS_LIVE_NOW_RE_INJECTED_ON_EVERY_STARTUP_TELEPORT,
@@ -1536,8 +1518,6 @@ public final class ModdedCommandMessages {
             MODDED_WORLD_COMMANDS_INSTEAD_IS_NOW_CONFIGURED_PRIMARY_WORLD_PLAYERS_VANILLA_OVERWORLD_ARE,
             MODDED_WORLD_COMMANDS_IRIS_MAIN_WORLD_OVERRIDE_CLEARED_OVERWORLD_KEEPS_ITS_CURRENT_GENERATOR,
             MODDED_WORLD_COMMANDS_INVALID_SEED_USE_NUMBER_RANDOM,
-            MODDED_WORLD_COMMANDS_PACK_IS_NOT_INSTALLED_DOWNLOADING_IRISDIMENSIONS_2,
-            MODDED_WORLD_COMMANDS_PACK_COULD_NOT_BE_DOWNLOADED_CHECK_NAME_INSTALL_IT_WITH_2,
             MODDED_WORLD_COMMANDS_PACK_IS_NOT_READY_YET_STILL_LOADING_VALIDATING_TRY_COMMAND,
             MODDED_WORLD_COMMANDS_FAILED_WRITE_SERVER_PROPERTIES_CHECK_FILE_PERMISSIONS_SET_LEVEL_TYPE,
             MODDED_WORLD_COMMANDS_IRIS_MAIN_WORLD_SET_PRESET_SEED,

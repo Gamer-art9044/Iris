@@ -119,7 +119,6 @@ public class IrisCodeWorkspace {
                 IO.writeAll(ws, rendered);
             } catch (Throwable e1) {
                 IrisLogging.reportError(e1);
-                e1.printStackTrace();
             }
         }
 

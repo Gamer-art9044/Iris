@@ -206,7 +206,6 @@ public class IrisEntitySpawn implements IRare {
             return e;
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             IrisLogging.error("      Failed to retrieve real entity @ " + at + " (entity: " + getEntity() + ")");
             return null;
         }

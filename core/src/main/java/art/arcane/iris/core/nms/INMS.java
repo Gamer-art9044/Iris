@@ -70,7 +70,7 @@ public class INMS {
     private static INMSBinding bind() {
         boolean disableNms = IrisSettings.get().getGeneral().isDisableNMS();
         if (disableNms) {
-            IrisLogging.info("Craftbukkit BUKKIT <-> " + NMSBinding1X.class.getSimpleName() + " Successfully Bound");
+            IrisLogging.debug("Craftbukkit BUKKIT <-> " + NMSBinding1X.class.getSimpleName() + " Successfully Bound");
             IrisLogging.warn("NMS support is disabled. Iris world creation is unavailable until general.disableNMS=false.");
             return new NMSBinding1X();
         }
@@ -87,7 +87,6 @@ public class INMS {
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             IrisLogging.error("Failed to determine server minecraft version!");
-            e.printStackTrace();
             if (e instanceof IllegalStateException illegalStateException) {
                 throw illegalStateException;
             }
@@ -96,19 +95,18 @@ public class INMS {
     }
 
     private static INMSBinding bindExact(String code) {
-        IrisLogging.info("Locating exact NMS Binding for " + code);
+        IrisLogging.debug("Locating exact NMS Binding for " + code);
         try {
             Class<?> clazz = Class.forName("art.arcane.iris.core.nms." + code + ".NMSBinding");
             Object candidate = clazz.getConstructor().newInstance();
             if (candidate instanceof INMSBinding binding) {
-                IrisLogging.info("Craftbukkit " + code + " <-> " + candidate.getClass().getSimpleName() + " Successfully Bound");
+                IrisLogging.debug("Craftbukkit " + code + " <-> " + candidate.getClass().getSimpleName() + " Successfully Bound");
                 return binding;
             }
             throw new IllegalStateException("Exact NMS binding class for " + code
                     + " does not implement " + INMSBinding.class.getName());
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             if (e instanceof IllegalStateException illegalStateException) {
                 throw illegalStateException;
             }

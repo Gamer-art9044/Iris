@@ -25,11 +25,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.dimension.DimensionType;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 final class WorldCheckDimensionContract {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
 
     private WorldCheckDimensionContract() {
     }
@@ -44,13 +41,13 @@ final class WorldCheckDimensionContract {
                     + ",levelMinY=" + level.getMinY() + ",levelHeight=" + level.getHeight();
             WorldCheckPredicates.qaEvent("dimension_type", dimension.getLoadKey(), pass, detail);
             if (!pass) {
-                LOGGER.error("[worldcheck] dimension type mismatch for {}: {}", dimension.getLoadKey(), detail);
+                ModdedIrisLog.error("[worldcheck] dimension type mismatch for {}: {}", dimension.getLoadKey(), detail);
             } else {
-                LOGGER.info("[worldcheck] dimension type contract: {}", detail);
+                ModdedIrisLog.info("[worldcheck] dimension type contract: {}", detail);
             }
             return pass;
         } catch (Throwable error) {
-            LOGGER.error("[worldcheck] could not validate the Iris dimension type contract", error);
+            ModdedIrisLog.error("[worldcheck] could not validate the Iris dimension type contract", error);
             WorldCheckPredicates.qaEvent("dimension_type", generator.activeDimensionKey(), false,
                     "validationError=" + error.getClass().getSimpleName() + ":" + error.getMessage());
             return false;
@@ -102,7 +99,7 @@ final class WorldCheckDimensionContract {
         WorldCheckPredicates.qaEvent("entity_mixin", "persistence", pass,
                 "vanilla=" + vanillaSave + ",suppressed=" + suppressed + ",restored=" + restored);
         if (!pass) {
-            LOGGER.error("[worldcheck] shared entity mixins are not active on this loader");
+            ModdedIrisLog.error("[worldcheck] shared entity mixins are not active on this loader");
         }
         return pass;
     }

@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackResourceCleanup;
@@ -31,8 +32,6 @@ import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.server.MinecraftServer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -44,7 +43,6 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedPackCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
 
     private ModdedPackCommands() {
@@ -139,7 +137,7 @@ public final class ModdedPackCommands {
                     }
                     server.execute(() -> report(source, result));
                 } catch (Throwable e) {
-                    LOGGER.error("Iris pack validation failed for {}", target.getName(), e);
+                    ModdedIrisLog.error("Iris pack validation failed for {}", target.getName(), e);
                     server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_VALIDATION_FAILED, MessageArgument.untrusted("value", target.getName()), MessageArgument.untrusted("value2", String.valueOf(e.getMessage())))));
                     broken++;
                 }

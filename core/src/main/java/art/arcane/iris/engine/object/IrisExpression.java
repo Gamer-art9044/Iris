@@ -74,8 +74,7 @@ public class IrisExpression extends IrisRegistrant {
                 scope.addInvocationVariable("y");
                 scope.addInvocationVariable("z");
             } catch (Throwable e) {
-                e.printStackTrace();
-                IrisLogging.error("Script Variable load error in " + getLoadFile().getPath());
+                IrisLogging.reportError("Script variable load failed in " + getLoadFile().getPath() + ".", e);
             }
 
             for (IrisExpressionFunction f : functions) {
@@ -87,8 +86,7 @@ public class IrisExpression extends IrisRegistrant {
             try {
                 return parser.parse(getExpression(), scope);
             } catch (Throwable e) {
-                e.printStackTrace();
-                IrisLogging.error("Script load error in " + getLoadFile().getPath());
+                IrisLogging.reportError("Script load failed in " + getLoadFile().getPath() + ".", e);
             }
 
             return null;

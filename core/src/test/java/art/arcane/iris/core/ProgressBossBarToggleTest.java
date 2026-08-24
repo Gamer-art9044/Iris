@@ -34,8 +34,12 @@ public class ProgressBossBarToggleTest {
     }
 
     @Test
-    public void worldCreationBossBarIsGatedBySettings() throws Exception {
-        assertGated("core/tools/WorldCreationProgressReporter.java");
+    public void worldCreationAlwaysUsesTheActionBarInsteadOfABossBar() throws Exception {
+        String source = source("core/tools/WorldCreationProgressReporter.java");
+
+        assertFalse(source.contains("isProgressBossBar()"));
+        assertFalse(source.contains("Bukkit.createBossBar("));
+        assertTrue(source.contains("WORLD_CREATE_LIFECYCLE_ACTION"));
     }
 
     @Test

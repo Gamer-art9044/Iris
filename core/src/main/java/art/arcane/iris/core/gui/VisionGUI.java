@@ -983,8 +983,8 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
             notifyUser(IrisLanguage.plain(DesktopUiMessages.VISION_NO_PLAYER));
             return;
         }
-        int worldX = (int) screenToWorldX(point.x);
-        int worldZ = (int) screenToWorldZ(point.y);
+        int worldX = floorWorldCoordinate(screenToWorldX(point.x));
+        int worldZ = floorWorldCoordinate(screenToWorldZ(point.y));
         overlay.teleport(worldX, worldZ);
         notifyUser(IrisLanguage.plain(
                 DesktopUiMessages.VISION_TELEPORTING,
@@ -1007,6 +1007,10 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         GuiHost.get().unregisterHotloadHook(hotloadHook);
         hostFrame.removeKeyListener(this);
         controller.close();
+    }
+
+    static int floorWorldCoordinate(double coordinate) {
+        return (int) StrictMath.floor(coordinate);
     }
 
     private static String modeName(RenderType type) {

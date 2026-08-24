@@ -14,12 +14,28 @@ public final class RiverNetwork {
     private static final long NODE_RANK_SALT = 0x3C6EF372FE94F82BL;
     private static final long BASIN_X_SALT = 0xCBBB9D5DC1059ED8L;
     private static final long BASIN_Z_SALT = 0x629A292A367CD507L;
+    private static final long BASIN_DEVIATION_X_SALT = 0xA4093822299F31D0L;
+    private static final long BASIN_DEVIATION_Z_SALT = 0x082EFA98EC4E6C89L;
     private static final long DIAGONAL_SALT = 0xA54FF53A5F1D36F1L;
     private static final long SOURCE_SALT = 0x510E527FADE682D1L;
     private static final long SOURCE_FLOOR_SALT = 0xD6E8FEB86659FD93L;
     private static final long REACH_SALT = 0x9B05688C2B3E6C1FL;
     private static final long DRY_SALT = 0x1F83D9ABFB41BD6BL;
     private static final long MEANDER_SALT = 0x5BE0CD19137E2179L;
+    private static final long MEANDER_PERSONALITY_SALT = 0x243F6A8885A308D3L;
+    private static final long MEANDER_AMPLITUDE_SALT = 0x13198A2E03707344L;
+    private static final long MEANDER_PHASE_SALT = 0xD1310BA698DFB5ACL;
+    private static final long MEANDER_SKEW_SALT = 0x2FFD72DBD01ADFB7L;
+    private static final long MEANDER_CYCLE_SALT = 0x452821E638D01377L;
+    private static final long MEANDER_FEATURE_A_SALT = 0xBE5466CF34E90C6CL;
+    private static final long MEANDER_FEATURE_B_SALT = 0xC0AC29B7C97C50DDL;
+    private static final long CONFLUENCE_SALT = 0x9E3779B97F4A7C15L;
+    private static final long BRANCH_SLOT_SALT = 0x94D049BB133111EBL;
+    private static final long BRANCH_GATE_SALT = 0x2545F4914F6CDD1DL;
+    private static final int MEANDER_NOISE_SAMPLES = 12;
+    private static final int WIDTH_PROFILE_SAMPLES = 12;
+    private static final double TWO_PI = StrictMath.PI * 2D;
+    private static final MeanderPersonality[] MEANDER_PERSONALITIES = MeanderPersonality.values();
 
     private final RiverNetworkOptions options;
 
@@ -213,10 +229,20 @@ public final class RiverNetwork {
 
     private double drainageDistance(RiverNodeId id) {
         int basinCells = options.routingBasinCells();
-        long basinX = Math.floorDiv(id.cellX(), basinCells);
-        long basinZ = Math.floorDiv(id.cellZ(), basinCells);
         double nodeX = id.cellX() + 0.5D;
         double nodeZ = id.cellZ() + 0.5D;
+        double deviationStrength = options.routingDeviationStrengthCells();
+        if (deviationStrength > 0D) {
+            int deviationScale = options.routingDeviationScaleCells();
+            double originalX = nodeX;
+            double originalZ = nodeZ;
+            nodeX += smoothCellNoise(originalX, originalZ, deviationScale, BASIN_DEVIATION_X_SALT)
+                    * deviationStrength;
+            nodeZ += smoothCellNoise(originalX, originalZ, deviationScale, BASIN_DEVIATION_Z_SALT)
+                    * deviationStrength;
+        }
+        long basinX = (long) StrictMath.floor(nodeX / basinCells);
+        long basinZ = (long) StrictMath.floor(nodeZ / basinCells);
         double jitterRadius = basinCells * 0.45D;
         double nearestDistance = Double.MAX_VALUE;
         for (long candidateX = basinX - 1L; candidateX <= basinX + 1L; candidateX++) {
@@ -232,6 +258,24 @@ public final class RiverNetwork {
             }
         }
         return nearestDistance;
+    }
+
+    private double smoothCellNoise(double x, double z, int scale, long salt) {
+        double scaledX = x / scale;
+        double scaledZ = z / scale;
+        long minimumX = (long) StrictMath.floor(scaledX);
+        long minimumZ = (long) StrictMath.floor(scaledZ);
+        double fractionX = scaledX - minimumX;
+        double fractionZ = scaledZ - minimumZ;
+        double fadeX = fractionX * fractionX * (3D - 2D * fractionX);
+        double fadeZ = fractionZ * fractionZ * (3D - 2D * fractionZ);
+        double northwest = centered(hash(minimumX, minimumZ, salt));
+        double northeast = centered(hash(minimumX + 1L, minimumZ, salt));
+        double southwest = centered(hash(minimumX, minimumZ + 1L, salt));
+        double southeast = centered(hash(minimumX + 1L, minimumZ + 1L, salt));
+        double north = northwest + (northeast - northwest) * fadeX;
+        double south = southwest + (southeast - southwest) * fadeX;
+        return north + (south - north) * fadeZ;
     }
 
     private NodePosition nodePosition(RiverNodeId id) {
@@ -261,13 +305,19 @@ public final class RiverNetwork {
             if (compareRank(neighbor, node) >= 0) {
                 continue;
             }
+            if (!branchPermitted(node, neighbor, resolver)) {
+                continue;
+            }
             RiverRoutingContext context = resolver.routingContext(node, neighbor);
             double routingCost = finiteNonNegative(resolver.terrain.reachRoutingCost(context));
             double oceanAttraction = neighbor.ocean() ? options.oceanAttraction() : 0.0;
             double flowAlignmentCost = flowAlignmentCost(node, neighbor, resolver);
+            double confluenceAttraction = unit(hash(neighbor.id(), CONFLUENCE_SALT))
+                    * options.confluenceWeight();
             ranked.add(new RankedCandidate(
                     neighbor,
-                    neighbor.routingScore() + routingCost + flowAlignmentCost - oceanAttraction
+                    neighbor.routingScore() + routingCost + flowAlignmentCost
+                            - oceanAttraction - confluenceAttraction
             ));
         }
         ranked.sort((first, second) -> {
@@ -281,6 +331,19 @@ public final class RiverNetwork {
         return List.copyOf(candidates);
     }
 
+    private boolean branchPermitted(RiverNode child, RiverNode parent, NodeResolver resolver) {
+        RiverEdgeId childEdge = RiverEdgeId.of(child.id(), parent.id());
+        int childSlot = resolver.branchSlot(parent, child);
+        if (childSlot < options.branchSoftCap()) {
+            return true;
+        }
+        double survivalChance = 1D;
+        for (int overflow = options.branchSoftCap(); overflow <= childSlot; overflow++) {
+            survivalChance *= options.branchChildShrinkFactor();
+        }
+        return gate(hash(childEdge, BRANCH_GATE_SALT), survivalChance);
+    }
+
     private RiverRoute trace(RiverNodeId sourceId, NodeResolver resolver) {
         if (!resolver.sourcePermitted(sourceId)) {
             return new RiverRoute(sourceId, RiverRouteState.SUPPRESSED, List.of(), false, false);
@@ -290,6 +353,7 @@ public final class RiverNetwork {
         ArrayList<RiverEdgeId> edges = new ArrayList<>(options.maxRouteReaches());
         RiverNode current = source;
         boolean reachedOcean = false;
+        boolean exhaustedHorizon = true;
         for (int reachIndex = 0; reachIndex < options.maxRouteReaches(); reachIndex++) {
             RiverNode next = null;
             int examined = 0;
@@ -305,10 +369,12 @@ public final class RiverNetwork {
                 }
             }
             if (next == null) {
+                exhaustedHorizon = false;
                 break;
             }
             RiverEdgeId edgeId = RiverEdgeId.of(current.id(), next.id());
             if (!resolver.continuationPermitted(resolver.routingContext(current, next))) {
+                exhaustedHorizon = false;
                 break;
             }
             edges.add(edgeId);
@@ -321,6 +387,9 @@ public final class RiverNetwork {
 
         if (reachedOcean) {
             return new RiverRoute(sourceId, RiverRouteState.WET, edges, true, false);
+        }
+        if (exhaustedHorizon && !options.requireOcean()) {
+            return new RiverRoute(sourceId, RiverRouteState.WET, edges, false, false);
         }
         if (!edges.isEmpty()) {
             RiverTerminalPolicy terminalPolicy = resolver.terminalPolicy(current);
@@ -388,13 +457,11 @@ public final class RiverNetwork {
             NodeResolver resolver
     ) {
         int pointCount = options.meanderSubdivisions() + 1;
-        double[] x = new double[pointCount];
-        double[] z = new double[pointCount];
+        double[] baseX = new double[pointCount];
+        double[] baseZ = new double[pointCount];
         double deltaX = to.x() - from.x();
         double deltaZ = to.z() - from.z();
         double length = StrictMath.hypot(deltaX, deltaZ);
-        double normalX = length == 0.0 ? 0.0 : -deltaZ / length;
-        double normalZ = length == 0.0 ? 0.0 : deltaX / length;
         double maximumOffset = StrictMath.min(options.meanderStrength(), length * 0.35);
         double directionX = length == 0D ? 1D : deltaX / length;
         double directionZ = length == 0D ? 0D : deltaZ / length;
@@ -416,23 +483,229 @@ public final class RiverNetwork {
                     + fromTangentWeight * fromTangent.z() * maximumOffset
                     + toWeight * to.z()
                     + toTangentWeight * toTangent.z() * maximumOffset;
+            baseX[point] = curvedX;
+            baseZ[point] = curvedZ;
+        }
+        if (maximumOffset <= 0D) {
+            return new RiverPolyline(baseX, baseZ);
+        }
+        MeanderProfile profile = meanderProfile(id);
+        double[] meanderNoise = meanderNoise(id, baseX, baseZ, resolver);
+        double[] meanderSignal = meanderSignal(id, profile, meanderNoise);
+        double[] x = new double[pointCount];
+        double[] z = new double[pointCount];
+        for (int point = 0; point < pointCount; point++) {
+            double t = (double) point / (pointCount - 1);
+            double tSquared = t * t;
+            double envelope = 16D * tSquared * (1D - t) * (1D - t);
             double straightX = from.x() + deltaX * t;
             double straightZ = from.z() + deltaZ * t;
-            RiverMeanderContext context = new RiverMeanderContext(id, t, straightX, straightZ);
-            double configuredNoise = resolver.terrain.meanderNoise(context);
-            double noise = Double.isFinite(configuredNoise)
-                    ? StrictMath.max(-1.0, StrictMath.min(1.0, configuredNoise))
-                    : smoothEdgeNoise(id, t * 3.0);
-            double envelope = 16D * tSquared * (1D - t) * (1D - t);
-            double offset = maximumOffset * 0.5D * envelope * noise;
-            x[point] = curvedX + normalX * offset;
-            z[point] = curvedZ + normalZ * offset;
+            double baseDisplacement = StrictMath.hypot(baseX[point] - straightX, baseZ[point] - straightZ);
+            double availableOffset = StrictMath.max(0D, maximumOffset - baseDisplacement);
+            double offset = availableOffset * 0.92D * envelope * meanderSignal[point];
+            FlowTangent normal = localNormal(baseX, baseZ, point);
+            x[point] = baseX[point] + normal.x() * offset;
+            z[point] = baseZ[point] + normal.z() * offset;
         }
         x[0] = from.x();
         z[0] = from.z();
         x[pointCount - 1] = to.x();
         z[pointCount - 1] = to.z();
         return new RiverPolyline(x, z);
+    }
+
+    private double[] meanderNoise(
+            RiverEdgeId id,
+            double[] baseX,
+            double[] baseZ,
+            NodeResolver resolver
+    ) {
+        int sampleCount = StrictMath.min(MEANDER_NOISE_SAMPLES, baseX.length);
+        double[] knots = new double[sampleCount];
+        for (int sample = 0; sample < sampleCount; sample++) {
+            double t = (double) sample / (sampleCount - 1);
+            double position = t * (baseX.length - 1);
+            int lower = (int) StrictMath.floor(position);
+            int upper = StrictMath.min(baseX.length - 1, lower + 1);
+            double interpolation = position - lower;
+            double curvedX = baseX[lower] + (baseX[upper] - baseX[lower]) * interpolation;
+            double curvedZ = baseZ[lower] + (baseZ[upper] - baseZ[lower]) * interpolation;
+            RiverMeanderContext context = new RiverMeanderContext(id, t, curvedX, curvedZ);
+            double configuredNoise = resolver.terrain.meanderNoise(context);
+            knots[sample] = Double.isFinite(configuredNoise)
+                    ? StrictMath.max(-1D, StrictMath.min(1D, configuredNoise))
+                    : smoothEdgeNoise(id, t * 3D);
+        }
+        double[] noise = new double[baseX.length];
+        for (int point = 0; point < noise.length; point++) {
+            double t = (double) point / (noise.length - 1);
+            double position = t * (sampleCount - 1);
+            int lower = (int) StrictMath.floor(position);
+            int upper = StrictMath.min(sampleCount - 1, lower + 1);
+            double interpolation = smoothStep(position - lower);
+            noise[point] = knots[lower] + (knots[upper] - knots[lower]) * interpolation;
+        }
+        return noise;
+    }
+
+    private MeanderProfile meanderProfile(RiverEdgeId id) {
+        int personalityIndex = (int) StrictMath.floor(
+                unit(hash(id, MEANDER_PERSONALITY_SALT)) * MEANDER_PERSONALITIES.length
+        );
+        MeanderPersonality personality = MEANDER_PERSONALITIES[
+                StrictMath.min(MEANDER_PERSONALITIES.length - 1, personalityIndex)
+        ];
+        double amplitudeRoll = unit(hash(id, MEANDER_AMPLITUDE_SALT));
+        double amplitude = personality == MeanderPersonality.QUIET
+                ? 0.16D + amplitudeRoll * 0.24D
+                : 0.48D + amplitudeRoll * 0.52D;
+        double maximumCycles = StrictMath.max(1D, StrictMath.min(8D, options.meanderSubdivisions() / 5D));
+        double cycleRoll = unit(hash(id, MEANDER_CYCLE_SALT));
+        double cycles = switch (personality) {
+            case SWEEP, HOOK, QUIET -> 0.45D + cycleRoll * 0.65D;
+            case S_CURVE -> 0.75D + cycleRoll * StrictMath.min(1.25D, maximumCycles);
+            case OXBOW -> 1D + cycleRoll * StrictMath.min(1.5D, maximumCycles);
+            case COIL -> StrictMath.min(maximumCycles, 2.25D + cycleRoll * 4.75D);
+            case WANDER -> 0.65D + cycleRoll * StrictMath.min(2.35D, maximumCycles);
+            case CHIRP -> StrictMath.min(maximumCycles, 1.5D + cycleRoll * 5.5D);
+        };
+        double handedness = (hash(id, MEANDER_SALT) & 1L) == 0L ? -1D : 1D;
+        return new MeanderProfile(
+                personality,
+                amplitude,
+                handedness,
+                unit(hash(id, MEANDER_PHASE_SALT)) * TWO_PI,
+                centered(hash(id, MEANDER_SKEW_SALT)) * 0.72D,
+                cycles,
+                unit(hash(id, MEANDER_FEATURE_A_SALT)),
+                unit(hash(id, MEANDER_FEATURE_B_SALT))
+        );
+    }
+
+    private double[] meanderSignal(RiverEdgeId id, MeanderProfile profile, double[] noise) {
+        int subdivisions = noise.length - 1;
+        for (int point = 0; point < noise.length; point++) {
+            double t = (double) point / subdivisions;
+            noise[point] = noise[point] * 0.78D + smoothEdgeNoise(id, t * 3.5D) * 0.22D;
+        }
+        smoothSignal(noise);
+        double detailCycles = StrictMath.max(0.5D, profile.cycles() + profile.featureB() * 1.5D);
+        double baseStep = TWO_PI * detailCycles / subdivisions;
+        double phase = profile.phase() + profile.featureA() * StrictMath.PI;
+        double[] signal = new double[noise.length];
+        for (int point = 0; point < noise.length; point++) {
+            double t = (double) point / subdivisions;
+            if (point > 0) {
+                double frequencyNoise = (noise[point - 1] + noise[point]) * 0.25D + 0.5D;
+                phase += baseStep * (0.45D + frequencyNoise * 1.1D);
+            }
+            double warpedT = warpMeanderPosition(t, profile.skew());
+            double macro = personalitySignal(profile, warpedT, noise[point]);
+            double detailWeight = detailWeight(profile.personality());
+            double detail = detailWeight <= 0D
+                    ? 0D
+                    : StrictMath.sin(phase) * (0.65D + StrictMath.abs(noise[point]) * 0.35D);
+            double noiseWeight = noiseWeight(profile.personality());
+            double macroWeight = 1D - detailWeight - noiseWeight;
+            signal[point] = clampSigned(profile.amplitude()
+                    * (macro * macroWeight + detail * detailWeight + noise[point] * noiseWeight));
+        }
+        smoothSignal(signal);
+        return signal;
+    }
+
+    private double personalitySignal(MeanderProfile profile, double t, double noise) {
+        double handedness = profile.handedness();
+        return switch (profile.personality()) {
+            case SWEEP -> handedness * (0.68D + StrictMath.sin(StrictMath.PI * t) * 0.32D);
+            case HOOK -> handedness * (0.12D + smoothStep(
+                    profile.featureA() < 0.5D ? t : 1D - t
+            ) * 0.88D);
+            case S_CURVE -> handedness * StrictMath.sin(
+                    TWO_PI * profile.cycles() * t + profile.phase()
+            );
+            case COIL -> StrictMath.sin(TWO_PI * profile.cycles() * t + profile.phase())
+                    * (0.62D + StrictMath.sin(StrictMath.PI * t) * 0.38D);
+            case WANDER -> clampSigned(
+                    noise * 0.82D
+                            + StrictMath.sin(TWO_PI * profile.cycles() * t + profile.phase()) * 0.38D
+                            + handedness * 0.12D
+            );
+            case OXBOW -> handedness * clampSigned(
+                    compactLobe(t, 0.18D + profile.featureA() * 0.2D, 0.24D + profile.featureB() * 0.12D)
+                            - compactLobe(t, 0.62D + profile.featureB() * 0.2D, 0.22D + profile.featureA() * 0.14D)
+                                    * (0.55D + profile.featureA() * 0.45D)
+            );
+            case CHIRP -> StrictMath.sin(
+                    profile.phase() + TWO_PI * (0.45D * t + profile.cycles() * t * t)
+            );
+            case QUIET -> handedness * (0.72D + noise * 0.28D);
+        };
+    }
+
+    private double detailWeight(MeanderPersonality personality) {
+        return switch (personality) {
+            case SWEEP, HOOK, OXBOW, QUIET -> 0D;
+            case S_CURVE -> 0.12D;
+            case COIL, WANDER -> 0.08D;
+            case CHIRP -> 0.1D;
+        };
+    }
+
+    private double noiseWeight(MeanderPersonality personality) {
+        return switch (personality) {
+            case SWEEP, S_CURVE, COIL, OXBOW, CHIRP -> 0.08D;
+            case HOOK -> 0.1D;
+            case WANDER -> 0.34D;
+            case QUIET -> 0.14D;
+        };
+    }
+
+    private double warpMeanderPosition(double t, double skew) {
+        return t + skew * t * (1D - t);
+    }
+
+    private double compactLobe(double t, double center, double radius) {
+        double distance = StrictMath.abs(t - center) / radius;
+        if (distance >= 1D) {
+            return 0D;
+        }
+        return smoothStep(1D - distance);
+    }
+
+    private double smoothStep(double value) {
+        double clamped = StrictMath.max(0D, StrictMath.min(1D, value));
+        return clamped * clamped * (3D - 2D * clamped);
+    }
+
+    private void smoothSignal(double[] signal) {
+        if (signal.length < 3) {
+            return;
+        }
+        double previousRaw = signal[0];
+        double currentRaw = signal[1];
+        for (int point = 1; point < signal.length - 1; point++) {
+            double nextRaw = signal[point + 1];
+            signal[point] = (previousRaw + currentRaw * 2D + nextRaw) * 0.25D;
+            previousRaw = currentRaw;
+            currentRaw = nextRaw;
+        }
+    }
+
+    private double clampSigned(double value) {
+        return StrictMath.max(-1D, StrictMath.min(1D, value));
+    }
+
+    private FlowTangent localNormal(double[] x, double[] z, int point) {
+        int previous = StrictMath.max(0, point - 1);
+        int next = StrictMath.min(x.length - 1, point + 1);
+        double tangentX = x[next] - x[previous];
+        double tangentZ = z[next] - z[previous];
+        double tangentLength = StrictMath.hypot(tangentX, tangentZ);
+        if (tangentLength <= 0.0000001D) {
+            return new FlowTangent(0D, 0D);
+        }
+        return new FlowTangent(-tangentZ / tangentLength, tangentX / tangentLength);
     }
 
     private FlowTangent flowTangent(
@@ -643,6 +916,8 @@ public final class RiverNetwork {
         private final Map<RiverNodeId, RiverTerminalPolicy> terminalPolicies;
         private final Map<RiverEdgeId, RiverRoutingContext> routingContexts;
         private final Map<RiverNodeId, FlowTangent> flowTangents;
+        private final Map<RiverEdgeId, Integer> branchSlots;
+        private final Map<RiverNodeId, Boolean> resolvedBranchParents;
 
         private NodeResolver(RiverTerrainSampler terrain) {
             this.terrain = terrain;
@@ -656,6 +931,8 @@ public final class RiverNetwork {
             terminalPolicies = new HashMap<>();
             routingContexts = new HashMap<>();
             flowTangents = new HashMap<>();
+            branchSlots = new HashMap<>();
+            resolvedBranchParents = new HashMap<>();
         }
 
         private RiverNode resolve(RiverNodeId id) {
@@ -666,6 +943,32 @@ public final class RiverNetwork {
             return downstreamCandidates.computeIfAbsent(
                     node.id(),
                     ignored -> computeDownstreamCandidates(node, this));
+        }
+
+        private int branchSlot(RiverNode parent, RiverNode child) {
+            if (!resolvedBranchParents.containsKey(parent.id())) {
+                ArrayList<RiverNode> upstream = new ArrayList<>(8);
+                for (RiverNodeId siblingId : neighbors(parent.id())) {
+                    RiverNode sibling = resolve(siblingId);
+                    if (sibling.riverAllowed() && compareRank(sibling, parent) > 0) {
+                        upstream.add(sibling);
+                    }
+                }
+                upstream.sort((first, second) -> {
+                    long firstPriority = hash(RiverEdgeId.of(first.id(), parent.id()), BRANCH_SLOT_SALT);
+                    long secondPriority = hash(RiverEdgeId.of(second.id(), parent.id()), BRANCH_SLOT_SALT);
+                    int priorityComparison = Long.compareUnsigned(firstPriority, secondPriority);
+                    return priorityComparison != 0
+                            ? priorityComparison
+                            : first.id().compareTo(second.id());
+                });
+                for (int slot = 0; slot < upstream.size(); slot++) {
+                    RiverNode sibling = upstream.get(slot);
+                    branchSlots.put(RiverEdgeId.of(sibling.id(), parent.id()), slot);
+                }
+                resolvedBranchParents.put(parent.id(), true);
+            }
+            return branchSlots.getOrDefault(RiverEdgeId.of(child.id(), parent.id()), Integer.MAX_VALUE);
         }
 
         private boolean sourcePermitted(RiverNodeId sourceId) {
@@ -819,6 +1122,29 @@ public final class RiverNetwork {
     private record FlowTangent(double x, double z) {
     }
 
+    private record MeanderProfile(
+            MeanderPersonality personality,
+            double amplitude,
+            double handedness,
+            double phase,
+            double skew,
+            double cycles,
+            double featureA,
+            double featureB
+    ) {
+    }
+
+    private enum MeanderPersonality {
+        QUIET,
+        SWEEP,
+        HOOK,
+        S_CURVE,
+        COIL,
+        WANDER,
+        OXBOW,
+        CHIRP
+    }
+
     private record SourceTileId(long tileX, long tileZ) {
     }
 
@@ -867,10 +1193,6 @@ public final class RiverNetwork {
         private RiverReach build() {
             int flow = wetFlow + dryFlow;
             int order = 1 + (31 - Integer.numberOfLeadingZeros(flow));
-            double baseWidth = positiveOrFallback(
-                    terrain.channelWidth(context, options.channelWidth()),
-                    options.channelWidth()
-            );
             double bankWidth = nonNegativeOrFallback(
                     terrain.bankWidth(context, options.bankWidth()),
                     options.bankWidth()
@@ -879,10 +1201,8 @@ public final class RiverNetwork {
                     terrain.depth(context, options.depth()),
                     options.depth()
             );
-            double width = StrictMath.min(
-                    options.maxChannelWidth(),
-                    baseWidth * (1.0 + options.orderWidthFactor() * (order - 1))
-            );
+            RiverWidthProfile widthProfile = widthProfile(order);
+            double width = widthProfile.maximum();
             bankWidth = StrictMath.min(options.maxBankWidth(), bankWidth);
             double depth = StrictMath.min(
                     options.maxDepth(),
@@ -897,6 +1217,7 @@ public final class RiverNetwork {
                     flow,
                     order,
                     width,
+                    widthProfile,
                     bankWidth,
                     depth,
                     state == RiverRouteState.WET && to.ocean(),
@@ -906,6 +1227,54 @@ public final class RiverNetwork {
                     context.polyline()
             );
         }
+
+        private RiverWidthProfile widthProfile(int order) {
+            RiverPolyline polyline = context.polyline();
+            int sampleCount = Math.min(WIDTH_PROFILE_SAMPLES, Math.max(2, polyline.size()));
+            double[] positions = new double[sampleCount];
+            double[] widths = new double[sampleCount];
+            double orderScale = 1D + options.orderWidthFactor() * (order - 1);
+            for (int index = 0; index < sampleCount; index++) {
+                double alongReach = (double) index / (sampleCount - 1);
+                ReachPosition position = positionAt(polyline, alongReach);
+                double baseWidth = positiveOrFallback(
+                        terrain.channelWidth(
+                                context,
+                                position.x(),
+                                position.z(),
+                                options.channelWidth()
+                        ),
+                        options.channelWidth()
+                );
+                positions[index] = alongReach;
+                widths[index] = StrictMath.min(
+                        options.maxChannelWidth(),
+                        StrictMath.max(1D, baseWidth * orderScale)
+                );
+            }
+            return new RiverWidthProfile(positions, widths);
+        }
+    }
+
+    private static ReachPosition positionAt(RiverPolyline polyline, double alongReach) {
+        double targetDistance = Math.max(0D, Math.min(1D, alongReach)) * polyline.length();
+        for (int point = 0; point < polyline.size() - 1; point++) {
+            double segmentStart = polyline.cumulativeLength(point);
+            double segmentEnd = polyline.cumulativeLength(point + 1);
+            if (targetDistance > segmentEnd && point < polyline.size() - 2) {
+                continue;
+            }
+            double segmentLength = segmentEnd - segmentStart;
+            double interpolation = segmentLength <= 0D
+                    ? 0D
+                    : (targetDistance - segmentStart) / segmentLength;
+            return new ReachPosition(
+                    polyline.x(point) + (polyline.x(point + 1) - polyline.x(point)) * interpolation,
+                    polyline.z(point) + (polyline.z(point + 1) - polyline.z(point)) * interpolation
+            );
+        }
+        int last = polyline.size() - 1;
+        return new ReachPosition(polyline.x(last), polyline.z(last));
     }
 
     private static double positiveOrFallback(double value, double fallback) {
@@ -914,5 +1283,8 @@ public final class RiverNetwork {
 
     private static double nonNegativeOrFallback(double value, double fallback) {
         return Double.isFinite(value) && value >= 0.0 ? value : fallback;
+    }
+
+    private record ReachPosition(double x, double z) {
     }
 }

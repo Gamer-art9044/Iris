@@ -45,11 +45,13 @@ public final class IrisProtocolServer {
     private final AtomicLong cursorOutOfBounds;
     private final AtomicLong visionTileForwarded;
     private final AtomicLong visionRateLimited;
+    private final AtomicLong visionOutOfBounds;
     private final AtomicLong pregenRegionDeltasBroadcast;
     private final AtomicLong studioHotloadsBroadcast;
     private final AtomicLong toastsBroadcast;
     private final AtomicLong toastsSent;
     private volatile EngineResolver engineResolver;
+    private volatile CursorInfoRequestHandler cursorInfoHandler;
     private volatile VisionTileRequestHandler visionTileHandler;
 
     public IrisProtocolServer(IrisSessionRegistry registry, long serverCapabilities, String serverBrand, boolean irisActive) {
@@ -73,6 +75,7 @@ public final class IrisProtocolServer {
         this.cursorOutOfBounds = new AtomicLong(0L);
         this.visionTileForwarded = new AtomicLong(0L);
         this.visionRateLimited = new AtomicLong(0L);
+        this.visionOutOfBounds = new AtomicLong(0L);
         this.pregenRegionDeltasBroadcast = new AtomicLong(0L);
         this.studioHotloadsBroadcast = new AtomicLong(0L);
         this.toastsBroadcast = new AtomicLong(0L);
@@ -85,6 +88,10 @@ public final class IrisProtocolServer {
 
     public void setEngineResolver(EngineResolver engineResolver) {
         this.engineResolver = engineResolver;
+    }
+
+    public void setCursorInfoHandler(CursorInfoRequestHandler cursorInfoHandler) {
+        this.cursorInfoHandler = cursorInfoHandler;
     }
 
     public void setVisionTileHandler(VisionTileRequestHandler visionTileHandler) {
@@ -279,6 +286,10 @@ public final class IrisProtocolServer {
         return visionRateLimited.get();
     }
 
+    public long visionOutOfBoundsCount() {
+        return visionOutOfBounds.get();
+    }
+
     public long pregenRegionDeltasBroadcastCount() {
         return pregenRegionDeltasBroadcast.get();
     }
@@ -338,6 +349,12 @@ public final class IrisProtocolServer {
             cursorRateLimited.incrementAndGet();
             return;
         }
+        CursorInfoRequestHandler handler = cursorInfoHandler;
+        if (handler != null) {
+            handler.handle(session.id(), request.blockX(), request.blockZ());
+            cursorInfoServed.incrementAndGet();
+            return;
+        }
         EngineResolver resolver = engineResolver;
         if (resolver == null) {
             noEngineDrops.incrementAndGet();
@@ -357,6 +374,10 @@ public final class IrisProtocolServer {
             capabilityRejected.incrementAndGet();
             return;
         }
+        if (visionTileOutOfWorldBounds(request)) {
+            visionOutOfBounds.incrementAndGet();
+            return;
+        }
         if (!session.allowVisionTile(clock.getAsLong())) {
             visionRateLimited.incrementAndGet();
             return;
@@ -372,5 +393,16 @@ public final class IrisProtocolServer {
 
     private static boolean outOfWorldBounds(int coordinate) {
         return coordinate > IrisProtocol.MAX_QUERY_BLOCK_COORDINATE || coordinate < -IrisProtocol.MAX_QUERY_BLOCK_COORDINATE;
+    }
+
+    private static boolean visionTileOutOfWorldBounds(IrisMessage.VisionTileRequest request) {
+        int zoom = Math.max(0, Math.min(request.zoomLevel(), IrisTileEncoder.MAX_ZOOM_LEVEL));
+        long tileSize = (long) IrisTileEncoder.TILE_PIXELS << zoom;
+        long minBlockX = (long) request.tileX() * tileSize;
+        long minBlockZ = (long) request.tileZ() * tileSize;
+        long maxBlockX = minBlockX + tileSize - 1L;
+        long maxBlockZ = minBlockZ + tileSize - 1L;
+        long limit = IrisProtocol.MAX_QUERY_BLOCK_COORDINATE;
+        return minBlockX < -limit || maxBlockX > limit || minBlockZ < -limit || maxBlockZ > limit;
     }
 }

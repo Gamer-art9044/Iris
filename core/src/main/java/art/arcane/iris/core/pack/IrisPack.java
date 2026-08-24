@@ -223,7 +223,6 @@ public class IrisPack {
                 IO.writeAll(ws, generateWorkspaceConfig());
             } catch (IOException e1) {
                 IrisLogging.reportError(e1);
-                e1.printStackTrace();
             }
         }
 

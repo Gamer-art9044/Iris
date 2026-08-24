@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.engine.framework.Engine;
@@ -40,8 +41,6 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.levelgen.structure.Structure;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -66,7 +65,6 @@ final class ModdedCommandSuggestions {
     static final SuggestionProvider<CommandSourceStack> PACK_NAMES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestPackNames(context, builder);
     static final SuggestionProvider<CommandSourceStack> DIMENSION_NAMES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestDimensionNames(context, builder);
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int TAB_FAILURE_KEYS_MAX = 256;
     private static final Set<String> REPORTED_TAB_FAILURES = ConcurrentHashMap.newKeySet();
     private static final long PACK_NAME_CACHE_TTL_MS = 3_000L;
@@ -180,7 +178,7 @@ final class ModdedCommandSuggestions {
         if (REPORTED_TAB_FAILURES.size() > TAB_FAILURE_KEYS_MAX) {
             REPORTED_TAB_FAILURES.clear();
         }
-        LOGGER.warn("Iris tab-complete for {} in {} failed; suggestions will be empty", suggestion, origin, error);
+        ModdedIrisLog.warn("Iris tab-complete for {} in {} failed; suggestions will be empty", suggestion, origin, error);
     }
 
     private static String tabOrigin(CommandSourceStack source) {

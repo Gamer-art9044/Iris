@@ -32,8 +32,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -53,7 +51,6 @@ public final class ModdedWorldCheck {
     private static final long SERVER_WAIT_TIMEOUT_MILLIS = 600000L;
     private static final long SERVER_WAIT_INTERVAL_MILLIS = 250L;
     private static final long SERVER_TASK_TIMEOUT_MILLIS = 900000L;
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     // halt, not exit: awaitStopAndExit already waited for MinecraftServer.halt(true), and exit() would run the
     // shutdown hooks and block behind the server thread it just stopped, so a finished check could hang forever.
     private static final ProcessExit PROCESS_EXIT = Runtime.getRuntime()::halt;
@@ -100,7 +97,7 @@ public final class ModdedWorldCheck {
             }
 
             if (server == null) {
-                LOGGER.error("[worldcheck] server did not finish starting within 10 minutes");
+                ModdedIrisLog.error("[worldcheck] server did not finish starting within 10 minutes");
                 return;
             }
 
@@ -115,15 +112,15 @@ public final class ModdedWorldCheck {
                     }
             )).get(SERVER_TASK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
-            LOGGER.error("[worldcheck] coordinator interrupted", e);
+            ModdedIrisLog.error("[worldcheck] coordinator interrupted", e);
             Thread.currentThread().interrupt();
         } catch (TimeoutException e) {
-            LOGGER.error("[worldcheck] server task did not finish within {}ms", SERVER_TASK_TIMEOUT_MILLIS);
+            ModdedIrisLog.error("[worldcheck] server task did not finish within {}ms", SERVER_TASK_TIMEOUT_MILLIS);
         } catch (Throwable e) {
-            LOGGER.error("[worldcheck] check failed", e);
+            ModdedIrisLog.error("[worldcheck] check failed", e);
         } finally {
             int resultCode = exitCode;
-            LOGGER.info("[worldcheck] shutting down dev server (result={})", resultCode == EXIT_PASS ? "PASS" : "FAIL");
+            ModdedIrisLog.info("[worldcheck] shutting down dev server (result={})", resultCode == EXIT_PASS ? "PASS" : "FAIL");
             MinecraftServer serverRef = server;
             if (serverRef != null && stopRequested.get()) {
                 awaitStopAndExit(() -> serverRef.halt(true), resultCode, processExit);
@@ -138,12 +135,12 @@ public final class ModdedWorldCheck {
         try {
             exitCode = check.getAsBoolean() ? EXIT_PASS : EXIT_FAILURE;
         } catch (Throwable e) {
-            LOGGER.error("[worldcheck] check failed", e);
+            ModdedIrisLog.error("[worldcheck] check failed", e);
         }
         try {
             requestStop.run();
         } catch (Throwable e) {
-            LOGGER.error("[worldcheck] server stop request failed", e);
+            ModdedIrisLog.error("[worldcheck] server stop request failed", e);
             return EXIT_FAILURE;
         }
         return exitCode;
@@ -159,7 +156,7 @@ public final class ModdedWorldCheck {
             awaitStop.run();
         } catch (Throwable e) {
             exitCode = EXIT_FAILURE;
-            LOGGER.error("[worldcheck] waiting for server shutdown failed", e);
+            ModdedIrisLog.error("[worldcheck] waiting for server shutdown failed", e);
         } finally {
             if (interrupted) {
                 Thread.currentThread().interrupt();
@@ -171,25 +168,25 @@ public final class ModdedWorldCheck {
     private static WorldCheckPreparation run(MinecraftServer server) {
         ServerLevel level = targetLevel(server);
         if (level == null) {
-            LOGGER.error("[worldcheck] no Iris dimension is loaded");
+            ModdedIrisLog.error("[worldcheck] no Iris dimension is loaded");
             return new WorldCheckPreparation(false, false, false, false,
                     new NativeStructureGate(false, 0, false, null));
         }
 
         String levelId = level.dimension().identifier().toString();
         String generatorClass = level.getChunkSource().getGenerator().getClass().getName();
-        LOGGER.info("[worldcheck] {} generator: {}", levelId, generatorClass);
+        ModdedIrisLog.info("[worldcheck] {} generator: {}", levelId, generatorClass);
         IrisModdedChunkGenerator generator = level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator iris
                 ? iris : null;
         boolean irisGenerator = generator != null;
         if (!irisGenerator) {
-            LOGGER.error("[worldcheck] {} is NOT using IrisModdedChunkGenerator", levelId);
+            ModdedIrisLog.error("[worldcheck] {} is NOT using IrisModdedChunkGenerator", levelId);
         }
         boolean dimensionTypeOk = generator != null
                 && WorldCheckDimensionContract.checkDimensionType(level, generator);
 
         BlockPos spawn = level.getRespawnData().pos();
-        LOGGER.info("[worldcheck] spawn: {} {} {} (minY={} height={})", spawn.getX(), spawn.getY(), spawn.getZ(), level.getMinY(), level.getHeight());
+        ModdedIrisLog.info("[worldcheck] spawn: {} {} {} (minY={} height={})", spawn.getX(), spawn.getY(), spawn.getZ(), level.getMinY(), level.getHeight());
 
         MessageDigest digest = WorldCheckPredicates.sha256();
         List<String> samples = new ArrayList<>();
@@ -210,9 +207,9 @@ public final class ModdedWorldCheck {
         }
 
         for (int i = 0; i < Math.min(6, samples.size()); i++) {
-            LOGGER.info("[worldcheck] surface sample: {}", samples.get(i));
+            ModdedIrisLog.info("[worldcheck] surface sample: {}", samples.get(i));
         }
-        LOGGER.info("[worldcheck] surface digest: {} ({} columns, {} distinct surface blocks: {})",
+        ModdedIrisLog.info("[worldcheck] surface digest: {} ({} columns, {} distinct surface blocks: {})",
                 HexFormat.of().formatHex(digest.digest()).substring(0, 12), samples.size(), surfaceKeys.size(), surfaceKeys);
 
         ChunkAccess zeroChunk = level.getChunk(0, 0);
@@ -230,16 +227,16 @@ public final class ModdedWorldCheck {
                 columnKeys.add(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
             }
         }
-        LOGGER.info("[worldcheck] chunk 0,0: {} non-empty sections of {}; column blocks at (8,*,8): {}",
+        ModdedIrisLog.info("[worldcheck] chunk 0,0: {} non-empty sections of {}; column blocks at (8,*,8): {}",
                 nonEmptySections, zeroChunk.getSections().length, columnKeys);
 
         boolean sectionsOk = nonEmptySections >= 4;
         boolean varietyOk = columnKeys.size() >= 2 || surfaceKeys.size() >= 2;
         if (!sectionsOk) {
-            LOGGER.error("[worldcheck] chunk 0,0 looks empty/vanilla-flat ({} non-empty sections)", nonEmptySections);
+            ModdedIrisLog.error("[worldcheck] chunk 0,0 looks empty/vanilla-flat ({} non-empty sections)", nonEmptySections);
         }
         if (!varietyOk) {
-            LOGGER.error("[worldcheck] generated terrain has no block variety (flat-world signature)");
+            ModdedIrisLog.error("[worldcheck] generated terrain has no block variety (flat-world signature)");
         }
 
         boolean entityMixinsOk = WorldCheckDimensionContract.checkEntityMixins(level);
@@ -262,7 +259,7 @@ public final class ModdedWorldCheck {
             WorldCheckPredicates.qaEvent("village_poi_metric", "village", poiOk,
                     "inBounds=" + poi.inBounds() + ",outOfBounds=" + poi.outOfBounds());
             if (!poiOk) {
-                LOGGER.error("[worldcheck] village POI audit failed: inBounds={} outOfBounds={}",
+                ModdedIrisLog.error("[worldcheck] village POI audit failed: inBounds={} outOfBounds={}",
                         poi.inBounds(), poi.outOfBounds());
             }
         } else {
@@ -271,12 +268,12 @@ public final class ModdedWorldCheck {
         int passed = structureGate.nonVillagePassed()
                 + (structureGate.villagePassBeforePoi() && poiOk ? 1 : 0);
         boolean structurePass = structureGate.passBeforePoi() && poiOk;
-        LOGGER.info("[worldcheck] native structure gate: {}/{} passed", passed,
+        ModdedIrisLog.info("[worldcheck] native structure gate: {}/{} passed", passed,
                 WorldCheckStructureAudit.STRUCTURE_CHECKS.size());
         WorldCheckPredicates.qaEvent("structure_aggregate", "all", structurePass,
                 "passed=" + passed + ",total=" + WorldCheckStructureAudit.STRUCTURE_CHECKS.size());
         boolean pass = preparation.nonStructurePass() && structurePass;
-        LOGGER.info("[worldcheck] {}", pass ? "PASS" : "FAIL");
+        ModdedIrisLog.info("[worldcheck] {}", pass ? "PASS" : "FAIL");
         WorldCheckPredicates.qaEvent("worldcheck_final", "all", pass,
                 "structures=" + WorldCheckStructureAudit.STRUCTURE_CHECKS.size()
                         + ",terrain=" + preparation.terrainOk()
@@ -295,7 +292,7 @@ public final class ModdedWorldCheck {
             if (requested != null) {
                 return requested;
             }
-            LOGGER.error("[worldcheck] requested dimension '{}' is not loaded", target);
+            ModdedIrisLog.error("[worldcheck] requested dimension '{}' is not loaded", target);
             return null;
         }
 

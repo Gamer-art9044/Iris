@@ -944,7 +944,7 @@ public final class IrisWorldRemovalService {
             PlatformChunkGenerator generator = null;
             if (world != null) {
                 Path loadedDirectory = world.getWorldFolder().toPath().toAbsolutePath().normalize();
-                WorldRemovalPathPolicy.validateStoragePath(target.levelRoot(), target.worldKey(), loadedDirectory);
+                WorldRemovalPathPolicy.validateStorageRoot(target.levelRoot(), target.worldKey(), loadedDirectory);
                 generator = IrisToolbelt.access(world);
             }
             boolean registryManaged = IrisWorlds.get().getWorlds().containsKey(target.worldKey().toString());

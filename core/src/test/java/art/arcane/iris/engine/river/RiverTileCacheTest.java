@@ -295,6 +295,7 @@ public class RiverTileCacheTest {
                 1,
                 1,
                 8.0,
+                RiverWidthProfile.constant(8.0),
                 4.0,
                 3.0,
                 false,

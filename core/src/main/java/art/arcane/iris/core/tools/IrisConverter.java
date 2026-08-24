@@ -154,7 +154,7 @@ public class IrisConverter {
 
                 } catch (Exception e) {
                     sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_CONVERTER_FAILED_CONVERT, MessageArgument.untrusted("name", String.valueOf(schem.getName()))));
-                    e.printStackTrace();
+                    IrisLogging.reportError("Failed to convert schematic " + schem.getName() + ".", e);
                 }
             }
             stopwatch.end();
@@ -184,4 +184,3 @@ public class IrisConverter {
         }
     }
 }
-

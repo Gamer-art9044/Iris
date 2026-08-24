@@ -13,21 +13,23 @@ import static org.junit.Assert.assertThrows;
 
 public class IrisSettingsDefaultsTest {
     @Test
-    public void concurrencyIsNotSerializedIntoSettingsJson() {
+    public void concurrencyIsNotSerializedIntoIrisJson() {
         String json = new Gson().toJson(new IrisSettings());
 
-        assertFalse("settings.json must not advertise an unconfigurable concurrency block",
+        assertFalse("iris.json must not advertise an unconfigurable concurrency block",
                 json.contains("\"concurrency\""));
     }
 
     @Test
-    public void legacyConcurrencyBlockStillLoadsAndKeepsDerivedValues() {
-        IrisSettings loaded = new Gson().fromJson(
-                "{\"concurrency\":{\"parallelism\":8,\"ioParallelism\":4}}", IrisSettings.class);
+    public void languageAndMetricsAreTheFirstGeneralControls() {
+        String json = new Gson().toJson(new IrisSettings());
 
-        assertNotNull(loaded.getConcurrency());
-        assertEquals(Math.max(2, Runtime.getRuntime().availableProcessors()),
-                loaded.getConcurrency().getParallelism());
+        int language = json.indexOf("\"language\"");
+        int metrics = json.indexOf("\"metrics\"");
+        int commandSounds = json.indexOf("\"commandSounds\"");
+        assertTrue(language >= 0);
+        assertTrue(language < metrics);
+        assertTrue(metrics < commandSounds);
     }
 
     @Test

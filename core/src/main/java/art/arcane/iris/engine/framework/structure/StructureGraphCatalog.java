@@ -91,7 +91,6 @@ public final class StructureGraphCatalog {
                 }
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
-                e.printStackTrace();
                 return false;
             }
         }

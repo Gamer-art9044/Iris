@@ -156,7 +156,6 @@ final class EngineShutdownSequence {
     private void reportIncompleteClose(Throwable failure) {
         IrisLogging.error("Iris engine shutdown remains incomplete after cleanup failures for " + engine.getWorld().name() + ".");
         IrisLogging.reportError(failure);
-        failure.printStackTrace();
         throw new IllegalStateException("Iris engine shutdown remains incomplete after cleanup failures.", failure);
     }
 

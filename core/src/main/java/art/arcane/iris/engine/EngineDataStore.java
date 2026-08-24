@@ -75,7 +75,6 @@ final class EngineDataStore {
                     }
                 } catch (IOException | JsonParseException e) {
                     IrisLogging.reportError(e);
-                    e.printStackTrace();
                     throw new IllegalStateException("Failed to read Iris engine data without modifying it: " + f.getAbsolutePath(), e);
                 }
             }
@@ -94,7 +93,6 @@ final class EngineDataStore {
                         engineDataEstablished = true;
                     } catch (IOException e) {
                         IrisLogging.reportError(e);
-                        e.printStackTrace();
                         throw new IllegalStateException("Failed to create Iris engine data: " + f.getAbsolutePath(), e);
                     }
                 }
@@ -141,7 +139,6 @@ final class EngineDataStore {
             } catch (IOException e) {
                 IrisLogging.error("Failed to save Engine Data");
                 IrisLogging.reportError(e);
-                e.printStackTrace();
                 throw new IllegalStateException("Failed to save Iris engine data: " + f.getAbsolutePath(), e);
             }
         }

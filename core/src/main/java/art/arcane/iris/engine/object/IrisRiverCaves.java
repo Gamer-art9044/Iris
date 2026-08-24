@@ -72,6 +72,11 @@ public class IrisRiverCaves {
     @Desc("The maximum coordinate warp applied to generated sealed grottos in blocks.")
     private double grottoWarpStrength = 2D;
 
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("The fraction of river-cave boundary columns that inherit the naturally resolved parent cave or surface biome instead of a flooded-cave override.")
+    private double parentBiomeInheritance = 0.5D;
+
     @MinNumber(4)
     @MaxNumber(256)
     @Desc("The horizontal proof radius for an existing closed cave component.")

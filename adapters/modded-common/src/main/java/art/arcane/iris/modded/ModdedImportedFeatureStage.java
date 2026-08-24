@@ -46,8 +46,6 @@ import net.minecraft.world.level.levelgen.RandomSupport;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
 import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -76,7 +74,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * {@link #generationSettings} answers exactly what vanilla's default getter answers.
  */
 final class ModdedImportedFeatureStage {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String CYCLE_MARKER = "Feature order cycle found";
     private static final long NO_GENERATION = Long.MIN_VALUE;
 
@@ -179,7 +176,7 @@ final class ModdedImportedFeatureStage {
         try {
             control = NativeFeatureGenerationPolicy.control(engine);
         } catch (RuntimeException error) {
-            LOGGER.error("Iris could not read importedFeatures for this dimension; features off: {}",
+            ModdedIrisLog.error("Iris could not read importedFeatures for this dimension; features off: {}",
                     error.toString());
             markInert(generation);
             return;
@@ -193,7 +190,7 @@ final class ModdedImportedFeatureStage {
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             built = buildTable(engine, control, generation);
         } catch (Throwable error) {
-            LOGGER.error("Iris importedFeatures is off for {}: feature table construction failed: {}",
+            ModdedIrisLog.error("Iris importedFeatures is off for {}: feature table construction failed: {}",
                     dimensionKey(engine), error.toString());
             markInert(generation);
             return;
@@ -207,7 +204,7 @@ final class ModdedImportedFeatureStage {
         // Arm the worldcheck log watch here, before any chunk decorates: arming from the first pass instead
         // missed every far-chunk write the first chunk made. No-op unless -Diris.worldcheck is set.
         WorldCheckFeaturePlacement.arm();
-        LOGGER.info("Iris importedFeatures on for {}: {} biomes, {} steps, {} custom-biome derivative maps",
+        ModdedIrisLog.info("Iris importedFeatures on for {}: {} biomes, {} steps, {} custom-biome derivative maps",
                 dimensionKey(engine), built.biomes().size(), built.steps().size(),
                 built.derivatives().size());
     }
@@ -222,7 +219,7 @@ final class ModdedImportedFeatureStage {
         // detection depend on JVM hash order and turns a real cycle into an intermittent one.
         List<Holder<Biome>> biomes = biomeSource.orderedPossibleBiomes();
         if (biomes.isEmpty()) {
-            LOGGER.error("Iris importedFeatures is on but {} exposes no biomes; features off",
+            ModdedIrisLog.error("Iris importedFeatures is on but {} exposes no biomes; features off",
                     dimensionKey(engine));
             return null;
         }
@@ -245,7 +242,7 @@ final class ModdedImportedFeatureStage {
             if (message == null || !message.contains(CYCLE_MARKER)) {
                 throw error;
             }
-            LOGGER.error("Iris importedFeatures is off for {}: the registered placed features cannot be ordered."
+            ModdedIrisLog.error("Iris importedFeatures is off for {}: the registered placed features cannot be ordered."
                             + " {}. Remove or reorder the conflicting content, or leave"
                             + " importedFeatures.enabled false.",
                     dimensionKey(engine), message);
@@ -276,7 +273,7 @@ final class ModdedImportedFeatureStage {
                 derivative = biomeSource.registeredBiome(derivativeKey);
             }
             if (derivative == null) {
-                LOGGER.warn("Iris importedFeatures: vanilla derivative {} of biome {} is not registered;"
+                ModdedIrisLog.warn("Iris importedFeatures: vanilla derivative {} of biome {} is not registered;"
                         + " its custom biomes generate no imported features",
                         derivativeKey, irisBiome.getLoadKey());
                 continue;

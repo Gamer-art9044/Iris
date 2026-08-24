@@ -91,7 +91,7 @@ public class ModdedPlatformPathsTest {
         File iris = new File(temporaryFolder.getRoot(), "iris");
 
         assertEquals(iris, platform.dataFolder());
-        assertEquals(new File(iris, "settings.json"), platform.dataFile("settings.json"));
+        assertEquals(new File(iris, "iris.json"), platform.dataFile("iris.json"));
         assertEquals(new File(iris, "parity"), platform.dataFolder("parity"));
     }
 

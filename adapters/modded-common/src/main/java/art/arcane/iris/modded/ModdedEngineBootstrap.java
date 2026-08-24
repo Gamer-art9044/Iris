@@ -55,13 +55,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.storage.LevelData;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 
 public final class ModdedEngineBootstrap {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String[] CORE_SELF_TEST_CLASSES = {
         "art.arcane.iris.engine.IrisEngine",
         "art.arcane.iris.util.common.data.B",
@@ -156,7 +153,7 @@ public final class ModdedEngineBootstrap {
         try {
             generator.unbindEngine(level);
         } catch (Throwable exception) {
-            LOGGER.error("Iris engine unload failed for {}", level.dimension().identifier(), exception);
+            ModdedIrisLog.error("Iris engine unload failed for {}", level.dimension().identifier(), exception);
             if (exception instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
@@ -207,7 +204,7 @@ public final class ModdedEngineBootstrap {
         if (failure != null) {
             // The shutdown path must not propagate: propagating aborts the remaining loader stop handlers and
             // can leave the level unsaved. Every stage already logged its own failure.
-            LOGGER.error("Iris modded shutdown completed with failures", failure);
+            ModdedIrisLog.error("Iris modded shutdown completed with failures", failure);
         }
     }
 
@@ -216,7 +213,7 @@ public final class ModdedEngineBootstrap {
             action.run();
             return failure;
         } catch (Throwable stageFailure) {
-            LOGGER.error("Iris modded shutdown stage '{}' failed", stage, stageFailure);
+            ModdedIrisLog.error("Iris modded shutdown stage '{}' failed", stage, stageFailure);
             if (failure == null) {
                 return stageFailure;
             }
@@ -255,7 +252,7 @@ public final class ModdedEngineBootstrap {
         BlockPos position = reconciledSpawnPosition(surfaceY, level.getMinY(), level.getHeight());
         server.setRespawnData(LevelData.RespawnData.of(
                 level.dimension(), position, current.yaw(), current.pitch()));
-        LOGGER.info("Iris spawn reconciled for {} at {},{},{}", dimensionId,
+        ModdedIrisLog.info("Iris spawn reconciled for {} at {},{},{}", dimensionId,
                 position.getX(), position.getY(), position.getZ());
     }
 
@@ -321,7 +318,7 @@ public final class ModdedEngineBootstrap {
                 Class.forName(className, true, classLoader);
                 loadedClasses++;
             } catch (Throwable error) {
-                LOGGER.error("Iris core self-test failed to initialize {}", className, error);
+                ModdedIrisLog.error("Iris core self-test failed to initialize {}", className, error);
             }
         }
 
@@ -404,7 +401,7 @@ public final class ModdedEngineBootstrap {
                     ModdedIrisSplash.print(boundLoader);
                 } catch (Throwable splashFailure) {
                     // A cosmetic banner must never roll back the platform bind.
-                    LOGGER.warn("Iris splash could not be printed", splashFailure);
+                    ModdedIrisLog.warn("Iris splash could not be printed", splashFailure);
                 }
                 createdServices.enableAll();
                 runtime = new BoundRuntime(created, createdServices);
@@ -413,7 +410,7 @@ public final class ModdedEngineBootstrap {
             } catch (Throwable failure) {
                 createdServices.rollback(failure);
                 rollback.restore(failure);
-                LOGGER.error("Iris modded platform binding failed", failure);
+                ModdedIrisLog.error("Iris modded platform binding failed", failure);
                 if (failure instanceof RuntimeException runtimeException) {
                     throw runtimeException;
                 }

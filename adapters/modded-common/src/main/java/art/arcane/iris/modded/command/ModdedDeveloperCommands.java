@@ -18,13 +18,12 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.spi.IrisPlatforms;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -37,7 +36,6 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 final class ModdedDeveloperCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
 
     private ModdedDeveloperCommands() {
@@ -71,7 +69,7 @@ final class ModdedDeveloperCommands {
             }
             return 1;
         } catch (SocketException error) {
-            LOGGER.error("Iris developer network dump failed", error);
+            ModdedIrisLog.error("Iris developer network dump failed", error);
             ModdedCommandFeedback.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DEVELOPER_COMMANDS_NETWORK_SCAN_FAILED, MessageArgument.untrusted("value", error.getClass().getSimpleName())));
             return 0;
         }

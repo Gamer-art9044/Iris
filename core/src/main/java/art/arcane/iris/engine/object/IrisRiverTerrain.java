@@ -59,17 +59,41 @@ public class IrisRiverTerrain {
     @Desc("The exponent shaping the channel-to-bank cross-section transition.")
     private double bankExponent = 2D;
 
-    @Desc("Modulates perpendicular spline displacement while preserving graph endpoints.")
+    @MinNumber(0)
+    @MaxNumber(16)
+    @Desc("The extra lateral tunnel-mouth blend carved on each side where a surface river enters or exits solid terrain.")
+    private double tunnelMouthBlend = 2D;
+
+    @Desc("Noise modulating the submerged floor of river tunnels.")
+    private IrisGeneratorStyle tunnelFloorStyle = new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(48D);
+
+    @Desc("The subterranean tunnel width multiplier relative to the surface river width.")
+    private IrisStyledRange tunnelWidthMultiplier = range(1D, 1D, NoiseStyle.FLAT, 1D);
+
+    @MinNumber(0)
+    @MaxNumber(8)
+    @Desc("The maximum vertical floor variation in river tunnels.")
+    private double tunnelFloorVariation = 2D;
+
+    @Desc("Noise modulating the dry roof of river tunnels.")
+    private IrisGeneratorStyle tunnelRoofStyle = new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(64D);
+
+    @MinNumber(0)
+    @MaxNumber(16)
+    @Desc("The maximum vertical roof variation in river tunnels.")
+    private double tunnelRoofVariation = 3D;
+
+    @Desc("Warps the spacing and amplitude of varied local-normal sweeps, hooks, curls, and wandering bends while preserving graph endpoints.")
     private IrisGeneratorStyle meanderStyle = new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(512D);
 
     @MinNumber(0)
     @MaxNumber(1024)
-    @Desc("The maximum perpendicular meander displacement in blocks.")
+    @Desc("The total endpoint-spline and shape-personality displacement envelope in blocks.")
     private double meanderStrength = 72D;
 
     @MinNumber(1)
     @MaxNumber(64)
-    @Desc("The number of straight segments used to flatten each meandering graph reach.")
+    @Desc("The number of straight segments used to flatten and resolve each meandering graph reach.")
     private int meanderSubdivisions = 8;
 
     @Desc("Modulates small river-bed height variation after the connected channel shape is solved.")

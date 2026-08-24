@@ -25,6 +25,13 @@ public class VisionRenderTypeTest {
         assertEquals("iris.desktop.vision.mode.river", DesktopUiMessages.VISION_MODE_RIVER.id());
     }
 
+    @Test
+    public void teleportCoordinatesFloorAcrossTheNegativeOrigin() {
+        assertEquals(-1, VisionGUI.floorWorldCoordinate(-0.01D));
+        assertEquals(0, VisionGUI.floorWorldCoordinate(0.99D));
+        assertEquals(1, VisionGUI.floorWorldCoordinate(1D));
+    }
+
     private static void assertTrueCatalogMember(MessageKey key) {
         assertEquals(key.id(), 1, DesktopUiMessages.keys().stream()
                 .filter(candidate -> candidate.id().equals(key.id()))

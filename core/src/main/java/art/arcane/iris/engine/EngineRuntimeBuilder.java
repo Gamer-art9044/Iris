@@ -172,7 +172,6 @@ final class EngineRuntimeBuilder {
         } catch (Throwable e) {
             engineRuntime.hash32().completeExceptionally(e);
             IrisLogging.reportError(e);
-            e.printStackTrace();
         }
         try {
             if (!engine.backgroundTasks.scheduleTrackedTask(() -> engine.getPlatformHooks().refreshDatapackWorkspace(engine))) {
@@ -180,7 +179,6 @@ final class EngineRuntimeBuilder {
             }
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
         }
     }
 
@@ -219,7 +217,6 @@ final class EngineRuntimeBuilder {
         } catch (Throwable e) {
             configuredFailure = e;
             IrisLogging.reportError(e);
-            e.printStackTrace();
             if (engine.getModeFallbackLogged().compareAndSet(false, true)) {
                 IrisLogging.warn("Failed to initialize configured dimension mode for " + engine.getDimension().getLoadKey() + ", falling back to OVERWORLD mode.");
             }

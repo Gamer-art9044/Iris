@@ -21,14 +21,11 @@ package art.arcane.iris.modded;
 import art.arcane.iris.modded.service.ModdedService;
 import art.arcane.iris.modded.service.ModdedTickableService;
 import net.minecraft.server.MinecraftServer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class ModdedServiceManager {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
 
     private final Map<Class<? extends ModdedService>, ModdedService> services = new LinkedHashMap<>();
     private boolean enabled = false;
@@ -103,7 +100,7 @@ public final class ModdedServiceManager {
                 service.onDisable();
             } catch (Throwable serviceFailure) {
                 failed++;
-                LOGGER.error("Iris service onDisable failed for {}", service.getClass().getName(), serviceFailure);
+                ModdedIrisLog.error("Iris service onDisable failed for {}", service.getClass().getName(), serviceFailure);
                 if (failure == null) {
                     failure = serviceFailure;
                 } else if (serviceFailure != failure) {
@@ -113,7 +110,7 @@ public final class ModdedServiceManager {
         }
         enabled = false;
         if (failure != null) {
-            LOGGER.error("Iris disabled all services with {} failure(s)", failed, failure);
+            ModdedIrisLog.error("Iris disabled all services with {} failure(s)", failed, failure);
         }
     }
 
@@ -132,7 +129,7 @@ public final class ModdedServiceManager {
         try {
             service.onServerTick(server);
         } catch (Throwable error) {
-            LOGGER.error("Iris service tick failed for {}", service.getClass().getName(), error);
+            ModdedIrisLog.error("Iris service tick failed for {}", service.getClass().getName(), error);
         }
     }
 
@@ -143,12 +140,12 @@ public final class ModdedServiceManager {
             if (cleanupError != failure) {
                 failure.addSuppressed(cleanupError);
             }
-            LOGGER.error("Iris service rollback failed for {}", service.getClass().getName(), cleanupError);
+            ModdedIrisLog.error("Iris service rollback failed for {}", service.getClass().getName(), cleanupError);
         }
     }
 
     private RuntimeException serviceFailure(ModdedService service, Throwable failure) {
-        LOGGER.error("Iris service onEnable failed for {}", service.getClass().getName(), failure);
+        ModdedIrisLog.error("Iris service onEnable failed for {}", service.getClass().getName(), failure);
         if (failure instanceof RuntimeException runtimeException) {
             return runtimeException;
         }

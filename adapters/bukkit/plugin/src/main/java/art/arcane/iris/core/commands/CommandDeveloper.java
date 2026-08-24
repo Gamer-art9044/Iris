@@ -242,7 +242,7 @@ public class CommandDeveloper implements DirectorExecutor {
                 try (CountingDataInputStream in = CountingDataInputStream.wrap(new BufferedInputStream(new FileInputStream(base)))) {
                     TectonicPlate.read(1088, in, true, IrisEngineMantle.createRuntimeDataAdapter(activeEngine.getData()), IrisEngineMantle.createRuntimeHooks());
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    Iris.reportError("Failed to inspect the Iris tectonic plate.", e);
                 }
             } else {
                 Matter.read(section);
@@ -282,7 +282,7 @@ public class CommandDeveloper implements DirectorExecutor {
                 MCAFile MCARegion = MCAUtil.read(mca);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            Iris.reportError("Failed to inspect Minecraft region files.", e);
         }
 
     }
@@ -339,7 +339,7 @@ public class CommandDeveloper implements DirectorExecutor {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            Iris.reportError("Failed to inspect server network interfaces.", e);
         }
     }
 

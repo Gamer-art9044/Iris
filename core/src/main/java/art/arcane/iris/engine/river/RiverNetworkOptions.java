@@ -9,6 +9,8 @@ public record RiverNetworkOptions(
         int minimumSourcesPerTile,
         int downstreamCandidateLimit,
         int routingBasinCells,
+        int routingDeviationScaleCells,
+        double routingDeviationStrengthCells,
         double routingPlateauHeight,
         double hydraulicBaseHeight,
         boolean requireOcean,
@@ -18,6 +20,9 @@ public record RiverNetworkOptions(
         double terrainHeightWeight,
         double routingNoiseWeight,
         double flowAlignmentWeight,
+        double confluenceWeight,
+        int branchSoftCap,
+        double branchChildShrinkFactor,
         double oceanAttraction,
         double channelWidth,
         double bankWidth,
@@ -38,6 +43,8 @@ public record RiverNetworkOptions(
         requireRange(minimumSourcesPerTile, 0, tileCells * tileCells, "minimumSourcesPerTile");
         requireRange(downstreamCandidateLimit, 1, 8, "downstreamCandidateLimit");
         requireRange(routingBasinCells, 8, 256, "routingBasinCells");
+        requireRange(routingDeviationScaleCells, 8, 256, "routingDeviationScaleCells");
+        requireRange(routingDeviationStrengthCells, 0D, 32D, "routingDeviationStrengthCells");
         requirePositive(routingPlateauHeight, "routingPlateauHeight");
         requireFinite(hydraulicBaseHeight, "hydraulicBaseHeight");
         requireRange(meanderSubdivisions, 1, 64, "meanderSubdivisions");
@@ -48,6 +55,9 @@ public record RiverNetworkOptions(
         requireFiniteNonNegative(terrainHeightWeight, "terrainHeightWeight");
         requireFiniteNonNegative(routingNoiseWeight, "routingNoiseWeight");
         requireFiniteNonNegative(flowAlignmentWeight, "flowAlignmentWeight");
+        requireFiniteNonNegative(confluenceWeight, "confluenceWeight");
+        requireRange(branchSoftCap, 1, 8, "branchSoftCap");
+        requireProbability(branchChildShrinkFactor, "branchChildShrinkFactor");
         requireFiniteNonNegative(oceanAttraction, "oceanAttraction");
         requirePositive(channelWidth, "channelWidth");
         requireFiniteNonNegative(bankWidth, "bankWidth");
@@ -76,6 +86,12 @@ public record RiverNetworkOptions(
 
     private static void requireRange(int value, int minimum, int maximum, String name) {
         if (value < minimum || value > maximum) {
+            throw new IllegalArgumentException(name + " must be between " + minimum + " and " + maximum);
+        }
+    }
+
+    private static void requireRange(double value, double minimum, double maximum, String name) {
+        if (!Double.isFinite(value) || value < minimum || value > maximum) {
             throw new IllegalArgumentException(name + " must be between " + minimum + " and " + maximum);
         }
     }
@@ -113,6 +129,8 @@ public record RiverNetworkOptions(
         private int minimumSourcesPerTile;
         private int downstreamCandidateLimit;
         private int routingBasinCells;
+        private int routingDeviationScaleCells;
+        private double routingDeviationStrengthCells;
         private double routingPlateauHeight;
         private double hydraulicBaseHeight;
         private boolean requireOcean;
@@ -122,6 +140,9 @@ public record RiverNetworkOptions(
         private double terrainHeightWeight;
         private double routingNoiseWeight;
         private double flowAlignmentWeight;
+        private double confluenceWeight;
+        private int branchSoftCap;
+        private double branchChildShrinkFactor;
         private double oceanAttraction;
         private double channelWidth;
         private double bankWidth;
@@ -144,6 +165,8 @@ public record RiverNetworkOptions(
             minimumSourcesPerTile = 0;
             downstreamCandidateLimit = 4;
             routingBasinCells = 64;
+            routingDeviationScaleCells = 24;
+            routingDeviationStrengthCells = 0D;
             routingPlateauHeight = 8.0;
             hydraulicBaseHeight = 64D;
             requireOcean = false;
@@ -153,6 +176,9 @@ public record RiverNetworkOptions(
             terrainHeightWeight = 1.0;
             routingNoiseWeight = 24.0;
             flowAlignmentWeight = 0D;
+            confluenceWeight = 0D;
+            branchSoftCap = 4;
+            branchChildShrinkFactor = 0.35D;
             oceanAttraction = 64.0;
             channelWidth = 10.0;
             bankWidth = 8.0;
@@ -202,6 +228,16 @@ public record RiverNetworkOptions(
             return this;
         }
 
+        public Builder routingDeviationScaleCells(int value) {
+            routingDeviationScaleCells = value;
+            return this;
+        }
+
+        public Builder routingDeviationStrengthCells(double value) {
+            routingDeviationStrengthCells = value;
+            return this;
+        }
+
         public Builder routingPlateauHeight(double value) {
             routingPlateauHeight = value;
             return this;
@@ -244,6 +280,21 @@ public record RiverNetworkOptions(
 
         public Builder flowAlignmentWeight(double value) {
             flowAlignmentWeight = value;
+            return this;
+        }
+
+        public Builder confluenceWeight(double value) {
+            confluenceWeight = value;
+            return this;
+        }
+
+        public Builder branchSoftCap(int value) {
+            branchSoftCap = value;
+            return this;
+        }
+
+        public Builder branchChildShrinkFactor(double value) {
+            branchChildShrinkFactor = value;
             return this;
         }
 
@@ -320,6 +371,8 @@ public record RiverNetworkOptions(
                     minimumSourcesPerTile,
                     downstreamCandidateLimit,
                     routingBasinCells,
+                    routingDeviationScaleCells,
+                    routingDeviationStrengthCells,
                     routingPlateauHeight,
                     hydraulicBaseHeight,
                     requireOcean,
@@ -329,6 +382,9 @@ public record RiverNetworkOptions(
                     terrainHeightWeight,
                     routingNoiseWeight,
                     flowAlignmentWeight,
+                    confluenceWeight,
+                    branchSoftCap,
+                    branchChildShrinkFactor,
                     oceanAttraction,
                     channelWidth,
                     bankWidth,

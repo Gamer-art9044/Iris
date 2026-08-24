@@ -20,14 +20,11 @@ package art.arcane.iris.modded;
 
 import art.arcane.iris.engine.framework.StructureVerticalBounds;
 import art.arcane.iris.modded.WorldCheckStructureAudit.StructureCheck;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 final class WorldCheckPredicates {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
 
     private WorldCheckPredicates() {
     }
@@ -39,7 +36,7 @@ final class WorldCheckPredicates {
     }
 
     static void qaEvent(String event, String structure, boolean pass, String detail) {
-        LOGGER.info(qaEventJson(event, structure, pass, detail));
+        ModdedIrisLog.info(qaEventJson(event, structure, pass, detail));
     }
 
     static String qaEventJson(String event, String structure, boolean pass, String detail) {

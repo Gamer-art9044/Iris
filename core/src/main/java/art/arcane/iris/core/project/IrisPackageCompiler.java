@@ -281,7 +281,6 @@ public class IrisPackageCompiler {
             return p;
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
         }
         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_FAILED));
         return null;

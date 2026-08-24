@@ -18,8 +18,6 @@
 
 package art.arcane.iris.modded;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -42,7 +40,6 @@ import java.util.concurrent.atomic.AtomicReference;
  * missing hop serializes generation on the loader's chunk threads.
  */
 public final class ModdedGenPool {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final long SHUTDOWN_DRAIN_MILLIS = 2_000L;
     private static final String[] C2ME_MARKERS = {
             "com.ishland.c2me.base.ModProperties",
@@ -116,7 +113,7 @@ public final class ModdedGenPool {
             if (pool.awaitTermination(SHUTDOWN_DRAIN_MILLIS, TimeUnit.MILLISECONDS)) {
                 return;
             }
-            LOGGER.debug("Iris gen pool did not drain in {}ms, forcing shutdown", SHUTDOWN_DRAIN_MILLIS);
+            ModdedIrisLog.debug("Iris gen pool did not drain in {}ms, forcing shutdown", SHUTDOWN_DRAIN_MILLIS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
@@ -131,7 +128,7 @@ public final class ModdedGenPool {
         if (detected == null) {
             detected = new ChunkSystem(false, "vanilla");
         }
-        LOGGER.info("Iris chunk system: {} (parallel={}, generation on {})",
+        ModdedIrisLog.info("Iris chunk system: {} (parallel={}, generation on {})",
                 detected.description(),
                 detected.parallel() ? "yes" : "no",
                 detected.parallel() ? "loader threads" : "Iris gen pool");
@@ -182,7 +179,7 @@ public final class ModdedGenPool {
             try {
                 value = field.get(null);
             } catch (Throwable e) {
-                LOGGER.debug("Iris chunk system probe could not read {}.{}: {}", configClass.getName(), section, e.toString());
+                ModdedIrisLog.debug("Iris chunk system probe could not read {}.{}: {}", configClass.getName(), section, e.toString());
                 continue;
             }
             if (value instanceof Boolean flag) {
@@ -209,7 +206,7 @@ public final class ModdedGenPool {
                             return flag;
                         }
                     } catch (Throwable e) {
-                        LOGGER.debug("Iris chunk system probe could not read {}.{}: {}", type.getName(), name, e.toString());
+                        ModdedIrisLog.debug("Iris chunk system probe could not read {}.{}: {}", type.getName(), name, e.toString());
                     }
                 }
                 Method method = declaredMethodOrNull(type, name);
@@ -219,7 +216,7 @@ public final class ModdedGenPool {
                             return flag;
                         }
                     } catch (Throwable e) {
-                        LOGGER.debug("Iris chunk system probe could not call {}.{}(): {}", type.getName(), name, e.toString());
+                        ModdedIrisLog.debug("Iris chunk system probe could not call {}.{}(): {}", type.getName(), name, e.toString());
                     }
                 }
             }
@@ -241,7 +238,7 @@ public final class ModdedGenPool {
                         return number.intValue();
                     }
                 } catch (Throwable e) {
-                    LOGGER.debug("Iris chunk system probe could not read {}.{}: {}", marker.getName(), name, e.toString());
+                    ModdedIrisLog.debug("Iris chunk system probe could not read {}.{}: {}", marker.getName(), name, e.toString());
                 }
             }
         }
@@ -254,7 +251,7 @@ public final class ModdedGenPool {
             try {
                 pool = field.get(null);
             } catch (Throwable e) {
-                LOGGER.debug("Iris chunk system probe could not read {}.{}: {}", marker.getName(), poolName, e.toString());
+                ModdedIrisLog.debug("Iris chunk system probe could not read {}.{}: {}", marker.getName(), poolName, e.toString());
                 continue;
             }
             if (pool == null) {
@@ -281,7 +278,7 @@ public final class ModdedGenPool {
                     return number.intValue();
                 }
             } catch (Throwable e) {
-                LOGGER.debug("Iris chunk system probe could not call {}.{}(): {}", current.getName(), name, e.toString());
+                ModdedIrisLog.debug("Iris chunk system probe could not call {}.{}(): {}", current.getName(), name, e.toString());
             }
         }
         return null;
@@ -305,7 +302,7 @@ public final class ModdedGenPool {
         } catch (NoSuchFieldException e) {
             return null;
         } catch (Throwable e) {
-            LOGGER.debug("Iris chunk system probe could not access field {}.{}: {}", type.getName(), name, e.toString());
+            ModdedIrisLog.debug("Iris chunk system probe could not access field {}.{}: {}", type.getName(), name, e.toString());
             return null;
         }
     }
@@ -318,7 +315,7 @@ public final class ModdedGenPool {
         } catch (NoSuchMethodException e) {
             return null;
         } catch (Throwable e) {
-            LOGGER.debug("Iris chunk system probe could not access method {}.{}(): {}", type.getName(), name, e.toString());
+            ModdedIrisLog.debug("Iris chunk system probe could not access method {}.{}(): {}", type.getName(), name, e.toString());
             return null;
         }
     }
@@ -336,7 +333,7 @@ public final class ModdedGenPool {
         try {
             return Class.forName(name, false, ModdedGenPool.class.getClassLoader());
         } catch (Throwable e) {
-            LOGGER.debug("Iris chunk system probe: {} absent ({})", name, e.getClass().getSimpleName());
+            ModdedIrisLog.debug("Iris chunk system probe: {} absent ({})", name, e.getClass().getSimpleName());
             return null;
         }
     }

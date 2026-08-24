@@ -18,14 +18,17 @@
 
 package art.arcane.iris.core.gui;
 
-import art.arcane.iris.platform.bukkit.BukkitPlatform;
-import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
+import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.render.RenderType;
 import art.arcane.iris.engine.object.IrisWorld;
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
+import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.format.Form;
+import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.LivingEntity;
@@ -36,15 +39,21 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static art.arcane.iris.util.common.data.registry.Attributes.MAX_HEALTH;
 
 public final class BukkitVisionOverlay implements GuiOverlay {
     private final Engine engine;
+    private final AtomicBoolean nativeTeleportActive = new AtomicBoolean();
     private final AtomicBoolean playerRefreshQueued = new AtomicBoolean();
+    private final AtomicLong teleportSequence = new AtomicLong();
+    private final AtomicReference<VisionTeleportRequest> latestTeleport = new AtomicReference<>();
     private volatile List<GuiMarker> playerMarkers = List.of();
 
     public BukkitVisionOverlay(Engine engine) {
@@ -144,25 +153,198 @@ public final class BukkitVisionOverlay implements GuiOverlay {
 
     @Override
     public void teleport(double worldX, double worldZ) {
-        IrisWorld target = engine.getWorld();
-        if (!target.hasPlatformWorld()) {
+        VisionTeleportRequest request = new VisionTeleportRequest(
+                teleportSequence.incrementAndGet(),
+                VisionGUI.floorWorldCoordinate(worldX),
+                VisionGUI.floorWorldCoordinate(worldZ));
+        latestTeleport.set(request);
+        startTeleport(request);
+    }
+
+    private void startTeleport(VisionTeleportRequest request) {
+        if (!request.processing.compareAndSet(false, true)) {
             return;
         }
-        J.runGlobal(() -> {
+        boolean scheduled = J.runGlobal(() -> {
+            IrisWorld target = engine.getWorld();
+            if (!isCurrent(request, target)) {
+                finish(request);
+                return;
+            }
+            World world = BukkitWorldBinding.world(target);
+            if (world == null) {
+                finish(request);
+                return;
+            }
             List<Player> players = BukkitWorldBinding.players(target);
             if (players.isEmpty()) {
+                finish(request);
                 return;
             }
             Player player = players.get(0);
-            World world = player.getWorld();
-            int xx = (int) worldX;
-            int zz = (int) worldZ;
-            J.runRegion(world, xx >> 4, zz >> 4, () -> {
-                int yy = world.getHighestBlockYAt(xx, zz) + 1;
-                Location destination = new Location(world, xx, yy, zz);
-                J.runEntity(player, () -> BukkitPlatform.teleportAsync(player, destination));
-            });
+            requestTeleportChunk(request, target, player, world);
         });
+        if (!scheduled) {
+            finish(request);
+        }
+    }
+
+    private void requestTeleportChunk(
+            VisionTeleportRequest request,
+            IrisWorld target,
+            Player player,
+            World world
+    ) {
+        int blockX = request.blockX;
+        int blockZ = request.blockZ;
+        int chunkX = blockX >> 4;
+        int chunkZ = blockZ >> 4;
+        CompletableFuture<Chunk> requested;
+        try {
+            requested = WorldRuntimeControlService.get().requestChunkAsync(
+                    world,
+                    chunkX,
+                    chunkZ,
+                    true,
+                    true
+            );
+        } catch (Throwable failure) {
+            fail(request, target, world, failure);
+            return;
+        }
+        if (requested == null) {
+            fail(request, target, world, new IllegalStateException(
+                    "Vision destination chunk request returned no future."));
+            return;
+        }
+        requested.whenComplete((chunk, failure) -> {
+            if (!isCurrent(request, target)) {
+                finish(request);
+                return;
+            }
+            if (failure != null) {
+                fail(request, target, world, failure);
+                return;
+            }
+            if (chunk == null || chunk.getWorld() != world) {
+                fail(request, target, world, new IllegalStateException(
+                        "Vision destination chunk request returned no chunk."));
+                return;
+            }
+            boolean scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
+                if (!isCurrent(request, target)) {
+                    finish(request);
+                    return;
+                }
+                int yy = world.getHighestBlockYAt(blockX, blockZ) + 1;
+                Location destination = new Location(world, blockX, yy, blockZ);
+                if (!J.runEntity(player, () -> delegateTeleport(
+                        request,
+                        target,
+                        player,
+                        world,
+                        destination))) {
+                    fail(request, target, world, new IllegalStateException(
+                            "Failed to schedule the Vision teleport on the player entity."));
+                }
+            });
+            if (!scheduled) {
+                fail(request, target, world, new IllegalStateException(
+                        "Failed to schedule the Vision surface lookup on its owning region."));
+            }
+        });
+    }
+
+    private void delegateTeleport(
+            VisionTeleportRequest request,
+            IrisWorld target,
+            Player player,
+            World world,
+            Location destination
+    ) {
+        if (!isCurrent(request, target) || !player.isOnline() || player.getWorld() != world) {
+            finish(request);
+            return;
+        }
+        if (!nativeTeleportActive.compareAndSet(false, true)) {
+            finish(request);
+            return;
+        }
+        if (!isCurrent(request, target)) {
+            nativeTeleportActive.set(false);
+            finish(request);
+            restartLatest(request);
+            return;
+        }
+
+        CompletableFuture<Boolean> teleport;
+        try {
+            teleport = BukkitPlatform.teleportAsync(player, destination);
+        } catch (Throwable failure) {
+            nativeTeleportActive.set(false);
+            fail(request, target, world, failure);
+            restartLatest(request);
+            return;
+        }
+        if (teleport == null) {
+            nativeTeleportActive.set(false);
+            fail(request, target, world, new IllegalStateException(
+                    "Vision teleport returned no completion future."));
+            restartLatest(request);
+            return;
+        }
+        teleport.whenComplete((success, failure) -> {
+            nativeTeleportActive.set(false);
+            finish(request);
+            if (isCurrent(request, target)) {
+                if (failure != null) {
+                    reportTeleportFailure(world, request.blockX, request.blockZ, failure);
+                } else if (!Boolean.TRUE.equals(success)) {
+                    reportTeleportFailure(world, request.blockX, request.blockZ, new IllegalStateException(
+                            "Vision teleport did not complete successfully."));
+                }
+            }
+            restartLatest(request);
+        });
+    }
+
+    private boolean isCurrent(VisionTeleportRequest request, IrisWorld target) {
+        VisionTeleportRequest current = latestTeleport.get();
+        return current != null
+                && current.sequence == request.sequence
+                && target != null
+                && engine.getWorld() == target
+                && target.hasPlatformWorld()
+                && !engine.isClosing()
+                && !engine.isClosed();
+    }
+
+    private void fail(
+            VisionTeleportRequest request,
+            IrisWorld target,
+            World world,
+            Throwable failure
+    ) {
+        finish(request);
+        if (isCurrent(request, target)) {
+            reportTeleportFailure(world, request.blockX, request.blockZ, failure);
+        }
+    }
+
+    private void finish(VisionTeleportRequest request) {
+        request.processing.set(false);
+    }
+
+    private void restartLatest(VisionTeleportRequest completed) {
+        VisionTeleportRequest current = latestTeleport.get();
+        if (current != null && current != completed) {
+            startTeleport(current);
+        }
+    }
+
+    private void reportTeleportFailure(World world, int blockX, int blockZ, Throwable failure) {
+        IrisLogging.reportError("Vision could not teleport to " + world.getName() + "@"
+                + blockX + "," + blockZ + ".", failure);
     }
 
     @Override
@@ -178,5 +360,19 @@ public final class BukkitVisionOverlay implements GuiOverlay {
             default -> null;
         };
         return file == null ? null : file.getName();
+    }
+
+    private static final class VisionTeleportRequest {
+        private final long sequence;
+        private final int blockX;
+        private final int blockZ;
+        private final AtomicBoolean processing;
+
+        private VisionTeleportRequest(long sequence, int blockX, int blockZ) {
+            this.sequence = sequence;
+            this.blockX = blockX;
+            this.blockZ = blockZ;
+            processing = new AtomicBoolean(false);
+        }
     }
 }

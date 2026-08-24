@@ -58,6 +58,10 @@ public final class IrisLogging {
         emit(LogLevel.DEBUG, message);
     }
 
+    public static void debug(String format, Object... args) {
+        emit(LogLevel.DEBUG, format(format, args));
+    }
+
     /**
      * Logs at {@link LogLevel#NOTICE}, applying {@link #format(String, Object...)} to the arguments. For the
      * few lifecycle milestones per boot that have to survive into the server's own log file.
@@ -121,19 +125,18 @@ public final class IrisLogging {
         Throwable cause = error == null ? new IllegalStateException("Unknown Iris failure") : error;
         String message = context == null || context.isBlank() ? "Unhandled Iris failure." : context;
 
-        try {
-            error(message);
-        } catch (Throwable inner) {
-            System.err.println("[Iris] " + message);
-            inner.printStackTrace(System.err);
-        }
-
         if (IrisPlatforms.isBound()) {
-            IrisPlatforms.get().reportError(message, cause);
+            try {
+                IrisPlatforms.get().reportError(message, cause);
+            } catch (Throwable inner) {
+                System.err.println("[Iris/ERROR] " + clean(message));
+                inner.printStackTrace(System.err);
+                cause.printStackTrace(System.err);
+            }
             return;
         }
 
-        reportError(cause);
+        System.err.println("[Iris/ERROR] " + clean(message));
         cause.printStackTrace(System.err);
     }
 

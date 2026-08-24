@@ -41,11 +41,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -64,6 +60,7 @@ final class WorldChunkMaintenance {
     private final Set<Long> chunkUpdateQueue = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean chunkUpdateScanScheduled = new AtomicBoolean();
     private final AtomicBoolean chunkDiscoveryScanScheduled = new AtomicBoolean();
+    private volatile Position2[] loadedChunkPositions = new Position2[0];
     private int forcedChunkUpdateCursor = 0;
 
     WorldChunkMaintenance(IrisWorldManager manager) {
@@ -182,8 +179,14 @@ final class WorldChunkMaintenance {
             }
 
             List<Player> players = new ArrayList<>(world.getPlayers());
+            Chunk[] loadedChunks = world.getLoadedChunks();
+            Position2[] currentLoadedChunkPositions = new Position2[loadedChunks.length];
+            for (int i = 0; i < loadedChunks.length; i++) {
+                currentLoadedChunkPositions[i] = new Position2(loadedChunks[i].getX(), loadedChunks[i].getZ());
+            }
+            loadedChunkPositions = currentLoadedChunkPositions;
             manager.playersPresent = !players.isEmpty();
-            manager.loadedChunkCount = world.getLoadedChunks().length;
+            manager.loadedChunkCount = currentLoadedChunkPositions.length;
             for (Player player : players) {
                 if (player == null) {
                     continue;
@@ -373,33 +376,6 @@ final class WorldChunkMaintenance {
         if (world == null) {
             return new Position2[0];
         }
-
-        CompletableFuture<Position2[]> future = new CompletableFuture<>();
-        boolean scheduled = J.runGlobal(() -> {
-            try {
-                Chunk[] chunks = world.getLoadedChunks();
-                Position2[] positions = new Position2[chunks.length];
-                for (int i = 0; i < chunks.length; i++) {
-                    positions[i] = new Position2(chunks[i].getX(), chunks[i].getZ());
-                }
-                manager.loadedChunkCount = positions.length;
-                future.complete(positions);
-            } catch (Throwable e) {
-                future.completeExceptionally(e);
-            }
-        });
-        if (!scheduled) {
-            return new Position2[0];
-        }
-
-        try {
-            return future.get(2, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return new Position2[0];
-        } catch (ExecutionException | TimeoutException e) {
-            IrisLogging.reportError(e);
-            return new Position2[0];
-        }
+        return loadedChunkPositions;
     }
 }

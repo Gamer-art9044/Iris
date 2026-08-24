@@ -94,7 +94,15 @@ final class PackRiverValidator {
             validateWater(path + ".water", water, errors);
         }
         if (biomes != null) {
-            validateBiomePools(packFolder, path + ".biomes", biomes, false, errors, warnings);
+            validateBiomePools(
+                    packFolder,
+                    path + ".biomes",
+                    biomes,
+                    false,
+                    usesOverworldNativeStructureRoles(context),
+                    errors,
+                    warnings
+            );
         }
         boolean sinkholeTerminal = terrain != null
                 && "SINKHOLE_GROTTO".equals(stringValue(terrain, "terminalMode", "DRY_CHANNEL"));
@@ -108,7 +116,7 @@ final class PackRiverValidator {
             if (Double.isFinite(meanderStrength) && meanderStrength > cellSize) {
                 warnings.add(path + ".terrain.meanderStrength exceeds topology.cellSize; reaches may require large cache halos.");
             }
-            validateTopologyComplexity(path, topology, terrain, errors);
+            validateTopologyComplexity(packFolder, path, topology, terrain, errors);
         }
         if (sinkholeTerminal && caves != null) {
             validateSinkholeCapability(
@@ -130,8 +138,14 @@ final class PackRiverValidator {
         PackJsonFieldChecks.validateOptionalIntegerRange(path, topology, "minimumSourcesPerTile", 0, 64, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, topology, "sinkSearchReaches", 0, 7, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, topology, "routingBasinCells", 8, 256, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, topology, "routingDeviationScaleCells", 8, 256, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "routingDeviationStrengthCells", 0D, 32D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "routingPlateauHeight", 1D, 64D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "routingNoiseWeight", 0D, 1024D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "flowAlignmentWeight", 0D, 1024D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "confluenceWeight", 0D, 1024D, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, topology, "branchSoftCap", 1, 8, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "branchChildShrinkFactor", 0D, 1D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "terrainHeightWeight", 0D, 16D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "terrainSlopeWeight", 0D, 16D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "oceanAttraction", 0D, 16D, errors);
@@ -155,6 +169,7 @@ final class PackRiverValidator {
         validateStyledRange(packFolder, terrain, "channelWidth", path, 1D, 2048D, errors, warnings);
         validateStyledRange(packFolder, terrain, "bankWidth", path, 0D, 2048D, errors, warnings);
         validateStyledRange(packFolder, terrain, "depth", path, 1D, 512D, errors, warnings);
+        validateStyledRange(packFolder, terrain, "tunnelWidthMultiplier", path, 1D, 8D, errors, warnings);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "maxChannelWidth", 1D, 2048D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "maxBankWidth", 0D, 2048D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "maxDepth", 1D, 512D, errors);
@@ -162,6 +177,9 @@ final class PackRiverValidator {
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "orderDepthFactor", 0D, 8D, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, terrain, "maxIncision", 0, 512, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "bankExponent", 0.125D, 16D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "tunnelMouthBlend", 0D, 16D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "tunnelFloorVariation", 0D, 8D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "tunnelRoofVariation", 0D, 16D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "meanderStrength", 0D, 1024D, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, terrain, "meanderSubdivisions", 1, 64, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "bedRoughness", 0D, 8D, errors);
@@ -169,8 +187,32 @@ final class PackRiverValidator {
         PackJsonFieldChecks.validateOptionalIntegerRange(path, terrain, "terminalTaper", 8, 1024, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "dryContinuationChance", 0D, 1D, errors);
         validateNoiseChance(packFolder, terrain, "incision", path, errors);
+        validateStyle(packFolder, terrain, "tunnelFloorStyle", path, errors);
+        validateStyle(packFolder, terrain, "tunnelRoofStyle", path, errors);
         validateStyle(packFolder, terrain, "meanderStyle", path, errors);
         validateStyle(packFolder, terrain, "bedRoughnessStyle", path, errors);
+        double maximumChannelWidth = doubleValue(terrain, "maxChannelWidth", 10D);
+        double maximumTunnelWidthMultiplier = styledRangeMaximum(
+                packFolder,
+                terrain,
+                "tunnelWidthMultiplier",
+                path,
+                1D
+        );
+        double tunnelMouthBlend = doubleValue(terrain, "tunnelMouthBlend", 2D);
+        if (Double.isFinite(maximumChannelWidth) && maximumChannelWidth >= 1D && maximumChannelWidth <= 2048D
+                && Double.isFinite(maximumTunnelWidthMultiplier)
+                && maximumTunnelWidthMultiplier >= 1D && maximumTunnelWidthMultiplier <= 8D
+                && Double.isFinite(tunnelMouthBlend) && tunnelMouthBlend >= 0D && tunnelMouthBlend <= 16D) {
+            String violation = RiverTopologyComplexity.tunnelPlanViolation(
+                    maximumChannelWidth,
+                    maximumTunnelWidthMultiplier,
+                    tunnelMouthBlend
+            );
+            if (violation != null) {
+                errors.add(path + " exceeds the safe derived hydrology budget. " + violation);
+            }
+        }
     }
 
     private static void validateWater(String path, JSONObject water, List<String> errors) {
@@ -188,6 +230,7 @@ final class PackRiverValidator {
     }
 
     private static void validateTopologyComplexity(
+            File packFolder,
             String path,
             JSONObject topology,
             JSONObject terrain,
@@ -201,6 +244,14 @@ final class PackRiverValidator {
         int meanderSubdivisions = integerValue(terrain, "meanderSubdivisions", 8);
         double maximumChannelWidth = doubleValue(terrain, "maxChannelWidth", 10D);
         double maximumBankWidth = doubleValue(terrain, "maxBankWidth", 4D);
+        double maximumTunnelWidthMultiplier = styledRangeMaximum(
+                packFolder,
+                terrain,
+                "tunnelWidthMultiplier",
+                path,
+                1D
+        );
+        double tunnelMouthBlend = doubleValue(terrain, "tunnelMouthBlend", 2D);
         if (cellSize < 64 || cellSize > 4096
                 || tileCells < 1 || tileCells > 64
                 || !Double.isFinite(siteJitter) || siteJitter < 0D || siteJitter > 0.49D
@@ -208,10 +259,16 @@ final class PackRiverValidator {
                 || !Double.isFinite(meanderStrength) || meanderStrength < 0D || meanderStrength > 1024D
                 || meanderSubdivisions < 1 || meanderSubdivisions > 64
                 || !Double.isFinite(maximumChannelWidth) || maximumChannelWidth < 1D || maximumChannelWidth > 2048D
-                || !Double.isFinite(maximumBankWidth) || maximumBankWidth < 0D || maximumBankWidth > 2048D) {
+                || !Double.isFinite(maximumBankWidth) || maximumBankWidth < 0D || maximumBankWidth > 2048D
+                || !Double.isFinite(maximumTunnelWidthMultiplier)
+                || maximumTunnelWidthMultiplier < 1D || maximumTunnelWidthMultiplier > 8D
+                || !Double.isFinite(tunnelMouthBlend) || tunnelMouthBlend < 0D || tunnelMouthBlend > 16D) {
             return;
         }
-        double maximumReachRadius = maximumChannelWidth * 0.5D + maximumBankWidth;
+        double maximumSurfaceRadius = maximumChannelWidth * 0.5D + maximumBankWidth;
+        double maximumTunnelRadius = maximumChannelWidth * 0.5D * maximumTunnelWidthMultiplier
+                + tunnelMouthBlend;
+        double maximumReachRadius = Math.max(maximumSurfaceRadius, maximumTunnelRadius);
         RiverTopologyComplexity.Estimate estimate = RiverTopologyComplexity.estimate(
                 cellSize,
                 tileCells,
@@ -239,6 +296,7 @@ final class PackRiverValidator {
         PackJsonFieldChecks.validateOptionalIntegerRange(path, caves, "grottoHorizontalRadius", 2, 128, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, caves, "grottoVerticalRadius", 2, 128, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, caves, "grottoWarpStrength", 0D, 32D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, caves, "parentBiomeInheritance", 0D, 1D, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, caves, "maxFloodRadius", 4, 256, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, caves, "maxFloodDepth", 4, 256, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, caves, "maxFloodVolume", 64, 1048576, errors);
@@ -525,12 +583,18 @@ final class PackRiverValidator {
         PackJsonFieldChecks.validateOptionalDoubleRange(path, override, "continuationChanceMultiplier", 0D, 16D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, override, "caveEntryMultiplier", 0D, 16D, errors);
         PackJsonFieldChecks.validateOptionalEnum(path, override, "terminalMode", TERMINAL_MODES, errors);
-        validateBiomePool(packFolder, path, override, "channelBiomes", RiverBiomeRole.CHANNEL, true, errors, warnings);
-        validateBiomePool(packFolder, path, override, "bankBiomes", RiverBiomeRole.BANK, true, errors, warnings);
-        validateBiomePool(packFolder, path, override, "mouthBiomes", RiverBiomeRole.MOUTH, true, errors, warnings);
-        validateBiomePool(packFolder, path, override, "dryBiomes", RiverBiomeRole.DRY, true, errors, warnings);
+        boolean validateSuitability = reachesOverworldNativeStructureRoles(
+                packFolder, resourceKey, resourceType, contexts);
+        validateBiomePool(packFolder, path, override, "channelBiomes", RiverBiomeRole.CHANNEL, true,
+                validateSuitability, errors, warnings);
+        validateBiomePool(packFolder, path, override, "bankBiomes", RiverBiomeRole.BANK, true,
+                validateSuitability, errors, warnings);
+        validateBiomePool(packFolder, path, override, "mouthBiomes", RiverBiomeRole.MOUTH, true,
+                validateSuitability, errors, warnings);
+        validateBiomePool(packFolder, path, override, "dryBiomes", RiverBiomeRole.DRY, true,
+                validateSuitability, errors, warnings);
         validateBiomePool(packFolder, path, override, "floodedCaveBiomes", RiverBiomeRole.FLOODED_CAVE, true,
-                errors, warnings);
+                validateSuitability, errors, warnings);
         if ("SINKHOLE_GROTTO".equals(stringValue(override, "terminalMode", null))) {
             validateOverrideSinkhole(
                     packFolder,
@@ -545,18 +609,24 @@ final class PackRiverValidator {
     }
 
     private static void validateBiomePools(File packFolder, String path, JSONObject biomes, boolean allowNull,
+                                           boolean validateSuitability,
                                            List<String> errors, List<String> warnings) {
         validateStyle(packFolder, biomes, "selectionStyle", path, errors);
-        validateBiomePool(packFolder, path, biomes, "channel", RiverBiomeRole.CHANNEL, allowNull, errors, warnings);
-        validateBiomePool(packFolder, path, biomes, "bank", RiverBiomeRole.BANK, allowNull, errors, warnings);
-        validateBiomePool(packFolder, path, biomes, "mouth", RiverBiomeRole.MOUTH, allowNull, errors, warnings);
-        validateBiomePool(packFolder, path, biomes, "dry", RiverBiomeRole.DRY, allowNull, errors, warnings);
+        validateBiomePool(packFolder, path, biomes, "channel", RiverBiomeRole.CHANNEL, allowNull,
+                validateSuitability, errors, warnings);
+        validateBiomePool(packFolder, path, biomes, "bank", RiverBiomeRole.BANK, allowNull,
+                validateSuitability, errors, warnings);
+        validateBiomePool(packFolder, path, biomes, "mouth", RiverBiomeRole.MOUTH, allowNull,
+                validateSuitability, errors, warnings);
+        validateBiomePool(packFolder, path, biomes, "dry", RiverBiomeRole.DRY, allowNull,
+                validateSuitability, errors, warnings);
         validateBiomePool(packFolder, path, biomes, "floodedCave", RiverBiomeRole.FLOODED_CAVE, allowNull,
-                errors, warnings);
+                validateSuitability, errors, warnings);
     }
 
     private static void validateBiomePool(File packFolder, String path, JSONObject owner, String field,
                                           RiverBiomeRole role, boolean allowNull,
+                                          boolean validateSuitability,
                                           List<String> errors, List<String> warnings) {
         if (!owner.has(field)) {
             return;
@@ -588,8 +658,34 @@ final class PackRiverValidator {
                 errors.add(entryPath + " references missing biome '" + key + "'.");
                 continue;
             }
-            validateBiomeSuitability(entryPath, key, role, PackValidationIo.readJson(biomeFile), warnings);
+            if (validateSuitability) {
+                validateBiomeSuitability(entryPath, key, role, PackValidationIo.readJson(biomeFile), warnings);
+            }
         }
+    }
+
+    private static boolean usesOverworldNativeStructureRoles(DimensionRiverContext context) {
+        return "NORMAL".equals(stringValue(context.dimension(), "environment", "NORMAL"));
+    }
+
+    private static boolean reachesOverworldNativeStructureRoles(
+            File packFolder,
+            String resourceKey,
+            String resourceType,
+            List<DimensionRiverContext> contexts
+    ) {
+        for (DimensionRiverContext context : contexts) {
+            if (!usesOverworldNativeStructureRoles(context)) {
+                continue;
+            }
+            boolean reachable = "Region".equals(resourceType)
+                    ? context.regionKeys().contains(resourceKey)
+                    : referencedSurfaceBiomes(packFolder, context.regionKeys()).contains(resourceKey);
+            if (reachable) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void validateBiomeSuitability(String path, String biomeKey, RiverBiomeRole role,
@@ -659,6 +755,26 @@ final class PackRiverValidator {
             errors.add(rangePath + ".min must not exceed " + rangePath + ".max.");
         }
         validateStyle(packFolder, range, "style", rangePath, errors);
+    }
+
+    private static double styledRangeMaximum(
+            File packFolder,
+            JSONObject owner,
+            String field,
+            String path,
+            double fallback
+    ) {
+        if (!owner.has(field)) {
+            return fallback;
+        }
+        JSONObject range = resolveObject(
+                packFolder,
+                owner.opt(field),
+                "snippet/style-range/",
+                path + "." + field,
+                new ArrayList<>()
+        );
+        return range == null ? fallback : doubleValue(range, "max", fallback);
     }
 
     private static void validateStyle(File packFolder, JSONObject owner, String field, String path,

@@ -5,44 +5,31 @@ import org.junit.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class CommandIrisFoliaCreateContractTest {
     @Test
-    public void ordinaryFoliaCreateRestartsOnlyAfterSuccessfulStagingAndFeedback() throws Exception {
+    public void ordinaryFoliaCreateUsesTheSharedRuntimeCreationPath() throws Exception {
         String source = Files.readString(Path.of(System.getProperty("iris.commandIrisSource")));
-        String foliaCreate = source.substring(
-                source.indexOf("if (J.isFolia()) {"),
-                source.indexOf("        try {", source.indexOf("if (J.isFolia()) {"))
+        String create = source.substring(
+                source.indexOf("    public void create("),
+                source.indexOf("    @Director(", source.indexOf("    public void create("))
         );
 
-        int stage = foliaCreate.indexOf("stageFoliaWorldCreation(worldName, dimension, seed)");
-        int failureExit = foliaCreate.indexOf("if (!staged)");
-        int feedback = foliaCreate.indexOf("COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTARTING_SERVER_GENERATE_LOAD");
-        int restart = foliaCreate.indexOf("ServerConfigurator.restart(\"Iris staged Folia world");
-
-        assertTrue(stage >= 0);
-        assertTrue(stage < failureExit);
-        assertTrue(failureExit < feedback);
-        assertTrue(feedback < restart);
+        assertTrue(create.contains("IrisToolbelt.createWorld()"));
+        assertTrue(create.contains(".studio(false)"));
+        assertTrue(create.contains(".create();"));
+        assertFalse(create.contains("J.isFolia()"));
+        assertFalse(create.contains("ServerConfigurator.restart("));
     }
 
     @Test
-    public void foliaStagePublishesCurrentPaperDataBeforeRegisteringStartupAlias() throws Exception {
+    public void obsoleteFoliaStagingSurfaceIsRemoved() throws Exception {
         String source = Files.readString(Path.of(System.getProperty("iris.commandIrisSource")));
-        int methodStart = source.indexOf("private boolean stageFoliaWorldCreation(");
-        int methodEnd = source.indexOf("private boolean registerWorldInBukkitYml(", methodStart);
-        String staging = source.substring(methodStart, methodEnd);
 
-        int currentPaperData = staging.indexOf("INMS.get().writeCurrentPaperWorldData(");
-        int pack = staging.indexOf("installIntoWorld(");
-        int publication = staging.indexOf("AtomicDirectoryPublisher.publishAbsent(");
-        int registration = staging.indexOf("registerWorldInBukkitYml(worldKey");
-
-        assertTrue(currentPaperData >= 0);
-        assertTrue(currentPaperData < pack);
-        assertTrue(pack < publication);
-        assertTrue(publication < registration);
-        assertTrue(source.contains("IrisWorldStorage.configuredWorldName("));
+        assertFalse(source.contains("stageFoliaWorldCreation"));
+        assertFalse(source.contains("writeCurrentPaperWorldData"));
+        assertFalse(source.contains("COMMAND_IRIS_RUNTIME_WORLD_CREATION_IS_DISABLED_ON_FOLIA"));
     }
 }

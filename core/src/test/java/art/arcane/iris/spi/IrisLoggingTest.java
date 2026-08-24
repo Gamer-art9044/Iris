@@ -13,8 +13,10 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /**
  * Severity is stated by the caller and honoured by every adapter, so the levels {@link IrisLogging} offers
@@ -24,6 +26,7 @@ import static org.mockito.Mockito.mock;
 public class IrisLoggingTest {
     private final List<LogLevel> levels = new ArrayList<>();
     private final List<String> messages = new ArrayList<>();
+    private IrisPlatform capturingPlatform;
     private IrisPlatform previousPlatform;
 
     @Before
@@ -53,6 +56,34 @@ public class IrisLoggingTest {
 
         assertEquals(List.of(LogLevel.NOTICE), levels);
         assertEquals("Engine init: world", messages.getFirst());
+    }
+
+    @Test
+    public void debugFormatsArgumentsAtDebugLevel() {
+        IrisLogging.debug("chunk=%d,%d", 3, 7);
+
+        assertEquals(List.of(LogLevel.DEBUG), levels);
+        assertEquals("chunk=3,7", messages.getFirst());
+    }
+
+    @Test
+    public void contextualReportUsesThePlatformReporterWithoutADuplicateLogLine() {
+        RuntimeException failure = new RuntimeException("broken");
+
+        IrisLogging.reportError("Generation failed.", failure);
+
+        verify(capturingPlatform).reportError("Generation failed.", failure);
+        assertTrue(levels.isEmpty());
+    }
+
+    @Test
+    public void defaultContextualReporterLogsTheFailureContext() {
+        IrisPlatform platform = mock(IrisPlatform.class, CALLS_REAL_METHODS);
+
+        platform.reportError("Generation failed.", null);
+
+        verify(platform).log(LogLevel.ERROR, "Generation failed.");
+        verify(platform).reportError((Throwable) null);
     }
 
     @Test
@@ -104,6 +135,7 @@ public class IrisLoggingTest {
 
     private void bindCapturingPlatform() {
         IrisPlatform platform = mock(IrisPlatform.class);
+        capturingPlatform = platform;
         doAnswer(invocation -> {
             levels.add(invocation.getArgument(0, LogLevel.class));
             messages.add(invocation.getArgument(1, String.class));

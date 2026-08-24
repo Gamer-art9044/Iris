@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.mantle.EngineMantle;
@@ -51,8 +52,6 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -65,7 +64,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.ModdedCommandMessages;
 public final class ModdedRegen {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int APPLY_AHEAD = 8;
     private static final long CHUNK_SLOT_TIMEOUT_MILLIS = 120000L;
     private static final long FINAL_APPLY_TIMEOUT_MILLIS = 300000L;
@@ -101,7 +99,7 @@ public final class ModdedRegen {
         ModdedRegen job = new ModdedRegen(source, level, generator, engine, centerX, centerZ, radius);
         int chunks = (job.radius * 2 + 1) * (job.radius * 2 + 1);
         job.ok("Regen started: " + chunks + " chunk(s) around " + centerX + "," + centerZ + ". Deleting and regenerating in place.");
-        LOGGER.info("Iris regen start: dim={} center={},{} radius={} chunks={}",
+        ModdedIrisLog.info("Iris regen start: dim={} center={},{} radius={} chunks={}",
                 level.dimension().identifier(), centerX, centerZ, job.radius, chunks);
         Thread thread = new Thread(job::run, "Iris Regenerate");
         thread.setDaemon(true);
@@ -117,11 +115,11 @@ public final class ModdedRegen {
             List<int[]> targets = ChunkSpiral.centerOut(centerX, centerZ, radius);
             int applied = regenerate(targets);
             ok("Regen finished: " + applied + "/" + targets.size() + " chunk(s) in " + Form.duration(M.ms() - startedAt, 2));
-            LOGGER.info("Iris regen done: {}/{} chunks in {}ms", applied, targets.size(), M.ms() - startedAt);
+            ModdedIrisLog.info("Iris regen done: {}/{} chunks in {}ms", applied, targets.size(), M.ms() - startedAt);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Throwable e) {
-            LOGGER.error("Iris regen failed", e);
+            ModdedIrisLog.error("Iris regen failed", e);
             fail("Regen failed: " + e);
         } finally {
             WorldMaintenance.endWorldMaintenance(worldIdentity, "regen");
@@ -155,7 +153,7 @@ public final class ModdedRegen {
             int chunkZ = target[1];
             if (!inFlight.tryAcquire(CHUNK_SLOT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 aborted.set(true);
-                LOGGER.error("Iris regen aborted: chunk {},{} waited {}ms for an apply slot ({}/{} done)",
+                ModdedIrisLog.error("Iris regen aborted: chunk {},{} waited {}ms for an apply slot ({}/{} done)",
                         chunkX, chunkZ, CHUNK_SLOT_TIMEOUT_MILLIS, completed.get(), total);
                 fail("Regen aborted: apply pipeline stalled at " + completed.get() + "/" + total + " chunk(s)");
                 break;
@@ -173,7 +171,7 @@ public final class ModdedRegen {
                 try {
                     engine.generate(chunkX << 4, chunkZ << 4, blocks, biomes, false);
                 } catch (Throwable e) {
-                    LOGGER.error("Iris regen chunk {},{} generation failed", chunkX, chunkZ, e);
+                    ModdedIrisLog.error("Iris regen chunk {},{} generation failed", chunkX, chunkZ, e);
                     fail("Chunk " + chunkX + "," + chunkZ + " generation FAILED: " + e.getClass().getSimpleName());
                     completed.incrementAndGet();
                     inFlight.release();
@@ -190,7 +188,7 @@ public final class ModdedRegen {
                         success = true;
                         applied.incrementAndGet();
                     } catch (Throwable e) {
-                        LOGGER.error("Iris regen chunk {},{} apply failed", chunkX, chunkZ, e);
+                        ModdedIrisLog.error("Iris regen chunk {},{} apply failed", chunkX, chunkZ, e);
                         fail("Chunk " + chunkX + "," + chunkZ + " apply FAILED: " + e.getClass().getSimpleName());
                     } finally {
                         int done = completed.incrementAndGet();
@@ -212,7 +210,7 @@ public final class ModdedRegen {
         if (!allApplied.await(FINAL_APPLY_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
             aborted.set(true);
             long outstanding = allApplied.getCount();
-            LOGGER.error("Iris regen aborted: {} of {} chunk(s) did not finish within {}ms",
+            ModdedIrisLog.error("Iris regen aborted: {} of {} chunk(s) did not finish within {}ms",
                     outstanding, total, FINAL_APPLY_TIMEOUT_MILLIS);
             fail("Regen aborted: " + outstanding + " of " + total + " chunk(s) never finished");
         }

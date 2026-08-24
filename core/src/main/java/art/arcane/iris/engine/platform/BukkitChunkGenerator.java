@@ -92,10 +92,6 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -109,11 +105,6 @@ import java.util.function.Supplier;
 @Data
 public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChunkGenerator, Listener {
     private static final int LOAD_LOCKS = Runtime.getRuntime().availableProcessors() * 4;
-    private static final int STUDIO_ENTRY_PRECOMPUTE_RADIUS = 2;
-    private static final int STUDIO_ENTRY_PRECOMPUTE_THREADS = Math.max(
-            1,
-            Math.min(6, Runtime.getRuntime().availableProcessors() / 2));
-    private static final AtomicInteger STUDIO_ENTRY_THREAD_SEQUENCE = new AtomicInteger();
     private static final long HOTLOAD_LOOP_DELAY_MS = 250L;
     private static final long HOTLOAD_MAINTENANCE_DELAY_MS = 4000L;
     private final GenerationStageGate loadLock;
@@ -127,7 +118,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private final AtomicBoolean setup;
     private final boolean studio;
     private final AtomicBoolean studioEntryBootstrapActive;
-    private final ConcurrentHashMap<Long, PreparedStudioChunk> preparedStudioEntryChunks;
     private final AtomicInteger a = new AtomicInteger(0);
     private volatile long lastChunkGenTime = 0L;
     private final CompletableFuture<Integer> spawnChunks = new CompletableFuture<>();
@@ -156,7 +146,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         this.hotloadChecker = new ChronoLatch(1000, false);
         this.studio = studio;
         this.studioEntryBootstrapActive = new AtomicBoolean(studio);
-        this.preparedStudioEntryChunks = new ConcurrentHashMap<>();
         this.dataLocation = dataLocation;
         this.dimensionKey = dimensionKey;
         this.folder = new ReactiveFolder(
@@ -211,7 +200,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             spawnChunks.completeExceptionally(e);
             IrisLogging.reportError(e);
             IrisLogging.error("Failed to initialize Iris generator for " + world.getName());
-            e.printStackTrace();
             if (e instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
@@ -489,7 +477,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 if (currentEngine != null && !currentEngine.isClosed()) {
                     currentEngine.close();
                 }
-                preparedStudioEntryChunks.clear();
                 folder.clear();
                 populators.clear();
             });
@@ -538,124 +525,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                     initializationFailure != null));
         }
         studioEntryBootstrapActive.set(false);
-    }
-
-    public CompletableFuture<Void> prepareStudioEntryChunks(
-            World bukkitWorld,
-            int centerChunkX,
-            int centerChunkZ
-    ) {
-        if (!studio || closing) {
-            return CompletableFuture.completedFuture(null);
-        }
-        Engine activeEngine = getEngine(bukkitWorld);
-        computeStudioGenerator();
-        if (studioGenerator != null) {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        long generationSessionId = activeEngine.getGenerationSessionId();
-        ConcurrentHashMap<Long, PreparedStudioChunk> prepared = new ConcurrentHashMap<>();
-        ExecutorService executor = createStudioEntryExecutor();
-        int diameter = STUDIO_ENTRY_PRECOMPUTE_RADIUS * 2 + 1;
-        ArrayList<CompletableFuture<Void>> tasks = new ArrayList<>(diameter * diameter);
-        for (int offsetX = -STUDIO_ENTRY_PRECOMPUTE_RADIUS;
-             offsetX <= STUDIO_ENTRY_PRECOMPUTE_RADIUS;
-             offsetX++) {
-            for (int offsetZ = -STUDIO_ENTRY_PRECOMPUTE_RADIUS;
-                 offsetZ <= STUDIO_ENTRY_PRECOMPUTE_RADIUS;
-                 offsetZ++) {
-                int chunkX = centerChunkX + offsetX;
-                int chunkZ = centerChunkZ + offsetZ;
-                CompletableFuture<Void> task = CompletableFuture.runAsync(
-                        () -> prepareStudioEntryChunk(
-                                bukkitWorld,
-                                activeEngine,
-                                generationSessionId,
-                                chunkX,
-                                chunkZ,
-                                prepared),
-                        executor);
-                tasks.add(task);
-            }
-        }
-
-        CompletableFuture<Void> completion = CompletableFuture.allOf(
-                tasks.toArray(new CompletableFuture<?>[0]));
-        CompletableFuture<Void> publication = completion.thenRun(() -> {
-            if (closing
-                    || engine != activeEngine
-                    || activeEngine.getGenerationSessionId() != generationSessionId) {
-                throw new IllegalStateException(
-                        "Studio entry precompute finished for a replaced engine runtime.");
-            }
-            preparedStudioEntryChunks.clear();
-            preparedStudioEntryChunks.putAll(prepared);
-        });
-        return publication.whenComplete((ignored, failure) -> executor.shutdownNow());
-    }
-
-    private ExecutorService createStudioEntryExecutor() {
-        return Executors.newFixedThreadPool(STUDIO_ENTRY_PRECOMPUTE_THREADS, runnable -> {
-            Thread thread = new Thread(
-                    runnable,
-                    "Iris Studio Entry-" + STUDIO_ENTRY_THREAD_SEQUENCE.incrementAndGet());
-            thread.setDaemon(true);
-            thread.setPriority(Thread.NORM_PRIORITY);
-            return thread;
-        });
-    }
-
-    private void prepareStudioEntryChunk(
-            World bukkitWorld,
-            Engine activeEngine,
-            long generationSessionId,
-            int chunkX,
-            int chunkZ,
-            ConcurrentHashMap<Long, PreparedStudioChunk> prepared
-    ) {
-        try (GenerationStagePermit ignored = acquireGenerationStage(
-                "studio_entry_chunk_precompute")) {
-            TerrainChunk terrainChunk = TerrainChunk.create(bukkitWorld);
-            ChunkDataHunkHolder blocks = new ChunkDataHunkHolder(terrainChunk.getChunkData());
-            Hunk<PlatformBiome> biomes = Hunk.viewBiomes(terrainChunk);
-            ChunkContext context = createStudioEntryContext(
-                    activeEngine,
-                    generationSessionId,
-                    chunkX,
-                    chunkZ);
-            activeEngine.generateMatter(chunkX, chunkZ, true, context);
-            try {
-                activeEngine.generate(chunkX << 4, chunkZ << 4, blocks, biomes, false);
-            } catch (WrongEngineBroException exception) {
-                throw new CompletionException(exception);
-            }
-            prepared.put(
-                    chunkKey(chunkX, chunkZ),
-                    new PreparedStudioChunk(activeEngine, generationSessionId, blocks)
-            );
-        }
-    }
-
-    private ChunkContext createStudioEntryContext(
-            Engine activeEngine,
-            long generationSessionId,
-            int chunkX,
-            int chunkZ
-    ) {
-        boolean cacheContext = !activeEngine.getPlatformHooks()
-                .shouldDisableChunkContextCache(activeEngine);
-        ChunkContext.PrefillPlan prefillPlan = cacheContext
-                ? ChunkContext.PrefillPlan.NO_CAVE
-                : ChunkContext.PrefillPlan.NONE;
-        return new ChunkContext(
-                chunkX << 4,
-                chunkZ << 4,
-                activeEngine.getComplex(),
-                generationSessionId,
-                cacheContext,
-                prefillPlan,
-                activeEngine.getMetrics());
     }
 
     public boolean isStudioEntryBootstrapActive() {
@@ -783,10 +652,8 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 IrisLogging.reportError(e);
-                e.printStackTrace();
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
-                e.printStackTrace();
             } finally {
                 if (acquired) {
                     loadLock.releaseExclusive();
@@ -916,14 +783,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             if (studioGenerator != null) {
                 studioGenerator.generateChunk(engine, tc, x, z);
             } else {
-                PreparedStudioChunk prepared = preparedStudioEntryChunks.remove(chunkKey(x, z));
-                if (prepared != null
-                        && prepared.engine() == engine
-                        && prepared.generationSessionId() == engine.getGenerationSessionId()) {
-                    prepared.blocks().applyTo(d);
-                    IrisLogging.debug("Applied prepared Studio entry chunk " + x + " " + z);
-                    return;
-                }
                 ChunkDataHunkHolder blocks = new ChunkDataHunkHolder(d);
                 Hunk<PlatformBiome> biomes = Hunk.viewBiomes(tc);
                 try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_terrain_stage");
@@ -941,17 +800,13 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 throw new IllegalStateException("Iris chunk generation was rejected during an engine transition.", e);
             }
 
-            IrisLogging.error("======================================");
-            e.printStackTrace();
+            IrisLogging.reportError("Iris chunk generation could not acquire its engine runtime at " + x + "," + z + ".", e);
             reportErrorChunk(x, z, e);
-            IrisLogging.error("======================================");
 
             throw new IllegalStateException("Iris chunk generation could not acquire its engine runtime.", e);
         } catch (Throwable e) {
-            IrisLogging.error("======================================");
-            e.printStackTrace();
+            IrisLogging.reportError("Iris failed to generate chunk " + x + "," + z + ".", e);
             reportErrorChunk(x, z, e);
-            IrisLogging.error("======================================");
 
             throw new IllegalStateException("Iris failed to generate chunk " + x + "," + z + ".", e);
         }
@@ -967,17 +822,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         }
 
         return isMaintenanceActive();
-    }
-
-    private static long chunkKey(int chunkX, int chunkZ) {
-        return ((long) chunkX << 32) ^ (chunkZ & 0xFFFFFFFFL);
-    }
-
-    private record PreparedStudioChunk(
-            Engine engine,
-            long generationSessionId,
-            ChunkDataHunkHolder blocks
-    ) {
     }
 
     private boolean isMaintenanceActive() {

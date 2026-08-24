@@ -18,6 +18,7 @@
 
 package art.arcane.iris.fabric.mixin;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.fabric.FabricForcedDatapackSources;
 import net.minecraft.server.packs.repository.PackRepository;
 import net.minecraft.server.packs.repository.RepositorySource;
@@ -26,7 +27,6 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 
@@ -42,7 +42,7 @@ public class PackRepositoryMixin {
         }
         // Client resource-pack repositories legitimately have no ServerPacksSource; a missing server-data
         // repository is reported once at boot by ModdedForcedDatapack.verifyInjected().
-        LoggerFactory.getLogger("Iris").debug(
+        ModdedIrisLog.debug(
                 "Iris forced datapack source not attached: no ServerPacksSource among {} source(s) {}",
                 sources.length, Arrays.toString(sources));
     }

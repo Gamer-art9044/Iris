@@ -59,18 +59,38 @@ public class WorldCreationProgressReporterTest {
     }
 
     @Test
-    public void bukkitHudMutationIsMarshalledOffTheAsyncReporterThread() throws Exception {
+    public void terminalPlayerMessagesHonorStrictPlaceholderContracts() {
+        String ready = C.stripColor(WorldCreationProgressReporter.terminalPlayerMessage(
+                false,
+                1.0D,
+                "World ready",
+                "",
+                1_000L
+        ));
+        String failed = C.stripColor(WorldCreationProgressReporter.terminalPlayerMessage(
+                true,
+                0.98D,
+                "Entering world",
+                "",
+                1_000L
+        ));
+
+        assertTrue(ready.contains("100% | World ready"));
+        assertTrue(failed.contains("FAILED | Entering world"));
+    }
+
+    @Test
+    public void playerProgressUsesTheEntityScheduledActionBarWithoutABossBar() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/tools/WorldCreationProgressReporter.java"
         )).replace("\r\n", "\n");
 
-        assertEquals(1, occurrences(source, "Bukkit.createBossBar("));
-        assertTrue(source.contains("J.sfut(reporter::initializePlayerHud)"));
+        assertFalse(source.contains("Bukkit.createBossBar("));
+        assertFalse(source.contains("WORLD_CREATE_BOSSBAR_"));
+        assertFalse(source.contains("isProgressBossBar()"));
+        assertTrue(source.contains("RuntimeProgressMessages.WORLD_CREATE_LIFECYCLE_ACTION"));
         assertTrue(source.contains("J.runEntity(sender.player(), guardedRender)"));
         assertTrue(source.contains("J.runEntity(sender.player(), render)"));
-        assertTrue(source.contains("J.runEntity(sender.player(), cleanup, 60, cleanup)"));
-        assertFalse(source.contains("HudSlotRequest"));
-        assertFalse(source.contains("hudLanes()"));
     }
 
     private static int occurrences(String value, String match) {

@@ -620,7 +620,6 @@ public final class EngineBukkitOps {
                 Thread.currentThread().interrupt();
             } catch (WrongEngineBroException | ExecutionException e) {
                 IrisLogging.reportError(e);
-                e.printStackTrace();
             } finally {
                 if (search != null && !resultDispatched) {
                     ACTIVE_LOCATE_REQUESTS.remove(playerId, search);

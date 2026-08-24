@@ -19,8 +19,6 @@
 package art.arcane.iris.engine;
 
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.localization.ClientUiMessages;
-import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.protocol.IrisProtocolServer;
 import art.arcane.iris.engine.EngineRuntime.BiomeMaxes;
 import art.arcane.iris.engine.EngineRuntimeBuilder.RuntimeAssembly;
@@ -31,9 +29,7 @@ import art.arcane.iris.engine.framework.StructureReachability;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
-import art.arcane.iris.spi.protocol.IrisMessage;
 import art.arcane.iris.util.project.context.IrisContext;
-import art.arcane.volmlib.util.localization.MessageArgument;
 
 import static art.arcane.iris.engine.EngineShutdownSequence.runCleanup;
 
@@ -132,7 +128,6 @@ final class EngineHotloader {
                 if (previousDataFailure != null) {
                     IrisLogging.error("Failed to completely release the previous Iris data runtime.");
                     IrisLogging.reportError(previousDataFailure);
-                    previousDataFailure.printStackTrace();
                 }
                 engine.getPrefetchSaveStarted().set(false);
                 engine.getEngineData().getStatistics().hotloaded();
@@ -190,13 +185,8 @@ final class EngineHotloader {
             if (protocolServer == null) {
                 return;
             }
-            IrisDimension dimension = engine.getDimension();
-            String packKey = dimension == null ? "" : dimension.getLoadKey();
+            String packKey = engine.getData().getDataFolder().getName();
             protocolServer.broadcastStudioHotload(packKey, 0, failed, message);
-            protocolServer.broadcastToast(
-                    failed ? IrisMessage.Toast.KIND_ERROR : IrisMessage.Toast.KIND_SUCCESS,
-                    IrisLanguage.plain(ClientUiMessages.TOAST_STUDIO_HOTLOAD),
-                    failed ? IrisLanguage.plain(ClientUiMessages.TOAST_PACK_FAILED, MessageArgument.untrusted("pack", packKey)) : packKey);
         } catch (Throwable broadcastFailure) {
             IrisLogging.error("Iris studio hotload broadcast failed: " + broadcastFailure.getClass().getSimpleName()
                     + ": " + broadcastFailure.getMessage());

@@ -27,7 +27,6 @@ import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.math.M;
 import org.bukkit.entity.Player;
 
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -41,11 +40,13 @@ import java.util.concurrent.atomic.AtomicLong;
 public class IrisEngineEffects extends EngineAssignedComponent implements EngineEffects {
     private static final long EFFECT_BUDGET_NANOS = 1_500_000L;
     private static final long EMPTY_PLAYER_REFRESH_NANOS = 1_000_000_000L;
+    private static final EnginePlayer[] NO_PLAYERS = new EnginePlayer[0];
 
     private final ConcurrentHashMap<UUID, EnginePlayer> players;
     private final Semaphore limit;
     private final AtomicBoolean playerMapUpdateQueued;
     private final AtomicLong nextEmptyRefresh;
+    private volatile EnginePlayer[] playerSnapshot;
 
     public IrisEngineEffects(Engine engine) {
         super(engine, "FX");
@@ -53,6 +54,7 @@ public class IrisEngineEffects extends EngineAssignedComponent implements Engine
         limit = new Semaphore(1);
         playerMapUpdateQueued = new AtomicBoolean(false);
         nextEmptyRefresh = new AtomicLong(0L);
+        playerSnapshot = NO_PLAYERS;
     }
 
     @Override
@@ -89,6 +91,7 @@ public class IrisEngineEffects extends EngineAssignedComponent implements Engine
         }
 
         players.keySet().removeIf((UUID playerId) -> !activeIds.contains(playerId));
+        playerSnapshot = players.values().toArray(EnginePlayer[]::new);
     }
 
     @Override
@@ -97,7 +100,8 @@ public class IrisEngineEffects extends EngineAssignedComponent implements Engine
             return;
         }
         try {
-            if (players.isEmpty()) {
+            EnginePlayer[] snapshot = playerSnapshot;
+            if (snapshot.length == 0) {
                 long now = System.nanoTime();
                 long next = nextEmptyRefresh.get();
                 if (now >= next && nextEmptyRefresh.compareAndSet(next, now + EMPTY_PLAYER_REFRESH_NANOS)) {
@@ -110,15 +114,14 @@ public class IrisEngineEffects extends EngineAssignedComponent implements Engine
                 return;
             }
 
-            List<EnginePlayer> snapshot = new ArrayList<>(players.values());
-            if (snapshot.isEmpty()) {
-                return;
-            }
-
             long started = System.nanoTime();
-            int remaining = snapshot.size();
+            int index = ThreadLocalRandom.current().nextInt(snapshot.length);
+            int remaining = snapshot.length;
             while (remaining-- > 0 && System.nanoTime() - started < EFFECT_BUDGET_NANOS) {
-                snapshot.get(ThreadLocalRandom.current().nextInt(snapshot.size())).tick();
+                snapshot[index].tick();
+                if (++index == snapshot.length) {
+                    index = 0;
+                }
             }
         } finally {
             limit.release();

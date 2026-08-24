@@ -42,29 +42,23 @@ import org.bukkit.Chunk;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Player;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
  * Ambient and marker entity spawning for a Bukkit Iris world. Every count and spawn hops onto the
- * thread that owns the data it reads (global for whole-world scans, entity for Folia candidate
- * scans, region for the chunk being populated) and spawning is paused whenever a count could not
- * be completed, so an incomplete saturation reading can never authorize a spawn.
+ * thread that owns the data it reads (global for synchronized whole-world snapshots, region for
+ * the chunk being populated) and spawning is paused whenever a count could not be completed, so
+ * an incomplete saturation reading can never authorize a spawn.
  */
 final class WorldEntitySpawner {
     private final IrisWorldManager manager;
@@ -101,26 +95,11 @@ final class WorldEntitySpawner {
                 if (realWorld == null) {
                     manager.entityCount = 0;
                     manager.entityCountValid = false;
-                } else if (J.isFolia()) {
-                    Integer count = getFoliaLivingEntityCount(realWorld);
-                    if (count != null) {
-                        manager.entityCount = count;
-                        manager.entityCountValid = true;
-                        resetEntityCountFailures();
-                    } else {
-                        manager.entityCountValid = false;
-                    }
                 } else {
                     CompletableFuture<Integer> future = new CompletableFuture<>();
                     boolean scheduled = J.runGlobal(() -> {
                         try {
-                            int count = 0;
-                            for (Entity entity : realWorld.getEntities()) {
-                                if (entity instanceof LivingEntity && !entity.isDead()) {
-                                    count++;
-                                }
-                            }
-                            future.complete(count);
+                            future.complete(livingEntityCount(realWorld));
                         } catch (Throwable ex) {
                             future.completeExceptionally(ex);
                         }
@@ -184,6 +163,10 @@ final class WorldEntitySpawner {
         return actuallySpawned.get() > 0;
     }
 
+    static int livingEntityCount(World world) {
+        return world.getLivingEntities().size();
+    }
+
     boolean isPregenActiveForThisWorld() {
         World world = BukkitWorldBinding.world(manager.getEngine().getWorld());
         if (world == null) {
@@ -200,118 +183,6 @@ final class WorldEntitySpawner {
         }
 
         return job.targetsWorldIdentity(WorldIdentity.serialize(world));
-    }
-
-    private Integer getFoliaLivingEntityCount(World world) {
-        CompletableFuture<List<Player>> playerFuture = new CompletableFuture<>();
-        boolean scheduled = J.runGlobal(() -> {
-            try {
-                playerFuture.complete(new ArrayList<>(world.getPlayers()));
-            } catch (Throwable e) {
-                playerFuture.completeExceptionally(e);
-            }
-        });
-        if (!scheduled) {
-            reportEntityCountFailure("Unable to schedule the Folia player snapshot; pausing Iris entity spawning until a complete count is available.", null);
-            return null;
-        }
-
-        List<Player> players;
-        try {
-            players = playerFuture.get(2, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            manager.entityCountValid = false;
-            Thread.currentThread().interrupt();
-            return null;
-        } catch (TimeoutException e) {
-            reportEntityCountFailure("Timed out while reading the Folia player snapshot; pausing Iris entity spawning until a complete count is available.", null);
-            return null;
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause() == null ? e : e.getCause();
-            reportEntityCountFailure("Failed to read the Folia player snapshot; pausing Iris entity spawning until a complete count is available.", cause);
-            return null;
-        }
-
-        Map<String, Entity> candidates = new ConcurrentHashMap<>();
-        AtomicBoolean incomplete = new AtomicBoolean();
-        AtomicReference<Throwable> failure = new AtomicReference<>();
-
-        CountDownLatch latch = new CountDownLatch(players.size());
-        for (Player player : players) {
-            if (player == null) {
-                latch.countDown();
-                continue;
-            }
-
-            if (!J.runEntity(player, () -> {
-                try {
-                    if (!player.isOnline() || !world.equals(player.getWorld())) {
-                        return;
-                    }
-                    candidates.put(player.getUniqueId().toString(), player);
-                    for (Entity nearby : player.getNearbyEntities(64, 64, 64)) {
-                        if (nearby != null) {
-                            candidates.put(nearby.getUniqueId().toString(), nearby);
-                        }
-                    }
-                } catch (Throwable e) {
-                    incomplete.set(true);
-                    failure.compareAndSet(null, e);
-                } finally {
-                    latch.countDown();
-                }
-            })) {
-                incomplete.set(true);
-                latch.countDown();
-            }
-        }
-
-        if (!awaitEntityTasks(latch, 2, TimeUnit.SECONDS) || incomplete.get()) {
-            if (!Thread.currentThread().isInterrupted()) {
-                reportEntityCountFailure("The Folia entity candidate scan was incomplete; pausing Iris entity spawning until a complete count is available.", failure.get());
-            }
-            return null;
-        }
-
-        AtomicInteger count = new AtomicInteger();
-        incomplete.set(false);
-        failure.set(null);
-        CountDownLatch entityLatch = new CountDownLatch(candidates.size());
-        for (Entity entity : candidates.values()) {
-            if (!J.runEntity(entity, () -> {
-                try {
-                    if (entity instanceof LivingEntity && world.equals(entity.getWorld()) && !entity.isDead()) {
-                        count.incrementAndGet();
-                    }
-                } catch (Throwable e) {
-                    incomplete.set(true);
-                    failure.compareAndSet(null, e);
-                } finally {
-                    entityLatch.countDown();
-                }
-            })) {
-                incomplete.set(true);
-                entityLatch.countDown();
-            }
-        }
-
-        if (!awaitEntityTasks(entityLatch, 2, TimeUnit.SECONDS) || incomplete.get()) {
-            if (!Thread.currentThread().isInterrupted()) {
-                reportEntityCountFailure("The Folia entity validation scan was incomplete; pausing Iris entity spawning until a complete count is available.", failure.get());
-            }
-            return null;
-        }
-
-        return count.get();
-    }
-
-    static boolean awaitEntityTasks(CountDownLatch latch, long timeout, TimeUnit unit) {
-        try {
-            return latch.await(timeout, unit);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
     }
 
     private boolean spawnChunkSafely(World world, int chunkX, int chunkZ, boolean initial) {

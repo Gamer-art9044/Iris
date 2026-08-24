@@ -28,6 +28,7 @@ import art.arcane.iris.engine.object.IrisDecorationPart;
 import art.arcane.iris.engine.object.IrisDecorator;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
 import art.arcane.iris.engine.object.IrisProceduralBlocks;
+import art.arcane.iris.engine.object.IrisRiverCaves;
 import art.arcane.iris.engine.river.cave.RiverCaveAction;
 import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.util.project.context.ChunkContext;
@@ -58,6 +59,8 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
     private static final int CAVE_BIOME_BLEND_RADIUS = 3;
     private static final int CAVE_BIOME_BLEND_CENTER_WEIGHT = 4;
     private static final int CAVE_BIOME_BLEND_TOTAL_WEIGHT = 8;
+    private static final int RIVER_BIOME_INHERITANCE_CELL_SIZE = 4;
+    private static final long RIVER_BIOME_INHERITANCE_SALT = 0x4CF5AD432745937FL;
     private static final MatterCavern BASIC_CAVERN = new MatterCavern(true, "", (byte) 0);
     private final RNG rng;
     private final PlatformBlockState AIR = B.getState("CAVE_AIR");
@@ -139,7 +142,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
 
             PrecisionStopwatch applyStopwatch = PrecisionStopwatch.start();
             try {
-                walls.forEach((rx, yy, rz, cavern) -> {
+                walls.forEach((rx, yy, rz, cavern, riverBoundary) -> {
                     RiverCaveHydrology hydrology = dataIfPresent(
                             mantleChunk, rx, yy, rz, RiverCaveHydrology.class);
                     if (hydrology != null && hydrology.protectsPlacement()) {
@@ -408,16 +411,16 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             int yy = columnMask.nextSetBit(0);
             while (yy >= 0) {
                 if (rz < 15 && !columnMasks[columnIndex + 1].contains(yy)) {
-                    walls.put(rx, yy, rz + 1, BASIC_CAVERN);
+                    walls.put(rx, yy, rz + 1, BASIC_CAVERN, false);
                 }
                 if (rx < 15 && !columnMasks[columnIndex + 16].contains(yy)) {
-                    walls.put(rx + 1, yy, rz, BASIC_CAVERN);
+                    walls.put(rx + 1, yy, rz, BASIC_CAVERN, false);
                 }
                 if (rz > 0 && !columnMasks[columnIndex - 1].contains(yy)) {
-                    walls.put(rx, yy, rz - 1, BASIC_CAVERN);
+                    walls.put(rx, yy, rz - 1, BASIC_CAVERN, false);
                 }
                 if (rx > 0 && !columnMasks[columnIndex - 16].contains(yy)) {
-                    walls.put(rx - 1, yy, rz, BASIC_CAVERN);
+                    walls.put(rx - 1, yy, rz, BASIC_CAVERN, false);
                 }
                 yy = columnMask.nextSetBit(yy + 1);
             }
@@ -437,17 +440,19 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             while (yy >= 0) {
                 MatterCavern cavern = composedCavernAt(mc, rx, yy, rz);
                 if (cavern != null) {
+                    RiverCaveHydrology hydrology = dataIfPresent(mc, rx, yy, rz, RiverCaveHydrology.class);
+                    boolean riverBoundary = hydrology != null && !hydrology.floodedBiomeKey().isEmpty();
                     if (rz < 15 && composedCavernAt(mc, rx, yy, rz + 1) == null) {
-                        walls.put(rx, yy, rz + 1, cavern);
+                        walls.put(rx, yy, rz + 1, cavern, riverBoundary);
                     }
                     if (rx < 15 && composedCavernAt(mc, rx + 1, yy, rz) == null) {
-                        walls.put(rx + 1, yy, rz, cavern);
+                        walls.put(rx + 1, yy, rz, cavern, riverBoundary);
                     }
                     if (rz > 0 && composedCavernAt(mc, rx, yy, rz - 1) == null) {
-                        walls.put(rx, yy, rz - 1, cavern);
+                        walls.put(rx, yy, rz - 1, cavern, riverBoundary);
                     }
                     if (rx > 0 && composedCavernAt(mc, rx - 1, yy, rz) == null) {
-                        walls.put(rx - 1, yy, rz, cavern);
+                        walls.put(rx - 1, yy, rz, cavern, riverBoundary);
                     }
                 }
                 yy = columnMask.nextSetBit(yy + 1);
@@ -523,7 +528,10 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             return;
         }
 
-        walls.put(localX, yy, localZ, neighbor);
+        RiverCaveHydrology hydrology = dataIfPresent(
+                neighborChunk, neighborX, yy, neighborZ, RiverCaveHydrology.class);
+        boolean riverBoundary = hydrology != null && !hydrology.floodedBiomeKey().isEmpty();
+        walls.put(localX, yy, localZ, neighbor, riverBoundary);
         int columnIndex = PowerOfTwoCoordinates.packLocal16(localX, localZ);
         boundaryMasks[columnIndex].add(yy);
     }
@@ -667,10 +675,12 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
     ) {
         IrisBiome floorBiome = resolveCaveBoundaryBiome(
                 walls.get(rx, zoneFloor, rz), worldX, zoneFloor, worldZ,
-                resolverState, caveBiomeCache, customBiomeCache);
+                resolverState, caveBiomeCache, customBiomeCache,
+                walls.isRiverBoundary(rx, zoneFloor, rz));
         IrisBiome ceilingBiome = resolveCaveBoundaryBiome(
                 walls.get(rx, zoneCeiling, rz), worldX, zoneCeiling, worldZ,
-                resolverState, caveBiomeCache, customBiomeCache);
+                resolverState, caveBiomeCache, customBiomeCache,
+                walls.isRiverBoundary(rx, zoneCeiling, rz));
         if (floorBiome == null && ceilingBiome == null) {
             return;
         }
@@ -688,12 +698,16 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 }
                 RiverCaveHydrology hydrology = dataIfPresent(
                         mantleChunk, rx, floorY, rz, RiverCaveHydrology.class);
-                if (hydrology != null && hydrology.protectsPlacement()) {
+                if (hydrology != null
+                        && hydrology.protectsPlacement()
+                        && hydrology.action() != RiverCaveAction.SEAL_GUARD) {
                     continue;
                 }
                 PlatformBlockState existing = output.getRaw(rx, floorY, rz);
                 PlatformBlockState layer = floorLayers.get(i);
-                if (!B.isSolid(existing) || !canReplaceCaveFloorLayer(output, rx, floorY, rz, layer)) {
+                if (!B.isSolid(existing)
+                        || !canReplaceRiverGuard(hydrology, layer, false)
+                        || !canReplaceCaveFloorLayer(output, rx, floorY, rz, layer)) {
                     continue;
                 }
                 if (B.isOre(existing)) {
@@ -715,7 +729,9 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 }
                 RiverCaveHydrology hydrology = dataIfPresent(
                         mantleChunk, rx, ceilingY, rz, RiverCaveHydrology.class);
-                if (hydrology != null && hydrology.protectsPlacement()) {
+                if (hydrology != null
+                        && hydrology.protectsPlacement()
+                        && hydrology.action() != RiverCaveAction.SEAL_GUARD) {
                     continue;
                 }
                 PlatformBlockState existing = output.getRaw(rx, ceilingY, rz);
@@ -723,6 +739,9 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                     continue;
                 }
                 PlatformBlockState layer = ceilingLayers.get(i);
+                if (!canReplaceRiverGuard(hydrology, layer, true)) {
+                    continue;
+                }
                 if (B.isOre(existing)) {
                     output.setRaw(rx, ceilingY, rz, B.toDeepSlateOre(existing, layer));
                     continue;
@@ -786,12 +805,16 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 }
                 int y = zone.floor - i - 1;
                 RiverCaveHydrology hydrology = dataIfPresent(mc, rx, y, rz, RiverCaveHydrology.class);
-                if (hydrology != null && hydrology.protectsPlacement()) {
+                if (hydrology != null
+                        && hydrology.protectsPlacement()
+                        && hydrology.action() != RiverCaveAction.SEAL_GUARD) {
                     continue;
                 }
                 PlatformBlockState block = floorBlocks.get(i);
                 PlatformBlockState existing = output.getRaw(rx, y, rz);
-                if (!B.isSolid(existing) || !canReplaceCaveFloorLayer(output, rx, y, rz, block)) {
+                if (!B.isSolid(existing)
+                        || !canReplaceRiverGuard(hydrology, block, false)
+                        || !canReplaceCaveFloorLayer(output, rx, y, rz, block)) {
                     continue;
                 }
                 if (B.isOre(existing)) {
@@ -810,12 +833,14 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                     break;
                 }
                 RiverCaveHydrology hydrology = dataIfPresent(mc, rx, cy, rz, RiverCaveHydrology.class);
-                if (hydrology != null && hydrology.protectsPlacement()) {
+                if (hydrology != null
+                        && hydrology.protectsPlacement()
+                        && hydrology.action() != RiverCaveAction.SEAL_GUARD) {
                     continue;
                 }
                 PlatformBlockState block = ceilingBlocks.get(i);
                 PlatformBlockState existing = output.getRaw(rx, cy, rz);
-                if (!B.isSolid(existing)) {
+                if (!B.isSolid(existing) || !canReplaceRiverGuard(hydrology, block, true)) {
                     continue;
                 }
                 if (B.isOre(existing)) {
@@ -876,15 +901,88 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
 
     IrisBiome resolveCaveBoundaryBiome(MantleChunk<Matter> mantleChunk, int x, int y, int z, int worldX, int worldZ, IrisDimensionCarvingResolver.State resolverState, Long2ObjectOpenHashMap<IrisBiome> caveBiomeCache, Map<String, IrisBiome> customBiomeCache) {
         MatterCavern cavern = composedCavernAt(mantleChunk, x, y, z);
+        RiverCaveHydrology hydrology = dataIfPresent(
+                mantleChunk, x, y, z, RiverCaveHydrology.class);
         return resolveCaveBoundaryBiome(
-                cavern, worldX, y, worldZ, resolverState, caveBiomeCache, customBiomeCache);
+                cavern, worldX, y, worldZ, resolverState, caveBiomeCache, customBiomeCache,
+                hydrology != null && !hydrology.floodedBiomeKey().isEmpty());
     }
 
     IrisBiome resolveCaveBoundaryBiome(MatterCavern cavern, int worldX, int y, int worldZ, IrisDimensionCarvingResolver.State resolverState, Long2ObjectOpenHashMap<IrisBiome> caveBiomeCache, Map<String, IrisBiome> customBiomeCache) {
+        return resolveCaveBoundaryBiome(
+                cavern, worldX, y, worldZ, resolverState, caveBiomeCache, customBiomeCache, false);
+    }
+
+    private IrisBiome resolveCaveBoundaryBiome(MatterCavern cavern, int worldX, int y, int worldZ, IrisDimensionCarvingResolver.State resolverState, Long2ObjectOpenHashMap<IrisBiome> caveBiomeCache, Map<String, IrisBiome> customBiomeCache, boolean riverBoundary) {
         if (cavern != null && !cavern.getCustomBiome().isEmpty()) {
+            if (riverBoundary && selectsParentRiverBiome(
+                    getEngine().getSeedManager().getCarve(),
+                    worldX,
+                    worldZ,
+                    riverParentBiomeInheritance())) {
+                IrisBiome parent = resolveRiverParentBiome(
+                        caveBiomeCache, worldX, y, worldZ, resolverState);
+                if (parent != null) {
+                    return parent;
+                }
+            }
             return resolveCustomBiome(customBiomeCache, cavern.getCustomBiome());
         }
         return resolveCaveBiome(caveBiomeCache, worldX, y, worldZ, resolverState);
+    }
+
+    static boolean selectsParentRiverBiome(long seed, int worldX, int worldZ, double inheritance) {
+        if (inheritance <= 0D) {
+            return false;
+        }
+        if (inheritance >= 1D) {
+            return true;
+        }
+        int cellX = Math.floorDiv(worldX, RIVER_BIOME_INHERITANCE_CELL_SIZE);
+        int cellZ = Math.floorDiv(worldZ, RIVER_BIOME_INHERITANCE_CELL_SIZE);
+        long hash = (seed + RIVER_BIOME_INHERITANCE_SALT) ^ BlockPosition.toLong(cellX, 0, cellZ);
+        hash = (hash ^ (hash >>> 30)) * 0xBF58476D1CE4E5B9L;
+        hash = (hash ^ (hash >>> 27)) * 0x94D049BB133111EBL;
+        hash ^= hash >>> 31;
+        double roll = (hash >>> 11) * 0x1.0p-53;
+        return roll < inheritance;
+    }
+
+    static boolean canReplaceRiverGuard(
+            RiverCaveHydrology hydrology,
+            PlatformBlockState layer,
+            boolean ceiling
+    ) {
+        if (hydrology == null || hydrology.action() != RiverCaveAction.SEAL_GUARD) {
+            return true;
+        }
+        return layer != null
+                && B.isSolid(layer)
+                && !B.isFluid(layer)
+                && (!ceiling || !isGravityAffected(layer));
+    }
+
+    private double riverParentBiomeInheritance() {
+        if (getDimension().getRivers() == null || getDimension().getRivers().getCaves() == null) {
+            return 0D;
+        }
+        IrisRiverCaves caves = getDimension().getRivers().getCaves();
+        return Math.max(0D, Math.min(1D, caves.getParentBiomeInheritance()));
+    }
+
+    private IrisBiome resolveRiverParentBiome(
+            Long2ObjectOpenHashMap<IrisBiome> caveBiomeCache,
+            int worldX,
+            int y,
+            int worldZ,
+            IrisDimensionCarvingResolver.State resolverState
+    ) {
+        IrisBiome parent = resolveCaveBiome(caveBiomeCache, worldX, y, worldZ, resolverState);
+        if (parent != null && parent == getEngine().getSurfaceBiome(worldX, worldZ)) {
+            IrisBiome natural = getComplex().getNaturalTrueBiomeStream().get(worldX, worldZ);
+            return natural == null ? parent : natural;
+        }
+        return parent;
     }
 
     static boolean canReplaceCaveFloorLayer(Hunk<PlatformBlockState> output, int x, int y, int z, PlatformBlockState layer) {

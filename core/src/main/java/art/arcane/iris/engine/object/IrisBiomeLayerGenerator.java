@@ -88,7 +88,6 @@ final class IrisBiomeLayerGenerator {
                     data.add(layer.get(random, i + j, (wx + j) / zoom, j, (wz - j) / zoom, rdata));
                 } catch (Throwable e) {
                     IrisLogging.reportError(e);
-                    e.printStackTrace();
                 }
             }
 
@@ -147,7 +146,6 @@ final class IrisBiomeLayerGenerator {
                     data.add(layer.get(random, i + j, (wx + j) / zoom, j, (wz - j) / zoom, rdata));
                 } catch (Throwable e) {
                     IrisLogging.reportError(e);
-                    e.printStackTrace();
                 }
             }
 
@@ -206,7 +204,6 @@ final class IrisBiomeLayerGenerator {
                         data.add(layer.get(random, i + j, (wx + j) / zoom, j, (wz - j) / zoom, rdata));
                     } catch (Throwable e) {
                         IrisLogging.reportError(e);
-                        e.printStackTrace();
                     }
                 }
             }
@@ -256,7 +253,6 @@ final class IrisBiomeLayerGenerator {
                     data.add(layer.get(random, i + j, (wx + j) / zoom, j, (wz - j) / zoom, rdata));
                 } catch (Throwable e) {
                     IrisLogging.reportError(e);
-                    e.printStackTrace();
                 }
             }
 

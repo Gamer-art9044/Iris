@@ -162,7 +162,6 @@ public final class StructureImporter {
             structure = Bukkit.getStructureManager().loadStructure(key);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             return new Result(false, "Failed to load structure " + key + ": " + e.getMessage(), 0, List.of(), true);
         }
         if (structure == null || structure.getPalettes().isEmpty()) {
@@ -174,7 +173,6 @@ public final class StructureImporter {
             captured = captureStructure(structure);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             return new Result(false, "Failed to capture structure " + key + ": " + e.getMessage(), 0, List.of(), true);
         }
 
@@ -221,7 +219,6 @@ public final class StructureImporter {
             return new Result(false, "Failed writing import for '" + name + "': " + e.getMessage(), count, losses);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             return new Result(false, "Failed writing import for '" + name + "': " + e.getMessage(), count, losses,
                     true);
         }
@@ -353,7 +350,6 @@ public final class StructureImporter {
     private static void reportWriteFailure(StructureWriteResult result) {
         result.failure().ifPresent((Throwable failure) -> {
             IrisLogging.reportError(failure);
-            failure.printStackTrace();
         });
     }
 
@@ -395,7 +391,6 @@ public final class StructureImporter {
         } catch (Throwable e) {
             IrisLogging.reportError(e);
             if (VillageImporter.shouldPrintFullTrace(e)) {
-                e.printStackTrace();
             }
             return new FinalStateResult(null, false);
         }
@@ -432,7 +427,6 @@ public final class StructureImporter {
             return LegacyTileData.fromBukkit(block);
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             return null;
         }
     }
@@ -465,7 +459,6 @@ public final class StructureImporter {
                 maxSpan = Math.max(maxSpan, readObjectSpan(iob));
             } catch (IOException e) {
                 IrisLogging.reportError(e);
-                e.printStackTrace();
                 return new Result(false, "Cannot read imported object '" + rel + "': " + e.getMessage(), 0,
                         List.of(), true);
             }
@@ -508,7 +501,6 @@ public final class StructureImporter {
                     + " template variants" + writeResultNote(writeResult), pieceNames.size(), List.of());
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             return new Result(false, "Failed writing group structure '" + groupName + "': " + e.getMessage(), 0,
                     List.of(), true);
         }
@@ -598,7 +590,6 @@ public final class StructureImporter {
             return new Result(false, "Failed writing capture for '" + name + "': " + e.getMessage(), 0, List.of());
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             return new Result(false, "Failed writing capture for '" + name + "': " + e.getMessage(), 0, List.of(),
                     true);
         }

@@ -464,7 +464,6 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
             IrisLogging.reportError(throwable);
         } catch (Throwable e) {
-            e.printStackTrace();
         }
 
         return null;
@@ -489,7 +488,6 @@ public class AsyncPregenMethod implements PregeneratorMethod {
             }
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
         } finally {
             try {
                 markFinished(success);
@@ -520,7 +518,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         String suppressedText = suppressed <= 0 ? "" : " suppressed=" + suppressed;
         // Slow chunk loads are what the adaptive in flight limit exists to absorb, and this line is already
         // interval throttled with a suppression count. It reports the throttle working, not a fault.
-        IrisLogging.info("Async pregen chunk load at " + x + "," + z
+        IrisLogging.debug("Async pregen chunk load at " + x + "," + z
                 + " is still pending after " + slowRequestWarningSeconds + "s."
                 + " adaptiveLimit=" + adaptiveInFlightLimit.get()
                 + suppressedText + " " + metricsSnapshot());
@@ -583,7 +581,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         }
 
         if (lastAdaptiveLogAt.compareAndSet(last, now)) {
-            IrisLogging.info("Async pregen adaptive limit " + mode + " -> " + value + " " + metricsSnapshot());
+            IrisLogging.debug("Async pregen adaptive limit " + mode + " -> " + value + " " + metricsSnapshot());
         }
     }
 
@@ -1001,7 +999,6 @@ public class AsyncPregenMethod implements PregeneratorMethod {
                 IrisLogging.warn("For more information see https://docs.papermc.io/paper/reference/global-configuration#chunk_system_worker_threads");
                 if (e instanceof InvocationTargetException) {
                     IrisLogging.reportError(e);
-                    e.printStackTrace();
                 }
             }
             return 0;
@@ -1023,7 +1020,6 @@ public class AsyncPregenMethod implements PregeneratorMethod {
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
                 IrisLogging.error("Failed to reset worker threads");
-                e.printStackTrace();
             }
             return i;
         });

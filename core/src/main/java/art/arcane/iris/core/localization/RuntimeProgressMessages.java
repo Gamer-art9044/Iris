@@ -25,16 +25,10 @@ public final class RuntimeProgressMessages {
     public static final TextKey STUDIO_STAGE_CREATE_WORLD = TextKey.of("iris.runtime.studio.stage.create_world", "Creating world");
     public static final TextKey STUDIO_STAGE_APPLY_WORLD_RULES = TextKey.of("iris.runtime.studio.stage.apply_world_rules", "Applying world rules");
     public static final TextKey STUDIO_STAGE_PREPARE_GENERATOR = TextKey.of("iris.runtime.studio.stage.prepare_generator", "Preparing generator");
-    public static final TextKey STUDIO_STAGE_REQUEST_ENTRY_CHUNK = TextKey.of("iris.runtime.studio.stage.request_entry_chunk", "Loading entry chunk");
-    public static final TextKey STUDIO_STAGE_RESOLVE_SAFE_ENTRY = TextKey.of("iris.runtime.studio.stage.resolve_safe_entry", "Finding safe spawn");
     public static final TextKey STUDIO_STAGE_TELEPORT_PLAYER = TextKey.of("iris.runtime.studio.stage.teleport_player", "Teleporting");
     public static final TextKey STUDIO_STAGE_FINALIZE_OPEN = TextKey.of("iris.runtime.studio.stage.finalize_open", "Finalizing");
     public static final TextKey STUDIO_STAGE_CLEANUP = TextKey.of("iris.runtime.studio.stage.cleanup", "Cleaning up");
     public static final TextKey WORLD_CREATE_TELEPORT_FAILED = TextKey.of("iris.runtime.world_create.teleport_failed", C.YELLOW + "The world was created, but automatic teleport failed. Try /iris teleport world={world}");
-    public static final TextKey WORLD_CREATE_BOSSBAR_WORKING = TextKey.of("iris.runtime.world_create.bossbar.working", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.WHITE + "Starting");
-    public static final TextKey WORLD_CREATE_BOSSBAR_PROGRESS = TextKey.of("iris.runtime.world_create.bossbar.progress", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.YELLOW + "{percent}% " + C.WHITE + "{stage}");
-    public static final TextKey WORLD_CREATE_BOSSBAR_FAILED = TextKey.of("iris.runtime.world_create.bossbar.failed", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.RED + "FAILED " + C.DARK_GRAY + "{percent}%");
-    public static final TextKey WORLD_CREATE_BOSSBAR_READY = TextKey.of("iris.runtime.world_create.bossbar.ready", C.GOLD + "World " + C.AQUA + "{world}" + C.GRAY + " | " + C.GREEN + "READY 100%");
     public static final TextKey WORLD_CREATE_LIFECYCLE_ACTION = TextKey.of("iris.runtime.world_create.lifecycle.action", "{bar}" + C.GRAY + " " + C.YELLOW + "{percent}%" + C.GRAY + " | " + C.WHITE + "{stage}{detail}" + C.DARK_GRAY + " {elapsed}");
     public static final TextKey WORLD_CREATE_LIFECYCLE_ACTION_FAILED = TextKey.of("iris.runtime.world_create.lifecycle.action.failed", "{bar}" + C.GRAY + " " + C.RED + "FAILED" + C.GRAY + " | " + C.WHITE + "{stage}{detail}" + C.DARK_GRAY + " {elapsed}");
     public static final TextKey WORLD_CREATE_LIFECYCLE_ACTION_READY = TextKey.of("iris.runtime.world_create.lifecycle.action.ready", "{bar}" + C.GRAY + " " + C.GREEN + "100%" + C.GRAY + " | " + C.GREEN + "World ready" + C.DARK_GRAY + " {elapsed}");
@@ -49,7 +43,7 @@ public final class RuntimeProgressMessages {
     public static final TextKey WORLD_CREATE_STAGE_PREPARE_GENERATOR = TextKey.of("iris.runtime.world_create.stage.prepare_generator", "Preparing generator");
     public static final TextKey WORLD_CREATE_STAGE_CREATE_WORLD = TextKey.of("iris.runtime.world_create.stage.create_world", "Generating spawn");
     public static final TextKey WORLD_CREATE_STAGE_REGISTER_WORLD = TextKey.of("iris.runtime.world_create.stage.register_world", "Registering world");
-    public static final TextKey WORLD_CREATE_STAGE_TELEPORT_PLAYER = TextKey.of("iris.runtime.world_create.stage.teleport_player", "Finding safe entry");
+    public static final TextKey WORLD_CREATE_STAGE_TELEPORT_PLAYER = TextKey.of("iris.runtime.world_create.stage.teleport_player", "Entering world");
     public static final TextKey WORLD_CREATE_STAGE_PREGENERATE = TextKey.of("iris.runtime.world_create.stage.pregenerate", "Pregenerating");
     public static final TextKey WORLD_CREATE_STAGE_FINALIZE = TextKey.of("iris.runtime.world_create.stage.finalize", "Finalizing");
     public static final TextKey WORLD_CREATE_STAGE_COMPLETE = TextKey.of("iris.runtime.world_create.stage.complete", "World ready");
@@ -124,16 +118,10 @@ public final class RuntimeProgressMessages {
             STUDIO_STAGE_CREATE_WORLD,
             STUDIO_STAGE_APPLY_WORLD_RULES,
             STUDIO_STAGE_PREPARE_GENERATOR,
-            STUDIO_STAGE_REQUEST_ENTRY_CHUNK,
-            STUDIO_STAGE_RESOLVE_SAFE_ENTRY,
             STUDIO_STAGE_TELEPORT_PLAYER,
             STUDIO_STAGE_FINALIZE_OPEN,
             STUDIO_STAGE_CLEANUP,
             WORLD_CREATE_TELEPORT_FAILED,
-            WORLD_CREATE_BOSSBAR_WORKING,
-            WORLD_CREATE_BOSSBAR_PROGRESS,
-            WORLD_CREATE_BOSSBAR_FAILED,
-            WORLD_CREATE_BOSSBAR_READY,
             WORLD_CREATE_LIFECYCLE_ACTION,
             WORLD_CREATE_LIFECYCLE_ACTION_FAILED,
             WORLD_CREATE_LIFECYCLE_ACTION_READY,

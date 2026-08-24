@@ -1,5 +1,6 @@
 package art.arcane.iris.modded.service;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
 import art.arcane.iris.modded.ModdedScheduler;
 import net.minecraft.core.BlockPos;
@@ -12,8 +13,6 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -21,7 +20,6 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class ModdedTreeFellerPresentation {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int MIN_BLOCKS_PER_PULSE = 4;
     private static final int MAX_BLOCKS_PER_PULSE = 64;
     private static final int TARGET_EROSION_PULSES = 60;
@@ -215,13 +213,13 @@ final class ModdedTreeFellerPresentation {
 
     private void reportEffectFailure(Throwable error) {
         if (effectFailureReported.compareAndSet(false, true)) {
-            LOGGER.error("Iris modded tree-feller presentation failed", error);
+            ModdedIrisLog.error("Iris modded tree-feller presentation failed", error);
         }
     }
 
     private void reportDeliveryFailure(Throwable error) {
         if (deliveryFailureReported.compareAndSet(false, true)) {
-            LOGGER.error("Iris modded tree-feller drop delivery failed", error);
+            ModdedIrisLog.error("Iris modded tree-feller drop delivery failed", error);
         }
     }
 }

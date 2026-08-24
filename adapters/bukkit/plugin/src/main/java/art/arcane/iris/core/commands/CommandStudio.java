@@ -77,7 +77,6 @@ import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.FluidCollisionMode;
-import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -573,7 +572,6 @@ public class CommandStudio implements DirectorExecutor {
             IO.writeAll(report, fileText.toString("\n"));
         } catch (IOException e) {
             Iris.reportError(e);
-            e.printStackTrace();
         }
 
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_DONE, MessageArgument.untrusted("value", report.getPath())));
@@ -662,9 +660,6 @@ public class CommandStudio implements DirectorExecutor {
                     if (failure != null) {
                         Iris.reportError("Studio teleport failed for player \"" + player.getName() + "\".", failure);
                         return;
-                    }
-                    if (Boolean.TRUE.equals(teleported)) {
-                        J.runEntity(player, () -> player.setGameMode(GameMode.CREATIVE));
                     }
                 });
     }
@@ -831,7 +826,6 @@ public class CommandStudio implements DirectorExecutor {
 
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_REPORTED, MessageArgument.untrusted("value", ff.getPath())));
         } catch (Throwable e) {
-            e.printStackTrace();
             Iris.reportError(e);
         }
     }

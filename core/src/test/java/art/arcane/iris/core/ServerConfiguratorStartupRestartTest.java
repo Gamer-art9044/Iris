@@ -4,9 +4,14 @@ import art.arcane.iris.spi.IrisLogging;
 import org.bukkit.Bukkit;
 import org.junit.Test;
 import org.mockito.MockedStatic;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -46,6 +51,48 @@ public class ServerConfiguratorStartupRestartTest {
     }
 
     @Test
+    public void immediateRestartCapabilityIsOptional() throws ReflectiveOperationException {
+        RestartCapableApi.restarted = false;
+
+        assertTrue(ServerConfigurator.invokeImmediateRestartIfSupported(RestartCapableApi.class));
+        assertTrue(RestartCapableApi.restarted);
+        assertFalse(ServerConfigurator.invokeImmediateRestartIfSupported(ShutdownOnlyApi.class));
+    }
+
+    @Test
+    public void productionBytecodeDoesNotLinkBukkitRestartDirectly() throws Exception {
+        AtomicBoolean directRestartInvocation = new AtomicBoolean(false);
+        ClassReader reader = new ClassReader(ServerConfigurator.class.getName());
+        reader.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+            ) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(
+                            int opcode,
+                            String owner,
+                            String methodName,
+                            String methodDescriptor,
+                            boolean isInterface
+                    ) {
+                        if ("org/bukkit/Bukkit".equals(owner) && "restart".equals(methodName)) {
+                            directRestartInvocation.set(true);
+                        }
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+
+        assertFalse(directRestartInvocation.get());
+    }
+
+    @Test
     public void startupRestartPathsPromoteTheValidationStateAndBypassTickQueues() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/ServerConfigurator.java"));
@@ -62,10 +109,22 @@ public class ServerConfiguratorStartupRestartTest {
         int validationRestart = configure.indexOf("requireDatapackRestart();", restartResult);
         assertTrue(restartResult >= 0);
         assertTrue(validationRestart > restartResult);
-        assertTrue(startupRestart.indexOf("Bukkit.restart();")
+        assertTrue(startupRestart.indexOf("invokeImmediateRestartIfSupported(Bukkit.class)")
                 < startupRestart.indexOf("Bukkit.shutdown();"));
+        assertFalse(startupRestart.contains("Bukkit.restart"));
         assertFalse(startupRestart.contains("J.s("));
         assertFalse(startupRestart.contains("dispatchCommand"));
+    }
+
+    public static final class RestartCapableApi {
+        private static boolean restarted;
+
+        public static void restart() {
+            restarted = true;
+        }
+    }
+
+    public static final class ShutdownOnlyApi {
     }
 
     private static String section(String source, String startMarker, String endMarker) {

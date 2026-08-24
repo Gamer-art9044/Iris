@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.service;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.service.EngineMaintenance;
 import art.arcane.iris.engine.framework.Engine;
@@ -27,8 +28,6 @@ import art.arcane.iris.modded.ModdedWorldEngines;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.project.context.IrisContext;
 import net.minecraft.server.MinecraftServer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -42,7 +41,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 public final class ModdedEngineMaintenanceService implements ModdedTickableService {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final long MAINTENANCE_PERIOD_MILLIS = 2_000L;
     private static final long SAVE_PERIOD_MILLIS = 60_000L;
     private static final long SHUTDOWN_TIMEOUT_SECONDS = 30L;
@@ -120,7 +118,7 @@ public final class ModdedEngineMaintenanceService implements ModdedTickableServi
             } catch (RejectedExecutionException exception) {
                 inFlight.remove(engine);
                 if (active == service && !active.isShutdown()) {
-                    LOGGER.error("Iris rejected engine maintenance for {}", engineName(engine), exception);
+                    ModdedIrisLog.error("Iris rejected engine maintenance for {}", engineName(engine), exception);
                 }
             }
         }
@@ -148,7 +146,7 @@ public final class ModdedEngineMaintenanceService implements ModdedTickableServi
 
             EngineMaintenance.Outcome outcome = EngineMaintenance.run(engine);
             if (outcome.unloadedTectonicPlates() > 0) {
-                LOGGER.debug("Iris unloaded {} tectonic plates in {}ms for {}",
+                ModdedIrisLog.debug("Iris unloaded {} tectonic plates in {}ms for {}",
                         outcome.unloadedTectonicPlates(), outcome.unloadDurationMillis(), engineName(engine));
             }
         } catch (GenerationSessionException exception) {
@@ -156,13 +154,13 @@ public final class ModdedEngineMaintenanceService implements ModdedTickableServi
                 return;
             }
             IrisLogging.reportError(exception);
-            LOGGER.error("Iris engine maintenance session failed for {}", engineName(engine), exception);
+            ModdedIrisLog.error("Iris engine maintenance session failed for {}", engineName(engine), exception);
         } catch (Throwable exception) {
             if (EngineMaintenance.isMantleClosed(exception)) {
                 return;
             }
             IrisLogging.reportError(exception);
-            LOGGER.error("Iris engine maintenance failed for {}", engineName(engine), exception);
+            ModdedIrisLog.error("Iris engine maintenance failed for {}", engineName(engine), exception);
         }
     }
 
@@ -180,7 +178,7 @@ public final class ModdedEngineMaintenanceService implements ModdedTickableServi
                 return;
             }
             IrisLogging.reportError(exception);
-            LOGGER.error("Iris engine save failed for {}", engineName(engine), exception);
+            ModdedIrisLog.error("Iris engine save failed for {}", engineName(engine), exception);
         }
     }
 
@@ -212,13 +210,13 @@ public final class ModdedEngineMaintenanceService implements ModdedTickableServi
             IllegalStateException failure = new IllegalStateException(
                     "Iris engine maintenance workers did not stop after shutdownNow");
             IrisLogging.reportError(failure);
-            LOGGER.error("Iris engine maintenance did not terminate; active engine lifecycle leases will block unsafe shutdown", failure);
+            ModdedIrisLog.error("Iris engine maintenance did not terminate; active engine lifecycle leases will block unsafe shutdown", failure);
             return false;
         } catch (InterruptedException exception) {
             active.shutdownNow();
             Thread.currentThread().interrupt();
             IrisLogging.reportError(exception);
-            LOGGER.error("Interrupted while draining Iris engine maintenance", exception);
+            ModdedIrisLog.error("Interrupted while draining Iris engine maintenance", exception);
             return false;
         }
     }

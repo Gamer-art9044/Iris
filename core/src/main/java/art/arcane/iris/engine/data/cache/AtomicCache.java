@@ -64,7 +64,7 @@ public class AtomicCache<T> {
             try {
                 return t.get();
             } catch (Throwable e) {
-                e.printStackTrace();
+                IrisLogging.reportError("Atomic cache supplier failed.", e);
                 return null;
             }
         });

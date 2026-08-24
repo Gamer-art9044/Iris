@@ -23,8 +23,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelStorageSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ConcurrentModificationException;
 import java.util.LinkedHashMap;
@@ -35,7 +33,6 @@ import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 public final class ModdedServerLevels implements ModdedServerAccess {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int CAPTURE_ATTEMPTS = 16;
     private static volatile Snapshot snapshot;
 
@@ -125,7 +122,7 @@ public final class ModdedServerLevels implements ModdedServerAccess {
                 Thread.onSpinWait();
             }
         }
-        LOGGER.error("Iris could not snapshot the level map after {} attempts; readers will see the previous snapshot", CAPTURE_ATTEMPTS);
+        ModdedIrisLog.error("Iris could not snapshot the level map after {} attempts; readers will see the previous snapshot", CAPTURE_ATTEMPTS);
         Snapshot current = snapshot;
         return current != null && current.server() == server ? current : null;
     }

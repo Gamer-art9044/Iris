@@ -29,8 +29,6 @@ import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.hunk.Hunk;
 import net.minecraft.server.MinecraftServer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -48,7 +46,6 @@ import java.util.Map;
 import java.util.TreeMap;
 
 public final class ModdedParityProbe {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final String DIMENSION_KEY = "overworld";
     private static final long SEED = 1337L;
     private static final int BIOME_STEP = 4;
@@ -82,7 +79,7 @@ public final class ModdedParityProbe {
         }
 
         if (server == null) {
-            LOGGER.error("[parity] server did not become ready within 10 minutes");
+            ModdedIrisLog.error("[parity] server did not become ready within 10 minutes");
             return;
         }
 
@@ -90,10 +87,10 @@ public final class ModdedParityProbe {
         try {
             match = run(server, config);
         } catch (Throwable e) {
-            LOGGER.error("[parity] probe failed", e);
+            ModdedIrisLog.error("[parity] probe failed", e);
         }
 
-        LOGGER.info("[parity] shutting down dev server (result={})", match ? "MATCH" : "MISMATCH");
+        ModdedIrisLog.info("[parity] shutting down dev server (result={})", match ? "MATCH" : "MISMATCH");
         server.halt(false);
     }
 
@@ -112,7 +109,7 @@ public final class ModdedParityProbe {
 
         File packSource = new File(packPath);
         if (!packSource.isDirectory()) {
-            LOGGER.error("[parity] pack folder not found: {}", packSource.getAbsolutePath());
+            ModdedIrisLog.error("[parity] pack folder not found: {}", packSource.getAbsolutePath());
             return false;
         }
 
@@ -121,14 +118,14 @@ public final class ModdedParityProbe {
 
         File workRoot = Files.createTempDirectory("iris-parity").toFile();
         File pack = clonePack(packSource, workRoot);
-        LOGGER.info("[parity] pack: {}", packSource.getAbsolutePath());
-        LOGGER.info("[parity] work copy: {}", pack.getAbsolutePath());
-        LOGGER.info("[parity] radius: {} ({} chunks)", radius, (2 * radius + 1) * (2 * radius + 1));
+        ModdedIrisLog.info("[parity] pack: {}", packSource.getAbsolutePath());
+        ModdedIrisLog.info("[parity] work copy: {}", pack.getAbsolutePath());
+        ModdedIrisLog.info("[parity] radius: {} ({} chunks)", radius, (2 * radius + 1) * (2 * radius + 1));
 
         IrisData data = IrisData.get(pack);
         IrisDimension dimension = data.getDimensionLoader().load(DIMENSION_KEY);
         if (dimension == null) {
-            LOGGER.error("[parity] dimension '{}' did not load from {}", DIMENSION_KEY, pack.getAbsolutePath());
+            ModdedIrisLog.error("[parity] dimension '{}' did not load from {}", DIMENSION_KEY, pack.getAbsolutePath());
             return false;
         }
 
@@ -147,7 +144,7 @@ public final class ModdedParityProbe {
         int minY = dimension.getMinHeight();
         int maxY = dimension.getMaxHeight();
         int height = maxY - minY;
-        LOGGER.info("[parity] engine up: dim={} seed={} minY={} maxY={}", engine.getDimension().getLoadKey(), engine.getSeedManager().getSeed(), minY, maxY);
+        ModdedIrisLog.info("[parity] engine up: dim={} seed={} minY={} maxY={}", engine.getDimension().getLoadKey(), engine.getSeedManager().getSeed(), minY, maxY);
 
         Map<String, String> goldenChunks = new HashMap<>();
         String goldenCombined = null;
@@ -173,7 +170,7 @@ public final class ModdedParityProbe {
                     goldenChunks.put(line.substring(0, second), line);
                 }
             }
-            LOGGER.info("[parity] golden: {} ({} chunks, combined={})", goldenPath, goldenChunks.size(), goldenCombined);
+            ModdedIrisLog.info("[parity] golden: {} ({} chunks, combined={})", goldenPath, goldenChunks.size(), goldenCombined);
         }
 
         PlatformBlockState airState = IrisPlatforms.get().registries().air();
@@ -198,9 +195,9 @@ public final class ModdedParityProbe {
 
             if (!failures.isEmpty()) {
                 failed++;
-                LOGGER.error("[parity] chunk {},{} FAILED ({} error(s))", cx, cz, failures.size());
+                ModdedIrisLog.error("[parity] chunk {},{} FAILED ({} error(s))", cx, cz, failures.size());
                 for (Throwable failure : failures) {
-                    LOGGER.error("[parity] chunk {},{} error", cx, cz, failure);
+                    ModdedIrisLog.error("[parity] chunk {},{} error", cx, cz, failure);
                 }
                 continue;
             }
@@ -212,9 +209,9 @@ public final class ModdedParityProbe {
             String golden = goldenChunks.get(key);
             if (golden != null && !golden.equals(line)) {
                 mismatches.add(key);
-                LOGGER.warn("[parity] chunk {} MISMATCH", key);
-                LOGGER.warn("[parity]   golden: {}", golden);
-                LOGGER.warn("[parity]   actual: {}", line);
+                ModdedIrisLog.warn("[parity] chunk {} MISMATCH", key);
+                ModdedIrisLog.warn("[parity]   golden: {}", golden);
+                ModdedIrisLog.warn("[parity]   actual: {}", line);
                 if (mismatches.size() == 1) {
                     diffDeep(cx, cz, blocks, height, minY);
                 }
@@ -231,9 +228,9 @@ public final class ModdedParityProbe {
         boolean match = goldenChunks.isEmpty() ? combinedMatch : (chunkMatch && (radius != 8 || combinedMatch));
 
         if (!goldenChunks.isEmpty()) {
-            LOGGER.info("[parity] per-chunk: {}/{} matched golden ({} failed)", body.size() - mismatches.size(), body.size(), failed);
+            ModdedIrisLog.info("[parity] per-chunk: {}/{} matched golden ({} failed)", body.size() - mismatches.size(), body.size(), failed);
         }
-        LOGGER.info("[parity] combined={} expected={} {} ({}/{})",
+        ModdedIrisLog.info("[parity] combined={} expected={} {} ({}/{})",
                 combined.substring(0, 12), expected, match ? "MATCH" : "MISMATCH", body.size() - mismatches.size(), targets.size());
         return match;
     }
@@ -246,7 +243,7 @@ public final class ModdedParityProbe {
         try {
             Path goldenDump = Path.of(deepDir, cx + "_" + cz + ".txt");
             if (!Files.exists(goldenDump)) {
-                LOGGER.warn("[parity] no deep dump for chunk {},{} at {}", cx, cz, goldenDump);
+                ModdedIrisLog.warn("[parity] no deep dump for chunk {},{} at {}", cx, cz, goldenDump);
                 return;
             }
             List<String> golden = Files.readAllLines(goldenDump, StandardCharsets.UTF_8);
@@ -267,15 +264,15 @@ public final class ModdedParityProbe {
                 String g = i < golden.size() ? golden.get(i) : "<missing>";
                 String a = i < actual.size() ? actual.get(i) : "<missing>";
                 if (!g.equals(a)) {
-                    LOGGER.warn("[parity]   deep diff line {}: golden='{}' actual='{}'", i, g, a);
+                    ModdedIrisLog.warn("[parity]   deep diff line {}: golden='{}' actual='{}'", i, g, a);
                     shown++;
                 }
             }
             File out = new File(IrisPlatforms.get().dataFolder("parity"), "deep-" + cx + "_" + cz + ".txt");
             Files.write(out.toPath(), actual, StandardCharsets.UTF_8);
-            LOGGER.warn("[parity]   full actual dump: {}", out.getAbsolutePath());
+            ModdedIrisLog.warn("[parity]   full actual dump: {}", out.getAbsolutePath());
         } catch (Throwable e) {
-            LOGGER.warn("[parity] deep diff failed", e);
+            ModdedIrisLog.warn("[parity] deep diff failed", e);
         }
     }
 
@@ -367,7 +364,7 @@ public final class ModdedParityProbe {
                 }
             } else {
                 for (Throwable error : batch) {
-                    LOGGER.warn("[parity] engine-init reported error (non-fatal)", error);
+                    ModdedIrisLog.warn("[parity] engine-init reported error (non-fatal)", error);
                 }
                 quietSince = System.currentTimeMillis();
             }

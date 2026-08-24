@@ -18,8 +18,6 @@
 
 package art.arcane.iris.modded;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -40,7 +38,6 @@ import java.util.function.BooleanSupplier;
  * references and is safe on a dedicated server.
  */
 public final class ModdedMixinAudit {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final AtomicBoolean AUDITED = new AtomicBoolean(false);
 
     private static final List<ExpectedMixin> EXPECTED = List.of(
@@ -95,20 +92,20 @@ public final class ModdedMixinAudit {
             }
         }
         if (missing.isEmpty()) {
-            LOGGER.info("Iris mixin audit ok on {} ({} dist): {}", platform,
+            ModdedIrisLog.info("Iris mixin audit ok on {} ({} dist): {}", platform,
                     clientEnvironment ? "client" : "server", String.join(", ", applied));
             return;
         }
-        LOGGER.error("===============================================================");
-        LOGGER.error("Iris mixin audit FAILED on {} ({} dist): {} of {} expected mixin(s) were not applied.",
+        ModdedIrisLog.error("===============================================================");
+        ModdedIrisLog.error("Iris mixin audit FAILED on {} ({} dist): {} of {} expected mixin(s) were not applied.",
                 platform, clientEnvironment ? "client" : "server", missing.size(),
                 missing.size() + applied.size());
         for (String entry : missing) {
-            LOGGER.error("  missing: {}", entry);
+            ModdedIrisLog.error("  missing: {}", entry);
         }
-        LOGGER.error("The mixin config was not registered for this loader (fabric.mod.json mixins, neoforge.mods.toml [[mixins]], forge MixinConfigs manifest attribute).");
-        LOGGER.error("Entity persistence, custom mob loot, parallel structure safety, or Iris world-type labels are disabled until this is fixed.");
-        LOGGER.error("===============================================================");
+        ModdedIrisLog.error("The mixin config was not registered for this loader (fabric.mod.json mixins, neoforge.mods.toml [[mixins]], forge MixinConfigs manifest attribute).");
+        ModdedIrisLog.error("Entity persistence, custom mob loot, parallel structure safety, or Iris world-type labels are disabled until this is fixed.");
+        ModdedIrisLog.error("===============================================================");
     }
 
     private static boolean isApplied(ExpectedMixin expected) {
@@ -126,7 +123,7 @@ public final class ModdedMixinAudit {
             }
             return false;
         } catch (ClassNotFoundException | LinkageError unavailable) {
-            LOGGER.warn("Iris mixin audit could not inspect {}", expected.targetClass(), unavailable);
+            ModdedIrisLog.warn("Iris mixin audit could not inspect {}", expected.targetClass(), unavailable);
             return true;
         }
     }

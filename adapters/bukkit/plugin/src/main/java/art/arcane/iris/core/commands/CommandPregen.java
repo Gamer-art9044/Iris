@@ -89,7 +89,6 @@ public class CommandPregen implements DirectorExecutor {
         } catch (Throwable e) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_PREGEN_FAILED_START_PREGENERATION_SEE_CONSOLE_DETAILS));
             Iris.reportError(e);
-            e.printStackTrace();
         }
     }
 

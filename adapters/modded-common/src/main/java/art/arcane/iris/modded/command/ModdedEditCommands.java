@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.gui.GuiHost;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.core.localization.IrisLanguage;
@@ -29,14 +30,11 @@ import art.arcane.volmlib.util.localization.MessageArgument;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.awt.Desktop;
 import java.io.File;
 
 final class ModdedEditCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
 
     private ModdedEditCommands() {
     }
@@ -123,7 +121,7 @@ final class ModdedEditCommands {
         try {
             Desktop.getDesktop().open(file);
         } catch (Throwable e) {
-            LOGGER.error("Iris edit failed to open {}", file, e);
+            ModdedIrisLog.error("Iris edit failed to open {}", file, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_COULD_NOT_OPEN, MessageArgument.untrusted("value", file.getName()), MessageArgument.untrusted("value2", e.getClass().getSimpleName())));
             return 0;
         }

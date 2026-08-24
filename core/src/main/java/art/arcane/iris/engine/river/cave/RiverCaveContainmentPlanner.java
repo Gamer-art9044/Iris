@@ -656,6 +656,9 @@ public final class RiverCaveContainmentPlanner {
                 return boundsRejection;
             }
             CaveVoxel voxel = voxelAt(view, position);
+            if (isGeneratedInletCarve(view, source, settings, position, voxel)) {
+                continue;
+            }
             RiverCaveRejection hazard = rejectionForHazard(voxel, settings);
             if (hazard != RiverCaveRejection.NONE) {
                 return hazard;
@@ -680,7 +683,8 @@ public final class RiverCaveContainmentPlanner {
                 if (carve.contains(neighbor)) {
                     continue;
                 }
-                if (isInletOpening(source, neighbor)) {
+                if (isInletOpening(source, neighbor)
+                        || isGeneratedInletOpening(view, source, settings, neighbor)) {
                     continue;
                 }
                 if (!view.isInWorld(neighbor)) {
@@ -726,7 +730,8 @@ public final class RiverCaveContainmentPlanner {
             RiverCaveAction action;
             if (position.y() <= source.waterHeadY()) {
                 action = RiverCaveAction.WET_SOURCE;
-            } else if (source.mode() == RiverCaveMode.WATERFALL_POOL) {
+            } else if (source.mode() == RiverCaveMode.WATERFALL_POOL
+                    || source.mode() == RiverCaveMode.GENERATED_GROTTO) {
                 action = RiverCaveAction.FALLING_WATER;
             } else {
                 action = RiverCaveAction.DRY_AIR;
@@ -761,6 +766,40 @@ public final class RiverCaveContainmentPlanner {
 
     private boolean isInletOpening(RiverCaveSource source, CavePosition position) {
         return position.equals(source.entry().offset(0, 1, 0));
+    }
+
+    private boolean isGeneratedInletCarve(
+            CaveVoxelView view,
+            RiverCaveSource source,
+            RiverCavePlannerSettings settings,
+            CavePosition position,
+            CaveVoxel voxel
+    ) {
+        if (voxel != CaveVoxel.CAVE_AIR && voxel != CaveVoxel.COMPATIBLE_FLUID) {
+            return false;
+        }
+        int extent = Math.max(0, settings.throatRadius() - 1);
+        long deltaX = (long) position.x() - source.entry().x();
+        long deltaZ = (long) position.z() - source.entry().z();
+        return position.y() >= source.entry().y() - extent
+                && position.y() <= source.entry().y()
+                && deltaX * deltaX + deltaZ * deltaZ <= (long) extent * extent
+                && view.isOpenToSurface(position);
+    }
+
+    private boolean isGeneratedInletOpening(
+            CaveVoxelView view,
+            RiverCaveSource source,
+            RiverCavePlannerSettings settings,
+            CavePosition position
+    ) {
+        int radius = Math.max(1, settings.throatRadius());
+        long deltaX = (long) position.x() - source.entry().x();
+        long deltaZ = (long) position.z() - source.entry().z();
+        return position.y() >= source.entry().y()
+                && position.y() <= source.entry().y() + 1
+                && deltaX * deltaX + deltaZ * deltaZ < (long) radius * radius
+                && view.isOpenToSurface(position);
     }
 
     private RiverCaveRejection validateSource(RiverCaveSource source) {

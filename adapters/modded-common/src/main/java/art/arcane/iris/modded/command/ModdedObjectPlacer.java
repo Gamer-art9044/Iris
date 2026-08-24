@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IObjectPlacer;
@@ -37,14 +38,11 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import org.jetbrains.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
 
 final class ModdedObjectPlacer implements IObjectPlacer {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final int DEFAULT_FLUID_HEIGHT = 63;
 
     private final ServerLevel level;
@@ -199,7 +197,7 @@ final class ModdedObjectPlacer implements IObjectPlacer {
             }
             restoredTiles++;
         } catch (Throwable e) {
-            LOGGER.error("Iris tile restore failed at {} {} {}", xx, yy, zz, e);
+            ModdedIrisLog.error("Iris tile restore failed at {} {} {}", xx, yy, zz, e);
             skippedTiles++;
         }
     }

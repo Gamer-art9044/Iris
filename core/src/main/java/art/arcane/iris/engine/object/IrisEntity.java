@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.link.Identifier;
@@ -253,9 +254,10 @@ public class IrisEntity extends IrisRegistrant {
                     }
                 }).get();
             } catch (InterruptedException e) {
-                e.printStackTrace();
+                Thread.currentThread().interrupt();
+                IrisLogging.reportError("Iris entity spawn preparation was interrupted.", e);
             } catch (ExecutionException e) {
-                e.printStackTrace();
+                IrisLogging.reportError("Iris entity spawn preparation failed.", e);
             }
             at = f.get();
         }

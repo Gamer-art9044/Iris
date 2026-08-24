@@ -278,7 +278,6 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             }
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
         }
 
         return null;
@@ -450,7 +449,6 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             return r;
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-            e.printStackTrace();
             IrisLogging.error("Failed to create loader! " + registrant.getCanonicalName());
         }
 
@@ -561,7 +559,6 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             ));
         }
         IrisLogging.reportError(failure);
-        failure.printStackTrace();
         throw failure;
     }
 
@@ -730,7 +727,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
                         .map(s -> s.split("\\Q.\\E")[0])
                         .forEach(s -> l.add("snippet/" + s));
             } catch (Throwable e) {
-                e.printStackTrace();
+                IrisLogging.reportError("Failed to scan Iris snippets in " + snippetFolder + ".", e);
             }
 
             return l;

@@ -173,7 +173,6 @@ public class PregenCacheImpl implements PregenCache {
             return readPlate(x, z, input);
         } catch (IOException e) {
             IrisLogging.error("Failed to read pregen cache " + file);
-            e.printStackTrace();
             IrisLogging.reportError(e);
         }
 
@@ -195,7 +194,6 @@ public class PregenCacheImpl implements PregenCache {
             plate.dirty = false;
         } catch (Throwable e) {
             IrisLogging.error("Failed to write pregen cache " + (file != null ? file : "c." + plate.x + "." + plate.z));
-            e.printStackTrace();
             IrisLogging.reportError(e);
         }
     }

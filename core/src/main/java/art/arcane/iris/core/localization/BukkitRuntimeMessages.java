@@ -406,10 +406,6 @@ public final class BukkitRuntimeMessages {
             "iris.bukkit.runtime.irisconverter.some_schematics_failed_convert_check_console_details",
             C.RED + "Some schematics failed to convert. Check the console for details."
     );
-    public static final TextKey STUDIO_S_V_C_INSTALLING_PACKAGE = TextKey.of(
-            "iris.bukkit.runtime.studiosvc.installing_package",
-            C.GOLD + "World pack " + C.AQUA + "{name}" + ":" + "{loadKey}" + C.GRAY + " | " + C.WHITE + "Publishing snapshot"
-    );
     public static final TextKey STUDIO_S_V_C_PACK_COPY_REQUIRES_ASYNC_THREAD = TextKey.of(
             "iris.bukkit.runtime.studiosvc.pack_copy_requires_async_thread",
             C.RED + "Iris refused to copy the world pack on the Bukkit primary thread."
@@ -708,7 +704,6 @@ public final class BukkitRuntimeMessages {
             IRIS_CONVERTER_FAILED_CONVERT,
             IRIS_CONVERTER_CONVERTED_3,
             IRIS_CONVERTER_SOME_SCHEMATICS_FAILED_CONVERT_CHECK_CONSOLE_DETAILS,
-            STUDIO_S_V_C_INSTALLING_PACKAGE,
             STUDIO_S_V_C_PACK_COPY_REQUIRES_ASYNC_THREAD,
             STUDIO_S_V_C_PACK_INSTALL_FAILED,
             STUDIO_S_V_C_LOOKING_PACKAGE,

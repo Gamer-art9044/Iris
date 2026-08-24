@@ -77,14 +77,14 @@ final class GoldenDebugObjectPlacer implements IObjectPlacer {
     @Override
     public int getHighest(int x, int z, IrisData data) {
         int result = delegate.getHighest(x, z, data);
-        IrisLogging.info("Goldendebug query: tag=" + tag + " getHighest(" + x + "," + z + ")=" + result);
+        IrisLogging.debug("Goldendebug query: tag=" + tag + " getHighest(" + x + "," + z + ")=" + result);
         return result;
     }
 
     @Override
     public int getHighest(int x, int z, IrisData data, boolean ignoreFluid) {
         int result = delegate.getHighest(x, z, data, ignoreFluid);
-        IrisLogging.info("Goldendebug query: tag=" + tag + " getHighest(" + x + "," + z + ",ignoreFluid=" + ignoreFluid + ")=" + result);
+        IrisLogging.debug("Goldendebug query: tag=" + tag + " getHighest(" + x + "," + z + ",ignoreFluid=" + ignoreFluid + ")=" + result);
         return result;
     }
 
@@ -106,7 +106,7 @@ final class GoldenDebugObjectPlacer implements IObjectPlacer {
     @Override
     public boolean isCarved(int x, int y, int z) {
         boolean result = delegate.isCarved(x, y, z);
-        IrisLogging.info("Goldendebug query: tag=" + tag + " isCarved(" + x + "," + y + "," + z + ")=" + result);
+        IrisLogging.debug("Goldendebug query: tag=" + tag + " isCarved(" + x + "," + y + "," + z + ")=" + result);
         return result;
     }
 
@@ -118,7 +118,7 @@ final class GoldenDebugObjectPlacer implements IObjectPlacer {
     @Override
     public boolean isSolid(int x, int y, int z) {
         boolean result = delegate.isSolid(x, y, z);
-        IrisLogging.info("Goldendebug query: tag=" + tag + " isSolid(" + x + "," + y + "," + z + ")=" + result);
+        IrisLogging.debug("Goldendebug query: tag=" + tag + " isSolid(" + x + "," + y + "," + z + ")=" + result);
         return result;
     }
 

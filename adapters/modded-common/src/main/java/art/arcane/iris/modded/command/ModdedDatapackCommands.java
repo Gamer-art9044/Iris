@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
@@ -35,8 +36,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.storage.LevelResource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -56,7 +55,6 @@ import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedDatapackCommands {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
     private static final String WORLD_PACK_NAME = "iris";
 
@@ -170,7 +168,7 @@ public final class ModdedDatapackCommands {
             try {
                 json = dimension.getDimensionType().toJson(DataVersion.getLatest().get());
             } catch (Throwable e) {
-                LOGGER.error("Iris dimension type generation failed for {}", dimension.getLoadKey(), e);
+                ModdedIrisLog.error("Iris dimension type generation failed for {}", dimension.getLoadKey(), e);
                 IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_DIMENSION_TYPE_GENERATION_FAILED, MessageArgument.untrusted("value", level.dimension().identifier()), MessageArgument.untrusted("value2", String.valueOf(e.getMessage()))));
                 continue;
             }
@@ -180,7 +178,7 @@ public final class ModdedDatapackCommands {
                 Files.writeString(output.toPath(), json, StandardCharsets.UTF_8);
                 written.add(output.getPath());
             } catch (IOException e) {
-                LOGGER.error("Iris dimension type write failed for {}", output, e);
+                ModdedIrisLog.error("Iris dimension type write failed for {}", output, e);
                 IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_FAILED_WRITE, MessageArgument.untrusted("output", output), MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
             }
         }
@@ -204,7 +202,7 @@ public final class ModdedDatapackCommands {
             Files.writeString(mcmeta.toPath(), meta, StandardCharsets.UTF_8);
             written.add(mcmeta.getPath());
         } catch (IOException e) {
-            LOGGER.error("Iris pack.mcmeta write failed for {}", mcmeta, e);
+            ModdedIrisLog.error("Iris pack.mcmeta write failed for {}", mcmeta, e);
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DATAPACK_COMMANDS_FAILED_WRITE_2, MessageArgument.untrusted("mcmeta", mcmeta), MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
             return 0;
         }
@@ -237,7 +235,7 @@ public final class ModdedDatapackCommands {
                     }
                 }
             } catch (Throwable e) {
-                LOGGER.error("Iris datapack import scan failed for pack {}", pack.getName(), e);
+                ModdedIrisLog.error("Iris datapack import scan failed for pack {}", pack.getName(), e);
             }
         }
 

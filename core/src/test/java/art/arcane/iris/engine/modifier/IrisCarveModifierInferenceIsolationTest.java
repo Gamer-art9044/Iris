@@ -70,7 +70,7 @@ public class IrisCarveModifierInferenceIsolationTest {
         Map<String, IrisBiome> customBiomes = new HashMap<>();
         customBiomes.put("shared", biome);
         CarveWallBuffer walls = new CarveWallBuffer(1);
-        walls.put(0, 1, 0, new MatterCavern(true, "shared", (byte) 0));
+        walls.put(0, 1, 0, new MatterCavern(true, "shared", (byte) 0), false);
         Method paintBoundaryZone = IrisCarveModifier.class.getDeclaredMethod(
                 "paintBoundaryZone",
                 Hunk.class,

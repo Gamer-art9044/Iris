@@ -29,8 +29,6 @@ import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -43,7 +41,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 public final class ModdedStartup {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final AtomicBoolean PREPARED = new AtomicBoolean(false);
     private static final AtomicBoolean STARTED = new AtomicBoolean(false);
 
@@ -76,7 +73,7 @@ public final class ModdedStartup {
             }
             if (!PackDirectoryResolver.listVisiblePackDirectories(legacy).isEmpty()) {
                 File real = art.arcane.iris.spi.IrisPlatforms.get().packsFolderNoCreate();
-                LOGGER.warn("Iris found packs under the legacy directory {} - modded packs load from {} only. Move them there.",
+                ModdedIrisLog.warn("Iris found packs under the legacy directory {} - modded packs load from {} only. Move them there.",
                         legacy.getAbsolutePath(), real.getAbsolutePath());
                 return;
             }
@@ -85,7 +82,7 @@ public final class ModdedStartup {
                 legacy.delete();
             }
         } catch (Throwable e) {
-            LOGGER.debug("Iris legacy packs directory check failed", e);
+            ModdedIrisLog.debug("Iris legacy packs directory check failed", e);
         }
     }
 
@@ -104,7 +101,7 @@ public final class ModdedStartup {
         try {
             ModdedForcedDatapack.regenerateIfStale("boot");
         } catch (Throwable failure) {
-            LOGGER.error("Iris could not refresh the forced datapack at boot", failure);
+            ModdedIrisLog.error("Iris could not refresh the forced datapack at boot", failure);
         }
     }
 
@@ -133,7 +130,7 @@ public final class ModdedStartup {
         List<File> packDirs = PackDirectoryResolver.listVisiblePackDirectories(packsRoot);
         PackValidationRegistry.clear();
         if (packDirs.isEmpty()) {
-            LOGGER.info("Iris found no packs to validate under {}; install one with /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>",
+            ModdedIrisLog.info("Iris found no packs to validate under {}; install one with /iris download pack=overworld, /iris download pack=underworld, or /iris download link=<zip-url>",
                     packsRoot.getAbsolutePath());
             return;
         }
@@ -142,19 +139,19 @@ public final class ModdedStartup {
                 PackValidationResult result = PackValidator.validate(packDir);
                 PackValidationRegistry.publish(result);
                 if (!result.isLoadable()) {
-                    LOGGER.error("Iris pack '{}' FAILED validation with {} blocking error(s); world/studio creation will be refused. First error: {}",
+                    ModdedIrisLog.error("Iris pack '{}' FAILED validation with {} blocking error(s); world/studio creation will be refused. First error: {}",
                             result.getPackName(), result.getBlockingErrors().size(),
                             result.getBlockingErrors().getFirst());
                 } else if (!result.getWarnings().isEmpty()) {
-                    LOGGER.info("Iris pack '{}' validated ({} warning(s)).", result.getPackName(), result.getWarnings().size());
+                    ModdedIrisLog.info("Iris pack '{}' validated ({} warning(s)).", result.getPackName(), result.getWarnings().size());
                     for (String warning : result.getWarnings()) {
-                        LOGGER.warn("  [{}] {}", result.getPackName(), warning);
+                        ModdedIrisLog.warn("  [{}] {}", result.getPackName(), warning);
                     }
                 } else {
-                    LOGGER.info("Iris pack '{}' validated.", result.getPackName());
+                    ModdedIrisLog.info("Iris pack '{}' validated.", result.getPackName());
                 }
             } catch (Throwable e) {
-                LOGGER.error("Iris pack validation failed for '{}'", packDir.getName(), e);
+                ModdedIrisLog.error("Iris pack validation failed for '{}'", packDir.getName(), e);
                 String detail = e.getMessage();
                 if (detail == null || detail.isBlank()) {
                     detail = e.getClass().getSimpleName();
@@ -190,7 +187,7 @@ public final class ModdedStartup {
         } catch (BrokenPackException e) {
             throw e;
         } catch (Throwable e) {
-            LOGGER.error("Iris required world-creation validation failed for '{}'", pack, e);
+            ModdedIrisLog.error("Iris required world-creation validation failed for '{}'", pack, e);
             String detail = e.getMessage();
             if (detail == null || detail.isBlank()) {
                 detail = e.getClass().getSimpleName();
@@ -220,17 +217,17 @@ public final class ModdedStartup {
             try {
                 ModdedDimensionManager.create(server, dimension.id(), dimension.pack(), dimension.dimension(), dimension.seed());
                 injected++;
-                LOGGER.info("Iris re-injected {}/{} '{}' (pack={} dim={}) in {}ms",
+                ModdedIrisLog.info("Iris re-injected {}/{} '{}' (pack={} dim={}) in {}ms",
                         index, dimensions.size(), dimension.id(), dimension.pack(), dimension.dimension(),
                         System.currentTimeMillis() - dimensionStartedAt);
             } catch (Throwable e) {
-                LOGGER.error("Iris failed to re-inject persistent dimension '{}' (pack={} dim={} seed={})", dimension.id(), dimension.pack(), dimension.dimension(), dimension.seed(), e);
+                ModdedIrisLog.error("Iris failed to re-inject persistent dimension '{}' (pack={} dim={} seed={})", dimension.id(), dimension.pack(), dimension.dimension(), dimension.seed(), e);
                 if (e instanceof OutOfMemoryError outOfMemory) {
                     throw outOfMemory;
                 }
             }
         }
-        LOGGER.info("Iris re-injected {}/{} persistent dimension(s) at startup in {}ms",
+        ModdedIrisLog.info("Iris re-injected {}/{} persistent dimension(s) at startup in {}ms",
                 injected, dimensions.size(), System.currentTimeMillis() - startedAt);
     }
 
@@ -245,7 +242,7 @@ public final class ModdedStartup {
                 }
             }
         } catch (IOException | RuntimeException unreadable) {
-            LOGGER.debug("Iris could not stat {} for validation reuse; revalidating", root, unreadable);
+            ModdedIrisLog.debug("Iris could not stat {} for validation reuse; revalidating", root, unreadable);
             return Long.MAX_VALUE;
         }
         return newest;

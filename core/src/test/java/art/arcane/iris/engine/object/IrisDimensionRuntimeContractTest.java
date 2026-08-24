@@ -2,6 +2,7 @@ package art.arcane.iris.engine.object;
 
 import org.junit.Test;
 
+import static art.arcane.iris.engine.object.IrisDimensionTypeOptions.TriState.TRUE;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -79,11 +80,83 @@ public class IrisDimensionRuntimeContractTest {
         }
     }
 
+    @Test
+    public void hotloadRejectsEnvironmentChanges() {
+        IrisDimension active = hotloadDimension();
+        IrisDimension replacement = hotloadDimension();
+        replacement.setEnvironment(IrisEnvironment.NETHER);
+
+        assertHotloadRejected(active, replacement, "active environment is NORMAL");
+    }
+
+    @Test
+    public void hotloadRejectsCustomEnvironmentEvenWhenItsBaseTypeMatchesNormal() {
+        IrisDimension active = hotloadDimension();
+        IrisDimension replacement = hotloadDimension();
+        replacement.setEnvironment(IrisEnvironment.CUSTOM);
+
+        assertHotloadRejected(active, replacement, "replacement environment is CUSTOM");
+    }
+
+    @Test
+    public void hotloadRejectsEffectiveDimensionOptionChanges() {
+        IrisDimension active = hotloadDimension();
+        IrisDimension replacement = hotloadDimension();
+        replacement.setDimensionOptions(new IrisDimensionTypeOptions().coordinateScale(2D));
+
+        assertHotloadRejected(active, replacement, "dimensionOptions");
+    }
+
+    @Test
+    public void hotloadRejectsFullbrightChangesThatAlterTheGeneratedType() {
+        IrisDimension active = hotloadDimension();
+        IrisDimension replacement = hotloadDimension();
+        replacement.setFullbright(true);
+
+        assertHotloadRejected(active, replacement, "fullbright");
+    }
+
+    @Test
+    public void hotloadAllowsExplicitOptionsEquivalentToTheBaseTemplate() {
+        IrisDimension active = hotloadDimension();
+        IrisDimension replacement = hotloadDimension();
+        replacement.setDimensionOptions(new IrisDimensionTypeOptions().skylight(TRUE));
+
+        IrisDimensionRuntimeContract.requireHotloadCompatible("Studio world", active, replacement, "iris");
+    }
+
+    @Test
+    public void hotloadAllowsTerrainOnlyDimensionChanges() {
+        IrisDimension active = hotloadDimension();
+        IrisDimension replacement = hotloadDimension();
+        replacement.setFluidHeight(80);
+
+        IrisDimensionRuntimeContract.requireHotloadCompatible("Studio world", active, replacement, "iris");
+    }
+
     private IrisDimensionRuntimeContract expectedContract() {
         IrisDimension dimension = new IrisDimension();
         dimension.setLoadKey("overworld");
         dimension.setDimensionHeight(new IrisRange(-256, 512));
         dimension.setLogicalHeight(512);
         return IrisDimensionRuntimeContract.expected(dimension, "iris");
+    }
+
+    private IrisDimension hotloadDimension() {
+        IrisDimension dimension = new IrisDimension();
+        dimension.setLoadKey("overworld");
+        dimension.setEnvironment(IrisEnvironment.NORMAL);
+        dimension.setDimensionHeight(new IrisRange(-64, 320));
+        dimension.setLogicalHeight(384);
+        return dimension;
+    }
+
+    private void assertHotloadRejected(IrisDimension active, IrisDimension replacement, String messageFragment) {
+        try {
+            IrisDimensionRuntimeContract.requireHotloadCompatible("Studio world", active, replacement, "iris");
+            fail("A hotload cannot replace the generated dimension type contract");
+        } catch (IrisDimensionContractException e) {
+            assertTrue(e.getMessage().contains(messageFragment));
+        }
     }
 }

@@ -48,8 +48,6 @@ import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -77,7 +75,6 @@ final class WorldCheckStructureAudit {
     private static final int MAX_FOOTPRINT_CHUNKS = 96;
     private static final int MAX_START_REFERENCE_CHUNKS = 16;
     private static final int MAX_STRUCTURE_CANDIDATES = 1024;
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
 
     private WorldCheckStructureAudit() {
     }
@@ -123,13 +120,13 @@ final class WorldCheckStructureAudit {
             }
         }
         boolean registryOk = registered.size() == check.registryKeys().size();
-        LOGGER.info("[worldcheck] {} registry: {}/{} resolved {}", check.label(), registered.size(),
+        ModdedIrisLog.info("[worldcheck] {} registry: {}/{} resolved {}", check.label(), registered.size(),
                 check.registryKeys().size(), registeredKeys);
         WorldCheckPredicates.qaEvent("structure_registry", check.label(), registryOk,
                 "resolved=" + registered.size() + ",expected=" + check.registryKeys().size()
                         + ",keys=" + String.join("|", registeredKeys));
         if (!registryOk) {
-            LOGGER.error("[worldcheck] {} registry resolution failed; expected {}", check.label(), check.registryKeys());
+            ModdedIrisLog.error("[worldcheck] {} registry resolution failed; expected {}", check.label(), check.registryKeys());
             WorldCheckPredicates.emitSkipped(check, "registry", "structure_reachability", "structure_locate",
                     "structure_start_reference", "structure_footprint", "structure_material",
                     "structure_block_entity");
@@ -149,12 +146,12 @@ final class WorldCheckStructureAudit {
             }
         }
         boolean reachableOk = !reachable.isEmpty();
-        LOGGER.info("[worldcheck] {} biome-reachable through Iris: {}", check.label(), reachableKeys);
+        ModdedIrisLog.info("[worldcheck] {} biome-reachable through Iris: {}", check.label(), reachableKeys);
         WorldCheckPredicates.qaEvent("structure_reachability", check.label(), reachableOk,
                 "reachable=" + reachable.size() + ",registered=" + registered.size()
                         + ",keys=" + String.join("|", reachableKeys));
         if (!reachableOk) {
-            LOGGER.error("[worldcheck] {} cannot generate in any biome produced by this Iris pack", check.label());
+            ModdedIrisLog.error("[worldcheck] {} cannot generate in any biome produced by this Iris pack", check.label());
             WorldCheckPredicates.emitSkipped(check, "reachability", "structure_locate", "structure_start_reference",
                     "structure_footprint", "structure_material", "structure_block_entity");
             return new StructureCheckResult(false, null);
@@ -170,7 +167,7 @@ final class WorldCheckStructureAudit {
                 "method=placement_candidates,millis=" + locateMillis + ",radius=" + check.locateRadius()
                         + ",result=" + (foundKey == null ? "none" : foundKey));
         if (found == null) {
-            LOGGER.error("[worldcheck] {} native placement candidates produced no valid start within {} rings after {}ms",
+            ModdedIrisLog.error("[worldcheck] {} native placement candidates produced no valid start within {} rings after {}ms",
                     check.label(), check.locateRadius(), locateMillis);
             WorldCheckPredicates.emitSkipped(check, "locate", "structure_start_reference", "structure_footprint",
                     "structure_material", "structure_block_entity");
@@ -178,11 +175,11 @@ final class WorldCheckStructureAudit {
         }
 
         BlockPos position = found.getFirst();
-        LOGGER.info("[worldcheck] {} generated candidate: {} {} {} in {}ms (radius={}, result={})",
+        ModdedIrisLog.info("[worldcheck] {} generated candidate: {} {} {} in {}ms (radius={}, result={})",
                 check.label(), position.getX(), position.getY(), position.getZ(), locateMillis,
                 check.locateRadius(), foundKey);
         if (!locateOk) {
-            LOGGER.error("[worldcheck] {} candidate scan returned unexpected structure {}", check.label(), foundKey);
+            ModdedIrisLog.error("[worldcheck] {} candidate scan returned unexpected structure {}", check.label(), foundKey);
             WorldCheckPredicates.emitSkipped(check, "locate", "structure_start_reference", "structure_footprint",
                     "structure_material", "structure_block_entity");
             return new StructureCheckResult(false, null);
@@ -196,13 +193,13 @@ final class WorldCheckStructureAudit {
         boolean validStart = start != null && start.isValid();
         int references = targetChunk.getReferencesForStructure(structure).size();
         boolean startReferenceOk = WorldCheckPredicates.hasNativeStructureEvidence(validStart, references);
-        LOGGER.info("[worldcheck] {} target chunk {},{}: valid start={}, references={}",
+        ModdedIrisLog.info("[worldcheck] {} target chunk {},{}: valid start={}, references={}",
                 check.label(), chunkX, chunkZ, validStart, references);
         WorldCheckPredicates.qaEvent("structure_start_reference", check.label(), startReferenceOk,
                 "chunk=" + chunkX + "," + chunkZ + ",validStart=" + validStart
                         + ",references=" + references);
         if (!startReferenceOk || !validStart) {
-            LOGGER.error("[worldcheck] {} located at chunk {},{} but no resolvable valid start was generated",
+            ModdedIrisLog.error("[worldcheck] {} located at chunk {},{} but no resolvable valid start was generated",
                     check.label(), chunkX, chunkZ);
             WorldCheckPredicates.emitSkipped(check, "start_reference", "structure_footprint", "structure_material",
                     "structure_block_entity");
@@ -221,7 +218,7 @@ final class WorldCheckStructureAudit {
                 "configured=" + decision.yShift() + ",applied="
                         + (appliedShift == null ? "unrecorded" : appliedShift));
         if (!verticalShiftOk) {
-            LOGGER.error("[worldcheck] {} expected vertical shift {} but generation recorded {}",
+            ModdedIrisLog.error("[worldcheck] {} expected vertical shift {} but generation recorded {}",
                     check.label(), decision.yShift(), appliedShift);
         }
 
@@ -229,7 +226,7 @@ final class WorldCheckStructureAudit {
         boolean footprintOk = footprint.inspectedChunks() > 0
                 && footprint.evidenceChunks() == footprint.inspectedChunks()
                 && footprint.coveredPieces() == footprint.totalPieces();
-        LOGGER.info("[worldcheck] {} footprint: chunks={}/{} evidence={} pieces={}/{}",
+        ModdedIrisLog.info("[worldcheck] {} footprint: chunks={}/{} evidence={} pieces={}/{}",
                 check.label(), footprint.inspectedChunks(), footprint.availableChunks(),
                 footprint.evidenceChunks(), footprint.coveredPieces(), footprint.totalPieces());
         WorldCheckPredicates.qaEvent("structure_footprint", check.label(), footprintOk,
@@ -239,7 +236,7 @@ final class WorldCheckStructureAudit {
 
         boolean materialOk = WorldCheckPredicates.hasCharacteristicMaterialEvidence(footprint.characteristicBlocks(),
                 footprint.characteristicChunks(), footprint.materialScannedChunks());
-        LOGGER.info("[worldcheck] {} material: blocks={} chunks={}/{}",
+        ModdedIrisLog.info("[worldcheck] {} material: blocks={} chunks={}/{}",
                 check.label(), footprint.characteristicBlocks(), footprint.characteristicChunks(),
                 footprint.materialScannedChunks());
         WorldCheckPredicates.qaEvent("structure_material", check.label(), materialOk,
@@ -250,7 +247,7 @@ final class WorldCheckStructureAudit {
         if (check.label().equals("mansion")) {
             boolean overlap = footprint.vegetationBlocks() > 0;
             vegetationOk = WorldCheckPredicates.mansionVegetationPass(footprint.vegetationBlocks());
-            LOGGER.info("[worldcheck] mansion vegetation metric: remaining log/leaf blocks={} columns={} overlap={}",
+            ModdedIrisLog.info("[worldcheck] mansion vegetation metric: remaining log/leaf blocks={} columns={} overlap={}",
                     footprint.vegetationBlocks(), footprint.vegetationColumns(), overlap);
             WorldCheckPredicates.qaEvent("mansion_vegetation_metric", check.label(), vegetationOk,
                     "remainingLogsOrLeaves=" + footprint.vegetationBlocks() + ",columns="
@@ -261,7 +258,7 @@ final class WorldCheckStructureAudit {
         PendingVillagePoi pendingPoi = null;
         if (check.label().equals("village")) {
             foundationOk = WorldCheckPredicates.villageFoundationPass(footprint.foundationGapColumns());
-            LOGGER.info("[worldcheck] village foundation metric: bases={} cobblestone={} columns={} unsupported={}",
+            ModdedIrisLog.info("[worldcheck] village foundation metric: bases={} cobblestone={} columns={} unsupported={}",
                     footprint.foundationBaseColumns(), footprint.foundationBlocks(),
                     footprint.foundationColumns(), footprint.foundationGapColumns());
             WorldCheckPredicates.qaEvent("village_foundation_metric", check.label(), foundationOk,
@@ -272,26 +269,26 @@ final class WorldCheckStructureAudit {
         }
 
         boolean blockEntityOk = footprint.blockEntityStates() == footprint.blockEntitiesPresent();
-        LOGGER.info("[worldcheck] {} block entities: state blocks={}, present={}, missing={}",
+        ModdedIrisLog.info("[worldcheck] {} block entities: state blocks={}, present={}, missing={}",
                 check.label(), footprint.blockEntityStates(), footprint.blockEntitiesPresent(),
                 footprint.blockEntityStates() - footprint.blockEntitiesPresent());
         WorldCheckPredicates.qaEvent("structure_block_entity", check.label(), blockEntityOk,
                 "states=" + footprint.blockEntityStates() + ",present=" + footprint.blockEntitiesPresent()
                         + ",missing=" + (footprint.blockEntityStates() - footprint.blockEntitiesPresent()));
         if (!footprintOk) {
-            LOGGER.error("[worldcheck] {} structure footprint is incomplete", check.label());
+            ModdedIrisLog.error("[worldcheck] {} structure footprint is incomplete", check.label());
         }
         if (!materialOk) {
-            LOGGER.error("[worldcheck] {} has no distributed characteristic structure material", check.label());
+            ModdedIrisLog.error("[worldcheck] {} has no distributed characteristic structure material", check.label());
         }
         if (!blockEntityOk) {
-            LOGGER.error("[worldcheck] {} generated block-entity states without matching block entities", check.label());
+            ModdedIrisLog.error("[worldcheck] {} generated block-entity states without matching block entities", check.label());
         }
         if (!vegetationOk) {
-            LOGGER.error("[worldcheck] mansion vegetation still intersects the generated structure footprint");
+            ModdedIrisLog.error("[worldcheck] mansion vegetation still intersects the generated structure footprint");
         }
         if (!foundationOk) {
-            LOGGER.error("[worldcheck] village has unsupported foundation columns after stilt placement");
+            ModdedIrisLog.error("[worldcheck] village has unsupported foundation columns after stilt placement");
         }
         boolean pass = verticalShiftOk && footprintOk && materialOk && blockEntityOk
                 && vegetationOk && foundationOk;

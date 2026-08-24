@@ -54,16 +54,53 @@ public final class ModdedIrisLog {
         LOGGER.info("[Iris/DEBUG] " + clean(message));
     }
 
+    public static void debug(String format, Object... arguments) {
+        RenderedLog rendered = render(format, arguments);
+        if (rendered.error() == null) {
+            debug(rendered.message());
+            return;
+        }
+        if (!debugEnabled()) {
+            LOGGER.debug(clean(rendered.message()), rendered.error());
+            return;
+        }
+
+        LOGGER.info("[Iris/DEBUG] " + clean(rendered.message()), rendered.error());
+    }
+
     public static void info(String message) {
         LOGGER.info(clean(message));
+    }
+
+    public static void info(String format, Object... arguments) {
+        RenderedLog rendered = render(format, arguments);
+        if (rendered.error() != null) {
+            LOGGER.info(clean(rendered.message()), rendered.error());
+            return;
+        }
+        info(rendered.message());
     }
 
     public static void warn(String message) {
         LOGGER.warn(clean(message));
     }
 
+    public static void warn(String format, Object... arguments) {
+        RenderedLog rendered = render(format, arguments);
+        if (rendered.error() != null) {
+            LOGGER.warn(clean(rendered.message()), rendered.error());
+            return;
+        }
+        warn(rendered.message());
+    }
+
     public static void error(String message) {
         LOGGER.error(clean(message));
+    }
+
+    public static void error(String format, Object... arguments) {
+        RenderedLog rendered = render(format, arguments);
+        error(rendered.message(), rendered.error());
     }
 
     public static void error(String message, Throwable error) {
@@ -77,6 +114,34 @@ public final class ModdedIrisLog {
 
     public static String clean(String message) {
         return IrisLogging.clean(message);
+    }
+
+    static RenderedLog render(String format, Object... arguments) {
+        String source = format == null ? "null" : format;
+        if (arguments == null || arguments.length == 0) {
+            return new RenderedLog(source, null);
+        }
+
+        int argumentCount = arguments.length;
+        Throwable error = arguments[argumentCount - 1] instanceof Throwable throwable ? throwable : null;
+        if (error != null) {
+            argumentCount--;
+        }
+
+        StringBuilder output = new StringBuilder(source.length() + argumentCount * 8);
+        int cursor = 0;
+        int argumentIndex = 0;
+        while (argumentIndex < argumentCount) {
+            int placeholder = source.indexOf("{}", cursor);
+            if (placeholder < 0) {
+                break;
+            }
+            output.append(source, cursor, placeholder);
+            output.append(String.valueOf(arguments[argumentIndex++]));
+            cursor = placeholder + 2;
+        }
+        output.append(source, cursor, source.length());
+        return new RenderedLog(output.toString(), error);
     }
 
     private static boolean debugEnabled() {
@@ -96,5 +161,8 @@ public final class ModdedIrisLog {
 
         DEBUG_SETTING_WARNING_LOGGED = true;
         LOGGER.warn("Iris debug logging setting could not be read", error);
+    }
+
+    record RenderedLog(String message, Throwable error) {
     }
 }

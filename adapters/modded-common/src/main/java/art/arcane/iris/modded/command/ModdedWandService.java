@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
@@ -42,8 +43,6 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.level.Level;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.awt.Color;
 import java.util.List;
@@ -52,7 +51,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class ModdedWandService {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Iris");
     private static final ConcurrentHashMap<UUID, Selection> SELECTIONS = new ConcurrentHashMap<>();
     private static final String WAND_TAG = "iris_wand";
     private static final String DUST_TAG = "iris_dust";
@@ -213,7 +211,7 @@ public final class ModdedWandService {
                 draw(player.level(), player, selection);
             }
         } catch (Throwable e) {
-            LOGGER.error("Iris wand selection draw failed", e);
+            ModdedIrisLog.error("Iris wand selection draw failed", e);
         }
     }
 

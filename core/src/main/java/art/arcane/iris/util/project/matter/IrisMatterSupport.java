@@ -112,10 +112,9 @@ public final class IrisMatterSupport {
             long oldSize = folder.length();
             object.read(folder);
             from(object).write(folder);
-            IrisLogging.info("Converted " + folder.getPath() + " Saved " + (oldSize - folder.length()));
+            IrisLogging.debug("Converted " + folder.getPath() + " Saved " + (oldSize - folder.length()));
         } catch (Throwable e) {
-            IrisLogging.error("Failed to convert " + folder.getPath());
-            e.printStackTrace();
+            IrisLogging.reportError("Failed to convert " + folder.getPath() + ".", e);
         }
 
         return 0;

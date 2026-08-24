@@ -22,22 +22,16 @@ import art.arcane.iris.Iris;
 import art.arcane.iris.core.BukkitWorldReconciler;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisSettings;
-import art.arcane.iris.core.IrisStartupValidation;
-import art.arcane.iris.core.DatapackInstallResult;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.PendingWorldReplacementManager;
 import art.arcane.iris.core.ServerConfigurator;
-import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration;
 import art.arcane.iris.core.lifecycle.IrisWorldRemovalService;
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;
 import art.arcane.iris.core.lifecycle.WorldLifecycleService;
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.nms.INMS;
-import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
-import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.service.StudioSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
@@ -62,9 +56,7 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -160,16 +152,6 @@ public class CommandIris implements DirectorExecutor {
             return;
         }
 
-        if (J.isFolia()) {
-            boolean staged = stageFoliaWorldCreation(worldName, dimension, seed);
-            if (!staged) {
-                return;
-            }
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_WORLD_STAGING_COMPLETED_RESTARTING_SERVER_GENERATE_LOAD, MessageArgument.untrusted("worldName", worldName)));
-            ServerConfigurator.restart("Iris staged Folia world \"" + worldName + "\" for startup.");
-            return;
-        }
-
         try {
             IrisToolbelt.createWorld()
                     .dimension(resolvedType)
@@ -260,116 +242,6 @@ public class CommandIris implements DirectorExecutor {
                     ? failure.getClass().getSimpleName()
                     : failure.getMessage();
             sender().sendMessage(C.RED + "Could not stage the world replacement: " + detail);
-        }
-    }
-
-    private boolean stageFoliaWorldCreation(String name, IrisDimension dimension, long seed) {
-        try {
-            IrisStartupValidation.requireWorldCreationReady();
-            PackValidationRegistry.requireLoadable(
-                    dimension.getLoader().getDataFolder().getName());
-        } catch (RuntimeException exception) {
-            sender().sendMessage(C.RED + exception.getMessage());
-            return false;
-        }
-        NamespacedKey worldKey = IrisWorldStorage.managedKeyFromName(name);
-        LifecycleOperationCoordinator.Lease worldLease = null;
-        File worldFolder = IrisWorldStorage.requireSafeManagedDimensionRoot(worldKey);
-        Path stagedWorld = null;
-        try {
-            LifecycleOperationCoordinator coordinator = LifecycleOperationCoordinator.get();
-            worldLease = coordinator.acquire(
-                    LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
-                    LifecycleOperationCoordinator.OperationKind.WORLD_CREATE,
-                    worldKey.toString());
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_RUNTIME_WORLD_CREATION_IS_DISABLED_ON_FOLIA));
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_PREPARING_WORLD_FILES_BUKKIT_YML_NEXT_STARTUP));
-            if (worldFolder.exists()) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_THAT_FOLDER_ALREADY_EXISTS));
-                return false;
-            }
-
-            DatapackInstallResult datapackResult = ServerConfigurator.installDataPacksIfChanged(true);
-            if (!datapackResult.succeeded()) {
-                sender().sendMessage(C.RED + "Failed to compile the Iris datapack. No world files were staged.");
-                return false;
-            }
-
-            Path targetWorld = worldFolder.toPath().toAbsolutePath().normalize();
-            Path namespaceRoot = targetWorld.getParent();
-            if (namespaceRoot == null) {
-                throw new IOException("Iris world target has no namespace directory: " + targetWorld);
-            }
-            Files.createDirectories(namespaceRoot);
-            stagedWorld = Files.createTempDirectory(namespaceRoot, ".iris-create-" + worldKey.getKey() + "-");
-            Path sourceOverworld = IrisWorldStorage.dimensionRoot(
-                    IrisWorldStorage.levelRoot(),
-                    NamespacedKey.minecraft("overworld")
-            ).toPath();
-            INMS.get().writeCurrentPaperWorldData(sourceOverworld, stagedWorld, seed);
-
-            IrisDimension installed = Iris.service(StudioSVC.class).installIntoWorld(
-                    sender(),
-                    dimension,
-                    stagedWorld.toFile()
-            );
-            if (installed == null) {
-                sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_STAGE_WORLD_FILES_DIMENSION, MessageArgument.untrusted("value", dimension.getLoadKey())));
-                return false;
-            }
-
-            try (AtomicDirectoryPublisher.Publication publication = AtomicDirectoryPublisher.publishAbsent(
-                    stagedWorld,
-                    targetWorld
-            )) {
-                stagedWorld = null;
-                if (!registerWorldInBukkitYml(worldKey, dimension.getLoadKey(), seed)) {
-                    return false;
-                }
-                publication.commit();
-            }
-
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_STAGED_IRIS_WORLD_WITH_GENERATOR_IRIS_SEED, MessageArgument.untrusted("name", name), MessageArgument.untrusted("value", dimension.getLoadKey()), MessageArgument.untrusted("seed", seed)));
-            return true;
-        } catch (LifecycleOperationCoordinator.BusyException e) {
-            sender().sendMessage(C.YELLOW + e.getMessage());
-            return false;
-        } catch (Throwable e) {
-            sender().sendMessage(C.RED + "Failed to stage the complete Iris world: " + e.getMessage());
-            Iris.reportError("Failed to stage complete Folia world \"" + worldKey + "\".", e);
-            return false;
-        } finally {
-            if (stagedWorld != null) {
-                deleteDirectorySafely(stagedWorld.toFile());
-            }
-            if (worldLease != null) {
-                worldLease.close();
-            }
-        }
-    }
-
-    private boolean registerWorldInBukkitYml(NamespacedKey worldKey, String dimension, Long seed) {
-        String configuredWorldName = IrisWorldStorage.configuredWorldName(
-                worldKey,
-                IrisWorldStorage.levelRoot().getName()
-        );
-        try {
-            BukkitWorldConfiguration.register(BUKKIT_YML, configuredWorldName, dimension, seed);
-            Iris.info("Registered \"" + configuredWorldName + "\" in bukkit.yml");
-            return true;
-        } catch (IOException e) {
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_FAILED_UPDATE_BUKKIT_YML, MessageArgument.untrusted("value", String.valueOf(e.getMessage()))));
-            Iris.error("Failed to update bukkit.yml!");
-            Iris.reportError(e);
-            return false;
-        }
-    }
-
-    private void deleteDirectorySafely(File directory) {
-        try {
-            AtomicDirectoryPublisher.deleteTree(directory.toPath());
-        } catch (IOException e) {
-            Iris.reportError("Failed to roll back staged world folder \"" + directory.getAbsolutePath() + "\".", e);
         }
     }
 

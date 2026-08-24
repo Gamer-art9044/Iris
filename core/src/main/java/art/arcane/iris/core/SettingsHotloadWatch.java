@@ -92,7 +92,6 @@ public final class SettingsHotloadWatch implements AutoCloseable {
             } catch (RuntimeException failure) {
                 IrisLogging.error("Iris settings and locale hotload watcher failed: " + failureDetail(failure));
                 IrisLogging.reportError(failure);
-                failure.printStackTrace();
             }
         }
     }
@@ -113,7 +112,7 @@ public final class SettingsHotloadWatch implements AutoCloseable {
         boolean missing = "missing".equals(snapshot.signature());
         if (isSettingsFile(file)) {
             if (missing) {
-                IrisLogging.warn("settings.json was removed; retaining the last valid runtime settings.");
+                IrisLogging.warn("iris.json was removed; retaining the last valid runtime settings.");
                 return true;
             }
             if (snapshot.normalizedContent() == null) {
@@ -210,7 +209,6 @@ public final class SettingsHotloadWatch implements AutoCloseable {
         } catch (RuntimeException failure) {
             IrisLogging.error("Rejected invalid settings hotload from " + file.getAbsolutePath() + ": " + failureDetail(failure));
             IrisLogging.reportError(failure);
-            failure.printStackTrace();
             return false;
         }
     }
@@ -221,7 +219,6 @@ public final class SettingsHotloadWatch implements AutoCloseable {
         } catch (RuntimeException failure) {
             IrisLogging.error("Rejected invalid locale hotload from " + file.getAbsolutePath() + ": " + failureDetail(failure));
             IrisLogging.reportError(failure);
-            failure.printStackTrace();
             return false;
         }
     }
@@ -251,7 +248,6 @@ public final class SettingsHotloadWatch implements AutoCloseable {
         }
         IrisLogging.error("Failed to read watched Iris file " + path + ": " + failureDetail(failure));
         IrisLogging.reportError(failure);
-        failure.printStackTrace();
     }
 
     private void clearCaptureFailure(File file) {
@@ -262,12 +258,12 @@ public final class SettingsHotloadWatch implements AutoCloseable {
         File file = delta.file();
         if (isSettingsFile(file)) {
             if (delta.after() != null) {
-                IrisLogging.info("Hotloaded settings.json");
+                IrisLogging.debug("Hotloaded iris.json");
             }
             return;
         }
         if (IrisLanguage.isActiveOverrideFile(file)) {
-            IrisLogging.info("Hotloaded locale override " + file.getName());
+            IrisLogging.debug("Hotloaded locale override " + file.getName());
         }
     }
 

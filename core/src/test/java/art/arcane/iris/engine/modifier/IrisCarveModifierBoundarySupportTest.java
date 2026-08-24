@@ -5,6 +5,8 @@ import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
+import art.arcane.iris.engine.river.cave.RiverCaveAction;
+import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
@@ -107,10 +109,52 @@ public class IrisCarveModifierBoundarySupportTest {
         assertTrue(IrisCarveModifier.hasStableCaveFloorSupport(output, 0, 6, 0));
     }
 
+    @Test
+    public void riverGuardOnlyAcceptsStableSolidBoundaryLayers() {
+        RiverCaveHydrology guard = RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD);
+        PlatformBlockState stone = state("minecraft:stone", true);
+        PlatformBlockState sand = state("minecraft:sand", true);
+        PlatformBlockState water = state("minecraft:water", false, true);
+
+        assertTrue(IrisCarveModifier.canReplaceRiverGuard(guard, stone, false));
+        assertTrue(IrisCarveModifier.canReplaceRiverGuard(guard, stone, true));
+        assertTrue(IrisCarveModifier.canReplaceRiverGuard(guard, sand, false));
+        assertFalse(IrisCarveModifier.canReplaceRiverGuard(guard, sand, true));
+        assertFalse(IrisCarveModifier.canReplaceRiverGuard(guard, water, false));
+    }
+
+    @Test
+    public void riverBiomeInheritanceIsColumnCoherentAndHonorsLimits() {
+        long seed = 7845123L;
+        boolean cell = IrisCarveModifier.selectsParentRiverBiome(seed, 8, 12, 0.5D);
+        for (int x = 8; x < 12; x++) {
+            for (int z = 12; z < 16; z++) {
+                assertTrue(cell == IrisCarveModifier.selectsParentRiverBiome(seed, x, z, 0.5D));
+            }
+        }
+        assertFalse(IrisCarveModifier.selectsParentRiverBiome(seed, 8, 12, 0D));
+        assertTrue(IrisCarveModifier.selectsParentRiverBiome(seed, 8, 12, 1D));
+
+        boolean inherited = false;
+        boolean overridden = false;
+        for (int x = -128; x <= 128; x += 4) {
+            boolean selected = IrisCarveModifier.selectsParentRiverBiome(seed, x, 0, 0.5D);
+            inherited |= selected;
+            overridden |= !selected;
+        }
+        assertTrue(inherited);
+        assertTrue(overridden);
+    }
+
     private PlatformBlockState state(String key, boolean solid) {
+        return state(key, solid, false);
+    }
+
+    private PlatformBlockState state(String key, boolean solid, boolean fluid) {
         PlatformBlockState state = mock(PlatformBlockState.class);
         doReturn(key).when(state).key();
         doReturn(solid).when(state).isSolid();
+        doReturn(fluid).when(state).isFluid();
         return state;
     }
 }

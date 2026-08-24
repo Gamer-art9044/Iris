@@ -40,6 +40,8 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -77,7 +79,6 @@ public class J {
         SchedulerBridge.setCancelScheduler(J::car);
         SchedulerBridge.setErrorHandler(e -> {
             IrisLogging.reportError(e);
-            e.printStackTrace();
         });
         SchedulerBridge.setInfoLogger(IrisLogging::debug);
         SchedulerBridge.setThreadRegistrar(thread -> {
@@ -104,7 +105,6 @@ public class J {
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
                 IrisLogging.error("Failed to run async task");
-                e.printStackTrace();
             }
         });
     }
@@ -116,7 +116,6 @@ public class J {
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
                 IrisLogging.error("Failed to run async task");
-                e.printStackTrace();
             }
         });
     }
@@ -379,6 +378,7 @@ public class J {
     }
 
     public static void cancelPluginTasks() {
+        cancelTrackedRepeatingTasks();
         if (!BukkitPlatform.hasPlugin()) {
             return;
         }
@@ -390,6 +390,17 @@ public class J {
         } catch (UnsupportedOperationException ex) {
             // Folia blocks BukkitScheduler usage.
             IrisLogging.debug("Skipping BukkitScheduler#cancelTasks for Iris on this server.");
+        }
+    }
+
+    static void cancelTrackedRepeatingTasks() {
+        List<Runnable> cancelActions;
+        synchronized (REPEATING_CANCELLERS) {
+            cancelActions = new ArrayList<>(REPEATING_CANCELLERS.values());
+            REPEATING_CANCELLERS.clear();
+        }
+        for (Runnable cancelAction : cancelActions) {
+            cancelAction.run();
         }
     }
 
@@ -587,7 +598,6 @@ public class J {
                 r.run();
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
-                e.printStackTrace();
             }
             if (state.cancelled || !canSchedule()) {
                 REPEATING_CANCELLERS.remove(taskId);
@@ -677,7 +687,6 @@ public class J {
                 r.run();
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
-                e.printStackTrace();
             }
             if (state.cancelled || !canSchedule()) {
                 REPEATING_CANCELLERS.remove(taskId);
@@ -708,13 +717,18 @@ public class J {
     }
 
     private static int trackRepeatingTask(Runnable cancelAction) {
-        int id = TASK_IDS.getAndIncrement();
-        REPEATING_CANCELLERS.put(id, cancelAction);
-        return id;
+        synchronized (REPEATING_CANCELLERS) {
+            int id = TASK_IDS.getAndIncrement();
+            REPEATING_CANCELLERS.put(id, cancelAction);
+            return id;
+        }
     }
 
     private static void cancelRepeatingTask(int id) {
-        Runnable cancelAction = REPEATING_CANCELLERS.remove(id);
+        Runnable cancelAction;
+        synchronized (REPEATING_CANCELLERS) {
+            cancelAction = REPEATING_CANCELLERS.remove(id);
+        }
         if (cancelAction != null) {
             cancelAction.run();
         }

@@ -56,6 +56,8 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -281,11 +283,7 @@ public class ServerConfigurator {
             IrisLogging.error("Unable to install datapacks, fixer is null!");
             return DatapackInstallResult.failedResult();
         }
-        if (fullInstall) {
-            IrisLogging.info("Checking Data Packs...");
-        } else {
-            IrisLogging.debug("Checking Data Packs...");
-        }
+        IrisLogging.debug("Checking Data Packs...");
         List<File> packRoots;
         List<IrisGeneratorBinding> bindings;
         try {
@@ -349,11 +347,7 @@ public class ServerConfigurator {
                 }
             }
         }
-        if (fullInstall) {
-            IrisLogging.info("Data Packs Setup!");
-        } else {
-            IrisLogging.debug("Data Packs Setup!");
-        }
+        IrisLogging.debug("Data Packs Setup!");
 
         boolean verifiedRestartRequired = fullInstall && verifyDataPacksPost();
         boolean restartRequired = fullInstall && (reapply.changed() || verifiedRestartRequired);
@@ -1026,17 +1020,37 @@ public class ServerConfigurator {
                 ? "Iris startup validation requires a restart."
                 : reason.trim();
         IrisLogging.warn(restartReason + " Restarting server before default worlds are loaded.");
+        boolean restartInvoked = false;
         try {
-            Bukkit.restart();
-        } catch (Throwable failure) {
-            IrisLogging.reportError("Unable to restart the server at the Iris startup boundary.", failure);
+            restartInvoked = invokeImmediateRestartIfSupported(Bukkit.class);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            Throwable cause = failure instanceof InvocationTargetException invocationFailure
+                    && invocationFailure.getCause() != null
+                    ? invocationFailure.getCause()
+                    : failure;
+            IrisLogging.reportError("Unable to restart the server at the Iris startup boundary.", cause);
         }
-        IrisLogging.error("The immediate Iris startup restart returned unexpectedly; stopping the server instead.");
+        if (restartInvoked) {
+            IrisLogging.error("The immediate Iris startup restart returned unexpectedly; stopping the server instead.");
+        } else {
+            IrisLogging.warn("This server has no immediate restart API; stopping at the Iris startup boundary instead.");
+        }
         try {
             Bukkit.shutdown();
         } catch (Throwable failure) {
             IrisLogging.reportError("Unable to stop the server after the Iris startup restart returned.", failure);
         }
+    }
+
+    static boolean invokeImmediateRestartIfSupported(Class<?> bukkitApi) throws ReflectiveOperationException {
+        Method restartMethod;
+        try {
+            restartMethod = Objects.requireNonNull(bukkitApi, "Bukkit API class").getMethod("restart");
+        } catch (NoSuchMethodException ignored) {
+            return false;
+        }
+        restartMethod.invoke(null);
+        return true;
     }
 
     public static boolean verifyDataPackInstalled(IrisDimension dimension) {
@@ -1056,11 +1070,9 @@ public class ServerConfigurator {
 
         if (!INMS.get().supportsDataPacks()) {
             if (!keys.isEmpty()) {
-                IrisLogging.warn("===================================================================================");
                 IrisLogging.warn("Pack " + key + " has " + keys.size() + " custom biome(s). ");
                 IrisLogging.warn("Your server version does not yet support datapacks for iris.");
                 IrisLogging.warn("The world will generate these biomes as backup biomes.");
-                IrisLogging.warn("====================================================================================");
             }
 
             return true;

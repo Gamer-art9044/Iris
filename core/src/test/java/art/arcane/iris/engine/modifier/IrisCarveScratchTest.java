@@ -22,19 +22,21 @@ public class IrisCarveScratchTest {
             int y = 20 + index;
             int z = (index * 3) & 15;
             MatterCavern cavern = new MatterCavern(true, "cave-" + index, (byte) 0);
-            buffer.put(x, y, z, cavern);
+            buffer.put(x, y, z, cavern, (index & 1) == 0);
             expected.put(key(x, y, z), cavern);
         }
 
         MatterCavern replacement = new MatterCavern(true, "replacement", (byte) 0);
-        buffer.put(5, 25, 15, replacement);
+        buffer.put(5, 25, 15, replacement, true);
         expected.put(key(5, 25, 15), replacement);
 
         assertSame(replacement, buffer.get(5, 25, 15));
+        assertTrue(buffer.isRiverBoundary(5, 25, 15));
         assertNull(buffer.get(5, 26, 15));
+        assertFalse(buffer.isRiverBoundary(5, 26, 15));
 
         Map<String, MatterCavern> actual = new HashMap<>();
-        buffer.forEach((x, y, z, cavern) -> actual.put(key(x, y, z), cavern));
+        buffer.forEach((x, y, z, cavern, riverBoundary) -> actual.put(key(x, y, z), cavern));
         assertEquals(expected.keySet(), actual.keySet());
         for (Map.Entry<String, MatterCavern> entry : expected.entrySet()) {
             assertSame(entry.getValue(), actual.get(entry.getKey()));
@@ -47,7 +49,7 @@ public class IrisCarveScratchTest {
         MatterCavern cavern = new MatterCavern(true, "cave", (byte) 0);
         scratch.columnMasks[0].add(12);
         scratch.boundaryMasks[0].add(13);
-        scratch.walls.put(1, 12, 2, cavern);
+        scratch.walls.put(1, 12, 2, cavern, true);
         scratch.customBiomeCache.put("cave", null);
         scratch.customCaveBiomePresent = true;
 
@@ -58,7 +60,7 @@ public class IrisCarveScratchTest {
         assertTrue(scratch.customBiomeCache.isEmpty());
         assertFalse(scratch.customCaveBiomePresent);
         int[] wallCount = new int[1];
-        scratch.walls.forEach((x, y, z, value) -> wallCount[0]++);
+        scratch.walls.forEach((x, y, z, value, riverBoundary) -> wallCount[0]++);
         assertEquals(0, wallCount[0]);
     }
 

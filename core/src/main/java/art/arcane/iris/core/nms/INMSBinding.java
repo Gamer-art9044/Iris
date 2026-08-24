@@ -54,8 +54,6 @@ import org.bukkit.generator.ChunkGenerator;
 import org.bukkit.inventory.ItemStack;
 
 import java.awt.Color;
-import java.io.IOException;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -270,14 +268,6 @@ public interface INMSBinding {
      * called on plugin disable and pre-unload so the transformer cannot outlive the plugin.
      */
     default void uninjectBukkit() {
-    }
-
-    default void writeCurrentPaperWorldData(
-            Path sourceWorldDirectory,
-            Path targetWorldDirectory,
-            long seed
-    ) throws IOException {
-        throw new UnsupportedOperationException("The active NMS binding does not support current Paper world data staging.");
     }
 
     default boolean awaitServerShutdownBoundary(long timeout, TimeUnit unit) {

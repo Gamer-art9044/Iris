@@ -92,16 +92,6 @@ public class IrisRiverTopology {
     @Desc("The deterministic attraction toward shared downstream nodes. Larger values form stronger tributary trees and confluences.")
     private double confluenceWeight = 0D;
 
-    @MinNumber(1)
-    @MaxNumber(8)
-    @Desc("The number of upstream children a graph node accepts before additional branches begin shrinking probabilistically.")
-    private int branchSoftCap = 4;
-
-    @MinNumber(0)
-    @MaxNumber(1)
-    @Desc("The multiplicative survival factor for each child beyond branchSoftCap. Recursive generations remain unbounded by depth.")
-    private double branchChildShrinkFactor = 0.35D;
-
     @MinNumber(0)
     @MaxNumber(16)
     @Desc("The contribution of natural terrain height to downstream routing cost.")

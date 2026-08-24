@@ -210,9 +210,11 @@ public final class RiverTile {
 
         double distance = StrictMath.sqrt(nearestDistanceSquared);
         double localWidth = nearestReach.widthAt(nearestAlongReach);
+        double localBankWidth = nearestReach.bankWidthAt(nearestAlongReach);
+        double localDepth = nearestReach.depthAt(nearestAlongReach);
         double channelRadius = localWidth * 0.5;
         RiverSection section = section(nearestReach, distance, channelRadius);
-        double carveWeight = carveWeight(distance, channelRadius, nearestReach.bankWidth());
+        double carveWeight = carveWeight(distance, channelRadius, localBankWidth);
         return new RiverSample(
                 true,
                 nearestReach.state(),
@@ -223,8 +225,8 @@ public final class RiverTile {
                 nearestReach.flow(),
                 nearestReach.order(),
                 localWidth,
-                nearestReach.bankWidth(),
-                nearestReach.depth(),
+                localBankWidth,
+                localDepth,
                 nearestReach.terminal(),
                 nearestReach.id()
         );
@@ -325,7 +327,7 @@ public final class RiverTile {
         RiverPolyline polyline = reach.polyline();
         if (polyline.length() == 0D) {
             double distanceSquared = squared(x - polyline.x(0)) + squared(z - polyline.z(0));
-            double radius = reach.widthAt(0D) * 0.5D + reach.bankWidth() + additionalRadius;
+            double radius = reach.widthAt(0D) * 0.5D + reach.bankWidthAt(0D) + additionalRadius;
             return distanceSquared <= radius * radius ? new ClosestPoint(distanceSquared, 0D) : null;
         }
         double nearest = Double.POSITIVE_INFINITY;
@@ -339,9 +341,9 @@ public final class RiverTile {
             }
             double deltaX = polyline.x(point + 1) - polyline.x(point);
             double deltaZ = polyline.z(point + 1) - polyline.z(point);
-            for (int profileIndex = 0; profileIndex < reach.widthProfile().size() - 1; profileIndex++) {
-                double profileStart = reach.widthProfile().position(profileIndex);
-                double profileEnd = reach.widthProfile().position(profileIndex + 1);
+            for (int profileIndex = 0; profileIndex < reach.bodyProfile().size() - 1; profileIndex++) {
+                double profileStart = reach.bodyProfile().position(profileIndex);
+                double profileEnd = reach.bodyProfile().position(profileIndex + 1);
                 double overlapStart = StrictMath.max(segmentStartAlong, profileStart);
                 double overlapEnd = StrictMath.min(segmentEndAlong, profileEnd);
                 if (overlapStart > overlapEnd) {
@@ -349,13 +351,16 @@ public final class RiverTile {
                 }
                 double intervalStart = (overlapStart - segmentStartAlong) / segmentAlongSpan;
                 double intervalEnd = (overlapEnd - segmentStartAlong) / segmentAlongSpan;
-                double widthSlope = (reach.widthProfile().width(profileIndex + 1)
-                        - reach.widthProfile().width(profileIndex)) / (profileEnd - profileStart);
-                double radiusBase = (reach.widthProfile().width(profileIndex)
+                double widthSlope = (reach.bodyProfile().widthAtIndex(profileIndex + 1)
+                        - reach.bodyProfile().widthAtIndex(profileIndex)) / (profileEnd - profileStart);
+                double bankSlope = (reach.bodyProfile().bankWidthAtIndex(profileIndex + 1)
+                        - reach.bodyProfile().bankWidthAtIndex(profileIndex)) / (profileEnd - profileStart);
+                double radiusBase = (reach.bodyProfile().widthAtIndex(profileIndex)
                         + widthSlope * (segmentStartAlong - profileStart)) * 0.5D
-                        + reach.bankWidth()
+                        + reach.bodyProfile().bankWidthAtIndex(profileIndex)
+                        + bankSlope * (segmentStartAlong - profileStart)
                         + additionalRadius;
-                double radiusSlope = widthSlope * segmentAlongSpan * 0.5D;
+                double radiusSlope = (widthSlope * 0.5D + bankSlope) * segmentAlongSpan;
                 ClosestPoint candidate = coveringPoint(
                         intervalStart,
                         intervalEnd,
@@ -394,7 +399,7 @@ public final class RiverTile {
                     maximumX,
                     maximumZ
             );
-            double radius = reach.widthAt(0D) * 0.5D + reach.bankWidth();
+            double radius = reach.widthAt(0D) * 0.5D + reach.bankWidthAt(0D);
             return distanceSquared <= radius * radius ? new ClosestPoint(distanceSquared, 0D) : null;
         }
         double nearest = Double.POSITIVE_INFINITY;
@@ -410,9 +415,9 @@ public final class RiverTile {
             double startZ = polyline.z(point);
             double deltaX = polyline.x(point + 1) - startX;
             double deltaZ = polyline.z(point + 1) - startZ;
-            for (int profileIndex = 0; profileIndex < reach.widthProfile().size() - 1; profileIndex++) {
-                double profileStart = reach.widthProfile().position(profileIndex);
-                double profileEnd = reach.widthProfile().position(profileIndex + 1);
+            for (int profileIndex = 0; profileIndex < reach.bodyProfile().size() - 1; profileIndex++) {
+                double profileStart = reach.bodyProfile().position(profileIndex);
+                double profileEnd = reach.bodyProfile().position(profileIndex + 1);
                 double overlapStart = StrictMath.max(segmentStartAlong, profileStart);
                 double overlapEnd = StrictMath.min(segmentEndAlong, profileEnd);
                 if (overlapStart > overlapEnd) {
@@ -420,11 +425,15 @@ public final class RiverTile {
                 }
                 double intervalStart = (overlapStart - segmentStartAlong) / segmentAlongSpan;
                 double intervalEnd = (overlapEnd - segmentStartAlong) / segmentAlongSpan;
-                double widthSlope = (reach.widthProfile().width(profileIndex + 1)
-                        - reach.widthProfile().width(profileIndex)) / (profileEnd - profileStart);
-                double radiusBase = (reach.widthProfile().width(profileIndex)
-                        + widthSlope * (segmentStartAlong - profileStart)) * 0.5D + reach.bankWidth();
-                double radiusSlope = widthSlope * segmentAlongSpan * 0.5D;
+                double widthSlope = (reach.bodyProfile().widthAtIndex(profileIndex + 1)
+                        - reach.bodyProfile().widthAtIndex(profileIndex)) / (profileEnd - profileStart);
+                double bankSlope = (reach.bodyProfile().bankWidthAtIndex(profileIndex + 1)
+                        - reach.bodyProfile().bankWidthAtIndex(profileIndex)) / (profileEnd - profileStart);
+                double radiusBase = (reach.bodyProfile().widthAtIndex(profileIndex)
+                        + widthSlope * (segmentStartAlong - profileStart)) * 0.5D
+                        + reach.bodyProfile().bankWidthAtIndex(profileIndex)
+                        + bankSlope * (segmentStartAlong - profileStart);
+                double radiusSlope = (widthSlope * 0.5D + bankSlope) * segmentAlongSpan;
                 double cursor = intervalStart;
                 do {
                     double next = intervalEnd;

@@ -50,19 +50,19 @@ public abstract class VolmitPlugin extends JavaPlugin implements Listener {
     }
 
     public void l(Object l) {
-        IrisLogging.info("[" + getName() + "]: " + l);
+        IrisLogging.info(String.valueOf(l));
     }
 
     public void w(Object l) {
-        IrisLogging.warn("[" + getName() + "]: " + l);
+        IrisLogging.warn(String.valueOf(l));
     }
 
     public void f(Object l) {
-        IrisLogging.error("[" + getName() + "]: " + l);
+        IrisLogging.error(String.valueOf(l));
     }
 
     public void v(Object l) {
-        IrisLogging.debug("[" + getName() + "]: " + l);
+        IrisLogging.debug(String.valueOf(l));
     }
 
     public void onEnable() {

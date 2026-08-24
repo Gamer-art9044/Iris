@@ -16,11 +16,11 @@ import art.arcane.iris.engine.object.IrisRiverTerrain;
 import art.arcane.iris.engine.object.IrisRiverTopology;
 import art.arcane.iris.engine.object.IrisRiverWater;
 import art.arcane.iris.engine.object.IrisRiverWaterMode;
+import art.arcane.iris.engine.object.IrisRiverWorm;
 import art.arcane.iris.engine.object.IrisStyledRange;
 import art.arcane.iris.engine.object.NoiseStyle;
 import art.arcane.iris.engine.river.RiverAnchor;
 import art.arcane.iris.engine.river.RiverEdgeId;
-import art.arcane.iris.engine.river.RiverMeanderContext;
 import art.arcane.iris.engine.river.RiverNetworkOptions;
 import art.arcane.iris.engine.river.RiverPolyline;
 import art.arcane.iris.engine.river.RiverReach;
@@ -35,6 +35,7 @@ import art.arcane.iris.engine.river.RiverTerminalPolicy;
 import art.arcane.iris.engine.river.RiverTile;
 import art.arcane.iris.engine.river.RiverTileCache;
 import art.arcane.iris.engine.river.RiverTopologyComplexity;
+import art.arcane.iris.engine.river.RiverWorm;
 import art.arcane.iris.util.project.interpolation.NoiseBounds;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.stream.ProceduralStream;
@@ -61,7 +62,6 @@ public final class IrisRiverRuntime implements AutoCloseable {
     private static final long WIDTH_NOISE_SALT = 0xBE5466CF34E90C6CL;
     private static final long BANK_NOISE_SALT = 0xC0AC29B7C97C50DDL;
     private static final long DEPTH_NOISE_SALT = 0x3F84D5B5B5470917L;
-    private static final long MEANDER_NOISE_SALT = 0x9216D5D98979FB1BL;
     private static final long BED_NOISE_SALT = 0xD1310BA698DFB5ACL;
     private static final long BIOME_NOISE_SALT = 0x2FFD72DBD01ADFB7L;
     private static final long CAVE_ENTRY_NOISE_SALT = 0xB8E1AFED6A267E96L;
@@ -98,7 +98,6 @@ public final class IrisRiverRuntime implements AutoCloseable {
     private final CNG widthNoise;
     private final CNG bankNoise;
     private final CNG depthNoise;
-    private final CNG meanderNoise;
     private final CNG bedNoise;
     private final CNG biomeNoise;
     private final CNG caveEntryNoise;
@@ -144,7 +143,6 @@ public final class IrisRiverRuntime implements AutoCloseable {
         widthNoise = noise(terrain.getChannelWidth(), WIDTH_NOISE_SALT);
         bankNoise = noise(terrain.getBankWidth(), BANK_NOISE_SALT);
         depthNoise = noise(terrain.getDepth(), DEPTH_NOISE_SALT);
-        meanderNoise = noise(terrain.getMeanderStyle(), MEANDER_NOISE_SALT);
         bedNoise = noise(terrain.getBedRoughnessStyle(), BED_NOISE_SALT);
         biomeNoise = noise(configuration.getBiomes().getSelectionStyle(), BIOME_NOISE_SALT);
         caveEntryNoise = noise(caves.getEntry(), CAVE_ENTRY_NOISE_SALT);
@@ -256,7 +254,11 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 z
         );
         int ceilingY = shapedTunnelCeilingY(
-                waterHeadY, caves.getDryHeadroom(), profile, roofOffset);
+                waterHeadY,
+                caves.getDryHeadroom() * column.reach().roofScaleAt(column.river().alongReach()),
+                profile,
+                roofOffset
+        );
         return new IrisRiverTunnelSample(column.river(), bedY, waterHeadY, ceilingY);
     }
 
@@ -349,7 +351,7 @@ public final class IrisRiverRuntime implements AutoCloseable {
         IrisBiome sampledBiome = naturalBiome.get(center.x(), center.z());
         double head = waterSurface(reach, alongReach, isNaturalOcean(sampledBiome));
         double centerNaturalHeight = naturalHeight.get(center.x(), center.z());
-        double centerBedHeight = head - reach.depth() + bedRoughness(center.x(), center.z());
+        double centerBedHeight = head - reach.depthAt(alongReach) + bedRoughness(center.x(), center.z());
         EffectiveRiverSettings settings = settingsFor(sampledRegion, sampledBiome);
         double maximumIncision = Math.max(0D, terrain.getMaxIncision() * settings.maxIncisionMultiplier());
         double cappedSurface = incisedHeight(centerNaturalHeight, centerBedHeight, 1D, maximumIncision);
@@ -627,8 +629,6 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 .routingNoiseWeight(0D)
                 .flowAlignmentWeight(topology.getFlowAlignmentWeight())
                 .confluenceWeight(topology.getConfluenceWeight())
-                .branchSoftCap(topology.getBranchSoftCap())
-                .branchChildShrinkFactor(topology.getBranchChildShrinkFactor())
                 .oceanAttraction(topology.getOceanAttraction())
                 .channelWidth(mid(riverTerrain.getChannelWidth(), 12D))
                 .bankWidth(mid(riverTerrain.getBankWidth(), 8D))
@@ -639,9 +639,61 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 .orderWidthFactor(riverTerrain.getOrderWidthFactor())
                 .orderDepthFactor(riverTerrain.getOrderDepthFactor())
                 .maximumReachRadius(maximumReachRadius(topology, riverTerrain))
-                .meanderStrength(riverTerrain.getMeanderStrength())
-                .meanderSubdivisions(riverTerrain.getMeanderSubdivisions())
+                .worms(worms(riverTerrain))
                 .build();
+    }
+
+    private List<RiverWorm> worms(IrisRiverTerrain riverTerrain) {
+        if (riverTerrain.getWorms() == null || riverTerrain.getWorms().isEmpty()) {
+            throw new IllegalArgumentException("River terrain must configure at least one Perlin worm");
+        }
+        ArrayList<RiverWorm> worms = new ArrayList<>(riverTerrain.getWorms().size());
+        for (IrisRiverWorm configured : riverTerrain.getWorms()) {
+            if (configured == null) {
+                throw new IllegalArgumentException("River terrain worms must not contain null entries");
+            }
+            worms.add(worm(configured));
+        }
+        return List.copyOf(worms);
+    }
+
+    private RiverWorm worm(IrisRiverWorm configured) {
+        if (configured.getChildren() == null) {
+            throw new IllegalArgumentException("River worm children must be an array");
+        }
+        ArrayList<RiverWorm> children = new ArrayList<>(configured.getChildren().size());
+        for (IrisRiverWorm child : configured.getChildren()) {
+            if (child == null) {
+                throw new IllegalArgumentException("River worm children must not contain null entries");
+            }
+            children.add(worm(child));
+        }
+        return new RiverWorm(
+                configured.getId(),
+                configured.getSeed(),
+                configured.getWeight(),
+                configured.getWavelength(),
+                configured.getDetailWavelength(),
+                configured.getTortuosity(),
+                configured.getDetailTortuosity(),
+                configured.getMaxOffset(),
+                configured.getSegments(),
+                configured.getWidthMultiplier(),
+                configured.getBankMultiplier(),
+                configured.getDepthMultiplier(),
+                configured.getBodyWavelength(),
+                configured.getBodyDetailWavelength(),
+                configured.getWidthVariation(),
+                configured.getBankVariation(),
+                configured.getDepthVariation(),
+                configured.getRoofVariation(),
+                configured.getBranchCap(),
+                configured.getBranchDecay(),
+                configured.getConfluenceMultiplier(),
+                configured.getChildChance(),
+                configured.getBranchChildChance(),
+                List.copyOf(children)
+        );
     }
 
     private void addTerminalCaveAnchors(
@@ -1142,11 +1194,6 @@ public final class IrisRiverRuntime implements AutoCloseable {
         }
 
         @Override
-        public double meanderNoise(RiverMeanderContext context) {
-            return meanderNoise.fitDouble(-1D, 1D, context.x(), context.z());
-        }
-
-        @Override
         public double flowNoise(double x, double z) {
             return routingNoise.fitDouble(-1D, 1D, x, z);
         }
@@ -1163,7 +1210,7 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 RiverRoutingContext context,
                 double x,
                 double z,
-            double fallback
+                double fallback
         ) {
             EffectiveRiverSettings settings = settingsAt(x, z);
             return styled(
@@ -1184,6 +1231,18 @@ public final class IrisRiverRuntime implements AutoCloseable {
         }
 
         @Override
+        public double bankWidth(RiverRoutingContext context, double x, double z, double fallback) {
+            EffectiveRiverSettings settings = settingsAt(x, z);
+            return styled(
+                    terrain.getBankWidth(),
+                    bankNoise,
+                    (int) StrictMath.round(x),
+                    (int) StrictMath.round(z),
+                    fallback
+            ) * settings.bankWidthMultiplier();
+        }
+
+        @Override
         public double depth(RiverRoutingContext context, double fallback) {
             EffectiveRiverSettings settings = settingsAt(context.midpointX(), context.midpointZ());
             double configuredDepth = styled(
@@ -1191,6 +1250,22 @@ public final class IrisRiverRuntime implements AutoCloseable {
                     depthNoise,
                     context.midpointX(),
                     context.midpointZ(),
+                    fallback
+            ) * settings.depthMultiplier();
+            return Math.min(
+                    terrain.getMaxDepth(),
+                    Math.max(1D + terrain.getBedRoughness(), configuredDepth)
+            );
+        }
+
+        @Override
+        public double depth(RiverRoutingContext context, double x, double z, double fallback) {
+            EffectiveRiverSettings settings = settingsAt(x, z);
+            double configuredDepth = styled(
+                    terrain.getDepth(),
+                    depthNoise,
+                    (int) StrictMath.round(x),
+                    (int) StrictMath.round(z),
                     fallback
             ) * settings.depthMultiplier();
             return Math.min(

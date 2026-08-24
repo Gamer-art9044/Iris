@@ -19,14 +19,12 @@ public final class RiverTopologyComplexity {
             double siteJitter,
             int maxRouteReaches,
             double maximumReachRadius,
-            double meanderStrength,
-            int meanderSubdivisions
+            double maximumWormOffset,
+            int maximumWormSegments
     ) {
         double maximumEdgeAxisDelta = cellSize * (1D + siteJitter);
-        double maximumEdgeLength = StrictMath.sqrt(2D) * maximumEdgeAxisDelta;
-        double maximumMeander = StrictMath.min(meanderStrength, maximumEdgeLength * 0.35D);
         long geometryPaddingCells = 1L + ceilToLong(
-                (maximumReachRadius + maximumMeander) / cellSize
+                (maximumReachRadius + maximumWormOffset) / cellSize
         );
         long targetWindowAxis = saturatedAdd(tileCells, saturatedMultiply(2L, geometryPaddingCells));
         long sourceWindowAxis = saturatedAdd(
@@ -36,7 +34,7 @@ public final class RiverTopologyComplexity {
         long sourceWindowCells = saturatedMultiply(sourceWindowAxis, sourceWindowAxis);
         long maximumRouteScanSteps = saturatedMultiply(sourceWindowCells, maxRouteReaches);
         double maximumSegmentSpan = maximumEdgeAxisDelta
-                + maximumMeander * 2D
+                + maximumWormOffset * 2D
                 + maximumReachRadius * 2D;
         long maximumSegmentBucketAxis = saturatedAdd(
                 ceilToLong(maximumSegmentSpan / SPATIAL_BUCKET_SIZE),
@@ -48,7 +46,7 @@ public final class RiverTopologyComplexity {
         );
         long maximumBucketWritesPerReach = saturatedMultiply(
                 maximumSegmentBucketCount,
-                meanderSubdivisions
+                maximumWormSegments
         );
         return new Estimate(
                 geometryPaddingCells,
@@ -66,8 +64,8 @@ public final class RiverTopologyComplexity {
             double siteJitter,
             int maxRouteReaches,
             double maximumReachRadius,
-            double meanderStrength,
-            int meanderSubdivisions
+            double maximumWormOffset,
+            int maximumWormSegments
     ) {
         Estimate estimate = estimate(
                 cellSize,
@@ -75,8 +73,8 @@ public final class RiverTopologyComplexity {
                 siteJitter,
                 maxRouteReaches,
                 maximumReachRadius,
-                meanderStrength,
-                meanderSubdivisions
+                maximumWormOffset,
+                maximumWormSegments
         );
         List<String> violations = estimate.violations();
         if (!violations.isEmpty()) {
@@ -205,7 +203,7 @@ public final class RiverTopologyComplexity {
                         + " bucket writes for one reach (" + maximumSegmentBucketAxis
                         + " buckets per segment axis), above the safe limit of "
                         + MAXIMUM_BUCKET_WRITES_PER_REACH
-                        + "; reduce channel width, bank width, orderWidthFactor, meanderStrength, or meanderSubdivisions.");
+                        + "; reduce channel width, bank width, orderWidthFactor, worm maxOffset, or worm segments.");
             }
             return List.copyOf(violations);
         }

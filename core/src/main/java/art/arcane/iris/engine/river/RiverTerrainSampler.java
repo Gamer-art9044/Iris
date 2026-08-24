@@ -50,10 +50,6 @@ public interface RiverTerrainSampler {
         return 0.0;
     }
 
-    default double meanderNoise(RiverMeanderContext context) {
-        return Double.NaN;
-    }
-
     default double flowNoise(double x, double z) {
         return Double.NaN;
     }
@@ -75,8 +71,26 @@ public interface RiverTerrainSampler {
         return fallback;
     }
 
+    default double bankWidth(
+            RiverRoutingContext context,
+            double x,
+            double z,
+            double fallback
+    ) {
+        return bankWidth(context, fallback);
+    }
+
     default double depth(RiverRoutingContext context, double fallback) {
         return fallback;
+    }
+
+    default double depth(
+            RiverRoutingContext context,
+            double x,
+            double z,
+            double fallback
+    ) {
+        return depth(context, fallback);
     }
 
     default RiverTerminalPolicy terminalPolicy(int blockX, int blockZ) {

@@ -1,8 +1,11 @@
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.engine.object.annotations.Required;
+import art.arcane.volmlib.util.collection.KList;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
@@ -83,18 +86,10 @@ public class IrisRiverTerrain {
     @Desc("The maximum vertical roof variation in river tunnels.")
     private double tunnelRoofVariation = 3D;
 
-    @Desc("Warps the spacing and amplitude of varied local-normal sweeps, hooks, curls, and wandering bends while preserving graph endpoints.")
-    private IrisGeneratorStyle meanderStyle = new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(512D);
-
-    @MinNumber(0)
-    @MaxNumber(1024)
-    @Desc("The total endpoint-spline and shape-personality displacement envelope in blocks.")
-    private double meanderStrength = 72D;
-
-    @MinNumber(1)
-    @MaxNumber(64)
-    @Desc("The number of straight segments used to flatten and resolve each meandering graph reach.")
-    private int meanderSubdivisions = 8;
+    @Required
+    @ArrayType(min = 1, type = IrisRiverWorm.class)
+    @Desc("Weighted root Perlin-worm families with inherited child styles for trunks and tributaries.")
+    private KList<IrisRiverWorm> worms = new KList<IrisRiverWorm>();
 
     @Desc("Modulates small river-bed height variation after the connected channel shape is solved.")
     private IrisGeneratorStyle bedRoughnessStyle = new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(96D);

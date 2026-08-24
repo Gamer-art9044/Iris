@@ -13,10 +13,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Core states a severity on every message it logs and the modded adapters honour it. On Bukkit the same
- * message used to become a coloured console line, which the server logs at INFO, so no core warning ever
- * appeared in a WARN-level scan of logs/latest.log - including the orphaned-world-storage reports the
- * bootstrap replays there specifically for operators to find.
+ * Core states a severity on every message it logs and the modded adapters honour it. Bukkit must preserve
+ * that severity through the shared component logger so diagnostics remain discoverable in logs/latest.log.
  */
 public class IrisDiagnosticLogLevelTest {
     @Test
@@ -26,25 +24,16 @@ public class IrisDiagnosticLogLevelTest {
     }
 
     @Test
-    public void informationalAndDebugMessagesStayOnTheConsolePath() {
+    public void informationalAndDebugMessagesStayOnTheInformationalPath() {
         assertNull(Iris.diagnosticLevel(LogLevel.INFO));
         assertNull(Iris.diagnosticLevel(LogLevel.DEBUG));
     }
 
-    /**
-     * Console sender output reaches the terminal but not the instance's logs/latest.log, which is the only
-     * log most operators read after the fact. A handful of lifecycle lines go to the plugin logger instead.
-     */
     @Test
     public void lifecycleNoticesReachThePluginLoggerAtInfo() {
         assertEquals(Level.INFO, Iris.diagnosticLevel(LogLevel.NOTICE));
     }
 
-    /**
-     * A warning raised by the adapter is the same kind of thing as a warning raised by core. Routing one
-     * through the plugin logger and the other through the console sender makes the level depend on which
-     * side of the SPI the call happened to be written on.
-     */
     @Test
     public void adapterSideWarningsCarryTheSameSeverityAsCoreWarnings() throws Exception {
         String source = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java")).replace("\r\n", "\n");
@@ -68,6 +57,16 @@ public class IrisDiagnosticLogLevelTest {
         String diagnostic = method(source, "private static void diagnostic(Level level, String message)");
         assertTrue(diagnostic, diagnostic.contains("ComponentLog.log("));
         assertTrue(diagnostic, diagnostic.contains("ComponentText.literal(line)"));
+    }
+
+    @Test
+    public void informationalMessagesUseTheSharedComponentLogger() throws Exception {
+        String source = Files.readString(Path.of("src/main/java/art/arcane/iris/Iris.java")).replace("\r\n", "\n");
+        String message = method(source, "public static void msg(String string)");
+
+        assertTrue(message, message.contains("ComponentLog.logMarkup("));
+        assertTrue(message, message.contains("logPrefix(plugin)"));
+        assertFalse(message, message.contains("getSender().sendMessage"));
     }
 
     private static String method(String source, String signature) {

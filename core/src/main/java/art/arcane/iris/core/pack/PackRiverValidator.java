@@ -111,10 +111,10 @@ final class PackRiverValidator {
         }
 
         if (topology != null && terrain != null) {
-            double meanderStrength = doubleValue(terrain, "meanderStrength", 72D);
+            WormEnvelope wormEnvelope = wormEnvelope(terrain);
             int cellSize = integerValue(topology, "cellSize", 512);
-            if (Double.isFinite(meanderStrength) && meanderStrength > cellSize) {
-                warnings.add(path + ".terrain.meanderStrength exceeds topology.cellSize; reaches may require large cache halos.");
+            if (wormEnvelope.maximumOffset() > cellSize) {
+                warnings.add(path + ".terrain.worms maxOffset exceeds topology.cellSize; reaches may require large cache halos.");
             }
             validateTopologyComplexity(packFolder, path, topology, terrain, errors);
         }
@@ -144,8 +144,6 @@ final class PackRiverValidator {
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "routingNoiseWeight", 0D, 1024D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "flowAlignmentWeight", 0D, 1024D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "confluenceWeight", 0D, 1024D, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, topology, "branchSoftCap", 1, 8, errors);
-        PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "branchChildShrinkFactor", 0D, 1D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "terrainHeightWeight", 0D, 16D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "terrainSlopeWeight", 0D, 16D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, topology, "oceanAttraction", 0D, 16D, errors);
@@ -180,8 +178,6 @@ final class PackRiverValidator {
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "tunnelMouthBlend", 0D, 16D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "tunnelFloorVariation", 0D, 8D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "tunnelRoofVariation", 0D, 16D, errors);
-        PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "meanderStrength", 0D, 1024D, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, terrain, "meanderSubdivisions", 1, 64, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "bedRoughness", 0D, 8D, errors);
         PackJsonFieldChecks.validateOptionalEnum(path, terrain, "terminalMode", TERMINAL_MODES, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, terrain, "terminalTaper", 8, 1024, errors);
@@ -189,8 +185,8 @@ final class PackRiverValidator {
         validateNoiseChance(packFolder, terrain, "incision", path, errors);
         validateStyle(packFolder, terrain, "tunnelFloorStyle", path, errors);
         validateStyle(packFolder, terrain, "tunnelRoofStyle", path, errors);
-        validateStyle(packFolder, terrain, "meanderStyle", path, errors);
         validateStyle(packFolder, terrain, "bedRoughnessStyle", path, errors);
+        validateWorms(path, terrain, errors);
         double maximumChannelWidth = doubleValue(terrain, "maxChannelWidth", 10D);
         double maximumTunnelWidthMultiplier = styledRangeMaximum(
                 packFolder,
@@ -240,8 +236,7 @@ final class PackRiverValidator {
         int tileCells = integerValue(topology, "tileCells", 4);
         double siteJitter = doubleValue(topology, "siteJitter", 0.35D);
         int maxRouteReaches = integerValue(topology, "maxRouteReaches", 16);
-        double meanderStrength = doubleValue(terrain, "meanderStrength", 72D);
-        int meanderSubdivisions = integerValue(terrain, "meanderSubdivisions", 8);
+        WormEnvelope wormEnvelope = wormEnvelope(terrain);
         double maximumChannelWidth = doubleValue(terrain, "maxChannelWidth", 10D);
         double maximumBankWidth = doubleValue(terrain, "maxBankWidth", 4D);
         double maximumTunnelWidthMultiplier = styledRangeMaximum(
@@ -256,8 +251,8 @@ final class PackRiverValidator {
                 || tileCells < 1 || tileCells > 64
                 || !Double.isFinite(siteJitter) || siteJitter < 0D || siteJitter > 0.49D
                 || maxRouteReaches < 1 || maxRouteReaches > 256
-                || !Double.isFinite(meanderStrength) || meanderStrength < 0D || meanderStrength > 1024D
-                || meanderSubdivisions < 1 || meanderSubdivisions > 64
+                || wormEnvelope.maximumOffset() < 0D || wormEnvelope.maximumOffset() > 1024D
+                || wormEnvelope.maximumSegments() < 1 || wormEnvelope.maximumSegments() > 64
                 || !Double.isFinite(maximumChannelWidth) || maximumChannelWidth < 1D || maximumChannelWidth > 2048D
                 || !Double.isFinite(maximumBankWidth) || maximumBankWidth < 0D || maximumBankWidth > 2048D
                 || !Double.isFinite(maximumTunnelWidthMultiplier)
@@ -275,12 +270,185 @@ final class PackRiverValidator {
                 siteJitter,
                 maxRouteReaches,
                 maximumReachRadius,
-                meanderStrength,
-                meanderSubdivisions
+                wormEnvelope.maximumOffset(),
+                wormEnvelope.maximumSegments()
         );
         for (String violation : estimate.violations()) {
             errors.add(path + " exceeds the safe derived complexity budget. " + violation);
         }
+    }
+
+    private static void validateWorms(String path, JSONObject terrain, List<String> errors) {
+        Object rawWorms = terrain.opt("worms");
+        if (!(rawWorms instanceof JSONArray worms)) {
+            errors.add(path + ".worms must be an array with at least one Perlin-worm profile.");
+            return;
+        }
+        if (worms.length() < 1) {
+            errors.add(path + ".worms must contain at least one Perlin-worm profile.");
+            return;
+        }
+        if (worms.length() > 16) {
+            errors.add(path + ".worms must contain at most 16 root profiles.");
+        }
+        Set<String> ids = new HashSet<String>();
+        Set<Long> seeds = new HashSet<Long>();
+        int profileCount = validateWormArray(path + ".worms", worms, 1, ids, seeds, errors);
+        if (profileCount > 128) {
+            errors.add(path + ".worms hierarchy must contain at most 128 profiles.");
+        }
+    }
+
+    private static int validateWormArray(
+            String path,
+            JSONArray worms,
+            int depth,
+            Set<String> ids,
+            Set<Long> seeds,
+            List<String> errors
+    ) {
+        if (worms.length() > 16) {
+            errors.add(path + " must contain at most 16 profiles.");
+        }
+        double totalWeight = 0D;
+        int profileCount = 0;
+        for (int index = 0; index < worms.length(); index++) {
+            JSONObject worm = worms.optJSONObject(index);
+            String wormPath = path + "[" + index + "]";
+            if (worm == null) {
+                errors.add(wormPath + " must be an object.");
+                continue;
+            }
+            profileCount++;
+            validateWormId(wormPath, worm, ids, errors);
+            long seed = validateWormSeed(wormPath, worm, errors);
+            if (!seeds.add(seed)) {
+                errors.add(wormPath + ".seed must be unique inside the worm hierarchy.");
+            }
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "weight", 0.000001D, 1000000D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "wavelength", 8D, 16384D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "detailWavelength", 8D, 16384D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "tortuosity", 0D, 1D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "detailTortuosity", 0D, 1D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "maxOffset", 0D, 1024D, errors);
+            PackJsonFieldChecks.validateOptionalIntegerRange(wormPath, worm, "segments", 1, 64, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "widthMultiplier", 0.125D, 8D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "bankMultiplier", 0.125D, 8D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "depthMultiplier", 0.125D, 8D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "bodyWavelength", 32D, 16384D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "bodyDetailWavelength", 32D, 16384D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "widthVariation", 0D, 0.875D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "bankVariation", 0D, 0.875D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "depthVariation", 0D, 0.875D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "roofVariation", 0D, 0.875D, errors);
+            PackJsonFieldChecks.validateOptionalIntegerRange(wormPath, worm, "branchCap", 1, 8, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "branchDecay", 0D, 1D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "confluenceMultiplier", 0D, 8D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "childChance", 0D, 1D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "branchChildChance", 0D, 1D, errors);
+            totalWeight += doubleValue(worm, "weight", 1D);
+            Object rawChildren = worm.opt("children");
+            if (rawChildren == null || rawChildren == JSONObject.NULL) {
+                continue;
+            }
+            if (!(rawChildren instanceof JSONArray children)) {
+                errors.add(wormPath + ".children must be an array.");
+                continue;
+            }
+            if (children.length() > 0 && depth >= 4) {
+                errors.add(wormPath + ".children exceeds the maximum hierarchy depth of 4.");
+                continue;
+            }
+            profileCount += validateWormArray(
+                    wormPath + ".children",
+                    children,
+                    depth + 1,
+                    ids,
+                    seeds,
+                    errors
+            );
+        }
+        if (worms.length() > 0 && (!Double.isFinite(totalWeight) || totalWeight <= 0D)) {
+            errors.add(path + " total weight must be finite and positive.");
+        }
+        return profileCount;
+    }
+
+    private static void validateWormId(String path, JSONObject worm, Set<String> ids, List<String> errors) {
+        Object rawId = worm.opt("id");
+        if (!(rawId instanceof String id) || !id.matches("[a-z0-9][a-z0-9_-]{0,63}")) {
+            errors.add(path + ".id must use 1 to 64 lowercase letters, digits, underscores, or hyphens.");
+            return;
+        }
+        if (!ids.add(id)) {
+            errors.add(path + ".id must be unique inside the worm hierarchy.");
+        }
+    }
+
+    private static long validateWormSeed(String path, JSONObject worm, List<String> errors) {
+        Object rawSeed = worm.opt("seed");
+        if (rawSeed == null || rawSeed == JSONObject.NULL) {
+            return 1L;
+        }
+        if (!(rawSeed instanceof Number number)
+                || !Double.isFinite(number.doubleValue())
+                || number.doubleValue() != StrictMath.rint(number.doubleValue())) {
+            errors.add(path + ".seed must be an integer.");
+            return 1L;
+        }
+        return number.longValue();
+    }
+
+    private static WormEnvelope wormEnvelope(JSONObject terrain) {
+        JSONArray worms = terrain.optJSONArray("worms");
+        if (worms == null || worms.length() == 0) {
+            return new WormEnvelope(320D, 48);
+        }
+        double maximumOffset = 0D;
+        int maximumSegments = 1;
+        WormEnvelope envelope = wormEnvelope(worms, maximumOffset, maximumSegments);
+        maximumOffset = envelope.maximumOffset();
+        maximumSegments = envelope.maximumSegments();
+        return new WormEnvelope(maximumOffset, maximumSegments);
+    }
+
+    private static WormEnvelope wormEnvelope(JSONArray worms, double maximumOffset, int maximumSegments) {
+        double resolvedOffset = maximumOffset;
+        int resolvedSegments = maximumSegments;
+        for (int index = 0; index < worms.length(); index++) {
+            JSONObject worm = worms.optJSONObject(index);
+            if (worm == null) {
+                continue;
+            }
+            resolvedOffset = Math.max(resolvedOffset, doubleValue(worm, "maxOffset", 320D));
+            resolvedSegments = Math.max(resolvedSegments, integerValue(worm, "segments", 48));
+            JSONArray children = worm.optJSONArray("children");
+            if (children != null) {
+                WormEnvelope childEnvelope = wormEnvelope(children, resolvedOffset, resolvedSegments);
+                resolvedOffset = Math.max(resolvedOffset, childEnvelope.maximumOffset());
+                resolvedSegments = Math.max(resolvedSegments, childEnvelope.maximumSegments());
+            }
+        }
+        return new WormEnvelope(resolvedOffset, resolvedSegments);
     }
 
     private static void validateCaves(File packFolder, String path, JSONObject caves,
@@ -959,6 +1127,9 @@ final class PackRiverValidator {
     private static double noiseChanceValue(JSONObject owner, String field, double defaultValue) {
         JSONObject chance = owner.optJSONObject(field);
         return chance == null ? defaultValue : doubleValue(chance, "chance", defaultValue);
+    }
+
+    private record WormEnvelope(double maximumOffset, int maximumSegments) {
     }
 
     record Validation(List<String> errors, List<String> warnings) {

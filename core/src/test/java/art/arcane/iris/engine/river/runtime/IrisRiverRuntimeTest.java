@@ -11,6 +11,7 @@ import art.arcane.iris.engine.object.IrisRiverOverride;
 import art.arcane.iris.engine.object.IrisRiverRoutingPolicy;
 import art.arcane.iris.engine.object.IrisRiverTerminalMode;
 import art.arcane.iris.engine.object.IrisRiverWaterMode;
+import art.arcane.iris.engine.object.IrisRiverWorm;
 import art.arcane.iris.engine.object.IrisStyledRange;
 import art.arcane.iris.engine.object.NoiseStyle;
 import art.arcane.iris.engine.river.RiverEdgeId;
@@ -20,14 +21,15 @@ import art.arcane.iris.engine.river.RiverPolyline;
 import art.arcane.iris.engine.river.RiverReach;
 import art.arcane.iris.engine.river.RiverRouteState;
 import art.arcane.iris.engine.river.RiverAnchor;
+import art.arcane.iris.engine.river.RiverBodyProfile;
 import art.arcane.iris.engine.river.RiverRoutingContext;
 import art.arcane.iris.engine.river.RiverTerrainNodeSample;
 import art.arcane.iris.engine.river.RiverTopologyComplexity;
 import art.arcane.iris.engine.river.RiverTerrainSourceSample;
-import art.arcane.iris.engine.river.RiverWidthProfile;
 import art.arcane.iris.util.project.interpolation.NoiseBounds;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.iris.util.project.stream.interpolation.Interpolated;
+import art.arcane.volmlib.util.collection.KList;
 import org.junit.Test;
 
 import java.util.HashMap;
@@ -793,9 +795,9 @@ public class IrisRiverRuntimeTest {
                 1,
                 1,
                 4D,
-                RiverWidthProfile.constant(4D),
                 2D,
                 4D,
+                RiverBodyProfile.constant(4D, 2D, 4D),
                 true,
                 false,
                 new RiverPolyline(new double[]{-600D, 0D}, new double[]{0D, 0D})
@@ -1004,8 +1006,12 @@ public class IrisRiverRuntimeTest {
                 .setBankWidth(range(12D))
                 .setDepth(range(5D))
                 .setMaxIncision(512)
-                .setMeanderStrength(0D)
-                .setMeanderStyle(flat())
+                .setWorms(new KList<>(new IrisRiverWorm()
+                        .setSeed(1L)
+                        .setTortuosity(0D)
+                        .setDetailTortuosity(0D)
+                        .setMaxOffset(0D)
+                        .setSegments(1)))
                 .setBedRoughness(0D)
                 .setBedRoughnessStyle(flat())
                 .setDryContinuationChance(1D);

@@ -295,9 +295,9 @@ public class RiverTileCacheTest {
                 1,
                 1,
                 8.0,
-                RiverWidthProfile.constant(8.0),
                 4.0,
                 3.0,
+                RiverBodyProfile.constant(8.0, 4.0, 3.0),
                 false,
                 false,
                 new RiverPolyline(new double[]{8.0, 56.0}, new double[]{8.0, 8.0})

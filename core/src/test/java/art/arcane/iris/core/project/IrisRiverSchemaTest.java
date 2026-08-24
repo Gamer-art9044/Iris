@@ -30,7 +30,10 @@ public class IrisRiverSchemaTest {
         JSONObject properties = schema.getJSONObject("properties");
         JSONObject topology = referencedProperties(definitions, properties.getJSONObject("topology"));
         JSONObject source = referencedProperties(definitions, topology.getJSONObject("source"));
-        JSONObject terrain = referencedProperties(definitions, properties.getJSONObject("terrain"));
+        JSONObject terrainDefinition = referencedDefinition(definitions, properties.getJSONObject("terrain"));
+        JSONObject terrain = terrainDefinition.getJSONObject("properties");
+        JSONObject worms = terrain.getJSONObject("worms");
+        JSONObject worm = referencedProperties(definitions, worms.getJSONObject("items"));
         JSONObject water = referencedProperties(definitions, properties.getJSONObject("water"));
         JSONObject biomes = referencedProperties(definitions, properties.getJSONObject("biomes"));
 
@@ -46,6 +49,29 @@ public class IrisRiverSchemaTest {
         assertEquals(2048D, terrain.getJSONObject("maxChannelWidth").getDouble("maximum"), 0D);
         assertEquals(0D, terrain.getJSONObject("maxBankWidth").getDouble("minimum"), 0D);
         assertEquals(512D, terrain.getJSONObject("maxDepth").getDouble("maximum"), 0D);
+        assertTrue(arrayContains(terrainDefinition.getJSONArray("required"), "worms"));
+        assertEquals("array", worms.getString("type"));
+        assertEquals(1, worms.getInt("minItems"));
+        assertEquals(0.000001D, worm.getJSONObject("weight").getDouble("minimum"), 0D);
+        assertEquals(16384D, worm.getJSONObject("wavelength").getDouble("maximum"), 0D);
+        assertEquals(1D, worm.getJSONObject("tortuosity").getDouble("maximum"), 0D);
+        assertEquals(1024D, worm.getJSONObject("maxOffset").getDouble("maximum"), 0D);
+        assertEquals(64, worm.getJSONObject("segments").getInt("maximum"));
+        assertEquals(0.125D, worm.getJSONObject("widthMultiplier").getDouble("minimum"), 0D);
+        assertEquals(8D, worm.getJSONObject("bankMultiplier").getDouble("maximum"), 0D);
+        assertEquals(8D, worm.getJSONObject("depthMultiplier").getDouble("maximum"), 0D);
+        assertEquals(32D, worm.getJSONObject("bodyWavelength").getDouble("minimum"), 0D);
+        assertEquals(16384D, worm.getJSONObject("bodyDetailWavelength").getDouble("maximum"), 0D);
+        assertEquals(0.875D, worm.getJSONObject("widthVariation").getDouble("maximum"), 0D);
+        assertEquals(0.875D, worm.getJSONObject("bankVariation").getDouble("maximum"), 0D);
+        assertEquals(0.875D, worm.getJSONObject("depthVariation").getDouble("maximum"), 0D);
+        assertEquals(0.875D, worm.getJSONObject("roofVariation").getDouble("maximum"), 0D);
+        assertEquals(8, worm.getJSONObject("branchCap").getInt("maximum"));
+        assertEquals(1D, worm.getJSONObject("branchDecay").getDouble("maximum"), 0D);
+        assertEquals(8D, worm.getJSONObject("confluenceMultiplier").getDouble("maximum"), 0D);
+        assertEquals(1D, worm.getJSONObject("childChance").getDouble("maximum"), 0D);
+        assertEquals(1D, worm.getJSONObject("branchChildChance").getDouble("maximum"), 0D);
+        assertEquals("array", worm.getJSONObject("children").getString("type"));
         assertEquals(List.of("SEA_LEVEL", "TERRACED"), enumValues(definitions, water.getJSONObject("mode")));
         assertEquals("array", biomes.getJSONObject("channel").getString("type"));
         assertEquals("#/definitions/erzbiomes",
@@ -87,8 +113,21 @@ public class IrisRiverSchemaTest {
     }
 
     private static JSONObject referencedProperties(JSONObject definitions, JSONObject reference) {
+        return referencedDefinition(definitions, reference).getJSONObject("properties");
+    }
+
+    private static JSONObject referencedDefinition(JSONObject definitions, JSONObject reference) {
         String key = reference.getString("$ref").substring("#/definitions/".length());
-        return definitions.getJSONObject(key).getJSONObject("properties");
+        return definitions.getJSONObject(key);
+    }
+
+    private static boolean arrayContains(JSONArray values, String expected) {
+        for (int index = 0; index < values.length(); index++) {
+            if (expected.equals(values.getString(index))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static List<String> enumValues(JSONObject definitions, JSONObject reference) {

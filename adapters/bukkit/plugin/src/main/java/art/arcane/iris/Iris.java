@@ -256,18 +256,19 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     public static void msg(String string) {
         try {
-            getSender().sendMessage(string);
+            Iris plugin = instance;
+            ComponentLog.logMarkup(
+                    plugin,
+                    Logger.getLogger("Iris"),
+                    logPrefix(plugin),
+                    Level.INFO,
+                    string,
+                    null);
         } catch (Throwable e) {
             try {
                 Iris plugin = instance;
-                String tag = plugin == null ? "" : plugin.getTag();
-                ComponentLog.logMarkup(
-                        plugin,
-                        Logger.getLogger("Iris"),
-                        "[Iris] ",
-                        Level.INFO,
-                        tag + string,
-                        null);
+                String plainPrefix = ComponentText.legacy(logPrefix(plugin)).plain();
+                Logger.getLogger("Iris").log(Level.INFO, plainPrefix + IrisLogging.clean(string));
             } catch (Throwable inner) {
                 System.err.println("[Iris] Failed to emit log message: " + inner.getMessage());
                 inner.printStackTrace(System.err);
@@ -561,13 +562,18 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     private static void diagnostic(Level level, String message) {
         String line = IrisLogging.clean(message);
+        Iris plugin = instance;
         ComponentLog.log(
-                instance,
+                plugin,
                 Logger.getLogger("Iris"),
-                "[Iris] ",
+                logPrefix(plugin),
                 level,
                 ComponentText.literal(line),
                 null);
+    }
+
+    private static String logPrefix(Iris plugin) {
+        return plugin == null ? "[Iris] " : plugin.getTag();
     }
 
     /**

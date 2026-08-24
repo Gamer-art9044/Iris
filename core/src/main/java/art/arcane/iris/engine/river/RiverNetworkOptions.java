@@ -1,5 +1,9 @@
 package art.arcane.iris.engine.river;
 
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
 public record RiverNetworkOptions(
         long seed,
         int cellSize,
@@ -21,8 +25,6 @@ public record RiverNetworkOptions(
         double routingNoiseWeight,
         double flowAlignmentWeight,
         double confluenceWeight,
-        int branchSoftCap,
-        double branchChildShrinkFactor,
         double oceanAttraction,
         double channelWidth,
         double bankWidth,
@@ -33,8 +35,7 @@ public record RiverNetworkOptions(
         double orderWidthFactor,
         double orderDepthFactor,
         double maximumReachRadius,
-        double meanderStrength,
-        int meanderSubdivisions
+        List<RiverWorm> worms
 ) {
     public RiverNetworkOptions {
         requireRange(cellSize, 8, 4096, "cellSize");
@@ -47,7 +48,6 @@ public record RiverNetworkOptions(
         requireRange(routingDeviationStrengthCells, 0D, 32D, "routingDeviationStrengthCells");
         requirePositive(routingPlateauHeight, "routingPlateauHeight");
         requireFinite(hydraulicBaseHeight, "hydraulicBaseHeight");
-        requireRange(meanderSubdivisions, 1, 64, "meanderSubdivisions");
         requireProbability(siteJitter, "siteJitter");
         requireProbability(sourceChance, "sourceChance");
         requireProbability(reachChance, "reachChance");
@@ -56,8 +56,6 @@ public record RiverNetworkOptions(
         requireFiniteNonNegative(routingNoiseWeight, "routingNoiseWeight");
         requireFiniteNonNegative(flowAlignmentWeight, "flowAlignmentWeight");
         requireFiniteNonNegative(confluenceWeight, "confluenceWeight");
-        requireRange(branchSoftCap, 1, 8, "branchSoftCap");
-        requireProbability(branchChildShrinkFactor, "branchChildShrinkFactor");
         requireFiniteNonNegative(oceanAttraction, "oceanAttraction");
         requirePositive(channelWidth, "channelWidth");
         requireFiniteNonNegative(bankWidth, "bankWidth");
@@ -68,20 +66,92 @@ public record RiverNetworkOptions(
         requireFiniteNonNegative(orderWidthFactor, "orderWidthFactor");
         requireFiniteNonNegative(orderDepthFactor, "orderDepthFactor");
         requireFiniteNonNegative(maximumReachRadius, "maximumReachRadius");
-        requireFiniteNonNegative(meanderStrength, "meanderStrength");
+        if (worms == null || worms.isEmpty()) {
+            throw new IllegalArgumentException("worms must contain at least one profile");
+        }
+        if (worms.size() > 16) {
+            throw new IllegalArgumentException("worms must contain at most 16 root profiles");
+        }
+        Set<String> ids = new HashSet<String>();
+        Set<Long> seeds = new HashSet<Long>();
+        int wormCount = validateWormTree(worms, 1, ids, seeds);
+        if (wormCount > 128) {
+            throw new IllegalArgumentException("worm hierarchy must contain at most 128 profiles");
+        }
+        worms = List.copyOf(worms);
         RiverTopologyComplexity.requireSafe(
                 cellSize,
                 tileCells,
                 siteJitter,
                 maxRouteReaches,
                 maximumReachRadius,
-                meanderStrength,
-                meanderSubdivisions
+                maximumWormOffset(worms),
+                maximumWormSegments(worms)
         );
     }
 
     public static Builder builder(long seed) {
         return new Builder(seed);
+    }
+
+    public double maximumWormOffset() {
+        return maximumWormOffset(worms);
+    }
+
+    public int maximumWormSegments() {
+        return maximumWormSegments(worms);
+    }
+
+    private static double maximumWormOffset(List<RiverWorm> worms) {
+        double maximum = 0D;
+        for (RiverWorm worm : worms) {
+            if (worm == null) {
+                throw new IllegalArgumentException("worms must not contain null profiles");
+            }
+            maximum = StrictMath.max(maximum, worm.maxOffset());
+            maximum = StrictMath.max(maximum, maximumWormOffset(worm.children()));
+        }
+        return maximum;
+    }
+
+    private static int maximumWormSegments(List<RiverWorm> worms) {
+        int maximum = 1;
+        for (RiverWorm worm : worms) {
+            if (worm == null) {
+                throw new IllegalArgumentException("worms must not contain null profiles");
+            }
+            maximum = StrictMath.max(maximum, worm.segments());
+            maximum = StrictMath.max(maximum, maximumWormSegments(worm.children()));
+        }
+        return maximum;
+    }
+
+    private static int validateWormTree(
+            List<RiverWorm> worms,
+            int depth,
+            Set<String> ids,
+            Set<Long> seeds
+    ) {
+        if (depth > 4) {
+            throw new IllegalArgumentException("worm hierarchy must be at most 4 profiles deep");
+        }
+        int count = 0;
+        for (RiverWorm worm : worms) {
+            if (worm == null) {
+                throw new IllegalArgumentException("worm hierarchy must not contain null profiles");
+            }
+            if (!ids.add(worm.id())) {
+                throw new IllegalArgumentException("worm ids must be unique: " + worm.id());
+            }
+            if (!seeds.add(worm.seed())) {
+                throw new IllegalArgumentException("worm seeds must be unique: " + worm.seed());
+            }
+            count++;
+            if (!worm.children().isEmpty()) {
+                count += validateWormTree(worm.children(), depth + 1, ids, seeds);
+            }
+        }
+        return count;
     }
 
     private static void requireRange(int value, int minimum, int maximum, String name) {
@@ -141,8 +211,6 @@ public record RiverNetworkOptions(
         private double routingNoiseWeight;
         private double flowAlignmentWeight;
         private double confluenceWeight;
-        private int branchSoftCap;
-        private double branchChildShrinkFactor;
         private double oceanAttraction;
         private double channelWidth;
         private double bankWidth;
@@ -153,8 +221,7 @@ public record RiverNetworkOptions(
         private double orderWidthFactor;
         private double orderDepthFactor;
         private double maximumReachRadius;
-        private double meanderStrength;
-        private int meanderSubdivisions;
+        private List<RiverWorm> worms;
 
         private Builder(long seed) {
             this.seed = seed;
@@ -177,8 +244,6 @@ public record RiverNetworkOptions(
             routingNoiseWeight = 24.0;
             flowAlignmentWeight = 0D;
             confluenceWeight = 0D;
-            branchSoftCap = 4;
-            branchChildShrinkFactor = 0.35D;
             oceanAttraction = 64.0;
             channelWidth = 10.0;
             bankWidth = 8.0;
@@ -189,8 +254,32 @@ public record RiverNetworkOptions(
             orderWidthFactor = 0.35;
             orderDepthFactor = 0.2;
             maximumReachRadius = Double.NaN;
-            meanderStrength = 40.0;
-            meanderSubdivisions = 8;
+            worms = List.of(new RiverWorm(
+                    "default",
+                    1L,
+                    1D,
+                    1024D,
+                    256D,
+                    0.5D,
+                    0.15D,
+                    40D,
+                    8,
+                    1D,
+                    1D,
+                    1D,
+                    512D,
+                    128D,
+                    0D,
+                    0D,
+                    0D,
+                    0D,
+                    4,
+                    0.35D,
+                    1D,
+                    0D,
+                    0D,
+                    List.of()
+            ));
         }
 
         public Builder cellSize(int value) {
@@ -288,16 +377,6 @@ public record RiverNetworkOptions(
             return this;
         }
 
-        public Builder branchSoftCap(int value) {
-            branchSoftCap = value;
-            return this;
-        }
-
-        public Builder branchChildShrinkFactor(double value) {
-            branchChildShrinkFactor = value;
-            return this;
-        }
-
         public Builder oceanAttraction(double value) {
             oceanAttraction = value;
             return this;
@@ -348,13 +427,8 @@ public record RiverNetworkOptions(
             return this;
         }
 
-        public Builder meanderStrength(double value) {
-            meanderStrength = value;
-            return this;
-        }
-
-        public Builder meanderSubdivisions(int value) {
-            meanderSubdivisions = value;
+        public Builder worms(List<RiverWorm> value) {
+            worms = value;
             return this;
         }
 
@@ -383,8 +457,6 @@ public record RiverNetworkOptions(
                     routingNoiseWeight,
                     flowAlignmentWeight,
                     confluenceWeight,
-                    branchSoftCap,
-                    branchChildShrinkFactor,
                     oceanAttraction,
                     channelWidth,
                     bankWidth,
@@ -395,8 +467,7 @@ public record RiverNetworkOptions(
                     orderWidthFactor,
                     orderDepthFactor,
                     resolvedMaximumReachRadius,
-                    meanderStrength,
-                    meanderSubdivisions
+                    worms
             );
         }
 

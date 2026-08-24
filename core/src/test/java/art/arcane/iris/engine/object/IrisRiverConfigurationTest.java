@@ -36,6 +36,7 @@ public class IrisRiverConfigurationTest {
         assertEquals(10D, dimension.getRivers().getTerrain().getMaxChannelWidth(), 0D);
         assertEquals(4D, dimension.getRivers().getTerrain().getMaxBankWidth(), 0D);
         assertEquals(10D, dimension.getRivers().getTerrain().getMaxDepth(), 0D);
+        assertTrue(dimension.getRivers().getTerrain().getWorms().isEmpty());
         assertEquals(IrisRiverCaveMode.SEALED, dimension.getRivers().getCaves().getMode());
         assertEquals(IrisRiverCaveFallback.SEALED, dimension.getRivers().getCaves().getFallback());
         assertEquals(IrisRiverExistingFluidPolicy.REJECT,
@@ -65,6 +66,27 @@ public class IrisRiverConfigurationTest {
                       "maxBankWidth": 2.5,
                       "maxDepth": 8,
                       "maxIncision": 36,
+                      "worms": [
+                        {
+                          "seed": 73,
+                          "weight": 2.5,
+                          "wavelength": 1536,
+                          "detailWavelength": 192,
+                          "tortuosity": 0.65,
+                          "detailTortuosity": 0.2,
+                          "maxOffset": 420,
+                          "segments": 56,
+                          "widthMultiplier": 1.4,
+                          "bankMultiplier": 1.2,
+                          "depthMultiplier": 0.8,
+                          "bodyWavelength": 704,
+                          "bodyDetailWavelength": 88,
+                          "widthVariation": 0.75,
+                          "bankVariation": 0.65,
+                          "depthVariation": 0.55,
+                          "roofVariation": 0.45
+                        }
+                      ],
                       "terminalMode": "SUPPRESS"
                     },
                     "water": {"mode": "TERRACED", "poolLength": 80},
@@ -111,6 +133,24 @@ public class IrisRiverConfigurationTest {
         assertEquals(2.5D, dimension.getRivers().getTerrain().getMaxBankWidth(), 0D);
         assertEquals(8D, dimension.getRivers().getTerrain().getMaxDepth(), 0D);
         assertEquals(36, dimension.getRivers().getTerrain().getMaxIncision());
+        IrisRiverWorm worm = dimension.getRivers().getTerrain().getWorms().get(0);
+        assertEquals(73L, worm.getSeed());
+        assertEquals(2.5D, worm.getWeight(), 0D);
+        assertEquals(1536D, worm.getWavelength(), 0D);
+        assertEquals(192D, worm.getDetailWavelength(), 0D);
+        assertEquals(0.65D, worm.getTortuosity(), 0D);
+        assertEquals(0.2D, worm.getDetailTortuosity(), 0D);
+        assertEquals(420D, worm.getMaxOffset(), 0D);
+        assertEquals(56, worm.getSegments());
+        assertEquals(1.4D, worm.getWidthMultiplier(), 0D);
+        assertEquals(1.2D, worm.getBankMultiplier(), 0D);
+        assertEquals(0.8D, worm.getDepthMultiplier(), 0D);
+        assertEquals(704D, worm.getBodyWavelength(), 0D);
+        assertEquals(88D, worm.getBodyDetailWavelength(), 0D);
+        assertEquals(0.75D, worm.getWidthVariation(), 0D);
+        assertEquals(0.65D, worm.getBankVariation(), 0D);
+        assertEquals(0.55D, worm.getDepthVariation(), 0D);
+        assertEquals(0.45D, worm.getRoofVariation(), 0D);
         assertEquals(IrisRiverTerminalMode.SUPPRESS,
                 dimension.getRivers().getTerrain().getTerminalMode());
         assertEquals(IrisRiverWaterMode.TERRACED, dimension.getRivers().getWater().getMode());
@@ -145,7 +185,11 @@ public class IrisRiverConfigurationTest {
                 .setFloodedCaveBiomes(new KList<>("biome-grotto"));
         IrisDimension dimension = new IrisDimension()
                 .setRegions(new KList<>("region"))
-                .setRivers(new IrisRiverNetwork().setEnabled(true).setBiomes(dimensionBiomes));
+                .setRivers(new IrisRiverNetwork()
+                        .setEnabled(true)
+                        .setTerrain(new IrisRiverTerrain()
+                                .setWorms(new KList<>(new IrisRiverWorm())))
+                        .setBiomes(dimensionBiomes));
         IrisRegion region = new IrisRegion()
                 .setLandBiomes(new KList<>("natural"))
                 .setRiverOverride(regionOverride);

@@ -90,6 +90,72 @@ public final class DesktopUiMessages {
     public static final TextKey PREGEN_TIME = TextKey.of("iris.desktop.pregen.time", "{remaining} remaining ({elapsed} elapsed)");
     public static final TextKey PREGEN_METHOD = TextKey.of("iris.desktop.pregen.method", "Generation method: {method}");
     public static final TextKey PREGEN_MEMORY = TextKey.of("iris.desktop.pregen.memory", "Memory: {used} ({usage}) Pressure: {pressure}/s");
+    public static final TextKey IMAGEMAP_TITLE = TextKey.of("iris.desktop.imagemap.title", "Image Map Studio");
+    public static final TextKey IMAGEMAP_PRESET = TextKey.of("iris.desktop.imagemap.preset", "Preset:");
+    public static final TextKey IMAGEMAP_LOAD = TextKey.of("iris.desktop.imagemap.load", "Load");
+    public static final TextKey IMAGEMAP_IMPORT_PNG = TextKey.of("iris.desktop.imagemap.import_png", "Import PNG");
+    public static final TextKey IMAGEMAP_REPLACE_PNG = TextKey.of("iris.desktop.imagemap.replace_png", "Replace PNG");
+    public static final TextKey IMAGEMAP_PREVIEW = TextKey.of("iris.desktop.imagemap.preview", "Preview");
+    public static final TextKey IMAGEMAP_EXPORT = TextKey.of("iris.desktop.imagemap.export", "Export to active pack");
+    public static final TextKey IMAGEMAP_METADATA = TextKey.of("iris.desktop.imagemap.metadata", "Source metadata");
+    public static final TextKey IMAGEMAP_RESOURCE = TextKey.of("iris.desktop.imagemap.resource", "Resource binding");
+    public static final TextKey IMAGEMAP_COORDINATES = TextKey.of("iris.desktop.imagemap.coordinates", "Coordinates and sampling");
+    public static final TextKey IMAGEMAP_BINDING_KEY = TextKey.of("iris.desktop.imagemap.binding_key", "Binding key");
+    public static final TextKey IMAGEMAP_MAP_KEY = TextKey.of("iris.desktop.imagemap.map_key", "Map key");
+    public static final TextKey IMAGEMAP_IMAGE_KEY = TextKey.of("iris.desktop.imagemap.image_key", "Image key");
+    public static final TextKey IMAGEMAP_TYPE = TextKey.of("iris.desktop.imagemap.type", "Type");
+    public static final TextKey IMAGEMAP_APPLICATION = TextKey.of("iris.desktop.imagemap.application", "Application");
+    public static final TextKey IMAGEMAP_BLOCKS_PER_PIXEL = TextKey.of("iris.desktop.imagemap.blocks_per_pixel", "Blocks per pixel");
+    public static final TextKey IMAGEMAP_ORIGIN_X = TextKey.of("iris.desktop.imagemap.origin_x", "World origin X");
+    public static final TextKey IMAGEMAP_ORIGIN_Z = TextKey.of("iris.desktop.imagemap.origin_z", "World origin Z");
+    public static final TextKey IMAGEMAP_SOURCE_ORIGIN_X = TextKey.of("iris.desktop.imagemap.source_origin_x", "Source origin X");
+    public static final TextKey IMAGEMAP_SOURCE_ORIGIN_Z = TextKey.of("iris.desktop.imagemap.source_origin_z", "Source origin Z");
+    public static final TextKey IMAGEMAP_ROTATION = TextKey.of("iris.desktop.imagemap.rotation", "Rotation");
+    public static final TextKey IMAGEMAP_MIRROR_X = TextKey.of("iris.desktop.imagemap.mirror_x", "Mirror X");
+    public static final TextKey IMAGEMAP_MIRROR_Z = TextKey.of("iris.desktop.imagemap.mirror_z", "Mirror Z");
+    public static final TextKey IMAGEMAP_SAMPLING = TextKey.of("iris.desktop.imagemap.sampling", "Sampling");
+    public static final TextKey IMAGEMAP_OUT_OF_BOUNDS = TextKey.of("iris.desktop.imagemap.out_of_bounds", "Out of bounds");
+    public static final TextKey IMAGEMAP_ALPHA = TextKey.of("iris.desktop.imagemap.alpha", "Alpha policy");
+    public static final TextKey IMAGEMAP_FALLBACK_VALUE = TextKey.of("iris.desktop.imagemap.fallback_value", "Fallback value");
+    public static final TextKey IMAGEMAP_FALLBACK_TARGET = TextKey.of("iris.desktop.imagemap.fallback_target", "Fallback target");
+    public static final TextKey IMAGEMAP_MINIMUM_HEIGHT = TextKey.of("iris.desktop.imagemap.minimum_height", "Minimum height");
+    public static final TextKey IMAGEMAP_MAXIMUM_HEIGHT = TextKey.of("iris.desktop.imagemap.maximum_height", "Maximum height");
+    public static final TextKey IMAGEMAP_VERTICAL_OFFSET = TextKey.of("iris.desktop.imagemap.vertical_offset", "Vertical offset");
+    public static final TextKey IMAGEMAP_CLAMP = TextKey.of("iris.desktop.imagemap.clamp", "Clamp height");
+    public static final TextKey IMAGEMAP_INVERTED = TextKey.of("iris.desktop.imagemap.inverted", "Invert values");
+    public static final TextKey IMAGEMAP_CURVE_EXPONENT = TextKey.of("iris.desktop.imagemap.curve_exponent", "Curve exponent");
+    public static final TextKey IMAGEMAP_SMOOTHING_RADIUS = TextKey.of("iris.desktop.imagemap.smoothing_radius", "Smoothing radius");
+    public static final TextKey IMAGEMAP_THRESHOLD = TextKey.of("iris.desktop.imagemap.threshold", "Threshold");
+    public static final TextKey IMAGEMAP_FALLOFF = TextKey.of("iris.desktop.imagemap.falloff", "Falloff");
+    public static final TextKey IMAGEMAP_COLOR_TOLERANCE = TextKey.of("iris.desktop.imagemap.color_tolerance", "Raw sRGB tolerance");
+    public static final TextKey IMAGEMAP_UNKNOWN_COLOR = TextKey.of("iris.desktop.imagemap.unknown_color", "Unknown color");
+    public static final TextKey IMAGEMAP_ADD_COLOR = TextKey.of("iris.desktop.imagemap.add_color", "Add legend color");
+    public static final TextKey IMAGEMAP_REMOVE_COLOR = TextKey.of("iris.desktop.imagemap.remove_color", "Remove selected");
+    public static final TextKey IMAGEMAP_COMPOSED_MASKS = TextKey.of("iris.desktop.imagemap.composed_masks", "Composed masks");
+    public static final TextKey IMAGEMAP_ADD_MASK = TextKey.of("iris.desktop.imagemap.add_mask", "Add mask binding");
+    public static final TextKey IMAGEMAP_HEIGHT = TextKey.of("iris.desktop.imagemap.height", "Height interpretation");
+    public static final TextKey IMAGEMAP_MASK = TextKey.of("iris.desktop.imagemap.mask", "Mask interpretation");
+    public static final TextKey IMAGEMAP_COLOR_MAP = TextKey.of("iris.desktop.imagemap.color_map", "Color legend");
+    public static final TextKey IMAGEMAP_OVERLAYS = TextKey.of("iris.desktop.imagemap.overlays", "World overlays");
+    public static final TextKey IMAGEMAP_CHUNKS = TextKey.of("iris.desktop.imagemap.chunks", "16-block chunks");
+    public static final TextKey IMAGEMAP_REGIONS = TextKey.of("iris.desktop.imagemap.regions", "512-block regions");
+    public static final TextKey IMAGEMAP_BOUNDARY = TextKey.of("iris.desktop.imagemap.boundary", "World boundary");
+    public static final TextKey IMAGEMAP_COVERAGE = TextKey.of("iris.desktop.imagemap.coverage", "Source coverage");
+    public static final TextKey IMAGEMAP_DIAGNOSTICS = TextKey.of("iris.desktop.imagemap.diagnostics", "Diagnostics");
+    public static final TextKey IMAGEMAP_READY = TextKey.of("iris.desktop.imagemap.ready", "Ready");
+    public static final TextKey IMAGEMAP_NO_SOURCE = TextKey.of("iris.desktop.imagemap.no_source", "Import a PNG source to begin.");
+    public static final TextKey IMAGEMAP_LOADING = TextKey.of("iris.desktop.imagemap.loading", "Loading preset...");
+    public static final TextKey IMAGEMAP_LOAD_FAILED = TextKey.of("iris.desktop.imagemap.load_failed", "Preset load failed");
+    public static final TextKey IMAGEMAP_PREVIEWING = TextKey.of("iris.desktop.imagemap.previewing", "Compiling preview...");
+    public static final TextKey IMAGEMAP_PREVIEW_VALID = TextKey.of("iris.desktop.imagemap.preview_valid", "Runtime compiler validation passed.");
+    public static final TextKey IMAGEMAP_PREVIEW_FAILED = TextKey.of("iris.desktop.imagemap.preview_failed", "Preview failed");
+    public static final TextKey IMAGEMAP_EXPORTING = TextKey.of("iris.desktop.imagemap.exporting", "Validating and exporting...");
+    public static final TextKey IMAGEMAP_EXPORTED = TextKey.of("iris.desktop.imagemap.exported", "Exported image map, PNG, and dimension binding atomically.");
+    public static final TextKey IMAGEMAP_EXPORT_FAILED = TextKey.of("iris.desktop.imagemap.export_failed", "Export failed");
+    public static final TextKey IMAGEMAP_SOURCE = TextKey.of("iris.desktop.imagemap.source", "Source pixels");
+    public static final TextKey IMAGEMAP_INTERPRETED = TextKey.of("iris.desktop.imagemap.interpreted", "Runtime interpretation");
+    public static final TextKey IMAGEMAP_NO_PREVIEW = TextKey.of("iris.desktop.imagemap.no_preview", "Compile a valid preview to inspect world output.");
+    public static final TextKey IMAGEMAP_PREVIEW_STATUS = TextKey.of("iris.desktop.imagemap.preview_status", "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel");
 
     private static final List<MessageKey> KEYS = List.of(
             VISION_TITLE, VISION_VIEW, VISION_GRID, VISION_FOLLOW,
@@ -112,7 +178,24 @@ public final class DesktopUiMessages {
             NOISE_CATEGORY_UTILITY, NOISE_CATEGORY_OTHER, PREGEN_INITIALIZING, PREGEN_TITLE,
             PREGEN_METHOD_PENDING, PREGEN_PAUSED, PREGEN_RESUME_HINT, PREGEN_PAUSE_HINT,
             PREGEN_PROGRESS_PAUSED, PREGEN_PROGRESS_SAVING, PREGEN_PROGRESS_GENERATING, PREGEN_SPEED,
-            PREGEN_SPEED_CACHED, PREGEN_TIME, PREGEN_METHOD, PREGEN_MEMORY
+            PREGEN_SPEED_CACHED, PREGEN_TIME, PREGEN_METHOD, PREGEN_MEMORY,
+            IMAGEMAP_TITLE, IMAGEMAP_PRESET, IMAGEMAP_LOAD, IMAGEMAP_IMPORT_PNG,
+            IMAGEMAP_REPLACE_PNG, IMAGEMAP_PREVIEW, IMAGEMAP_EXPORT, IMAGEMAP_METADATA,
+            IMAGEMAP_RESOURCE, IMAGEMAP_COORDINATES, IMAGEMAP_BINDING_KEY, IMAGEMAP_MAP_KEY,
+            IMAGEMAP_IMAGE_KEY, IMAGEMAP_TYPE, IMAGEMAP_APPLICATION, IMAGEMAP_BLOCKS_PER_PIXEL,
+            IMAGEMAP_ORIGIN_X, IMAGEMAP_ORIGIN_Z, IMAGEMAP_SOURCE_ORIGIN_X, IMAGEMAP_SOURCE_ORIGIN_Z,
+            IMAGEMAP_ROTATION, IMAGEMAP_MIRROR_X, IMAGEMAP_MIRROR_Z, IMAGEMAP_SAMPLING,
+            IMAGEMAP_OUT_OF_BOUNDS, IMAGEMAP_ALPHA, IMAGEMAP_FALLBACK_VALUE, IMAGEMAP_FALLBACK_TARGET,
+            IMAGEMAP_MINIMUM_HEIGHT, IMAGEMAP_MAXIMUM_HEIGHT, IMAGEMAP_VERTICAL_OFFSET, IMAGEMAP_CLAMP,
+            IMAGEMAP_INVERTED, IMAGEMAP_CURVE_EXPONENT, IMAGEMAP_SMOOTHING_RADIUS, IMAGEMAP_THRESHOLD,
+            IMAGEMAP_FALLOFF, IMAGEMAP_COLOR_TOLERANCE, IMAGEMAP_UNKNOWN_COLOR, IMAGEMAP_ADD_COLOR,
+            IMAGEMAP_REMOVE_COLOR, IMAGEMAP_COMPOSED_MASKS, IMAGEMAP_ADD_MASK,
+            IMAGEMAP_HEIGHT, IMAGEMAP_MASK, IMAGEMAP_COLOR_MAP,
+            IMAGEMAP_OVERLAYS, IMAGEMAP_CHUNKS, IMAGEMAP_REGIONS, IMAGEMAP_BOUNDARY,
+            IMAGEMAP_COVERAGE, IMAGEMAP_DIAGNOSTICS, IMAGEMAP_READY, IMAGEMAP_NO_SOURCE,
+            IMAGEMAP_LOADING, IMAGEMAP_LOAD_FAILED, IMAGEMAP_PREVIEWING, IMAGEMAP_PREVIEW_VALID,
+            IMAGEMAP_PREVIEW_FAILED, IMAGEMAP_EXPORTING, IMAGEMAP_EXPORTED, IMAGEMAP_EXPORT_FAILED,
+            IMAGEMAP_SOURCE, IMAGEMAP_INTERPRETED, IMAGEMAP_NO_PREVIEW, IMAGEMAP_PREVIEW_STATUS
     );
 
     private DesktopUiMessages() {

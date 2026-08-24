@@ -45,6 +45,9 @@ public interface EnginePlatformHooks {
     default void validateDimensionHotload(Engine engine, IrisDimension replacement) {
     }
 
+    default void applyWorldBoundary(Engine engine) {
+    }
+
     default boolean isPregeneratorActive(Engine engine) {
         return false;
     }

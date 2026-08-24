@@ -36,11 +36,14 @@ import art.arcane.iris.engine.framework.NativeStructureVolume;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.object.IrisWorld;
+import art.arcane.iris.engine.object.IrisWorldBoundary;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KList;
 import org.bukkit.World;
+import org.bukkit.WorldBorder;
 
 public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
     @Override
@@ -78,6 +81,35 @@ public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
                 engine.getDimension(),
                 replacement,
                 "iris");
+    }
+
+    @Override
+    public void applyWorldBoundary(Engine engine) {
+        IrisDimension expectedDimension = engine.getDimension();
+        IrisWorldBoundary configuredBoundary = expectedDimension.getWorldBoundary();
+        if (configuredBoundary == null) {
+            return;
+        }
+        IrisWorld expectedIrisWorld = engine.getWorld();
+        World expectedWorld = BukkitWorldBinding.world(expectedIrisWorld);
+        if (expectedWorld == null) {
+            return;
+        }
+        IrisWorldBoundary boundary;
+        try {
+            boundary = IrisWorldBoundary.snapshot(configuredBoundary);
+        } catch (Throwable error) {
+            IrisLogging.error("Invalid Iris world boundary for " + expectedWorld.getName() + ".");
+            IrisLogging.reportError(error);
+            throw propagateBoundaryFailure("Invalid Iris world boundary for '" + expectedWorld.getName() + "'.", error);
+        }
+        if (!J.runGlobal(() -> applyWorldBoundary(engine, expectedDimension, expectedIrisWorld, expectedWorld, boundary))) {
+            IllegalStateException failure = new IllegalStateException(
+                    "Bukkit global scheduler rejected world-boundary application for '" + expectedWorld.getName() + "'.");
+            IrisLogging.error(failure.getMessage());
+            IrisLogging.reportError(failure);
+            throw failure;
+        }
     }
 
     @Override
@@ -133,5 +165,44 @@ public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
         }
         World world = BukkitWorldBinding.world(engine.getWorld());
         return world != null && IrisToolbelt.isWorldMaintenanceBypassingMantleStages(world);
+    }
+
+    static void applyWorldBoundary(WorldBorder worldBorder, IrisWorldBoundary boundary) {
+        if (boundary == null) {
+            return;
+        }
+        worldBorder.setCenter(boundary.getCenter().getX(), boundary.getCenter().getZ());
+        worldBorder.setSize(boundary.getSize());
+        worldBorder.setWarningDistance(boundary.getWarningDistance());
+        worldBorder.setDamageBuffer(boundary.getDamageBuffer());
+        worldBorder.setDamageAmount(boundary.getDamageAmount());
+    }
+
+    private static void applyWorldBoundary(Engine engine, IrisDimension expectedDimension,
+                                           IrisWorld expectedIrisWorld, World expectedWorld,
+                                           IrisWorldBoundary boundary) {
+        if (engine.isClosed() || engine.isClosing() || engine.getDimension() != expectedDimension
+                || engine.getWorld() != expectedIrisWorld
+                || BukkitWorldBinding.world(expectedIrisWorld) != expectedWorld) {
+            return;
+        }
+        try {
+            applyWorldBoundary(expectedWorld.getWorldBorder(), boundary);
+        } catch (Throwable error) {
+            IrisLogging.error("Failed to apply Iris world boundary to " + expectedWorld.getName() + ".");
+            IrisLogging.reportError(error);
+            throw propagateBoundaryFailure("Failed to apply Iris world boundary to '"
+                    + expectedWorld.getName() + "'.", error);
+        }
+    }
+
+    private static RuntimeException propagateBoundaryFailure(String message, Throwable error) {
+        if (error instanceof Error fatal) {
+            throw fatal;
+        }
+        if (error instanceof RuntimeException runtimeException) {
+            return runtimeException;
+        }
+        return new IllegalStateException(message, error);
     }
 }

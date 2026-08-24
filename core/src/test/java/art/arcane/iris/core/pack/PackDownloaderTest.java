@@ -408,6 +408,54 @@ public class PackDownloaderTest {
     }
 
     @Test
+    public void networkFailureReportsItsCauseAndReopensAdmission() throws Exception {
+        File packsFolder = temp.newFolder("failed-download-packs");
+        byte[] followupArchive = packArchive("failed-followup.zip", "failed_followup");
+        AtomicInteger failedRequests = new AtomicInteger();
+        AtomicInteger followupRequests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/missing.zip", exchange -> {
+            failedRequests.incrementAndGet();
+            exchange.sendResponseHeaders(404, -1L);
+            exchange.close();
+        });
+        server.createContext("/followup.zip", exchange -> {
+            followupRequests.incrementAndGet();
+            exchange.sendResponseHeaders(200, followupArchive.length);
+            exchange.getResponseBody().write(followupArchive);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+
+            IOException failure = assertThrows(IOException.class, () -> PackDownloader.downloadUrl(
+                    packsFolder,
+                    baseUrl + "/missing.zip",
+                    false,
+                    ignored -> {
+                    }
+            ));
+
+            assertTrue(failure.getMessage().contains("HTTP 404"));
+            assertEquals(1, failedRequests.get());
+            PackDownloader.PackInstallResult followup = PackDownloader.downloadUrl(
+                    packsFolder,
+                    baseUrl + "/followup.zip",
+                    false,
+                    ignored -> {
+                    }
+            );
+            assertNotNull(followup);
+            assertEquals("failed_followup", followup.key());
+            assertEquals(1, followupRequests.get());
+            assertEquals(0, PackDownloader.downloadLockCount());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     public void builtInPackPresenceRequiresItsPrimaryDimension() throws Exception {
         File packsFolder = temp.newFolder("managed-presence");
         Path dimensions = Files.createDirectories(

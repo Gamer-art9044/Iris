@@ -89,13 +89,14 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.lru)
     implementation(libs.caffeine)
+    implementation(libs.paralithic)
 
     // Dynamically Loaded
-    slim(libs.paralithic)
     slim(libs.paperlib)
     slim(libs.adventure.api)
     slim(libs.adventure.minimessage)
-    slim(libs.adventure.platform)
+    slim(libs.adventure.serializer.legacy)
+    slim(libs.adventure.serializer.plain)
     slim(libs.bstats)
     slim(libs.sentry)
 
@@ -310,6 +311,7 @@ tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.Shadow
     // surfaces are only referenced from :adapters:bukkit:plugin, which is merged into the artifact
     // after this task runs. Both would be stripped as unreachable. Excluding them from minimization
     // leaves it reaching ~25KB of Gson internals, which is not worth a mode that fails silently.
+    relocate('com.dfsek.paralithic', "${lib}.paralithic")
     relocate('io.github.slimjar', "${lib}.slimjar")
     exclude('modules/loader-agent.isolated-jar')
     exclude(supersededVolmLibPackages)

@@ -19,6 +19,7 @@
 package art.arcane.iris.core.pack;
 
 import art.arcane.iris.engine.object.IrisDimensionType;
+import art.arcane.iris.engine.object.IrisWorldBoundary;
 import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
 
@@ -47,6 +48,7 @@ final class PackDimensionValidator {
 
             validateImportedStructurePolicy(dimensionKey, dimJson, blockingErrors, warnings);
             validateDimensionHeights(packFolder, dimensionKey, dimJson, blockingErrors);
+            validateWorldBoundary(dimensionKey, dimJson, blockingErrors);
 
             JSONArray regionsArray = dimJson.optJSONArray("regions");
             if (regionsArray == null || regionsArray.length() == 0) {
@@ -277,6 +279,85 @@ final class PackDimensionValidator {
             blockingErrors.add("Dimension '" + dimensionKey + "' logicalHeight is " + logicalHeight
                     + "; it cannot be greater than the dimension height of " + height + ".");
         }
+    }
+
+    static void validateWorldBoundary(String dimensionKey, JSONObject dimension, List<String> blockingErrors) {
+        if (!dimension.has("worldBoundary")) {
+            return;
+        }
+        if (dimension.isNull("worldBoundary")) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' worldBoundary must be an object.");
+            return;
+        }
+        JSONObject boundary = dimension.optJSONObject("worldBoundary");
+        if (boundary == null) {
+            blockingErrors.add("Dimension '" + dimensionKey + "' worldBoundary must be an object.");
+            return;
+        }
+
+        String context = "Dimension '" + dimensionKey + "' worldBoundary";
+        validateFiniteNumber(boundary, "size", 1D, IrisWorldBoundary.MAXIMUM_SIZE, context, blockingErrors);
+        validateInteger(boundary, "warningDistance", 0, Integer.MAX_VALUE, context, blockingErrors);
+        validateFiniteNumber(boundary, "damageBuffer", 0D, Double.MAX_VALUE, context, blockingErrors);
+        validateFiniteNumber(boundary, "damageAmount", 0D, Double.MAX_VALUE, context, blockingErrors);
+
+        if (!boundary.has("center")) {
+            return;
+        }
+        if (boundary.isNull("center")) {
+            blockingErrors.add(context + ".center must be an object.");
+            return;
+        }
+        JSONObject center = boundary.optJSONObject("center");
+        if (center == null) {
+            blockingErrors.add(context + ".center must be an object.");
+            return;
+        }
+        validateFiniteNumber(center, "x", -IrisWorldBoundary.MAXIMUM_CENTER,
+                IrisWorldBoundary.MAXIMUM_CENTER, context + ".center", blockingErrors);
+        validateFiniteNumber(center, "z", -IrisWorldBoundary.MAXIMUM_CENTER,
+                IrisWorldBoundary.MAXIMUM_CENTER, context + ".center", blockingErrors);
+    }
+
+    private static void validateFiniteNumber(JSONObject owner, String field, double minimum, double maximum,
+                                             String context, List<String> blockingErrors) {
+        if (!owner.has(field)) {
+            return;
+        }
+        Object raw = owner.opt(field);
+        if (!(raw instanceof Number number)) {
+            blockingErrors.add(context + "." + field + " must be a number.");
+            return;
+        }
+        double value = number.doubleValue();
+        if (!Double.isFinite(value) || value < minimum || value > maximum) {
+            blockingErrors.add(context + "." + field + " must be finite and between "
+                    + decimalLabel(minimum) + " and " + decimalLabel(maximum) + ".");
+        }
+    }
+
+    private static void validateInteger(JSONObject owner, String field, int minimum, int maximum,
+                                        String context, List<String> blockingErrors) {
+        if (!owner.has(field)) {
+            return;
+        }
+        Object raw = owner.opt(field);
+        if (!(raw instanceof Number number)) {
+            blockingErrors.add(context + "." + field + " must be an integer.");
+            return;
+        }
+        double value = number.doubleValue();
+        if (!Double.isFinite(value) || value != Math.rint(value) || value < minimum || value > maximum) {
+            blockingErrors.add(context + "." + field + " must be an integer between "
+                    + minimum + " and " + maximum + ".");
+        }
+    }
+
+    private static String decimalLabel(double value) {
+        if (Math.abs(value) <= Long.MAX_VALUE && value == Math.rint(value)) {
+            return Long.toString((long) value);
+        }
+        return Double.toString(value);
     }
 
     private static JSONObject resolveDimensionHeight(File packFolder, JSONObject dimJson) {

@@ -62,6 +62,11 @@ public class PackExportClosureTest {
         assertTrue("Bukkit packager must export region objects alongside biome objects",
                 bukkit.contains("regions.forEach((r) -> allPlacements.addAll(r.getObjects()))"));
         assertTrue("Bukkit packager must export entity loot tables", bukkit.contains("getLoot().getTables()"));
+        int bukkitValidation = bukkit.indexOf("PackValidator.validateForPackaging(project.getPath())");
+        assertTrue("Bukkit packager must validate before opening or mutating package state",
+                bukkitValidation >= 0
+                        && bukkitValidation < bukkit.indexOf("IrisData.openRuntime(project.getPath())")
+                        && bukkitValidation < bukkit.indexOf("IO.delete(folder)"));
 
         String modded = Files.readString(Path.of(
                 "../adapters/modded-common/src/main/java/art/arcane/iris/modded/command/ModdedStudioCommands.java")).replace("\r\n", "\n");
@@ -69,5 +74,8 @@ public class PackExportClosureTest {
         assertTrue("modded packager must write markers/", modded.contains("\"markers\""));
         assertTrue("modded packager must include initial spawns", modded.contains("getInitialSpawns"));
         assertTrue("modded packager must export region objects", modded.contains("region.getObjects()"));
+        int moddedValidation = modded.indexOf("PackValidator.validateForPackaging(packFolder)");
+        assertTrue("modded packager must validate before mutating package state",
+                moddedValidation >= 0 && moddedValidation < modded.indexOf("IO.delete(folder)"));
     }
 }

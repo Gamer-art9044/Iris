@@ -12,6 +12,7 @@ import art.arcane.volmlib.util.inventorygui.UIElement;
 import art.arcane.volmlib.util.inventorygui.UIPaneDecorator;
 import art.arcane.volmlib.util.inventorygui.UIWindow;
 import art.arcane.volmlib.util.inventorygui.WindowResolution;
+import art.arcane.volmlib.util.plugin.ComponentMessenger;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -64,13 +65,13 @@ public final class JigsawStudioMenuController {
         Optional<JigsawStudioMenuState> available = actions.menuState(player);
         if (available.isEmpty()) {
             close(player);
-            player.sendMessage(ChatColor.RED + "Iris Jigsaw Studio is not active in this world.");
+            send(player, ChatColor.RED + "Iris Jigsaw Studio is not active in this world.");
             return false;
         }
         JigsawStudioMenuState state = available.get();
         if (state.workcells().isEmpty()) {
             close(player);
-            player.sendMessage(ChatColor.RED + "This Jigsaw Studio has no workcells.");
+            send(player, ChatColor.RED + "This Jigsaw Studio has no workcells.");
             return false;
         }
 
@@ -160,7 +161,7 @@ public final class JigsawStudioMenuController {
             return false;
         }
         if (!current.get().irisExtended()) {
-            player.sendMessage(ChatColor.YELLOW
+            send(player, ChatColor.YELLOW
                     + "Vanilla-portable pieces cannot encode Iris theme or piece-rule metadata.");
             close(player);
             return false;
@@ -1573,7 +1574,7 @@ public final class JigsawStudioMenuController {
             return;
         }
         if (variant.active()) {
-            player.sendMessage(ChatColor.YELLOW + "That variant is already loaded. Right-click it for details.");
+            send(player, ChatColor.YELLOW + "That variant is already loaded. Right-click it for details.");
             return;
         }
         if (actions.switchVariant(player, workcellId, pieceKey, false)) {
@@ -1655,11 +1656,11 @@ public final class JigsawStudioMenuController {
             return;
         }
         if (!variant.active() || !variant.owned()) {
-            player.sendMessage(ChatColor.YELLOW + "Load an owned variant before editing its rules.");
+            send(player, ChatColor.YELLOW + "Load an owned variant before editing its rules.");
             return;
         }
         if (!current.get().irisExtended()) {
-            player.sendMessage(ChatColor.YELLOW
+            send(player, ChatColor.YELLOW
                     + "Vanilla-portable pieces cannot encode Iris theme or piece-rule metadata.");
             return;
         }
@@ -1753,7 +1754,7 @@ public final class JigsawStudioMenuController {
         UUID playerId = player.getUniqueId();
         PendingWorkcellResize existing = pendingWorkcellResize(playerId, requestId, workcellId);
         if (existing != null && existing.applying()) {
-            player.sendMessage(ChatColor.YELLOW + "That cell size is already being applied.");
+            send(player, ChatColor.YELLOW + "That cell size is already being applied.");
             return;
         }
         JigsawStudioCellDimensions base = existing == null
@@ -1762,7 +1763,7 @@ public final class JigsawStudioMenuController {
         Optional<JigsawStudioCellDimensions> adjusted = adjustedDimensions(
                 base, axis, delta);
         if (adjusted.isEmpty()) {
-            player.sendMessage(ChatColor.RED + "That workcell size is outside Iris limits.");
+            send(player, ChatColor.RED + "That workcell size is outside Iris limits.");
             return;
         }
         PendingWorkcellResize pending = new PendingWorkcellResize(
@@ -1864,7 +1865,7 @@ public final class JigsawStudioMenuController {
         if (window != null) {
             renderWorkcellSettings(window, current.orElseThrow(), withCapacity(workcell, retry.dimensions()));
         }
-        player.sendMessage(ChatColor.YELLOW
+        send(player, ChatColor.YELLOW
                 + "Cell resizing is still pending; use Apply Cell Size to retry after the current operation settles.");
     }
 
@@ -1927,7 +1928,7 @@ public final class JigsawStudioMenuController {
         Optional<JigsawStudioCellDimensions> adjusted = adjustedDimensions(
                 variant.dimensions().orElseThrow(), axis, delta);
         if (adjusted.isEmpty()) {
-            player.sendMessage(ChatColor.RED + "That variant size is outside Iris limits.");
+            send(player, ChatColor.RED + "That variant size is outside Iris limits.");
             return;
         }
         resizeVariant(player, requestId, workcellId, pieceKey, adjusted.get());
@@ -1953,7 +1954,7 @@ public final class JigsawStudioMenuController {
         if (dimensions.width() > workcell.capacity().width()
                 || dimensions.height() > workcell.capacity().height()
                 || dimensions.depth() > workcell.capacity().depth()) {
-            player.sendMessage(ChatColor.RED + "Increase this workcell's capacity before making the variant larger.");
+            send(player, ChatColor.RED + "Increase this workcell's capacity before making the variant larger.");
             return;
         }
         if (actions.resizeVariant(player, workcellId, pieceKey, dimensions)) {
@@ -1967,11 +1968,11 @@ public final class JigsawStudioMenuController {
             return;
         }
         if (!current.get().irisExtended()) {
-            player.sendMessage(ChatColor.YELLOW + "Mandatory caps require Iris compatibility.");
+            send(player, ChatColor.YELLOW + "Mandatory caps require Iris compatibility.");
             return;
         }
         if (current.get().requireCaps() == requireCaps) {
-            player.sendMessage(ChatColor.YELLOW + "Mandatory caps are already "
+            send(player, ChatColor.YELLOW + "Mandatory caps are already "
                     + (requireCaps ? "enabled." : "disabled."));
             return;
         }
@@ -1987,7 +1988,7 @@ public final class JigsawStudioMenuController {
             return;
         }
         if (!current.get().irisExtended()) {
-            player.sendMessage(ChatColor.YELLOW + "Theme sets require Iris compatibility.");
+            send(player, ChatColor.YELLOW + "Theme sets require Iris compatibility.");
             return;
         }
         if (!nextThemeSetKey(current.get().themeSets()).equals(themeKey)) {
@@ -2011,7 +2012,7 @@ public final class JigsawStudioMenuController {
             return;
         }
         if (!current.get().irisExtended()) {
-            player.sendMessage(ChatColor.YELLOW + "Theme weights require Iris compatibility.");
+            send(player, ChatColor.YELLOW + "Theme weights require Iris compatibility.");
             return;
         }
         JigsawStudioMenuState.ThemeSet themeSet = current.get().themeSet(expected.key());
@@ -2021,7 +2022,7 @@ public final class JigsawStudioMenuController {
         }
         Optional<Integer> weight = adjustedPositiveValue(themeSet.weight(), delta);
         if (weight.isEmpty()) {
-            player.sendMessage(ChatColor.RED + "Theme weights must remain positive.");
+            send(player, ChatColor.RED + "Theme weights must remain positive.");
             return;
         }
         if (actions.updateThemeSetWeight(player, themeSet.key(), weight.get())) {
@@ -2041,7 +2042,7 @@ public final class JigsawStudioMenuController {
             return;
         }
         if (!workcell.dirty()) {
-            player.sendMessage(ChatColor.YELLOW + "This workcell has no pending changes to flush.");
+            send(player, ChatColor.YELLOW + "This workcell has no pending changes to flush.");
             return;
         }
         if (actions.flushAutosave(player, workcellId)) {
@@ -2085,7 +2086,7 @@ public final class JigsawStudioMenuController {
         }
         Optional<JigsawStudioPieceRules> rules = adjustedRules(variant.rules(), field, delta);
         if (rules.isEmpty()) {
-            player.sendMessage(ChatColor.RED + "That piece rule value is outside Iris limits.");
+            send(player, ChatColor.RED + "That piece rule value is outside Iris limits.");
             return;
         }
         updateVariantRules(
@@ -2108,7 +2109,7 @@ public final class JigsawStudioMenuController {
             return;
         }
         if (!current.get().irisExtended()) {
-            player.sendMessage(ChatColor.YELLOW + "Piece rules require Iris compatibility.");
+            send(player, ChatColor.YELLOW + "Piece rules require Iris compatibility.");
             return;
         }
         JigsawStudioMenuState.Variant variant = activeVariant(current.get(), workcellId);
@@ -2134,7 +2135,7 @@ public final class JigsawStudioMenuController {
             return;
         }
         if (!current.get().irisExtended()) {
-            player.sendMessage(ChatColor.YELLOW + "Theme membership requires Iris compatibility.");
+            send(player, ChatColor.YELLOW + "Theme membership requires Iris compatibility.");
             return;
         }
         JigsawStudioMenuState.Variant variant = activeVariant(current.get(), workcell.stableId());
@@ -2201,7 +2202,7 @@ public final class JigsawStudioMenuController {
             return;
         }
         if (!current.get().irisExtended()) {
-            player.sendMessage(ChatColor.YELLOW + "Per-entry chance requires Iris compatibility.");
+            send(player, ChatColor.YELLOW + "Per-entry chance requires Iris compatibility.");
             return;
         }
         JigsawStudioMenuState.Variant active = activeVariant(current.get(), workcellId);
@@ -2449,7 +2450,11 @@ public final class JigsawStudioMenuController {
 
     private void stale(Player player) {
         closeAfterAction(player);
-        player.sendMessage(ChatColor.RED + "This Jigsaw Studio menu is stale. Open the control chest again.");
+        send(player, ChatColor.RED + "This Jigsaw Studio menu is stale. Open the control chest again.");
+    }
+
+    private static void send(Player player, String message) {
+        ComponentMessenger.sendSection(player, message);
     }
 
     private void closeAfterAction(Player player) {

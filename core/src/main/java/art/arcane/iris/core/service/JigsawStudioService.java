@@ -63,6 +63,7 @@ import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.volmlib.util.plugin.ComponentMessenger;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
@@ -7803,7 +7804,7 @@ public final class JigsawStudioService implements IrisService, JigsawStudioMenuC
 
     private static void message(Player player, String text) {
         if (player != null) {
-            J.runEntity(player, () -> player.sendMessage("[Iris Jigsaw Studio] " + text));
+            J.runEntity(player, () -> ComponentMessenger.sendLiteral(player, "[Iris Jigsaw Studio] " + text));
         }
     }
 

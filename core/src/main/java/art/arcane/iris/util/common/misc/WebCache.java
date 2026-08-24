@@ -27,10 +27,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -38,6 +38,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -48,13 +49,15 @@ import java.util.concurrent.TimeUnit;
  */
 public final class WebCache {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10L);
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(120L);
+    private static final DownloadPolicy DOWNLOAD_POLICY = new DownloadPolicy(
+            Duration.ofSeconds(10L),
+            3,
+            Duration.ofSeconds(1L)
+    );
     private static final int BUFFER_SIZE = 8192;
     private static final long PROGRESS_INTERVAL_NANOS = Duration.ofMillis(250L).toNanos();
     private static final TransferProgressListener NO_TRANSFER_PROGRESS = progress -> {
     };
-
-    private static volatile HttpClient client;
 
     private WebCache() {
     }
@@ -89,24 +92,31 @@ public final class WebCache {
         }
     }
 
-    public static File getNonCachedFile(String name, String url) {
+    public static File getNonCachedFile(String name, String url) throws IOException {
         return getNonCachedFile(name, url, Long.MAX_VALUE);
     }
 
-    public static File getNonCachedFile(String name, String url, long maxBytes) {
+    public static File getNonCachedFile(String name, String url, long maxBytes) throws IOException {
         return getNonCachedFile(name, url, maxBytes, NO_TRANSFER_PROGRESS);
     }
 
-    public static File getNonCachedFile(String name, String url, TransferProgressListener progressListener) {
+    public static File getNonCachedFile(String name, String url,
+                                        TransferProgressListener progressListener) throws IOException {
         return getNonCachedFile(name, url, Long.MAX_VALUE, progressListener);
     }
 
     public static File getNonCachedFile(String name, String url, long maxBytes,
-                                        TransferProgressListener progressListener) {
+                                        TransferProgressListener progressListener) throws IOException {
+        return getNonCachedFile(name, url, maxBytes, DOWNLOAD_POLICY, progressListener);
+    }
+
+    static File getNonCachedFile(String name, String url, long maxBytes, DownloadPolicy policy,
+                                 TransferProgressListener progressListener) throws IOException {
         String h = IO.hash(name + "*" + url);
         File f = IrisPlatforms.get().dataFile("cache", h.substring(0, 2), h.substring(3, 5), h);
         IrisLogging.debug("Download " + name);
-        return download(name, url, f, maxBytes, progressListener) ? f : null;
+        download(name, url, f, maxBytes, policy, progressListener);
+        return f;
     }
 
     private static boolean download(String name, String url, File target) {
@@ -119,103 +129,79 @@ public final class WebCache {
 
     private static boolean download(String name, String url, File target, long maxBytes,
                                     TransferProgressListener progressListener) {
+        try {
+            download(name, url, target, maxBytes, DOWNLOAD_POLICY, progressListener);
+            return true;
+        } catch (InterruptedIOException exception) {
+            if (Thread.currentThread().isInterrupted()) {
+                IrisLogging.debug("Download interrupted for " + name);
+            } else {
+                IrisLogging.reportError(exception);
+            }
+            return false;
+        } catch (IOException exception) {
+            IrisLogging.reportError(exception);
+            return false;
+        }
+    }
+
+    private static void download(String name, String url, File target, long maxBytes, DownloadPolicy policy,
+                                 TransferProgressListener progressListener) throws IOException {
         if (maxBytes < 1L) {
             throw new IllegalArgumentException("Download size limit must be positive.");
         }
+        DownloadPolicy downloadPolicy = Objects.requireNonNull(policy, "policy");
         TransferProgressListener progress = progressListener == null ? NO_TRANSFER_PROGRESS : progressListener;
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                .timeout(REQUEST_TIMEOUT)
-                .GET()
-                .build();
+        DownloadFailure lastFailure = null;
+        for (int attempt = 1; attempt <= downloadPolicy.attempts(); attempt++) {
+            checkInterrupted();
+            try {
+                downloadAttempt(name, url, target, maxBytes, downloadPolicy.readTimeout(), progress);
+                return;
+            } catch (DownloadFailure failure) {
+                lastFailure = failure;
+                if (!failure.retryable() || attempt == downloadPolicy.attempts()) {
+                    if (failure.retryable() && attempt > 1) {
+                        throw new DownloadFailure(
+                                failure.getMessage() + " Download failed after " + attempt + " attempts.",
+                                false,
+                                failure
+                        );
+                    }
+                    throw failure;
+                }
+                awaitRetry(downloadPolicy.retryDelay().multipliedBy(attempt));
+            }
+        }
+        throw Objects.requireNonNull(lastFailure, "lastFailure");
+    }
+
+    private static void downloadAttempt(String name, String url, File target, long maxBytes, Duration readTimeout,
+                                        TransferProgressListener progress) throws IOException {
         Path staged = null;
         try {
             checkInterrupted();
-            HttpResponse<InputStream> response = client()
-                    .send(request, HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() / 100 != 2) {
-                response.body().close();
-                IrisLogging.reportError(new IOException("HTTP " + response.statusCode()
-                        + " downloading " + name));
-                return false;
-            }
-            long declaredBytes = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
-            if (declaredBytes > maxBytes) {
-                response.body().close();
-                throw new IOException("Download exceeds the size limit for " + name + ".");
-            }
             Path destination = target.toPath().toAbsolutePath().normalize();
             Path parent = destination.getParent();
             if (parent == null) {
-                response.body().close();
-                throw new IOException("Download target has no parent: " + destination);
+                throw new DownloadFailure("Download target has no parent: " + destination, false);
             }
-            Files.createDirectories(parent);
-            staged = Files.createTempFile(parent, ".download-", ".tmp");
-            long startedNanos = System.nanoTime();
-            long lastProgressNanos = startedNanos;
-            sendProgress(progress, new TransferProgress(0L, declaredBytes, 0L, false));
-            long downloadedBytes = 0L;
-            try (InputStream in = response.body();
-                 OutputStream out = Files.newOutputStream(staged, StandardOpenOption.WRITE)) {
-                byte[] buffer = new byte[BUFFER_SIZE];
-                int read;
-                while (true) {
-                    checkInterrupted();
-                    read = in.read(buffer);
-                    if (read == -1) {
-                        break;
-                    }
-                    checkInterrupted();
-                    if (read > maxBytes - downloadedBytes) {
-                        throw new IOException("Download exceeds the size limit for " + name + ".");
-                    }
-                    out.write(buffer, 0, read);
-                    downloadedBytes += read;
-                    long currentNanos = System.nanoTime();
-                    if (currentNanos - lastProgressNanos >= PROGRESS_INTERVAL_NANOS) {
-                        sendProgress(progress, new TransferProgress(
-                                downloadedBytes,
-                                declaredBytes,
-                                elapsedMillis(startedNanos, currentNanos),
-                                false
-                        ));
-                        lastProgressNanos = currentNanos;
-                    }
-                }
-                out.flush();
+            try {
+                Files.createDirectories(parent);
+                staged = Files.createTempFile(parent, ".download-", ".tmp");
+            } catch (IOException exception) {
+                throw new DownloadFailure("Unable to stage download " + name + ".", false, exception);
             }
-            sendProgress(progress, new TransferProgress(
-                    downloadedBytes,
-                    declaredBytes,
-                    elapsedMillis(startedNanos),
-                    true
-            ));
+            transfer(name, url, staged, maxBytes, readTimeout, progress);
             checkInterrupted();
             try {
                 Files.move(staged, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException unsupported) {
                 Files.move(staged, destination, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException exception) {
+                throw new DownloadFailure("Unable to publish download " + name + ".", false, exception);
             }
             staged = null;
-            return true;
-        } catch (InterruptedIOException e) {
-            if (Thread.currentThread().isInterrupted()) {
-                IrisLogging.debug("Download interrupted for " + name);
-            } else {
-                IrisLogging.reportError(e);
-            }
-            return false;
-        } catch (IOException e) {
-            if (Thread.currentThread().isInterrupted()) {
-                IrisLogging.debug("Download interrupted for " + name);
-                return false;
-            }
-            IrisLogging.reportError(e);
-            return false;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            IrisLogging.debug("Download interrupted for " + name);
-            return false;
         } finally {
             if (staged != null) {
                 try {
@@ -225,6 +211,165 @@ public final class WebCache {
                 }
             }
         }
+    }
+
+    private static void transfer(String name, String url, Path staged, long maxBytes, Duration readTimeout,
+                                 TransferProgressListener progress) throws IOException {
+        HttpURLConnection connection = null;
+        Thread interruptionWatchdog = null;
+        boolean responseStarted = false;
+        try {
+            URLConnection opened = URI.create(url).toURL().openConnection();
+            if (!(opened instanceof HttpURLConnection httpConnection)) {
+                throw new DownloadFailure("Download URL is not HTTP or HTTPS.", false);
+            }
+            connection = httpConnection;
+            connection.setConnectTimeout(timeoutMillis(CONNECT_TIMEOUT));
+            connection.setReadTimeout(timeoutMillis(readTimeout));
+            connection.setInstanceFollowRedirects(true);
+            connection.setRequestMethod("GET");
+            interruptionWatchdog = startInterruptionWatchdog(connection);
+            int statusCode = connection.getResponseCode();
+            if (statusCode / 100 != 2) {
+                closeErrorResponse(connection);
+                throw new DownloadFailure(
+                        "HTTP " + statusCode + " while downloading " + name + ".",
+                        isRetryableStatus(statusCode)
+                );
+            }
+            responseStarted = true;
+            long declaredBytes = connection.getContentLengthLong();
+            if (declaredBytes > maxBytes) {
+                throw new DownloadFailure("Download exceeds the size limit for " + name + ".", false);
+            }
+            streamResponse(name, connection, staged, maxBytes, declaredBytes, progress);
+        } catch (DownloadFailure exception) {
+            throw exception;
+        } catch (InterruptedIOException exception) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw exception;
+            }
+            String message = responseStarted && exception instanceof SocketTimeoutException
+                    ? "Download of " + name + " stalled for " + readTimeout.toSeconds()
+                    + " seconds without receiving data."
+                    : "Connection timed out or was interrupted while downloading " + name + ".";
+            throw new DownloadFailure(message, true, exception);
+        } catch (IOException exception) {
+            if (Thread.currentThread().isInterrupted()) {
+                InterruptedIOException interrupted = new InterruptedIOException("Download interrupted.");
+                interrupted.initCause(exception);
+                throw interrupted;
+            }
+            throw new DownloadFailure("Network failure while downloading " + name + ": "
+                    + errorDetail(exception), true, exception);
+        } catch (IllegalArgumentException exception) {
+            throw new DownloadFailure("Invalid download URL for " + name + ".", false, exception);
+        } finally {
+            if (interruptionWatchdog != null) {
+                interruptionWatchdog.interrupt();
+            }
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private static void streamResponse(String name, HttpURLConnection connection, Path staged, long maxBytes,
+                                       long declaredBytes, TransferProgressListener progress) throws IOException {
+        long startedNanos = System.nanoTime();
+        long lastProgressNanos = startedNanos;
+        sendProgress(progress, new TransferProgress(0L, declaredBytes, 0L, false));
+        long downloadedBytes = 0L;
+        try (InputStream in = connection.getInputStream();
+             OutputStream out = Files.newOutputStream(staged, StandardOpenOption.WRITE)) {
+            byte[] buffer = new byte[BUFFER_SIZE];
+            int read;
+            while (true) {
+                checkInterrupted();
+                read = in.read(buffer);
+                if (read == -1) {
+                    break;
+                }
+                checkInterrupted();
+                if (read > maxBytes - downloadedBytes) {
+                    throw new DownloadFailure("Download exceeds the size limit for " + name + ".", false);
+                }
+                out.write(buffer, 0, read);
+                downloadedBytes += read;
+                long currentNanos = System.nanoTime();
+                if (currentNanos - lastProgressNanos >= PROGRESS_INTERVAL_NANOS) {
+                    sendProgress(progress, new TransferProgress(
+                            downloadedBytes,
+                            declaredBytes,
+                            elapsedMillis(startedNanos, currentNanos),
+                            false
+                    ));
+                    lastProgressNanos = currentNanos;
+                }
+            }
+            out.flush();
+        }
+        if (declaredBytes >= 0L && downloadedBytes != declaredBytes) {
+            throw new DownloadFailure(
+                    "Download of " + name + " ended after " + downloadedBytes + " of " + declaredBytes + " bytes.",
+                    true
+            );
+        }
+        sendProgress(progress, new TransferProgress(
+                downloadedBytes,
+                declaredBytes,
+                elapsedMillis(startedNanos),
+                true
+        ));
+    }
+
+    private static void awaitRetry(Duration delay) throws InterruptedIOException {
+        try {
+            TimeUnit.MILLISECONDS.sleep(delay.toMillis());
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            InterruptedIOException interrupted = new InterruptedIOException("Download retry interrupted.");
+            interrupted.initCause(exception);
+            throw interrupted;
+        }
+    }
+
+    private static Thread startInterruptionWatchdog(HttpURLConnection connection) {
+        Thread worker = Thread.currentThread();
+        Thread watchdog = new Thread(() -> {
+            while (!worker.isInterrupted()) {
+                try {
+                    Thread.sleep(100L);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+            connection.disconnect();
+        }, "Iris Web Download Watchdog");
+        watchdog.setDaemon(true);
+        watchdog.start();
+        return watchdog;
+    }
+
+    private static boolean isRetryableStatus(int statusCode) {
+        return statusCode == 408 || statusCode == 425 || statusCode == 429 || statusCode >= 500;
+    }
+
+    private static int timeoutMillis(Duration timeout) {
+        return Math.toIntExact(Math.min(Integer.MAX_VALUE, timeout.toMillis()));
+    }
+
+    private static void closeErrorResponse(HttpURLConnection connection) throws IOException {
+        InputStream response = connection.getErrorStream();
+        if (response != null) {
+            response.close();
+        }
+    }
+
+    private static String errorDetail(IOException exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
     private static void checkInterrupted() throws InterruptedIOException {
@@ -249,27 +394,39 @@ public final class WebCache {
         }
     }
 
-    private static HttpClient client() {
-        HttpClient current = client;
-        if (current != null) {
-            return current;
-        }
-        synchronized (WebCache.class) {
-            if (client == null) {
-                client = HttpClient.newBuilder()
-                        .connectTimeout(CONNECT_TIMEOUT)
-                        .followRedirects(HttpClient.Redirect.NORMAL)
-                        .build();
-            }
-            return client;
-        }
+    public record TransferProgress(long transferredBytes, long contentLength, long elapsedMillis, boolean complete) {
     }
 
-    public record TransferProgress(long transferredBytes, long contentLength, long elapsedMillis, boolean complete) {
+    record DownloadPolicy(Duration readTimeout, int attempts, Duration retryDelay) {
+        DownloadPolicy {
+            Objects.requireNonNull(readTimeout, "readTimeout");
+            Objects.requireNonNull(retryDelay, "retryDelay");
+            if (readTimeout.isZero() || readTimeout.isNegative() || attempts < 1 || retryDelay.isNegative()) {
+                throw new IllegalArgumentException("Download policy values are invalid.");
+            }
+        }
     }
 
     @FunctionalInterface
     public interface TransferProgressListener {
         void onProgress(TransferProgress progress);
+    }
+
+    private static final class DownloadFailure extends IOException {
+        private final boolean retryable;
+
+        private DownloadFailure(String message, boolean retryable) {
+            super(message);
+            this.retryable = retryable;
+        }
+
+        private DownloadFailure(String message, boolean retryable, Throwable cause) {
+            super(message, cause);
+            this.retryable = retryable;
+        }
+
+        private boolean retryable() {
+            return retryable;
+        }
     }
 }

@@ -27,7 +27,6 @@ public class DiagnosticSeverityPolicyTest {
         assertLoggedWith("util/project/hunk/Hunk.java", "OUT OF BOUNDS ", "debug");
         assertLoggedWith("engine/mantle/MantleWriter.java", "No set? ", "debug");
         assertLoggedWith("engine/mantle/MantleWriter.java", "Mantle Writer Accessed chunk out of bounds", "debug");
-        assertLoggedWith("engine/object/IrisImageMap.java", "No image ", "warnOnce");
         assertLoggedWith("engine/object/IrisDecorator.java", "Empty Block Data for ", "warnOnce");
         assertLoggedWith("engine/object/IrisCompat.java", "Can't find block data for ", "warnOnce");
         assertLoggedWith("engine/data/cache/AtomicCache.java", "Atomic cache supplier failed: %s: %s", "warnOnce");

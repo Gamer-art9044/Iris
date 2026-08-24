@@ -21,10 +21,14 @@ package art.arcane.iris.modded.command;
 import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.gui.GuiHost;
+import art.arcane.iris.core.gui.ImageMapStudioGUI;
 import art.arcane.iris.core.gui.NoiseExplorerGUI;
 import art.arcane.iris.core.gui.VisionGUI;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.StructurePackageClosure;
+import art.arcane.iris.core.pack.ImageMapPackageClosure;
+import art.arcane.iris.core.pack.PackValidationResult;
+import art.arcane.iris.core.pack.PackValidator;
 import art.arcane.iris.core.project.IrisProjectCopier;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -151,6 +155,8 @@ public final class ModdedStudioCommands {
         root.then(noiseTree("nmap"));
         root.then(mapTree("map"));
         root.then(mapTree("render"));
+        root.then(imageMapTree("imagemap"));
+        root.then(imageMapTree("imap"));
         root.then(message("loot", "Loot simulation opens a Bukkit chest inventory GUI; it is not available on modded servers."));
         root.then(message("profile", "Pack performance profiling is part of the Bukkit studio toolchain and is not ported to modded servers."));
         root.then(message("spawn", "Iris entity spawning uses the Bukkit entity pipeline and is not ported to modded servers."));
@@ -217,6 +223,11 @@ public final class ModdedStudioCommands {
                 .executes((CommandContext<CommandSourceStack> context) -> map(context.getSource()));
     }
 
+    private static LiteralArgumentBuilder<CommandSourceStack> imageMapTree(String name) {
+        return Commands.literal(name)
+                .executes((CommandContext<CommandSourceStack> context) -> imageMap(context.getSource()));
+    }
+
     private static int noise(CommandSourceStack source, String generatorKey, long seed) {
         ServerLevel level = source.getLevel();
         Engine engine = IrisModdedCommands.engineFor(level);
@@ -263,6 +274,29 @@ public final class ModdedStudioCommands {
         ModdedGuiHost.bindContext(source.getServer(), level, engine, player == null ? null : player.getUUID());
         VisionGUI.launch(engine);
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_OPENING_VISION_MAP_ON_SERVER_DISPLAY, MessageArgument.untrusted("value", level.dimension().identifier())));
+        return 1;
+    }
+
+    private static int imageMap(CommandSourceStack source) {
+        ServerLevel level = source.getLevel();
+        Engine engine = IrisModdedCommands.engineFor(level);
+        if (engine == null) {
+            IrisModdedCommands.fail(source, IrisLanguage.plain(
+                    ModdedCommandMessages.MODDED_STUDIO_COMMANDS_IMAGE_MAP_REQUIRES_IRIS_DIMENSION
+            ));
+            return 0;
+        }
+        if (!ImageMapStudioGUI.isAvailable()) {
+            IrisModdedCommands.fail(source, guiUnavailableMessage());
+            return 0;
+        }
+        ServerPlayer player = source.getPlayer();
+        ModdedGuiHost.bindContext(source.getServer(), level, engine, player == null ? null : player.getUUID());
+        ImageMapStudioGUI.launch(engine);
+        IrisModdedCommands.ok(source, IrisLanguage.plain(
+                ModdedCommandMessages.MODDED_STUDIO_COMMANDS_OPENING_IMAGE_MAP_STUDIO_ON_SERVER_DISPLAY,
+                MessageArgument.untrusted("value", level.dimension().identifier())
+        ));
         return 1;
     }
 
@@ -640,6 +674,11 @@ public final class ModdedStudioCommands {
     }
 
     private static File compilePackage(File packFolder, String dimKey) throws IOException {
+        PackValidationResult validation = PackValidator.validateForPackaging(packFolder);
+        if (!validation.isLoadable()) {
+            throw new IOException("Pack validation failed before packaging: "
+                    + String.join("; ", validation.getBlockingErrors()));
+        }
         IrisData dm = IrisData.get(packFolder);
         IrisDimension dimension = dm.getDimensionLoader().load(dimKey);
         if (dimension == null) {
@@ -660,7 +699,16 @@ public final class ModdedStudioCommands {
         LinkedHashSet<String> markerKeys = new LinkedHashSet<>();
         LinkedHashSet<String> structureKeys = new LinkedHashSet<>();
 
-        regionKeys.addAll(dimension.getRegions());
+        dimension.getAllRegions(() -> dm).forEach((IrisRegion region) -> {
+            if (region != null && region.getLoadKey() != null) {
+                regionKeys.add(region.getLoadKey());
+            }
+        });
+        dimension.getReachableBiomes(() -> dm).forEach((IrisBiome biome) -> {
+            if (biome != null && biome.getLoadKey() != null) {
+                biomeKeys.add(biome.getLoadKey());
+            }
+        });
         lootKeys.addAll(dimension.getLoot().getTables());
         spawnerKeys.addAll(dimension.getEntitySpawners());
         collectStructureKeys(structureKeys, dimension.getStructures());
@@ -722,6 +770,7 @@ public final class ModdedStudioCommands {
             throw new IOException("Structure package closure is invalid: " + String.join("; ", structureClosure.errors()));
         }
         hashes.append(structureClosure.writeTo(folder, true));
+        hashes.append(ImageMapPackageClosure.writeAll(dm, folder, true));
         for (String objectKey : objectKeys) {
             try {
                 File objectFile = dm.getObjectLoader().findFile(objectKey);

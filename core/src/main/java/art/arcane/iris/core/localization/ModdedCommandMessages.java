@@ -907,6 +907,14 @@ public final class ModdedCommandMessages {
             "iris.modded.moddedstudiocommands.opening_vision_map_on_server_display",
             "Opening the Vision map for " + "{value}" + " on the server display."
     );
+    public static final TextKey MODDED_STUDIO_COMMANDS_IMAGE_MAP_REQUIRES_IRIS_DIMENSION = TextKey.of(
+            "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension",
+            "Stand in an active Iris or Studio dimension before opening the Image Map Studio."
+    );
+    public static final TextKey MODDED_STUDIO_COMMANDS_OPENING_IMAGE_MAP_STUDIO_ON_SERVER_DISPLAY = TextKey.of(
+            "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display",
+            "Opening the Image Map Studio for " + "{value}" + " on the server display."
+    );
     public static final TextKey MODDED_STUDIO_COMMANDS_FAILED_WRITE_WORKSPACE = TextKey.of(
             "iris.modded.moddedstudiocommands.failed_write_workspace",
             "Failed to write workspace for " + "{value}" + ": " + "{value2}"
@@ -1462,6 +1470,8 @@ public final class ModdedCommandMessages {
             MODDED_STUDIO_COMMANDS_OPENING_NOISE_EXPLORER_GENERATOR_SEED,
             MODDED_STUDIO_COMMANDS_THIS_DIMENSION_IS_NOT_GENERATED_BY_IRIS_STAND_IRIS_STUDIO,
             MODDED_STUDIO_COMMANDS_OPENING_VISION_MAP_ON_SERVER_DISPLAY,
+            MODDED_STUDIO_COMMANDS_IMAGE_MAP_REQUIRES_IRIS_DIMENSION,
+            MODDED_STUDIO_COMMANDS_OPENING_IMAGE_MAP_STUDIO_ON_SERVER_DISPLAY,
             MODDED_STUDIO_COMMANDS_FAILED_WRITE_WORKSPACE,
             MODDED_STUDIO_COMMANDS_WORKSPACE_REGENERATED_WITH_JSON_SCHEMAS_AUTOCOMPLETE,
             MODDED_STUDIO_COMMANDS_COULD_NOT_OPEN,

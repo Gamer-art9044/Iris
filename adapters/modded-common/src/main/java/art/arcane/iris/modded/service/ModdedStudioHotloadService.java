@@ -28,6 +28,7 @@ import art.arcane.iris.engine.framework.NativeStructureVolume;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.object.IrisWorld;
+import art.arcane.iris.engine.object.IrisWorldBoundary;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedForcedDatapack;
@@ -38,6 +39,8 @@ import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.io.ReactiveFolder;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.border.WorldBorder;
 
 import java.io.File;
 import java.util.HashSet;
@@ -118,6 +121,42 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
                 engine.getDimension(),
                 replacement,
                 "irisworldgen");
+    }
+
+    @Override
+    public void applyWorldBoundary(Engine engine) {
+        IrisDimension expectedDimension = engine.getDimension();
+        IrisWorldBoundary configuredBoundary = expectedDimension.getWorldBoundary();
+        if (configuredBoundary == null) {
+            return;
+        }
+        IrisWorld expectedIrisWorld = engine.getWorld();
+        if (expectedIrisWorld == null || !expectedIrisWorld.hasPlatformWorld()
+                || !(expectedIrisWorld.platformWorld().nativeHandle() instanceof ServerLevel expectedLevel)) {
+            return;
+        }
+        IrisWorldBoundary boundary;
+        try {
+            boundary = IrisWorldBoundary.snapshot(configuredBoundary);
+        } catch (Throwable error) {
+            ModdedIrisLog.error("Invalid Iris world boundary for "
+                    + expectedLevel.dimension().identifier() + ".", error);
+            throw propagateBoundaryFailure("Invalid Iris world boundary for '"
+                    + expectedLevel.dimension().identifier() + "'.", error);
+        }
+        MinecraftServer server = expectedLevel.getServer();
+        if (server.isSameThread()) {
+            applyWorldBoundary(engine, expectedDimension, expectedIrisWorld, expectedLevel, boundary);
+            return;
+        }
+        try {
+            server.execute(() -> applyWorldBoundary(engine, expectedDimension, expectedIrisWorld, expectedLevel, boundary));
+        } catch (Throwable error) {
+            ModdedIrisLog.error("Failed to schedule Iris world-boundary application for "
+                    + expectedLevel.dimension().identifier() + ".", error);
+            throw propagateBoundaryFailure("Failed to schedule Iris world-boundary application for '"
+                    + expectedLevel.dimension().identifier() + "'.", error);
+        }
     }
 
     @Override
@@ -266,6 +305,45 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
             }
         }
         return false;
+    }
+
+    static void applyWorldBoundary(WorldBorder worldBorder, IrisWorldBoundary boundary) {
+        if (boundary == null) {
+            return;
+        }
+        worldBorder.setCenter(boundary.getCenter().getX(), boundary.getCenter().getZ());
+        worldBorder.setSize(boundary.getSize());
+        worldBorder.setWarningBlocks(boundary.getWarningDistance());
+        worldBorder.setSafeZone(boundary.getDamageBuffer());
+        worldBorder.setDamagePerBlock(boundary.getDamageAmount());
+    }
+
+    private static void applyWorldBoundary(Engine engine, IrisDimension expectedDimension,
+                                           IrisWorld expectedIrisWorld, ServerLevel expectedLevel,
+                                           IrisWorldBoundary boundary) {
+        if (engine.isClosed() || engine.isClosing() || engine.getDimension() != expectedDimension
+                || engine.getWorld() != expectedIrisWorld
+                || expectedIrisWorld.platformWorld().nativeHandle() != expectedLevel) {
+            return;
+        }
+        try {
+            applyWorldBoundary(expectedLevel.getWorldBorder(), boundary);
+        } catch (Throwable error) {
+            ModdedIrisLog.error("Failed to apply Iris world boundary to "
+                    + expectedLevel.dimension().identifier() + ".", error);
+            throw propagateBoundaryFailure("Failed to apply Iris world boundary to '"
+                    + expectedLevel.dimension().identifier() + "'.", error);
+        }
+    }
+
+    private static RuntimeException propagateBoundaryFailure(String message, Throwable error) {
+        if (error instanceof Error fatal) {
+            throw fatal;
+        }
+        if (error instanceof RuntimeException runtimeException) {
+            return runtimeException;
+        }
+        return new IllegalStateException(message, error);
     }
 
     private void writeWorkspace(Engine engine, String operation) {

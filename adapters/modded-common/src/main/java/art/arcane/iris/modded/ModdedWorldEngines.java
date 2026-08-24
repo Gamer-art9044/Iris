@@ -50,7 +50,8 @@ public final class ModdedWorldEngines {
         if (existing != null) {
             return existing;
         }
-        return ENGINES.computeIfAbsent(level, (ServerLevel l) -> create(l, pack, dimensionKey, seedOverride));
+        return ENGINES.computeIfAbsent(level,
+                (ServerLevel l) -> createAndApplyWorldBoundary(l, pack, dimensionKey, seedOverride));
     }
 
     public static Collection<Engine> activeEngines() {
@@ -98,7 +99,31 @@ public final class ModdedWorldEngines {
 
     static void closeUnregistered(Engine engine) {
         close(engine);
+        ENGINES.entrySet().removeIf((Map.Entry<ServerLevel, Engine> entry) -> entry.getValue() == engine);
         ModdedGuiHost.unbind(engine);
+    }
+
+    private static Engine createAndApplyWorldBoundary(ServerLevel level, String pack,
+                                                      String dimensionKey, long seedOverride) {
+        Engine engine = create(level, pack, dimensionKey, seedOverride);
+        try {
+            engine.getPlatformHooks().applyWorldBoundary(engine);
+            return engine;
+        } catch (Throwable failure) {
+            try {
+                close(engine);
+            } catch (Throwable cleanupError) {
+                failure.addSuppressed(cleanupError);
+            }
+            if (failure instanceof Error fatal) {
+                throw fatal;
+            }
+            if (failure instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IllegalStateException("Failed to apply Iris world boundary for '"
+                    + level.dimension().identifier() + "'.", failure);
+        }
     }
 
     private static Engine create(ServerLevel level, String pack, String dimensionKey, long seedOverride) {

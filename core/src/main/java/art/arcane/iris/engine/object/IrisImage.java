@@ -20,19 +20,31 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisRegistrant;
 
-import java.awt.Color;
+import java.awt.image.ColorModel;
 import java.awt.image.BufferedImage;
+import java.awt.image.IndexColorModel;
+import java.awt.image.Raster;
 import java.util.Objects;
 
-public class IrisImage extends IrisRegistrant {
+public final class IrisImage extends IrisRegistrant {
     private final BufferedImage image;
+    private final Raster raster;
+    private final ColorModel colorModel;
+    private final String format;
 
     public IrisImage() {
-        this(new BufferedImage(4, 4, BufferedImage.TYPE_INT_RGB));
+        this(new BufferedImage(4, 4, BufferedImage.TYPE_INT_RGB), "png");
     }
 
     public IrisImage(BufferedImage image) {
+        this(image, "png");
+    }
+
+    public IrisImage(BufferedImage image, String format) {
         this.image = Objects.requireNonNull(image, "IrisImage requires a decoded image (the source file was unreadable or not an image)");
+        this.raster = image.getRaster();
+        this.colorModel = image.getColorModel();
+        this.format = Objects.requireNonNull(format, "Image format").toLowerCase();
     }
 
     public int getWidth() {
@@ -43,63 +55,104 @@ public class IrisImage extends IrisRegistrant {
         return image.getHeight();
     }
 
-    public int getRawValue(int x, int z) {
-        if (x >= getWidth() || z >= getHeight() || x < 0 || z < 0) {
-            return 0;
-        }
+    public String getFormat() {
+        return format;
+    }
 
+    public IrisImageColorMode getColorMode() {
+        if (colorModel instanceof IndexColorModel) {
+            return IrisImageColorMode.INDEXED;
+        }
+        int colorComponents = colorModel.getNumColorComponents();
+        if (colorComponents == 1) {
+            return colorModel.hasAlpha() ? IrisImageColorMode.UNSUPPORTED : IrisImageColorMode.GRAYSCALE;
+        }
+        if (colorComponents == 3) {
+            return colorModel.hasAlpha() ? IrisImageColorMode.RGBA : IrisImageColorMode.RGB;
+        }
+        return IrisImageColorMode.UNSUPPORTED;
+    }
+
+    public int getColorComponentCount() {
+        return colorModel.getNumColorComponents();
+    }
+
+    public int getChannelCount() {
+        return raster.getNumBands();
+    }
+
+    public int getBitDepth() {
+        int[] sampleSizes = raster.getSampleModel().getSampleSize();
+        int maximum = 0;
+        int colorBands = Math.min(getColorComponentCount(), sampleSizes.length);
+        for (int index = 0; index < colorBands; index++) {
+            maximum = Math.max(maximum, sampleSizes[index]);
+        }
+        return maximum;
+    }
+
+    public boolean hasAlpha() {
+        return colorModel.hasAlpha();
+    }
+
+    public double getBandNormalized(int x, int z, int band) {
+        requireCoordinate(x, z);
+        if (band < 0 || band >= raster.getNumBands()) {
+            throw new IllegalArgumentException("Image band " + band + " is outside 0.." + (raster.getNumBands() - 1));
+        }
+        int bits = raster.getSampleModel().getSampleSize(band);
+        long maximum = (1L << bits) - 1L;
+        return raster.getSample(x, z, band) / (double) maximum;
+    }
+
+    public int getBandSample(int x, int z, int band) {
+        requireCoordinate(x, z);
+        if (band < 0 || band >= raster.getNumBands()) {
+            throw new IllegalArgumentException("Image band " + band + " is outside 0.." + (raster.getNumBands() - 1));
+        }
+        return raster.getSample(x, z, band);
+    }
+
+    public double getAlphaNormalized(int x, int z) {
+        requireCoordinate(x, z);
+        if (!hasAlpha()) {
+            return 1D;
+        }
+        int alphaBand = raster.getNumBands() - 1;
+        return getBandNormalized(x, z, alphaBand);
+    }
+
+    public int getRawRgb8(int x, int z) {
+        requireCoordinate(x, z);
+        IrisImageColorMode mode = getColorMode();
+        if (mode != IrisImageColorMode.RGB && mode != IrisImageColorMode.RGBA) {
+            throw new IllegalStateException("Raw RGB sampling requires an RGB or RGBA image, not " + mode);
+        }
+        int red = scaleTo8Bit(x, z, 0);
+        int green = scaleTo8Bit(x, z, 1);
+        int blue = scaleTo8Bit(x, z, 2);
+        return red << 16 | green << 8 | blue;
+    }
+
+    public int getPreviewArgb(int x, int z) {
+        requireCoordinate(x, z);
         return image.getRGB(x, z);
     }
 
-    public double getValue(IrisImageChannel channel, int x, int z) {
-        int color = getRawValue(x, z);
-
-        switch (channel) {
-            case RED -> {
-                return ((color >> 16) & 0xFF) / 255D;
-            }
-            case GREEN -> {
-                return ((color >> 8) & 0xFF) / 255D;
-            }
-            case BLUE -> {
-                return ((color) & 0xFF) / 255D;
-            }
-            case SATURATION -> {
-                return Color.RGBtoHSB((color >> 16) & 0xFF, (color >> 8) & 0xFF, (color) & 0xFF, null)[1];
-            }
-            case HUE -> {
-                return Color.RGBtoHSB((color >> 16) & 0xFF, (color >> 8) & 0xFF, (color) & 0xFF, null)[0];
-            }
-            case BRIGHTNESS -> {
-                return Color.RGBtoHSB((color >> 16) & 0xFF, (color >> 8) & 0xFF, (color) & 0xFF, null)[2];
-            }
-            case COMPOSITE_ADD_RGB -> {
-                return ((((color >> 16) & 0xFF) / 255D) + (((color >> 8) & 0xFF) / 255D) + (((color) & 0xFF) / 255D)) / 3D;
-            }
-            case COMPOSITE_MUL_RGB -> {
-                return (((color >> 16) & 0xFF) / 255D) * (((color >> 8) & 0xFF) / 255D) * (((color) & 0xFF) / 255D);
-            }
-            case COMPOSITE_MAX_RGB -> {
-                return Math.max(Math.max((((color >> 16) & 0xFF) / 255D), (((color >> 8) & 0xFF) / 255D)), (((color) & 0xFF) / 255D));
-            }
-            case COMPOSITE_ADD_HSB -> {
-                float[] hsb = Color.RGBtoHSB((color >> 16) & 0xFF, (color >> 8) & 0xFF, (color) & 0xFF, null);
-                return (hsb[0] + hsb[1] + hsb[2]) / 3D;
-            }
-            case COMPOSITE_MUL_HSB -> {
-                float[] hsb = Color.RGBtoHSB((color >> 16) & 0xFF, (color >> 8) & 0xFF, (color) & 0xFF, null);
-                return hsb[0] * hsb[1] * hsb[2];
-            }
-            case COMPOSITE_MAX_HSB -> {
-                float[] hsb = Color.RGBtoHSB((color >> 16) & 0xFF, (color >> 8) & 0xFF, (color) & 0xFF, null);
-                return Math.max(hsb[0], Math.max(hsb[1], hsb[2]));
-            }
-            case RAW -> {
-                return color;
-            }
+    private int scaleTo8Bit(int x, int z, int band) {
+        int bits = raster.getSampleModel().getSampleSize(band);
+        int sample = raster.getSample(x, z, band);
+        if (bits == 8) {
+            return sample;
         }
+        long maximum = (1L << bits) - 1L;
+        return (int) Math.round(sample * 255D / maximum);
+    }
 
-        return color;
+    private void requireCoordinate(int x, int z) {
+        if (x < 0 || z < 0 || x >= getWidth() || z >= getHeight()) {
+            throw new IndexOutOfBoundsException("Image coordinate " + x + "," + z + " is outside " + getWidth() + "x" + getHeight());
+        }
     }
 
     @Override

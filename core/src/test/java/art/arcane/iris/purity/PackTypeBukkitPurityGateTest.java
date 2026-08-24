@@ -96,6 +96,7 @@ public class PackTypeBukkitPurityGateTest {
             "art.arcane.iris.engine.object.IrisExpression",
             "art.arcane.iris.engine.object.IrisObject",
             "art.arcane.iris.engine.object.IrisImage",
+            "art.arcane.iris.engine.object.IrisImageMap",
             "art.arcane.iris.engine.object.matter.IrisMatterObject",
             "art.arcane.iris.engine.object.IrisStructure",
             "art.arcane.iris.engine.object.IrisJigsawPool",

@@ -191,6 +191,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 return false;
             }
             INMS.get().inject(world.getSeed(), engine, world);
+            engine.getPlatformHooks().applyWorldBoundary(engine);
             IrisLogging.debug("Injected Iris Biome Source into " + world.getName());
             if (!studio) {
                 J.s(() -> updateSpawnLocation(world), 1);

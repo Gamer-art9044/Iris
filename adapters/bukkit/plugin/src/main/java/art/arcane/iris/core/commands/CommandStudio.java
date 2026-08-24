@@ -21,6 +21,7 @@ package art.arcane.iris.core.commands;
 import art.arcane.iris.Iris;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.gui.ImageMapStudioGUI;
 import art.arcane.iris.core.gui.NoiseExplorerGUI;
 import art.arcane.iris.core.gui.VisionGUI;
 import art.arcane.iris.core.loader.IrisData;
@@ -261,6 +262,28 @@ public class CommandStudio implements DirectorExecutor {
 
         String generatorKey = generator.getLoadKey();
         NoiseExplorerGUI.launchGeneratorKey(generatorKey, generator, seed);
+    }
+
+    @Director(description = "Open the image-map studio (External GUI)", descriptionKey = "iris.director.commandstudio.director.open_image_map_studio_external_gui", aliases = {"imap"})
+    public void imagemap(
+            @Param(name = "world", description = "The Iris world whose active pack receives image-map exports", descriptionKey = "iris.director.commandstudio.param.world_open_image_map_studio", contextual = true, contextualOverride = true)
+            World world
+    ) {
+        if (noGUI()) {
+            return;
+        }
+        if (!ImageMapStudioGUI.isAvailable()) {
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_YOU_MUST_HAVE_SERVER_LAUNCHED_GUIS_ENABLED_SETTINGS));
+            return;
+        }
+        if (!IrisToolbelt.isIrisWorld(world)) {
+            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_YOU_NEED_BE_SPECIFY_IRIS_GENERATED_WORLD));
+            return;
+        }
+
+        Engine activeEngine = IrisToolbelt.access(world).getEngine();
+        ImageMapStudioGUI.launch(activeEngine);
+        sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_OPENING_IMAGE_MAP_STUDIO));
     }
 
     @Director(description = "Show loot if a chest were right here", descriptionKey = "iris.director.commandstudio.director.show_loot_if_chest_were_right_here", origin = DirectorOrigin.PLAYER, sync = true)

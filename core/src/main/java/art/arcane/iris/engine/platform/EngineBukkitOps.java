@@ -52,6 +52,7 @@ import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.Position2;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.volmlib.util.plugin.ComponentMessenger;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterCavern;
 import art.arcane.volmlib.util.matter.MatterUpdate;
@@ -551,7 +552,7 @@ public final class EngineBukkitOps {
 
     public static void gotoRegion(Engine engine, IrisRegion r, Player player, boolean teleport) {
         if (!engine.getDimension().getRegions().contains(r.getLoadKey())) {
-            player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_IS_NOT_DEFINED_DIMENSION, MessageArgument.untrusted("name", String.valueOf(r.getName()))));
+            ComponentMessenger.sendSection(player, IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_IS_NOT_DEFINED_DIMENSION, MessageArgument.untrusted("name", String.valueOf(r.getName()))));
             return;
         }
 
@@ -569,14 +570,14 @@ public final class EngineBukkitOps {
     private static void find(Engine engine, Locator<?> locator, Player player, boolean teleport, String message) {
         find(engine, locator, player, 120_000, location -> {
             if (location == null) {
-                player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_COULD_NOT_FIND_WITHIN_SEARCH_RANGE, MessageArgument.untrusted("message", String.valueOf(message))));
+                ComponentMessenger.sendSection(player, IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_COULD_NOT_FIND_WITHIN_SEARCH_RANGE, MessageArgument.untrusted("message", String.valueOf(message))));
                 return;
             }
             if (teleport) {
                 J.runEntity(player, () -> teleportAsyncSafely(player, location));
-                player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_TELEPORTING, MessageArgument.untrusted("message", String.valueOf(message))));
+                ComponentMessenger.sendSection(player, IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_TELEPORTING, MessageArgument.untrusted("message", String.valueOf(message))));
             } else {
-                player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_AT, MessageArgument.untrusted("message", String.valueOf(message)), MessageArgument.untrusted("blockX", String.valueOf(location.getBlockX())), MessageArgument.untrusted("blockY", String.valueOf(location.getBlockY())), MessageArgument.untrusted("blockZ", String.valueOf(location.getBlockZ()))));
+                ComponentMessenger.sendSection(player, IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_AT, MessageArgument.untrusted("message", String.valueOf(message)), MessageArgument.untrusted("blockX", String.valueOf(location.getBlockX())), MessageArgument.untrusted("blockY", String.valueOf(location.getBlockY())), MessageArgument.untrusted("blockZ", String.valueOf(location.getBlockZ()))));
             }
         });
     }

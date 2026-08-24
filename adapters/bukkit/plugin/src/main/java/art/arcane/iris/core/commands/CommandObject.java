@@ -398,7 +398,7 @@ public class CommandObject implements DirectorExecutor {
                 MessageArgument.trusted("value2", targets.size())
         ));
 
-        org.bukkit.command.CommandSender s = sender();
+        VolmitSender s = sender();
         List<TreePlausibilizeBatch.Target> queued = targets;
         J.a(() -> TreePlausibilizeBatch.run(queued, dryRun, reach, nearest, (TreePlausibilizeBatch.Output output) ->
                 s.sendMessage(output.headline()

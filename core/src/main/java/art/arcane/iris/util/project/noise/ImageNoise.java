@@ -19,15 +19,41 @@
 package art.arcane.iris.util.project.noise;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.image.CompiledIrisImageMap;
+import art.arcane.iris.engine.image.IrisImageMapValidationException;
+import art.arcane.iris.engine.object.IrisImage;
 import art.arcane.iris.engine.object.IrisImageMap;
+import art.arcane.iris.engine.object.IrisImageMapType;
 
 public class ImageNoise implements NoiseGenerator {
-    private final IrisImageMap expression;
-    private final IrisData data;
+    private final CompiledIrisImageMap compiled;
 
-    public ImageNoise(IrisData data, IrisImageMap expression) {
-        this.data = data;
-        this.expression = expression;
+    public ImageNoise(IrisData data, String imageMapKey) {
+        IrisImageMap definition = data.getImageMapLoader().load(imageMapKey);
+        if (definition == null) {
+            throw new IrisImageMapValidationException("Missing image-map resource '" + imageMapKey + "'");
+        }
+        if (definition.getType() == IrisImageMapType.COLOR_MAP) {
+            throw new IrisImageMapValidationException(
+                    "Generator-style image-map resource '" + imageMapKey + "' must produce normalized scalar data"
+            );
+        }
+        IrisImage image = data.getImageLoader().load(definition.getSource());
+        if (image == null) {
+            throw new IrisImageMapValidationException(
+                    "Image-map resource '" + imageMapKey + "' references missing or invalid PNG '"
+                            + definition.getSource() + "'"
+            );
+        }
+        try {
+            compiled = CompiledIrisImageMap.compile(definition, image);
+        } finally {
+            data.getImageLoader().unload(definition.getSource());
+        }
+    }
+
+    public String getContentHash() {
+        return compiled.getContentHash();
     }
 
     @Override
@@ -37,7 +63,7 @@ public class ImageNoise implements NoiseGenerator {
 
     @Override
     public double noise(double x, double z) {
-        return expression.getNoise(data, (int) x, (int) z);
+        return compiled.sampleNormalized(x, z);
     }
 
     @Override

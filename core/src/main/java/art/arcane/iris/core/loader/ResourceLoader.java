@@ -720,6 +720,12 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
         folderCache.reset();
     }
 
+    public void unload(String name) {
+        if (name != null && !name.isBlank()) {
+            loadCache.invalidate(name);
+        }
+    }
+
     public File fileFor(T b) {
         return resolveFile(b.getLoadKey(), ".json", getFolders());
     }

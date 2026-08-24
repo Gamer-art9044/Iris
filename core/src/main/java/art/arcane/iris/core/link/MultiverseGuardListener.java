@@ -25,6 +25,7 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
+import art.arcane.volmlib.util.plugin.ComponentMessenger;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
@@ -472,7 +473,7 @@ public final class MultiverseGuardListener implements Listener {
             }
         } catch (Throwable ignored) {
             for (String line : lines) {
-                sender.sendMessage(line);
+                ComponentMessenger.sendSection(sender, line);
             }
         }
     }

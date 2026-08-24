@@ -537,6 +537,7 @@ List<String> requiredBukkitArtifactEntries = [
     'art/arcane/iris/core/lifecycle/WorldLifecycleStaging.class',
     'art/arcane/iris/util/simd/VectorSimdKernels.class',
     'art/arcane/iris/util/simd/VectorNoiseKernels2D.class',
+    'art/arcane/iris/util/paralithic/functions/Function.class',
     'art/arcane/iris/util/project/agent/Agent.class',
     'art/arcane/iris/util/common/misc/getHardware.class',
     'art/arcane/iris/util/caffeine/cache/Caffeine.class',

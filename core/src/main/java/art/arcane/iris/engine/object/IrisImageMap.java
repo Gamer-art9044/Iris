@@ -1,105 +1,120 @@
-/*
- * Iris is a World Generator for Minecraft Bukkit Servers
- * Copyright (c) 2022 Arcane Arts (Volmit Software)
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
-
 package art.arcane.iris.engine.object;
 
-import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.object.annotations.Desc;
+import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
-import art.arcane.iris.engine.object.annotations.Snippet;
-import art.arcane.iris.spi.IrisLogging;
-import art.arcane.iris.util.project.interpolation.InterpolationMethod;
-import art.arcane.iris.util.project.interpolation.IrisInterpolation;
-import lombok.AllArgsConstructor;
+import art.arcane.volmlib.util.collection.KMap;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
-@Snippet("image-map")
 @Accessors(chain = true)
 @NoArgsConstructor
-@AllArgsConstructor
-@Desc("Represents an image map")
+@Desc("A reusable typed image-map definition")
 @Data
-public class IrisImageMap {
+@EqualsAndHashCode(callSuper = false)
+public class IrisImageMap extends IrisRegistrant {
+    public static final double MINIMUM_SCALE = 0.000001D;
+    public static final double MAXIMUM_COLOR_TOLERANCE = 441.672956D;
+
     @RegistryListResource(IrisImage.class)
-    @Desc("Define the png image to read in this noise map")
-    private String image = "";
+    @Desc("PNG source under images/, without the file extension")
+    private String source = "";
 
-    @MinNumber(1)
-    @Desc("The amount of distance a single pixel is when reading this map, reading x=13, would still read pixel 0 if the scale is 32. You can zoom this externally through noise styles for zooming out.")
-    private double coordinateScale = 32;
+    @Desc("How source pixels are decoded")
+    private IrisImageMapType type = IrisImageMapType.GRAYSCALE_HEIGHT;
 
-    @Desc("The interpolation method if the coordinateScale is greater than 1. This blends the image into noise. For nearest neighbor, use NONE.")
-    private InterpolationMethod interpolationMethod = InterpolationMethod.BILINEAR_STARCAST_6;
+    @MinNumber(MINIMUM_SCALE)
+    @Desc("Minecraft blocks represented by one source pixel")
+    private double blocksPerPixel = 1D;
 
-    @Desc("The channel of the image to read from. This basically converts image data into a number betwen 0 to 1 per pixel using a certain 'channel/filter'")
-    private IrisImageChannel channel = IrisImageChannel.COMPOSITE_ADD_HSB;
+    @Desc("Minecraft X/Z coordinate that maps to sourceOrigin")
+    private IrisImageMapOrigin origin = new IrisImageMapOrigin();
 
-    @Desc("Invert the channel input")
+    @Desc("Source pixel X/Y coordinate placed at origin")
+    private IrisImageMapOrigin sourceOrigin = new IrisImageMapOrigin();
+
+    @Desc("Clockwise quarter-turn rotation around sourceOrigin")
+    private IrisImageMapRotation rotation = IrisImageMapRotation.DEG_0;
+
+    @Desc("Mirror image X around sourceOrigin before rotation")
+    private boolean mirrorX = false;
+
+    @Desc("Mirror image Y around sourceOrigin before rotation")
+    private boolean mirrorZ = false;
+
+    @Desc("Numeric sampling filter; exact color and binary maps require NEAREST")
+    private IrisImageMapSampling sampling = IrisImageMapSampling.NEAREST;
+
+    @Desc("Behavior outside the source rectangle")
+    private IrisImageMapOutOfBounds outOfBounds = IrisImageMapOutOfBounds.FALLBACK;
+
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("Normalized scalar used by FALLBACK coordinates")
+    private double fallbackValue = 0D;
+
+    @Desc("Legend target used by FALLBACK or unknown color-map pixels")
+    private String fallbackTarget = "";
+
+    @Desc("How alpha affects decoded data")
+    private IrisImageMapAlpha alpha = IrisImageMapAlpha.IGNORE;
+
+    @Desc("Minimum absolute world Y for height maps")
+    private double minimumHeight = -64D;
+
+    @Desc("Maximum absolute world Y for height maps")
+    private double maximumHeight = 320D;
+
+    @Desc("Vertical block offset applied after height decoding")
+    private double verticalOffset = 0D;
+
+    @Desc("Clamp decoded height to minimumHeight and maximumHeight after offset")
+    private boolean clamp = true;
+
+    @Desc("Invert decoded scalar values before curve evaluation")
     private boolean inverted = false;
 
-    @Desc("Tile the image coordinates")
-    private boolean tiled = false;
+    @MinNumber(MINIMUM_SCALE)
+    @Desc("Power curve applied after optional inversion; 1 is linear")
+    private double curveExponent = 1D;
 
-    @Desc("Center 0,0 to the center of the image instead of the top left.")
-    private boolean centered = true;
+    @MinNumber(0)
+    @MaxNumber(32)
+    @Desc("Load-time box smoothing radius in source pixels")
+    private int smoothingRadius = 0;
 
-    private transient AtomicCache<IrisImage> imageCache = new AtomicCache<IrisImage>();
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("Binary mask threshold")
+    private double threshold = 0.5D;
 
-    public double getNoise(IrisData data, int x, int z) {
-        IrisImage i = imageCache.aquire(() -> data.getImageLoader().load(image));
-        if (i == null) {
-            // Reached per sample for as long as the pack points at an image that will not load, so the
-            // pack key is what the operator needs and one statement of it is enough.
-            IrisLogging.warnOnce("image-map:" + image, "No image %s in the pack; that noise samples as zero.", image);
-            return 0;
-        }
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("Mask transition width above threshold")
+    private double falloff = 0D;
 
-        return IrisInterpolation.getNoise(interpolationMethod, x, z, coordinateScale, (xx, zz) -> rawNoise(i, xx, zz));
+    @MinNumber(0)
+    @MaxNumber(MAXIMUM_COLOR_TOLERANCE)
+    @Desc("Euclidean raw sRGB distance accepted by tolerant color matching; zero is exact")
+    private double colorTolerance = 0D;
+
+    @Desc("How colors absent from the legend are handled")
+    private IrisImageMapUnknownColor unknownColor = IrisImageMapUnknownColor.ERROR;
+
+    @Desc("Exact #RRGGBB colors mapped to Iris resource or Minecraft block keys")
+    private KMap<String, String> colors = new KMap<>();
+
+    @Override
+    public String getFolderName() {
+        return "image-maps";
     }
 
-    private double rawNoise(IrisImage i, double x, double z) {
-        x /= coordinateScale;
-        z /= coordinateScale;
-
-        // X and Z are now scaled to the image
-
-        // Add half the image width & height if centered
-        if (isCentered()) {
-            x += i.getWidth() / 2D;
-            z += i.getHeight() / 2D;
-        }
-
-        // If tiled modulo over width and height
-        if (isTiled()) {
-            x = x % i.getWidth();
-            x = x < 0 ? x + i.getWidth() : x; // Fix java's negative modulo shit
-            z = z % i.getHeight();
-            z = z < 0 ? z + i.getHeight() : z; // Fix java's negative modulo shit
-        }
-
-        // Retrieve value from image
-        double v = i.getValue(getChannel(), (int) x, (int) z);
-
-        // Return value, or 1 - value if inverted (value is in double set [0, 1] so this will return [0, 1])
-        return isInverted() ? 1D - v : v;
+    @Override
+    public String getTypeName() {
+        return "Image Map";
     }
 }

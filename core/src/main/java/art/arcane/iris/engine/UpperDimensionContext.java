@@ -1,7 +1,9 @@
 package art.arcane.iris.engine;
 
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.image.IrisImageMapRuntime;
 import art.arcane.iris.engine.object.InferredType;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -35,22 +37,19 @@ public class UpperDimensionContext implements DataProvider {
     private final ProceduralStream<IrisBiome> biomeStream;
     private final ProceduralStream<IrisRegion> regionStream;
     private final ProceduralStream<PlatformBlockState> rockStream;
+    private final IrisImageMapRuntime imageMapRuntime;
     private final boolean selfReferencing;
 
-    private UpperDimensionContext(IrisDimension dimension, IrisData data, int chunkHeight,
-                                 ProceduralStream<Double> heightStream,
-                                 ProceduralStream<IrisBiome> biomeStream,
-                                 ProceduralStream<IrisRegion> regionStream,
-                                 ProceduralStream<PlatformBlockState> rockStream,
-                                 boolean selfReferencing) {
-        this.dimension = dimension;
-        this.data = data;
-        this.chunkHeight = chunkHeight;
-        this.heightStream = heightStream;
-        this.biomeStream = biomeStream;
-        this.regionStream = regionStream;
-        this.rockStream = rockStream;
-        this.selfReferencing = selfReferencing;
+    private UpperDimensionContext(ContextState state) {
+        this.dimension = state.dimension();
+        this.data = state.data();
+        this.chunkHeight = state.chunkHeight();
+        this.heightStream = state.heightStream();
+        this.biomeStream = state.biomeStream();
+        this.regionStream = state.regionStream();
+        this.rockStream = state.rockStream();
+        this.imageMapRuntime = state.imageMapRuntime();
+        this.selfReferencing = state.selfReferencing();
     }
 
     public static UpperDimensionContext create(Engine engine, IrisDimension upperDim) {
@@ -64,7 +63,7 @@ public class UpperDimensionContext implements DataProvider {
 
     private static UpperDimensionContext createSelfReferencing(Engine engine, int chunkHeight) {
         IrisComplex complex = engine.getComplex();
-        return new UpperDimensionContext(
+        return new UpperDimensionContext(new ContextState(
                 engine.getDimension(),
                 engine.getData(),
                 chunkHeight,
@@ -72,8 +71,9 @@ public class UpperDimensionContext implements DataProvider {
                 complex.getNaturalTrueBiomeStream(),
                 complex.getRegionStream(),
                 complex.getRockStream(),
+                complex.getImageMapRuntime(),
                 true
-        );
+        ));
     }
 
     private static UpperDimensionContext createCrossReferencing(Engine engine, IrisDimension upperDim, int chunkHeight) {
@@ -82,9 +82,15 @@ public class UpperDimensionContext implements DataProvider {
             resolvedData = engine.getData();
         }
         IrisData upperData = resolvedData;
+        IrisImageMapRuntime imageMapRuntime = IrisImageMapRuntime.compile(
+                upperData,
+                upperDim,
+                engine.getMinHeight()
+        );
         long seedOffset = upperDim.getLoadKey().hashCode();
         RNG rng = new RNG(engine.getSeedManager().getComplex() ^ seedOffset);
         double fluidHeight = upperDim.getFluidHeight();
+        int cacheSize = IrisSettings.get().getPerformance().getNoiseCacheSize();
         DataProvider dataProvider = () -> upperData;
 
         Map<IrisInterpolator, Set<IrisGenerator>> generators = new HashMap<>();
@@ -94,17 +100,17 @@ public class UpperDimensionContext implements DataProvider {
         upperDim.getRegions().forEach(regionKey -> {
             IrisRegion region = upperData.getRegionLoader().load(regionKey);
             if (region != null) {
-                region.getNaturalBiomes(dataProvider).forEach(biome -> {
-                    allBiomes.add(biome);
-                    biome.getGenerators().forEach(link -> {
-                        IrisGenerator gen = link.getCachedGenerator(dataProvider);
-                        if (gen != null) {
-                            generators.computeIfAbsent(gen.getInterpolator(), k -> new HashSet<>()).add(gen);
-                        }
-                    });
-                });
+                region.getNaturalBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
+                        biome, dataProvider, allBiomes, generators));
             }
         });
+        for (IrisRegion mappedRegion : imageMapRuntime.getMappedRegions()) {
+            mappedRegion.getNaturalBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
+                    biome, dataProvider, allBiomes, generators));
+        }
+        for (IrisBiome mappedBiome : imageMapRuntime.getMappedBiomes()) {
+            registerBiomeGenerators(mappedBiome, dataProvider, allBiomes, generators);
+        }
 
         Map<IrisInterpolator, IdentityHashMap<IrisBiome, NoiseBounds>> generatorBounds = new HashMap<>();
         for (Map.Entry<IrisInterpolator, Set<IrisGenerator>> entry : generators.entrySet()) {
@@ -128,8 +134,11 @@ public class UpperDimensionContext implements DataProvider {
         ProceduralStream<Double> regionStyleStream = upperDim.getRegionStyle()
                 .create(rng.nextParallelRNG(883), upperData).stream()
                 .zoom(upperDim.getRegionZoom());
-        ProceduralStream<IrisRegion> regionStream = regionStyleStream
+        ProceduralStream<IrisRegion> proceduralRegionStream = regionStyleStream
                 .selectRarity(upperData.getRegionLoader().loadAll(upperDim.getRegions()));
+        ProceduralStream<IrisRegion> regionStream = proceduralRegionStream
+                .convertAware2D((region, x, z) -> mappedRegion(imageMapRuntime, region, x, z))
+                .cache2D("upperImageMappedRegionStream", engine, cacheSize);
 
         ProceduralStream<IrisBiome> landBiomeStream = regionStream
                 .convert(r -> upperDim.getLandBiomeStyle()
@@ -165,13 +174,16 @@ public class UpperDimensionContext implements DataProvider {
                 .bake().scale(1D / upperDim.getContinentZoom()).bake().stream()
                 .convert(v -> v >= upperDim.getLandChance() ? InferredType.SEA : InferredType.LAND);
 
-        ProceduralStream<IrisBiome> baseBiomeStream = bridgeStream
+        ProceduralStream<IrisBiome> proceduralBaseBiomeStream = bridgeStream
                 .convertAware2D((t, x, z) -> {
                     ProceduralStream<IrisBiome> stream = inferredStreams.get(t);
                     return stream != null ? stream.get(x, z) : inferredStreams.get(InferredType.LAND).get(x, z);
                 })
                 .convertAware2D((biome, x, z) -> implode(
                         biome, x, z, rng, dataProvider, childSelectionPlans, 3));
+        ProceduralStream<IrisBiome> baseBiomeStream = proceduralBaseBiomeStream
+                .convertAware2D((biome, x, z) -> mappedBiome(imageMapRuntime, biome, x, z))
+                .cache2D("upperImageMappedBaseBiomeStream", engine, cacheSize);
 
         KList<IrisShapedGeneratorStyle> overlayNoise = upperDim.getOverlayNoise();
         ProceduralStream<Double> overlayStream = overlayNoise.isEmpty()
@@ -189,7 +201,7 @@ public class UpperDimensionContext implements DataProvider {
         ProceduralStream<Double> heightStream = ProceduralStream.of((x, z) -> {
             IrisBiome b = baseBiomeStream.get(x, z);
             if (b == null) {
-                return fluidHeight;
+                return mappedTerrainHeight(imageMapRuntime, fluidHeight, x, z);
             }
             double interpolatedHeight = 0;
             for (Map.Entry<IrisInterpolator, Set<IrisGenerator>> entry : generators.entrySet()) {
@@ -233,10 +245,18 @@ public class UpperDimensionContext implements DataProvider {
                 }
                 interpolatedHeight += d / gens.size();
             }
-            return Math.max(Math.min(interpolatedHeight + fluidHeight + overlayStream.get(x, z), chunkHeight), 0);
-        }, Interpolated.DOUBLE);
+            double proceduralHeight = Math.max(
+                    Math.min(interpolatedHeight + fluidHeight + overlayStream.get(x, z), chunkHeight),
+                    0D
+            );
+            return mappedTerrainHeight(imageMapRuntime, proceduralHeight, x, z);
+        }, Interpolated.DOUBLE).cache2DDouble("upperImageMappedHeightStream", engine, cacheSize);
 
         ProceduralStream<IrisBiome> finalBiomeStream = heightStream.convertAware2D((height, x, z) -> {
+            IrisBiome mappedBiome = imageMapRuntime.sampleBiome(x, z);
+            if (mappedBiome != null) {
+                return mappedBiome;
+            }
             IrisBiome baseBiome = baseBiomeStream.get(x, z);
             IrisBiome resolved = IrisComplex.resolveSurfaceBiome(
                     height,
@@ -251,13 +271,13 @@ public class UpperDimensionContext implements DataProvider {
             return resolved == baseBiome
                     ? baseBiome
                     : implode(resolved, x, z, rng, dataProvider, childSelectionPlans, 3);
-        });
+        }).cache2D("upperImageMappedFinalBiomeStream", engine, cacheSize);
 
         ProceduralStream<PlatformBlockState> rockStream = upperDim.getRockPalette()
                 .getLayerGenerator(rng.nextParallelRNG(45), upperData).stream()
                 .select(upperDim.getRockPalette().getBlockData(upperData));
 
-        return new UpperDimensionContext(
+        return new UpperDimensionContext(new ContextState(
                 upperDim,
                 upperData,
                 chunkHeight,
@@ -265,8 +285,63 @@ public class UpperDimensionContext implements DataProvider {
                 finalBiomeStream,
                 regionStream,
                 rockStream,
+                imageMapRuntime,
                 false
-        );
+        ));
+    }
+
+    private static void registerBiomeGenerators(
+            IrisBiome biome,
+            DataProvider dataProvider,
+            Set<IrisBiome> allBiomes,
+            Map<IrisInterpolator, Set<IrisGenerator>> generators
+    ) {
+        allBiomes.add(biome);
+        biome.getGenerators().forEach(link -> {
+            IrisGenerator generator = link.getCachedGenerator(dataProvider);
+            if (generator != null) {
+                generators.computeIfAbsent(generator.getInterpolator(), key -> new HashSet<>()).add(generator);
+            }
+        });
+    }
+
+    static IrisRegion mappedRegion(
+            IrisImageMapRuntime imageMapRuntime,
+            IrisRegion proceduralRegion,
+            double worldX,
+            double worldZ
+    ) {
+        IrisRegion mappedRegion = imageMapRuntime.sampleRegion(worldX, worldZ);
+        return mappedRegion == null ? proceduralRegion : mappedRegion;
+    }
+
+    static double mappedTerrainHeight(
+            IrisImageMapRuntime imageMapRuntime,
+            double proceduralHeight,
+            double worldX,
+            double worldZ
+    ) {
+        return imageMapRuntime.sampleTerrainHeight(worldX, worldZ, proceduralHeight);
+    }
+
+    static IrisBiome mappedBiome(
+            IrisImageMapRuntime imageMapRuntime,
+            IrisBiome proceduralBiome,
+            double worldX,
+            double worldZ
+    ) {
+        IrisBiome mappedBiome = imageMapRuntime.sampleBiome(worldX, worldZ);
+        return mappedBiome == null ? proceduralBiome : mappedBiome;
+    }
+
+    static PlatformBlockState mappedSurfaceBlock(
+            IrisImageMapRuntime imageMapRuntime,
+            PlatformBlockState proceduralBlock,
+            double worldX,
+            double worldZ
+    ) {
+        PlatformBlockState mappedBlock = imageMapRuntime.sampleSurfaceBlock(worldX, worldZ);
+        return mappedBlock == null ? proceduralBlock : mappedBlock;
     }
 
     private static KList<IrisBiome> loadInferredBiomes(IrisData data, KList<String> keys, InferredType type) {
@@ -340,6 +415,10 @@ public class UpperDimensionContext implements DataProvider {
         return rockStream.get((double) x, (double) z);
     }
 
+    public PlatformBlockState getSurfaceBlock(int x, int z) {
+        return imageMapRuntime.sampleSurfaceBlock(x, z);
+    }
+
     public IrisDimension getDimension() {
         return dimension;
     }
@@ -351,5 +430,18 @@ public class UpperDimensionContext implements DataProvider {
 
     public boolean isSelfReferencing() {
         return selfReferencing;
+    }
+
+    private record ContextState(
+            IrisDimension dimension,
+            IrisData data,
+            int chunkHeight,
+            ProceduralStream<Double> heightStream,
+            ProceduralStream<IrisBiome> biomeStream,
+            ProceduralStream<IrisRegion> regionStream,
+            ProceduralStream<PlatformBlockState> rockStream,
+            IrisImageMapRuntime imageMapRuntime,
+            boolean selfReferencing
+    ) {
     }
 }

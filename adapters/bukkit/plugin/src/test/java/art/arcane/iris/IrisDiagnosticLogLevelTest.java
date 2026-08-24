@@ -65,7 +65,9 @@ public class IrisDiagnosticLogLevelTest {
 
         assertTrue(bridge, bridge.contains("diagnosticLevel(target)"));
         assertTrue(bridge, bridge.contains("diagnostic(diagnostic, message)"));
-        assertTrue(source.contains("plugin.getLogger().log(level, line)"));
+        String diagnostic = method(source, "private static void diagnostic(Level level, String message)");
+        assertTrue(diagnostic, diagnostic.contains("ComponentLog.log("));
+        assertTrue(diagnostic, diagnostic.contains("ComponentText.literal(line)"));
     }
 
     private static String method(String source, String signature) {

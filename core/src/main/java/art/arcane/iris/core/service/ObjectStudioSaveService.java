@@ -53,6 +53,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.volmlib.util.plugin.ComponentMessenger;
 public class ObjectStudioSaveService implements IrisService {
     private static ObjectStudioSaveService INSTANCE;
 
@@ -142,11 +143,11 @@ public class ObjectStudioSaveService implements IrisService {
         Player player = event.getPlayer();
         GridCell cell = findCellNear(studio, clicked.getX(), clicked.getZ());
         if (cell == null) {
-            player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_NO_CELL_UNDER_CLICK_X_Z, MessageArgument.untrusted("x", String.valueOf(clicked.getX())), MessageArgument.untrusted("z", String.valueOf(clicked.getZ()))));
+            send(player, IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_NO_CELL_UNDER_CLICK_X_Z, MessageArgument.untrusted("x", String.valueOf(clicked.getX())), MessageArgument.untrusted("z", String.valueOf(clicked.getZ()))));
             return;
         }
 
-        player.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVING_X_X, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())), MessageArgument.untrusted("w", String.valueOf(cell.w())), MessageArgument.untrusted("h", String.valueOf(cell.h())), MessageArgument.untrusted("d", String.valueOf(cell.d()))));
+        send(player, IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVING_X_X, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())), MessageArgument.untrusted("w", String.valueOf(cell.w())), MessageArgument.untrusted("h", String.valueOf(cell.h())), MessageArgument.untrusted("d", String.valueOf(cell.d()))));
         IrisLogging.debug("Object Studio save triggered by %s for %s/%s", player.getName(), cell.pack(), cell.key());
         J.runRegion(world, cell.chunkMinX(), cell.chunkMinZ(), () -> {
             try {
@@ -236,7 +237,7 @@ public class ObjectStudioSaveService implements IrisService {
         Long prior = studio.hashes.get(hashKey);
         if (prior != null && prior == hash) {
             if (notify != null) {
-                notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_NO_CHANGES, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key()))));
+                send(notify, IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_NO_CHANGES, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key()))));
             }
             return;
         }
@@ -244,7 +245,7 @@ public class ObjectStudioSaveService implements IrisService {
         if (!anyBlock && prior == null) {
             studio.hashes.put(hashKey, hash);
             if (notify != null) {
-                notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_EMPTY_CELL_NOTHING_WRITE, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key()))));
+                send(notify, IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_EMPTY_CELL_NOTHING_WRITE, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key()))));
             }
             return;
         }
@@ -254,7 +255,7 @@ public class ObjectStudioSaveService implements IrisService {
         File targetFile = objectFileFor(studio, cell);
         if (targetFile == null) {
             if (notify != null) {
-                notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_NO_TARGET_FILE, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key()))));
+                send(notify, IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_NO_TARGET_FILE, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key()))));
             }
             return;
         }
@@ -269,15 +270,19 @@ public class ObjectStudioSaveService implements IrisService {
                 IrisLogging.debug("Object Studio saved: %s/%s (%dx%dx%d)",
                         cell.pack(), cell.key(), cell.w(), cell.h(), cell.d());
                 if (notify != null) {
-                    J.runEntity(notify, () -> notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVED, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())))));
+                    J.runEntity(notify, () -> send(notify, IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVED, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())))));
                 }
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
                 if (notify != null) {
-                    J.runEntity(notify, () -> notify.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVE_FAILED, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())), MessageArgument.untrusted("error", String.valueOf(e.getMessage())))));
+                    J.runEntity(notify, () -> send(notify, IrisLanguage.text(BukkitRuntimeMessages.OBJECT_STUDIO_SAVE_SERVICE_OBJECT_STUDIO_SAVE_FAILED, MessageArgument.untrusted("pack", String.valueOf(cell.pack())), MessageArgument.untrusted("key", String.valueOf(cell.key())), MessageArgument.untrusted("error", String.valueOf(e.getMessage())))));
                 }
             }
         });
+    }
+
+    private static void send(Player player, String message) {
+        ComponentMessenger.sendSection(player, message);
     }
 
     private boolean allChunksLoaded(World world, GridCell cell) {

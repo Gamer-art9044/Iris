@@ -17,14 +17,17 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -71,9 +74,12 @@ public class WebCacheTest {
             Files.createDirectories(existing.toPath().getParent());
             Files.writeString(existing.toPath(), "previous", StandardCharsets.UTF_8);
 
-            File downloaded = WebCache.getNonCachedFile(name, url, 8L);
+            IOException failure = assertThrows(
+                    IOException.class,
+                    () -> WebCache.getNonCachedFile(name, url, 8L)
+            );
 
-            assertNull(downloaded);
+            assertTrue(failure.getMessage().contains("size limit"));
             assertEquals("previous", Files.readString(existing.toPath(), StandardCharsets.UTF_8));
         } finally {
             server.stop(0);
@@ -91,9 +97,12 @@ public class WebCacheTest {
             Files.createDirectories(existing.toPath().getParent());
             Files.writeString(existing.toPath(), "previous", StandardCharsets.UTF_8);
 
-            File downloaded = WebCache.getNonCachedFile(name, url, 8L);
+            IOException failure = assertThrows(
+                    IOException.class,
+                    () -> WebCache.getNonCachedFile(name, url, 8L)
+            );
 
-            assertNull(downloaded);
+            assertTrue(failure.getMessage().contains("size limit"));
             assertEquals("previous", Files.readString(existing.toPath(), StandardCharsets.UTF_8));
         } finally {
             server.stop(0);
@@ -192,6 +201,127 @@ public class WebCacheTest {
         }
     }
 
+    @Test
+    public void stalledResponseTimesOutAndPreservesThePreviousCacheEntry() throws Exception {
+        byte[] body = "stalled-response".getBytes(StandardCharsets.UTF_8);
+        CountDownLatch prefixSent = new CountDownLatch(1);
+        CountDownLatch releaseResponse = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/pack", exchange -> {
+            try {
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body, 0, 4);
+                exchange.getResponseBody().flush();
+                prefixSent.countDown();
+                releaseResponse.await(5L, TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        try {
+            String name = "stalled-pack";
+            String url = url(server);
+            File existing = cachedFile(name, url);
+            Files.createDirectories(existing.toPath().getParent());
+            Files.writeString(existing.toPath(), "previous", StandardCharsets.UTF_8);
+            WebCache.DownloadPolicy policy = new WebCache.DownloadPolicy(
+                    Duration.ofMillis(100L),
+                    1,
+                    Duration.ZERO
+            );
+
+            IOException failure = assertThrows(
+                    IOException.class,
+                    () -> WebCache.getNonCachedFile(name, url, body.length, policy, ignored -> {
+                    })
+            );
+
+            assertTrue(prefixSent.await(1L, TimeUnit.SECONDS));
+            assertTrue(failure.getMessage().contains("stalled"));
+            assertEquals("previous", Files.readString(existing.toPath(), StandardCharsets.UTF_8));
+            assertNoIncompleteDownloads(existing.getParentFile());
+        } finally {
+            releaseResponse.countDown();
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void transientServerFailuresRetryAndPublishTheCompleteResponse() throws Exception {
+        byte[] body = "retried-response".getBytes(StandardCharsets.UTF_8);
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/pack", exchange -> {
+            if (requests.incrementAndGet() < 3) {
+                exchange.sendResponseHeaders(503, -1L);
+                exchange.close();
+                return;
+            }
+            respond(exchange, body, true);
+        });
+        server.start();
+        try {
+            WebCache.DownloadPolicy policy = new WebCache.DownloadPolicy(
+                    Duration.ofSeconds(1L),
+                    3,
+                    Duration.ZERO
+            );
+
+            File downloaded = WebCache.getNonCachedFile(
+                    "retried-pack",
+                    url(server),
+                    body.length,
+                    policy,
+                    ignored -> {
+                    }
+            );
+
+            assertEquals(3, requests.get());
+            assertEquals("retried-response", Files.readString(downloaded.toPath(), StandardCharsets.UTF_8));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void permanentClientFailureDoesNotRetry() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/pack", exchange -> {
+            requests.incrementAndGet();
+            exchange.sendResponseHeaders(404, -1L);
+            exchange.close();
+        });
+        server.start();
+        try {
+            WebCache.DownloadPolicy policy = new WebCache.DownloadPolicy(
+                    Duration.ofSeconds(1L),
+                    3,
+                    Duration.ZERO
+            );
+
+            IOException failure = assertThrows(
+                    IOException.class,
+                    () -> WebCache.getNonCachedFile(
+                            "missing-pack",
+                            url(server),
+                            64L,
+                            policy,
+                            ignored -> {
+                            }
+                    )
+            );
+
+            assertTrue(failure.getMessage().contains("HTTP 404"));
+            assertEquals(1, requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private HttpServer server(byte[] body, boolean declareLength) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/pack", exchange -> respond(exchange, body, declareLength));
@@ -212,6 +342,11 @@ public class WebCacheTest {
     private File cachedFile(String name, String url) {
         String hash = IO.hash(name + "*" + url);
         return IrisPlatforms.get().dataFile("cache", hash.substring(0, 2), hash.substring(3, 5), hash);
+    }
+
+    private void assertNoIncompleteDownloads(File folder) {
+        File[] incomplete = folder.listFiles((File parent, String name) -> name.startsWith(".download-"));
+        assertTrue(incomplete == null || incomplete.length == 0);
     }
 
     private void assertProgressEndsAt(List<WebCache.TransferProgress> progress, long transferredBytes,

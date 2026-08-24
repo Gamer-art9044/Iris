@@ -14,21 +14,14 @@ import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.json.JSONException;
-import art.arcane.volmlib.util.reflect.ShadeFix;
 import art.arcane.iris.util.common.plugin.VolmitPlugin;
 import art.arcane.iris.util.common.scheduling.J;
 
 import io.sentry.Sentry;
-import net.kyori.adventure.audience.Audience;
-import net.kyori.adventure.platform.bukkit.BukkitAudiences;
-import net.kyori.adventure.text.serializer.ComponentSerializer;
 import org.bstats.bukkit.Metrics;
 import org.bstats.charts.DrilldownPie;
 import org.bstats.charts.SingleLineChart;
 import org.bukkit.Bukkit;
-import org.bukkit.command.CommandSender;
-import org.bukkit.entity.Player;
-import org.bukkit.plugin.Plugin;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -122,22 +115,5 @@ public class Bindings {
 
             plugin.postShutdown(metrics::shutdown);
         });
-    }
-
-    public static class Adventure {
-        private final BukkitAudiences audiences;
-
-        public Adventure(Plugin plugin) {
-            ShadeFix.fix(ComponentSerializer.class);
-            this.audiences = BukkitAudiences.create(plugin);
-        }
-
-        public Audience player(Player player) {
-            return audiences.player(player);
-        }
-
-        public Audience sender(CommandSender sender) {
-            return audiences.sender(sender);
-        }
     }
 }

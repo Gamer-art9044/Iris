@@ -104,10 +104,6 @@ public final class PackDownloadMessages {
             "iris.runtime.pack_download.downloading",
             "Downloading {url}"
     );
-    public static final TextKey FAILED_TO_FIND = TextKey.of(
-            "iris.runtime.pack_download.failed_to_find",
-            "Failed to find pack at {url}"
-    );
     public static final TextKey UNPACKING = TextKey.of(
             "iris.runtime.pack_download.unpacking",
             "Unpacking {repository}"
@@ -213,7 +209,6 @@ public final class PackDownloadMessages {
             INVALID_BUILT_IN,
             SHUTTING_DOWN,
             DOWNLOADING,
-            FAILED_TO_FIND,
             UNPACKING,
             UNPACK_FAILED,
             NO_EXTRACTED_FILES,

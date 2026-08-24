@@ -358,23 +358,25 @@ public final class PackDownloader {
                 PackDownloadMessages.DOWNLOADING,
                 MessageArgument.untrusted("url", source)
         ) + " ");
-        File zip = WebCache.getNonCachedFile(
-                "pack-archive",
-                url,
-                ARCHIVE_LIMITS.maxArchiveBytes(),
-                transfer -> sendProgress(progressListener, DownloadProgress.transfer(transfer))
-        );
+        File zip;
+        try {
+            zip = WebCache.getNonCachedFile(
+                    "pack-archive",
+                    url,
+                    ARCHIVE_LIMITS.maxArchiveBytes(),
+                    transfer -> sendProgress(progressListener, DownloadProgress.transfer(transfer))
+            );
+        } catch (InterruptedIOException exception) {
+            cancellation.checkpoint();
+            throw exception;
+        }
         cancellation.checkpoint();
         File temp = WebCache.getTemp();
         File work = new File(temp, "dl-" + UUID.randomUUID());
 
         try {
-            if (zip == null || !zip.exists()) {
-                sendFeedback(feedback, IrisLanguage.plain(
-                        PackDownloadMessages.FAILED_TO_FIND,
-                        MessageArgument.untrusted("url", source)
-                ));
-                return null;
+            if (!zip.exists()) {
+                throw new IOException("Downloaded pack archive is missing before unpacking.");
             }
             sendProgress(progressListener, DownloadProgress.phase(DownloadPhase.UNPACKING));
             sendFeedback(feedback, IrisLanguage.plain(

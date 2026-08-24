@@ -184,6 +184,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         Engine replacement = ModdedWorldEngines.prepareReplacement(level, pack, packDimensionKey, seed);
         try {
             ModdedWorldEngines.installReplacement(level, replacement);
+            replacement.getPlatformHooks().applyWorldBoundary(replacement);
         } catch (Throwable error) {
             try {
                 ModdedWorldEngines.closeUnregistered(replacement);

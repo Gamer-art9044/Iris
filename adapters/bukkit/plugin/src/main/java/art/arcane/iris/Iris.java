@@ -102,6 +102,9 @@ import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.io.InstanceState;
 import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.volmlib.util.plugin.ComponentLog;
+import art.arcane.volmlib.util.plugin.ComponentMessenger;
+import art.arcane.volmlib.util.plugin.ComponentText;
 import art.arcane.iris.util.common.misc.Bindings;
 import art.arcane.iris.util.common.misc.ServerProperties;
 import art.arcane.iris.util.common.misc.SlimJar;
@@ -147,6 +150,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -161,7 +165,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     }
 
     public static Iris instance;
-    public static Bindings.Adventure audiences;
     public static MultiverseCoreLink linkMultiverseCore;
     public static IrisCompat compat;
     public static ChunkTickets tickets;
@@ -256,7 +259,15 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             getSender().sendMessage(string);
         } catch (Throwable e) {
             try {
-                instance.getLogger().info(instance.getTag() + IrisLogging.clean(string));
+                Iris plugin = instance;
+                String tag = plugin == null ? "" : plugin.getTag();
+                ComponentLog.logMarkup(
+                        plugin,
+                        Logger.getLogger("Iris"),
+                        "[Iris] ",
+                        Level.INFO,
+                        tag + string,
+                        null);
             } catch (Throwable inner) {
                 System.err.println("[Iris] Failed to emit log message: " + inner.getMessage());
                 inner.printStackTrace(System.err);
@@ -550,20 +561,13 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     private static void diagnostic(Level level, String message) {
         String line = IrisLogging.clean(message);
-        Iris plugin = instance;
-        if (plugin != null) {
-            try {
-                plugin.getLogger().log(level, line);
-                return;
-            } catch (Throwable unavailable) {
-                // Paper runs the bootstrap before a plugin logger exists; the streams below are all there is.
-            }
-        }
-        if (level.intValue() >= Level.WARNING.intValue()) {
-            System.err.println("[Iris] " + line);
-            return;
-        }
-        System.out.println("[Iris] " + line);
+        ComponentLog.log(
+                instance,
+                Logger.getLogger("Iris"),
+                "[Iris] ",
+                level,
+                ComponentText.literal(line),
+                null);
     }
 
     /**
@@ -595,7 +599,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         PaperLibBootstrap.install();
         SimdSupport.install();
         services = new KMap<>();
-        setupAudience();
         BukkitPlatform.hostHud(new HudActionBar(this), new HudBossBarLane());
         Bindings.setupSentry();
         // Explicit, ordered service list: the previous reflective jar scan gave hash-ordered
@@ -791,17 +794,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             } catch (IrisException e) {
                 reportError(e);
             }
-        }
-    }
-
-    private void setupAudience() {
-        try {
-            audiences = new Bindings.Adventure(this);
-            BukkitPlatform.hostAudiences(audiences);
-        } catch (Throwable e) {
-            IrisSettings.get().getGeneral().setUseConsoleCustomColors(false);
-            IrisSettings.get().getGeneral().setUseCustomColorsIngame(false);
-            Iris.reportError("Failed to set up Adventure; custom colors are disabled.", e);
         }
     }
 
@@ -1215,7 +1207,9 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     }
 
     public void imsg(CommandSender s, String msg) {
-        s.sendMessage(C.IRIS + "[" + C.DARK_GRAY + "Iris" + C.IRIS + "]" + C.GRAY + ": " + msg);
+        ComponentMessenger.sendSection(
+                s,
+                C.IRIS + "[" + C.DARK_GRAY + "Iris" + C.IRIS + "]" + C.GRAY + ": " + msg);
     }
 
     @Nullable

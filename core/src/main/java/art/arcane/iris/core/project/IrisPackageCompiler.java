@@ -22,6 +22,9 @@ import com.google.gson.Gson;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.localization.BukkitRuntimeMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.iris.core.pack.ImageMapPackageClosure;
+import art.arcane.iris.core.pack.PackValidationResult;
+import art.arcane.iris.core.pack.PackValidator;
 import art.arcane.iris.core.pack.StructurePackageClosure;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBlockData;
@@ -65,6 +68,14 @@ public class IrisPackageCompiler {
     }
 
     public File compilePackage(VolmitSender sender, boolean obfuscate, boolean minify) {
+        PackValidationResult validation = PackValidator.validateForPackaging(project.getPath());
+        if (!validation.isLoadable()) {
+            IllegalStateException error = new IllegalStateException("Pack validation failed before packaging: "
+                    + String.join("; ", validation.getBlockingErrors()));
+            IrisLogging.reportError("Package validation failed for '" + project.getName() + "'.", error);
+            sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.IRIS_PROJECT_FAILED));
+            return null;
+        }
         // Detached loader on purpose: obfuscation rewrites the placement 'place' lists on the
         // loaded resources, which must never leak into the shared cached pack state — a second
         // export against a mutated cache produced archives with an empty objects/ directory.
@@ -108,9 +119,10 @@ public class IrisPackageCompiler {
             addIfPresent(blocks, dm.getBlockLoader().load(i));
         }
 
-        dimension.getRegions().forEach((i) -> addIfPresent(regions, dm.getRegionLoader().load(i)));
+        dimension.getAllRegions(() -> dm).forEach((region) -> addIfPresent(regions, region));
         dimension.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i)));
         regions.forEach((i) -> biomes.addAll(i.getAllBiomes(() -> dm)));
+        dimension.getReachableBiomes(() -> dm).forEach((biome) -> addIfPresent(biomes, biome));
         regions.forEach((r) -> r.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i))));
         regions.forEach((r) -> r.getEntitySpawners().forEach((sp) -> addIfPresent(spawners, dm.getSpawnerLoader().load(sp))));
         dimension.getEntitySpawners().forEach((sp) -> addIfPresent(spawners, dm.getSpawnerLoader().load(sp)));
@@ -209,6 +221,7 @@ public class IrisPackageCompiler {
                 throw new IOException("Structure package closure is invalid: " + String.join("; ", structureClosure.errors()));
             }
             b.append(structureClosure.writeTo(folder, minify));
+            b.append(ImageMapPackageClosure.writeAll(dm, folder, minify));
             a = new JSONObject(new Gson().toJson(dimension)).toString(minify ? 0 : 4);
             IO.writeAll(new File(folder, "dimensions/" + dimension.getLoadKey() + ".json"), a);
             b.append(IO.hash(a));

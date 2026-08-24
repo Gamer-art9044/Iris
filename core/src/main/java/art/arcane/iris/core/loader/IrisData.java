@@ -46,6 +46,7 @@ import art.arcane.iris.engine.object.IrisExpression;
 import art.arcane.iris.engine.object.IrisObjectScale;
 import art.arcane.iris.engine.object.IrisGenerator;
 import art.arcane.iris.engine.object.IrisImage;
+import art.arcane.iris.engine.object.IrisImageMap;
 import art.arcane.iris.engine.object.IrisJigsawPiece;
 import art.arcane.iris.engine.object.IrisJigsawPool;
 import art.arcane.iris.engine.object.IrisLootTable;
@@ -119,6 +120,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     private ResourceLoader<IrisObject> objectLoader;
     private ResourceLoader<IrisMatterObject> matterLoader;
     private ResourceLoader<IrisImage> imageLoader;
+    private ResourceLoader<IrisImageMap> imageMapLoader;
     private ResourceLoader<IrisStructure> structureLoader;
     private ResourceLoader<IrisJigsawPool> jigsawPoolLoader;
     private ResourceLoader<IrisJigsawPiece> jigsawPieceLoader;
@@ -239,6 +241,10 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
 
     public static IrisImage loadAnyImage(String key, @Nullable IrisData nearest) {
         return loadAny(IrisImage.class, key, nearest);
+    }
+
+    public static IrisImageMap loadAnyImageMap(String key, @Nullable IrisData nearest) {
+        return loadAny(IrisImageMap.class, key, nearest);
     }
 
     public static IrisDimension loadAnyDimension(String key, @Nullable IrisData nearest) {
@@ -484,6 +490,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         this.expressionLoader = registerLoader(IrisExpression.class, replacement);
         this.objectLoader = registerLoader(IrisObject.class, replacement);
         this.imageLoader = registerLoader(IrisImage.class, replacement);
+        this.imageMapLoader = registerLoader(IrisImageMap.class, replacement);
         this.matterLoader = registerLoader(IrisMatterObject.class, replacement);
         this.structureLoader = registerLoader(IrisStructure.class, replacement);
         this.jigsawPoolLoader = registerLoader(IrisJigsawPool.class, replacement);
@@ -510,13 +517,19 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
                 .setPrettyPrinting();
         KMap<Class<? extends IrisRegistrant>, ResourceLoader<? extends IrisRegistrant>> replacement = new KMap<>();
         dataFolder.mkdirs();
-        recoverStructureTransactions();
         biomeLoader = registerLoader(IrisBiome.class, replacement);
+        regionLoader = registerLoader(IrisRegion.class, replacement);
         dimensionLoader = registerLoader(IrisDimension.class, replacement);
+        generatorLoader = registerLoader(IrisGenerator.class, replacement);
+        expressionLoader = registerLoader(IrisExpression.class, replacement);
+        imageLoader = registerLoader(IrisImage.class, replacement);
+        imageMapLoader = registerLoader(IrisImageMap.class, replacement);
         builder.registerTypeAdapterFactory(KeyedType::createTypeAdapter);
         gson = builder.create();
         loaders = replacement;
-        if (biomeLoader == null || dimensionLoader == null) {
+        if (biomeLoader == null || regionLoader == null || dimensionLoader == null
+                || generatorLoader == null || expressionLoader == null
+                || imageLoader == null || imageMapLoader == null) {
             throw new IllegalStateException("Unable to initialize Iris datapack compiler loaders for " + dataFolder);
         }
     }

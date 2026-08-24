@@ -139,6 +139,7 @@ final class EngineHotloader {
                         throw new IllegalStateException("Iris background task admission closed before workspace refresh.");
                     }
                 }
+                engine.getPlatformHooks().applyWorldBoundary(engine);
                 broadcastStudioHotload(false, "");
             } catch (Throwable e) {
                 if (!published) {

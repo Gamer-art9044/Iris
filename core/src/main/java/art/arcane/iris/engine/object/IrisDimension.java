@@ -63,6 +63,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -188,6 +189,11 @@ public class IrisDimension extends IrisRegistrant {
     private IrisRange dimensionHeight = new IrisRange(-64, 320);
     @Desc("Define options for this dimension")
     private IrisDimensionTypeOptions dimensionOptions = new IrisDimensionTypeOptions();
+    @Desc("Configure and enforce the native Minecraft world border. When omitted, Iris leaves the native border unchanged.")
+    private IrisWorldBoundary worldBoundary = null;
+    @ArrayType(type = IrisImageMapBinding.class)
+    @Desc("Bind reusable image-map resources to typed world-generation inputs")
+    private KList<IrisImageMapBinding> imageMaps = new KList<>();
     @Desc("When true, sets the dimension's ambient light to maximum, making all blocks fully lit regardless of light level.")
     private boolean fullbright = false;
     @RegistryListResource(IrisDimension.class)
@@ -441,21 +447,39 @@ public class IrisDimension extends IrisRegistrant {
     }
 
     public KList<IrisRegion> getAllRegions(DataProvider g) {
-        KList<IrisRegion> r = new KList<>();
+        KMap<String, IrisRegion> regions = new KMap<>();
 
         if (g == null) {
-            return r;
+            return regions.v();
         }
         IrisData data = g.getData();
         if (data == null || data.getRegionLoader() == null) {
-            return r;
+            return regions.v();
         }
 
-        for (String i : getRegions()) {
-            r.add(data.getRegionLoader().load(i));
+        for (String key : getRegions()) {
+            IrisRegion region = data.getRegionLoader().load(key);
+            if (region != null) {
+                regions.put(key, region);
+            }
         }
-
-        return r;
+        for (IrisImageMapBinding binding : getImageMaps()) {
+            if (binding == null || binding.getApplication() != IrisImageMapApplication.REGION) {
+                continue;
+            }
+            IrisImageMap map = data.getImageMapLoader().load(binding.getMap());
+            if (map == null || map.getColors() == null) {
+                continue;
+            }
+            for (String target : imageMapTargets(map)) {
+                String key = localImageMapTarget(target);
+                IrisRegion region = data.getRegionLoader().load(key);
+                if (region != null) {
+                    regions.put(key, region);
+                }
+            }
+        }
+        return regions.v();
     }
 
     public KList<IrisRegion> getAllAnyRegions() {
@@ -496,15 +520,23 @@ public class IrisDimension extends IrisRegistrant {
         if (riversEnabled && riverNetwork.getBiomes() != null) {
             addReachableBiomeKeys(pending, riverNetwork.getBiomes().getAllBiomeIds());
         }
-        KList<String> regionKeys = getRegions();
-        if (regionKeys != null) {
-            for (String regionKey : regionKeys) {
-                IrisRegion region = data.getRegionLoader().load(regionKey);
-                if (region == null) {
-                    continue;
-                }
-                addReachableBiomeKeys(pending,
-                        riversEnabled ? region.getAllBiomeIds() : region.getNaturalBiomeIds());
+        for (IrisRegion region : getAllRegions(g)) {
+            if (region == null) {
+                continue;
+            }
+            addReachableBiomeKeys(pending,
+                    riversEnabled ? region.getAllBiomeIds() : region.getNaturalBiomeIds());
+        }
+        for (IrisImageMapBinding binding : getImageMaps()) {
+            if (binding == null || binding.getApplication() != IrisImageMapApplication.BIOME) {
+                continue;
+            }
+            IrisImageMap map = data.getImageMapLoader().load(binding.getMap());
+            if (map == null) {
+                continue;
+            }
+            for (String target : imageMapTargets(map)) {
+                addReachableBiomeKey(pending, localImageMapTarget(target));
             }
         }
 
@@ -559,6 +591,25 @@ public class IrisDimension extends IrisRegistrant {
         }
 
         return biomes.v();
+    }
+
+    private Set<String> imageMapTargets(IrisImageMap map) {
+        Set<String> targets = new LinkedHashSet<>();
+        if (map.getColors() != null) {
+            for (String target : map.getColors().values()) {
+                if (target != null && !target.isBlank()) {
+                    targets.add(target);
+                }
+            }
+        }
+        if (map.getFallbackTarget() != null && !map.getFallbackTarget().isBlank()) {
+            targets.add(map.getFallbackTarget());
+        }
+        return targets;
+    }
+
+    private String localImageMapTarget(String target) {
+        return target.startsWith("iris:") ? target.substring("iris:".length()) : target;
     }
 
     private void addReachableBiomeKeys(Deque<String> pending, Iterable<String> biomeKeys) {

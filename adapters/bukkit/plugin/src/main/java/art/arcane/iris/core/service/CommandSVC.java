@@ -62,6 +62,7 @@ import java.util.Optional;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.IrisMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.volmlib.util.plugin.ComponentMessenger;
 public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, DirectorInvocationHook {
     private static final String ROOT_COMMAND = "iris";
     private static final String ROOT_PERMISSION = "iris.all";
@@ -169,7 +170,7 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
 
     public void executeRoot(CommandSender sender, String label, String[] args) {
         if (!sender.hasPermission(ROOT_PERMISSION)) {
-            sender.sendMessage(IrisLanguage.text(
+            ComponentMessenger.sendSection(sender, IrisLanguage.text(
                     IrisMessages.COMMAND_PERMISSION_DENIED,
                     MessageArgument.trusted("permission", ROOT_PERMISSION)
             ));
@@ -325,7 +326,7 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
         @Override
         public void sendMessage(String message) {
             if (message != null && !message.trim().isEmpty()) {
-                sender.sendMessage(message);
+                ComponentMessenger.sendLiteral(sender, message);
             }
         }
     }

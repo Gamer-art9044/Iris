@@ -28,7 +28,6 @@ public final class BukkitArtifactVerifier {
     // Relocation targets for the libraries slimjar downloads and relocates at runtime. Compiled
     // references to them are correct and the classes are correctly absent from the jar.
     private static final List<String> RUNTIME_DOWNLOADED_PREFIXES = List.of(
-            "art/arcane/iris/util/paralithic/",
             "art/arcane/iris/util/paper/",
             "art/arcane/iris/util/kyori/",
             "art/arcane/iris/util/metrics/",

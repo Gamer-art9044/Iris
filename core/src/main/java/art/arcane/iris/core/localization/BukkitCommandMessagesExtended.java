@@ -612,6 +612,10 @@ public final class BukkitCommandMessagesExtended {
             "iris.bukkit.commandstudio.opening_noise_explorer",
             C.GREEN + "Opening Noise Explorer!"
     );
+    public static final TextKey COMMAND_STUDIO_OPENING_IMAGE_MAP_STUDIO = TextKey.of(
+            "iris.bukkit.commandstudio.opening_image_map_studio",
+            C.GREEN + "Opening the Image Map Studio."
+    );
     public static final TextKey COMMAND_STUDIO_CANNOT_ADD_ITEMS_VIRTUAL_INVENTORY_BECAUSE = TextKey.of(
             "iris.bukkit.commandstudio.cannot_add_items_virtual_inventory_because",
             C.RED + "Cannot add items to virtual inventory because of: " + "{value}"
@@ -952,6 +956,7 @@ public final class BukkitCommandMessagesExtended {
             COMMAND_STUDIO_OPENING_VSCODE_PACK,
             COMMAND_STUDIO_PACK_HAS_VERSION,
             COMMAND_STUDIO_OPENING_NOISE_EXPLORER,
+            COMMAND_STUDIO_OPENING_IMAGE_MAP_STUDIO,
             COMMAND_STUDIO_CANNOT_ADD_ITEMS_VIRTUAL_INVENTORY_BECAUSE,
             COMMAND_STUDIO_OPENING_INVENTORY_NOW,
             COMMAND_STUDIO_ONLY_WORKS_IRIS_WORLD,

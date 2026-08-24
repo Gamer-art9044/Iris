@@ -120,6 +120,7 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
             int topY = Math.min(hf, chunkHeight - 1);
             PlatformBlockState fluid = fluidCache.get(xf, zf);
             PlatformBlockState rock = rockCache.get(xf, zf);
+            PlatformBlockState mappedSurfaceBlock = complex.getImageMapRuntime().sampleSurfaceBlock(realX, realZ);
             KList<IrisOreGenerator> biomeSurfaceOres = hideOres ? null : biome.getSurfaceOreGenerators();
             KList<IrisOreGenerator> regionSurfaceOres = hideOres ? null : region.getSurfaceOreGenerators();
             KList<IrisOreGenerator> biomeUndergroundOres = hideOres ? null : biome.getUndergroundOreGenerators();
@@ -173,6 +174,10 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
 
                 if (i <= he) {
                     int depth = he - i;
+                    if (depth == 0 && mappedSurfaceBlock != null) {
+                        h.setRaw(xf, i, zf, mappedSurfaceBlock);
+                        continue;
+                    }
                     if (blocks == null) {
                         blocks = biome.generateLayers(dimension, realX, realZ, localRng, he, he, data, complex);
                     }
@@ -210,6 +215,7 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
                 if (upperSurfaceY < chunkHeight - 1) {
                     IrisBiome upperBiome = upperContext.getUpperBiome(realX, realZ);
                     PlatformBlockState upperRock = upperContext.getRockBlock(realX, realZ);
+                    PlatformBlockState upperMappedSurface = upperContext.getSurfaceBlock(realX, realZ);
                     int upperThickness = chunkHeight - 1 - upperSurfaceY;
                     KList<PlatformBlockState> upperBlocks = upperBiome != null
                             ? upperBiome.generateLayers(upperContext.getDimension(),
@@ -220,6 +226,10 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
                     for (int y = chunkHeight - 1; y >= upperSurfaceY; y--) {
                         if (y == chunkHeight - 1 && bedrockEnabled) {
                             h.setRaw(xf, y, zf, BEDROCK);
+                            continue;
+                        }
+                        if (y == upperSurfaceY && upperMappedSurface != null) {
+                            h.setRaw(xf, y, zf, upperMappedSurface);
                             continue;
                         }
                         int depthFromFace = y - upperSurfaceY;

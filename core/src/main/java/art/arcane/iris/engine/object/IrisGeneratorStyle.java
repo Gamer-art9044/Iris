@@ -71,7 +71,8 @@ public class IrisGeneratorStyle {
     @RegistryListResource(IrisExpression.class)
     private String expression = null;
     @Desc("Use an Image map instead of a generated value")
-    private IrisImageMap imageMap = null;
+    @RegistryListResource(IrisImageMap.class)
+    private String imageMap = null;
     @MinNumber(0.00001)
     @Desc("The Output multiplier. Only used if parent is fracture.")
     private double multiplier = 1;
@@ -109,13 +110,7 @@ public class IrisGeneratorStyle {
             return 0;
         }
 
-        return Objects.hash(imageMap.getImage(),
-                imageMap.getCoordinateScale(),
-                imageMap.getInterpolationMethod(),
-                imageMap.getChannel(),
-                imageMap.isInverted(),
-                imageMap.isTiled(),
-                imageMap.isCentered());
+        return imageMap.hashCode();
     }
 
     private int hash() {
@@ -178,8 +173,9 @@ public class IrisGeneratorStyle {
                         e.getLoadFile() == null ? 0L : e.getLoadFile().lastModified()));
             }
         } else if (getImageMap() != null) {
-            cng = new CNG(rng, new ImageNoise(data, getImageMap()), 1D, 1).bake();
-            sourceStamp = Integer.toUnsignedLong(imageMapHash());
+            ImageNoise imageNoise = new ImageNoise(data, getImageMap());
+            cng = new CNG(rng, imageNoise, 1D, 1).bake();
+            sourceStamp = Integer.toUnsignedLong(imageNoise.getContentHash().hashCode());
         }
 
         if (cng == null) {

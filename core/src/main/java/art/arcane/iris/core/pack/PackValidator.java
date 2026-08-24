@@ -52,6 +52,10 @@ public final class PackValidator {
         return validate(packFolder, false);
     }
 
+    public static PackValidationResult validateForPackaging(File packFolder) {
+        return validate(packFolder, false);
+    }
+
     private static PackValidationResult validate(File packFolder, boolean validateLiveRegistries) {
         String packName = packFolder == null ? "<unknown>" : packFolder.getName();
         List<String> blockingErrors = new ArrayList<>();
@@ -76,6 +80,10 @@ public final class PackValidator {
         }
 
         PackDimensionValidator.validateDimensions(packFolder, dimensionFiles, blockingErrors, warnings);
+        PackImageMapValidator.Validation imageMaps = PackImageMapValidator.validate(
+                packFolder, dimensionFiles, validateLiveRegistries);
+        addDistinct(blockingErrors, imageMaps.errors());
+        addDistinct(warnings, imageMaps.warnings());
         PackRiverValidator.Validation riverValidation = PackRiverValidator.validate(packFolder, dimensionFiles);
         addDistinct(blockingErrors, riverValidation.errors());
         addDistinct(warnings, riverValidation.warnings());

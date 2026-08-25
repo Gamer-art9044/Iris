@@ -44,6 +44,7 @@ import art.arcane.iris.engine.object.IrisSpawner;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedEngineBootstrap;
+import art.arcane.iris.modded.ModdedScheduler;
 import art.arcane.iris.modded.ModdedWorkspaceGenerator;
 import art.arcane.iris.util.common.parallel.BurstExecutor;
 import art.arcane.iris.util.common.parallel.MultiBurst;
@@ -67,7 +68,6 @@ import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.Relative;
 import org.zeroturnaround.zip.ZipUtil;
 
 import java.awt.Desktop;
@@ -79,6 +79,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
@@ -96,6 +98,7 @@ public final class ModdedStudioCommands {
     private static final String DEFAULT_TEMPLATE = "example";
     private static final UUID CONSOLE_OWNER = new UUID(0L, 0L);
     private static final Map<UUID, String> STUDIOS = new ConcurrentHashMap<>();
+    private static final ModdedStudioTransitionQueue TRANSITIONS = new ModdedStudioTransitionQueue();
     private static final SuggestionProvider<CommandSourceStack> GENERATOR_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> {
         ModdedCommandFeedback.tab(context.getSource());
         try {
@@ -192,6 +195,7 @@ public final class ModdedStudioCommands {
     }
 
     public static void clear() {
+        TRANSITIONS.clear();
         STUDIOS.clear();
     }
 
@@ -272,7 +276,7 @@ public final class ModdedStudioCommands {
         }
         ServerPlayer player = source.getPlayer();
         ModdedGuiHost.bindContext(source.getServer(), level, engine, player == null ? null : player.getUUID());
-        VisionGUI.launch(engine);
+        VisionGUI.launch(engine, player == null ? null : player.getUUID());
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_OPENING_VISION_MAP_ON_SERVER_DISPLAY, MessageArgument.untrusted("value", level.dimension().identifier())));
         return 1;
     }
@@ -402,124 +406,242 @@ public final class ModdedStudioCommands {
         String dimensionId = player == null ? studioConsoleDimensionId() : studioDimensionId(player);
         MinecraftServer server = source.getServer();
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_OPENING_STUDIO_SEED, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("seed", seed)));
-        Thread thread = new Thread(() -> openAsync(source, server, owner, dimensionId, pack, seed), "Iris Studio Open");
-        thread.setDaemon(true);
-        thread.start();
+        CompletableFuture<Void> transition = TRANSITIONS.submit(
+                owner,
+                () -> openTransition(source, server, owner, dimensionId, pack, seed));
+        reportOpenFailure(source, server, dimensionId, pack, transition);
         return 1;
     }
 
-    private static void openAsync(CommandSourceStack source, MinecraftServer server, UUID owner, String dimensionId, String pack, long seed) {
+    private static CompletableFuture<Void> openTransition(
+            CommandSourceStack source,
+            MinecraftServer server,
+            UUID owner,
+            String dimensionId,
+            String pack,
+            long seed
+    ) {
+        CompletableFuture<Void> transition = new CompletableFuture<>();
+        ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
+        if (scheduler == null) {
+            transition.completeExceptionally(new IllegalStateException(
+                    "Iris modded scheduler is unavailable for Studio open."));
+            return transition;
+        }
+        scheduler.asyncIfRunning(() -> prepareStudioOpen(
+                        source,
+                        server,
+                        owner,
+                        dimensionId,
+                        pack,
+                        seed,
+                        transition),
+                () -> transition.completeExceptionally(new IllegalStateException(
+                        "Iris modded scheduler rejected Studio open.")));
+        return transition;
+    }
+
+    private static void prepareStudioOpen(
+            CommandSourceStack source,
+            MinecraftServer server,
+            UUID owner,
+            String dimensionId,
+            String pack,
+            long seed,
+            CompletableFuture<Void> transition
+    ) {
         try {
             File packFolder = new File(ModdedPackCommands.packsRoot(), pack);
             if (!new File(packFolder, "dimensions/" + pack + ".json").isFile()) {
-                server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(
-                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_REQUIRED_PACK_IS_NOT_INSTALLED_INSTALL_THEN_RESTART,
-                        MessageArgument.untrusted("pack", pack))));
-                return;
+                throw new IllegalStateException("Required Studio pack '" + pack
+                        + "' is not installed with dimensions/" + pack + ".json.");
             }
             IrisData data = IrisData.get(packFolder);
             IrisDimension dimension = data.getDimensionLoader().load(pack);
             if (dimension == null) {
-                server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PACK_HAS_NO_DIMENSIONS_JSON, MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("pack2", pack))));
-                return;
+                throw new IllegalStateException("Studio pack '" + pack
+                        + "' has no dimensions/" + pack + ".json definition.");
             }
-            try {
-                ModdedWorkspaceGenerator.writeWorkspace(data, packFolder, true);
-            } catch (Throwable workspaceError) {
-                ModdedIrisLog.error("Iris workspace write failed for {}", packFolder, workspaceError);
-                server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(
-                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_FAILED_WRITE_WORKSPACE,
-                        MessageArgument.untrusted("value", packFolder.getAbsolutePath()),
-                        MessageArgument.untrusted("value2", String.valueOf(workspaceError.getMessage())))));
-            }
-            server.execute(() -> {
-                if (owner.equals(CONSOLE_OWNER)) {
-                    injectConsole(source, server, dimensionId, pack, seed);
-                } else {
-                    injectAndTeleport(source, server, owner, dimensionId, pack, seed);
-                }
-            });
-        } catch (Throwable e) {
-            ModdedIrisLog.error("Iris studio open failed for {}", pack, e);
-            server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_OPEN_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e)))));
+            ModdedWorkspaceGenerator.writeWorkspace(data, packFolder, true);
+            server.execute(() -> executeStudioOpen(
+                    source,
+                    server,
+                    owner,
+                    dimensionId,
+                    pack,
+                    seed,
+                    transition));
+        } catch (Throwable failure) {
+            transition.completeExceptionally(failure);
         }
     }
 
-    private static void injectConsole(CommandSourceStack source, MinecraftServer server, String dimensionId, String pack, long seed) {
-        ModdedDimensionManager.Handle handle;
+    private static void executeStudioOpen(
+            CommandSourceStack source,
+            MinecraftServer server,
+            UUID owner,
+            String dimensionId,
+            String pack,
+            long seed,
+            CompletableFuture<Void> transition
+    ) {
+        ModdedDimensionManager.Handle handle = null;
         try {
+            replaceExistingStudio(server, owner, dimensionId);
             handle = ModdedDimensionManager.create(server, dimensionId, pack, pack, seed);
-        } catch (Throwable e) {
-            ModdedIrisLog.error("Iris console studio injection failed for {} ({})", dimensionId, pack, e);
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_INJECTION_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
-            return;
-        }
-        STUDIOS.put(CONSOLE_OWNER, dimensionId);
-        ServerLevel studio = handle.level();
-        int surface = studio.getMaxY();
-        try {
-            Engine engine = IrisModdedCommands.engineFor(studio);
-            if (engine != null) {
-                surface = engine.getMinHeight() + engine.getHeight(8, 8, false) + 2;
+            STUDIOS.put(owner, dimensionId);
+            if (owner.equals(CONSOLE_OWNER)) {
+                completeConsoleOpen(source, dimensionId, pack, seed, handle);
+                transition.complete(null);
+                return;
             }
-        } catch (Throwable e) {
-            ModdedIrisLog.error("Iris console studio surface probe failed for {}", dimensionId, e);
+            ServerPlayer player = server.getPlayerList().getPlayer(owner);
+            if (player == null) {
+                throw new IllegalStateException("Studio owner disconnected before teleport.");
+            }
+            ServerLevel studio = handle.level();
+            Engine engine = IrisModdedCommands.engineFor(studio);
+            if (engine == null) {
+                throw new IllegalStateException("Studio engine is unavailable for " + dimensionId + ".");
+            }
+            int surfaceY = engine.getMinHeight() + engine.getHeight(8, 8, false) + 2;
+            CompletableFuture<Boolean> teleport = ModdedDimensionManager.teleportAsync(
+                    player,
+                    server,
+                    studio,
+                    8.5D,
+                    surfaceY,
+                    8.5D);
+            teleport.whenComplete((success, failure) -> server.execute(() -> {
+                if (transition.isDone()) {
+                    return;
+                }
+                if (failure != null) {
+                    transition.completeExceptionally(failure);
+                    return;
+                }
+                if (!Boolean.TRUE.equals(success)) {
+                    transition.completeExceptionally(new IllegalStateException(
+                            "Studio native teleport did not complete successfully."));
+                    return;
+                }
+                IrisModdedCommands.ok(source, IrisLanguage.plain(
+                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_OPEN_NOW_RUNS_SEED_USE_IRIS_STUDIO_CLOSE_WHEN,
+                        MessageArgument.untrusted("dimensionId", dimensionId),
+                        MessageArgument.untrusted("pack", pack),
+                        MessageArgument.untrusted("seed", seed)));
+                transition.complete(null);
+            }));
+        } catch (Throwable failure) {
+            transition.completeExceptionally(failure);
+            if (handle != null && transition.isCompletedExceptionally()) {
+                cleanupFailedOpen(server, owner, dimensionId, failure);
+            }
         }
+    }
+
+    private static void replaceExistingStudio(MinecraftServer server, UUID owner, String dimensionId) {
+        if (ModdedDimensionManager.level(server, dimensionId) != null
+                || ModdedDimensionManager.handle(dimensionId) != null) {
+            ModdedDimensionManager.remove(server, dimensionId, true);
+        }
+        STUDIOS.remove(owner, dimensionId);
+    }
+
+    private static void cleanupFailedOpen(
+            MinecraftServer server,
+            UUID owner,
+            String dimensionId,
+            Throwable failure
+    ) {
+        try {
+            ModdedDimensionManager.remove(server, dimensionId, true);
+            STUDIOS.remove(owner, dimensionId);
+        } catch (Throwable cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
+            ModdedIrisLog.error("Iris failed to clean up Studio '{}' after open failure",
+                    dimensionId, cleanupFailure);
+        }
+    }
+
+    private static void completeConsoleOpen(
+            CommandSourceStack source,
+            String dimensionId,
+            String pack,
+            long seed,
+            ModdedDimensionManager.Handle handle
+    ) {
+        ServerLevel studio = handle.level();
+        Engine engine = IrisModdedCommands.engineFor(studio);
+        int surface = engine == null
+                ? studio.getMinY() + 1
+                : engine.getMinHeight() + engine.getHeight(8, 8, false) + 2;
+        surface = Math.max(studio.getMinY() + 1, Math.min(studio.getMaxY() - 2, surface));
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_CONSOLE_STUDIO_OPEN_NOW_RUNS_SEED_TRANSIENT_NOT_WRITTEN_IRIS, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("seed", seed)));
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_ENTER_IT_WITH_EXECUTE_RUN_TP_S_8_5_8, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("surface", surface)));
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_PREGEN_IT_WITH_IRIS_PREGEN_START_RADIUS, MessageArgument.untrusted("dimensionId", dimensionId)));
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_REMOVE_IT_WITH_IRIS_STUDIO_CLOSE));
     }
 
-    private static void injectAndTeleport(CommandSourceStack source, MinecraftServer server, UUID owner, String dimensionId, String pack, long seed) {
-        ServerPlayer player = server.getPlayerList().getPlayer(owner);
-        if (player == null) {
-            return;
-        }
-        ModdedDimensionManager.Handle handle;
-        try {
-            handle = ModdedDimensionManager.create(server, dimensionId, pack, pack, seed);
-        } catch (Throwable e) {
-            ModdedIrisLog.error("Iris studio injection failed for {} ({})", dimensionId, pack, e);
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_INJECTION_FAILED_2, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
-            return;
-        }
-        STUDIOS.put(owner, dimensionId);
-        ServerLevel studio = handle.level();
-        int surface = studio.getMaxY();
-        try {
-            Engine engine = IrisModdedCommands.engineFor(studio);
-            if (engine != null) {
-                surface = engine.getMinHeight() + engine.getHeight(8, 8, false) + 2;
+    private static void reportOpenFailure(
+            CommandSourceStack source,
+            MinecraftServer server,
+            String dimensionId,
+            String pack,
+            CompletableFuture<Void> transition
+    ) {
+        transition.whenComplete((ignored, failure) -> {
+            if (failure == null) {
+                return;
             }
-        } catch (Throwable e) {
-            ModdedIrisLog.error("Iris studio surface probe failed for {}", dimensionId, e);
-        }
-        player.teleportTo(studio, 8.5D, surface, 8.5D, java.util.Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
-        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_OPEN_NOW_RUNS_SEED_USE_IRIS_STUDIO_CLOSE_WHEN, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("seed", seed)));
+            Throwable cause = unwrapFailure(failure);
+            ModdedIrisLog.error("Iris Studio open failed for '{}' ({})", dimensionId, pack, cause);
+            server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(
+                    ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_OPEN_FAILED,
+                    MessageArgument.untrusted("value", cause.getClass().getSimpleName()),
+                    MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(cause)))));
+        });
     }
 
     private static int close(CommandSourceStack source) {
         ServerPlayer player = source.getPlayer();
         MinecraftServer server = source.getServer();
         UUID owner = player == null ? CONSOLE_OWNER : player.getUUID();
-        // Commit the ownership drop only after removal succeeds: dropping it first orphaned a
-        // still-registered studio that no command could ever remove again.
-        String dimensionId = STUDIOS.get(owner);
-        if (dimensionId == null) {
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_YOU_DO_NOT_HAVE_OPEN_STUDIO_USE_IRIS_STUDIO_OPEN));
-            return 0;
-        }
-        try {
-            ModdedDimensionManager.remove(server, dimensionId, true);
-        } catch (Throwable e) {
-            ModdedIrisLog.error("Iris studio close failed for {}", dimensionId, e);
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_CLOSE_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName()), MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(e))));
-            return 0;
-        }
-        STUDIOS.remove(owner, dimensionId);
-        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_CLOSED_WAS_EVACUATED_UNLOADED_ITS_REGION_DATA_DELETED, MessageArgument.untrusted("dimensionId", dimensionId)));
+        TRANSITIONS.submit(owner, () -> closeTransition(source, server, owner));
         return 1;
+    }
+
+    private static CompletableFuture<Void> closeTransition(
+            CommandSourceStack source,
+            MinecraftServer server,
+            UUID owner
+    ) {
+        CompletableFuture<Void> transition = new CompletableFuture<>();
+        server.execute(() -> {
+            String dimensionId = STUDIOS.get(owner);
+            if (dimensionId == null) {
+                IrisModdedCommands.fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_YOU_DO_NOT_HAVE_OPEN_STUDIO_USE_IRIS_STUDIO_OPEN));
+                transition.complete(null);
+                return;
+            }
+            try {
+                ModdedDimensionManager.remove(server, dimensionId, true);
+                STUDIOS.remove(owner, dimensionId);
+                IrisModdedCommands.ok(source, IrisLanguage.plain(
+                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_CLOSED_WAS_EVACUATED_UNLOADED_ITS_REGION_DATA_DELETED,
+                        MessageArgument.untrusted("dimensionId", dimensionId)));
+                transition.complete(null);
+            } catch (Throwable failure) {
+                ModdedIrisLog.error("Iris Studio close failed for {}", dimensionId, failure);
+                IrisModdedCommands.fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_CLOSE_FAILED,
+                        MessageArgument.untrusted("value", failure.getClass().getSimpleName()),
+                        MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(failure))));
+                transition.completeExceptionally(failure);
+            }
+        });
+        return transition;
     }
 
     private static int status(CommandSourceStack source) {
@@ -568,29 +690,100 @@ public final class ModdedStudioCommands {
             return 0;
         }
         MinecraftServer server = source.getServer();
-        String dimensionId = STUDIOS.get(player.getUUID());
-        if (dimensionId == null) {
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_YOU_DO_NOT_HAVE_OPEN_STUDIO_USE_IRIS_STUDIO_OPEN_2));
-            return 0;
-        }
-        ServerLevel studio = ModdedDimensionManager.level(server, dimensionId);
-        if (studio == null) {
-            STUDIOS.remove(player.getUUID());
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_YOUR_STUDIO_DIMENSION_IS_NO_LONGER_LOADED_USE_IRIS_STUDIO));
-            return 0;
-        }
-        int surface = studio.getMaxY();
-        try {
-            Engine engine = IrisModdedCommands.engineFor(studio);
-            if (engine != null) {
-                surface = engine.getMinHeight() + engine.getHeight(8, 8, false) + 2;
-            }
-        } catch (Throwable e) {
-            ModdedIrisLog.error("Iris tpstudio surface probe failed", e);
-        }
-        player.teleportTo(studio, 8.5D, surface, 8.5D, java.util.Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
-        IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_STUDIO_COMMANDS_TELEPORTED_YOUR_STUDIO, MessageArgument.untrusted("dimensionId", dimensionId)));
+        UUID owner = player.getUUID();
+        CompletableFuture<Void> transition = TRANSITIONS.submit(
+                owner,
+                () -> teleportToStudio(source, server, owner));
+        reportTeleportFailure(source, server, transition);
         return 1;
+    }
+
+    private static CompletableFuture<Void> teleportToStudio(
+            CommandSourceStack source,
+            MinecraftServer server,
+            UUID owner
+    ) {
+        CompletableFuture<Void> transition = new CompletableFuture<>();
+        server.execute(() -> {
+            if (transition.isDone()) {
+                return;
+            }
+            String dimensionId = STUDIOS.get(owner);
+            if (dimensionId == null) {
+                IrisModdedCommands.fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_YOU_DO_NOT_HAVE_OPEN_STUDIO_USE_IRIS_STUDIO_OPEN_2));
+                transition.complete(null);
+                return;
+            }
+            ServerLevel studio = ModdedDimensionManager.level(server, dimensionId);
+            if (studio == null) {
+                STUDIOS.remove(owner, dimensionId);
+                IrisModdedCommands.fail(source, IrisLanguage.plain(
+                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_YOUR_STUDIO_DIMENSION_IS_NO_LONGER_LOADED_USE_IRIS_STUDIO));
+                transition.complete(null);
+                return;
+            }
+            ServerPlayer activePlayer = server.getPlayerList().getPlayer(owner);
+            Engine engine = IrisModdedCommands.engineFor(studio);
+            if (activePlayer == null || engine == null) {
+                transition.completeExceptionally(new IllegalStateException(
+                        "Studio player or engine is unavailable for teleport."));
+                return;
+            }
+            int surfaceY = engine.getMinHeight() + engine.getHeight(8, 8, false) + 2;
+            CompletableFuture<Boolean> teleport = ModdedDimensionManager.teleportAsync(
+                    activePlayer,
+                    server,
+                    studio,
+                    8.5D,
+                    surfaceY,
+                    8.5D);
+            teleport.whenComplete((success, failure) -> server.execute(() -> {
+                if (transition.isDone()) {
+                    return;
+                }
+                if (failure != null) {
+                    transition.completeExceptionally(failure);
+                    return;
+                }
+                if (!Boolean.TRUE.equals(success)) {
+                    transition.completeExceptionally(new IllegalStateException(
+                            "Studio native teleport did not complete successfully."));
+                    return;
+                }
+                IrisModdedCommands.ok(source, IrisLanguage.plain(
+                        ModdedCommandMessages.MODDED_STUDIO_COMMANDS_TELEPORTED_YOUR_STUDIO,
+                        MessageArgument.untrusted("dimensionId", dimensionId)));
+                transition.complete(null);
+            }));
+        });
+        return transition;
+    }
+
+    private static void reportTeleportFailure(
+            CommandSourceStack source,
+            MinecraftServer server,
+            CompletableFuture<Void> transition
+    ) {
+        transition.whenComplete((ignored, failure) -> {
+            if (failure == null) {
+                return;
+            }
+            Throwable cause = unwrapFailure(failure);
+            ModdedIrisLog.error("Iris Studio teleport failed", cause);
+            server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(
+                    ModdedCommandMessages.MODDED_STUDIO_COMMANDS_STUDIO_OPEN_FAILED,
+                    MessageArgument.untrusted("value", cause.getClass().getSimpleName()),
+                    MessageArgument.trusted("errorMessage", IrisLanguage.errorDetail(cause)))));
+        });
+    }
+
+    private static Throwable unwrapFailure(Throwable failure) {
+        Throwable cause = failure;
+        while (cause instanceof CompletionException && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        return cause;
     }
 
     private static int version(CommandSourceStack source, String pack) {

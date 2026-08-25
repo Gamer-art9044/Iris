@@ -48,7 +48,6 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 @EqualsAndHashCode(callSuper = true)
 @Data
@@ -78,7 +77,7 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
     final WorldBlockDropRouter blockDropRouter = new WorldBlockDropRouter(this);
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
-    final WorldTeleportWarmup teleportWarmup = new WorldTeleportWarmup(this);
+    final WorldTeleportWarmup teleportWarmup = new WorldTeleportWarmup();
     private boolean looperStopped;
     private volatile boolean cleanupServiceStopped;
     volatile int entityCount = 0;
@@ -191,10 +190,6 @@ public class IrisWorldManager extends EngineAssignedWorldManager {
                 unavailable.run();
             }
         };
-    }
-
-    AtomicBoolean ignoreTeleport() {
-        return ignoreTP;
     }
 
     @Override

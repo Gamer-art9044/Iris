@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class WorldRuntimeControlServiceTeleportTest {
@@ -86,6 +87,30 @@ public class WorldRuntimeControlServiceTeleportTest {
             InOrder gameModes = inOrder(player);
             gameModes.verify(player).setGameMode(GameMode.SPECTATOR);
             gameModes.verify(player).setGameMode(GameMode.CREATIVE);
+        }
+    }
+
+    @Test
+    public void successfulModeTeleportTemporarilyReducesAndRestoresViewDistance() {
+        Player player = mock(Player.class);
+        Location destination = mock(Location.class);
+        CompletableFuture<Boolean> nativeTeleport = new CompletableFuture<>();
+        when(player.getGameMode()).thenReturn(GameMode.SURVIVAL);
+        when(player.getViewDistance()).thenReturn(12);
+
+        try (MockedStatic<J> scheduling = immediateEntityScheduling()) {
+            CompletableFuture<Boolean> result = WorldRuntimeControlService.scheduleTeleport(
+                    player,
+                    destination,
+                    GameMode.SPECTATOR,
+                    (target, location) -> nativeTeleport);
+            nativeTeleport.complete(true);
+
+            assertTrue(result.join());
+            InOrder viewDistances = inOrder(player);
+            viewDistances.verify(player).setViewDistance(2);
+            viewDistances.verify(player).setViewDistance(12);
+            verify(player).setGameMode(GameMode.SPECTATOR);
         }
     }
 

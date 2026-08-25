@@ -83,7 +83,6 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -95,7 +94,6 @@ import art.arcane.volmlib.util.localization.MessageArgument;
 public class StudioSVC implements IrisService {
     public static final String WORKSPACE_NAME = "packs";
     private static final long DOWNLOAD_SHUTDOWN_POLL_SECONDS = 15L;
-    private static final long STUDIO_PLAYER_TELEPORT_TIMEOUT_SECONDS = 10L;
     private static final Pattern PROJECT_NAME = Pattern.compile("[a-z0-9_-]+");
     private static final AtomicCache<Integer> counter = new AtomicCache<>();
     private final StudioTransitionQueue studioTransitions = new StudioTransitionQueue();
@@ -478,24 +476,14 @@ public class StudioSVC implements IrisService {
 
     public CompletableFuture<Boolean> teleportToActiveProject(Player player) {
         Player target = Objects.requireNonNull(player, "Studio teleport player");
-        AtomicBoolean admission = new AtomicBoolean(true);
-        long deadlineNanos = System.nanoTime()
-                + TimeUnit.SECONDS.toNanos(STUDIO_PLAYER_TELEPORT_TIMEOUT_SECONDS);
-        CompletableFuture<Boolean> transition = studioTransitions.submit(() -> {
+        return studioTransitions.submit(() -> {
             IrisProject project = activeProject;
             if (project == null || !project.isOpen()) {
                 return CompletableFuture.failedFuture(new IllegalStateException(
                         "No active Studio project is available for teleport."));
             }
-            return StudioOpenCoordinator.get().teleportPlayerToProject(
-                    project,
-                    target,
-                    admission,
-                    deadlineNanos);
+            return StudioOpenCoordinator.get().teleportPlayerToProject(project, target);
         });
-        transition.orTimeout(STUDIO_PLAYER_TELEPORT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        transition.whenComplete((ignored, failure) -> admission.set(false));
-        return transition;
     }
 
     public void open(VolmitSender sender, String dimm) {
@@ -565,13 +553,20 @@ public class StudioSVC implements IrisService {
             StudioOpenCoordinator.StudioOpenKind openKind,
             Consumer<World> onDone
     ) throws IrisException {
+        long requestedAtNanos = System.nanoTime();
         if (reportPackAdmissionFailure(sender, dimm) != null) {
             return;
         }
         StudioOpenCoordinator.StudioOpenKind requiredOpenKind = Objects.requireNonNull(
                 openKind,
                 "Studio open kind");
-        studioTransitions.submit(() -> replaceActiveProject(sender, seed, dimm, requiredOpenKind, onDone))
+        studioTransitions.submit(() -> replaceActiveProject(
+                        sender,
+                        seed,
+                        dimm,
+                        requiredOpenKind,
+                        onDone,
+                        requestedAtNanos))
                 .whenComplete((ignored, throwable) -> {
                     if (throwable == null) {
                         return;
@@ -591,6 +586,7 @@ public class StudioSVC implements IrisService {
             Runnable beforeOpen,
             Consumer<World> onDone
     ) {
+        long requestedAtNanos = System.nanoTime();
         BrokenPackException failure = reportPackAdmissionFailure(sender, dimension);
         if (failure != null) {
             return CompletableFuture.failedFuture(failure);
@@ -601,7 +597,8 @@ public class StudioSVC implements IrisService {
                 dimension,
                 Objects.requireNonNull(openKind, "Studio open kind"),
                 Objects.requireNonNull(beforeOpen, "Studio before-open callback"),
-                Objects.requireNonNull(onDone, "Studio open completion callback")));
+                Objects.requireNonNull(onDone, "Studio open completion callback"),
+                requestedAtNanos));
     }
 
     private CompletableFuture<StudioOpenCoordinator.StudioOpenResult> replaceActiveProjectTracked(
@@ -610,7 +607,8 @@ public class StudioSVC implements IrisService {
             String dimension,
             StudioOpenCoordinator.StudioOpenKind openKind,
             Runnable beforeOpen,
-            Consumer<World> onDone
+            Consumer<World> onDone,
+            long requestedAtNanos
     ) {
         return closeActiveProject().thenCompose(closeResult -> {
             if (closeResult == null) {
@@ -621,7 +619,13 @@ public class StudioSVC implements IrisService {
                 return CompletableFuture.failedFuture(closeResult.failureCause());
             }
             beforeOpen.run();
-            return beginStudioOpenTracked(sender, seed, dimension, openKind, onDone);
+            return beginStudioOpenTracked(
+                    sender,
+                    seed,
+                    dimension,
+                    openKind,
+                    onDone,
+                    requestedAtNanos);
         });
     }
 
@@ -630,13 +634,14 @@ public class StudioSVC implements IrisService {
             long seed,
             String dimension,
             StudioOpenCoordinator.StudioOpenKind openKind,
-            Consumer<World> onDone
+            Consumer<World> onDone,
+            long requestedAtNanos
     ) {
         IrisProject project = new IrisProject(new File(getWorkspaceFolder(), dimension));
         activeProject = project;
         CompletableFuture<StudioOpenCoordinator.StudioOpenResult> opening;
         try {
-            opening = project.open(sender, seed, openKind, onDone);
+            opening = project.open(sender, seed, openKind, onDone, requestedAtNanos);
         } catch (IrisException exception) {
             if (activeProject == project) {
                 activeProject = null;
@@ -663,7 +668,8 @@ public class StudioSVC implements IrisService {
             long seed,
             String dimension,
             StudioOpenCoordinator.StudioOpenKind openKind,
-            Consumer<World> onDone
+            Consumer<World> onDone,
+            long requestedAtNanos
     ) {
         return closeActiveProjectForReplacement(sender).handle((closeResult, closeThrowable) -> {
             if (closeThrowable != null) {
@@ -691,7 +697,13 @@ public class StudioSVC implements IrisService {
             }
             return true;
         }).thenCompose(closed -> closed
-                ? beginStudioOpen(sender, seed, dimension, openKind, onDone)
+                ? beginStudioOpen(
+                        sender,
+                        seed,
+                        dimension,
+                        openKind,
+                        onDone,
+                        requestedAtNanos)
                 : CompletableFuture.completedFuture(null));
     }
 
@@ -700,7 +712,8 @@ public class StudioSVC implements IrisService {
             long seed,
             String dimension,
             StudioOpenCoordinator.StudioOpenKind openKind,
-            Consumer<World> onDone
+            Consumer<World> onDone,
+            long requestedAtNanos
     ) {
         IrisProject project = new IrisProject(new File(getWorkspaceFolder(), dimension));
         activeProject = project;
@@ -710,7 +723,8 @@ public class StudioSVC implements IrisService {
                     sender,
                     seed,
                     openKind,
-                    onDone);
+                    onDone,
+                    requestedAtNanos);
         } catch (IrisException e) {
             if (activeProject == project) {
                 activeProject = null;

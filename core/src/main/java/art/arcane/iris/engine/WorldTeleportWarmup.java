@@ -18,87 +18,53 @@
 
 package art.arcane.iris.engine;
 
-import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.RuntimeUiMessages;
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.spi.IrisLogging;
-import art.arcane.iris.util.common.parallel.MultiBurst;
-import art.arcane.iris.util.common.plugin.VolmitSender;
-import art.arcane.iris.util.common.scheduling.J;
-import art.arcane.iris.util.common.scheduling.jobs.QueueJob;
-import art.arcane.volmlib.util.collection.KList;
-import io.papermc.lib.PaperLib;
-import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.player.PlayerTeleportEvent;
 
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 
-/**
- * Cancels a teleport, loads the destination chunks off the main thread and then replays the teleport
- * on the thread that owns the player. The replay sets the manager's ignore flag so the reissued
- * teleport is not intercepted again.
- */
 final class WorldTeleportWarmup {
-    private final IrisWorldManager manager;
-
-    WorldTeleportWarmup(IrisWorldManager manager) {
-        this.manager = manager;
-    }
-
     void teleportAsync(PlayerTeleportEvent e) {
+        Location destination = e.getTo();
+        if (destination == null) {
+            return;
+        }
+
+        Player player = e.getPlayer();
+        PlayerTeleportEvent.TeleportCause cause = e.getCause();
         e.setCancelled(true);
-        warmupAreaAsync(e.getPlayer(), e.getTo(), () -> J.runEntity(e.getPlayer(), manager.managedTask(
-                "bukkit_world_manager_teleport",
-                () -> {
-            manager.ignoreTeleport().set(true);
-            e.getPlayer().teleport(e.getTo(), e.getCause());
-            manager.ignoreTeleport().set(false);
-        })));
+        CompletableFuture<Boolean> teleport;
+        try {
+            teleport = BukkitPlatform.teleportAsync(
+                    player,
+                    destination.clone(),
+                    cause);
+        } catch (Throwable failure) {
+            reportFailure(player, destination, failure);
+            return;
+        }
+        if (teleport == null) {
+            reportFailure(player, destination, new IllegalStateException(
+                    "Async teleport returned no completion future."));
+            return;
+        }
+        teleport.whenComplete((success, failure) -> {
+            if (failure != null) {
+                reportFailure(player, destination, failure);
+            } else if (!Boolean.TRUE.equals(success)) {
+                reportFailure(player, destination, new IllegalStateException(
+                        "Async teleport did not complete successfully."));
+            }
+        });
     }
 
-    private void warmupAreaAsync(Player player, Location to, Runnable r) {
-        J.a(manager.managedTask("bukkit_world_manager_teleport_warmup", () -> {
-            int viewDistance = 2;
-            KList<Future<Chunk>> futures = new KList<>();
-            for (int i = -viewDistance; i <= viewDistance; i++) {
-                for (int j = -viewDistance; j <= viewDistance; j++) {
-                    int finalJ = j;
-                    int finalI = i;
-
-                    if (to.getWorld().isChunkLoaded((to.getBlockX() >> 4) + i, (to.getBlockZ() >> 4) + j)) {
-                        futures.add(CompletableFuture.completedFuture(null));
-                        continue;
-                    }
-
-                    futures.add(MultiBurst.burst.completeValue(()
-                            -> PaperLib.getChunkAtAsync(to.getWorld(),
-                            (to.getBlockX() >> 4) + finalI,
-                            (to.getBlockZ() >> 4) + finalJ,
-                            true, false).get()));
-                }
-            }
-
-            new QueueJob<Future<Chunk>>() {
-                @Override
-                public void execute(Future<Chunk> chunkFuture) {
-                    try {
-                        chunkFuture.get();
-                    } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                        IrisLogging.debug("Chunk warmup interrupted while loading async teleport chunk.");
-                    } catch (ExecutionException ex) {
-                        IrisLogging.reportError(ex);
-                    }
-                }
-
-                @Override
-                public String getName() {
-                    return IrisLanguage.text(RuntimeUiMessages.JOB_LOADING_CHUNKS);
-                }
-            }.queue(futures).execute(new VolmitSender(player), true, r);
-        }));
+    private void reportFailure(Player player, Location destination, Throwable failure) {
+        IrisLogging.error("Async teleport into Iris world failed for " + player.getName()
+                + " at " + destination.getBlockX() + ", " + destination.getBlockY() + ", "
+                + destination.getBlockZ() + ".");
+        IrisLogging.reportError(failure);
     }
 }

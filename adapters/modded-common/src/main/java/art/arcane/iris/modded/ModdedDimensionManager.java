@@ -56,13 +56,16 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ModdedDimensionManager {
+    private static final int TELEPORT_WARM_RADIUS = 0;
     private static final Object LOCK = new Object();
     private static final ConcurrentHashMap<String, Handle> HANDLES = new ConcurrentHashMap<>();
     private static final TicketType TELEPORT_WARM_TICKET = new TicketType(TicketType.NO_TIMEOUT,
             TicketType.FLAG_LOADING | TicketType.FLAG_KEEP_DIMENSION_ACTIVE);
-    private static final long TELEPORT_WARM_TIMEOUT_SECONDS = 30L;
+    private static final long TELEPORT_TIMEOUT_SECONDS = 10L;
     private static volatile ModdedServerAccess access;
 
     private ModdedDimensionManager() {
@@ -213,15 +216,16 @@ public final class ModdedDimensionManager {
                     instanceof IrisModdedChunkGenerator irisGenerator
                     ? irisGenerator
                     : null;
-            boolean generatorUnbound = false;
+            boolean unloadEventStarted = false;
             try {
                 evacuate(server, level);
+                level.save(null, true, false);
+                unloadEventStarted = true;
+                ModdedEngineBootstrap.loader().fireDynamicLevelUnload(server, level);
                 if (generator != null) {
                     generator.unbindEngine(level);
-                    generatorUnbound = true;
                 }
                 ModdedWorldEngines.evictOrThrow(level);
-                level.save(null, true, false);
                 serverAccess.removeLevel(server, key);
                 // Undo snapshots pin the ServerLevel and could replay into the dead level.
                 art.arcane.iris.modded.command.ModdedObjectUndo.forget(level);
@@ -233,7 +237,7 @@ public final class ModdedDimensionManager {
                 ModdedIrisLog.info("Iris removed runtime dimension '{}'", dimensionId);
                 return true;
             } catch (Throwable e) {
-                rollbackRemoval(server, serverAccess, key, level, generator, generatorUnbound, e);
+                rollbackRemoval(server, serverAccess, key, level, generator, unloadEventStarted, e);
                 ModdedIrisLog.error("Iris failed to remove runtime dimension '{}'", dimensionId, e);
                 throw new IllegalStateException("Iris runtime dimension removal failed for " + dimensionId, e);
             }
@@ -242,13 +246,16 @@ public final class ModdedDimensionManager {
 
     private static void rollbackRemoval(MinecraftServer server, ModdedServerAccess serverAccess,
                                         ResourceKey<Level> key, ServerLevel level,
-                                        IrisModdedChunkGenerator generator, boolean generatorUnbound,
-                                        Throwable failure) {
+                                        IrisModdedChunkGenerator generator, boolean unloadEventStarted,
+        Throwable failure) {
         try {
-            if (!generatorUnbound || generator == null || !serverAccess.hasLevel(server, key)) {
+            if (!unloadEventStarted || !serverAccess.hasLevel(server, key)) {
                 return;
             }
-            generator.bindLevel(level);
+            if (generator != null) {
+                generator.bindLevel(level);
+            }
+            ModdedEngineBootstrap.loader().fireDynamicLevelLoad(server, level);
         } catch (Throwable rollbackFailure) {
             if (rollbackFailure != failure) {
                 failure.addSuppressed(rollbackFailure);
@@ -258,44 +265,263 @@ public final class ModdedDimensionManager {
         }
     }
 
-    public static boolean teleport(ServerPlayer player, MinecraftServer server, String dimensionId, double x, double y, double z) {
-        ServerLevel level = level(server, dimensionId);
-        if (level == null) {
-            return false;
-        }
-        int blockX = (int) Math.floor(x);
-        int blockZ = (int) Math.floor(z);
-        ChunkPos chunkPos = new ChunkPos(blockX >> 4, blockZ >> 4);
-        if (level.getChunkSource().hasChunk(chunkPos.x(), chunkPos.z())) {
-            completeTeleport(player, level, x, y, z, blockX, blockZ);
-            return true;
-        }
-        UUID playerId = player.getUUID();
-        CompletableFuture
-                .supplyAsync(() -> level.getChunkSource().addTicketAndLoadWithRadius(TELEPORT_WARM_TICKET, chunkPos, 1), server)
-                .thenCompose((CompletableFuture<?> inner) -> inner)
-                // The ticket has no timeout of its own: bound the wait so the release below always runs.
-                .orTimeout(TELEPORT_WARM_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                .whenComplete((Object result, Throwable error) -> server.execute(() -> {
-                    level.getChunkSource().removeTicketWithRadius(TELEPORT_WARM_TICKET, chunkPos, 1);
-                    if (error != null) {
-                        ModdedIrisLog.warn("Iris chunk warm for teleport into '{}' at {},{} failed: {}", dimensionId, chunkPos.x(), chunkPos.z(), error.toString());
-                    }
-                    ServerPlayer target = server.getPlayerList().getPlayer(playerId);
-                    if (target == null) {
-                        return;
-                    }
-                    completeTeleport(target, level, x, y, z, blockX, blockZ);
-                }));
-        return true;
+    public static CompletableFuture<Boolean> teleportAsync(
+            ServerPlayer player,
+            MinecraftServer server,
+            String dimensionId,
+            double x,
+            double y,
+            double z
+    ) {
+        return teleportAsync(player, server, dimensionId, x, y, z,
+                System.nanoTime() + TimeUnit.SECONDS.toNanos(TELEPORT_TIMEOUT_SECONDS));
     }
 
-    private static void completeTeleport(ServerPlayer player, ServerLevel level, double x, double y, double z, int blockX, int blockZ) {
-        double targetY = y;
-        if (y == Double.MIN_VALUE) {
-            targetY = level.getHeight(Heightmap.Types.MOTION_BLOCKING, blockX, blockZ);
+    public static CompletableFuture<Boolean> teleportAsync(
+            ServerPlayer player,
+            MinecraftServer server,
+            String dimensionId,
+            double x,
+            double y,
+            double z,
+            long deadlineNanos
+    ) {
+        ServerLevel level = level(server, dimensionId);
+        if (level == null) {
+            return CompletableFuture.completedFuture(false);
         }
-        player.teleportTo(level, x, targetY, z, Set.<Relative>of(), player.getYRot(), player.getXRot(), false);
+        return teleportAsync(player, server, level, x, y, z, deadlineNanos);
+    }
+
+    public static CompletableFuture<Boolean> teleportAsync(
+            ServerPlayer player,
+            MinecraftServer server,
+            ServerLevel level,
+            double x,
+            double y,
+            double z
+    ) {
+        return teleportAsync(player, server, level, x, y, z, 0L);
+    }
+
+    public static CompletableFuture<Boolean> teleportAsync(
+            ServerPlayer player,
+            MinecraftServer server,
+            ServerLevel level,
+            double x,
+            double y,
+            double z,
+            long deadlineNanos
+    ) {
+        CompletableFuture<Boolean> result = new CompletableFuture<>();
+        if (player == null || server == null || level == null || level.getServer() != server) {
+            result.complete(false);
+            return result;
+        }
+        if (!Double.isFinite(x) || !Double.isFinite(z)
+                || (y != Double.MIN_VALUE && !Double.isFinite(y))) {
+            result.completeExceptionally(new IllegalArgumentException("Teleport coordinates must be finite."));
+            return result;
+        }
+        if (deadlineNanos != 0L) {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                result.completeExceptionally(teleportTimeout(level, x, z));
+                return result;
+            }
+            result.orTimeout(remainingNanos, TimeUnit.NANOSECONDS);
+        }
+        UUID playerId = player.getUUID();
+        runOnServer(server, () -> beginTeleport(
+                result,
+                playerId,
+                server,
+                level,
+                x,
+                y,
+                z,
+                deadlineNanos));
+        return result;
+    }
+
+    private static void beginTeleport(
+            CompletableFuture<Boolean> result,
+            UUID playerId,
+            MinecraftServer server,
+            ServerLevel level,
+            double x,
+            double y,
+            double z,
+            long deadlineNanos
+    ) {
+        if (result.isDone()) {
+            return;
+        }
+        if (deadlineNanos != 0L && System.nanoTime() >= deadlineNanos) {
+            result.completeExceptionally(teleportTimeout(level, x, z));
+            return;
+        }
+        ServerLevel active = level(server, level.dimension().identifier().toString());
+        if (active != level) {
+            result.complete(false);
+            return;
+        }
+        int blockX = ModdedTeleportBounds.blockCoordinate(x);
+        int blockZ = ModdedTeleportBounds.blockCoordinate(z);
+        ChunkPos chunkPos = new ChunkPos(blockX >> 4, blockZ >> 4);
+        if (level.getChunkSource().hasChunk(chunkPos.x(), chunkPos.z())) {
+            completeTeleport(result, playerId, server, level, x, y, z, blockX, blockZ, deadlineNanos);
+            return;
+        }
+        warmAndTeleport(result, playerId, server, level, x, y, z, blockX, blockZ, chunkPos, deadlineNanos);
+    }
+
+    private static void warmAndTeleport(
+            CompletableFuture<Boolean> result,
+            UUID playerId,
+            MinecraftServer server,
+            ServerLevel level,
+            double x,
+            double y,
+            double z,
+            int blockX,
+            int blockZ,
+            ChunkPos chunkPos,
+            long deadlineNanos
+    ) {
+        AtomicBoolean ticketReleased = new AtomicBoolean();
+        CompletableFuture<?> chunkLoad;
+        try {
+            chunkLoad = level.getChunkSource().addTicketAndLoadWithRadius(
+                    TELEPORT_WARM_TICKET,
+                    chunkPos,
+                    TELEPORT_WARM_RADIUS);
+        } catch (Throwable failure) {
+            result.completeExceptionally(failure);
+            return;
+        }
+        if (chunkLoad == null) {
+            releaseTeleportTicket(level, chunkPos, ticketReleased);
+            result.completeExceptionally(new IllegalStateException(
+                    "Chunk warm returned no completion future for " + level.dimension().identifier()
+                            + " at " + chunkPos.x() + "," + chunkPos.z() + "."));
+            return;
+        }
+        result.whenComplete((success, failure) -> runOnServer(server,
+                () -> releaseTeleportTicket(level, chunkPos, ticketReleased)));
+        chunkLoad.whenComplete((ignored, failure) -> runOnServer(server, () -> {
+            releaseTeleportTicket(level, chunkPos, ticketReleased);
+            if (result.isDone()) {
+                return;
+            }
+            if (failure != null) {
+                result.completeExceptionally(failure);
+                return;
+            }
+            completeTeleport(result, playerId, server, level, x, y, z, blockX, blockZ, deadlineNanos);
+        }));
+    }
+
+    private static void releaseTeleportTicket(
+            ServerLevel level,
+            ChunkPos chunkPos,
+            AtomicBoolean ticketReleased
+    ) {
+        if (ticketReleased.compareAndSet(false, true)) {
+            level.getChunkSource().removeTicketWithRadius(
+                    TELEPORT_WARM_TICKET,
+                    chunkPos,
+                    TELEPORT_WARM_RADIUS);
+        }
+    }
+
+    private static void completeTeleport(
+            CompletableFuture<Boolean> result,
+            UUID playerId,
+            MinecraftServer server,
+            ServerLevel level,
+            double x,
+            double y,
+            double z,
+            int blockX,
+            int blockZ,
+            long deadlineNanos
+    ) {
+        if (result.isDone()) {
+            return;
+        }
+        if (deadlineNanos != 0L && System.nanoTime() >= deadlineNanos) {
+            result.completeExceptionally(teleportTimeout(level, x, z));
+            return;
+        }
+        ServerLevel active = level(server, level.dimension().identifier().toString());
+        ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+        if (active != level || player == null) {
+            result.complete(false);
+            return;
+        }
+        try {
+            int targetY = resolveSafeTeleportY(level, blockX, blockZ, y);
+            boolean teleported = player.teleportTo(
+                    level,
+                    x,
+                    targetY,
+                    z,
+                    Set.<Relative>of(),
+                    player.getYRot(),
+                    player.getXRot(),
+                    false);
+            result.complete(teleported);
+        } catch (Throwable failure) {
+            result.completeExceptionally(failure);
+        }
+    }
+
+    private static int resolveSafeTeleportY(ServerLevel level, int blockX, int blockZ, double requestedY) {
+        int initialY = requestedY == Double.MIN_VALUE
+                ? level.getHeight(Heightmap.Types.MOTION_BLOCKING, blockX, blockZ)
+                : (int) Math.floor(requestedY);
+        int startY = ModdedTeleportBounds.clampY(level.getMinY(), level.getMaxY(), initialY);
+        int maximumY = ModdedTeleportBounds.maximumY(level.getMinY(), level.getMaxY());
+        int minimumY = ModdedTeleportBounds.minimumY(level.getMinY(), level.getMaxY());
+        for (int candidateY = startY; candidateY <= maximumY; candidateY++) {
+            if (isSafeStandingPosition(level, blockX, candidateY, blockZ)) {
+                return candidateY;
+            }
+        }
+        for (int candidateY = startY - 1; candidateY >= minimumY; candidateY--) {
+            if (isSafeStandingPosition(level, blockX, candidateY, blockZ)) {
+                return candidateY;
+            }
+        }
+        throw new IllegalStateException("No safe teleport position exists in "
+                + level.dimension().identifier() + " at " + blockX + "," + blockZ + ".");
+    }
+
+    private static boolean isSafeStandingPosition(ServerLevel level, int blockX, int blockY, int blockZ) {
+        BlockPos feet = new BlockPos(blockX, blockY, blockZ);
+        BlockPos head = feet.above();
+        BlockPos support = feet.below();
+        return level.getBlockState(feet).getCollisionShape(level, feet).isEmpty()
+                && level.getBlockState(feet).getFluidState().isEmpty()
+                && level.getBlockState(head).getCollisionShape(level, head).isEmpty()
+                && level.getBlockState(head).getFluidState().isEmpty()
+                && !level.getBlockState(support).getCollisionShape(level, support).isEmpty();
+    }
+
+    private static TimeoutException teleportTimeout(ServerLevel level, double x, double z) {
+        return new TimeoutException("Teleport into " + level.dimension().identifier()
+                + " at " + ModdedTeleportBounds.blockCoordinate(x) + ","
+                + ModdedTeleportBounds.blockCoordinate(z)
+                + " exceeded " + TELEPORT_TIMEOUT_SECONDS + " seconds.");
+    }
+
+    private static void runOnServer(MinecraftServer server, Runnable task) {
+        if (server.isSameThread()) {
+            task.run();
+            return;
+        }
+        server.execute(task);
     }
 
     private static Holder<DimensionType> resolveDimensionType(RegistryAccess registryAccess, String pack, String packDimensionKey) {
@@ -362,6 +588,7 @@ public final class ModdedDimensionManager {
                 List.of(),
                 false);
 
+        boolean loadEventStarted = false;
         try {
             generator.bindLevel(level);
             Handle handle = new Handle(dimensionId, pack, packDimensionKey, seed, level, generator);
@@ -371,9 +598,11 @@ public final class ModdedDimensionManager {
                         + "': the level was registered concurrently");
             }
             server.getPlayerList().addWorldborderListener(level);
+            loadEventStarted = true;
+            ModdedEngineBootstrap.loader().fireDynamicLevelLoad(server, level);
             return handle;
         } catch (Throwable error) {
-            rollbackInjection(server, serverAccess, key, level, generator, error);
+            rollbackInjection(server, serverAccess, key, level, generator, loadEventStarted, error);
             if (error instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
@@ -386,7 +615,17 @@ public final class ModdedDimensionManager {
 
     private static void rollbackInjection(MinecraftServer server, ModdedServerAccess serverAccess,
                                           ResourceKey<Level> key, ServerLevel level,
-                                          IrisModdedChunkGenerator generator, Throwable failure) {
+                                          IrisModdedChunkGenerator generator, boolean loadEventStarted,
+                                          Throwable failure) {
+        if (loadEventStarted) {
+            try {
+                ModdedEngineBootstrap.loader().fireDynamicLevelUnload(server, level);
+            } catch (Throwable cleanupError) {
+                failure.addSuppressed(cleanupError);
+                ModdedIrisLog.error("Iris failed to publish rollback unload for {}",
+                        key.identifier(), cleanupError);
+            }
+        }
         try {
             if (serverAccess.hasLevel(server, key)) {
                 ServerLevel removed = serverAccess.removeLevel(server, key);

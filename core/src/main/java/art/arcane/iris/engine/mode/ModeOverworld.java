@@ -57,7 +57,11 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
             if (shouldBypassMantleStages()) {
                 return;
             }
-            generateMatter(x >> 4, z >> 4, m, c);
+            generateMatter(
+                    x >> 4,
+                    z >> 4,
+                    m || getEngine().isStudio(),
+                    c);
         };
         EngineStage sTerrain = (x, z, k, p, m, c) -> terrain.actuate(x, z, k, m, c);
         EngineStage sDecorant = (x, z, k, p, m, c) -> decorant.actuate(x, z, k, m, c);

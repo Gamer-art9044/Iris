@@ -92,7 +92,6 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         boolean hideOres = dimension.isHideOresForHiddenOre();
         ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
         ChunkedDataCache<IrisRegion> regionCache = context.getRegion();
-        ChunkedDataCache<PlatformBlockState> fluidCache = context.getFluid();
         ChunkedDataCache<PlatformBlockState> rockCache = context.getRock();
         int realX = xf + x;
         UpperDimensionContext upperContext = getEngine().getUpperContext();
@@ -118,7 +117,7 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
             }
 
             int topY = Math.min(hf, chunkHeight - 1);
-            PlatformBlockState fluid = fluidCache.get(xf, zf);
+            PlatformBlockState fluid = complex.resolveSurfaceFluid(realX, realZ);
             PlatformBlockState rock = rockCache.get(xf, zf);
             PlatformBlockState mappedSurfaceBlock = complex.getImageMapRuntime().sampleSurfaceBlock(realX, realZ);
             KList<IrisOreGenerator> biomeSurfaceOres = hideOres ? null : biome.getSurfaceOreGenerators();

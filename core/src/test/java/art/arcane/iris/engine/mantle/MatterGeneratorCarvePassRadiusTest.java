@@ -54,16 +54,124 @@ public class MatterGeneratorCarvePassRadiusTest {
         assertEquals(objects.visited, carving.visited);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    public void chunkSpecificInputRadiusAvoidsUnusedPrerequisiteHalo() {
+        IrisDimension dimension = mock(IrisDimension.class);
+        when(dimension.isUseMantle()).thenReturn(true);
+        Mantle<Matter> mantle = mock(Mantle.class);
+        MantleChunk<Matter> chunk = mock(MantleChunk.class);
+        when(mantle.getChunk(anyInt(), anyInt())).thenReturn(chunk);
+        when(chunk.use()).thenReturn(chunk);
+        doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(1);
+            task.run();
+            return null;
+        }).when(chunk).raiseFlagSuspend(any(), any(Runnable.class));
+
+        Engine engine = mock(Engine.class);
+        when(engine.getDimension()).thenReturn(dimension);
+
+        RecordingComponent carving = new RecordingComponent(ReservedFlag.CARVED, 0, 1);
+        RecordingComponent conditional = new RecordingComponent(
+                ReservedFlag.RIVER_HYDROLOGY,
+                1,
+                0,
+                160,
+                0
+        );
+        TestMatterGenerator generator = new TestMatterGenerator(engine, mantle, List.of(
+                new MantlePass(List.of(carving), 11, 160),
+                new MantlePass(List.of(conditional), 0, 0)
+        ));
+
+        generator.generateMatter(0, 0, false, mock(ChunkContext.class));
+
+        assertEquals(9, carving.visited.size());
+        assertEquals(Set.of("0,0"), conditional.visited);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void lazyInputGenerationKeepsReadAccessWithoutEagerlyGeneratingTheHalo() {
+        IrisDimension dimension = mock(IrisDimension.class);
+        when(dimension.isUseMantle()).thenReturn(true);
+        Mantle<Matter> mantle = mock(Mantle.class);
+        MantleChunk<Matter> chunk = mock(MantleChunk.class);
+        when(mantle.getChunk(anyInt(), anyInt())).thenReturn(chunk);
+        when(chunk.use()).thenReturn(chunk);
+        doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(1);
+            task.run();
+            return null;
+        }).when(chunk).raiseFlagSuspend(any(), any(Runnable.class));
+
+        Engine engine = mock(Engine.class);
+        when(engine.getDimension()).thenReturn(dimension);
+
+        RecordingComponent carving = new RecordingComponent(ReservedFlag.CARVED, 0, 0);
+        RecordingComponent conditional = new RecordingComponent(
+                ReservedFlag.RIVER_HYDROLOGY,
+                1,
+                0,
+                0,
+                160,
+                true,
+                10
+        );
+        TestMatterGenerator generator = new TestMatterGenerator(engine, mantle, List.of(
+                new MantlePass(List.of(carving), 10, 160),
+                new MantlePass(List.of(conditional), 0, 0)
+        ));
+
+        generator.generateMatter(0, 0, false, mock(ChunkContext.class));
+
+        assertEquals(Set.of("0,0"), carving.visited);
+        assertEquals(Set.of("0,0"), conditional.visited);
+        assertTrue(conditional.accessSucceeded);
+    }
+
     private static final class RecordingComponent implements MantleComponent {
         private final MantleFlag flag;
         private final int priority;
         private final int radius;
+        private final int inputRadius;
+        private final int chunkInputRadius;
+        private final boolean lazyInputGeneration;
+        private final int accessProbeOffset;
         private final Set<String> visited = new LinkedHashSet<>();
+        private boolean accessSucceeded;
 
         private RecordingComponent(MantleFlag flag, int priority, int radius) {
+            this(flag, priority, radius, 0, 0, false, 0);
+        }
+
+        private RecordingComponent(
+                MantleFlag flag,
+                int priority,
+                int radius,
+                int inputRadius,
+                int chunkInputRadius
+        ) {
+            this(flag, priority, radius, inputRadius, chunkInputRadius, false, 0);
+        }
+
+        private RecordingComponent(
+                MantleFlag flag,
+                int priority,
+                int radius,
+                int inputRadius,
+                int chunkInputRadius,
+                boolean lazyInputGeneration,
+                int accessProbeOffset
+        ) {
             this.flag = flag;
             this.priority = priority;
             this.radius = radius;
+            this.inputRadius = inputRadius;
+            this.chunkInputRadius = chunkInputRadius;
+            this.lazyInputGeneration = lazyInputGeneration;
+            this.accessProbeOffset = accessProbeOffset;
         }
 
         @Override
@@ -74,6 +182,26 @@ public class MatterGeneratorCarvePassRadiusTest {
         @Override
         public int getRadius() {
             return radius;
+        }
+
+        @Override
+        public int getInputRadius() {
+            return inputRadius;
+        }
+
+        @Override
+        public int getInputRadius(
+                int targetChunkX,
+                int targetChunkZ,
+                int invocationChunkRadius,
+                ChunkContext context
+        ) {
+            return chunkInputRadius;
+        }
+
+        @Override
+        public boolean isInputGenerationLazy() {
+            return lazyInputGeneration;
         }
 
         @Override
@@ -102,6 +230,9 @@ public class MatterGeneratorCarvePassRadiusTest {
         @Override
         public void generateLayer(MantleWriter writer, int x, int z, ChunkContext context) {
             visited.add(x + "," + z);
+            if (accessProbeOffset != 0) {
+                accessSucceeded = writer.acquireChunk(x + accessProbeOffset, z) != null;
+            }
         }
     }
 

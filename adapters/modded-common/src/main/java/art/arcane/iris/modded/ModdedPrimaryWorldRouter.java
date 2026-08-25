@@ -26,12 +26,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ModdedPrimaryWorldRouter {
     private static final int TICK_INTERVAL = 20;
 
     private static final Set<UUID> routed = ConcurrentHashMap.newKeySet();
+    private static final Set<UUID> inFlight = ConcurrentHashMap.newKeySet();
     private static int tickCounter = 0;
 
     private ModdedPrimaryWorldRouter() {
@@ -39,6 +41,7 @@ public final class ModdedPrimaryWorldRouter {
 
     public static void clear() {
         routed.clear();
+        inFlight.clear();
     }
 
     /**
@@ -48,6 +51,7 @@ public final class ModdedPrimaryWorldRouter {
     public static void forget(UUID player) {
         if (player != null) {
             routed.remove(player);
+            inFlight.remove(player);
         }
     }
 
@@ -82,17 +86,35 @@ public final class ModdedPrimaryWorldRouter {
         List<ServerPlayer> players = new ArrayList<>(server.getPlayerList().getPlayers());
         for (ServerPlayer player : players) {
             UUID id = player.getUUID();
-            if (routed.contains(id)) {
+            if (routed.contains(id) || !inFlight.add(id)) {
                 continue;
             }
             if (player.level() != overworld) {
+                inFlight.remove(id);
                 routed.add(id);
                 continue;
             }
             try {
-                ModdedDimensionManager.teleport(player, server, primary, player.getX(), Double.MIN_VALUE, player.getZ());
-                routed.add(id);
+                CompletableFuture<Boolean> teleport = ModdedDimensionManager.teleportAsync(
+                        player,
+                        server,
+                        primary,
+                        player.getX(),
+                        Double.MIN_VALUE,
+                        player.getZ());
+                teleport.whenComplete((success, failure) -> {
+                    inFlight.remove(id);
+                    if (Boolean.TRUE.equals(success) && failure == null) {
+                        routed.add(id);
+                        return;
+                    }
+                    if (failure != null) {
+                        ModdedIrisLog.error("Iris failed to route player {} to primary world '{}'",
+                                id, primary, failure);
+                    }
+                });
             } catch (Throwable e) {
+                inFlight.remove(id);
                 ModdedIrisLog.error("Iris failed to route player {} to primary world '{}'", id, primary, e);
             }
         }

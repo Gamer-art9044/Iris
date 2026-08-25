@@ -46,6 +46,14 @@ public class ModdedPlatformPathsTest {
             }
 
             @Override
+            public void fireDynamicLevelLoad(MinecraftServer server, ServerLevel level) {
+            }
+
+            @Override
+            public void fireDynamicLevelUnload(MinecraftServer server, ServerLevel level) {
+            }
+
+            @Override
             public boolean clientEnvironment() {
                 return false;
             }

@@ -65,7 +65,7 @@ public class ModdedLifecycleFailureContractTest {
         String reinjection = method(source, "private static void reinjectPersistentDimensions(");
         String failure = catchBlock(reinjection);
 
-        assertTrue(failure.contains("LOGGER.error("));
+        assertTrue(failure.contains("ModdedIrisLog.error("));
         assertFalse(failure.contains("e.toString()"));
         assertFalse(failure.contains("throw new IllegalStateException("));
         assertTrue(reinjection.contains("injected++;"));
@@ -152,7 +152,7 @@ public class ModdedLifecycleFailureContractTest {
         assertBefore(stop, "\"world engines\"", "\"dimension manager\"");
         assertBefore(stop, "\"server state\"", "if (failure != null)");
         assertFalse(stop.contains("throw"));
-        assertTrue(stop.contains("LOGGER.error(\"Iris modded shutdown completed with failures\", failure);"));
+        assertTrue(stop.contains("ModdedIrisLog.error(\"Iris modded shutdown completed with failures\", failure);"));
 
         String runStage = method(source, "private static Throwable runStopStage(");
         assertTrue(runStage.contains("catch (Throwable stageFailure)"));
@@ -207,21 +207,21 @@ public class ModdedLifecycleFailureContractTest {
         String bootstrapSource = source("ModdedEngineBootstrap.java");
         String unload = method(bootstrapSource, "public static void levelUnloaded(ServerLevel level)");
         String failure = catchBlock(unload);
-        assertTrue(failure.contains("LOGGER.error("));
+        assertTrue(failure.contains("ModdedIrisLog.error("));
         assertTrue(failure.contains("throw "));
 
         String managerSource = source("ModdedDimensionManager.java");
         String remove = method(managerSource, "public static boolean remove(MinecraftServer server, String dimensionId, boolean wipeStorage)");
         assertTrue(remove.contains("ModdedWorldEngines.evictOrThrow(level);"));
         assertFalse(remove.contains("ModdedWorldEngines.evict(level);"));
-        assertTrue(remove.contains("generatorUnbound = true;"));
-        assertTrue(remove.contains("rollbackRemoval(server, serverAccess, key, level, generator, generatorUnbound, e);"));
+        assertTrue(remove.contains("unloadEventStarted = true;"));
+        assertTrue(remove.contains("rollbackRemoval(server, serverAccess, key, level, generator, unloadEventStarted, e);"));
 
         String rollback = method(managerSource, "private static void rollbackRemoval(");
         assertTrue(rollback.contains("serverAccess.hasLevel(server, key)"));
         assertTrue(rollback.contains("generator.bindLevel(level);"));
         assertTrue(rollback.contains("failure.addSuppressed(rollbackFailure);"));
-        assertTrue(rollback.contains("LOGGER.error("));
+        assertTrue(rollback.contains("ModdedIrisLog.error("));
     }
 
     @Test

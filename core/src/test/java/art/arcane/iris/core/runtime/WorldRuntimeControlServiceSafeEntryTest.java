@@ -78,6 +78,27 @@ public class WorldRuntimeControlServiceSafeEntryTest {
     }
 
     @Test
+    public void resolvesSafeCavityBelowDimensionRoof() {
+        World world = loadedWorld(0, 0);
+        Block netherrack = block(Material.NETHERRACK, false, false, FULL_BLOCK);
+        Block air = block(Material.AIR, false, true);
+        doReturn(300).when(world).getHighestBlockYAt(anyInt(), anyInt(), eq(HeightMap.MOTION_BLOCKING_NO_LEAVES));
+        doAnswer(invocation -> {
+            int y = invocation.getArgument(1);
+            if (y == 201 || y == 202) {
+                return air;
+            }
+            return netherrack;
+        }).when(world).getBlockAt(anyInt(), anyInt(), anyInt());
+
+        Location source = new Location(world, 0.5D, 201D, 0.5D);
+        Location result = WorldRuntimeControlService.findTopSafeLocation(world, source);
+
+        assertNotNull(result);
+        assertEquals(201, result.getBlockY());
+    }
+
+    @Test
     public void rejectsFluidHazardousAndCollisionBlockedCandidates() {
         World world = loadedWorld(0, 0);
         Block water = block(Material.WATER, true, true);
@@ -166,7 +187,7 @@ public class WorldRuntimeControlServiceSafeEntryTest {
         Location result = WorldRuntimeControlService.findTopSafeLocation(world, source);
 
         assertNull(result);
-        assertEquals(-1, lowestReadY.get());
+        assertEquals(-64, lowestReadY.get());
     }
 
     @Test

@@ -44,6 +44,9 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 
 public class IrisCaveCarver3DNearParityTest {
+    private static final int SURFACE_CEILING_FADE_DEPTH = 12;
+    private static final double SURFACE_CEILING_SOLID_EPSILON = 0.000001D;
+
     private static Method sampleDensityMethod;
     private static Method aquiferCandidateMethod;
     private static Field engineField;
@@ -165,6 +168,26 @@ public class IrisCaveCarver3DNearParityTest {
         assertTrue(hasZ(capture.carvedCells, 15));
         assertTrue(maxY(capture.carvedCells) <= 47);
         assertTrue(minY(capture.carvedCells) >= 0);
+    }
+
+    @Test
+    public void flatSurfaceDoesNotHardClipLargeCaveCeiling() {
+        assertFlatSurfaceCeiling(createFluidProfile()
+                .setVerticalRange(new IrisRange(20D, 72D))
+                .setAllowSurfaceBreak(false)
+                .setSurfaceClearance(5)
+                .setAllowFluid(false)
+                .setAllowLava(false)
+                .setAdaptiveSampling(false)
+                .setSampleStep(1));
+        assertFlatSurfaceCeiling(createFluidProfile()
+                .setVerticalRange(new IrisRange(20D, 72D))
+                .setAllowSurfaceBreak(false)
+                .setSurfaceClearance(5)
+                .setAllowFluid(false)
+                .setAllowLava(false)
+                .setAdaptiveSampling(true)
+                .setSampleStep(1));
     }
 
     @Test
@@ -444,6 +467,38 @@ public class IrisCaveCarver3DNearParityTest {
         assertTrue("expected carved cell delta below 3.5% but was " + differingRatio, differingRatio <= 0.035D);
     }
 
+    private void assertFlatSurfaceCeiling(IrisCaveProfile profile) {
+        Engine engine = createEngine(96, 72);
+        WriterCapture capture = createWriterCapture(96);
+
+        new IrisCaveCarver3D(engine, profile).carve(
+                capture.writer, 0, 0, fullWeights(), 0D, 0D, null, filledHeights(72));
+
+        int[] ceilingYByColumn = new int[256];
+        Arrays.fill(ceilingYByColumn, Integer.MIN_VALUE);
+        for (String cell : capture.carvedCells) {
+            int localX = coordinate(cell, 0);
+            int y = coordinate(cell, 1);
+            int localZ = coordinate(cell, 2);
+            int columnIndex = (localX << 4) | localZ;
+            ceilingYByColumn[columnIndex] = Math.max(ceilingYByColumn[columnIndex], y);
+        }
+
+        Map<Integer, Integer> ceilingPlaneCounts = new HashMap<>();
+        int largestPlane = 0;
+        for (int ceilingY : ceilingYByColumn) {
+            assertTrue(ceilingY != Integer.MIN_VALUE);
+            assertTrue(ceilingY <= 67);
+            int planeCount = ceilingPlaneCounts.merge(ceilingY, 1, Integer::sum);
+            largestPlane = Math.max(largestPlane, planeCount);
+        }
+
+        assertTrue("expected at least three ceiling levels but found " + ceilingPlaneCounts,
+                ceilingPlaneCounts.size() >= 3);
+        assertTrue("expected no dominant ceiling plane but found " + ceilingPlaneCounts,
+                largestPlane < 192);
+    }
+
     private void assertExactParity(boolean warp, boolean modules, boolean adaptiveSampling) throws Exception {
         Engine engine = createEngine(96, 90);
         double[] columnWeights = fullWeights();
@@ -523,9 +578,11 @@ public class IrisCaveCarver3DNearParityTest {
         int[] columnTopY = new int[256];
         int[] surfaceBreakFloorY = new int[256];
         boolean[] surfaceBreakColumn = new boolean[256];
+        boolean[] surfaceCeilingColumn = new boolean[256];
         int[] fluidMaxY = new int[256];
         double[] passThreshold = new double[256];
         double[] verticalEdgeFade = computeVerticalEdgeFade(profile, minY, maxY);
+        double[] surfaceClosureThreshold = computeSurfaceClosureThresholds(profile, minY, maxY);
         MatterCavern[] matterByY = computeMatterByY(engine, profile, carveAir, carveLava, carveForcedAir, minY, maxY);
 
         int x0 = chunkX << 4;
@@ -542,7 +599,8 @@ public class IrisCaveCarver3DNearParityTest {
                     columnSurfaceY = engine.getHeight(x, z);
                 }
 
-                int clearanceTopY = Math.min(maxY, Math.max(minY, columnSurfaceY - surfaceClearance));
+                int unclampedClearanceTopY = columnSurfaceY - surfaceClearance;
+                int clearanceTopY = Math.min(maxY, Math.max(minY, unclampedClearanceTopY));
                 boolean breakColumn = allowSurfaceBreak && signed(surfaceBreakDensity.noiseFast2D(x, z)) >= surfaceBreakNoiseThreshold;
                 int resolvedTopY = breakColumn ? Math.min(maxY, Math.max(minY, columnSurfaceY)) : clearanceTopY;
                 columnTopY[columnIndex] = resolvedTopY;
@@ -551,6 +609,7 @@ public class IrisCaveCarver3DNearParityTest {
                         : Integer.MIN_VALUE;
                 surfaceBreakFloorY[columnIndex] = Math.max(minY, columnSurfaceY - surfaceBreakDepth);
                 surfaceBreakColumn[columnIndex] = breakColumn;
+                surfaceCeilingColumn[columnIndex] = !breakColumn && unclampedClearanceTopY <= maxY;
                 double columnWeight = clampColumnWeight(resolvedWeights[columnIndex]);
                 if (columnWeight <= 0D || resolvedTopY < minY) {
                     passThreshold[columnIndex] = Double.NaN;
@@ -584,6 +643,14 @@ public class IrisCaveCarver3DNearParityTest {
                         localThreshold += surfaceBreakThresholdBoost;
                     }
                     localThreshold -= verticalEdgeFade[y - minY];
+                    localThreshold = applySurfaceCeilingFade(
+                            localThreshold,
+                            surfaceCeilingColumn[columnIndex],
+                            topY,
+                            y,
+                            minY,
+                            surfaceClosureThreshold
+                    );
 
                     double density = (double) sampleDensityMethod.invoke(carver, x, y, z);
                     if (density > localThreshold) {
@@ -604,6 +671,64 @@ public class IrisCaveCarver3DNearParityTest {
         }
 
         return carved;
+    }
+
+    private double applySurfaceCeilingFade(
+            double threshold,
+            boolean surfaceCeilingColumn,
+            int columnTopY,
+            int y,
+            int minY,
+            double[] surfaceClosureThreshold
+    ) {
+        if (!surfaceCeilingColumn) {
+            return threshold;
+        }
+
+        int ceilingDistance = columnTopY - y;
+        if (ceilingDistance < 0 || ceilingDistance >= SURFACE_CEILING_FADE_DEPTH) {
+            return threshold;
+        }
+
+        double closureThreshold = surfaceClosureThreshold[y - minY];
+        if (threshold <= closureThreshold) {
+            return threshold;
+        }
+
+        double progress = ceilingDistance / (double) SURFACE_CEILING_FADE_DEPTH;
+        double smooth = progress * progress * (3D - (2D * progress));
+        return closureThreshold + ((threshold - closureThreshold) * smooth);
+    }
+
+    private double[] computeSurfaceClosureThresholds(IrisCaveProfile profile, int minY, int maxY) {
+        double normalization = Math.abs(profile.getBaseWeight()) + Math.abs(profile.getDetailWeight());
+        for (IrisCaveFieldModule module : profile.getModules()) {
+            normalization += Math.abs(module.getWeight());
+        }
+        if (normalization <= 0D) {
+            normalization = 1D;
+        }
+
+        double[] thresholds = new double[Math.max(0, maxY - minY + 1)];
+        double baseMinimum = -Math.abs(profile.getBaseWeight()) - Math.abs(profile.getDetailWeight());
+        for (int y = minY; y <= maxY; y++) {
+            double minimumDensity = baseMinimum;
+            for (IrisCaveFieldModule module : profile.getModules()) {
+                IrisRange range = module.getVerticalRange();
+                if (y < Math.floor(range.getMin()) || y > Math.ceil(range.getMax())) {
+                    continue;
+                }
+                double rawMinimum = module.isInvert()
+                        ? module.getThreshold() - 1D
+                        : -1D - module.getThreshold();
+                double rawMaximum = module.isInvert()
+                        ? module.getThreshold() + 1D
+                        : 1D - module.getThreshold();
+                minimumDensity += Math.min(rawMinimum * module.getWeight(), rawMaximum * module.getWeight());
+            }
+            thresholds[y - minY] = (minimumDensity / normalization) - SURFACE_CEILING_SOLID_EPSILON;
+        }
+        return thresholds;
     }
 
     private double[] computeVerticalEdgeFade(IrisCaveProfile profile, int minY, int maxY) {

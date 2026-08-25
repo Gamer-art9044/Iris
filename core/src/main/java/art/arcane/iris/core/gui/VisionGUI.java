@@ -73,6 +73,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 public final class VisionGUI extends JPanel implements MouseWheelListener, KeyListener, MouseMotionListener, MouseInputListener {
     private static final long serialVersionUID = 2094606939770332040L;
@@ -107,6 +108,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     private static final double KEYBOARD_ZOOM_FACTOR = 1.189207115002721D;
 
     private final JFrame hostFrame;
+    private final UUID openerId;
     private final VisionRenderController controller;
     private final Runnable hotloadHook;
     private final Timer resizeTimer;
@@ -147,11 +149,12 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     private boolean controlsUpdating;
     private boolean closed;
 
-    private VisionGUI(JFrame hostFrame, Engine engine) {
+    private VisionGUI(JFrame hostFrame, Engine engine, UUID openerId) {
         this.hostFrame = Objects.requireNonNull(hostFrame, "hostFrame");
         this.engine = Objects.requireNonNull(engine, "engine");
+        this.openerId = openerId;
         this.renderer = new IrisRenderer(engine);
-        this.overlay = GuiHost.get().overlayFor(engine);
+        this.overlay = GuiHost.get().overlayFor(engine, openerId);
         this.controller = new VisionRenderController(this::repaint);
         this.hotloadHook = () -> EventQueue.invokeLater(this::refreshContent);
         this.notifications = new LinkedHashMap<>();
@@ -201,14 +204,14 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         notificationTimer.start();
     }
 
-    public static void launch(Engine engine) {
-        EventQueue.invokeLater(() -> createAndShowGUI(engine));
+    public static void launch(Engine engine, UUID openerId) {
+        EventQueue.invokeLater(() -> createAndShowGUI(engine, openerId));
     }
 
-    private static void createAndShowGUI(Engine engine) {
+    private static void createAndShowGUI(Engine engine, UUID openerId) {
         JFrame frame = new JFrame(IrisLanguage.plain(DesktopUiMessages.VISION_TITLE));
         GuiHost.prepareFrame(frame);
-        VisionGUI vision = new VisionGUI(frame, engine);
+        VisionGUI vision = new VisionGUI(frame, engine, openerId);
         frame.getContentPane().setBackground(BACKGROUND);
         frame.setLayout(new BorderLayout());
         frame.add(buildToolbar(vision), BorderLayout.NORTH);
@@ -739,7 +742,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
             }
             engine = reacquired;
             renderer = new IrisRenderer(reacquired);
-            overlay = GuiHost.get().overlayFor(reacquired);
+            overlay = GuiHost.get().overlayFor(reacquired, openerId);
             contentRevision++;
             captureHeightRange();
             return true;
@@ -758,7 +761,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
             return;
         }
         renderer = new IrisRenderer(engine);
-        overlay = GuiHost.get().overlayFor(engine);
+        overlay = GuiHost.get().overlayFor(engine, openerId);
         contentRevision++;
         captureHeightRange();
         requestRender();

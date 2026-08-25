@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Set;
 
 final class PackRiverValidator {
-    private static final Set<String> WATER_MODES = Set.of("SEA_LEVEL", "TERRACED");
+    private static final Set<String> WATER_MODES = Set.of("FIXED", "TERRACED");
     private static final Set<String> TERMINAL_MODES = Set.of("SUPPRESS", "DRY_CHANNEL", "SINKHOLE_GROTTO");
     private static final Set<String> ROUTING_POLICIES = Set.of("ALLOW", "AVOID", "BLOCK");
     private static final Set<String> CAVE_MODES = Set.of(
@@ -91,7 +91,7 @@ final class PackRiverValidator {
             validateTerrain(packFolder, path + ".terrain", terrain, errors, warnings);
         }
         if (water != null) {
-            validateWater(path + ".water", water, errors);
+            validateWater(path + ".water", water, context.dimension(), errors);
         }
         if (biomes != null) {
             validateBiomePools(
@@ -107,7 +107,15 @@ final class PackRiverValidator {
         boolean sinkholeTerminal = terrain != null
                 && "SINKHOLE_GROTTO".equals(stringValue(terrain, "terminalMode", "DRY_CHANNEL"));
         if (caves != null) {
-            validateCaves(packFolder, path + ".caves", caves, sinkholeTerminal, errors, warnings);
+            validateCaves(
+                    packFolder,
+                    path + ".caves",
+                    caves,
+                    context.dimension(),
+                    sinkholeTerminal,
+                    errors,
+                    warnings
+            );
         }
 
         if (topology != null && terrain != null) {
@@ -168,6 +176,7 @@ final class PackRiverValidator {
         validateStyledRange(packFolder, terrain, "bankWidth", path, 0D, 2048D, errors, warnings);
         validateStyledRange(packFolder, terrain, "depth", path, 1D, 512D, errors, warnings);
         validateStyledRange(packFolder, terrain, "tunnelWidthMultiplier", path, 1D, 8D, errors, warnings);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "channelRadiusBonus", 0D, 64D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "maxChannelWidth", 1D, 2048D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "maxBankWidth", 0D, 2048D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, terrain, "maxDepth", 1D, 512D, errors);
@@ -211,17 +220,49 @@ final class PackRiverValidator {
         }
     }
 
-    private static void validateWater(String path, JSONObject water, List<String> errors) {
+    private static void validateWater(
+            String path,
+            JSONObject water,
+            JSONObject dimension,
+            List<String> errors
+    ) {
         PackJsonFieldChecks.validateOptionalEnum(path, water, "mode", WATER_MODES, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, water, "poolLength", 8, 4096, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, water, "maximumPoolRise", 0, 64, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, water, "dropHeight", 1, 32, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, water, "fluidHeight", -2048, 2048, errors);
+        validateFluidPalette(path, water, errors);
 
-        String mode = stringValue(water, "mode", "SEA_LEVEL");
+        String mode = stringValue(water, "mode", "FIXED");
+        int fluidHeight = integerValue(water, "fluidHeight", 63);
         int maximumPoolRise = integerValue(water, "maximumPoolRise", 4);
         int dropHeight = integerValue(water, "dropHeight", 1);
         if ("TERRACED".equals(mode) && dropHeight > maximumPoolRise) {
             errors.add(path + ".dropHeight must not exceed maximumPoolRise in TERRACED mode.");
+        }
+        JSONObject dimensionHeight = dimension.optJSONObject("dimensionHeight");
+        int minimumHeight = dimensionHeight == null ? -64 : integerValue(dimensionHeight, "min", -64);
+        int maximumHeight = dimensionHeight == null ? 320 : integerValue(dimensionHeight, "max", 320);
+        if (fluidHeight < minimumHeight || fluidHeight > maximumHeight) {
+            errors.add(path + ".fluidHeight must remain inside dimensionHeight.");
+        }
+        if ("TERRACED".equals(mode) && fluidHeight + maximumPoolRise > maximumHeight) {
+            errors.add(path + ".fluidHeight plus maximumPoolRise must remain inside dimensionHeight.");
+        }
+    }
+
+    private static void validateFluidPalette(String path, JSONObject water, List<String> errors) {
+        if (!water.has("fluidPalette")) {
+            return;
+        }
+        Object rawPalette = water.opt("fluidPalette");
+        if (!(rawPalette instanceof JSONObject palette)) {
+            errors.add(path + ".fluidPalette must be an object.");
+            return;
+        }
+        Object rawBlocks = palette.opt("palette");
+        if (!(rawBlocks instanceof JSONArray blocks) || blocks.length() < 1) {
+            errors.add(path + ".fluidPalette.palette must contain at least one fluid block.");
         }
     }
 
@@ -345,9 +386,11 @@ final class PackRiverValidator {
             PackJsonFieldChecks.validateOptionalDoubleRange(
                     wormPath, worm, "depthMultiplier", 0.125D, 8D, errors);
             PackJsonFieldChecks.validateOptionalDoubleRange(
-                    wormPath, worm, "bodyWavelength", 32D, 16384D, errors);
+                    wormPath, worm, "bodyWavelength", 8D, 16384D, errors);
             PackJsonFieldChecks.validateOptionalDoubleRange(
-                    wormPath, worm, "bodyDetailWavelength", 32D, 16384D, errors);
+                    wormPath, worm, "bodyDetailWavelength", 8D, 16384D, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(
+                    wormPath, worm, "bodyDetailInfluence", 0D, 1D, errors);
             PackJsonFieldChecks.validateOptionalDoubleRange(
                     wormPath, worm, "widthVariation", 0D, 0.875D, errors);
             PackJsonFieldChecks.validateOptionalDoubleRange(
@@ -452,6 +495,7 @@ final class PackRiverValidator {
     }
 
     private static void validateCaves(File packFolder, String path, JSONObject caves,
+                                      JSONObject dimension,
                                       boolean forceGeneratedGrotto,
                                       List<String> errors, List<String> warnings) {
         PackJsonFieldChecks.validateOptionalEnum(path, caves, "mode", CAVE_MODES, errors);
@@ -473,6 +517,19 @@ final class PackRiverValidator {
         validateNoiseChance(packFolder, caves, "entry", path, errors);
         validateStyle(packFolder, caves, "grottoShapeStyle", path, errors);
         validateStyle(packFolder, caves, "grottoWarpStyle", path, errors);
+        JSONObject deepPools = caves.has("deepPools")
+                ? requireObject(caves, "deepPools", path + ".deepPools", errors)
+                : null;
+        if (deepPools != null) {
+            validateDeepPools(
+                    packFolder,
+                    path + ".deepPools",
+                    deepPools,
+                    dimension,
+                    errors,
+                    warnings
+            );
+        }
 
         String mode = stringValue(caves, "mode", "SEALED");
         if ("SEALED".equals(mode) && !forceGeneratedGrotto) {
@@ -502,6 +559,86 @@ final class PackRiverValidator {
         String fallback = stringValue(caves, "fallback", "SEALED");
         if (forceGeneratedGrotto || usesGeneratedGrotto(mode, fallback)) {
             validateGrotto(path, caves, errors);
+        }
+    }
+
+    private static void validateDeepPools(
+            File packFolder,
+            String path,
+            JSONObject deepPools,
+            JSONObject dimension,
+            List<String> errors,
+            List<String> warnings
+    ) {
+        PackJsonFieldChecks.validateOptionalBoolean(path, deepPools, "enabled", errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "minimumSpacing", 16, 4096, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "maximumPerReach", 0, 16, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "minimumFluidY", -2048, 2048, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "maximumFluidY", -2048, 2048, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "searchRadius", 0, 256, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "searchAttempts", 1, 64, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "horizontalRadius", 2, 128, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "verticalRadius", 2, 64, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "dryHeadroom", 1, 63, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(
+                path, deepPools, "shapeVariation", 0D, 0.75D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(
+                path, deepPools, "warpStrength", 0D, 64D, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path, deepPools, "maximumVolume", 64, 1048576, errors);
+        validateNoiseChance(packFolder, deepPools, "reach", path, errors);
+        validateStyle(packFolder, deepPools, "shapeStyle", path, errors);
+        validateStyle(packFolder, deepPools, "warpStyle", path, errors);
+        validateFluidPalette(path, deepPools, errors);
+
+        int minimumFluidY = integerValue(deepPools, "minimumFluidY", -224);
+        int maximumFluidY = integerValue(deepPools, "maximumFluidY", -104);
+        int searchRadius = integerValue(deepPools, "searchRadius", 16);
+        int horizontalRadius = integerValue(deepPools, "horizontalRadius", 18);
+        int verticalRadius = integerValue(deepPools, "verticalRadius", 8);
+        int dryHeadroom = integerValue(deepPools, "dryHeadroom", 4);
+        int maximumVolume = integerValue(deepPools, "maximumVolume", 32768);
+        if (minimumFluidY > maximumFluidY) {
+            errors.add(path + ".minimumFluidY must not exceed maximumFluidY.");
+        }
+        if (dryHeadroom >= verticalRadius) {
+            errors.add(path + ".dryHeadroom must be smaller than verticalRadius.");
+        }
+        if (searchRadius + horizontalRadius > 128) {
+            errors.add(path + ".searchRadius plus horizontalRadius must not exceed 128 blocks.");
+        }
+        long minimumVolume = grottoVolume(horizontalRadius, verticalRadius);
+        if (minimumVolume > maximumVolume) {
+            errors.add(path + ".maximumVolume must be at least " + minimumVolume
+                    + " to contain the base deep-pool chamber.");
+        }
+
+        if (!booleanValue(deepPools, "enabled", false)) {
+            return;
+        }
+
+        JSONObject dimensionHeight = dimension.optJSONObject("dimensionHeight");
+        int minimumHeight = dimensionHeight == null ? -64 : integerValue(dimensionHeight, "min", -64);
+        int maximumHeight = dimensionHeight == null ? 320 : integerValue(dimensionHeight, "max", 320);
+        int lowestBoundaryY = minimumFluidY - (verticalRadius * 2 - dryHeadroom) - 1;
+        int highestBoundaryY = maximumFluidY + dryHeadroom + 1;
+        if (lowestBoundaryY <= minimumHeight || highestBoundaryY >= maximumHeight) {
+            errors.add(path + " fluid range and chamber envelope must remain inside dimensionHeight.");
+        }
+
+        int maximumPerReach = integerValue(deepPools, "maximumPerReach", 1);
+        double reachChance = noiseChanceValue(deepPools, "reach", 1D / 3D);
+        if (maximumPerReach == 0 || reachChance == 0D) {
+            warnings.add(path + " is enabled but its reach gate cannot accept any pools.");
         }
     }
 

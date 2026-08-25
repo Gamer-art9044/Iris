@@ -66,9 +66,21 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
     private final AtomicReferenceArray<MantleChunk<Matter>> window;
 
     public MantleWriter(EngineMantle engineMantle, Mantle<Matter> mantle, int x, int z, int radius, boolean multicore) {
+        this(engineMantle, mantle, x, z, radius, radius * 2, multicore);
+    }
+
+    public MantleWriter(
+            EngineMantle engineMantle,
+            Mantle<Matter> mantle,
+            int x,
+            int z,
+            int prefetchRadius,
+            int accessRadius,
+            boolean multicore
+    ) {
         this.engineMantle = engineMantle;
         this.mantle = mantle;
-        this.radius = radius * 2;
+        this.radius = accessRadius;
         this.x = x;
         this.z = z;
         // Every coordinate acquireChunk accepts lives in this window, so a flat array replaces the
@@ -78,7 +90,10 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
 
         final boolean foliaMaintenance = J.isFolia()
                 && WorldMaintenance.isWorldMaintenanceActive(engineMantle.getEngine().getWorld().identity());
-        final int parallelism = foliaMaintenance ? 1 : (multicore ? Runtime.getRuntime().availableProcessors() / 2 : 4);
+        final int parallelism = resolvePrefetchParallelism(
+                foliaMaintenance,
+                multicore,
+                Runtime.getRuntime().availableProcessors());
         if (foliaMaintenance && IrisSettings.get().getGeneral().isDebug()) {
             IrisLogging.info("MantleWriter using sequential chunk prefetch for maintenance regen at " + x + "," + z + ".");
         }
@@ -86,10 +101,10 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         // prefetch must release the permits already pinned into the window here.
         try {
             mantle.getChunks(
-                    x - radius,
-                    x + radius,
-                    z - radius,
-                    z + radius,
+                    x - prefetchRadius,
+                    x + prefetchRadius,
+                    z - prefetchRadius,
+                    z + prefetchRadius,
                     parallelism,
                     this::storePrefetchedChunk
             );
@@ -97,6 +112,16 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
             close();
             throw e;
         }
+    }
+
+    static int resolvePrefetchParallelism(boolean foliaMaintenance, boolean multicore, int availableProcessors) {
+        if (foliaMaintenance) {
+            return 1;
+        }
+        if (!multicore) {
+            return 4;
+        }
+        return Math.max(1, availableProcessors / 2);
     }
 
     private static Set<IrisPosition> getBallooned(Set<IrisPosition> vset, double radius) {

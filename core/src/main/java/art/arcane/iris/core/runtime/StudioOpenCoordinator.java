@@ -14,6 +14,7 @@ import art.arcane.iris.core.project.IrisProject;
 import art.arcane.iris.core.project.IrisCodeWorkspace;
 import art.arcane.iris.core.tools.IrisCreator;
 import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.util.common.plugin.VolmitSender;
@@ -98,16 +99,11 @@ public final class StudioOpenCoordinator {
 
     public CompletableFuture<Boolean> teleportPlayerToProject(
             IrisProject project,
-            Player player,
-            AtomicBoolean admission,
-            long deadlineNanos
+            Player player
     ) {
         if (project == null || player == null) {
             return CompletableFuture.completedFuture(false);
         }
-        AtomicBoolean activeAdmission = Objects.requireNonNull(
-                admission,
-                "Studio teleport admission");
         PlatformChunkGenerator provider = project.getActiveProvider();
         if (provider == null) {
             return CompletableFuture.failedFuture(new IllegalStateException(
@@ -123,10 +119,6 @@ public final class StudioOpenCoordinator {
             return CompletableFuture.failedFuture(new IllegalStateException(
                     "Studio entry point could not be resolved."));
         }
-        if (System.nanoTime() >= deadlineNanos
-                || !activeAdmission.compareAndSet(true, false)) {
-            return studioTeleportDeadlineFailure("native teleport delegation");
-        }
         CompletableFuture<Boolean> teleport = project.getActiveOpenKind() == StudioOpenKind.STANDARD
                 ? WorldRuntimeControlService.get().teleportInMode(player, entry, GameMode.SPECTATOR)
                 : WorldRuntimeControlService.get().teleport(player, entry);
@@ -134,25 +126,12 @@ public final class StudioOpenCoordinator {
             return CompletableFuture.failedFuture(new IllegalStateException(
                     "Studio native teleport returned no completion future."));
         }
-        long remainingNanos = deadlineNanos - System.nanoTime();
-        if (remainingNanos <= 0L) {
-            teleport.completeExceptionally(new TimeoutException(
-                    "Studio teleport deadline expired before native teleport completion."));
-            return teleport;
-        }
-        teleport.orTimeout(remainingNanos, TimeUnit.NANOSECONDS);
         return teleport;
-    }
-
-    private <T> CompletableFuture<T> studioTeleportDeadlineFailure(String stageName) {
-        return CompletableFuture.failedFuture(new TimeoutException(
-                "Studio teleport deadline expired before " + stageName + "."));
     }
 
     private void executeOpen(StudioOpenRequest request, CompletableFuture<StudioOpenResult> future) {
         World world = null;
         PlatformChunkGenerator provider = null;
-        CompletableFuture<Boolean> nativeTeleportFuture = null;
         try {
             long openStart = System.nanoTime();
             long t = openStart;
@@ -181,6 +160,10 @@ public final class StudioOpenCoordinator {
             if (provider == null) {
                 throw new IllegalStateException("Studio runtime provider is unavailable for world \"" + request.worldName() + "\".");
             }
+            World entryWorld = world;
+            PlatformChunkGenerator entryProvider = provider;
+            CompletableFuture<Void> entryBootstrap = J.afut(
+                    () -> endStudioEntryBootstrap(entryWorld, entryProvider));
 
             updateStage(request, "apply_world_rules", 0.72D);
             final World rulesWorld = world;
@@ -204,8 +187,14 @@ public final class StudioOpenCoordinator {
             t = logStudioPhase(request, "resolve_entry_anchor", t, openStart);
 
             updateStage(request, "prepare_structure_rings", 0.79D);
-            endStudioEntryBootstrap(world, provider);
+            entryBootstrap.get(STUDIO_STRUCTURE_ACTIVATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             t = logStudioPhase(request, "prepare_structure_rings", t, openStart);
+
+            updateStage(request, "prepare_generation_caches", 0.88D);
+            if (entryProvider.getEngine() instanceof IrisEngine irisEngine) {
+                irisEngine.awaitGenerationCacheWarm();
+            }
+            t = logStudioPhase(request, "prepare_generation_caches", t, openStart);
 
             Location entryLocation = entryAnchor;
 
@@ -219,7 +208,7 @@ public final class StudioOpenCoordinator {
                 }
                 Boolean teleported;
                 try {
-                    nativeTeleportFuture = WorldRuntimeControlService.get().teleportInMode(
+                    CompletableFuture<Boolean> nativeTeleportFuture = WorldRuntimeControlService.get().teleportInMode(
                             player,
                             entryLocation,
                             GameMode.SPECTATOR);
@@ -227,15 +216,20 @@ public final class StudioOpenCoordinator {
                         throw new IllegalStateException(
                                 "Studio native teleport returned no completion future.");
                     }
-                    teleported = nativeTeleportFuture.get(60L, TimeUnit.SECONDS);
-                } catch (TimeoutException e) {
-                    nativeTeleportFuture.completeExceptionally(e);
-                    throw new IllegalStateException("Studio teleport timed out — destination region may still be generating.");
+                    teleported = nativeTeleportFuture.get();
+                } catch (ExecutionException e) {
+                    Throwable failure = unwrapFailure(e);
+                    throw new IllegalStateException("Studio teleport failed.", failure);
                 }
                 if (!Boolean.TRUE.equals(teleported)) {
                     throw new IllegalStateException("Studio teleport did not complete successfully.");
                 }
                 t = logStudioPhase(request, "teleport_standard_entry", t, openStart);
+                IrisLogging.info("Studio player %s arrived in %dms: dimension=%s world=%s",
+                        player.getName(),
+                        elapsedMillis(request.requestedAtNanos()),
+                        request.dimensionKey(),
+                        world.getName());
             }
 
             updateStage(request, "finalize_open", 1.00D);
@@ -861,10 +855,14 @@ public final class StudioOpenCoordinator {
             StudioOpenKind openKind,
             boolean retainOnFailure,
             Consumer<StudioOpenProgress> progressConsumer,
-            Consumer<World> onDone
+            Consumer<World> onDone,
+            long requestedAtNanos
     ) {
         public StudioOpenRequest {
             openKind = Objects.requireNonNull(openKind, "Studio open kind");
+            if (requestedAtNanos <= 0L) {
+                throw new IllegalArgumentException("Studio request time must be positive.");
+            }
         }
 
         public static StudioOpenRequest studioProject(
@@ -874,6 +872,25 @@ public final class StudioOpenCoordinator {
                 StudioOpenKind openKind,
                 Consumer<StudioOpenProgress> progressConsumer,
                 Consumer<World> onDone
+        ) {
+            return studioProject(
+                    project,
+                    sender,
+                    seed,
+                    openKind,
+                    progressConsumer,
+                    onDone,
+                    System.nanoTime());
+        }
+
+        public static StudioOpenRequest studioProject(
+                IrisProject project,
+                VolmitSender sender,
+                long seed,
+                StudioOpenKind openKind,
+                Consumer<StudioOpenProgress> progressConsumer,
+                Consumer<World> onDone,
+                long requestedAtNanos
         ) {
             String playerName = sender != null && sender.isPlayer() && sender.player() != null ? sender.player().getName() : null;
             return new StudioOpenRequest(
@@ -886,7 +903,8 @@ public final class StudioOpenCoordinator {
                     openKind,
                     false,
                     progressConsumer,
-                    onDone
+                    onDone,
+                    requestedAtNanos
             );
         }
     }

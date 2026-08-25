@@ -3,7 +3,7 @@ package art.arcane.iris.engine.mantle.components;
 import art.arcane.iris.engine.river.cave.CavePosition;
 import art.arcane.iris.engine.river.cave.CaveVoxel;
 import art.arcane.iris.engine.river.cave.CaveVoxelView;
-import art.arcane.iris.engine.river.cave.RiverCaveAction;
+import art.arcane.iris.engine.river.cave.RiverCaveFluidKind;
 import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.object.IrisProceduralBlocks;
@@ -15,8 +15,10 @@ import art.arcane.volmlib.util.mantle.runtime.TectonicPlate;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterCavern;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import java.util.Objects;
+import java.util.function.BiConsumer;
 
 final class MantleRiverCaveVoxelView implements MantleRiverHydrologyComponent.TunnelVoxelView {
     private static final int CLOSED_COLUMN = Integer.MAX_VALUE;
@@ -26,6 +28,9 @@ final class MantleRiverCaveVoxelView implements MantleRiverHydrologyComponent.Tu
     private final int worldHeight;
     private final Function2<Integer, Integer, Integer> surfaceHeight;
     private final Function2<Integer, Integer, PlatformBlockState> compatibleFluid;
+    private final RiverCaveFluidKind planningFluidKind;
+    private final BiConsumer<Integer, Integer> chunkLoader;
+    private final LongOpenHashSet loadedChunks;
     private final Long2IntOpenHashMap openFloorCache;
     private final Long2IntOpenHashMap surfaceHeightCache;
 
@@ -33,12 +38,17 @@ final class MantleRiverCaveVoxelView implements MantleRiverHydrologyComponent.Tu
             Mantle<Matter> mantle,
             int worldHeight,
             Function2<Integer, Integer, Integer> surfaceHeight,
-            Function2<Integer, Integer, PlatformBlockState> compatibleFluid
+            Function2<Integer, Integer, PlatformBlockState> compatibleFluid,
+            RiverCaveFluidKind planningFluidKind,
+            BiConsumer<Integer, Integer> chunkLoader
     ) {
         this.mantle = Objects.requireNonNull(mantle);
         this.worldHeight = worldHeight;
         this.surfaceHeight = Objects.requireNonNull(surfaceHeight);
         this.compatibleFluid = Objects.requireNonNull(compatibleFluid);
+        this.planningFluidKind = Objects.requireNonNull(planningFluidKind);
+        this.chunkLoader = Objects.requireNonNull(chunkLoader);
+        loadedChunks = new LongOpenHashSet();
         openFloorCache = new Long2IntOpenHashMap();
         openFloorCache.defaultReturnValue(CACHE_MISS);
         surfaceHeightCache = new Long2IntOpenHashMap();
@@ -52,10 +62,18 @@ final class MantleRiverCaveVoxelView implements MantleRiverHydrologyComponent.Tu
 
     @Override
     public CaveVoxel voxelAt(CavePosition position) {
+        RiverCaveHydrology hydrology = dataIfPresent(position, RiverCaveHydrology.class);
+        if (hydrology != null && hydrology.fluidKind() != planningFluidKind) {
+            return CaveVoxel.INCOMPATIBLE_FLUID;
+        }
         MatterCavern cavern = dataIfPresent(position, MatterCavern.class);
         if (cavern != null) {
             if (cavern.isLava()) {
-                return CaveVoxel.LAVA;
+                PlatformBlockState expected = compatibleFluid.apply(position.x(), position.z());
+                return expected != null
+                        && IrisProceduralBlocks.materialKey(expected).endsWith(":lava")
+                        ? CaveVoxel.COMPATIBLE_FLUID
+                        : CaveVoxel.LAVA;
             }
             if (cavern.getLiquid() == 1) {
                 return CaveVoxel.COMPATIBLE_FLUID;
@@ -71,13 +89,13 @@ final class MantleRiverCaveVoxelView implements MantleRiverHydrologyComponent.Tu
         if (!block.isFluid()) {
             return CaveVoxel.SOLID;
         }
-        if (IrisProceduralBlocks.materialKey(block).endsWith(":lava")) {
-            return CaveVoxel.LAVA;
-        }
         PlatformBlockState expected = compatibleFluid.apply(position.x(), position.z());
-        return expected != null
-                && IrisProceduralBlocks.materialKey(expected).equals(IrisProceduralBlocks.materialKey(block))
-                ? CaveVoxel.COMPATIBLE_FLUID
+        if (expected != null
+                && IrisProceduralBlocks.materialKey(expected).equals(IrisProceduralBlocks.materialKey(block))) {
+            return CaveVoxel.COMPATIBLE_FLUID;
+        }
+        return IrisProceduralBlocks.materialKey(block).endsWith(":lava")
+                ? CaveVoxel.LAVA
                 : CaveVoxel.INCOMPATIBLE_FLUID;
     }
 
@@ -99,9 +117,8 @@ final class MantleRiverCaveVoxelView implements MantleRiverHydrologyComponent.Tu
     }
 
     @Override
-    public RiverCaveAction riverActionAt(CavePosition position) {
-        RiverCaveHydrology hydrology = dataIfPresent(position, RiverCaveHydrology.class);
-        return hydrology == null ? null : hydrology.action();
+    public RiverCaveHydrology riverHydrologyAt(CavePosition position) {
+        return dataIfPresent(position, RiverCaveHydrology.class);
     }
 
     private int resolveOpenFloor(int x, int z) {
@@ -131,6 +148,10 @@ final class MantleRiverCaveVoxelView implements MantleRiverHydrologyComponent.Tu
     private <T> T dataIfPresent(CavePosition position, Class<T> type) {
         int chunkX = position.x() >> 4;
         int chunkZ = position.z() >> 4;
+        long chunkKey = Mantle.key(chunkX, chunkZ);
+        if (loadedChunks.add(chunkKey)) {
+            chunkLoader.accept(chunkX, chunkZ);
+        }
         TectonicPlate<Matter> plate = mantle.getLoadedRegions().get(Mantle.key(chunkX >> 5, chunkZ >> 5));
         if (plate == null || plate.isClosed()) {
             return null;

@@ -11,20 +11,30 @@ public final class RiverCaveHydrology {
 
     private final RiverCaveAction action;
     private final String floodedBiomeKey;
+    private final RiverCaveFluidKind fluidKind;
     private final MatterCavern cavern;
 
-    public RiverCaveHydrology(RiverCaveAction action, String floodedBiomeKey) {
+    public RiverCaveHydrology(
+            RiverCaveAction action,
+            String floodedBiomeKey,
+            RiverCaveFluidKind fluidKind
+    ) {
         this.action = Objects.requireNonNull(action);
         this.floodedBiomeKey = floodedBiomeKey == null ? "" : floodedBiomeKey.trim();
+        this.fluidKind = Objects.requireNonNull(fluidKind);
         this.cavern = switch (action) {
-            case WET_SOURCE, FALLING_WATER -> new MatterCavern(true, this.floodedBiomeKey, LIQUID_FLUID);
+            case WET_SOURCE, FALLING_FLUID -> new MatterCavern(true, this.floodedBiomeKey, LIQUID_FLUID);
             case DRY_AIR -> new MatterCavern(true, this.floodedBiomeKey, LIQUID_FORCED_AIR);
             case SEAL_GUARD -> null;
         };
     }
 
     public static RiverCaveHydrology of(RiverCaveAction action) {
-        return new RiverCaveHydrology(action, "");
+        return new RiverCaveHydrology(action, "", RiverCaveFluidKind.RIVER);
+    }
+
+    public static RiverCaveHydrology of(RiverCaveAction action, RiverCaveFluidKind fluidKind) {
+        return new RiverCaveHydrology(action, "", fluidKind);
     }
 
     public Optional<String> floodedBiome() {
@@ -36,11 +46,11 @@ public final class RiverCaveHydrology {
     }
 
     public boolean isWet() {
-        return action == RiverCaveAction.WET_SOURCE || action == RiverCaveAction.FALLING_WATER;
+        return action == RiverCaveAction.WET_SOURCE || action == RiverCaveAction.FALLING_FLUID;
     }
 
     public boolean isFalling() {
-        return action == RiverCaveAction.FALLING_WATER;
+        return action == RiverCaveAction.FALLING_FLUID;
     }
 
     public boolean protectsPlacement() {
@@ -59,6 +69,10 @@ public final class RiverCaveHydrology {
         return floodedBiomeKey;
     }
 
+    public RiverCaveFluidKind fluidKind() {
+        return fluidKind;
+    }
+
     @Override
     public boolean equals(Object object) {
         if (this == object) {
@@ -67,16 +81,19 @@ public final class RiverCaveHydrology {
         if (!(object instanceof RiverCaveHydrology hydrology)) {
             return false;
         }
-        return action == hydrology.action && floodedBiomeKey.equals(hydrology.floodedBiomeKey);
+        return action == hydrology.action
+                && floodedBiomeKey.equals(hydrology.floodedBiomeKey)
+                && fluidKind == hydrology.fluidKind;
     }
 
     @Override
     public int hashCode() {
-        return (31 * action.hashCode()) + floodedBiomeKey.hashCode();
+        return (31 * ((31 * action.hashCode()) + floodedBiomeKey.hashCode())) + fluidKind.hashCode();
     }
 
     @Override
     public String toString() {
-        return "RiverCaveHydrology[action=" + action + ", floodedBiomeKey=" + floodedBiomeKey + "]";
+        return "RiverCaveHydrology[action=" + action + ", floodedBiomeKey=" + floodedBiomeKey
+                + ", fluidKind=" + fluidKind + "]";
     }
 }

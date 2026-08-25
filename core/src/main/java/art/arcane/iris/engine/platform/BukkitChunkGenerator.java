@@ -121,6 +121,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private final AtomicInteger a = new AtomicInteger(0);
     private volatile long lastChunkGenTime = 0L;
     private final CompletableFuture<Integer> spawnChunks = new CompletableFuture<>();
+    private final CompletableFuture<Void> initialSpawnReady = new CompletableFuture<>();
     private final AtomicCache<EngineTarget> targetCache = new AtomicCache<>();
     private final AtomicReference<CompletableFuture<Void>> closeFuture = new AtomicReference<>();
     private volatile Engine engine;
@@ -194,11 +195,19 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             engine.getPlatformHooks().applyWorldBoundary(engine);
             IrisLogging.debug("Injected Iris Biome Source into " + world.getName());
             if (!studio) {
-                J.s(() -> updateSpawnLocation(world), 1);
+                J.sfut(() -> updateSpawnLocation(world), 1)
+                        .whenComplete((ignored, failure) -> {
+                            if (failure != null) {
+                                initialSpawnReady.completeExceptionally(failure);
+                            }
+                        });
+            } else {
+                initialSpawnReady.complete(null);
             }
         } catch (Throwable e) {
             initializationFailure = e;
             spawnChunks.completeExceptionally(e);
+            initialSpawnReady.completeExceptionally(e);
             IrisLogging.reportError(e);
             IrisLogging.error("Failed to initialize Iris generator for " + world.getName());
             if (e instanceof RuntimeException runtimeException) {
@@ -231,16 +240,58 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     }
 
     private void updateSpawnLocation(World world) {
-        Location initialSpawn = getInitialSpawnLocation(world);
-        int chunkX = initialSpawn.getBlockX() >> 4;
-        int chunkZ = initialSpawn.getBlockZ() >> 4;
-        CompletableFuture<Chunk> chunkFuture = requestChunkAsync(world, chunkX, chunkZ, true);
-        if (chunkFuture == null) {
-            return;
-        }
+        try {
+            Location initialSpawn = getInitialSpawnLocation(world);
+            int chunkX = initialSpawn.getBlockX() >> 4;
+            int chunkZ = initialSpawn.getBlockZ() >> 4;
+            CompletableFuture<Chunk> chunkFuture = requestChunkAsync(world, chunkX, chunkZ, true);
+            if (chunkFuture == null) {
+                initialSpawnReady.completeExceptionally(new IllegalStateException(
+                        "Initial spawn chunk request returned no completion future for world \""
+                                + world.getName() + "\"."));
+                return;
+            }
 
-        chunkFuture.thenAccept(chunk ->
-                J.runRegion(chunk.getWorld(), chunk.getX(), chunk.getZ(), () -> applySpawnLocation(chunk.getWorld(), initialSpawn)));
+            chunkFuture.whenComplete((chunk, failure) -> {
+                try {
+                    if (failure != null) {
+                        initialSpawnReady.completeExceptionally(failure);
+                        return;
+                    }
+                    if (chunk == null) {
+                        throw new IllegalStateException(
+                                "Initial spawn chunk request completed without a chunk for world \""
+                                        + world.getName() + "\".");
+                    }
+                    J.runRegionFuture(
+                            chunk.getWorld(),
+                            chunk.getX(),
+                            chunk.getZ(),
+                            () -> completeSpawnLocation(chunk.getWorld(), initialSpawn))
+                            .whenComplete((ignored, scheduleFailure) -> {
+                                if (scheduleFailure != null) {
+                                    initialSpawnReady.completeExceptionally(scheduleFailure);
+                                }
+                            });
+                } catch (Throwable callbackFailure) {
+                    initialSpawnReady.completeExceptionally(new IllegalStateException(
+                            "Initial spawn preparation failed for world \""
+                                    + world.getName() + "\".",
+                            callbackFailure));
+                }
+            });
+        } catch (Throwable failure) {
+            initialSpawnReady.completeExceptionally(failure);
+        }
+    }
+
+    private void completeSpawnLocation(World world, Location initialSpawn) {
+        try {
+            applySpawnLocation(world, initialSpawn);
+            initialSpawnReady.complete(null);
+        } catch (Throwable failure) {
+            initialSpawnReady.completeExceptionally(failure);
+        }
     }
 
     private void applySpawnLocation(World world, Location initialSpawn) {
@@ -255,8 +306,25 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
         int minY = world.getMinHeight() + 1;
         int maxY = world.getMaxHeight() - 2;
-        int y = Math.max(minY, Math.min(maxY, world.getHighestBlockYAt(initialSpawn) + 1));
+        int y = resolveInitialSpawnY(world, initialSpawn, minY, maxY);
         world.setSpawnLocation(new Location(world, initialSpawn.getX(), y, initialSpawn.getZ(), initialSpawn.getYaw(), initialSpawn.getPitch()));
+    }
+
+    private int resolveInitialSpawnY(World world, Location initialSpawn, int minY, int maxY) {
+        Engine activeEngine = engine;
+        if (activeEngine != null && activeEngine.getComplex() != null && activeEngine.getComplex().getHeightStream() != null) {
+            int generatedY = activeEngine.getMinHeight()
+                    + activeEngine.getComplex().getHeightStream().get(initialSpawn.getX(), initialSpawn.getZ()).intValue()
+                    + 1;
+            return Math.max(minY, Math.min(maxY, generatedY));
+        }
+
+        return Math.max(minY, Math.min(maxY, world.getHighestBlockYAt(initialSpawn) + 1));
+    }
+
+    @Override
+    public CompletableFuture<Void> getInitialSpawnReady() {
+        return initialSpawnReady;
     }
 
     @SuppressWarnings("unchecked")
@@ -377,6 +445,11 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             this.hotloader = shouldRunStudioHotload(studio, closing, jigsawStudioActive) ? new Looper() {
                 @Override
                 protected long loop() {
+                    Engine activeEngine = engine;
+                    if (activeEngine instanceof IrisEngine irisEngine
+                            && irisEngine.isGenerationCacheWarmPending()) {
+                        return HOTLOAD_LOOP_DELAY_MS;
+                    }
                     if (shouldThrottleHotload()) {
                         return HOTLOAD_MAINTENANCE_DELAY_MS;
                     }

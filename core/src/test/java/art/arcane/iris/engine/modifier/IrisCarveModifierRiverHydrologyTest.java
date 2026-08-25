@@ -1,6 +1,7 @@
 package art.arcane.iris.engine.modifier;
 
 import art.arcane.iris.engine.river.cave.RiverCaveAction;
+import art.arcane.iris.engine.river.cave.RiverCaveFluidKind;
 import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.matter.MatterCavern;
@@ -24,7 +25,11 @@ public class IrisCarveModifierRiverHydrologyTest {
                 baseline, RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD)));
 
         MatterCavern wet = IrisCarveModifier.composeCavern(
-                baseline, new RiverCaveHydrology(RiverCaveAction.WET_SOURCE, "iris:flooded"));
+                baseline, new RiverCaveHydrology(
+                        RiverCaveAction.WET_SOURCE,
+                        "iris:flooded",
+                        RiverCaveFluidKind.DEEP_POOL
+                ));
         MatterCavern dry = IrisCarveModifier.composeCavern(
                 baseline, RiverCaveHydrology.of(RiverCaveAction.DRY_AIR));
 
@@ -47,7 +52,7 @@ public class IrisCarveModifierRiverHydrologyTest {
         assertSame(source, IrisCarveModifier.resolveHydrologyState(
                 RiverCaveHydrology.of(RiverCaveAction.WET_SOURCE), current, source, air));
         assertSame(falling, IrisCarveModifier.resolveHydrologyState(
-                RiverCaveHydrology.of(RiverCaveAction.FALLING_WATER), current, source, air));
+                RiverCaveHydrology.of(RiverCaveAction.FALLING_FLUID), current, source, air));
         assertSame(air, IrisCarveModifier.resolveHydrologyState(
                 RiverCaveHydrology.of(RiverCaveAction.DRY_AIR), current, source, air));
     }

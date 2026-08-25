@@ -21,6 +21,7 @@ package art.arcane.iris.fabric;
 import art.arcane.iris.modded.ModdedLoader;
 import art.arcane.iris.modded.service.ModdedTreeFellerService;
 import net.fabricmc.api.EnvType;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLevelEvents;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.permission.v1.PermissionContextOwner;
 import net.fabricmc.loader.api.FabricLoader;
@@ -69,6 +70,16 @@ public final class FabricModdedLoader implements ModdedLoader {
     public void invalidateLevelCache(MinecraftServer server) {
         // Intentionally empty: Fabric keeps no cached level view of its own (getAllLevels reads the live
         // map). Off-thread readers rely on the ModdedServerLevels snapshot, which the caller republishes.
+    }
+
+    @Override
+    public void fireDynamicLevelLoad(MinecraftServer server, ServerLevel level) {
+        ServerLevelEvents.LOAD.invoker().onLevelLoad(server, level);
+    }
+
+    @Override
+    public void fireDynamicLevelUnload(MinecraftServer server, ServerLevel level) {
+        ServerLevelEvents.UNLOAD.invoker().onLevelUnload(server, level);
     }
 
     @Override

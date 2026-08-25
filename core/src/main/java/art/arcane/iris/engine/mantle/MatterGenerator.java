@@ -4,6 +4,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.project.context.ChunkContext;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
@@ -43,18 +44,31 @@ public interface MatterGenerator {
             return;
         }
 
-        int writeRadius = getRadius();
+        MatterGenerationPlan generationPlan = resolveGenerationPlan(x, z, context);
+        MatterPassPlan[] passPlans = generationPlan.passPlans();
+        if (passPlans.length == 0) {
+            return;
+        }
+        int prefetchRadius = passPlans[0].passChunkRadius();
         LongOpenHashSet partialChunks = new LongOpenHashSet();
 
-        try (MantleWriter writer = new MantleWriter(getEngine().getMantle(), getMantle(), x, z, writeRadius, multicore)) {
+        try (MantleWriter writer = new MantleWriter(
+                getEngine().getMantle(),
+                getMantle(),
+                x,
+                z,
+                prefetchRadius,
+                generationPlan.writerAccessRadius(),
+                multicore)) {
             // Every task launched below writes through this writer. They must all be finished before
             // close() releases the cached chunks, even when a pass throws, or detached pool threads
             // write into released chunks.
             List<MatterComponentTask> outstandingTasks = null;
 
             try {
-                for (MantlePass pass : getComponents()) {
-                    int passRadius = pass.passChunkRadius();
+                for (MatterPassPlan passPlan : passPlans) {
+                    MantlePass pass = passPlan.pass();
+                    int passRadius = passPlan.passChunkRadius();
                     List<MantleComponent> passComponents = pass.components();
                     MantleComponent[] enabledComponents = new MantleComponent[passComponents.size()];
                     int[] componentPassRadii = new int[passComponents.size()];
@@ -63,7 +77,7 @@ public interface MatterGenerator {
                         if (component.isEnabled()) {
                             // A component must cover its own reach plus every later pass' reach, or a
                             // later pass reads this component's data from chunks it never wrote.
-                            int componentReach = component.getRadius() + pass.downstreamBlockRadius();
+                            int componentReach = component.getRadius() + passPlan.downstreamBlockRadius();
                             componentPassRadii[enabledComponentCount] = componentReach > 0 ? Math.ceilDiv(componentReach, 16) : 0;
                             enabledComponents[enabledComponentCount++] = component;
                         }
@@ -112,7 +126,8 @@ public interface MatterGenerator {
                             MantleChunk<Matter> chunk = writer.acquireChunk(passX, passZ);
                             if (chunk == null) {
                                 throw new IllegalStateException("Mantle pass chunk " + passX + "," + passZ
-                                        + " is outside the writer prepared at " + x + "," + z + " with radius " + writeRadius);
+                                        + " is outside the writer prepared at " + x + "," + z
+                                        + " with radius " + generationPlan.writerAccessRadius());
                             }
 
                             if (chunk.isFlagged(MantleFlag.PLANNED)) {
@@ -174,8 +189,9 @@ public interface MatterGenerator {
                     }
                 }
 
-                for (int i = -getRealRadius(); i <= getRealRadius(); i++) {
-                    for (int j = -getRealRadius(); j <= getRealRadius(); j++) {
+                int realRadius = passPlans[passPlans.length - 1].passChunkRadius();
+                for (int i = -realRadius; i <= realRadius; i++) {
+                    for (int j = -realRadius; j <= realRadius; j++) {
                         int realX = x + i;
                         int realZ = z + j;
                         long realKey = chunkKey(realX, realZ);
@@ -193,6 +209,45 @@ public interface MatterGenerator {
 
     private static long chunkKey(int x, int z) {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
+    }
+
+    private MatterGenerationPlan resolveGenerationPlan(int x, int z, ChunkContext context) {
+        List<MantlePass> passes = getComponents();
+        MatterPassPlan[] plans = new MatterPassPlan[passes.size()];
+        int accessDownstreamBlockRadius = 0;
+        int generationDownstreamBlockRadius = 0;
+        for (int passIndex = passes.size() - 1; passIndex >= 0; passIndex--) {
+            MantlePass pass = passes.get(passIndex);
+            int passBlockRadius = 0;
+            int passAccessInputRadius = 0;
+            int passGenerationInputRadius = 0;
+            for (MantleComponent component : pass.components()) {
+                if (!component.isEnabled()) {
+                    continue;
+                }
+                int componentRadius = component.getRadius();
+                passBlockRadius = Math.max(passBlockRadius, componentRadius);
+                int componentReach = componentRadius + generationDownstreamBlockRadius;
+                int invocationChunkRadius = componentReach > 0
+                        ? Math.ceilDiv(componentReach, 16)
+                        : 0;
+                int componentInputRadius = component.getInputRadius(x, z, invocationChunkRadius, context);
+                passAccessInputRadius = Math.max(passAccessInputRadius, componentInputRadius);
+                if (!component.isInputGenerationLazy()) {
+                    passGenerationInputRadius = Math.max(passGenerationInputRadius, componentInputRadius);
+                }
+            }
+            int accessInvocationRadius = accessDownstreamBlockRadius + passBlockRadius;
+            int generationInvocationRadius = generationDownstreamBlockRadius + passBlockRadius;
+            int passChunkRadius = generationInvocationRadius > 0 ? Math.ceilDiv(generationInvocationRadius, 16) : 0;
+            plans[passIndex] = new MatterPassPlan(pass, passChunkRadius, generationDownstreamBlockRadius);
+            accessDownstreamBlockRadius = accessInvocationRadius + passAccessInputRadius;
+            generationDownstreamBlockRadius = generationInvocationRadius + passGenerationInputRadius;
+        }
+        int writerChunkRadius = accessDownstreamBlockRadius > 0
+                ? Math.ceilDiv(accessDownstreamBlockRadius, 16)
+                : 0;
+        return new MatterGenerationPlan(plans, writerChunkRadius * 2);
     }
 
     private MatterComponentTask runComponentAsync(
@@ -217,11 +272,21 @@ public interface MatterGenerator {
 
         try {
             if (DISPATCHER.ownsCurrentThread()) {
-                completeComponentTask(future, key, chunk, component, writer, chunkX, chunkZ, context);
+                completeComponentTask(future, key, chunk, component, writer, chunkX, chunkZ, context, IrisContext.get());
                 return new MatterComponentTask(key, future, null);
             }
 
-            Future<?> submission = DISPATCHER.submit(() -> completeComponentTask(future, key, chunk, component, writer, chunkX, chunkZ, context));
+            IrisContext callerContext = IrisContext.get();
+            Future<?> submission = DISPATCHER.submit(() -> completeComponentTask(
+                    future,
+                    key,
+                    chunk,
+                    component,
+                    writer,
+                    chunkX,
+                    chunkZ,
+                    context,
+                    callerContext));
             return new MatterComponentTask(key, future, submission);
         } catch (Throwable throwable) {
             IN_FLIGHT_COMPONENTS.remove(key, future);
@@ -329,16 +394,39 @@ public interface MatterGenerator {
             MantleWriter writer,
             int chunkX,
             int chunkZ,
-            ChunkContext context
+            ChunkContext context,
+            IrisContext callerContext
     ) {
         try {
-            runComponentInline(chunk, component, writer, chunkX, chunkZ, context);
+            runComponentWithContext(chunk, component, writer, chunkX, chunkZ, context, callerContext);
             future.complete(null);
         } catch (Throwable throwable) {
             future.completeExceptionally(throwable);
             throw throwable;
         } finally {
             IN_FLIGHT_COMPONENTS.remove(key, future);
+        }
+    }
+
+    private void runComponentWithContext(
+            MantleChunk<Matter> chunk,
+            MantleComponent component,
+            MantleWriter writer,
+            int chunkX,
+            int chunkZ,
+            ChunkContext context,
+            IrisContext callerContext
+    ) {
+        if (callerContext == null) {
+            runComponentInline(chunk, component, writer, chunkX, chunkZ, context);
+            return;
+        }
+
+        try (IrisContext.Scope ignored = IrisContext.open(
+                callerContext.getEngine(),
+                callerContext.getGenerationSessionId(),
+                callerContext.getChunkContext())) {
+            runComponentInline(chunk, component, writer, chunkX, chunkZ, context);
         }
     }
 
@@ -358,6 +446,12 @@ public interface MatterGenerator {
      * owns the task, and null when the future belongs to another generation or already completed.
      */
     record MatterComponentTask(MatterTaskKey key, CompletableFuture<Void> future, Future<?> submission) {
+    }
+
+    record MatterPassPlan(MantlePass pass, int passChunkRadius, int downstreamBlockRadius) {
+    }
+
+    record MatterGenerationPlan(MatterPassPlan[] passPlans, int writerAccessRadius) {
     }
 
     final class MatterTaskKey {

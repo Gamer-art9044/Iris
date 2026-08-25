@@ -1019,6 +1019,117 @@ public class RiverNetworkTest {
     }
 
     @Test
+    public void volatileBodyProfilesResolveSubTenBlockThicknessChanges() {
+        RiverWorm volatileBody = new RiverWorm(
+                "volatile-body",
+                4815L,
+                1D,
+                1024D,
+                128D,
+                0.65D,
+                0.2D,
+                180D,
+                48,
+                1D,
+                1D,
+                1D,
+                24D,
+                8D,
+                0.95D,
+                0.875D,
+                0.75D,
+                0.75D,
+                0.75D,
+                4,
+                0.35D,
+                1D,
+                0D,
+                0D,
+                List.of()
+        );
+        RiverNetwork network = new RiverNetwork(options(4815L)
+                .cellSize(1700)
+                .tileCells(1)
+                .siteJitter(0D)
+                .requireOcean(false)
+                .channelWidth(14D)
+                .maxChannelWidth(38D)
+                .maximumReachRadius(64D)
+                .worms(List.of(volatileBody))
+                .build());
+
+        RiverReach reach = network.buildTile(0, 0, flatTerrain(false)).reaches().getFirst();
+        RiverBodyProfile profile = reach.bodyProfile();
+        double maximumStationSpacing = 0D;
+        for (int index = 1; index < profile.size(); index++) {
+            maximumStationSpacing = StrictMath.max(
+                    maximumStationSpacing,
+                    reach.polyline().length() * (profile.position(index) - profile.position(index - 1))
+            );
+        }
+        boolean volatileChangeFound = false;
+        for (double distance = 0D; distance + 10D <= reach.polyline().length(); distance += 2D) {
+            double start = distance / reach.polyline().length();
+            double end = (distance + 10D) / reach.polyline().length();
+            if (StrictMath.abs(profile.width(start) - profile.width(end)) >= 2D) {
+                volatileChangeFound = true;
+                break;
+            }
+        }
+
+        assertTrue(maximumStationSpacing <= 10D);
+        assertTrue(volatileChangeFound);
+    }
+
+    @Test
+    public void channelRadiusBonusAddsThreeBlocksPerSideAfterShaping() {
+        RiverWorm constantBody = wormProfile(
+                "radius-bonus",
+                6501L,
+                8,
+                1D,
+                1D,
+                1D,
+                64D,
+                16D,
+                0D,
+                0D,
+                0D,
+                0D,
+                4,
+                0.35D,
+                1D,
+                0D,
+                0D,
+                List.of()
+        );
+        RiverNetwork baseline = new RiverNetwork(options(6501L)
+                .siteJitter(0D)
+                .requireOcean(false)
+                .channelWidth(10D)
+                .maxChannelWidth(38D)
+                .maximumReachRadius(64D)
+                .worms(List.of(constantBody))
+                .build());
+        RiverNetwork expanded = new RiverNetwork(options(6501L)
+                .siteJitter(0D)
+                .requireOcean(false)
+                .channelWidth(10D)
+                .channelRadiusBonus(3D)
+                .maxChannelWidth(38D)
+                .maximumReachRadius(64D)
+                .worms(List.of(constantBody))
+                .build());
+
+        RiverReach baselineReach = baseline.buildTile(0, 0, flatTerrain(false)).reaches().getFirst();
+        RiverReach expandedReach = expanded.buildTile(0, 0, flatTerrain(false)).reaches().getFirst();
+
+        assertEquals(baselineReach.id(), expandedReach.id());
+        assertEquals(6D, expandedReach.bodyProfile().width(0.5D)
+                - baselineReach.bodyProfile().width(0.5D), 0.0000001D);
+    }
+
+    @Test
     public void foldedReachSamplingFindsFartherCoveringWidthEnvelope() {
         RiverNode from = node(0L, 0L, 0D, 0D);
         RiverNode to = node(1L, 0L, 0D, 10D);
@@ -1119,17 +1230,17 @@ public class RiverNetworkTest {
     public void weightedWormProfilesSelectDistinctConfigurableVariants() {
         RiverWorm gentle = new RiverWorm(
                 "gentle", 301L, 1D, 1024D, 256D, 0.2D, 0.05D, 10D, 8, 0.5D, 0.5D, 0.5D,
-                512D, 128D, 0D, 0D, 0D, 0D,
+                512D, 128D, 0.3D, 0D, 0D, 0D, 0D,
                 4, 0.35D, 1D, 0D, 0D, List.of()
         );
         RiverWorm winding = new RiverWorm(
                 "winding", 302L, 1D, 512D, 128D, 0.55D, 0.15D, 20D, 16, 1D, 1D, 1D,
-                512D, 128D, 0D, 0D, 0D, 0D,
+                512D, 128D, 0.3D, 0D, 0D, 0D, 0D,
                 4, 0.35D, 1D, 0D, 0D, List.of()
         );
         RiverWorm restless = new RiverWorm(
                 "restless", 303L, 1D, 192D, 48D, 0.9D, 0.35D, 30D, 32, 2D, 2D, 2D,
-                512D, 128D, 0D, 0D, 0D, 0D,
+                512D, 128D, 0.3D, 0D, 0D, 0D, 0D,
                 4, 0.35D, 1D, 0D, 0D, List.of()
         );
         RiverNetwork network = new RiverNetwork(options(64L)
@@ -1547,6 +1658,7 @@ public class RiverNetworkTest {
                 1D,
                 512D,
                 128D,
+                0.3D,
                 0D,
                 0D,
                 0D,
@@ -1631,6 +1743,7 @@ public class RiverNetworkTest {
                 depthMultiplier,
                 bodyWavelength,
                 bodyDetailWavelength,
+                0.3D,
                 widthVariation,
                 bankVariation,
                 depthVariation,

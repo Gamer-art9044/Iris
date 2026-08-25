@@ -107,7 +107,7 @@ public final class ModdedGuiHost implements GuiHost.Provider {
     }
 
     @Override
-    public GuiOverlay overlayFor(Engine engine) {
+    public GuiOverlay overlayFor(Engine engine, UUID openerId) {
         if (engine == null) {
             return null;
         }
@@ -115,6 +115,7 @@ public final class ModdedGuiHost implements GuiHost.Provider {
         if (level == null || server == null) {
             return null;
         }
-        return new ModdedVisionOverlay(server, level, engine, openers.get(engine));
+        UUID resolvedOpenerId = openerId == null ? openers.get(engine) : openerId;
+        return new ModdedVisionOverlay(server, level, engine, resolvedOpenerId);
     }
 }

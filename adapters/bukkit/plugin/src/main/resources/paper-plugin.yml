@@ -2,6 +2,7 @@ name: ${name}
 version: ${version}
 main: ${main}
 bootstrapper: ${bootstrapper}
+loader: art.arcane.iris.IrisPluginLoader
 folia-supported: true
 api-version: '${apiVersion}'
 load: STARTUP

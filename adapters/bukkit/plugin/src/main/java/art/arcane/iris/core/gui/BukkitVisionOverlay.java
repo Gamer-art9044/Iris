@@ -18,7 +18,6 @@
 
 package art.arcane.iris.core.gui;
 
-import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.render.RenderType;
@@ -28,7 +27,6 @@ import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.format.Form;
-import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.LivingEntity;
@@ -39,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -50,14 +49,16 @@ import static art.arcane.iris.util.common.data.registry.Attributes.MAX_HEALTH;
 
 public final class BukkitVisionOverlay implements GuiOverlay {
     private final Engine engine;
+    private final UUID openerId;
     private final AtomicBoolean nativeTeleportActive = new AtomicBoolean();
     private final AtomicBoolean playerRefreshQueued = new AtomicBoolean();
     private final AtomicLong teleportSequence = new AtomicLong();
     private final AtomicReference<VisionTeleportRequest> latestTeleport = new AtomicReference<>();
     private volatile List<GuiMarker> playerMarkers = List.of();
 
-    public BukkitVisionOverlay(Engine engine) {
+    public BukkitVisionOverlay(Engine engine, UUID openerId) {
         this.engine = engine;
+        this.openerId = openerId;
     }
 
     /**
@@ -177,67 +178,20 @@ public final class BukkitVisionOverlay implements GuiOverlay {
                 return;
             }
             List<Player> players = BukkitWorldBinding.players(target);
-            if (players.isEmpty()) {
+            Player player = selectPlayer(players);
+            if (player == null) {
                 finish(request);
                 return;
             }
-            Player player = players.get(0);
-            requestTeleportChunk(request, target, player, world);
-        });
-        if (!scheduled) {
-            finish(request);
-        }
-    }
-
-    private void requestTeleportChunk(
-            VisionTeleportRequest request,
-            IrisWorld target,
-            Player player,
-            World world
-    ) {
-        int blockX = request.blockX;
-        int blockZ = request.blockZ;
-        int chunkX = blockX >> 4;
-        int chunkZ = blockZ >> 4;
-        CompletableFuture<Chunk> requested;
-        try {
-            requested = WorldRuntimeControlService.get().requestChunkAsync(
-                    world,
-                    chunkX,
-                    chunkZ,
-                    true,
-                    true
-            );
-        } catch (Throwable failure) {
-            fail(request, target, world, failure);
-            return;
-        }
-        if (requested == null) {
-            fail(request, target, world, new IllegalStateException(
-                    "Vision destination chunk request returned no future."));
-            return;
-        }
-        requested.whenComplete((chunk, failure) -> {
-            if (!isCurrent(request, target)) {
-                finish(request);
-                return;
-            }
-            if (failure != null) {
-                fail(request, target, world, failure);
-                return;
-            }
-            if (chunk == null || chunk.getWorld() != world) {
-                fail(request, target, world, new IllegalStateException(
-                        "Vision destination chunk request returned no chunk."));
-                return;
-            }
-            boolean scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
-                if (!isCurrent(request, target)) {
-                    finish(request);
-                    return;
-                }
-                int yy = world.getHighestBlockYAt(blockX, blockZ) + 1;
-                Location destination = new Location(world, blockX, yy, blockZ);
+            int blockX = request.blockX;
+            int blockZ = request.blockZ;
+            try {
+                int blockY = engine.getMinHeight() + engine.getHeight(blockX, blockZ, false) + 2;
+                Location destination = new Location(
+                        world,
+                        blockX + 0.5D,
+                        blockY,
+                        blockZ + 0.5D);
                 if (!J.runEntity(player, () -> delegateTeleport(
                         request,
                         target,
@@ -247,12 +201,25 @@ public final class BukkitVisionOverlay implements GuiOverlay {
                     fail(request, target, world, new IllegalStateException(
                             "Failed to schedule the Vision teleport on the player entity."));
                 }
-            });
-            if (!scheduled) {
-                fail(request, target, world, new IllegalStateException(
-                        "Failed to schedule the Vision surface lookup on its owning region."));
+            } catch (Throwable failure) {
+                fail(request, target, world, failure);
             }
         });
+        if (!scheduled) {
+            finish(request);
+        }
+    }
+
+    private Player selectPlayer(List<Player> players) {
+        if (openerId == null) {
+            return players.isEmpty() ? null : players.get(0);
+        }
+        for (Player player : players) {
+            if (openerId.equals(player.getUniqueId())) {
+                return player;
+            }
+        }
+        return null;
     }
 
     private void delegateTeleport(

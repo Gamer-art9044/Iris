@@ -31,6 +31,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -63,7 +64,7 @@ public final class GuiHost {
         default void unregisterHotloadHook(Runnable onHotload) {
         }
 
-        default GuiOverlay overlayFor(Engine engine) {
+        default GuiOverlay overlayFor(Engine engine, UUID openerId) {
             return null;
         }
     }

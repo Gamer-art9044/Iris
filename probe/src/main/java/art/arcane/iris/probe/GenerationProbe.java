@@ -59,7 +59,6 @@ import java.util.stream.Stream;
 
 public final class GenerationProbe {
     private static final long SEED = 1337L;
-    private static final int SIGNATURE_SAMPLE_STEP = 8;
     private static final List<Throwable> REPORTED = Collections.synchronizedList(new ArrayList<>());
 
     private static final class InertPreservation implements PreservationRegistry {
@@ -127,7 +126,7 @@ public final class GenerationProbe {
     }
 
     record ProbeConfiguration(File packSource, String dimensionKey, int warmupChunks, int measuredChunks,
-                              int centerChunkX, int centerChunkZ) {
+                              int centerChunkX, int centerChunkZ, boolean multicore, boolean studio) {
         ProbeConfiguration {
             if (packSource == null) {
                 throw new IllegalArgumentException("Pack folder is required.");
@@ -144,8 +143,8 @@ public final class GenerationProbe {
         }
 
         static ProbeConfiguration parse(String[] args) {
-            if (args.length != 6) {
-                throw new IllegalArgumentException("Expected: <pack> <dimension> <warmupChunks> <measuredChunks> <centerChunkX> <centerChunkZ>");
+            if (args.length != 8) {
+                throw new IllegalArgumentException("Expected: <pack> <dimension> <warmupChunks> <measuredChunks> <centerChunkX> <centerChunkZ> <multicore> <studio>");
             }
             return new ProbeConfiguration(
                     new File(args[0]),
@@ -153,7 +152,9 @@ public final class GenerationProbe {
                     Integer.parseInt(args[2]),
                     Integer.parseInt(args[3]),
                     Integer.parseInt(args[4]),
-                    Integer.parseInt(args[5]));
+                    Integer.parseInt(args[5]),
+                    Boolean.parseBoolean(args[6]),
+                    Boolean.parseBoolean(args[7]));
         }
     }
 
@@ -189,18 +190,21 @@ public final class GenerationProbe {
                             TimingSummary measuredTimings, String signature) {
     }
 
-    record ProbeResult(String status, String dimensionKey, int warmupChunks, int measuredChunks,
+    record ProbeResult(String status, String dimensionKey, int warmupChunks, int measuredChunks, boolean multicore,
+                       boolean studio,
                        int successfulChunks, int failedChunks, long engineReadyNanos, long firstChunkNanos,
                        TimingSummary measuredTimings, String signature) {
         String machineLine() {
             double measuredSeconds = measuredTimings.totalNanos() / 1_000_000_000D;
             double chunksPerSecond = measuredSeconds == 0D ? 0D : measuredChunks / measuredSeconds;
             return String.format(Locale.ROOT,
-                    "IRIS_GENPROBE_RESULT version=1 status=%s dimension=%s warmup_chunks=%d measured_chunks=%d successful_chunks=%d failed_chunks=%d engine_ready_ms=%.3f first_chunk_ms=%.3f measured_median_ms=%.3f measured_p95_ms=%.3f measured_max_ms=%.3f measured_total_ms=%.3f measured_cps=%.3f signature=%s",
+                    "IRIS_GENPROBE_RESULT version=1 status=%s dimension=%s warmup_chunks=%d measured_chunks=%d multicore=%s studio=%s successful_chunks=%d failed_chunks=%d engine_ready_ms=%.3f first_chunk_ms=%.3f measured_median_ms=%.3f measured_p95_ms=%.3f measured_max_ms=%.3f measured_total_ms=%.3f measured_cps=%.3f signature=%s",
                     status,
                     dimensionKey,
                     warmupChunks,
                     measuredChunks,
+                    multicore,
+                    studio,
                     successfulChunks,
                     failedChunks,
                     nanosToMillis(engineReadyNanos),
@@ -239,6 +243,8 @@ public final class GenerationProbe {
                     configuration.dimensionKey(),
                     configuration.warmupChunks(),
                     configuration.measuredChunks(),
+                    configuration.multicore(),
+                    configuration.studio(),
                     0,
                     configuration.warmupChunks() + configuration.measuredChunks(),
                     0L,
@@ -285,6 +291,8 @@ public final class GenerationProbe {
             System.out.println("[genprobe] warmup chunks: " + configuration.warmupChunks());
             System.out.println("[genprobe] measured chunks: " + configuration.measuredChunks());
             System.out.println("[genprobe] center chunk: " + configuration.centerChunkX() + "," + configuration.centerChunkZ());
+            System.out.println("[genprobe] multicore: " + configuration.multicore());
+            System.out.println("[genprobe] studio: " + configuration.studio());
 
             long engineStart = System.nanoTime();
             data = IrisData.get(pack);
@@ -302,7 +310,11 @@ public final class GenerationProbe {
                     .maxHeight(dimension.getMaxHeight())
                     .build();
             EngineTarget target = new EngineTarget(world, dimension, data);
-            engine = new IrisEngine(target, IrisEngine.InitializationMode.RUNTIME);
+            engine = new IrisEngine(
+                    target,
+                    configuration.studio()
+                            ? IrisEngine.InitializationMode.STUDIO
+                            : IrisEngine.InitializationMode.RUNTIME);
             long engineReadyNanos = System.nanoTime() - engineStart;
 
             List<Throwable> initNoise = settleAndDrain();
@@ -311,7 +323,6 @@ public final class GenerationProbe {
                     + " seed=" + engine.getSeedManager().getSeed()
                     + " minY=" + engine.getMinHeight() + " maxY=" + engine.getMaxHeight()
                     + " timeMs=" + String.format(Locale.ROOT, "%.3f", nanosToMillis(engineReadyNanos)));
-
             GenerationResult generation = generate(engine, configuration);
             String status = generation.failedChunks() == 0 ? "PASS" : "FAIL";
             printGenerationFailures(generation);
@@ -320,6 +331,8 @@ public final class GenerationProbe {
                     configuration.dimensionKey(),
                     configuration.warmupChunks(),
                     configuration.measuredChunks(),
+                    configuration.multicore(),
+                    configuration.studio(),
                     generation.successfulChunks(),
                     generation.failedChunks(),
                     engineReadyNanos,
@@ -390,7 +403,12 @@ public final class GenerationProbe {
             Hunk<PlatformBiome> biomes = Hunk.newArrayHunk(16, height, 16);
             long started = System.nanoTime();
             try {
-                engine.generate(coordinate.x() << 4, coordinate.z() << 4, blocks, biomes, false);
+                engine.generate(
+                        coordinate.x() << 4,
+                        coordinate.z() << 4,
+                        blocks,
+                        biomes,
+                        configuration.multicore());
             } catch (Throwable e) {
                 failures.add(e);
             }
@@ -465,10 +483,9 @@ public final class GenerationProbe {
     private static void updateSignature(MessageDigest digest, ChunkCoordinate coordinate,
                                         Hunk<PlatformBlockState> blocks, Hunk<PlatformBiome> biomes, int height) {
         updateDigest(digest, coordinate.x() + "," + coordinate.z());
-        int verticalStep = Math.max(1, height / 16);
-        for (int x = 0; x < 16; x += SIGNATURE_SAMPLE_STEP) {
-            for (int z = 0; z < 16; z += SIGNATURE_SAMPLE_STEP) {
-                for (int y = 0; y < height; y += verticalStep) {
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                for (int y = 0; y < height; y++) {
                     PlatformBlockState state = blocks.get(x, y, z);
                     PlatformBiome biome = biomes.get(x, y, z);
                     updateDigest(digest, state == null ? "minecraft:air" : state.key());

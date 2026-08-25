@@ -20,13 +20,15 @@ final class ConfiguredRiverGrottoShape implements RiverCaveGrottoShape {
     private final CNG warpY;
     private final CNG warpZ;
     private final double warpStrength;
+    private final double boundaryVariation;
 
     ConfiguredRiverGrottoShape(
             long seed,
             IrisData data,
             IrisGeneratorStyle shapeStyle,
             IrisGeneratorStyle warpStyle,
-            double warpStrength
+            double warpStrength,
+            double boundaryVariation
     ) {
         IrisGeneratorStyle resolvedShape = shapeStyle == null
                 ? new IrisGeneratorStyle(NoiseStyle.FLAT)
@@ -39,6 +41,7 @@ final class ConfiguredRiverGrottoShape implements RiverCaveGrottoShape {
         warpY = resolvedWarp.createNoCache(new RNG(seed ^ WARP_Y_SALT), data);
         warpZ = resolvedWarp.createNoCache(new RNG(seed ^ WARP_Z_SALT), data);
         this.warpStrength = Math.max(0D, warpStrength);
+        this.boundaryVariation = Math.max(0D, Math.min(0.75D, boundaryVariation));
     }
 
     @Override
@@ -60,7 +63,7 @@ final class ConfiguredRiverGrottoShape implements RiverCaveGrottoShape {
         double normalized = (warpedX * warpedX / (horizontalRadius * horizontalRadius))
                 + (warpedY * warpedY / (verticalRadius * verticalRadius))
                 + (warpedZ * warpedZ / (horizontalRadius * horizontalRadius));
-        double boundary = shape.fitDouble(-0.2D, 0.2D, worldX, worldY, worldZ);
+        double boundary = shape.fitDouble(-boundaryVariation, boundaryVariation, worldX, worldY, worldZ);
         return normalized <= 1D + boundary;
     }
 }

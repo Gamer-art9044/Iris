@@ -24,6 +24,11 @@ public class IrisRiverTerrain {
     @Desc("The wet-bed depth below the local water surface, or dry-channel depth below natural terrain, in blocks.")
     private IrisStyledRange depth = range(2D, 7D, NoiseStyle.IRIS, 768D);
 
+    @MinNumber(0)
+    @MaxNumber(64)
+    @Desc("The radius added to every channel after worm, regional, local, and stream-order shaping.")
+    private double channelRadiusBonus = 0D;
+
     @MinNumber(1)
     @MaxNumber(2048)
     @Desc("The final wet-channel width cap after region, biome, and stream-order scaling.")
@@ -64,7 +69,7 @@ public class IrisRiverTerrain {
 
     @MinNumber(0)
     @MaxNumber(16)
-    @Desc("The extra lateral tunnel-mouth blend carved on each side where a surface river enters or exits solid terrain.")
+    @Desc("The longitudinal transition length and maximum lateral and roof flare where a surface river enters or exits solid terrain.")
     private double tunnelMouthBlend = 2D;
 
     @Desc("Noise modulating the submerged floor of river tunnels.")

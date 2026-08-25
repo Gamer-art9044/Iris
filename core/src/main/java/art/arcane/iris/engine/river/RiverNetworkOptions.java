@@ -29,6 +29,7 @@ public record RiverNetworkOptions(
         double channelWidth,
         double bankWidth,
         double depth,
+        double channelRadiusBonus,
         double maxChannelWidth,
         double maxBankWidth,
         double maxDepth,
@@ -60,6 +61,7 @@ public record RiverNetworkOptions(
         requirePositive(channelWidth, "channelWidth");
         requireFiniteNonNegative(bankWidth, "bankWidth");
         requirePositive(depth, "depth");
+        requireFiniteNonNegative(channelRadiusBonus, "channelRadiusBonus");
         requirePositive(maxChannelWidth, "maxChannelWidth");
         requireFiniteNonNegative(maxBankWidth, "maxBankWidth");
         requirePositive(maxDepth, "maxDepth");
@@ -215,6 +217,7 @@ public record RiverNetworkOptions(
         private double channelWidth;
         private double bankWidth;
         private double depth;
+        private double channelRadiusBonus;
         private double maxChannelWidth;
         private double maxBankWidth;
         private double maxDepth;
@@ -269,6 +272,7 @@ public record RiverNetworkOptions(
                     1D,
                     512D,
                     128D,
+                    0.3D,
                     0D,
                     0D,
                     0D,
@@ -397,6 +401,11 @@ public record RiverNetworkOptions(
             return this;
         }
 
+        public Builder channelRadiusBonus(double value) {
+            channelRadiusBonus = value;
+            return this;
+        }
+
         public Builder maxChannelWidth(double value) {
             maxChannelWidth = value;
             return this;
@@ -461,6 +470,7 @@ public record RiverNetworkOptions(
                     channelWidth,
                     bankWidth,
                     depth,
+                    channelRadiusBonus,
                     maxChannelWidth,
                     maxBankWidth,
                     maxDepth,

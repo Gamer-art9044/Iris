@@ -9,6 +9,7 @@ import art.arcane.iris.core.lifecycle.WorldReplacementBootstrap;
 import art.arcane.iris.core.lifecycle.WorldReplacementBootstrapMarker;
 import art.arcane.iris.core.pack.DefaultPackBootstrapProvisioner;
 import art.arcane.iris.core.pack.DefaultPackBootstrapProvisioner.ProvisionResult;
+import art.arcane.iris.util.common.misc.SlimJar;
 import io.papermc.paper.plugin.bootstrap.BootstrapContext;
 import io.papermc.paper.plugin.bootstrap.PluginBootstrap;
 import io.papermc.paper.plugin.lifecycle.event.LifecycleEvent;
@@ -26,6 +27,7 @@ public final class IrisBootstrap implements PluginBootstrap {
     public void bootstrap(BootstrapContext context) {
         WorldReplacementBootstrapMarker.markBootstrapped();
         try {
+            loadRuntimeLibraries(context);
             BukkitStartupPaths startupPaths = BukkitStartupPaths.resolveCurrent();
             reconcilePendingWorldReplacements(context, startupPaths);
             quarantineWorthlessHusks(startupPaths, message -> context.getLogger().warn(message));
@@ -36,6 +38,27 @@ public final class IrisBootstrap implements PluginBootstrap {
         } catch (Throwable failure) {
             armStartupFailure(context, failure);
         }
+    }
+
+    private static void loadRuntimeLibraries(BootstrapContext context) {
+        SlimJar.loadBootstrap(
+                context.getDataDirectory().resolve("cache").resolve("libraries"),
+                new SlimJar.BootstrapLogger() {
+                    @Override
+                    public void info(String message) {
+                        context.getLogger().info(message);
+                    }
+
+                    @Override
+                    public void error(String message) {
+                        context.getLogger().error(message);
+                    }
+
+                    @Override
+                    public void debug(String message) {
+                        context.getLogger().debug(message);
+                    }
+                });
     }
 
     private static void reconcilePendingWorldReplacements(

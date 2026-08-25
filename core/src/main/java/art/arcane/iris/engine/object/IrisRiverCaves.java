@@ -97,4 +97,7 @@ public class IrisRiverCaves {
 
     @Desc("The policy for fluid already present in a candidate contained cave body.")
     private IrisRiverExistingFluidPolicy existingFluidPolicy = IrisRiverExistingFluidPolicy.REJECT;
+
+    @Desc("Sparse, independently filled cave-floor pools generated at deep river-network anchors.")
+    private IrisRiverDeepPools deepPools = new IrisRiverDeepPools();
 }

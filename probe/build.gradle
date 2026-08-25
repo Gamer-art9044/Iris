@@ -55,6 +55,8 @@ Provider<String> probeWarmupChunks = providers.gradleProperty('probeWarmupChunks
 Provider<String> probeMeasuredChunks = providers.gradleProperty('probeMeasuredChunks').orElse('1024')
 Provider<String> probeCenterChunkX = providers.gradleProperty('probeCenterChunkX').orElse('2048')
 Provider<String> probeCenterChunkZ = providers.gradleProperty('probeCenterChunkZ').orElse('2048')
+Provider<String> probeMulticore = providers.gradleProperty('probeMulticore').orElse('false')
+Provider<String> probeStudio = providers.gradleProperty('probeStudio').orElse('false')
 
 tasks.register('genProbe', JavaExec) {
     group = 'verification'
@@ -76,7 +78,9 @@ tasks.register('genProbe', JavaExec) {
             probeWarmupChunks.get(),
             probeMeasuredChunks.get(),
             probeCenterChunkX.get(),
-            probeCenterChunkZ.get())
+            probeCenterChunkZ.get(),
+            probeMulticore.get(),
+            probeStudio.get())
     }
 }
 

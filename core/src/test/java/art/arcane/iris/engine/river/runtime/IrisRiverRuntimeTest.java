@@ -139,6 +139,18 @@ public class IrisRiverRuntimeTest {
     }
 
     @Test
+    public void footprintPresenceQueryDistinguishesEmptyAndRoutedAreas() {
+        IrisRiverNetwork emptyConfiguration = configuration(false);
+        emptyConfiguration.getTopology().getSource().setChance(0D);
+
+        try (IrisRiverRuntime empty = runtime(emptyConfiguration);
+             IrisRiverRuntime routed = runtime(configuration(false))) {
+            assertFalse(empty.hasRiverFootprint(-128, -128, 128, 128));
+            assertTrue(routed.hasRiverFootprint(-128, -128, 128, 128));
+        }
+    }
+
+    @Test
     public void settingsAtSkipsNaturalBiomeWhenBiomeOverridesAreUnreachable() {
         IrisRiverNetwork configuration = configuration(false);
         IrisRegion region = new IrisRegion().setRiverOverride(
@@ -236,6 +248,7 @@ public class IrisRiverRuntimeTest {
                 configuration,
                 mock(IrisData.class),
                 63,
+                63,
                 false,
                 true,
                 true,
@@ -289,6 +302,7 @@ public class IrisRiverRuntimeTest {
                 4829759234L,
                 configuration,
                 mock(IrisData.class),
+                63,
                 63,
                 true,
                 true,
@@ -454,6 +468,37 @@ public class IrisRiverRuntimeTest {
     }
 
     @Test
+    public void deepPoolReachGateIsIndependentSparseAndReachLimited() {
+        IrisRiverNetwork configuration = configuration(false);
+        configuration.getCaves().getDeepPools()
+                .setEnabled(true)
+                .setMaximumPerReach(1);
+        configuration.getCaves().getDeepPools().getReach()
+                .setChance(1D)
+                .setInfluence(0D)
+                .setStyle(flat());
+
+        try (IrisRiverRuntime runtime = runtime(configuration)) {
+            List<RiverAnchor> anchors = runtime.candidateAnchors(0, 0, 256, 256, 16D, 882L);
+            Map<RiverEdgeId, Integer> acceptedPerReach = new HashMap<>();
+            for (RiverAnchor anchor : anchors) {
+                if (runtime.acceptsDeepPoolAnchor(anchor)) {
+                    acceptedPerReach.merge(anchor.reachId(), 1, Integer::sum);
+                }
+            }
+
+            assertFalse(acceptedPerReach.isEmpty());
+            for (int accepted : acceptedPerReach.values()) {
+                assertEquals(1, accepted);
+            }
+            configuration.getCaves().getDeepPools().setEnabled(false);
+            for (RiverAnchor anchor : anchors) {
+                assertFalse(runtime.acceptsDeepPoolAnchor(anchor));
+            }
+        }
+    }
+
+    @Test
     public void finalPolylineSupercoverRejectsOneBlockedColumnMissedByWidthSpacing() {
         IrisRiverNetwork configuration = configuration(false);
         IrisBiome land = new IrisBiome().setInferredType(InferredType.LAND);
@@ -523,6 +568,7 @@ public class IrisRiverRuntimeTest {
                 4829759234L,
                 configuration,
                 mock(IrisData.class),
+                63,
                 63,
                 false,
                 true,
@@ -693,15 +739,26 @@ public class IrisRiverRuntimeTest {
     }
 
     @Test
-    public void cliffTransitionClassifiesOpenAndSolidColumnsIndependently() {
-        IrisRiverNetwork configuration = configuration(false);
-        configuration.getTerrain()
+    public void cliffTransitionCreatesAFlaredTunnelMouth() {
+        IrisRiverNetwork sealedConfiguration = configuration(false);
+        sealedConfiguration.getTerrain()
                 .setMaxIncision(10)
-                .setTunnelMouthBlend(2D);
+                .setTunnelMouthBlend(0D);
+        IrisRiverNetwork mouthConfiguration = configuration(false);
+        mouthConfiguration.getTerrain()
+                .setMaxIncision(10)
+                .setTunnelMouthBlend(6D);
         ProceduralStream<Double> height = ProceduralStream.ofDouble((x, z) -> x < 0D ? 50D : 100D);
 
-        try (IrisRiverRuntime runtime = runtime(
-                configuration,
+        try (IrisRiverRuntime sealed = runtime(
+                sealedConfiguration,
+                height,
+                constantLandBiome(),
+                new IrisRegion(),
+                true,
+                false
+        ); IrisRiverRuntime mouth = runtime(
+                mouthConfiguration,
                 height,
                 constantLandBiome(),
                 new IrisRegion(),
@@ -710,14 +767,16 @@ public class IrisRiverRuntimeTest {
         )) {
             boolean transitionFound = false;
             for (int z = -2048; z <= 2048 && !transitionFound; z++) {
-                IrisRiverSurfaceSample open = runtime.sample(-1, z);
-                IrisRiverSurfaceSample solid = runtime.sample(0, z);
-                IrisRiverTunnelSample tunnel = runtime.sampleTunnel(0, z);
+                IrisRiverSurfaceSample open = mouth.sample(-1, z);
+                IrisRiverSurfaceSample solid = mouth.sample(0, z);
+                IrisRiverTunnelSample tunnel = mouth.sampleTunnel(0, z);
+                IrisRiverTunnelSample unflared = sealed.sampleTunnel(0, z);
                 if (open.river().present()
                         && solid.river().present()
                         && open.river().reachId().equals(solid.river().reachId())
                         && open.surfaceFluid()
-                        && tunnel != null) {
+                        && tunnel != null
+                        && (unflared == null || tunnel.ceilingY() > unflared.ceilingY())) {
                     assertFalse(open.subterranean());
                     assertTrue(solid.subterranean());
                     transitionFound = true;
@@ -814,6 +873,19 @@ public class IrisRiverRuntimeTest {
         }
     }
 
+    @Test
+    public void fixedRiverHeightIsIndependentFromNaturalOceanHeight() {
+        IrisRiverNetwork configuration = configuration(false);
+        configuration.getWater()
+                .setMode(IrisRiverWaterMode.FIXED)
+                .setFluidHeight(-48);
+
+        try (IrisRiverRuntime runtime = runtimeWithFluidHeights(configuration, -48, 63)) {
+            assertEquals(-48D, runtime.waterSurface(null, 0D, false), 0D);
+            assertEquals(63D, runtime.waterSurface(null, 0D, true), 0D);
+        }
+    }
+
     private static IrisRiverRuntime runtime(IrisRiverNetwork configuration) {
         IrisBiome land = new IrisBiome().setInferredType(InferredType.LAND);
         IrisRegion region = new IrisRegion();
@@ -898,6 +970,55 @@ public class IrisRiverRuntimeTest {
             boolean blockingRoutingPossible,
             boolean biomeRiverOverridesPossible
     ) {
+        return runtime(
+                configuration,
+                height,
+                biome,
+                region,
+                boreMantleActive,
+                caveHydrologyActive,
+                blockingRoutingPossible,
+                biomeRiverOverridesPossible,
+                63,
+                63
+        );
+    }
+
+    private static IrisRiverRuntime runtimeWithFluidHeights(
+            IrisRiverNetwork configuration,
+            int riverFluidHeight,
+            int dimensionFluidHeight
+    ) {
+        IrisBiome biome = new IrisBiome().setInferredType(InferredType.LAND);
+        return runtime(
+                configuration,
+                constantHeight(80D),
+                ProceduralStream.of(
+                        (x, z) -> biome,
+                        Interpolated.of(value -> 0D, value -> biome)
+                ),
+                new IrisRegion(),
+                false,
+                true,
+                true,
+                true,
+                riverFluidHeight,
+                dimensionFluidHeight
+        );
+    }
+
+    private static IrisRiverRuntime runtime(
+            IrisRiverNetwork configuration,
+            ProceduralStream<Double> height,
+            ProceduralStream<IrisBiome> biome,
+            IrisRegion region,
+            boolean boreMantleActive,
+            boolean caveHydrologyActive,
+            boolean blockingRoutingPossible,
+            boolean biomeRiverOverridesPossible,
+            int riverFluidHeight,
+            int dimensionFluidHeight
+    ) {
         ProceduralStream<Double> slope = ProceduralStream.ofDouble((x, z) -> 0.025D);
         ProceduralStream<Boolean> oceans = ProceduralStream.of(
                 (x, z) -> height.getDouble(x, z) < 62D,
@@ -911,7 +1032,8 @@ public class IrisRiverRuntimeTest {
                 4829759234L,
                 configuration,
                 mock(IrisData.class),
-                63,
+                riverFluidHeight,
+                dimensionFluidHeight,
                 boreMantleActive,
                 caveHydrologyActive,
                 blockingRoutingPossible,

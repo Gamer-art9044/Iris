@@ -39,7 +39,6 @@ import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KSet;
-import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.misc.ServerProperties;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
@@ -90,6 +89,8 @@ public class ServerConfigurator {
     private static final Object DATAPACK_INSTALL_LOCK = new Object();
     private static final String CODE_WORKSPACE_SUFFIX = ".code-workspace";
     private static final String COMPILER_INPUT_FINGERPRINT_CACHE = "datapack-compiler-input-fingerprint";
+    static final String POST_COMPILE_RESTART_WARNING = "Iris installed updated datapack registry entries; "
+            + "restart the server before creating worlds or opening Studios.";
     private static final int FINGERPRINT_BUFFER_BYTES = 64 * 1024;
     private static volatile boolean loadedDatapackRuntimeReady;
     private static volatile String loadedDatapackCompilerInputFingerprint = "";
@@ -419,13 +420,18 @@ public class ServerConfigurator {
                     && !reusableRuntimeFingerprint(
                             loadedDatapackCompilerInputFingerprint,
                             current);
+            boolean loadedRegistryRestartRequired = fullInstall
+                    && loadedCompilerInputsChanged
+                    && currentRegistryRequiresRestart();
             if (!current.isEmpty() && current.equals(cached)) {
                 IrisLogging.debug("Data packs unchanged, skipping install.");
-                DatapackInstallResult result = fullInstall && loadedCompilerInputsChanged
+                DatapackInstallResult result = loadedRegistryRestartRequired
                         ? DatapackInstallResult.restartRequiredResult()
                         : resultForUnchangedFingerprint(fullInstall, reapply);
                 if (result.restartRequired()) {
                     requireDatapackRestart();
+                } else if (result.succeeded()) {
+                    loadedDatapackCompilerInputFingerprint = current;
                 }
                 reportTiming(timingConsumer, "datapack_install_if_changed_total", totalStart);
                 return result;
@@ -435,7 +441,7 @@ public class ServerConfigurator {
                     resolveDataFixer(),
                     fullInstall,
                     reapply);
-            if (fullInstall && loadedCompilerInputsChanged && result.succeeded()) {
+            if (loadedRegistryRestartRequired && result.succeeded()) {
                 result = DatapackInstallResult.restartRequiredResult();
             }
             if (result.restartRequired()) {
@@ -444,6 +450,7 @@ public class ServerConfigurator {
             reportTiming(timingConsumer, "datapack_compile_publish", compileStart);
             if (result.succeeded() && !result.restartRequired()) {
                 writeCompilerInputFingerprintCache(cacheFile.toPath(), current);
+                loadedDatapackCompilerInputFingerprint = current;
             }
             reportTiming(timingConsumer, "datapack_install_if_changed_total", totalStart);
             return result;
@@ -454,6 +461,22 @@ public class ServerConfigurator {
         return IrisDatapackCompiler.collectPackRoots(
                 IrisPlatforms.get().dataFolder().toPath(),
                 IrisWorldStorage.levelRoot().toPath());
+    }
+
+    private static boolean currentRegistryRequiresRestart() {
+        try {
+            Map<String, String> currentRequirements = IrisDatapackCompiler.computeRegistryRequirements(
+                    collectCompilerPackRoots(),
+                    resolveDataFixer());
+            return runtimeRequiresRegistryRestart(
+                    loadedDatapackRegistryRequirements,
+                    currentRequirements);
+        } catch (IOException | RuntimeException exception) {
+            IrisLogging.reportError(
+                    "Unable to compare loaded Iris datapack registry requirements.",
+                    exception);
+            return true;
+        }
     }
 
     private static List<IrisGeneratorBinding> collectConfiguredLevelStemBindings() throws IOException {
@@ -543,6 +566,19 @@ public class ServerConfigurator {
             }
         }
         return true;
+    }
+
+    static boolean runtimeRequiresRegistryRestart(
+            Map<String, String> loadedRequirements,
+            Map<String, String> currentRequirements
+    ) {
+        if (currentRequirements == null) {
+            return true;
+        }
+        if (currentRequirements.isEmpty()) {
+            return false;
+        }
+        return !loadedRegistrySatisfies(loadedRequirements, currentRequirements);
     }
 
     static boolean reusableRuntimeFingerprint(String loadedFingerprint, String currentFingerprint) {
@@ -961,31 +997,29 @@ public class ServerConfigurator {
 
     private static boolean verifyDataPacksPost() {
         try (Stream<IrisData> stream = allPacks()) {
-            boolean bad = stream
-                    .map(data -> {
-                        IrisLogging.debug("Checking Pack: " + data.getDataFolder().getPath());
-                        ResourceLoader<IrisDimension> loader = data.getDimensionLoader();
-                        return loader.loadAll(loader.getPossibleKeys())
-                                .stream()
-                                .filter(Objects::nonNull)
-                                .map(ServerConfigurator::verifyDataPackInstalled)
-                                .toList()
-                                .contains(false);
-                    })
-                    .toList()
-                    .contains(true);
-            if (!bad) {
-                return false;
-            }
+            return verifyDataPacksPost(stream);
         }
+    }
 
-
+    static boolean verifyDataPacksPost(Stream<IrisData> packs) {
+        boolean bad = Objects.requireNonNull(packs, "Iris packs")
+                .map(data -> {
+                    IrisLogging.debug("Checking Pack: " + data.getDataFolder().getPath());
+                    ResourceLoader<IrisDimension> loader = data.getDimensionLoader();
+                    return loader.loadAll(loader.getPossibleKeys())
+                            .stream()
+                            .filter(Objects::nonNull)
+                            .map(dimension -> verifyDataPackInstalled(dimension, false))
+                            .toList()
+                            .contains(false);
+                })
+                .toList()
+                .contains(true);
+        if (!bad) {
+            return false;
+        }
         if (INMS.get().supportsDataPacks()) {
-            // Three sentences, no rules: a separator carries the record's severity too, so a box drawn
-            // out of equals signs became three more [SEVERE] lines saying nothing.
-            IrisLogging.error(C.ITALIC + "You need to restart your server to properly generate custom biomes.");
-            IrisLogging.error(C.ITALIC + "By continuing, Iris will use backup biomes in place of the custom biomes.");
-            IrisLogging.error(C.UNDERLINE + "Restart the server before generating.");
+            IrisLogging.warn(POST_COMPILE_RESTART_WARNING);
 
             for (Player i : Bukkit.getOnlinePlayers()) {
                 if (i.isOp() || i.hasPermission("iris.all")) {
@@ -1054,6 +1088,10 @@ public class ServerConfigurator {
     }
 
     public static boolean verifyDataPackInstalled(IrisDimension dimension) {
+        return verifyDataPackInstalled(dimension, true);
+    }
+
+    private static boolean verifyDataPackInstalled(IrisDimension dimension, boolean reportRuntimeFailure) {
         KSet<String> keys = new KSet<>();
         boolean warn = false;
 
@@ -1082,17 +1120,21 @@ public class ServerConfigurator {
             Object o = INMS.get().getCustomBiomeBaseFor(i);
 
             if (o == null) {
-                IrisLogging.warn("The Biome " + i + " is not registered on the server.");
+                if (reportRuntimeFailure) {
+                    IrisLogging.warn("The Biome " + i + " is not registered on the server.");
+                }
                 warn = true;
             }
         }
 
         if (INMS.get().missingDimensionTypes(dimension.getDimensionTypeKey())) {
-            IrisLogging.warn("The Dimension Type for " + dimension.getLoadFile() + " is not registered on the server.");
+            if (reportRuntimeFailure) {
+                IrisLogging.warn("The Dimension Type for " + dimension.getLoadFile() + " is not registered on the server.");
+            }
             warn = true;
         }
 
-        if (warn) {
+        if (warn && reportRuntimeFailure) {
             IrisLogging.error("The Pack " + key + " is INCAPABLE of generating custom biomes");
             IrisLogging.error("If not done automatically, restart your server before generating with this pack!");
         }

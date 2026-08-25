@@ -69,10 +69,26 @@ public class StudioOpenCoordinatorOpenKindTest {
                         null);
 
         assertEquals(StudioOpenCoordinator.StudioOpenKind.JIGSAW, request.openKind());
+        assertTrue(request.requestedAtNanos() > 0L);
     }
 
     @Test
-    public void activeStudioTeleportIsSerializedAndBoundedBeforeNativeDelegation() throws Exception {
+    public void nativeTeleportWaitsForCompletionWithoutAnArrivalDeadline() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"))
+                .replace("\r\n", "\n");
+        int methodStart = source.indexOf("private void executeOpen(");
+        int delegation = source.indexOf("WorldRuntimeControlService.get().teleportInMode(", methodStart);
+        int completion = source.indexOf("nativeTeleportFuture.get();", delegation);
+
+        assertTrue(delegation >= 0);
+        assertTrue(completion > delegation);
+        assertFalse(source.substring(methodStart, completion).contains("orTimeout("));
+        assertFalse(source.substring(methodStart, completion).contains("deadlineNanos"));
+    }
+
+    @Test
+    public void activeStudioTeleportIsSerializedWithoutAnArrivalDeadline() throws Exception {
         String coordinator = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"))
                 .replace("\r\n", "\n");
@@ -89,28 +105,22 @@ public class StudioOpenCoordinatorOpenKindTest {
         String serviceMethod = service.substring(serviceStart, serviceEnd);
         int transitionAdmission = serviceMethod.indexOf("studioTransitions.submit(() ->");
         int projectCapture = serviceMethod.indexOf("IrisProject project = activeProject");
-        int publicDeadline = serviceMethod.indexOf(
-                "transition.orTimeout(STUDIO_PLAYER_TELEPORT_TIMEOUT_SECONDS");
-        int admissionClose = serviceMethod.indexOf(
-                "transition.whenComplete((ignored, failure) -> admission.set(false))");
-        int nativeClaim = coordinatorMethod.indexOf(
-                "activeAdmission.compareAndSet(true, false)");
         int nativeDelegation = coordinatorMethod.indexOf(
                 "WorldRuntimeControlService.get().teleportInMode(player, entry, GameMode.SPECTATOR)");
 
         assertTrue(transitionAdmission >= 0);
         assertTrue(projectCapture > transitionAdmission);
-        assertTrue(publicDeadline > projectCapture);
-        assertTrue(admissionClose > publicDeadline);
-        assertTrue(serviceMethod.contains("deadlineNanos"));
+        assertFalse(serviceMethod.contains("orTimeout("));
+        assertFalse(serviceMethod.contains("deadlineNanos"));
         assertTrue(coordinatorMethod.contains(
                 "WorldRuntimeControlService.get().resolveEntryAnchor(world, provider)"));
         assertTrue(coordinatorMethod.contains(
                 "project.getActiveOpenKind() == StudioOpenKind.STANDARD"));
         assertFalse(coordinatorMethod.contains("requestChunkAsync("));
         assertFalse(coordinatorMethod.contains("getHighestBlockYAt("));
-        assertTrue(nativeClaim >= 0);
-        assertTrue(nativeDelegation > nativeClaim);
+        assertTrue(nativeDelegation >= 0);
+        assertFalse(coordinatorMethod.contains("orTimeout("));
+        assertFalse(coordinatorMethod.contains("deadlineNanos"));
     }
 
     @Test
@@ -161,6 +171,7 @@ public class StudioOpenCoordinatorOpenKindTest {
                 "prepare_generator",
                 "resolve_entry_anchor",
                 "prepare_structure_rings",
+                "prepare_generation_caches",
                 "teleport_standard_entry",
                 "finalize_open")) {
             int current = source.indexOf("\"" + phase + "\"", previous + 1);
@@ -174,11 +185,13 @@ public class StudioOpenCoordinatorOpenKindTest {
     public void structureStateCompletesBeforeImmediateNativeTeleport() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
-        int completionCall = source.indexOf("endStudioEntryBootstrap(world, provider)");
-        int teleport = source.indexOf(
-                "WorldRuntimeControlService.get().teleportInMode(", completionCall);
+        int executeOpen = source.indexOf("private void executeOpen(");
+        int completionCall = source.indexOf("endStudioEntryBootstrap(entryWorld, entryProvider)", executeOpen);
+        int completionAwait = source.indexOf("entryBootstrap.get(", completionCall);
+        int cacheAwait = source.indexOf("irisEngine.awaitGenerationCacheWarm()", completionAwait);
+        int teleportStart = source.indexOf("WorldRuntimeControlService.get().teleportInMode(", cacheAwait);
         int finalizeOpen = source.indexOf(
-                "updateStage(request, \"finalize_open\", 1.00D)", teleport);
+                "updateStage(request, \"finalize_open\", 1.00D)", teleportStart);
         int futureComplete = source.indexOf(
                 "future.complete(new StudioOpenResult(world, entryLocation))", finalizeOpen);
         int methodStart = source.indexOf(
@@ -191,14 +204,15 @@ public class StudioOpenCoordinatorOpenKindTest {
         int gateRelease = method.indexOf("bukkitGenerator::endStudioEntryBootstrap");
 
         assertTrue(completionCall >= 0);
-        assertTrue(teleport > completionCall);
-        assertFalse(source.contains("preparedEntryChunks"));
-        assertTrue(finalizeOpen > teleport);
+        assertTrue(completionAwait > completionCall);
+        assertTrue(cacheAwait > completionAwait);
+        assertTrue(teleportStart > cacheAwait);
+        assertTrue(finalizeOpen > teleportStart);
         assertTrue(futureComplete > finalizeOpen);
+        assertFalse(source.contains("requestChunkAsync("));
         assertTrue(scheduled >= 0);
         assertTrue(claim > scheduled);
         assertTrue(activation > claim);
-        assertTrue(gateRelease > activation);
         int ringCompletion = method.indexOf("thenCompose(nativeActivation -> nativeActivation)");
         assertTrue(ringCompletion > activation);
         assertTrue(gateRelease > ringCompletion);

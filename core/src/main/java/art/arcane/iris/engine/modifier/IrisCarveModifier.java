@@ -117,7 +117,9 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                     columnMasks,
                     upperSurfaceHeights,
                     worldHeightSpan,
-                    caveLavaHeight
+                    caveLavaHeight,
+                    chunkBlockX,
+                    chunkBlockZ
             );
             CarveResolver carveResolver = new CarveResolver(resolutionContext);
             mantleChunk.iterate(MatterCavern.class, (xx, yy, zz, cavern) -> carveResolver.apply(
@@ -166,8 +168,6 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 });
 
                 for (int columnIndex = 0; columnIndex < 256; columnIndex++) {
-                    int localX = PowerOfTwoCoordinates.unpackLocal16X(columnIndex);
-                    int localZ = columnIndex & 15;
                     processColumnFromMask(
                             output,
                             mantleChunk,
@@ -178,8 +178,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                             z,
                             resolverState,
                             caveBiomeCache,
-                            customBiomeCache,
-                            context.getFluid().get(localX, localZ)
+                            customBiomeCache
                     );
                 }
 
@@ -279,7 +278,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
         }
         return switch (hydrology.action()) {
             case WET_SOURCE -> fluid;
-            case FALLING_WATER -> fallingFluidState(fluid);
+            case FALLING_FLUID -> fallingFluidState(fluid);
             case DRY_AIR -> air;
             case SEAL_GUARD -> normalizeWaterlogging(current, null);
         };
@@ -369,9 +368,16 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 return;
             }
 
-            PlatformBlockState fluid = isFluidIntent(cavern)
-                    ? context.chunkContext().getFluid().get(localX, localZ)
-                    : null;
+            PlatformBlockState fluid = null;
+            if (isFluidIntent(cavern)) {
+                fluid = hydrology == null
+                        ? context.chunkContext().getFluid().get(localX, localZ)
+                        : getComplex().resolveRiverCaveFluid(
+                                hydrology.fluidKind(),
+                                context.chunkBlockX() + localX,
+                                context.chunkBlockZ() + localZ
+                        );
+            }
             if (hydrology != null) {
                 context.output().setRaw(localX, y, localZ,
                         resolveHydrologyState(hydrology, current, fluid, AIR));
@@ -395,7 +401,9 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             CarveColumnMask[] columnMasks,
             int[] upperSurfaceHeights,
             int worldHeightSpan,
-            int caveLavaHeight
+            int caveLavaHeight,
+            int chunkBlockX,
+            int chunkBlockZ
     ) {
     }
 
@@ -572,8 +580,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             int chunkZ,
             IrisDimensionCarvingResolver.State resolverState,
             Long2ObjectOpenHashMap<IrisBiome> caveBiomeCache,
-            Map<String, IrisBiome> customBiomeCache,
-            PlatformBlockState columnFluid
+            Map<String, IrisBiome> customBiomeCache
     ) {
         if (columnMask == null || columnMask.isEmpty()) {
             return;
@@ -601,7 +608,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 } else {
                     if (zone.isValid(getEngine())) {
                         processZone(output, mc, mantle, zone, rx, rz, worldX, worldZ, resolverState,
-                                caveBiomeCache, customBiomeCache, columnFluid);
+                                caveBiomeCache, customBiomeCache);
                     }
                     zone = new CaveZone();
                     zone.setFloor(y);
@@ -614,7 +621,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
 
         if (zone.isValid(getEngine())) {
             processZone(output, mc, mantle, zone, rx, rz, worldX, worldZ, resolverState,
-                    caveBiomeCache, customBiomeCache, columnFluid);
+                    caveBiomeCache, customBiomeCache);
         }
     }
 
@@ -767,8 +774,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                              CaveZone zone, int rx, int rz, int xx, int zz,
                              IrisDimensionCarvingResolver.State resolverState,
                              Long2ObjectOpenHashMap<IrisBiome> caveBiomeCache,
-                             Map<String, IrisBiome> customBiomeCache,
-                             PlatformBlockState columnFluid) {
+                             Map<String, IrisBiome> customBiomeCache) {
         int maxY = output.getHeight();
 
         if (zone.ceiling + 1 < maxY && B.isDecorant(output.getRaw(rx, zone.ceiling + 1, rz))) {
@@ -793,7 +799,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
         IrisBiome floorBiome = resolveCaveBoundaryBiome(mc, rx, zone.floor, rz, xx, zz, resolverState, caveBiomeCache, customBiomeCache);
         IrisBiome ceilingBiome = resolveCaveBoundaryBiome(mc, rx, zone.ceiling, rz, xx, zz, resolverState, caveBiomeCache, customBiomeCache);
         if (floorBiome == null && ceilingBiome == null) {
-            normalizeCaveZoneWaterlogging(output, mc, zone, rx, rz, columnFluid);
+            normalizeCaveZoneWaterlogging(output, mc, zone, rx, rz, xx, zz);
             return;
         }
 
@@ -865,7 +871,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             decorant.getCeilingDecorator().decorate(rx, rz, xx, xx, xx, zz, zz, zz, output, ceilingBiome, InferredType.CAVE, zone.getCeiling(), zone.airThickness());
         }
 
-        normalizeCaveZoneWaterlogging(output, mc, zone, rx, rz, columnFluid);
+        normalizeCaveZoneWaterlogging(output, mc, zone, rx, rz, xx, zz);
     }
 
     private void normalizeCaveZoneWaterlogging(
@@ -874,7 +880,8 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             CaveZone zone,
             int localX,
             int localZ,
-            PlatformBlockState columnFluid
+            int worldX,
+            int worldZ
     ) {
         int minimumY = Math.max(0, zone.floor - 1);
         int maximumY = Math.min(output.getHeight() - 1, zone.ceiling + 1);
@@ -887,6 +894,11 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             MatterCavern baseline = dataIfPresent(
                     mantleChunk, localX, y, localZ, MatterCavern.class);
             PlatformBlockState current = output.getRaw(localX, y, localZ);
+            PlatformBlockState columnFluid = getComplex().resolveRiverCaveFluid(
+                    hydrology.fluidKind(),
+                    worldX,
+                    worldZ
+            );
             PlatformBlockState normalized = normalizeHydrologyWaterlogging(
                     current,
                     baseline,

@@ -24,7 +24,9 @@ public class IrisRiverConfigurationTest {
 
         assertNotNull(dimension.getRivers());
         assertFalse(dimension.getRivers().isEnabled());
-        assertEquals(IrisRiverWaterMode.SEA_LEVEL, dimension.getRivers().getWater().getMode());
+        assertEquals(IrisRiverWaterMode.FIXED, dimension.getRivers().getWater().getMode());
+        assertEquals(63, dimension.getRivers().getWater().getFluidHeight());
+        assertEquals("water", dimension.getRivers().getWater().getFluidPalette().getPalette().getFirst().getBlock());
         assertFalse(dimension.getRivers().getTopology().isRequireOcean());
         assertEquals(512, dimension.getRivers().getTopology().getCellSize());
         assertEquals(16, dimension.getRivers().getTopology().getMaxRouteReaches());
@@ -41,6 +43,12 @@ public class IrisRiverConfigurationTest {
         assertEquals(IrisRiverCaveFallback.SEALED, dimension.getRivers().getCaves().getFallback());
         assertEquals(IrisRiverExistingFluidPolicy.REJECT,
                 dimension.getRivers().getCaves().getExistingFluidPolicy());
+        assertNotNull(dimension.getRivers().getCaves().getDeepPools());
+        assertFalse(dimension.getRivers().getCaves().getDeepPools().isEnabled());
+        assertEquals(-224, dimension.getRivers().getCaves().getDeepPools().getMinimumFluidY());
+        assertEquals(-104, dimension.getRivers().getCaves().getDeepPools().getMaximumFluidY());
+        assertEquals("lava", dimension.getRivers().getCaves().getDeepPools()
+                .getFluidPalette().getPalette().getFirst().getBlock());
         assertTrue(dimension.getRivers().getBiomes().getAllBiomeIds().isEmpty());
         assertNull(new IrisRegion().getRiverOverride());
         assertNull(new IrisBiome().getRiverOverride());
@@ -62,6 +70,7 @@ public class IrisRiverConfigurationTest {
                       "source": {"chance": 0.27, "influence": 0.4}
                     },
                     "terrain": {
+                      "channelRadiusBonus": 3,
                       "maxChannelWidth": 9,
                       "maxBankWidth": 2.5,
                       "maxDepth": 8,
@@ -80,7 +89,8 @@ public class IrisRiverConfigurationTest {
                           "bankMultiplier": 1.2,
                           "depthMultiplier": 0.8,
                           "bodyWavelength": 704,
-                          "bodyDetailWavelength": 88,
+                          "bodyDetailWavelength": 18,
+                          "bodyDetailInfluence": 0.82,
                           "widthVariation": 0.75,
                           "bankVariation": 0.65,
                           "depthVariation": 0.55,
@@ -89,7 +99,14 @@ public class IrisRiverConfigurationTest {
                       ],
                       "terminalMode": "SUPPRESS"
                     },
-                    "water": {"mode": "TERRACED", "poolLength": 80},
+                    "water": {
+                      "mode": "TERRACED",
+                      "fluidHeight": -48,
+                      "fluidPalette": {
+                        "palette": [{"block": "minecraft:lava"}]
+                      },
+                      "poolLength": 80
+                    },
                     "biomes": {
                       "channel": ["river/channel"],
                       "floodedCave": ["river/grotto"]
@@ -97,7 +114,29 @@ public class IrisRiverConfigurationTest {
                     "caves": {
                       "mode": "FLOOD_CLOSED_COMPONENT",
                       "maxFloodVolume": 2048,
-                      "existingFluidPolicy": "ALLOW_SAME"
+                      "existingFluidPolicy": "ALLOW_SAME",
+                      "deepPools": {
+                        "enabled": true,
+                        "reach": {
+                          "chance": 0.4,
+                          "influence": 0.1
+                        },
+                        "minimumSpacing": 896,
+                        "maximumPerReach": 2,
+                        "minimumFluidY": -220,
+                        "maximumFluidY": -112,
+                        "searchRadius": 24,
+                        "searchAttempts": 18,
+                        "horizontalRadius": 28,
+                        "verticalRadius": 11,
+                        "dryHeadroom": 5,
+                        "shapeVariation": 0.7,
+                        "warpStrength": 9,
+                        "maximumVolume": 65536,
+                        "fluidPalette": {
+                          "palette": [{"block": "minecraft:lava"}]
+                        }
+                      }
                     }
                   }
                 }
@@ -130,6 +169,7 @@ public class IrisRiverConfigurationTest {
         assertFalse(dimension.getRivers().getTopology().isRequireOcean());
         assertEquals(0.27D, dimension.getRivers().getTopology().getSource().getChance(), 0D);
         assertEquals(9D, dimension.getRivers().getTerrain().getMaxChannelWidth(), 0D);
+        assertEquals(3D, dimension.getRivers().getTerrain().getChannelRadiusBonus(), 0D);
         assertEquals(2.5D, dimension.getRivers().getTerrain().getMaxBankWidth(), 0D);
         assertEquals(8D, dimension.getRivers().getTerrain().getMaxDepth(), 0D);
         assertEquals(36, dimension.getRivers().getTerrain().getMaxIncision());
@@ -146,7 +186,8 @@ public class IrisRiverConfigurationTest {
         assertEquals(1.2D, worm.getBankMultiplier(), 0D);
         assertEquals(0.8D, worm.getDepthMultiplier(), 0D);
         assertEquals(704D, worm.getBodyWavelength(), 0D);
-        assertEquals(88D, worm.getBodyDetailWavelength(), 0D);
+        assertEquals(18D, worm.getBodyDetailWavelength(), 0D);
+        assertEquals(0.82D, worm.getBodyDetailInfluence(), 0D);
         assertEquals(0.75D, worm.getWidthVariation(), 0D);
         assertEquals(0.65D, worm.getBankVariation(), 0D);
         assertEquals(0.55D, worm.getDepthVariation(), 0D);
@@ -154,12 +195,32 @@ public class IrisRiverConfigurationTest {
         assertEquals(IrisRiverTerminalMode.SUPPRESS,
                 dimension.getRivers().getTerrain().getTerminalMode());
         assertEquals(IrisRiverWaterMode.TERRACED, dimension.getRivers().getWater().getMode());
+        assertEquals(-48, dimension.getRivers().getWater().getFluidHeight());
+        assertEquals("minecraft:lava",
+                dimension.getRivers().getWater().getFluidPalette().getPalette().getFirst().getBlock());
         assertEquals(Set.of("river/channel", "river/grotto"),
                 Set.copyOf(dimension.getRivers().getBiomes().getAllBiomeIds()));
         assertEquals(IrisRiverCaveMode.FLOOD_CLOSED_COMPONENT,
                 dimension.getRivers().getCaves().getMode());
         assertEquals(IrisRiverExistingFluidPolicy.ALLOW_SAME,
                 dimension.getRivers().getCaves().getExistingFluidPolicy());
+        IrisRiverDeepPools deepPools = dimension.getRivers().getCaves().getDeepPools();
+        assertTrue(deepPools.isEnabled());
+        assertEquals(0.4D, deepPools.getReach().getChance(), 0D);
+        assertEquals(0.1D, deepPools.getReach().getInfluence(), 0D);
+        assertEquals(896, deepPools.getMinimumSpacing());
+        assertEquals(2, deepPools.getMaximumPerReach());
+        assertEquals(-220, deepPools.getMinimumFluidY());
+        assertEquals(-112, deepPools.getMaximumFluidY());
+        assertEquals(24, deepPools.getSearchRadius());
+        assertEquals(18, deepPools.getSearchAttempts());
+        assertEquals(28, deepPools.getHorizontalRadius());
+        assertEquals(11, deepPools.getVerticalRadius());
+        assertEquals(5, deepPools.getDryHeadroom());
+        assertEquals(0.7D, deepPools.getShapeVariation(), 0D);
+        assertEquals(9D, deepPools.getWarpStrength(), 0D);
+        assertEquals(65536, deepPools.getMaximumVolume());
+        assertEquals("minecraft:lava", deepPools.getFluidPalette().getPalette().getFirst().getBlock());
 
         assertEquals(Boolean.FALSE, region.getRiverOverride().getAllowSources());
         assertEquals(IrisRiverRoutingPolicy.AVOID, region.getRiverOverride().getRoutingPolicy());

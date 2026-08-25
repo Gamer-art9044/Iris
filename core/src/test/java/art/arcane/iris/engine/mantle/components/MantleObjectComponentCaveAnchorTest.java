@@ -55,7 +55,7 @@ public class MantleObjectComponentCaveAnchorTest {
         assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
                 true, water, RiverCaveHydrology.of(RiverCaveAction.WET_SOURCE), 20, 8));
         assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
-                true, water, RiverCaveHydrology.of(RiverCaveAction.FALLING_WATER), 20, 8));
+                true, water, RiverCaveHydrology.of(RiverCaveAction.FALLING_FLUID), 20, 8));
         assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
                 true, null, RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD), 20, 8));
     }

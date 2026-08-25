@@ -43,4 +43,52 @@ public class IrisCreatorProgressContractTest {
         assertFalse(source.contains("RuntimeProgressMessages.WORLD_CREATE_ACTION"));
         assertFalse(source.contains("RuntimeProgressMessages.WORLD_CREATE_CONSOLE"));
     }
+
+    @Test
+    public void persistentCreateReadinessPrecedesSuccessRegistrationAndLeaseRelease() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("iris.irisCreatorSource")))
+                .replace("\r\n", "\n");
+
+        int acquireLease = source.indexOf("worldLease = coordinator.acquire(");
+        int createReserved = source.indexOf(
+                "createReserved(worldKey, resolvedDimension, creationReporter)",
+                acquireLease);
+        int reportSuccess = source.indexOf("creationReporter.succeed()", createReserved);
+        int releaseLease = source.indexOf("worldLease.close()", reportSuccess);
+        int createWorld = source.indexOf("INMS.get().createWorldAsync(wc, request)", createReserved);
+        int persistentGuard = source.indexOf("if (!studio && !benchmark) {", createWorld);
+        int awaitSpawn = source.indexOf("awaitInitialSpawnPreparation(access, name)", persistentGuard);
+        int creationDone = source.indexOf("done.set(true)", awaitSpawn);
+        int registerWorld = source.indexOf("BukkitWorldConfiguration.register(", creationDone);
+        int returnWorld = source.indexOf("return world;", registerWorld);
+
+        assertTrue(acquireLease >= 0);
+        assertTrue(createReserved > acquireLease);
+        assertTrue(reportSuccess > createReserved);
+        assertTrue(releaseLease > reportSuccess);
+        assertTrue(createWorld > createReserved);
+        assertTrue(persistentGuard > createWorld);
+        assertTrue(awaitSpawn > persistentGuard);
+        assertTrue(creationDone > awaitSpawn);
+        assertTrue(registerWorld > creationDone);
+        assertTrue(returnWorld > registerWorld);
+    }
+
+    @Test
+    public void spawnReadinessFailureReachesWorldCreationRollback() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("iris.irisCreatorSource")))
+                .replace("\r\n", "\n");
+
+        int awaitSpawn = source.indexOf("awaitInitialSpawnPreparation(access, name)");
+        int createReservedFailure = source.indexOf("} catch (Throwable failure) {", awaitSpawn);
+        int rollback = source.indexOf(
+                "rollbackWorldCreation(worldKey, world, stagedGenerator, storageRoot, bukkitRegistered, failure)",
+                createReservedFailure);
+        int rethrow = source.indexOf("throw irisException", rollback);
+
+        assertTrue(awaitSpawn >= 0);
+        assertTrue(createReservedFailure > awaitSpawn);
+        assertTrue(rollback > createReservedFailure);
+        assertTrue(rethrow > rollback);
+    }
 }

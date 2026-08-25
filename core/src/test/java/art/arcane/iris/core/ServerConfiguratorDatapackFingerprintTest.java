@@ -447,6 +447,15 @@ public class ServerConfiguratorDatapackFingerprintTest {
         assertFalse(ServerConfigurator.loadedRegistrySatisfies(
                 loaded,
                 Map.of("worldgen/biome/overworld:new", "biome-new")));
+        assertFalse(ServerConfigurator.runtimeRequiresRegistryRestart(
+                loaded,
+                Map.of(
+                        "dimension_type/iris:overworld", "dimension-a",
+                        "worldgen/biome/overworld:forest", "biome-a")));
+        assertTrue(ServerConfigurator.runtimeRequiresRegistryRestart(
+                loaded,
+                Map.of("dimension_type/iris:overworld", "dimension-b")));
+        assertFalse(ServerConfigurator.runtimeRequiresRegistryRestart(loaded, Map.of()));
     }
 
     @Test

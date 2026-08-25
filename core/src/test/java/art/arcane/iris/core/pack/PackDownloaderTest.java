@@ -652,6 +652,35 @@ public class PackDownloaderTest {
     }
 
     @Test
+    public void invalidBuiltInRiverSchemaPreservesExistingTarget() throws Exception {
+        File packsFolder = temp.newFolder("invalid-river-packs");
+        File target = writePack(packsFolder.toPath().resolve("overworld"), "overworld", "old");
+        File extracted = writePack(temp.newFolder("invalid-river-source").toPath(), "overworld", "new");
+        Files.writeString(
+                extracted.toPath().resolve("dimensions/overworld.json"),
+                "{\"name\":\"Overworld\",\"regions\":[\"local\"],\"logicalHeight\":256,"
+                        + "\"dimensionHeight\":{\"min\":-64,\"max\":320},\"rivers\":{\"enabled\":true,"
+                        + "\"terrain\":{},\"water\":{\"mode\":\"SEA_LEVEL\"}}}",
+                StandardCharsets.UTF_8
+        );
+
+        PackDownloader.PackInstallResult result = PackDownloader.installExtractedPack(
+                packsFolder,
+                extracted,
+                true,
+                "overworld",
+                ignored -> {
+                }
+        );
+
+        assertNull(result);
+        assertEquals("old", Files.readString(target.toPath().resolve("state.txt"), StandardCharsets.UTF_8));
+        assertTrue(Files.isRegularFile(target.toPath().resolve("regions/local.json")));
+        assertTransactionStateClean(packsFolder);
+        assertEquals(0, PackDownloader.downloadLockCount());
+    }
+
+    @Test
     public void forceOverwriteReplacesEnginelessLoadedPackData() throws Exception {
         // A registered loader with no engines is a stale catalog registration (startup
         // validation registers one per visible pack); it must not block a forced update.

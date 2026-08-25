@@ -186,7 +186,7 @@ public class IrisModdedStructureCommandTest {
         assertTrue(command.contains("ModdedLocateCommands.registeredStructureUnavailableMessage("));
         assertTrue(command.contains("engine.getData().getStructureLoader().getPossibleKeys()"));
         assertTrue(command.contains("IrisStructureLocator.hasLocatableEditablePlacement(engine, key)"));
-        assertTrue(command.contains("LOGGER.info(\"[Iris goto unregistered] [{}] {} - {}\""));
+        assertTrue(command.contains("ModdedIrisLog.info(\"[Iris goto unregistered] [{}] {} - {}\""));
         assertTrue(command.contains("UNREGISTERED(\"unregistered\")"));
         assertFalse(command.contains("DatapackIngestService"));
     }

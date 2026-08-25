@@ -56,6 +56,10 @@ public final class IrisLanguage {
     private static final Pattern LOCALE_NAME = Pattern.compile("[A-Za-z0-9_-]+");
     private static final Pattern LEGACY_COLOR = Pattern.compile("(?i)\\u00a7[0-9A-FK-ORX]");
     private static final MessageCatalog CATALOG = IrisMessages.catalog();
+    private static final List<String> BUKKIT_MESSAGE_IDS = CATALOG.ids().stream()
+            .filter(id -> !id.startsWith("iris.modded."))
+            .sorted()
+            .toList();
     private static final LocalizationManager MANAGER = new LocalizationManager(
             LocalizationCandidate.english(CATALOG, PluralSelector.oneOther())
     );
@@ -369,8 +373,11 @@ public final class IrisLanguage {
         }
     }
 
-    private static LocaleOverlay parseOverlay(String source, String locale, String raw) {
+    static LocaleOverlay parseOverlay(String source, String locale, String raw) {
         JsonElement parsed = JsonParser.parseString(raw == null || raw.isBlank() ? "{}" : raw);
+        if (parsed.isJsonArray()) {
+            return parseCompactBukkitOverlay(source, locale, parsed.getAsJsonArray());
+        }
         if (!parsed.isJsonObject()) {
             throw new IllegalArgumentException("Locale source is not a JSON object: " + source);
         }
@@ -396,6 +403,49 @@ public final class IrisLanguage {
         }
         appendMessages(builder, messages.getAsJsonObject(), "");
         return builder.build();
+    }
+
+    private static LocaleOverlay parseCompactBukkitOverlay(
+            String source,
+            String locale,
+            JsonArray root
+    ) {
+        if (root.size() != 2 || !root.get(0).isJsonPrimitive() || !root.get(1).isJsonArray()) {
+            throw new IllegalArgumentException("Compact locale source is invalid: " + source);
+        }
+        if (!locale.equals(normalizeLocale(root.get(0).getAsString()))) {
+            throw new IllegalArgumentException("Locale source declares a different locale than its file: " + source);
+        }
+        JsonArray messages = root.get(1).getAsJsonArray();
+        if (messages.size() != BUKKIT_MESSAGE_IDS.size()) {
+            throw new IllegalArgumentException("Compact locale message count is invalid: " + source);
+        }
+        LocaleOverlay.Builder builder = LocaleOverlay.builder(source, locale);
+        for (int i = 0; i < messages.size(); i++) {
+            JsonElement value = messages.get(i);
+            if (value == null || value.isJsonNull()) {
+                continue;
+            }
+            appendCompactMessage(builder, BUKKIT_MESSAGE_IDS.get(i), value);
+        }
+        return builder.build();
+    }
+
+    private static void appendCompactMessage(
+            LocaleOverlay.Builder builder,
+            String key,
+            JsonElement value
+    ) {
+        MessageKey definition = CATALOG.key(key);
+        if (value.isJsonObject() && definition instanceof PluralKey) {
+            builder.plural(key, readPlural(key, value.getAsJsonObject()));
+        } else if (value.isJsonArray()) {
+            builder.lines(key, readLines(key, value.getAsJsonArray()));
+        } else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+            builder.text(key, value.getAsString());
+        } else {
+            throw new IllegalArgumentException("Compact locale value has an invalid shape: " + key);
+        }
     }
 
     private static void appendMessages(LocaleOverlay.Builder builder, JsonObject object, String prefix) {

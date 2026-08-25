@@ -10,6 +10,7 @@ import art.arcane.iris.core.service.BoardSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.util.common.scheduling.J;
 import io.papermc.lib.PaperLib;
 import org.bukkit.Bukkit;
@@ -41,10 +42,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class WorldRuntimeControlService {
+    private static final int STUDIO_ENTRY_VIEW_DISTANCE = 2;
     private static final int MAX_SAFE_ENTRY_HORIZONTAL_RADIUS = 15;
-    private static final int MAX_SAFE_ENTRY_VERTICAL_SEARCH = 64;
+    private static final int SAFE_ENTRY_UPWARD_ALLOWANCE = 32;
     private static final double BLOCK_CENTER = 0.5D;
     private static final double COLLISION_EPSILON = 0.000001D;
+    private static final Method PLAYER_GET_VIEW_DISTANCE_METHOD = findPlayerMethod("getViewDistance");
+    private static final Method PLAYER_SET_VIEW_DISTANCE_METHOD = findPlayerMethod("setViewDistance", int.class);
     private static final Set<Material> UNSAFE_ENTRY_MATERIALS = Set.of(
             Material.CACTUS,
             Material.CAMPFIRE,
@@ -302,7 +306,7 @@ public final class WorldRuntimeControlService {
         CompletableFuture<Location> future = new CompletableFuture<>();
         boolean scheduled = J.runRegion(world, chunkX, chunkZ, () -> {
             try {
-                future.complete(findTopSafeLocation(world, source));
+                future.complete(findTopSafeLocationWithTicket(world, source, chunkX, chunkZ));
             } catch (Throwable t) {
                 future.completeExceptionally(t);
             }
@@ -312,6 +316,22 @@ public final class WorldRuntimeControlService {
                     "Failed to schedule safe-entry resolve for " + world.getName() + "@" + chunkX + "," + chunkZ + "."));
         }
         return future;
+    }
+
+    private static Location findTopSafeLocationWithTicket(
+            World world,
+            Location source,
+            int chunkX,
+            int chunkZ
+    ) {
+        boolean ticketAdded = world.addPluginChunkTicket(chunkX, chunkZ, BukkitPlatform.plugin());
+        try {
+            return findTopSafeLocation(world, source);
+        } finally {
+            if (ticketAdded) {
+                world.removePluginChunkTicket(chunkX, chunkZ, BukkitPlatform.plugin());
+            }
+        }
     }
 
     public CompletableFuture<Boolean> teleport(Player player, Location location) {
@@ -350,6 +370,7 @@ public final class WorldRuntimeControlService {
 
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         GameModeRestore modeRestore = new GameModeRestore(player);
+        PlayerViewDistanceRestore viewDistanceRestore = new PlayerViewDistanceRestore(player);
         AtomicReference<CompletableFuture<Boolean>> activeTeleport = new AtomicReference<>();
         future.whenComplete((success, failure) -> {
             if (Boolean.TRUE.equals(success)) {
@@ -359,6 +380,7 @@ public final class WorldRuntimeControlService {
             if (teleport != null && !teleport.isDone()) {
                 teleport.cancel(false);
             }
+            viewDistanceRestore.restore();
             modeRestore.restore();
         });
         boolean scheduled = J.runEntity(player, () -> {
@@ -368,7 +390,9 @@ public final class WorldRuntimeControlService {
                 }
                 if (gameMode != null) {
                     modeRestore.apply(gameMode);
+                    viewDistanceRestore.apply();
                     if (future.isDone()) {
+                        viewDistanceRestore.restore();
                         modeRestore.restore();
                         return;
                     }
@@ -393,6 +417,7 @@ public final class WorldRuntimeControlService {
 
                     if (Boolean.TRUE.equals(success)) {
                         if (future.complete(true)) {
+                            viewDistanceRestore.restore();
                             J.runEntity(player, () -> IrisServices.get(BoardSVC.class).updatePlayer(player));
                         }
                         return;
@@ -479,6 +504,7 @@ public final class WorldRuntimeControlService {
                             z,
                             minimumFloorY,
                             maximumFloorY,
+                            source.getBlockY() - 1,
                             yaw,
                             pitch
                     );
@@ -498,13 +524,14 @@ public final class WorldRuntimeControlService {
             int z,
             int minimumFloorY,
             int maximumFloorY,
+            int preferredFloorY,
             float yaw,
             float pitch
     ) {
         int highestY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
-        int startingFloorY = Math.max(minimumFloorY, Math.min(maximumFloorY, highestY));
-        int lowestFloorY = Math.max(minimumFloorY, startingFloorY - MAX_SAFE_ENTRY_VERTICAL_SEARCH + 1);
-        for (int floorY = startingFloorY; floorY >= lowestFloorY; floorY--) {
+        int preferredMaximumY = Math.min(maximumFloorY, preferredFloorY + SAFE_ENTRY_UPWARD_ALLOWANCE);
+        int startingFloorY = Math.max(minimumFloorY, Math.min(preferredMaximumY, highestY));
+        for (int floorY = startingFloorY; floorY >= minimumFloorY; floorY--) {
             Block floor = world.getBlockAt(x, floorY, z);
             if (!isSafeFloor(floor)) {
                 continue;
@@ -777,6 +804,14 @@ public final class WorldRuntimeControlService {
         return method.invoke(instance);
     }
 
+    private static Method findPlayerMethod(String methodName, Class<?>... parameterTypes) {
+        try {
+            return Player.class.getMethod(methodName, parameterTypes);
+        } catch (NoSuchMethodException ignored) {
+            return null;
+        }
+    }
+
     @FunctionalInterface
     interface TeleportExecutor {
         CompletableFuture<Boolean> teleport(Player player, Location location);
@@ -819,6 +854,58 @@ public final class WorldRuntimeControlService {
                 IrisLogging.reportError(
                         "Failed to restore a player's game mode after an unsuccessful teleport.",
                         new IllegalStateException("The player entity scheduler rejected the game-mode restoration."));
+            }
+        }
+    }
+
+    private static final class PlayerViewDistanceRestore {
+        private final Player player;
+        private final AtomicBoolean changed;
+        private final AtomicBoolean restored;
+        private int previousViewDistance;
+
+        private PlayerViewDistanceRestore(Player player) {
+            this.player = player;
+            changed = new AtomicBoolean(false);
+            restored = new AtomicBoolean(false);
+        }
+
+        private void apply() {
+            if (PLAYER_GET_VIEW_DISTANCE_METHOD == null || PLAYER_SET_VIEW_DISTANCE_METHOD == null) {
+                return;
+            }
+            try {
+                Object currentValue = PLAYER_GET_VIEW_DISTANCE_METHOD.invoke(player);
+                if (!(currentValue instanceof Number)) {
+                    return;
+                }
+                int currentViewDistance = ((Number) currentValue).intValue();
+                if (currentViewDistance <= STUDIO_ENTRY_VIEW_DISTANCE) {
+                    return;
+                }
+                PLAYER_SET_VIEW_DISTANCE_METHOD.invoke(player, STUDIO_ENTRY_VIEW_DISTANCE);
+                previousViewDistance = currentViewDistance;
+                changed.set(true);
+            } catch (ReflectiveOperationException failure) {
+                IrisLogging.reportError("Failed to apply a temporary player view distance for a studio teleport.", failure);
+            }
+        }
+
+        private void restore() {
+            if (!changed.get() || !restored.compareAndSet(false, true)) {
+                return;
+            }
+            Runnable restoration = () -> {
+                try {
+                    PLAYER_SET_VIEW_DISTANCE_METHOD.invoke(player, previousViewDistance);
+                } catch (ReflectiveOperationException failure) {
+                    IrisLogging.reportError("Failed to restore a player's view distance after a studio teleport.", failure);
+                }
+            };
+            if (!J.runEntity(player, restoration)) {
+                IrisLogging.reportError(
+                        "Failed to restore a player's view distance after a studio teleport.",
+                        new IllegalStateException("The player entity scheduler rejected the view-distance restoration."));
             }
         }
     }

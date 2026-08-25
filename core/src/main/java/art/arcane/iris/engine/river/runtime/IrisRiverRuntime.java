@@ -9,6 +9,7 @@ import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisRiverNetwork;
 import art.arcane.iris.engine.object.IrisRiverCaveMode;
 import art.arcane.iris.engine.object.IrisRiverCaves;
+import art.arcane.iris.engine.object.IrisRiverDeepPools;
 import art.arcane.iris.engine.object.IrisRiverNoiseChance;
 import art.arcane.iris.engine.object.IrisRiverRoutingPolicy;
 import art.arcane.iris.engine.object.IrisRiverTerminalMode;
@@ -41,6 +42,8 @@ import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -48,6 +51,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 public final class IrisRiverRuntime implements AutoCloseable {
     static final int MAXIMUM_REACH_FEASIBILITY_SAMPLES = 65;
@@ -66,17 +70,22 @@ public final class IrisRiverRuntime implements AutoCloseable {
     private static final long BIOME_NOISE_SALT = 0x2FFD72DBD01ADFB7L;
     private static final long CAVE_ENTRY_NOISE_SALT = 0xB8E1AFED6A267E96L;
     private static final long CAVE_ENTRY_GATE_SALT = 0xBA7C9045F12C7F99L;
+    private static final long DEEP_POOL_REACH_NOISE_SALT = 0x7137449123EF65CDL;
+    private static final long DEEP_POOL_REACH_GATE_SALT = 0xE9B5DBA58189DBBCL;
     private static final long TUNNEL_FLOOR_NOISE_SALT = 0x8CB92BA72F3D8DD7L;
     private static final long TUNNEL_ROOF_NOISE_SALT = 0xDB4F0B9175AE2165L;
     private static final long TUNNEL_WIDTH_NOISE_SALT = 0xC6EF372FE94F82BEL;
     private static final long FLOODED_CAVE_BIOME_SALT = 0x24A19947B3916CF7L;
     private static final long TERMINAL_CAVE_ANCHOR_SALT = 0x9E3779B97F4A7C15L;
     private static final int TILE_CACHE_SIZE = 32;
+    private static final int TUNNEL_SAMPLE_CHUNK_CACHE_SIZE = 4_096;
+    private static final Object ABSENT_TUNNEL_SAMPLE = new Object();
 
     private final long seed;
     private final IrisRiverNetwork configuration;
     private final IrisData data;
-    private final int fluidHeight;
+    private final int riverFluidHeight;
+    private final int dimensionFluidHeight;
     private final boolean boreMantleActive;
     private final boolean caveHydrologyActive;
     private final boolean blockingRoutingPossible;
@@ -101,12 +110,14 @@ public final class IrisRiverRuntime implements AutoCloseable {
     private final CNG bedNoise;
     private final CNG biomeNoise;
     private final CNG caveEntryNoise;
+    private final CNG deepPoolReachNoise;
     private final CNG tunnelFloorNoise;
     private final CNG tunnelRoofNoise;
     private final CNG tunnelWidthNoise;
     private final art.arcane.iris.engine.river.RiverNetwork network;
     private final RuntimeTerrainSampler terrainSampler;
     private final RiverTileCache tileCache;
+    private final Cache<Long, TunnelSampleChunk> tunnelSampleCache;
     private final ConcurrentHashMap<IdentitySettingsKey, EffectiveRiverSettings> settingsCache;
     private final ConcurrentHashMap<BiomePoolKey, List<IrisBiome>> biomePoolCache;
 
@@ -115,7 +126,8 @@ public final class IrisRiverRuntime implements AutoCloseable {
         seed = context.seed();
         configuration = context.configuration();
         data = context.data();
-        fluidHeight = context.fluidHeight();
+        riverFluidHeight = context.riverFluidHeight();
+        dimensionFluidHeight = context.dimensionFluidHeight();
         boreMantleActive = context.boreMantleActive();
         caveHydrologyActive = context.caveHydrologyActive();
         blockingRoutingPossible = context.blockingRoutingPossible();
@@ -146,6 +158,11 @@ public final class IrisRiverRuntime implements AutoCloseable {
         bedNoise = noise(terrain.getBedRoughnessStyle(), BED_NOISE_SALT);
         biomeNoise = noise(configuration.getBiomes().getSelectionStyle(), BIOME_NOISE_SALT);
         caveEntryNoise = noise(caves.getEntry(), CAVE_ENTRY_NOISE_SALT);
+        IrisRiverDeepPools deepPools = caves.getDeepPools();
+        deepPoolReachNoise = noise(
+                deepPools == null ? null : deepPools.getReach(),
+                DEEP_POOL_REACH_NOISE_SALT
+        );
         tunnelFloorNoise = noise(terrain.getTunnelFloorStyle(), TUNNEL_FLOOR_NOISE_SALT);
         tunnelRoofNoise = noise(terrain.getTunnelRoofStyle(), TUNNEL_ROOF_NOISE_SALT);
         tunnelWidthNoise = noise(terrain.getTunnelWidthMultiplier(), TUNNEL_WIDTH_NOISE_SALT);
@@ -158,12 +175,15 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 TILE_CACHE_SIZE,
                 (tileX, tileZ) -> network.buildTile(tileX, tileZ, terrainSampler)
         );
+        tunnelSampleCache = Caffeine.newBuilder()
+                .maximumSize(TUNNEL_SAMPLE_CHUNK_CACHE_SIZE)
+                .build();
     }
 
     public IrisRiverSurfaceSample sample(double x, double z) {
         ResolvedRiverColumn column = resolveColumn(x, z);
         if (column == null) {
-            return IrisRiverSurfaceSample.none(naturalHeight.get(x, z), fluidHeight);
+            return IrisRiverSurfaceSample.none(naturalHeight.get(x, z), dimensionFluidHeight);
         }
         if (column.subterranean()) {
             return new IrisRiverSurfaceSample(
@@ -229,9 +249,8 @@ public final class IrisRiverRuntime implements AutoCloseable {
         if (!column.subterranean()) {
             return null;
         }
-        if (isTunnelMouth(column, mouthBlend)) {
-            channelRadius += mouthBlend;
-        }
+        double mouthFactor = tunnelMouthFactor(column, mouthBlend);
+        channelRadius += mouthBlend * mouthFactor;
         if (column.river().distance() > channelRadius) {
             return null;
         }
@@ -255,11 +274,18 @@ public final class IrisRiverRuntime implements AutoCloseable {
         );
         int ceilingY = shapedTunnelCeilingY(
                 waterHeadY,
-                caves.getDryHeadroom() * column.reach().roofScaleAt(column.river().alongReach()),
+                caves.getDryHeadroom() * column.reach().roofScaleAt(column.river().alongReach())
+                        + mouthBlend * mouthFactor,
                 profile,
                 roofOffset
         );
         return new IrisRiverTunnelSample(column.river(), bedY, waterHeadY, ceilingY);
+    }
+
+    public IrisRiverTunnelSample sampleTunnel(int x, int z) {
+        long chunkKey = ((long) (x >> 4) << 32) ^ ((z >> 4) & 0xFFFFFFFFL);
+        TunnelSampleChunk chunk = tunnelSampleCache.get(chunkKey, ignored -> new TunnelSampleChunk());
+        return chunk.sample(this, x, z);
     }
 
     static int shapedTunnelBedY(
@@ -331,18 +357,44 @@ public final class IrisRiverRuntime implements AutoCloseable {
         );
     }
 
-    private boolean isTunnelMouth(ResolvedRiverColumn column, double mouthBlend) {
+    private double tunnelMouthFactor(ResolvedRiverColumn column, double mouthBlend) {
         if (mouthBlend <= 0D) {
-            return false;
+            return 0D;
         }
         double length = column.reach().polyline().length();
         if (length <= 0D) {
-            return false;
+            return 0D;
         }
         double offset = mouthBlend / length;
         double alongReach = column.river().alongReach();
-        return !isCenterlineSubterranean(column.reach(), clamp01(alongReach - offset))
-                || !isCenterlineSubterranean(column.reach(), clamp01(alongReach + offset));
+        return Math.max(
+                tunnelMouthFactor(column.reach(), alongReach, clamp01(alongReach - offset), mouthBlend),
+                tunnelMouthFactor(column.reach(), alongReach, clamp01(alongReach + offset), mouthBlend)
+        );
+    }
+
+    private double tunnelMouthFactor(
+            RiverReach reach,
+            double subterraneanAlong,
+            double candidateOpenAlong,
+            double mouthBlend
+    ) {
+        if (candidateOpenAlong == subterraneanAlong
+                || isCenterlineSubterranean(reach, candidateOpenAlong)) {
+            return 0D;
+        }
+        double openAlong = candidateOpenAlong;
+        double solidAlong = subterraneanAlong;
+        for (int iteration = 0; iteration < 5; iteration++) {
+            double midpoint = (openAlong + solidAlong) * 0.5D;
+            if (isCenterlineSubterranean(reach, midpoint)) {
+                solidAlong = midpoint;
+            } else {
+                openAlong = midpoint;
+            }
+        }
+        double distance = StrictMath.abs(solidAlong - subterraneanAlong) * reach.polyline().length();
+        return clamp01(1D - distance / mouthBlend);
     }
 
     private boolean isCenterlineSubterranean(RiverReach reach, double alongReach) {
@@ -399,6 +451,35 @@ public final class IrisRiverRuntime implements AutoCloseable {
         double centerX = minimumX * 0.5D + maximumX * 0.5D;
         double centerZ = minimumZ * 0.5D + maximumZ * 0.5D;
         return tileAt(centerX, centerZ).sampleFootprint(minimumX, minimumZ, maximumX, maximumZ);
+    }
+
+    public boolean hasRiverFootprint(
+            int minimumX,
+            int minimumZ,
+            int maximumX,
+            int maximumZ
+    ) {
+        if (minimumX >= maximumX || minimumZ >= maximumZ) {
+            return false;
+        }
+        int minimumTileX = network.tileXForBlock(minimumX);
+        int minimumTileZ = network.tileZForBlock(minimumZ);
+        int maximumTileX = network.tileXForBlock(maximumX - 1);
+        int maximumTileZ = network.tileZForBlock(maximumZ - 1);
+        for (int tileX = minimumTileX; tileX <= maximumTileX; tileX++) {
+            for (int tileZ = minimumTileZ; tileZ <= maximumTileZ; tileZ++) {
+                RiverSample sample = tileCache.get(tileX, tileZ).sampleFootprint(
+                        minimumX,
+                        minimumZ,
+                        maximumX,
+                        maximumZ
+                );
+                if (sample.present()) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public List<RiverAnchor> candidateAnchors(
@@ -481,7 +562,9 @@ public final class IrisRiverRuntime implements AutoCloseable {
     }
 
     public int maximumTunnelHeadroom() {
-        return caves.getDryHeadroom() + (int) StrictMath.ceil(terrain.getTunnelRoofVariation());
+        return caves.getDryHeadroom()
+                + (int) StrictMath.ceil(terrain.getTunnelRoofVariation())
+                + (int) StrictMath.ceil(terrain.getTunnelMouthBlend());
     }
 
     public boolean acceptsCaveAnchor(RiverAnchor anchor) {
@@ -529,6 +612,52 @@ public final class IrisRiverRuntime implements AutoCloseable {
             }
             accepted++;
             if (accepted >= caves.getMaximumPerReach()) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    public boolean acceptsDeepPoolAnchor(RiverAnchor anchor) {
+        Objects.requireNonNull(anchor);
+        IrisRiverDeepPools deepPools = caves.getDeepPools();
+        if (deepPools == null
+                || !deepPools.isEnabled()
+                || deepPools.getMaximumPerReach() <= 0
+                || anchor.state() != RiverRouteState.WET
+                || !caveHydrologyActive) {
+            return false;
+        }
+        RiverReach reach = tileAt(anchor.x(), anchor.z()).reach(anchor.reachId());
+        if (reach == null || reach.state() != RiverRouteState.WET) {
+            return false;
+        }
+        if (!deepPoolReachEligible(deepPools, reach)) {
+            return false;
+        }
+        TerminalCaveAnchor terminal = terminalCaveAnchor(reach);
+        if (terminal != null && anchor.stableId() == terminal.stableId()) {
+            return false;
+        }
+        double firstDistance = unit(art.arcane.iris.engine.river.RiverNetwork.mix(
+                reach.id().stableId() ^ anchor.samplingSalt()
+        )) * anchor.samplingSpacing();
+        double anchorDistance = firstDistance + anchor.index() * anchor.samplingSpacing();
+        if (anchorDistance >= reach.polyline().length()) {
+            return false;
+        }
+        int accepted = 0;
+        for (int index = 0; index <= anchor.index(); index++) {
+            long stableId = art.arcane.iris.engine.river.RiverNetwork.mix(
+                    reach.id().stableId()
+                            ^ anchor.samplingSalt()
+                            ^ (long) index * 0x9E3779B97F4A7C15L
+            );
+            if (index == anchor.index()) {
+                return stableId == anchor.stableId() && accepted < deepPools.getMaximumPerReach();
+            }
+            accepted++;
+            if (accepted >= deepPools.getMaximumPerReach()) {
                 return false;
             }
         }
@@ -603,6 +732,7 @@ public final class IrisRiverRuntime implements AutoCloseable {
     @Override
     public void close() {
         tileCache.close();
+        tunnelSampleCache.invalidateAll();
         settingsCache.clear();
         biomePoolCache.clear();
     }
@@ -620,7 +750,7 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 .routingDeviationScaleCells(topology.getRoutingDeviationScaleCells())
                 .routingDeviationStrengthCells(topology.getRoutingDeviationStrengthCells())
                 .routingPlateauHeight(topology.getRoutingPlateauHeight())
-                .hydraulicBaseHeight(fluidHeight)
+                .hydraulicBaseHeight(riverFluidHeight)
                 .requireOcean(topology.isRequireOcean())
                 .sourceChance(chance(topology.getSource()))
                 .reachChance(chance(topology.getContinuation()))
@@ -633,6 +763,7 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 .channelWidth(mid(riverTerrain.getChannelWidth(), 12D))
                 .bankWidth(mid(riverTerrain.getBankWidth(), 8D))
                 .depth(mid(riverTerrain.getDepth(), 4D))
+                .channelRadiusBonus(riverTerrain.getChannelRadiusBonus())
                 .maxChannelWidth(riverTerrain.getMaxChannelWidth())
                 .maxBankWidth(riverTerrain.getMaxBankWidth())
                 .maxDepth(riverTerrain.getMaxDepth())
@@ -683,6 +814,7 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 configured.getDepthMultiplier(),
                 configured.getBodyWavelength(),
                 configured.getBodyDetailWavelength(),
+                configured.getBodyDetailInfluence(),
                 configured.getWidthVariation(),
                 configured.getBankVariation(),
                 configured.getDepthVariation(),
@@ -757,6 +889,24 @@ public final class IrisRiverRuntime implements AutoCloseable {
         return unit(hash) < chance;
     }
 
+    private boolean deepPoolReachEligible(
+            IrisRiverDeepPools deepPools,
+            RiverReach reach
+    ) {
+        CenterlinePosition center = centerlinePosition(reach, 0.5D);
+        EffectiveRiverSettings settings = settingsAt(center.x(), center.z());
+        double chance = clamp01(effectiveChance(
+                deepPools.getReach(),
+                deepPoolReachNoise,
+                (int) StrictMath.floor(center.x()),
+                (int) StrictMath.floor(center.z())
+        ) * settings.caveEntryMultiplier());
+        long hash = art.arcane.iris.engine.river.RiverNetwork.mix(
+                seed ^ reach.id().stableId() ^ DEEP_POOL_REACH_GATE_SALT
+        );
+        return unit(hash) < chance;
+    }
+
     private TerminalCaveAnchor terminalCaveAnchor(RiverReach reach) {
         if (!caveHydrologyActive || !reach.terminal() || reach.state() != RiverRouteState.WET) {
             return null;
@@ -809,8 +959,11 @@ public final class IrisRiverRuntime implements AutoCloseable {
     }
 
     double waterSurface(RiverReach reach, double alongReach, boolean naturalOcean) {
-        if (reach == null || water.getMode() == IrisRiverWaterMode.SEA_LEVEL || naturalOcean) {
-            return fluidHeight;
+        if (naturalOcean) {
+            return dimensionFluidHeight;
+        }
+        if (reach == null || water.getMode() == IrisRiverWaterMode.FIXED) {
+            return riverFluidHeight;
         }
         return terracedWaterSurface(
                 reach.from().hydraulicHeight(),
@@ -883,10 +1036,10 @@ public final class IrisRiverRuntime implements AutoCloseable {
 
     private int nodeWaterHead(double naturalNodeHeight, int dropHeight) {
         int availableRise = Math.max(0, water.getMaximumPoolRise());
-        int maximumHead = fluidHeight + availableRise;
+        int maximumHead = riverFluidHeight + availableRise;
         int naturalHead = (int) StrictMath.floor(naturalNodeHeight - 1D);
-        int clamped = Math.max(fluidHeight, Math.min(maximumHead, naturalHead));
-        return fluidHeight + Math.floorDiv(clamped - fluidHeight, dropHeight) * dropHeight;
+        int clamped = Math.max(riverFluidHeight, Math.min(maximumHead, naturalHead));
+        return riverFluidHeight + Math.floorDiv(clamped - riverFluidHeight, dropHeight) * dropHeight;
     }
 
     private static boolean isNaturalOcean(IrisBiome biome) {
@@ -1011,6 +1164,25 @@ public final class IrisRiverRuntime implements AutoCloseable {
         return (hash >>> 11) * 0x1.0p-53;
     }
 
+    private static final class TunnelSampleChunk {
+        private final AtomicReferenceArray<Object> samples = new AtomicReferenceArray<>(256);
+
+        private IrisRiverTunnelSample sample(IrisRiverRuntime runtime, int x, int z) {
+            int index = ((x & 15) << 4) | (z & 15);
+            Object cached = samples.get(index);
+            if (cached == null) {
+                IrisRiverTunnelSample computed = runtime.sampleTunnel((double) x, (double) z);
+                Object encoded = computed == null ? ABSENT_TUNNEL_SAMPLE : computed;
+                if (samples.compareAndSet(index, null, encoded)) {
+                    cached = encoded;
+                } else {
+                    cached = samples.get(index);
+                }
+            }
+            return cached == ABSENT_TUNNEL_SAMPLE ? null : (IrisRiverTunnelSample) cached;
+        }
+    }
+
     private final class RuntimeTerrainSampler implements RiverTerrainSampler {
         private final IrisRiverTopology topology;
 
@@ -1022,11 +1194,11 @@ public final class IrisRiverRuntime implements AutoCloseable {
         public RiverTerrainNodeSample sampleNode(int blockX, int blockZ) {
             boolean oceanIntent = Boolean.TRUE.equals(naturalOcean.get(blockX, blockZ));
             boolean naturalHeightRequired = topology.getTerrainHeightWeight() > 0D
-                    || water.getMode() != IrisRiverWaterMode.SEA_LEVEL
+                    || water.getMode() != IrisRiverWaterMode.FIXED
                     || oceanIntent;
             double sampledNaturalHeight = naturalHeightRequired
                     ? naturalHeight.get(blockX, blockZ)
-                    : fluidHeight;
+                    : dimensionFluidHeight;
             boolean sampledOcean = oceanIntent && isSubmergedOutlet(sampledNaturalHeight);
             IrisRegion sampledRegion = region.get(blockX, blockZ);
             IrisBiome sampledBiome = biomeRiverOverridesPossible ? naturalBiome.get(blockX, blockZ) : null;
@@ -1068,7 +1240,7 @@ public final class IrisRiverRuntime implements AutoCloseable {
         }
 
         private boolean isSubmergedOutlet(double sampledNaturalHeight) {
-            return Math.round(sampledNaturalHeight) < Math.round(fluidHeight);
+            return Math.round(sampledNaturalHeight) < Math.round(dimensionFluidHeight);
         }
 
         @Override
@@ -1150,8 +1322,8 @@ public final class IrisRiverRuntime implements AutoCloseable {
                 }
                 maximumIncision *= settings.maxIncisionMultiplier();
             }
-            double head = configuration.getWater().getMode() == IrisRiverWaterMode.SEA_LEVEL
-                    ? fluidHeight
+            double head = configuration.getWater().getMode() == IrisRiverWaterMode.FIXED
+                    ? riverFluidHeight
                     : terracedWaterSurface(
                             context.from().hydraulicHeight(),
                             context.to().hydraulicHeight(),

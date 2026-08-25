@@ -1,6 +1,7 @@
 package art.arcane.iris.util.project.matter.slices;
 
 import art.arcane.iris.engine.river.cave.RiverCaveAction;
+import art.arcane.iris.engine.river.cave.RiverCaveFluidKind;
 import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import org.junit.Test;
 
@@ -18,14 +19,20 @@ public class RiverCaveHydrologyMatterTest {
     public void everyActionAndBiomeRoundTrips() throws IOException {
         RiverCaveHydrologyMatter matter = new RiverCaveHydrologyMatter();
         for (RiverCaveAction action : RiverCaveAction.values()) {
-            RiverCaveHydrology expected = new RiverCaveHydrology(action, "iris:flooded_grotto");
-            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-            matter.writeNode(expected, new DataOutputStream(bytes));
+            for (RiverCaveFluidKind fluidKind : RiverCaveFluidKind.values()) {
+                RiverCaveHydrology expected = new RiverCaveHydrology(
+                        action,
+                        "iris:flooded_grotto",
+                        fluidKind
+                );
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                matter.writeNode(expected, new DataOutputStream(bytes));
 
-            RiverCaveHydrology actual = matter.readNode(
-                    new DataInputStream(new ByteArrayInputStream(bytes.toByteArray())));
+                RiverCaveHydrology actual = matter.readNode(
+                        new DataInputStream(new ByteArrayInputStream(bytes.toByteArray())));
 
-            assertEquals(expected, actual);
+                assertEquals(expected, actual);
+            }
         }
     }
 
@@ -40,5 +47,7 @@ public class RiverCaveHydrologyMatterTest {
                 new DataInputStream(new ByteArrayInputStream(bytes.toByteArray()))));
         assertThrows(IOException.class, () -> matter.readNode(
                 new DataInputStream(new ByteArrayInputStream(new byte[]{99}))));
+        assertThrows(IOException.class, () -> matter.readNode(
+                new DataInputStream(new ByteArrayInputStream(new byte[]{1, 99}))));
     }
 }

@@ -65,7 +65,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     private static final AtomicInteger BOOST_HOLDERS = new AtomicInteger();
     private static final int ADAPTIVE_SLOW_REQUEST_STEP = 3;
     private static final int ADAPTIVE_RECOVERY_INTERVAL = 8;
-    private static final long CLOSE_DRAIN_TIMEOUT_SECONDS = 60L;
+    private static final long CLOSE_DRAIN_WARNING_SECONDS = 60L;
     private static final long FLUSH_TIMEOUT_SECONDS = 120L;
     private final World world;
     private final IrisRuntimeSchedulerMode runtimeSchedulerMode;
@@ -773,17 +773,13 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         // A stop request interrupts the pregen worker; shield the drain and flush so chunks still hit disk.
         boolean interrupted = Thread.interrupted();
         try {
-            boolean drained = false;
-            try {
-                drained = semaphore.tryAcquire(threads, CLOSE_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                interrupted = true;
-            }
-
-            if (!drained) {
-                IrisLogging.warn("Async pregen close did not drain in " + CLOSE_DRAIN_TIMEOUT_SECONDS
-                        + "s, continuing degraded. " + metricsSnapshot());
-            }
+            interrupted |= awaitDrain(
+                    semaphore,
+                    threads,
+                    CLOSE_DRAIN_WARNING_SECONDS,
+                    TimeUnit.SECONDS,
+                    () -> IrisLogging.warn("Async pregen is still draining outstanding chunks. " + metricsSnapshot())
+            );
 
             flushAllRemainingChunks();
             executor.shutdown();
@@ -793,6 +789,26 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         } finally {
             if (interrupted) {
                 Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    static boolean awaitDrain(
+            Semaphore semaphore,
+            int permits,
+            long warningInterval,
+            TimeUnit timeUnit,
+            Runnable onWait
+    ) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                if (semaphore.tryAcquire(permits, warningInterval, timeUnit)) {
+                    return interrupted;
+                }
+                onWait.run();
+            } catch (InterruptedException e) {
+                interrupted = true;
             }
         }
     }

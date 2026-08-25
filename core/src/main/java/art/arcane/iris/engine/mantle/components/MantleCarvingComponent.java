@@ -474,7 +474,7 @@ public class MantleCarvingComponent extends IrisMantleComponent {
     private void prefillProfileFieldSamples(int startX, int startZ, IrisComplex complex, BlendScratch blendScratch) {
         fillFieldHeights(complex.getHeightStream(), startX, startZ, blendScratch.fieldSurfaceHeights);
         fillFieldHeights(complex.getRiverWaterSurfaceStream(), startX, startZ, blendScratch.fieldFluidHeights);
-        fillFieldFluidPresence(complex.getFluidStream(), startX, startZ, blendScratch.fieldSurfaceHeights,
+        fillFieldFluidPresence(complex, startX, startZ, blendScratch.fieldSurfaceHeights,
                 blendScratch.fieldFluidHeights, blendScratch.fieldHasFluid);
         fillFieldObjects(complex.getRegionStream(), startX, startZ, blendScratch.fieldRegions);
         fillFieldObjects(complex.getTrueBiomeStream(), startX, startZ, blendScratch.fieldSurfaceBiomes);
@@ -500,7 +500,7 @@ public class MantleCarvingComponent extends IrisMantleComponent {
     }
 
     private void fillFieldFluidPresence(
-            ProceduralStream<PlatformBlockState> stream,
+            IrisComplex complex,
             int startX,
             int startZ,
             double[] surfaceHeights,
@@ -511,7 +511,7 @@ public class MantleCarvingComponent extends IrisMantleComponent {
             int worldX = startX + fieldX;
             for (int fieldZ = 0; fieldZ < FIELD_SIZE; fieldZ++) {
                 int fieldIndex = (fieldX * FIELD_SIZE) + fieldZ;
-                target[fieldIndex] = B.isFluid(stream.get(worldX, startZ + fieldZ))
+                target[fieldIndex] = B.isFluid(complex.resolveSurfaceFluid(worldX, startZ + fieldZ))
                         && Math.round(surfaceHeights[fieldIndex]) < Math.round(fluidHeights[fieldIndex]);
             }
         }

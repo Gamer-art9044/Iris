@@ -22,7 +22,9 @@ public final class GenerationProbeTest {
                 "256",
                 "1024",
                 "2048",
-                "-2048"
+                "-2048",
+                "true",
+                "true"
         });
 
         assertEquals(new File("/tmp/pack"), configuration.packSource());
@@ -31,6 +33,8 @@ public final class GenerationProbeTest {
         assertEquals(1024, configuration.measuredChunks());
         assertEquals(2048, configuration.centerChunkX());
         assertEquals(-2048, configuration.centerChunkZ());
+        assertTrue(configuration.multicore());
+        assertTrue(configuration.studio());
     }
 
     @Test
@@ -38,11 +42,11 @@ public final class GenerationProbeTest {
         assertThrows(IllegalArgumentException.class,
                 () -> GenerationProbe.ProbeConfiguration.parse(new String[]{"/tmp/pack"}));
         assertThrows(IllegalArgumentException.class,
-                () -> new GenerationProbe.ProbeConfiguration(new File("/tmp/pack"), " ", 1, 1, 0, 0));
+                () -> new GenerationProbe.ProbeConfiguration(new File("/tmp/pack"), " ", 1, 1, 0, 0, false, false));
         assertThrows(IllegalArgumentException.class,
-                () -> new GenerationProbe.ProbeConfiguration(new File("/tmp/pack"), "overworld", 0, 1, 0, 0));
+                () -> new GenerationProbe.ProbeConfiguration(new File("/tmp/pack"), "overworld", 0, 1, 0, 0, false, false));
         assertThrows(IllegalArgumentException.class,
-                () -> new GenerationProbe.ProbeConfiguration(new File("/tmp/pack"), "overworld", 1, 0, 0, 0));
+                () -> new GenerationProbe.ProbeConfiguration(new File("/tmp/pack"), "overworld", 1, 0, 0, 0, false, false));
     }
 
     @Test
@@ -73,11 +77,11 @@ public final class GenerationProbeTest {
         GenerationProbe.TimingSummary timings = new GenerationProbe.TimingSummary(
                 10_000_000L, 20_000_000L, 30_000_000L, 40_000_000L);
         GenerationProbe.ProbeResult result = new GenerationProbe.ProbeResult(
-                "PASS", "underworld", 2, 4, 6, 0,
+                "PASS", "underworld", 2, 4, true, true, 6, 0,
                 5_000_000L, 6_000_000L, timings, "0123456789abcdef");
 
         assertEquals(
-                "IRIS_GENPROBE_RESULT version=1 status=PASS dimension=underworld warmup_chunks=2 measured_chunks=4 successful_chunks=6 failed_chunks=0 engine_ready_ms=5.000 first_chunk_ms=6.000 measured_median_ms=10.000 measured_p95_ms=20.000 measured_max_ms=30.000 measured_total_ms=40.000 measured_cps=100.000 signature=0123456789abcdef",
+                "IRIS_GENPROBE_RESULT version=1 status=PASS dimension=underworld warmup_chunks=2 measured_chunks=4 multicore=true studio=true successful_chunks=6 failed_chunks=0 engine_ready_ms=5.000 first_chunk_ms=6.000 measured_median_ms=10.000 measured_p95_ms=20.000 measured_max_ms=30.000 measured_total_ms=40.000 measured_cps=100.000 signature=0123456789abcdef",
                 result.machineLine());
     }
 

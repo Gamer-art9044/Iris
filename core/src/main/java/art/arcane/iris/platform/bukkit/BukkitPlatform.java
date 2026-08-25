@@ -52,6 +52,7 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.CreatureSpawnEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.util.Vector;
@@ -234,6 +235,11 @@ public final class BukkitPlatform implements IrisPlatform {
 
     public static java.util.concurrent.CompletableFuture<Boolean> teleportAsync(Entity entity, Location destination) {
         return io.papermc.lib.PaperLib.teleportAsync(entity, destination);
+    }
+
+    public static java.util.concurrent.CompletableFuture<Boolean> teleportAsync(Entity entity, Location destination,
+                                                                                PlayerTeleportEvent.TeleportCause cause) {
+        return io.papermc.lib.PaperLib.teleportAsync(entity, destination, cause);
     }
 
     public static boolean isPaperServer() {

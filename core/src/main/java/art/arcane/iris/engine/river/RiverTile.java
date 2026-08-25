@@ -325,25 +325,35 @@ public final class RiverTile {
             double additionalRadius
     ) {
         RiverPolyline polyline = reach.polyline();
-        if (polyline.length() == 0D) {
+        RiverBodyProfile bodyProfile = reach.bodyProfile();
+        double polylineLength = polyline.length();
+        if (polylineLength == 0D) {
             double distanceSquared = squared(x - polyline.x(0)) + squared(z - polyline.z(0));
             double radius = reach.widthAt(0D) * 0.5D + reach.bankWidthAt(0D) + additionalRadius;
             return distanceSquared <= radius * radius ? new ClosestPoint(distanceSquared, 0D) : null;
         }
         double nearest = Double.POSITIVE_INFINITY;
         double nearestAlong = 0.0;
-        for (int point = 0; point < polyline.size() - 1; point++) {
-            double segmentStartAlong = polyline.cumulativeLength(point) / polyline.length();
-            double segmentEndAlong = polyline.cumulativeLength(point + 1) / polyline.length();
+        int pointLimit = polyline.size() - 1;
+        int profileLimit = bodyProfile.size() - 1;
+        for (int point = 0; point < pointLimit; point++) {
+            double segmentStartAlong = polyline.cumulativeLength(point) / polylineLength;
+            double segmentEndAlong = polyline.cumulativeLength(point + 1) / polylineLength;
             double segmentAlongSpan = segmentEndAlong - segmentStartAlong;
             if (segmentAlongSpan == 0D) {
                 continue;
             }
-            double deltaX = polyline.x(point + 1) - polyline.x(point);
-            double deltaZ = polyline.z(point + 1) - polyline.z(point);
-            for (int profileIndex = 0; profileIndex < reach.bodyProfile().size() - 1; profileIndex++) {
-                double profileStart = reach.bodyProfile().position(profileIndex);
-                double profileEnd = reach.bodyProfile().position(profileIndex + 1);
+            double startX = polyline.x(point);
+            double startZ = polyline.z(point);
+            double deltaX = polyline.x(point + 1) - startX;
+            double deltaZ = polyline.z(point + 1) - startZ;
+            int firstProfileIndex = bodyProfile.intervalIndex(segmentStartAlong);
+            for (int profileIndex = firstProfileIndex;
+                 profileIndex < profileLimit
+                         && bodyProfile.position(profileIndex) <= segmentEndAlong;
+                 profileIndex++) {
+                double profileStart = bodyProfile.position(profileIndex);
+                double profileEnd = bodyProfile.position(profileIndex + 1);
                 double overlapStart = StrictMath.max(segmentStartAlong, profileStart);
                 double overlapEnd = StrictMath.min(segmentEndAlong, profileEnd);
                 if (overlapStart > overlapEnd) {
@@ -351,13 +361,16 @@ public final class RiverTile {
                 }
                 double intervalStart = (overlapStart - segmentStartAlong) / segmentAlongSpan;
                 double intervalEnd = (overlapEnd - segmentStartAlong) / segmentAlongSpan;
-                double widthSlope = (reach.bodyProfile().widthAtIndex(profileIndex + 1)
-                        - reach.bodyProfile().widthAtIndex(profileIndex)) / (profileEnd - profileStart);
-                double bankSlope = (reach.bodyProfile().bankWidthAtIndex(profileIndex + 1)
-                        - reach.bodyProfile().bankWidthAtIndex(profileIndex)) / (profileEnd - profileStart);
-                double radiusBase = (reach.bodyProfile().widthAtIndex(profileIndex)
+                double profileSpan = profileEnd - profileStart;
+                double profileWidth = bodyProfile.widthAtIndex(profileIndex);
+                double profileBankWidth = bodyProfile.bankWidthAtIndex(profileIndex);
+                double widthSlope = (bodyProfile.widthAtIndex(profileIndex + 1)
+                        - profileWidth) / profileSpan;
+                double bankSlope = (bodyProfile.bankWidthAtIndex(profileIndex + 1)
+                        - profileBankWidth) / profileSpan;
+                double radiusBase = (profileWidth
                         + widthSlope * (segmentStartAlong - profileStart)) * 0.5D
-                        + reach.bodyProfile().bankWidthAtIndex(profileIndex)
+                        + profileBankWidth
                         + bankSlope * (segmentStartAlong - profileStart)
                         + additionalRadius;
                 double radiusSlope = (widthSlope * 0.5D + bankSlope) * segmentAlongSpan;
@@ -365,9 +378,9 @@ public final class RiverTile {
                         intervalStart,
                         intervalEnd,
                         deltaX,
-                        polyline.x(point) - x,
+                        startX - x,
                         deltaZ,
-                        polyline.z(point) - z,
+                        startZ - z,
                         radiusSlope,
                         radiusBase,
                         segmentStartAlong,
@@ -390,7 +403,9 @@ public final class RiverTile {
             double maximumZ
     ) {
         RiverPolyline polyline = reach.polyline();
-        if (polyline.length() == 0D) {
+        RiverBodyProfile bodyProfile = reach.bodyProfile();
+        double polylineLength = polyline.length();
+        if (polylineLength == 0D) {
             double distanceSquared = pointRectangleDistanceSquared(
                     polyline.x(0),
                     polyline.z(0),
@@ -404,9 +419,11 @@ public final class RiverTile {
         }
         double nearest = Double.POSITIVE_INFINITY;
         double nearestAlong = 0.0;
-        for (int point = 0; point < polyline.size() - 1; point++) {
-            double segmentStartAlong = polyline.cumulativeLength(point) / polyline.length();
-            double segmentEndAlong = polyline.cumulativeLength(point + 1) / polyline.length();
+        int pointLimit = polyline.size() - 1;
+        int profileLimit = bodyProfile.size() - 1;
+        for (int point = 0; point < pointLimit; point++) {
+            double segmentStartAlong = polyline.cumulativeLength(point) / polylineLength;
+            double segmentEndAlong = polyline.cumulativeLength(point + 1) / polylineLength;
             double segmentAlongSpan = segmentEndAlong - segmentStartAlong;
             if (segmentAlongSpan == 0D) {
                 continue;
@@ -415,9 +432,13 @@ public final class RiverTile {
             double startZ = polyline.z(point);
             double deltaX = polyline.x(point + 1) - startX;
             double deltaZ = polyline.z(point + 1) - startZ;
-            for (int profileIndex = 0; profileIndex < reach.bodyProfile().size() - 1; profileIndex++) {
-                double profileStart = reach.bodyProfile().position(profileIndex);
-                double profileEnd = reach.bodyProfile().position(profileIndex + 1);
+            int firstProfileIndex = bodyProfile.intervalIndex(segmentStartAlong);
+            for (int profileIndex = firstProfileIndex;
+                 profileIndex < profileLimit
+                         && bodyProfile.position(profileIndex) <= segmentEndAlong;
+                 profileIndex++) {
+                double profileStart = bodyProfile.position(profileIndex);
+                double profileEnd = bodyProfile.position(profileIndex + 1);
                 double overlapStart = StrictMath.max(segmentStartAlong, profileStart);
                 double overlapEnd = StrictMath.min(segmentEndAlong, profileEnd);
                 if (overlapStart > overlapEnd) {
@@ -425,13 +446,16 @@ public final class RiverTile {
                 }
                 double intervalStart = (overlapStart - segmentStartAlong) / segmentAlongSpan;
                 double intervalEnd = (overlapEnd - segmentStartAlong) / segmentAlongSpan;
-                double widthSlope = (reach.bodyProfile().widthAtIndex(profileIndex + 1)
-                        - reach.bodyProfile().widthAtIndex(profileIndex)) / (profileEnd - profileStart);
-                double bankSlope = (reach.bodyProfile().bankWidthAtIndex(profileIndex + 1)
-                        - reach.bodyProfile().bankWidthAtIndex(profileIndex)) / (profileEnd - profileStart);
-                double radiusBase = (reach.bodyProfile().widthAtIndex(profileIndex)
+                double profileSpan = profileEnd - profileStart;
+                double profileWidth = bodyProfile.widthAtIndex(profileIndex);
+                double profileBankWidth = bodyProfile.bankWidthAtIndex(profileIndex);
+                double widthSlope = (bodyProfile.widthAtIndex(profileIndex + 1)
+                        - profileWidth) / profileSpan;
+                double bankSlope = (bodyProfile.bankWidthAtIndex(profileIndex + 1)
+                        - profileBankWidth) / profileSpan;
+                double radiusBase = (profileWidth
                         + widthSlope * (segmentStartAlong - profileStart)) * 0.5D
-                        + reach.bodyProfile().bankWidthAtIndex(profileIndex)
+                        + profileBankWidth
                         + bankSlope * (segmentStartAlong - profileStart);
                 double radiusSlope = (widthSlope * 0.5D + bankSlope) * segmentAlongSpan;
                 double cursor = intervalStart;
@@ -626,8 +650,7 @@ public final class RiverTile {
     }
 
     private List<RiverReach> indexedReaches(double x, double z) {
-        List<RiverReach> indexed = spatialIndex.get(bucketKey(bucket(x), bucket(z)));
-        return indexed == null ? List.of() : indexed;
+        return spatialIndex.getOrDefault(bucketKey(bucket(x), bucket(z)), List.of());
     }
 
     private List<RiverReach> indexedReaches(
@@ -641,12 +664,15 @@ public final class RiverTile {
         int maximumBucketX = bucket(StrictMath.nextDown(queryMaximumX));
         int minimumBucketZ = bucket(queryMinimumZ);
         int maximumBucketZ = bucket(StrictMath.nextDown(queryMaximumZ));
+        if (minimumBucketX == maximumBucketX && minimumBucketZ == maximumBucketZ) {
+            return spatialIndex.getOrDefault(
+                    bucketKey(minimumBucketX, minimumBucketZ),
+                    List.of()
+            );
+        }
         for (int bucketX = minimumBucketX; bucketX <= maximumBucketX; bucketX++) {
             for (int bucketZ = minimumBucketZ; bucketZ <= maximumBucketZ; bucketZ++) {
-                List<RiverReach> bucketReaches = spatialIndex.get(bucketKey(bucketX, bucketZ));
-                if (bucketReaches != null) {
-                    indexed.addAll(bucketReaches);
-                }
+                indexed.addAll(spatialIndex.getOrDefault(bucketKey(bucketX, bucketZ), List.of()));
             }
         }
         return List.copyOf(indexed);
@@ -662,26 +688,13 @@ public final class RiverTile {
         int maximumBucketX = bucket(queryMaximumX);
         int minimumBucketZ = bucket(queryMinimumZ);
         int maximumBucketZ = bucket(queryMaximumZ);
-        if (spatialIndex.isEmpty()) {
-            return List.of();
-        }
         if (minimumBucketX == maximumBucketX && minimumBucketZ == maximumBucketZ) {
-            List<RiverReach> bucketReaches = spatialIndex.get(bucketKey(minimumBucketX, minimumBucketZ));
-            return bucketReaches == null ? List.of() : bucketReaches;
-        }
-        long bucketWidth = (long) maximumBucketX - minimumBucketX + 1L;
-        long bucketDepth = (long) maximumBucketZ - minimumBucketZ + 1L;
-        if (bucketWidth > spatialIndex.size() / bucketDepth
-                || bucketWidth * bucketDepth >= spatialIndex.size()) {
-            return reaches;
+            return indexedReaches(queryMinimumX, queryMinimumZ);
         }
         LinkedHashSet<RiverReach> indexed = new LinkedHashSet<>();
         for (int bucketX = minimumBucketX; bucketX <= maximumBucketX; bucketX++) {
             for (int bucketZ = minimumBucketZ; bucketZ <= maximumBucketZ; bucketZ++) {
-                List<RiverReach> bucketReaches = spatialIndex.get(bucketKey(bucketX, bucketZ));
-                if (bucketReaches != null) {
-                    indexed.addAll(bucketReaches);
-                }
+                indexed.addAll(spatialIndex.getOrDefault(bucketKey(bucketX, bucketZ), List.of()));
             }
         }
         return List.copyOf(indexed);

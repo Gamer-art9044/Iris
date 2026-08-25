@@ -188,7 +188,7 @@ public class StructureCaveAnchorResolverTest {
         assertFalse(StructureCaveAnchorResolver.acceptsAnchorFluid(
                 true, fluid, RiverCaveHydrology.of(RiverCaveAction.WET_SOURCE), 20, 8));
         assertFalse(StructureCaveAnchorResolver.acceptsAnchorFluid(
-                true, fluid, RiverCaveHydrology.of(RiverCaveAction.FALLING_WATER), 20, 8));
+                true, fluid, RiverCaveHydrology.of(RiverCaveAction.FALLING_FLUID), 20, 8));
         assertFalse(StructureCaveAnchorResolver.acceptsAnchorFluid(
                 true, null, RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD), 20, 8));
         assertTrue(StructureCaveAnchorResolver.acceptsAnchorFluid(

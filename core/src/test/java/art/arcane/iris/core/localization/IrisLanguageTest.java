@@ -11,6 +11,7 @@ import art.arcane.volmlib.util.localization.MessageValue;
 import art.arcane.volmlib.util.localization.PluralValue;
 import art.arcane.volmlib.util.localization.TextValue;
 import art.arcane.volmlib.util.localization.VolmitLocales;
+import com.google.gson.JsonArray;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -172,6 +173,29 @@ public class IrisLanguageTest {
             }
             assertTrue(locale + " contains too many English placeholder values", translated >= 1050);
         }
+    }
+
+    @Test
+    public void compactBukkitLocaleUsesSortedCatalogPositionsAndEnglishFallbacks() {
+        List<String> messageIds = IrisLanguage.catalog().ids().stream()
+                .filter(id -> !id.startsWith("iris.modded."))
+                .sorted()
+                .toList();
+        String translatedId = IrisMessages.COMMAND_UNKNOWN.id();
+        JsonArray values = new JsonArray(messageIds.size());
+        for (int i = 0; i < messageIds.size(); i++) {
+            values.add(messageIds.get(i).equals(translatedId) ? "Unbekannter Iris-Befehl" : null);
+        }
+        JsonArray compact = new JsonArray(2);
+        compact.add("de_DE");
+        compact.add(values);
+
+        LocaleOverlay overlay = IrisLanguage.parseOverlay("test", "de_DE", compact.toString());
+
+        assertEquals(Set.of(translatedId), overlay.values().keySet());
+        assertEquals(
+                "Unbekannter Iris-Befehl",
+                ((TextValue) overlay.value(translatedId)).template());
     }
 
     @Test

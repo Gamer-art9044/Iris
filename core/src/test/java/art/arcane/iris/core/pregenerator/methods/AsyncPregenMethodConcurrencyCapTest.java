@@ -3,11 +3,17 @@ package art.arcane.iris.core.pregenerator.methods;
 import org.junit.Test;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 public class AsyncPregenMethodConcurrencyCapTest {
     @Test
@@ -76,5 +82,32 @@ public class AsyncPregenMethodConcurrencyCapTest {
 
         assertEquals(0, slowRequests.get());
         assertEquals("generated", request.join());
+    }
+
+    @Test
+    public void closeDrainWaitsPastWarningIntervalsUntilEveryPermitReturns() throws Exception {
+        Semaphore semaphore = new Semaphore(0);
+        AtomicInteger warnings = new AtomicInteger();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<Boolean> drain = executor.submit(() -> AsyncPregenMethod.awaitDrain(
+                    semaphore,
+                    2,
+                    10L,
+                    TimeUnit.MILLISECONDS,
+                    warnings::incrementAndGet
+            ));
+
+            while (warnings.get() == 0) {
+                Thread.onSpinWait();
+            }
+            semaphore.release(2);
+
+            assertFalse(drain.get(1L, TimeUnit.SECONDS));
+            assertTrue(warnings.get() > 0);
+            assertEquals(0, semaphore.availablePermits());
+        } finally {
+            executor.shutdownNow();
+        }
     }
 }

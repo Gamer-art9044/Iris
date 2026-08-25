@@ -38,6 +38,10 @@ public interface ModdedLoader {
 
     void invalidateLevelCache(MinecraftServer server);
 
+    void fireDynamicLevelLoad(MinecraftServer server, ServerLevel level);
+
+    void fireDynamicLevelUnload(MinecraftServer server, ServerLevel level);
+
     boolean clientEnvironment();
 
     Path configDir();

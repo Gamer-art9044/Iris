@@ -4,7 +4,6 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.InferredType;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisRiverOverride;
-import art.arcane.iris.engine.object.IrisRiverWaterMode;
 import art.arcane.iris.engine.river.RiverRouteState;
 import art.arcane.iris.engine.river.RiverSample;
 import art.arcane.iris.engine.river.RiverSection;
@@ -60,50 +59,19 @@ public class IrisComplexSurfaceBiomeTest {
     }
 
     @Test
-    public void naturalOceanHeightMaskMatchesResolvedLandAndSeaBiomes() {
-        double fluidHeight = 64D;
-        IrisBiome land = new IrisBiome().setInferredType(InferredType.LAND);
-        IrisBiome sea = new IrisBiome().setInferredType(InferredType.SEA);
-        IrisBiome shore = new IrisBiome().setInferredType(InferredType.SHORE);
-        IrisRegion region = mock(IrisRegion.class);
-        for (double shoreHeight : new double[]{0D, 3D}) {
-            doReturn(shoreHeight).when(region).getShoreHeight(0D, 0D);
-            double[] heights = new double[]{
-                    fluidHeight - 2D,
-                    fluidHeight - 1D,
-                    fluidHeight,
-                    fluidHeight + shoreHeight,
-                    fluidHeight + shoreHeight + 0.000001D
-            };
-            for (IrisBiome base : List.of(land, sea)) {
-                for (double height : heights) {
-                    IrisBiome resolved = IrisComplex.resolveSurfaceBiome(
-                            height,
-                            base,
-                            region,
-                            0D,
-                            0D,
-                            fluidHeight,
-                            constant(land),
-                            constant(sea),
-                            constant(shore)
-                    );
-                    Boolean ocean = IrisComplex.createNaturalOceanStream(
-                            ProceduralStream.ofDouble((x, z) -> height),
-                            constantType(InferredType.LAND),
-                            null,
-                            fluidHeight,
-                            IrisRiverWaterMode.TERRACED
-                    ).get(0D, 0D);
-
-                    assertEquals(resolved.getInferredType() == InferredType.SEA, ocean.booleanValue());
-                }
-            }
-        }
+    public void naturalOceanMaskTracksContinentalIntent() {
+        assertTrue(IrisComplex.createNaturalOceanStream(
+                constantType(InferredType.SEA),
+                null
+        ).get(0D, 0D));
+        assertFalse(IrisComplex.createNaturalOceanStream(
+                constantType(InferredType.LAND),
+                null
+        ).get(0D, 0D));
     }
 
     @Test
-    public void naturalOceanHeightMaskSamplesOnlyNaturalHeight() {
+    public void naturalOceanMaskDoesNotSampleNaturalHeight() {
         AtomicInteger heightSamples = new AtomicInteger();
         ProceduralStream<Double> height = ProceduralStream.ofDouble((x, z) -> {
             heightSamples.incrementAndGet();
@@ -111,15 +79,12 @@ public class IrisComplexSurfaceBiomeTest {
         });
 
         Boolean ocean = IrisComplex.createNaturalOceanStream(
-                height,
                 constantType(InferredType.LAND),
-                null,
-                64D,
-                IrisRiverWaterMode.TERRACED
+                null
         ).get(8D, -3D);
 
-        assertTrue(ocean);
-        assertEquals(1, heightSamples.get());
+        assertFalse(ocean);
+        assertEquals(0, heightSamples.get());
     }
 
     @Test
@@ -131,31 +96,22 @@ public class IrisComplexSurfaceBiomeTest {
         });
 
         assertTrue(IrisComplex.createNaturalOceanStream(
-                height,
                 constantType(InferredType.LAND),
-                new IrisBiome().setInferredType(InferredType.SEA),
-                64D,
-                IrisRiverWaterMode.SEA_LEVEL
+                new IrisBiome().setInferredType(InferredType.SEA)
         ).get(0D, 0D));
         assertFalse(IrisComplex.createNaturalOceanStream(
-                height,
                 constantType(InferredType.SEA),
-                new IrisBiome().setInferredType(InferredType.LAND),
-                64D,
-                IrisRiverWaterMode.SEA_LEVEL
+                new IrisBiome().setInferredType(InferredType.LAND)
         ).get(0D, 0D));
         assertFalse(IrisComplex.createNaturalOceanStream(
-                height,
                 constantType(InferredType.SEA),
-                new IrisBiome().setInferredType(InferredType.SHORE),
-                64D,
-                IrisRiverWaterMode.SEA_LEVEL
+                new IrisBiome().setInferredType(InferredType.SHORE)
         ).get(0D, 0D));
         assertEquals(0, heightSamples.get());
     }
 
     @Test
-    public void seaLevelOceanMaskUsesContinentalIntentWithoutSamplingHeight() {
+    public void fixedOceanMaskUsesContinentalIntentWithoutSamplingHeight() {
         AtomicInteger heightSamples = new AtomicInteger();
         ProceduralStream<Double> height = ProceduralStream.ofDouble((x, z) -> {
             heightSamples.incrementAndGet();
@@ -163,11 +119,8 @@ public class IrisComplexSurfaceBiomeTest {
         });
 
         Boolean ocean = IrisComplex.createNaturalOceanStream(
-                height,
                 constantType(InferredType.SEA),
-                null,
-                64D,
-                IrisRiverWaterMode.SEA_LEVEL
+                null
         ).get(8D, -3D);
 
         assertTrue(ocean);

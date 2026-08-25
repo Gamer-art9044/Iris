@@ -72,15 +72,20 @@ public class IrisRiverWorm {
     @Desc("Depth multiplier for reaches selecting this worm.")
     private double depthMultiplier = 1D;
 
-    @MinNumber(32)
+    @MinNumber(8)
     @MaxNumber(16384)
     @Desc("Primary world-space wavelength controlling longitudinal body swelling and pinching.")
     private double bodyWavelength = 512D;
 
-    @MinNumber(32)
+    @MinNumber(8)
     @MaxNumber(16384)
     @Desc("Detail wavelength adding smaller changes to the longitudinal body profile.")
     private double bodyDetailWavelength = 128D;
+
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("Share of the longitudinal body field supplied by bodyDetailWavelength; the remainder uses bodyWavelength.")
+    private double bodyDetailInfluence = 0.3D;
 
     @MinNumber(0)
     @MaxNumber(0.875)

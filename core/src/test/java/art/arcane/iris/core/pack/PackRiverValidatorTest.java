@@ -127,8 +127,9 @@ public class PackRiverValidatorTest {
                         {
                           "id": "trunk",
                           "seed": 17,
-                          "bodyWavelength": 31,
+                          "bodyWavelength": 7,
                           "bodyDetailWavelength": 16385,
+                          "bodyDetailInfluence": 1.1,
                           "widthVariation": -0.1,
                           "bankVariation": 0.876,
                           "depthVariation": -0.1,
@@ -150,8 +151,9 @@ public class PackRiverValidatorTest {
 
         PackRiverValidator.Validation result = validate(pack);
 
-        assertContains(result.errors(), "rivers.terrain.worms[0].bodyWavelength must be at least 32");
+        assertContains(result.errors(), "rivers.terrain.worms[0].bodyWavelength must be at least 8");
         assertContains(result.errors(), "rivers.terrain.worms[0].bodyDetailWavelength must be at most 16384");
+        assertContains(result.errors(), "rivers.terrain.worms[0].bodyDetailInfluence must be at most 1");
         assertContains(result.errors(), "rivers.terrain.worms[0].widthVariation must be at least 0");
         assertContains(result.errors(), "rivers.terrain.worms[0].bankVariation must be at most 0.875");
         assertContains(result.errors(), "rivers.terrain.worms[0].depthVariation must be at least 0");
@@ -355,6 +357,140 @@ public class PackRiverValidatorTest {
         PackRiverValidator.Validation result = validate(pack);
 
         assertContains(result.errors(), "rivers.water.dropHeight must not exceed maximumPoolRise");
+    }
+
+    @Test
+    public void acceptsIndependentCaveLavaRiverHeightAndPalette() throws Exception {
+        File pack = pack("""
+                {
+                  "regions": ["region"],
+                  "dimensionHeight": {"min": -64, "max": 320},
+                  "fluidHeight": 63,
+                  "rivers": {
+                    "enabled": true,
+                    "terrain": {"worms": [{"id": "river"}]},
+                    "water": {
+                      "mode": "FIXED",
+                      "fluidHeight": -48,
+                      "fluidPalette": {
+                        "palette": [{"block": "minecraft:lava"}]
+                      }
+                    }
+                  }
+                }
+                """);
+
+        PackRiverValidator.Validation result = validate(pack);
+
+        assertTrue(result.errors().toString(), result.errors().isEmpty());
+    }
+
+    @Test
+    public void acceptsSparseBlobbyDeepLavaPoolsWithIndependentHeight() throws Exception {
+        File pack = pack("""
+                {
+                  "regions": ["region"],
+                  "dimensionHeight": {"min": -256, "max": 512},
+                  "rivers": {
+                    "enabled": true,
+                    "terrain": {"worms": [{"id": "river"}]},
+                    "caves": {
+                      "deepPools": {
+                        "enabled": true,
+                        "reach": {
+                          "chance": 0.08,
+                          "influence": 0.04,
+                          "style": {"style": "IRIS", "zoom": 4096}
+                        },
+                        "minimumSpacing": 768,
+                        "maximumPerReach": 1,
+                        "minimumFluidY": -224,
+                        "maximumFluidY": -108,
+                        "searchRadius": 20,
+                        "searchAttempts": 12,
+                        "horizontalRadius": 24,
+                        "verticalRadius": 10,
+                        "dryHeadroom": 5,
+                        "shapeStyle": {"style": "IRIS", "zoom": 12},
+                        "shapeVariation": 0.6,
+                        "warpStyle": {"style": "IRIS", "zoom": 24},
+                        "warpStrength": 8,
+                        "maximumVolume": 65536,
+                        "fluidPalette": {
+                          "palette": [{"block": "minecraft:lava"}]
+                        }
+                      }
+                    }
+                  }
+                }
+                """);
+
+        PackRiverValidator.Validation result = validate(pack);
+
+        assertTrue(result.errors().toString(), result.errors().isEmpty());
+    }
+
+    @Test
+    public void rejectsUnsafeDeepPoolEnvelopeShapeAndPalette() throws Exception {
+        File pack = pack("""
+                {
+                  "regions": ["region"],
+                  "dimensionHeight": {"min": -64, "max": 320},
+                  "rivers": {
+                    "enabled": true,
+                    "terrain": {"worms": [{"id": "river"}]},
+                    "caves": {
+                      "deepPools": {
+                        "enabled": true,
+                        "reach": {"chance": 0},
+                        "minimumFluidY": -90,
+                        "maximumFluidY": -120,
+                        "searchRadius": 120,
+                        "horizontalRadius": 20,
+                        "verticalRadius": 8,
+                        "dryHeadroom": 8,
+                        "maximumVolume": 64,
+                        "fluidPalette": {"palette": []}
+                      }
+                    }
+                  }
+                }
+                """);
+
+        PackRiverValidator.Validation result = validate(pack);
+
+        assertContains(result.errors(), "deepPools.minimumFluidY must not exceed maximumFluidY");
+        assertContains(result.errors(), "deepPools.dryHeadroom must be smaller than verticalRadius");
+        assertContains(result.errors(), "deepPools.searchRadius plus horizontalRadius must not exceed 128");
+        assertContains(result.errors(), "deepPools.maximumVolume must be at least");
+        assertContains(result.errors(), "deepPools.fluidPalette.palette must contain at least one fluid block");
+        assertContains(result.errors(), "deepPools fluid range and chamber envelope must remain inside dimensionHeight");
+        assertContains(result.warnings(), "deepPools is enabled but its reach gate cannot accept any pools");
+    }
+
+    @Test
+    public void rejectsRetiredWaterModeInvalidPaletteAndOutOfBoundsHeight() throws Exception {
+        File pack = pack("""
+                {
+                  "regions": ["region"],
+                  "dimensionHeight": {"min": -64, "max": 320},
+                  "rivers": {
+                    "enabled": true,
+                    "terrain": {"worms": [{"id": "river"}]},
+                    "water": {
+                      "mode": "SEA_LEVEL",
+                      "fluidHeight": -80,
+                      "fluidPalette": {"palette": []}
+                    }
+                  }
+                }
+                """);
+
+        PackRiverValidator.Validation result = validate(pack);
+
+        assertContains(result.errors(), "rivers.water.mode must be one of");
+        assertContains(result.errors(), "rivers.water.fluidHeight must remain inside dimensionHeight");
+        assertContains(result.errors(), "rivers.water.fluidPalette.palette must contain at least one fluid block");
     }
 
     @Test

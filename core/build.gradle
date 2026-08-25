@@ -86,12 +86,11 @@ dependencies {
     implementation(volmLibCoordinate) {
         transitive = false
     }
-    implementation(libs.gson)
-    implementation(libs.lru)
-    implementation(libs.caffeine)
-    implementation(libs.paralithic)
-
     // Dynamically Loaded
+    slim(libs.gson)
+    slim(libs.lru)
+    slim(libs.caffeine)
+    slim(libs.paralithic)
     slim(libs.paperlib)
     slim(libs.adventure.api)
     slim(libs.adventure.minimessage)
@@ -154,6 +153,8 @@ slimJar {
     ]
 
     relocate('com.dfsek.paralithic', "${lib}.paralithic")
+    relocate('com.google.gson', "${lib}.gson")
+    relocate('com.googlecode.concurrentlinkedhashmap', "${lib}.lru")
     relocate('io.papermc.lib', "${lib}.paper")
     relocate('net.kyori', "${lib}.kyori")
     relocate('org.bstats', "${lib}.metrics")
@@ -285,8 +286,148 @@ List<String> supersededVolmLibPackages = [
     'art/arcane/volmlib/util/director/visual/**',
     'art/arcane/volmlib/util/value/**',
     'art/arcane/volmlib/util/api/**',
-    'art/arcane/volmlib/util/entity/**'
+    'art/arcane/volmlib/util/entity/**',
+    'art/arcane/volmlib/util/config/**',
+    'art/arcane/volmlib/util/reflect/**',
+    'art/arcane/volmlib/util/documentation/**',
+    'art/arcane/iris/core/report/**',
+    'art/arcane/iris/util/common/inventorygui/**',
+    'art/arcane/iris/util/common/board/**',
+    'art/arcane/volmlib/integration/VaultEconomy*.class'
 ]
+
+List<String> unusedVolmLibClasses = [
+    'art/arcane/volmlib/util/nbt/io/ParseException',
+    'art/arcane/volmlib/util/nbt/io/SNBTDeserializer',
+    'art/arcane/volmlib/util/nbt/io/SNBTParser',
+    'art/arcane/volmlib/util/nbt/io/SNBTSerializer',
+    'art/arcane/volmlib/util/nbt/io/SNBTUtil',
+    'art/arcane/volmlib/util/nbt/io/SNBTWriter',
+    'art/arcane/volmlib/util/nbt/io/StringPointer',
+    'art/arcane/volmlib/util/io/StringDeserializer',
+    'art/arcane/volmlib/util/io/StringSerializer',
+    'art/arcane/volmlib/util/json/EnumType',
+    'art/arcane/volmlib/util/json/HTTP',
+    'art/arcane/volmlib/util/json/HTTPTokener',
+    'art/arcane/volmlib/util/json/JSONML',
+    'art/arcane/volmlib/util/json/JSONStringer',
+    'art/arcane/volmlib/util/json/JSONWriter',
+    'art/arcane/volmlib/util/json/XML',
+    'art/arcane/volmlib/util/json/XMLTokener',
+    'art/arcane/volmlib/util/hud/HudBid',
+    'art/arcane/volmlib/util/hud/HudBidder',
+    'art/arcane/volmlib/util/hud/HudLocalLedger',
+    'art/arcane/volmlib/util/hud/HudTitleClaim',
+    'art/arcane/volmlib/util/hud/HudTitleService',
+    'art/arcane/volmlib/util/scheduling/GroupedExecutor',
+    'art/arcane/volmlib/util/scheduling/SchedulerRuntime',
+    'art/arcane/volmlib/util/scheduling/SchedulerUtils',
+    'art/arcane/volmlib/util/scheduling/TaskExecutor',
+    'art/arcane/volmlib/util/parallel/StreamUtilsSupport',
+    'art/arcane/volmlib/util/parallel/SyncExecutorSupport',
+    'art/arcane/volmlib/util/cache/ByteBitCache',
+    'art/arcane/volmlib/util/cache/DataBitCache',
+    'art/arcane/volmlib/util/cache/FloatBitCache',
+    'art/arcane/volmlib/util/cache/IntBitCache',
+    'art/arcane/volmlib/util/cache/ShortBitCache',
+    'art/arcane/volmlib/util/cache/UByteBitCache',
+    'art/arcane/volmlib/util/data/ChunkCache',
+    'art/arcane/volmlib/util/data/ComplexCache',
+    'art/arcane/volmlib/util/data/IrisBiomeStorage',
+    'art/arcane/volmlib/util/data/NibbleArray',
+    'art/arcane/volmlib/util/data/NibbleDataPalette',
+    'art/arcane/volmlib/util/data/Recycler',
+    'art/arcane/volmlib/util/data/VanillaBiomeMap',
+    'art/arcane/volmlib/util/data/Writable',
+    'art/arcane/volmlib/util/data/base/ComplexCacheBase',
+    'art/arcane/volmlib/util/director/DirectorNodeBase',
+    'art/arcane/volmlib/util/director/DirectorParameterBase',
+    'art/arcane/volmlib/util/director/theme/DirectorThemes',
+    'art/arcane/volmlib/util/interpolation/InterpolationMethod',
+    'art/arcane/volmlib/util/interpolation/IrisInterpolation',
+    'art/arcane/volmlib/util/math/INode',
+    'art/arcane/volmlib/util/math/IrisMathHelper',
+    'art/arcane/volmlib/util/math/KochanekBartelsInterpolation',
+    'art/arcane/volmlib/util/math/PathInterpolation',
+    'art/arcane/volmlib/util/math/Spiral',
+    'art/arcane/volmlib/util/board/BoardManager',
+    'art/arcane/volmlib/util/board/BoardUpdateTask',
+    'art/arcane/volmlib/util/bukkit/Placeholders',
+    'art/arcane/volmlib/util/hunk/HunkFactory',
+    'art/arcane/volmlib/util/hunk/storage/ArrayHunk',
+    'art/arcane/volmlib/util/hunk/storage/AtomicDoubleHunk',
+    'art/arcane/volmlib/util/hunk/storage/AtomicIntegerHunk',
+    'art/arcane/volmlib/util/hunk/storage/AtomicLongHunk',
+    'art/arcane/volmlib/util/hunk/storage/SynchronizedArrayHunk',
+    'art/arcane/volmlib/util/hunk/view/BiomeForceBridge',
+    'art/arcane/volmlib/util/hunk/view/BiomeGridForceSupport',
+    'art/arcane/volmlib/util/hunk/view/BiomeGridHunkHolder',
+    'art/arcane/volmlib/util/hunk/view/BiomeGridHunkView',
+    'art/arcane/volmlib/util/hunk/view/ChunkDataHunkHolder',
+    'art/arcane/volmlib/util/hunk/view/RotatedXHunkView',
+    'art/arcane/volmlib/util/hunk/view/RotatedYHunkView',
+    'art/arcane/volmlib/util/hunk/view/RotatedZHunkView',
+    'art/arcane/volmlib/util/exceptions/MissingDimensionException',
+    'art/arcane/volmlib/util/function/Supplier2',
+    'art/arcane/volmlib/util/function/Supplier3',
+    'art/arcane/volmlib/util/hud/HudPriority',
+    'art/arcane/volmlib/util/interpolation/InterpolationMethod3D',
+    'art/arcane/volmlib/util/interpolation/InterpolationType',
+    'art/arcane/volmlib/util/inventorygui/UIRainbowDecorator',
+    'art/arcane/volmlib/util/io/Converter',
+    'art/arcane/volmlib/util/matter/MatterPlacer',
+    'art/arcane/volmlib/util/plugin/SplashScreenSupport',
+    'art/arcane/volmlib/util/scheduling/Contained',
+    'art/arcane/volmlib/util/scheduling/IrisLock',
+    'art/arcane/volmlib/util/scheduling/QueueExecutor',
+    'art/arcane/volmlib/util/scheduling/S',
+    'art/arcane/volmlib/util/scheduling/SBase',
+    'art/arcane/volmlib/util/scheduling/SlidingWindowRateLimiter',
+    'art/arcane/volmlib/util/scheduling/Switch',
+    'art/arcane/volmlib/util/scheduling/ThreadMonitor',
+    'art/arcane/volmlib/util/cache/ByteCache',
+    'art/arcane/volmlib/util/cache/ChunkCache2DSimple',
+    'art/arcane/volmlib/util/cache/IntCache',
+    'art/arcane/volmlib/util/cache/ShortCache',
+    'art/arcane/volmlib/util/cache/UByteCache',
+    'art/arcane/volmlib/util/cache/WorldCache2DSimple',
+    'art/arcane/volmlib/util/data/CuboidException',
+    'art/arcane/volmlib/util/data/DUTF',
+    'art/arcane/volmlib/util/data/Heafty',
+    'art/arcane/volmlib/util/data/InvertedBiomeGrid',
+    'art/arcane/volmlib/util/data/Shrinkwrap',
+    'art/arcane/volmlib/util/data/WeightMap',
+    'art/arcane/volmlib/util/data/WeightedRandom',
+    'art/arcane/volmlib/util/director/compat/BukkitDirectorContext',
+    'art/arcane/volmlib/util/director/handlers/base/DummyHandlerBase',
+    'art/arcane/volmlib/util/director/handlers/base/OptionalWorldHandlerBase',
+    'art/arcane/volmlib/util/parallel/BurstedHunk',
+    'art/arcane/volmlib/util/parallel/GridLockSupport',
+    'art/arcane/volmlib/util/parallel/NoopGridLockSupport',
+    'art/arcane/volmlib/util/bukkit/ChunkPositionSet',
+    'art/arcane/volmlib/util/bukkit/Events',
+    'art/arcane/volmlib/util/json/SingleCollectionTypeFactory',
+    'art/arcane/volmlib/util/collection/StateList',
+    'art/arcane/iris/core/pack/IrisPack',
+    'art/arcane/iris/core/pack/IrisPackRepository',
+    'art/arcane/iris/core/jobs/DownloadJob',
+    'art/arcane/iris/core/jobs/JobCollection',
+    'art/arcane/iris/core/jobs/ParallelQueueJob',
+    'art/arcane/iris/core/jobs/QueueJob',
+    'art/arcane/iris/engine/framework/placer/WorldObjectPlacer',
+    'art/arcane/iris/engine/object/IPostBlockAccess',
+    'art/arcane/iris/engine/object/IrisPotionEffect',
+    'art/arcane/iris/engine/platform/DummyChunkGenerator',
+    'art/arcane/iris/util/common/math/VectorMath',
+    'art/arcane/iris/util/common/parallel/GridLock',
+    'art/arcane/iris/util/common/reflect/W',
+    'art/arcane/iris/util/slimjar/BuildConstants',
+    'art/arcane/iris/util/slimjar/relocation/meta/AttributeMetaMediator',
+    'art/arcane/iris/util/slimjar/relocation/meta/AttributeMetaMediatorFactory'
+]
+List<String> unusedVolmLibClassEntries = unusedVolmLibClasses.collectMany { String classPath ->
+    [classPath + '.class', classPath + '$*.class']
+}
 
 // Annotation-only artifacts pulled in transitively by Gson and Caffeine. Their types appear solely
 // in annotation attributes, which the JVM skips silently when the type is absent, so nothing loads
@@ -315,6 +456,7 @@ tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.Shadow
     relocate('io.github.slimjar', "${lib}.slimjar")
     exclude('modules/loader-agent.isolated-jar')
     exclude(supersededVolmLibPackages)
+    exclude(unusedVolmLibClassEntries)
     exclude(annotationOnlyArtifacts)
     exclude(dependencyBuildMetadata)
     from(embeddedAgentJar.map { it.archiveFile }) {

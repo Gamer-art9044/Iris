@@ -258,7 +258,8 @@ public class IrisChunkGeneratorFailureContractTest {
 
         assertTrue(createBiomes.contains("requireGenerationStage(\"bukkit_nms_create_biomes\")"));
         assertTrue(createBiomes.contains("customBiomeSource.prepareVisibleBiomeBatch()"));
-        assertTrue(createBiomes.contains("customBiomeSource::getVisibleNoiseBiomeWithActiveGenerationLease"));
+        assertTrue(createBiomes.contains("new IrisDimensionCarvingResolver.State()"));
+        assertTrue(createBiomes.contains("sampler, resolverState"));
         assertTrue(buildSurface.contains("delegate.buildSurface("));
         assertTrue(carvers.contains("delegate.applyCarvers("));
         assertTrue(noise.contains("requireNoiseGenerationStage("));

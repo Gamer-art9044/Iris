@@ -38,6 +38,19 @@ public interface MantleComponent extends Comparable<MantleComponent> {
         return 0;
     }
 
+    default int getInputRadius(
+            int targetChunkX,
+            int targetChunkZ,
+            int invocationChunkRadius,
+            ChunkContext context
+    ) {
+        return getInputRadius();
+    }
+
+    default boolean isInputGenerationLazy() {
+        return false;
+    }
+
     default IrisData getData() {
         return getEngineMantle().getData();
     }

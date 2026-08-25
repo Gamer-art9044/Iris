@@ -24,12 +24,13 @@ import art.arcane.iris.core.gui.GuiOverlay;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.render.RenderType;
+import art.arcane.iris.modded.ModdedDimensionManager;
+import art.arcane.iris.modded.ModdedIrisLog;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 
 import java.awt.Desktop;
@@ -37,6 +38,8 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public final class ModdedVisionOverlay implements GuiOverlay {
@@ -80,11 +83,14 @@ public final class ModdedVisionOverlay implements GuiOverlay {
 
     @Override
     public void teleport(double worldX, double worldZ) {
-        int blockX = (int) worldX;
-        int blockZ = (int) worldZ;
+        int blockX = (int) Math.floor(worldX);
+        int blockZ = (int) Math.floor(worldZ);
         server.execute(() -> {
             ServerPlayer player = opener == null ? null : server.getPlayerList().getPlayer(opener);
             if (player == null) {
+                if (opener != null) {
+                    return;
+                }
                 List<ServerPlayer> players = level.players();
                 if (players.isEmpty()) {
                     return;
@@ -92,8 +98,24 @@ public final class ModdedVisionOverlay implements GuiOverlay {
                 player = players.get(0);
             }
             int surfaceY = engine.getMinHeight() + engine.getHeight(blockX, blockZ, false) + 2;
-            int safeY = Math.max(surfaceY, level.getHeight(Heightmap.Types.MOTION_BLOCKING, blockX, blockZ) + 1);
-            player.teleportTo(level, blockX + 0.5D, safeY, blockZ + 0.5D, java.util.Set.of(), player.getYRot(), player.getXRot(), false);
+            CompletableFuture<Boolean> teleport = ModdedDimensionManager.teleportAsync(
+                    player,
+                    server,
+                    level,
+                    blockX + 0.5D,
+                    surfaceY,
+                    blockZ + 0.5D,
+                    System.nanoTime() + TimeUnit.SECONDS.toNanos(10L));
+            UUID playerId = player.getUUID();
+            teleport.whenComplete((success, failure) -> {
+                if (failure != null) {
+                    ModdedIrisLog.error("Iris Vision teleport failed for {} at {},{}",
+                            playerId, blockX, blockZ, failure);
+                } else if (!Boolean.TRUE.equals(success)) {
+                    ModdedIrisLog.warn("Iris Vision teleport did not complete for {} at {},{}",
+                            playerId, blockX, blockZ);
+                }
+            });
         });
     }
 

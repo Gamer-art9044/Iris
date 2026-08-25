@@ -131,10 +131,26 @@ public final class IrisModdedCommands {
             return 0;
         }
         String dimensionId = level.dimension().identifier().toString();
-        if (!ModdedDimensionManager.teleport(player, source.getServer(), dimensionId, 8.5D, Double.MIN_VALUE, 8.5D)) {
-            fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_TELEPORT_FAILED_DIMENSION_IS_NOT_LOADED, MessageArgument.untrusted("dimensionId", dimensionId)));
-            return 0;
-        }
+        MinecraftServer server = source.getServer();
+        CompletableFuture<Boolean> teleport = ModdedDimensionManager.teleportAsync(
+                player,
+                server,
+                dimensionId,
+                8.5D,
+                Double.MIN_VALUE,
+                8.5D);
+        teleport.whenComplete((success, failure) -> {
+            if (Boolean.TRUE.equals(success) && failure == null) {
+                return;
+            }
+            if (failure != null) {
+                ModdedIrisLog.error("Iris teleport into '{}' failed for {}",
+                        dimensionId, player.getUUID(), failure);
+            }
+            server.execute(() -> fail(source, IrisLanguage.plain(
+                    ModdedCommandMessages.IRIS_MODDED_COMMANDS_TELEPORT_FAILED_DIMENSION_IS_NOT_LOADED,
+                    MessageArgument.untrusted("dimensionId", dimensionId))));
+        });
         ok(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_TELEPORTING, MessageArgument.untrusted("value", player.getScoreboardName()), MessageArgument.untrusted("dimensionId", dimensionId)));
         return 1;
     }

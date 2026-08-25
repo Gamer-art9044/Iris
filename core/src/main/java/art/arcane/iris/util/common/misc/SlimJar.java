@@ -19,12 +19,55 @@ public class SlimJar {
     private static final ReentrantLock lock = new ReentrantLock();
     private static final AtomicBoolean loaded = new AtomicBoolean();
 
+    public static void loadBootstrap(Path downloadPath, BootstrapLogger logger) {
+        if (loaded.get()) {
+            return;
+        }
+        lock.lock();
+        try {
+            if (loaded.get()) {
+                return;
+            }
+            ApplicationBuilder.appending("Iris")
+                    .injectableFactory(InjectableFactory.selecting(
+                            InjectableFactory.ERROR,
+                            InjectableFactory.INJECTABLE,
+                            InjectableFactory.WRAPPED,
+                            InjectableFactory.UNSAFE))
+                    .downloadDirectoryPath(downloadPath)
+                    .logger(new ProcessLogger() {
+                        @Override
+                        public void info(@NotNull String message, @Nullable Object... args) {
+                            logger.info(message.formatted(args));
+                        }
+
+                        @Override
+                        public void error(@NotNull String message, @Nullable Object... args) {
+                            logger.error(message.formatted(args));
+                        }
+
+                        @Override
+                        public void debug(@NotNull String message, @Nullable Object... args) {
+                            logger.debug(message.formatted(args));
+                        }
+                    })
+                    .build();
+            loaded.set(true);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public static void load() {
-        if (loaded.get()) return;
+        if (loaded.get()) {
+            return;
+        }
         lock.lock();
 
         try {
-            if (loaded.getAndSet(true)) return;
+            if (loaded.get()) {
+                return;
+            }
             VolmitPlugin plugin = BukkitPlatform.volmitPlugin();
             Path downloadPath = plugin.getDataFolder("cache", "libraries").toPath();
             debug(plugin, "Loading libraries...");
@@ -58,6 +101,7 @@ public class SlimJar {
                         })
                         .build();
             }
+            loaded.set(true);
             debug(plugin, "Libraries loaded successfully!");
         } finally {
             lock.unlock();
@@ -68,5 +112,13 @@ public class SlimJar {
         if (DEBUG) {
             plugin.getLogger().info("[DEBUG] " + message);
         }
+    }
+
+    public interface BootstrapLogger {
+        void info(String message);
+
+        void error(String message);
+
+        void debug(String message);
     }
 }

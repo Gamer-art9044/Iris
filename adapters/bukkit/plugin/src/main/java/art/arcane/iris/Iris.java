@@ -573,7 +573,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     }
 
     private static String logPrefix(Iris plugin) {
-        return plugin == null ? "[Iris] " : plugin.getTag();
+        return plugin == null ? ComponentLog.discriminator("Iris", "&a") : plugin.getTag();
     }
 
     /**

@@ -13,7 +13,15 @@ import lombok.experimental.Accessors;
 @Data
 public class IrisRiverWater {
     @Desc("The strategy used to determine river water-surface height.")
-    private IrisRiverWaterMode mode = IrisRiverWaterMode.SEA_LEVEL;
+    private IrisRiverWaterMode mode = IrisRiverWaterMode.FIXED;
+
+    @MinNumber(-2048)
+    @MaxNumber(2048)
+    @Desc("The base river fluid surface in absolute world Y, independent of the dimension ocean height.")
+    private int fluidHeight = 63;
+
+    @Desc("The river fluid palette used by surface channels, contained tunnels, grottos, and waterfall throats.")
+    private IrisMaterialPalette fluidPalette = new IrisMaterialPalette().qclear().qadd("water");
 
     @MinNumber(8)
     @MaxNumber(4096)
@@ -22,7 +30,7 @@ public class IrisRiverWater {
 
     @MinNumber(0)
     @MaxNumber(64)
-    @Desc("The greatest river water height permitted above the dimension fluid height.")
+    @Desc("The greatest terraced river height permitted above fluidHeight.")
     private int maximumPoolRise = 4;
 
     @MinNumber(1)

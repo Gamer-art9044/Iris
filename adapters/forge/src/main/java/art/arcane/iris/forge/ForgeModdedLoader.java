@@ -28,6 +28,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.common.util.Result;
 import net.minecraftforge.event.level.BlockEvent;
+import net.minecraftforge.event.level.LevelEvent;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.loading.FMLEnvironment;
 import net.minecraftforge.fml.loading.FMLLoader;
@@ -75,6 +76,16 @@ public final class ForgeModdedLoader implements ModdedLoader {
     @Override
     public void invalidateLevelCache(MinecraftServer server) {
         server.markWorldsDirty();
+    }
+
+    @Override
+    public void fireDynamicLevelLoad(MinecraftServer server, ServerLevel level) {
+        LevelEvent.Load.BUS.post(new LevelEvent.Load(level));
+    }
+
+    @Override
+    public void fireDynamicLevelUnload(MinecraftServer server, ServerLevel level) {
+        LevelEvent.Unload.BUS.post(new LevelEvent.Unload(level));
     }
 
     @Override

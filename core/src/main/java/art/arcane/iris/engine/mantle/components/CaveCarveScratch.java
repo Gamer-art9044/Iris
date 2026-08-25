@@ -27,6 +27,7 @@ final class CaveCarveScratch {
     final int[] fluidMaxY = new int[256];
     final int[] surfaceBreakFloorY = new int[256];
     final boolean[] surfaceBreakColumn = new boolean[256];
+    final boolean[] surfaceCeilingColumn = new boolean[256];
     final double[] columnThreshold = new double[256];
     final double[] passThreshold = new double[256];
     final double[] fullWeights = new double[256];
@@ -62,6 +63,7 @@ final class CaveCarveScratch {
     int activeModulesY = Integer.MIN_VALUE;
     int activeModuleCount;
     double[] verticalEdgeFade = new double[0];
+    double[] surfaceClosureThreshold = new double[0];
     MatterCavern[] matterByY = new MatterCavern[0];
     Matter[] sectionMatter = new Matter[0];
     MatterSlice<?>[] sectionSlices = new MatterSlice<?>[0];

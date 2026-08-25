@@ -85,18 +85,34 @@ public class IrisProject {
             StudioOpenCoordinator.StudioOpenKind openKind,
             Consumer<World> onDone
     ) throws IrisException {
+        return open(sender, seed, openKind, onDone, System.nanoTime());
+    }
+
+    public CompletableFuture<StudioOpenCoordinator.StudioOpenResult> open(
+            VolmitSender sender,
+            long seed,
+            StudioOpenCoordinator.StudioOpenKind openKind,
+            Consumer<World> onDone,
+            long requestedAtNanos
+    ) throws IrisException {
         if (isOpen()) {
-            return close().thenCompose(ignored -> openInternal(sender, seed, openKind, onDone));
+            return close().thenCompose(ignored -> openInternal(
+                    sender,
+                    seed,
+                    openKind,
+                    onDone,
+                    requestedAtNanos));
         }
 
-        return openInternal(sender, seed, openKind, onDone);
+        return openInternal(sender, seed, openKind, onDone, requestedAtNanos);
     }
 
     private CompletableFuture<StudioOpenCoordinator.StudioOpenResult> openInternal(
             VolmitSender sender,
             long seed,
             StudioOpenCoordinator.StudioOpenKind openKind,
-            Consumer<World> onDone
+            Consumer<World> onDone,
+            long requestedAtNanos
     ) {
         AtomicReference<String> stage = new AtomicReference<>("Queued");
         AtomicReference<Double> progress = new AtomicReference<>(0.01D);
@@ -114,7 +130,8 @@ public class IrisProject {
                             }
                             progress.set(Math.max(0D, Math.min(0.99D, update.progress())));
                         },
-                        onDone
+                        onDone,
+                        requestedAtNanos
                 )
         );
         StudioOpenProgressReporter.startStudioOpenReporter(sender, stage, progress, complete, failed);

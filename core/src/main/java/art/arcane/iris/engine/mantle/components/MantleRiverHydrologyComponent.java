@@ -1,17 +1,21 @@
 package art.arcane.iris.engine.mantle.components;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.mantle.ComponentFlag;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.IrisMantleComponent;
+import art.arcane.iris.engine.mantle.MantleComponent;
 import art.arcane.iris.engine.mantle.MantleWriter;
 import art.arcane.iris.engine.object.IrisRiverCaveFallback;
 import art.arcane.iris.engine.object.IrisRiverCaveMode;
 import art.arcane.iris.engine.object.IrisRiverCaves;
+import art.arcane.iris.engine.object.IrisRiverDeepPools;
 import art.arcane.iris.engine.object.IrisRiverExistingFluidPolicy;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisRiverNetwork;
 import art.arcane.iris.engine.river.RiverAnchor;
+import art.arcane.iris.engine.river.RiverNetwork;
 import art.arcane.iris.engine.river.RiverRouteState;
 import art.arcane.iris.engine.river.RiverSample;
 import art.arcane.iris.engine.river.RiverSection;
@@ -22,6 +26,7 @@ import art.arcane.iris.engine.river.cave.CaveVoxelPrecondition;
 import art.arcane.iris.engine.river.cave.CaveVoxelView;
 import art.arcane.iris.engine.river.cave.RiverCaveAction;
 import art.arcane.iris.engine.river.cave.RiverCaveContainmentPlanner;
+import art.arcane.iris.engine.river.cave.RiverCaveFluidKind;
 import art.arcane.iris.engine.river.cave.RiverCaveFluidPolicy;
 import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.engine.river.cave.RiverCaveMode;
@@ -35,8 +40,13 @@ import art.arcane.iris.engine.river.runtime.IrisRiverTunnelSample;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
+import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
+import art.arcane.volmlib.util.math.BlockPosition;
+import art.arcane.volmlib.util.matter.Matter;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -47,6 +57,8 @@ import java.util.Set;
 @ComponentFlag(ReservedFlag.RIVER_HYDROLOGY)
 public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
     private static final long CANDIDATE_SALT = 0x6A09E667F3BCC909L;
+    private static final long DEEP_POOL_CANDIDATE_SALT = 0xBB67AE8584CAA73BL;
+    private static final long DEEP_POOL_POSITION_SALT = 0x3C6EF372FE94F82BL;
     static final int PRIORITY = 1;
     private static final int[] FALLBACK_X = {0, 1, -1, 0, 0};
     private static final int[] FALLBACK_Z = {0, 0, 0, 1, -1};
@@ -74,6 +86,11 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
     }
 
     @Override
+    public boolean isInputGenerationLazy() {
+        return true;
+    }
+
+    @Override
     public int getInputRadius() {
         if (!getDimension().isCarvingEnabled()
                 || getDimension().getRivers() == null
@@ -88,6 +105,122 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
     }
 
     @Override
+    public int getInputRadius(
+            int targetChunkX,
+            int targetChunkZ,
+            int invocationChunkRadius,
+            ChunkContext context
+    ) {
+        if (!getDimension().isCarvingEnabled()
+                || getDimension().getRivers() == null
+                || !getDimension().getRivers().isEnabled()) {
+            return 0;
+        }
+        if (context == null || context.getComplex() == null) {
+            return getInputRadius();
+        }
+        IrisRiverRuntime runtime = context.getComplex().getRiverRuntime();
+        if (runtime == null) {
+            return getInputRadius();
+        }
+        IrisRiverCaves caves = runtime.caveSettings();
+        int tunnelRadius = tunnelHalo(runtime);
+        int radius = hasRiverFootprint(
+                runtime,
+                targetChunkX,
+                targetChunkZ,
+                invocationChunkRadius,
+                tunnelRadius
+        ) ? tunnelRadius : 0;
+        if (caves.getMode() != IrisRiverCaveMode.SEALED
+                && caves.getMaximumPerReach() > 0) {
+            radius = Math.max(radius, hasAcceptedCaveAnchor(
+                    runtime,
+                    caves,
+                    targetChunkX,
+                    targetChunkZ,
+                    invocationChunkRadius
+            ) ? planningHalo(caves) : 0);
+        }
+        IrisRiverDeepPools deepPools = caves.getDeepPools();
+        if (deepPools != null
+                && deepPools.isEnabled()
+                && deepPools.getMaximumPerReach() > 0) {
+            radius = Math.max(radius, hasAcceptedDeepPoolAnchor(
+                    runtime,
+                    deepPools,
+                    targetChunkX,
+                    targetChunkZ,
+                    invocationChunkRadius
+            ) ? deepPoolPlanningHalo(deepPools) : 0);
+        }
+        return radius;
+    }
+
+    private static boolean hasRiverFootprint(
+            IrisRiverRuntime runtime,
+            int targetChunkX,
+            int targetChunkZ,
+            int invocationChunkRadius,
+            int tunnelRadius
+    ) {
+        return runtime.hasRiverFootprint(
+                ((targetChunkX - invocationChunkRadius) << 4) - tunnelRadius,
+                ((targetChunkZ - invocationChunkRadius) << 4) - tunnelRadius,
+                ((targetChunkX + invocationChunkRadius + 1) << 4) + tunnelRadius,
+                ((targetChunkZ + invocationChunkRadius + 1) << 4) + tunnelRadius
+        );
+    }
+
+    private static boolean hasAcceptedCaveAnchor(
+            IrisRiverRuntime runtime,
+            IrisRiverCaves caves,
+            int targetChunkX,
+            int targetChunkZ,
+            int invocationChunkRadius
+    ) {
+        int candidateHalo = candidateHalo(caves);
+        List<RiverAnchor> anchors = runtime.candidateAnchors(
+                ((targetChunkX - invocationChunkRadius) << 4) - candidateHalo,
+                ((targetChunkZ - invocationChunkRadius) << 4) - candidateHalo,
+                ((targetChunkX + invocationChunkRadius + 1) << 4) + candidateHalo,
+                ((targetChunkZ + invocationChunkRadius + 1) << 4) + candidateHalo,
+                caves.getMinimumSpacing(),
+                CANDIDATE_SALT
+        );
+        for (RiverAnchor anchor : anchors) {
+            if (runtime.acceptsCaveAnchor(anchor)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasAcceptedDeepPoolAnchor(
+            IrisRiverRuntime runtime,
+            IrisRiverDeepPools deepPools,
+            int targetChunkX,
+            int targetChunkZ,
+            int invocationChunkRadius
+    ) {
+        int candidateHalo = deepPoolCandidateHalo(deepPools);
+        List<RiverAnchor> anchors = runtime.candidateAnchors(
+                ((targetChunkX - invocationChunkRadius) << 4) - candidateHalo,
+                ((targetChunkZ - invocationChunkRadius) << 4) - candidateHalo,
+                ((targetChunkX + invocationChunkRadius + 1) << 4) + candidateHalo,
+                ((targetChunkZ + invocationChunkRadius + 1) << 4) + candidateHalo,
+                deepPools.getMinimumSpacing(),
+                DEEP_POOL_CANDIDATE_SALT
+        );
+        for (RiverAnchor anchor : anchors) {
+            if (runtime.acceptsDeepPoolAnchor(anchor)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
     public void generateLayer(MantleWriter writer, int chunkX, int chunkZ, ChunkContext context) {
         IrisRiverRuntime runtime = context.getComplex().getRiverRuntime();
         if (runtime == null || !getDimension().isCarvingEnabled()) {
@@ -96,11 +229,21 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
         publishTunnels(writer, context, runtime, chunkX, chunkZ);
 
         IrisRiverCaves caves = runtime.caveSettings();
-        if (caves.getMode() == IrisRiverCaveMode.SEALED || caves.getMaximumPerReach() <= 0) {
-            return;
+        if (caves.getMode() != IrisRiverCaveMode.SEALED && caves.getMaximumPerReach() > 0) {
+            publishCaveConnections(writer, context, runtime, caves, chunkX, chunkZ);
         }
+        publishDeepPools(writer, context, runtime, caves.getDeepPools(), chunkX, chunkZ);
+    }
 
-        MantleRiverCaveVoxelView view = createView(writer, context);
+    private void publishCaveConnections(
+            MantleWriter writer,
+            ChunkContext context,
+            IrisRiverRuntime runtime,
+            IrisRiverCaves caves,
+            int chunkX,
+            int chunkZ
+    ) {
+        MantleRiverCaveVoxelView view = createView(writer, context, RiverCaveFluidKind.RIVER);
         int candidateHalo = candidateHalo(caves);
         int minimumX = (chunkX << 4) - candidateHalo;
         int minimumZ = (chunkZ << 4) - candidateHalo;
@@ -146,11 +289,202 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
         }
 
         RiverCavePlanningResult result = planner.planAll(view, sources, settings);
-        MantleRiverCaveVoxelView revalidationView = createView(writer, context);
+        MantleRiverCaveVoxelView revalidationView = createView(
+                writer,
+                context,
+                RiverCaveFluidKind.RIVER
+        );
         if (!preconditionsHold(revalidationView, result.baselinePreconditions())) {
             return;
         }
-        publishLocal(writer, chunkX, chunkZ, result, floodedBiomes);
+        publishLocal(
+                writer,
+                chunkX,
+                chunkZ,
+                result,
+                floodedBiomes,
+                RiverCaveFluidKind.RIVER
+        );
+    }
+
+    private void publishDeepPools(
+            MantleWriter writer,
+            ChunkContext context,
+            IrisRiverRuntime runtime,
+            IrisRiverDeepPools deepPools,
+            int chunkX,
+            int chunkZ
+    ) {
+        if (deepPools == null || !deepPools.isEnabled() || deepPools.getMaximumPerReach() <= 0) {
+            return;
+        }
+        MantleRiverCaveVoxelView view = createView(
+                writer,
+                context,
+                RiverCaveFluidKind.DEEP_POOL
+        );
+        int candidateHalo = deepPoolCandidateHalo(deepPools);
+        int minimumX = (chunkX << 4) - candidateHalo;
+        int minimumZ = (chunkZ << 4) - candidateHalo;
+        int maximumX = ((chunkX + 1) << 4) + candidateHalo;
+        int maximumZ = ((chunkZ + 1) << 4) + candidateHalo;
+        List<RiverAnchor> anchors = runtime.candidateAnchors(
+                minimumX,
+                minimumZ,
+                maximumX,
+                maximumZ,
+                deepPools.getMinimumSpacing(),
+                DEEP_POOL_CANDIDATE_SALT
+        );
+        if (anchors.isEmpty()) {
+            return;
+        }
+
+        RiverCavePlannerSettings settings = deepPoolPlannerSettings(deepPools, seed(), getData());
+        List<RiverCaveSource> sources = new ArrayList<>();
+        Map<Long, String> floodedBiomes = new HashMap<>();
+        for (RiverAnchor anchor : anchors) {
+            if (!runtime.acceptsDeepPoolAnchor(anchor)) {
+                continue;
+            }
+            RiverCaveSource source = deepPoolSourceFor(
+                    view,
+                    deepPools,
+                    anchor,
+                    getDimension().getMinHeight(),
+                    seed()
+            );
+            if (source == null) {
+                continue;
+            }
+            sources.add(source);
+            floodedBiomes.put(source.sourceId(), runtime.selectFloodedCaveBiome(anchor));
+        }
+        if (sources.isEmpty()) {
+            return;
+        }
+
+        RiverCavePlanningResult result = planner.planAll(view, sources, settings);
+        MantleRiverCaveVoxelView revalidationView = createView(
+                writer,
+                context,
+                RiverCaveFluidKind.DEEP_POOL
+        );
+        if (!preconditionsHold(revalidationView, result.baselinePreconditions())) {
+            return;
+        }
+        publishLocal(
+                writer,
+                chunkX,
+                chunkZ,
+                result,
+                floodedBiomes,
+                RiverCaveFluidKind.DEEP_POOL
+        );
+    }
+
+    static RiverCavePlannerSettings deepPoolPlannerSettings(
+            IrisRiverDeepPools deepPools,
+            long seed,
+            IrisData data
+    ) {
+        int verticalDepth = deepPools.getVerticalRadius() * 2 - deepPools.getDryHeadroom() + 1;
+        int proofRadius = (int) StrictMath.ceil(
+                StrictMath.sqrt(2D) * deepPools.getHorizontalRadius()
+        ) + 1;
+        return new RiverCavePlannerSettings(
+                proofRadius,
+                verticalDepth,
+                deepPools.getMaximumVolume(),
+                deepPools.getVerticalRadius(),
+                1,
+                deepPools.getHorizontalRadius(),
+                deepPools.getVerticalRadius(),
+                deepPools.getDryHeadroom(),
+                RiverCaveFluidPolicy.REJECT_EXISTING,
+                new ConfiguredRiverGrottoShape(
+                        seed ^ DEEP_POOL_POSITION_SALT,
+                        data,
+                        deepPools.getShapeStyle(),
+                        deepPools.getWarpStyle(),
+                        deepPools.getWarpStrength(),
+                        deepPools.getShapeVariation()
+                ),
+                proofRadius,
+                verticalDepth
+        );
+    }
+
+    static RiverCaveSource deepPoolSourceFor(
+            CaveVoxelView view,
+            IrisRiverDeepPools deepPools,
+            RiverAnchor anchor,
+            int worldMinimumY,
+            long seed
+    ) {
+        int minimumHead = deepPools.getMinimumFluidY() - worldMinimumY;
+        int maximumHead = deepPools.getMaximumFluidY() - worldMinimumY;
+        int headRange = maximumHead - minimumHead + 1;
+        if (headRange <= 0) {
+            return null;
+        }
+        int searchRadius = deepPools.getSearchRadius();
+        int searchWidth = searchRadius * 2 + 1;
+        int targetDepth = Math.max(
+                1,
+                deepPools.getVerticalRadius() - deepPools.getDryHeadroom()
+        );
+        for (int attempt = 0; attempt < deepPools.getSearchAttempts(); attempt++) {
+            long hash = RiverNetwork.mix(
+                    seed
+                            ^ anchor.stableId()
+                            ^ DEEP_POOL_POSITION_SALT
+                            ^ (long) attempt * 0x9E3779B97F4A7C15L
+            );
+            int offsetX = searchRadius == 0
+                    ? 0
+                    : Math.floorMod((int) hash, searchWidth) - searchRadius;
+            int offsetZ = searchRadius == 0
+                    ? 0
+                    : Math.floorMod((int) (hash >>> 32), searchWidth) - searchRadius;
+            if ((long) offsetX * offsetX + (long) offsetZ * offsetZ
+                    > (long) searchRadius * searchRadius) {
+                continue;
+            }
+            int x = (int) StrictMath.floor(anchor.x()) + offsetX;
+            int z = (int) StrictMath.floor(anchor.z()) + offsetZ;
+            int startOffset = (int) StrictMath.floor(unit(hash) * headRange);
+            for (int scanned = 0; scanned < headRange; scanned++) {
+                int headY = maximumHead - Math.floorMod(startOffset + scanned, headRange);
+                CavePosition floor = new CavePosition(x, headY, z);
+                CavePosition above = new CavePosition(x, headY + 1, z);
+                CavePosition target = new CavePosition(x, headY - targetDepth, z);
+                if (!view.isInWorld(target)
+                        || !view.isInWorld(above)
+                        || view.voxelAt(floor) != CaveVoxel.SOLID
+                        || view.voxelAt(above) != CaveVoxel.CAVE_AIR
+                        || view.isOpenToSurface(above)) {
+                    continue;
+                }
+                long sourceId = RiverNetwork.mix(
+                        anchor.stableId()
+                                ^ BlockPosition.toLong(x, headY, z)
+                                ^ DEEP_POOL_POSITION_SALT
+                );
+                return new RiverCaveSource(
+                        sourceId,
+                        floor,
+                        target,
+                        headY,
+                        RiverCaveMode.DEEP_POOL
+                );
+            }
+        }
+        return null;
+    }
+
+    private static double unit(long hash) {
+        return (hash >>> 11) * 0x1.0p-53;
     }
 
     @Override
@@ -176,9 +510,15 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             return false;
         }
         IrisRiverCaves caves = dimension.getRivers().getCaves();
-        return caves != null
-                && caves.getMode() != IrisRiverCaveMode.SEALED
+        if (caves == null) {
+            return false;
+        }
+        boolean caveConnections = caves.getMode() != IrisRiverCaveMode.SEALED
                 && caves.getMaximumPerReach() > 0;
+        IrisRiverDeepPools deepPools = caves.getDeepPools();
+        return caveConnections || deepPools != null
+                && deepPools.isEnabled()
+                && deepPools.getMaximumPerReach() > 0;
     }
 
     static int planningHalo(IrisRiverCaves caves) {
@@ -186,14 +526,31 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
     }
 
     static int inputRadius(IrisRiverCaves caves, int tunnelRadius) {
-        if (caves.getMode() == IrisRiverCaveMode.SEALED || caves.getMaximumPerReach() <= 0) {
-            return tunnelRadius;
+        int radius = tunnelRadius;
+        if (caves.getMode() != IrisRiverCaveMode.SEALED && caves.getMaximumPerReach() > 0) {
+            radius = Math.max(radius, planningHalo(caves));
         }
-        return Math.max(tunnelRadius, planningHalo(caves));
+        IrisRiverDeepPools deepPools = caves.getDeepPools();
+        if (deepPools != null && deepPools.isEnabled() && deepPools.getMaximumPerReach() > 0) {
+            radius = Math.max(radius, deepPoolPlanningHalo(deepPools));
+        }
+        return radius;
     }
 
     static int candidateHalo(IrisRiverCaves caves) {
         return cavePublicationRadius(caves) * 3;
+    }
+
+    static int deepPoolPlanningHalo(IrisRiverDeepPools deepPools) {
+        return deepPoolPublicationRadius(deepPools) * 4;
+    }
+
+    static int deepPoolCandidateHalo(IrisRiverDeepPools deepPools) {
+        return deepPoolPublicationRadius(deepPools) * 3;
+    }
+
+    static int deepPoolPublicationRadius(IrisRiverDeepPools deepPools) {
+        return deepPools.getSearchRadius() + deepPools.getHorizontalRadius() + 1;
     }
 
     static int cavePublicationRadius(IrisRiverCaves caves) {
@@ -296,13 +653,13 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
         boolean changed;
         do {
             changed = false;
-            Set<CavePosition> candidateActions = mergeActions(containedColumns).keySet();
+            Long2ObjectOpenHashMap<TunnelColumn> candidateColumns = indexColumns(containedColumns);
             for (int index = containedColumns.size() - 1; index >= 0; index--) {
                 TunnelColumn column = containedColumns.get(index);
                 if (!isTunnelColumnContained(
                         view,
                         column,
-                        candidateActions,
+                        candidateColumns,
                         dryHeadroom,
                         surfaceSampler
                 )) {
@@ -348,7 +705,10 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
                 ));
             }
         }
-        return new TunnelPlan(Map.copyOf(actions), Map.copyOf(preconditions));
+        return new TunnelPlan(
+                Collections.unmodifiableMap(actions),
+                Collections.unmodifiableMap(preconditions)
+        );
     }
 
     private static TunnelColumn createTunnelColumn(
@@ -360,8 +720,9 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
         if (sample == null) {
             return null;
         }
-        LinkedHashMap<CavePosition, RiverCaveAction> actions = new LinkedHashMap<>();
-        for (int y = sample.bedY() + 1; y <= sample.ceilingY(); y++) {
+        int minimumY = sample.bedY() + 1;
+        int maximumY = sample.ceilingY();
+        for (int y = minimumY; y <= maximumY; y++) {
             CavePosition position = new CavePosition(x, y, z);
             RiverCaveAction action = y <= sample.waterHeadY()
                     ? RiverCaveAction.WET_SOURCE
@@ -371,22 +732,24 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
                     && !matchesPublishedAction(view, position, action))) {
                 return null;
             }
-            actions.put(position, action);
         }
-        return actions.isEmpty() ? null : new TunnelColumn(actions);
+        return minimumY > maximumY
+                ? null
+                : new TunnelColumn(x, z, minimumY, sample.waterHeadY(), maximumY);
     }
 
     private static boolean isTunnelColumnContained(
             CaveVoxelView view,
             TunnelColumn column,
-            Set<CavePosition> candidateActions,
+            Long2ObjectOpenHashMap<TunnelColumn> candidateColumns,
             int dryHeadroom,
             SurfaceSampler surfaceSampler
     ) {
-        for (CavePosition position : column.actions().keySet()) {
+        for (int y = column.minimumY(); y <= column.maximumY(); y++) {
+            CavePosition position = new CavePosition(column.x(), y, column.z());
             for (int[] offset : NEIGHBORS) {
                 CavePosition neighbor = offset(position, offset);
-                if (candidateActions.contains(neighbor)) {
+                if (containsAction(candidateColumns, neighbor)) {
                     continue;
                 }
                 if (!view.isInWorld(neighbor)) {
@@ -417,7 +780,9 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             SurfaceSampler surfaceSampler
     ) {
         IrisRiverSurfaceSample sample = surfaceSampler.sample(position.x(), position.z());
-        if (!isWetChannelBed(sample) || sample.subterranean()) {
+        if (!sample.river().present()
+                || sample.river().state() != RiverRouteState.WET
+                || sample.subterranean()) {
             return false;
         }
         int bedY = (int) Math.round(sample.terrainHeight());
@@ -428,9 +793,34 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
     private static Map<CavePosition, RiverCaveAction> mergeActions(List<TunnelColumn> columns) {
         LinkedHashMap<CavePosition, RiverCaveAction> actions = new LinkedHashMap<>();
         for (TunnelColumn column : columns) {
-            actions.putAll(column.actions());
+            for (int y = column.minimumY(); y <= column.maximumY(); y++) {
+                actions.put(
+                        new CavePosition(column.x(), y, column.z()),
+                        y <= column.waterHeadY()
+                                ? RiverCaveAction.WET_SOURCE
+                                : RiverCaveAction.DRY_AIR
+                );
+            }
         }
         return actions;
+    }
+
+    private static Long2ObjectOpenHashMap<TunnelColumn> indexColumns(List<TunnelColumn> columns) {
+        Long2ObjectOpenHashMap<TunnelColumn> indexed = new Long2ObjectOpenHashMap<>(columns.size());
+        for (TunnelColumn column : columns) {
+            indexed.put(Cache.key(column.x(), column.z()), column);
+        }
+        return indexed;
+    }
+
+    private static boolean containsAction(
+            Long2ObjectOpenHashMap<TunnelColumn> columns,
+            CavePosition position
+    ) {
+        TunnelColumn column = columns.get(Cache.key(position.x(), position.z()));
+        return column != null
+                && position.y() >= column.minimumY()
+                && position.y() <= column.maximumY();
     }
 
     private static boolean matchesPublishedAction(
@@ -438,8 +828,13 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             CavePosition position,
             RiverCaveAction action
     ) {
-        return view instanceof TunnelVoxelView tunnelView
-                && tunnelView.riverActionAt(position) == action;
+        if (!(view instanceof TunnelVoxelView tunnelView)) {
+            return false;
+        }
+        RiverCaveHydrology hydrology = tunnelView.riverHydrologyAt(position);
+        return hydrology != null
+                && hydrology.action() == action
+                && hydrology.fluidKind() == RiverCaveFluidKind.RIVER;
     }
 
     private static CavePosition offset(CavePosition position, int[] offset) {
@@ -450,13 +845,37 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
         );
     }
 
-    private MantleRiverCaveVoxelView createView(MantleWriter writer, ChunkContext context) {
+    private MantleRiverCaveVoxelView createView(
+            MantleWriter writer,
+            ChunkContext context,
+            RiverCaveFluidKind fluidKind
+    ) {
         return new MantleRiverCaveVoxelView(
                 writer.getMantle(),
                 writer.getMantle().getWorldHeight(),
                 (x, z) -> context.getComplex().getRoundedHeighteightStream().get(x, z),
-                (x, z) -> context.getComplex().getFluidStream().get(x, z)
+                (x, z) -> context.getComplex().resolveRiverCaveFluid(fluidKind, x, z),
+                fluidKind,
+                (chunkX, chunkZ) -> generateCarvingInput(writer, context, chunkX, chunkZ)
         );
+    }
+
+    private void generateCarvingInput(
+            MantleWriter writer,
+            ChunkContext context,
+            int chunkX,
+            int chunkZ
+    ) {
+        MantleComponent carving = getEngineMantle().getRegisteredComponents().get(ReservedFlag.CARVED);
+        if (carving == null || !carving.isEnabled()) {
+            throw new IllegalStateException("River hydrology requires the carving component");
+        }
+        MantleChunk<Matter> chunk = writer.acquireChunk(chunkX, chunkZ);
+        if (chunk == null) {
+            throw new IllegalStateException("River hydrology read exceeded the prepared mantle radius at "
+                    + chunkX + "," + chunkZ);
+        }
+        chunk.raiseFlagSuspend(ReservedFlag.CARVED, () -> carving.generateLayer(writer, chunkX, chunkZ, context));
     }
 
     private void publishTunnels(
@@ -467,7 +886,11 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             int chunkZ
     ) {
         for (int attempt = 0; attempt < 2; attempt++) {
-            MantleRiverCaveVoxelView view = createView(writer, context);
+            MantleRiverCaveVoxelView view = createView(
+                    writer,
+                    context,
+                    RiverCaveFluidKind.RIVER
+            );
             TunnelPlan plan = planTunnels(
                     view,
                     chunkX,
@@ -478,7 +901,11 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
                     runtime::sampleTunnel,
                     runtime::sample
             );
-            MantleRiverCaveVoxelView revalidationView = createView(writer, context);
+            MantleRiverCaveVoxelView revalidationView = createView(
+                    writer,
+                    context,
+                    RiverCaveFluidKind.RIVER
+            );
             if (preconditionsHold(revalidationView, plan.preconditions())) {
                 publishTunnelLocal(writer, chunkX, chunkZ, plan);
                 return;
@@ -505,7 +932,8 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
                         data,
                         caves.getGrottoShapeStyle(),
                         caves.getGrottoWarpStyle(),
-                        caves.getGrottoWarpStrength()
+                        caves.getGrottoWarpStrength(),
+                        0.2D
                 ),
                 caves.getMaxFloodRadius(),
                 caves.getMaxFloodDepth()
@@ -673,7 +1101,8 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
             int chunkX,
             int chunkZ,
             RiverCavePlanningResult result,
-            Map<Long, String> floodedBiomes
+            Map<Long, String> floodedBiomes,
+            RiverCaveFluidKind fluidKind
     ) {
         Map<CavePosition, RiverCaveSource> owners = actionOwners(result);
         ArrayList<Map.Entry<CavePosition, RiverCaveAction>> actions = new ArrayList<>(result.actions().entrySet());
@@ -692,7 +1121,7 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
                     position.x(),
                     position.y(),
                     position.z(),
-                    new RiverCaveHydrology(entry.getValue(), biome)
+                    new RiverCaveHydrology(entry.getValue(), biome, fluidKind)
             );
         }
     }
@@ -708,7 +1137,12 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
         for (Map.Entry<CavePosition, RiverCaveAction> entry : actions) {
             CavePosition position = entry.getKey();
             if (owns(chunkX, chunkZ, position)) {
-                writer.setData(position.x(), position.y(), position.z(), RiverCaveHydrology.of(entry.getValue()));
+                writer.setData(
+                        position.x(),
+                        position.y(),
+                        position.z(),
+                        RiverCaveHydrology.of(entry.getValue(), RiverCaveFluidKind.RIVER)
+                );
             }
         }
     }
@@ -749,7 +1183,7 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
     }
 
     interface TunnelVoxelView extends CaveVoxelView {
-        RiverCaveAction riverActionAt(CavePosition position);
+        RiverCaveHydrology riverHydrologyAt(CavePosition position);
     }
 
     record TunnelPlan(
@@ -761,6 +1195,12 @@ public final class MantleRiverHydrologyComponent extends IrisMantleComponent {
         }
     }
 
-    private record TunnelColumn(Map<CavePosition, RiverCaveAction> actions) {
+    private record TunnelColumn(
+            int x,
+            int z,
+            int minimumY,
+            int waterHeadY,
+            int maximumY
+    ) {
     }
 }

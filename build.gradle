@@ -4,6 +4,8 @@ import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 
 /*
  * Iris is a World Generator for Minecraft Bukkit Servers
@@ -73,6 +75,7 @@ String bukkitArtifactName = irisArtifactName('CraftBukkit', bukkitMinecraftRange
 String fabricArtifactName = irisArtifactName('Fabric', "${minecraftVersion}+${loaderDisplayVersion(fabricLoaderVersion)}")
 String forgeArtifactName = irisArtifactName('Forge', "${minecraftVersion}+${loaderDisplayVersion(forgeVersion)}")
 String neoForgeArtifactName = irisArtifactName('NeoForge', "${minecraftVersion}+${loaderDisplayVersion(neoForgeVersion)}")
+long maximumBukkitArtifactBytes = 7_000_000L
 apply plugin: ApiGenerator
 
 // Where `buildAll` drops the per-platform jars for a local test server. Use the approved sibling
@@ -145,6 +148,16 @@ nmsBindings.each { key, value ->
 
 def included = configurations.create('included')
 def jarJar = configurations.create('jarJar')
+def bukkitLanguagesDirectory = layout.buildDirectory.dir('generated/bukkit-languages')
+Set<String> sharedNonEnglishBukkitMessages = [
+    'iris.desktop.vision.fps',
+    'iris.desktop.vision.tiles',
+    'iris.bukkit.runtime.commandpack.message_2',
+    'iris.bukkit.commanddatapack.message_2',
+    'iris.runtime.chunk_job.bossbar.progress',
+    'iris.runtime.studio.action.progress',
+    'iris.runtime.chunk_job.action.progress'
+] as Set
 dependencies {
     nmsBindings.keySet().each { key ->
         add('included', project(path: ":adapters:bukkit:nms:${key}", configuration: 'runtimeElements'))
@@ -154,14 +167,66 @@ dependencies {
     add('jarJar', project(':core:agent'))
 }
 
+def prepareBukkitLanguages = tasks.register('prepareBukkitLanguages') {
+    inputs.files(fileTree(project(':core').file('src/main/resources/languages')) {
+        include('*.json')
+    })
+    outputs.dir(bukkitLanguagesDirectory)
+    doLast {
+        File outputDirectory = bukkitLanguagesDirectory.get().asFile
+        delete(outputDirectory)
+        outputDirectory.mkdirs()
+        List<File> sources = fileTree(project(':core').file('src/main/resources/languages')) {
+            include('*.json')
+        }.files.sort { File left, File right -> left.name <=> right.name }
+        List<Map<String, Object>> catalogs = sources.collect { File source ->
+            (Map<String, Object>) new JsonSlurper().parse(source)
+        }
+        Map<String, Object> referenceMessages = (Map<String, Object>) catalogs.first().get('messages')
+        List<String> messageIds = referenceMessages.keySet()
+                .findAll { String key -> !key.startsWith('iris.modded.') }
+                .sort()
+        Set<String> sharedFallbackIds = new LinkedHashSet<>(messageIds)
+        catalogs.each { Map<String, Object> catalog ->
+            Map<String, Object> messages = (Map<String, Object>) catalog.get('messages')
+            if (!messages.keySet().containsAll(messageIds)) {
+                throw new GradleException("Bundled locale ${catalog.get('locale')} is missing Bukkit messages")
+            }
+            sharedFallbackIds.removeIf { String key -> messages.get(key) != referenceMessages.get(key) }
+        }
+        sharedFallbackIds.removeAll(sharedNonEnglishBukkitMessages)
+
+        sources.eachWithIndex { File source, int index ->
+            Map<String, Object> catalog = catalogs.get(index)
+            Map<String, Object> messages = (Map<String, Object>) catalog.get('messages')
+            List<Object> compactMessages = messageIds.collect { String key ->
+                sharedFallbackIds.contains(key) ? null : messages.get(key)
+            }
+            new File(outputDirectory, source.name).setText(
+                    JsonOutput.toJson([catalog.get('locale'), compactMessages]),
+                    'UTF-8')
+        }
+    }
+}
+
 tasks.named('jar', Jar).configure {
     inputs.files(included)
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from(jarJar, provider { included.resolve().collect { zipTree(it) } })
+    includeEmptyDirs = false
+    from(jarJar)
+    from(provider { included.resolve().collect { zipTree(it) } }) {
+        exclude('languages/**')
+    }
+    from(prepareBukkitLanguages) {
+        into('languages')
+    }
     doFirst {
         delete(layout.buildDirectory.file("libs/Iris-${project.version}.jar"))
     }
     archiveFileName.set(bukkitArtifactName)
+    doLast {
+        JarCompactor.compact(archiveFile.get().asFile)
+    }
 }
 
 tasks.register('iris', Copy) {
@@ -537,10 +602,8 @@ List<String> requiredBukkitArtifactEntries = [
     'art/arcane/iris/core/lifecycle/WorldLifecycleStaging.class',
     'art/arcane/iris/util/simd/VectorSimdKernels.class',
     'art/arcane/iris/util/simd/VectorNoiseKernels2D.class',
-    'art/arcane/iris/util/paralithic/functions/Function.class',
     'art/arcane/iris/util/project/agent/Agent.class',
     'art/arcane/iris/util/common/misc/getHardware.class',
-    'art/arcane/iris/util/caffeine/cache/Caffeine.class',
     'art/arcane/volmlib/util/io/JarScanner.class',
     'art/arcane/volmlib/util/director/runtime/DirectorRuntimeEngine.class',
     'art/arcane/volmlib/util/mantle/io/Lz4IOWorkerCodecSupport.class',
@@ -553,7 +616,12 @@ tasks.register('verifyBukkitArtifact') {
     File artifact = layout.buildDirectory.file("libs/${bukkitArtifactName}").get().asFile
     inputs.file(artifact)
     doLast {
-        BukkitArtifactVerifier.verify(artifact, requiredBukkitArtifactEntries, 17, 400, 16)
+        BukkitArtifactVerifier.verify(
+                artifact,
+                requiredBukkitArtifactEntries,
+                17,
+                16,
+                maximumBukkitArtifactBytes)
         logger.lifecycle("Verified ${artifact.name} packaging and class reference graph")
     }
 }

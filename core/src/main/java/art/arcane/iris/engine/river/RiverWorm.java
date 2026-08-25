@@ -17,6 +17,7 @@ public record RiverWorm(
         double depthMultiplier,
         double bodyWavelength,
         double bodyDetailWavelength,
+        double bodyDetailInfluence,
         double widthVariation,
         double bankVariation,
         double depthVariation,
@@ -44,8 +45,9 @@ public record RiverWorm(
         requireRange(widthMultiplier, 0.125D, 8D, "widthMultiplier");
         requireRange(bankMultiplier, 0.125D, 8D, "bankMultiplier");
         requireRange(depthMultiplier, 0.125D, 8D, "depthMultiplier");
-        requireRange(bodyWavelength, 32D, 16384D, "bodyWavelength");
-        requireRange(bodyDetailWavelength, 32D, 16384D, "bodyDetailWavelength");
+        requireRange(bodyWavelength, 8D, 16384D, "bodyWavelength");
+        requireRange(bodyDetailWavelength, 8D, 16384D, "bodyDetailWavelength");
+        requireRange(bodyDetailInfluence, 0D, 1D, "bodyDetailInfluence");
         requireRange(widthVariation, 0D, 0.875D, "widthVariation");
         requireRange(bankVariation, 0D, 0.875D, "bankVariation");
         requireRange(depthVariation, 0D, 0.875D, "depthVariation");

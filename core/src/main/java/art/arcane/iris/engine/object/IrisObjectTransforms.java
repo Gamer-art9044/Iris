@@ -25,6 +25,11 @@ import art.arcane.iris.util.common.math.IrisBlockVector;
 import art.arcane.iris.util.common.math.IrisVector;
 import art.arcane.iris.util.project.interpolation.Interpolation3D;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+
 /**
  * Geometric transforms for {@link IrisObject}: rotation, scaling and the interpolated upscalers.
  */
@@ -133,6 +138,7 @@ final class IrisObjectTransforms {
             VectorMap<PlatformBlockState> b = new VectorMap<>();
             IrisPosition min = self.getAABB().min();
             IrisPosition max = self.getAABB().max();
+            NearestBlockIndex nearestBlocks = NearestBlockIndex.create(v);
 
             for (int x = min.getX(); x <= max.getX(); x++) {
                 for (int y = min.getY(); y <= max.getY(); y++) {
@@ -146,7 +152,7 @@ final class IrisObjectTransforms {
 
                             return 1;
                         }) >= 0.5) {
-                            b.put(new IrisBlockVector(x, y, z), nearestBlockData(self, x, y, z));
+                            b.put(new IrisBlockVector(x, y, z), nearestBlockData(v, nearestBlocks, x, y, z));
                         } else {
                             b.put(new IrisBlockVector(x, y, z), IrisObject.States.AIR);
                         }
@@ -169,6 +175,7 @@ final class IrisObjectTransforms {
             VectorMap<PlatformBlockState> b = new VectorMap<>();
             IrisPosition min = self.getAABB().min();
             IrisPosition max = self.getAABB().max();
+            NearestBlockIndex nearestBlocks = NearestBlockIndex.create(v);
 
             for (int x = min.getX(); x <= max.getX(); x++) {
                 for (int y = min.getY(); y <= max.getY(); y++) {
@@ -182,7 +189,7 @@ final class IrisObjectTransforms {
 
                             return 1;
                         }) >= 0.5) {
-                            b.put(new IrisBlockVector(x, y, z), nearestBlockData(self, x, y, z));
+                            b.put(new IrisBlockVector(x, y, z), nearestBlockData(v, nearestBlocks, x, y, z));
                         } else {
                             b.put(new IrisBlockVector(x, y, z), IrisObject.States.AIR);
                         }
@@ -209,6 +216,7 @@ final class IrisObjectTransforms {
             VectorMap<PlatformBlockState> b = new VectorMap<>();
             IrisPosition min = self.getAABB().min();
             IrisPosition max = self.getAABB().max();
+            NearestBlockIndex nearestBlocks = NearestBlockIndex.create(v);
 
             for (int x = min.getX(); x <= max.getX(); x++) {
                 for (int y = min.getY(); y <= max.getY(); y++) {
@@ -222,7 +230,7 @@ final class IrisObjectTransforms {
 
                             return 1;
                         }, tension, bias) >= 0.5) {
-                            b.put(new IrisBlockVector(x, y, z), nearestBlockData(self, x, y, z));
+                            b.put(new IrisBlockVector(x, y, z), nearestBlockData(v, nearestBlocks, x, y, z));
                         } else {
                             b.put(new IrisBlockVector(x, y, z), IrisObject.States.AIR);
                         }
@@ -238,36 +246,124 @@ final class IrisObjectTransforms {
         }
     }
 
-    private static PlatformBlockState nearestBlockData(IrisObject self, int x, int y, int z) {
+    private static PlatformBlockState nearestBlockData(VectorMap<PlatformBlockState> blocks,
+                                                       NearestBlockIndex nearestBlocks,
+                                                       int x, int y, int z) {
         IrisBlockVector vv = new IrisBlockVector(x, y, z);
-        self.readLock.lock();
-        try {
-            PlatformBlockState r = self.blocks.get(vv);
-
-            if (!B.isAir(r)) {
-                return r;
-            }
-
-            double d = Double.MAX_VALUE;
-
-            for (var entry : self.blocks) {
-                PlatformBlockState dat = entry.getValue();
-
-                if (B.isAir(dat)) {
-                    continue;
-                }
-
-                double dx = entry.getKey().distanceSquared(vv);
-
-                if (dx < d) {
-                    d = dx;
-                    r = dat;
-                }
-            }
-
-            return r;
-        } finally {
-            self.readLock.unlock();
+        PlatformBlockState direct = blocks.get(vv);
+        if (!B.isAir(direct)) {
+            return direct;
         }
+        return nearestBlocks.nearest(x, y, z, direct);
+    }
+
+    static final class NearestBlockIndex {
+        private static final Comparator<NearestBlock> X_ORDER = Comparator
+                .comparingInt(NearestBlock::x)
+                .thenComparingInt(NearestBlock::rank);
+        private static final Comparator<NearestBlock> Y_ORDER = Comparator
+                .comparingInt(NearestBlock::y)
+                .thenComparingInt(NearestBlock::rank);
+        private static final Comparator<NearestBlock> Z_ORDER = Comparator
+                .comparingInt(NearestBlock::z)
+                .thenComparingInt(NearestBlock::rank);
+
+        private final NearestNode root;
+        private PlatformBlockState bestState;
+        private double bestDistance;
+        private int bestRank;
+
+        private NearestBlockIndex(NearestNode root) {
+            this.root = root;
+        }
+
+        static NearestBlockIndex create(VectorMap<PlatformBlockState> blocks) {
+            List<NearestBlock> points = new ArrayList<>(blocks.size());
+            VectorMap<PlatformBlockState>.Cursor cursor = blocks.cursor();
+            int rank = 0;
+            while (cursor.next()) {
+                PlatformBlockState state = cursor.value();
+                if (!B.isAir(state)) {
+                    IrisBlockVector position = cursor.key();
+                    points.add(new NearestBlock(position.getBlockX(), position.getBlockY(), position.getBlockZ(),
+                            rank, state));
+                }
+                rank++;
+            }
+
+            NearestBlock[] pointArray = points.toArray(new NearestBlock[0]);
+            return new NearestBlockIndex(build(pointArray, 0, pointArray.length, 0));
+        }
+
+        PlatformBlockState nearest(int x, int y, int z, PlatformBlockState fallback) {
+            if (root == null) {
+                return fallback;
+            }
+
+            bestState = fallback;
+            bestDistance = Double.MAX_VALUE;
+            bestRank = Integer.MAX_VALUE;
+            search(root, x, y, z);
+            return bestState;
+        }
+
+        private static NearestNode build(NearestBlock[] points, int from, int to, int depth) {
+            if (from >= to) {
+                return null;
+            }
+
+            int axis = depth % 3;
+            Arrays.sort(points, from, to, comparator(axis));
+            int middle = (from + to) >>> 1;
+            return new NearestNode(
+                    points[middle],
+                    axis,
+                    build(points, from, middle, depth + 1),
+                    build(points, middle + 1, to, depth + 1)
+            );
+        }
+
+        private static Comparator<NearestBlock> comparator(int axis) {
+            return switch (axis) {
+                case 0 -> X_ORDER;
+                case 1 -> Y_ORDER;
+                default -> Z_ORDER;
+            };
+        }
+
+        private void search(NearestNode node, int x, int y, int z) {
+            if (node == null) {
+                return;
+            }
+
+            NearestBlock point = node.point();
+            double xDistance = point.x() - x;
+            double yDistance = point.y() - y;
+            double zDistance = point.z() - z;
+            double distance = (xDistance * xDistance) + (yDistance * yDistance) + (zDistance * zDistance);
+            if (distance < bestDistance || (distance == bestDistance && point.rank() < bestRank)) {
+                bestState = point.state();
+                bestDistance = distance;
+                bestRank = point.rank();
+            }
+
+            double axisDistance = switch (node.axis()) {
+                case 0 -> x - point.x();
+                case 1 -> y - point.y();
+                default -> z - point.z();
+            };
+            NearestNode near = axisDistance <= 0D ? node.lower() : node.upper();
+            NearestNode far = axisDistance <= 0D ? node.upper() : node.lower();
+            search(near, x, y, z);
+            if ((axisDistance * axisDistance) <= bestDistance) {
+                search(far, x, y, z);
+            }
+        }
+    }
+
+    private record NearestNode(NearestBlock point, int axis, NearestNode lower, NearestNode upper) {
+    }
+
+    private record NearestBlock(int x, int y, int z, int rank, PlatformBlockState state) {
     }
 }

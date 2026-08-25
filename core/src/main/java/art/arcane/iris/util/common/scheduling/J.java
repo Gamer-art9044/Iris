@@ -303,6 +303,43 @@ public class J {
         return true;
     }
 
+    public static CompletableFuture<Void> runRegionFuture(
+            World world,
+            int chunkX,
+            int chunkZ,
+            Runnable runnable
+    ) {
+        if (world == null || runnable == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException(
+                    "Region task world and runnable are required."));
+        }
+
+        if (isFolia()) {
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            if (isOwnedByCurrentRegion(world, chunkX, chunkZ)) {
+                settle(future, runnable);
+                return future;
+            }
+            if (!runRegionImmediate(
+                    world,
+                    chunkX,
+                    chunkZ,
+                    () -> settle(future, runnable))) {
+                future.completeExceptionally(new IllegalStateException(
+                        "Failed to schedule region task for " + world.getName()
+                                + "@" + chunkX + "," + chunkZ + "."));
+            }
+            return future;
+        }
+
+        if (isPrimaryThread()) {
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            settle(future, runnable);
+            return future;
+        }
+        return sfut(runnable);
+    }
+
     public static boolean runGlobal(Runnable runnable) {
         if (runnable == null) {
             return false;

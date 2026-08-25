@@ -306,6 +306,9 @@ public class IrisCreator {
                 world = J.sfut(() -> INMS.get().createWorldAsync(wc, request))
                         .thenCompose(Function.identity())
                         .get(WORLD_CREATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                if (!studio && !benchmark) {
+                    awaitInitialSpawnPreparation(access, name);
+                }
             } catch (Throwable e) {
                 done.set(true);
                 cancelRepeatingTask(createProgressTask);
@@ -601,6 +604,21 @@ public class IrisCreator {
             }, interval));
         });
         return taskId;
+    }
+
+    static void awaitInitialSpawnPreparation(
+            PlatformChunkGenerator generator,
+            String worldName
+    ) throws InterruptedException, ExecutionException, TimeoutException {
+        CompletableFuture<Void> initialSpawnReady = Objects.requireNonNull(
+                generator.getInitialSpawnReady(),
+                "Initial spawn preparation future");
+        try {
+            initialSpawnReady.get(WORLD_CREATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException failure) {
+            throw new TimeoutException("Initial spawn preparation timed out for world \""
+                    + worldName + "\".");
+        }
     }
 
     private AtomicInteger startPregenProgressReporter(

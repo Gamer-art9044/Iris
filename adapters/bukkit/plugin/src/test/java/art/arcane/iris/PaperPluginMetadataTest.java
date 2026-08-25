@@ -53,6 +53,7 @@ public class PaperPluginMetadataTest {
         }
 
         assertTrue(metadata.contains("bootstrapper: " + IrisBootstrap.class.getName()));
+        assertTrue(metadata.contains("loader: " + IrisPluginLoader.class.getName()));
         assertTrue(metadata.contains("folia-supported: true"));
         assertTrue(metadata.contains("load: STARTUP"));
         assertFalse(metadata.contains("commands:"));

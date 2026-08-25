@@ -30,6 +30,7 @@ import org.bukkit.event.Listener;
 
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class BukkitGuiHost implements GuiHost.Provider {
@@ -72,8 +73,8 @@ public final class BukkitGuiHost implements GuiHost.Provider {
     }
 
     @Override
-    public GuiOverlay overlayFor(Engine engine) {
-        return engine == null ? null : new BukkitVisionOverlay(engine);
+    public GuiOverlay overlayFor(Engine engine, UUID openerId) {
+        return engine == null ? null : new BukkitVisionOverlay(engine, openerId);
     }
 
     private static final class HotloadListener implements Listener {

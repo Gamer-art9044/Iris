@@ -26,12 +26,16 @@ import art.arcane.iris.core.events.IrisEngineHotloadEvent;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
+import org.bukkit.Location;
 import org.bukkit.Sound;
+import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.world.ChunkUnloadEvent;
 import org.bukkit.event.world.WorldSaveEvent;
@@ -45,7 +49,6 @@ public abstract class EngineAssignedWorldManager extends EngineAssignedComponent
     private boolean listenerRegistered;
     private boolean closeRequested;
     private int taskId;
-    protected AtomicBoolean ignoreTP = new AtomicBoolean(false);
 
     public EngineAssignedWorldManager() {
         super(null, null);
@@ -124,6 +127,29 @@ public abstract class EngineAssignedWorldManager extends EngineAssignedComponent
                 onBlockPlace(e);
             }
         });
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void on(PlayerTeleportEvent e) {
+        if (!BukkitPlatform.isPaperServer()
+                || !getEngine().isStudio()
+                || e.getCause() != PlayerTeleportEvent.TeleportCause.COMMAND) {
+            return;
+        }
+
+        Location destination = e.getTo();
+        World targetWorld = BukkitWorldBinding.world(getTarget().getWorld());
+        if (destination == null || targetWorld == null || !targetWorld.equals(destination.getWorld())) {
+            return;
+        }
+
+        int chunkX = destination.getBlockX() >> 4;
+        int chunkZ = destination.getBlockZ() >> 4;
+        if (targetWorld.isChunkLoaded(chunkX, chunkZ)) {
+            return;
+        }
+
+        runManagerTask("bukkit_world_manager_teleport_event", () -> teleportAsync(e));
     }
 
     @EventHandler

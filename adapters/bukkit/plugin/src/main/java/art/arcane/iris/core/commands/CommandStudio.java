@@ -96,6 +96,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -412,7 +413,8 @@ public class CommandStudio implements DirectorExecutor {
             return;
         }
 
-        VisionGUI.launch(IrisToolbelt.access(world).getEngine());
+        UUID openerId = sender().isPlayer() ? player().getUniqueId() : null;
+        VisionGUI.launch(IrisToolbelt.access(world).getEngine(), openerId);
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_OPENING_MAP));
     }
 

@@ -119,6 +119,15 @@ public final class RiverBodyProfile {
         return roofScales[index];
     }
 
+    public int intervalIndex(double alongReach) {
+        double position = StrictMath.max(0D, StrictMath.min(1D, alongReach));
+        int index = Arrays.binarySearch(positions, position);
+        if (index >= 0) {
+            return StrictMath.min(index, positions.length - 2);
+        }
+        return StrictMath.max(0, StrictMath.min(-index - 2, positions.length - 2));
+    }
+
     @Override
     public boolean equals(Object object) {
         if (this == object) {

@@ -1,24 +1,32 @@
 package art.arcane.iris.engine.mantle.components;
 
+import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.object.IrisGeneratorStyle;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisRiverCaveFallback;
 import art.arcane.iris.engine.object.IrisRiverCaveMode;
 import art.arcane.iris.engine.object.IrisRiverCaves;
+import art.arcane.iris.engine.object.IrisRiverDeepPools;
 import art.arcane.iris.engine.object.IrisRiverExistingFluidPolicy;
 import art.arcane.iris.engine.object.NoiseStyle;
 import art.arcane.iris.engine.mantle.ComponentFlag;
+import art.arcane.iris.engine.river.RiverAnchor;
 import art.arcane.iris.engine.river.RiverEdgeId;
 import art.arcane.iris.engine.river.RiverNodeId;
 import art.arcane.iris.engine.river.RiverRouteState;
 import art.arcane.iris.engine.river.RiverSample;
 import art.arcane.iris.engine.river.RiverSection;
+import art.arcane.iris.engine.river.RiverTopologyComplexity;
 import art.arcane.iris.engine.river.cave.CavePosition;
 import art.arcane.iris.engine.river.cave.CaveVoxel;
 import art.arcane.iris.engine.river.cave.CaveVoxelPrecondition;
 import art.arcane.iris.engine.river.cave.RiverCaveAction;
 import art.arcane.iris.engine.river.cave.RiverCaveContainmentPlanner;
 import art.arcane.iris.engine.river.cave.RiverCaveFluidPolicy;
+import art.arcane.iris.engine.river.cave.RiverCaveFluidKind;
+import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.engine.river.cave.RiverCaveMode;
 import art.arcane.iris.engine.river.cave.RiverCavePlan;
 import art.arcane.iris.engine.river.cave.RiverCavePlannerSettings;
@@ -26,6 +34,12 @@ import art.arcane.iris.engine.river.cave.RiverCaveRejection;
 import art.arcane.iris.engine.river.cave.RiverCaveSource;
 import art.arcane.iris.engine.river.runtime.IrisRiverSurfaceSample;
 import art.arcane.iris.engine.river.runtime.IrisRiverTunnelSample;
+import art.arcane.iris.engine.river.runtime.IrisRiverRuntime;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.PlatformRegistries;
+import art.arcane.iris.util.project.context.ChunkContext;
 import org.junit.Test;
 
 import java.util.HashMap;
@@ -41,7 +55,14 @@ import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class MantleRiverHydrologyComponentTest {
     private final RiverCaveContainmentPlanner planner = new RiverCaveContainmentPlanner();
@@ -70,6 +91,12 @@ public class MantleRiverHydrologyComponentTest {
         dimension.getRivers().getCaves().setMaximumPerReach(0);
         assertTrue(MantleRiverHydrologyComponent.isEnabledFor(dimension));
         assertFalse(MantleRiverHydrologyComponent.isCaveConnectionsEnabledFor(dimension));
+        dimension.getRivers().getCaves().setMode(IrisRiverCaveMode.SEALED);
+        dimension.getRivers().getCaves().getDeepPools().setEnabled(true);
+        assertTrue(MantleRiverHydrologyComponent.isCaveConnectionsEnabledFor(dimension));
+        dimension.getRivers().getCaves().getDeepPools().setMaximumPerReach(0);
+        assertFalse(MantleRiverHydrologyComponent.isCaveConnectionsEnabledFor(dimension));
+        dimension.getRivers().getCaves().getDeepPools().setEnabled(false).setMaximumPerReach(1);
         dimension.getRivers().getCaves().setMaximumPerReach(1);
         dimension.setCarvingEnabled(false);
         assertFalse(MantleRiverHydrologyComponent.isEnabledFor(dimension));
@@ -82,6 +109,69 @@ public class MantleRiverHydrologyComponentTest {
         dimension.getDisabledComponents().clear();
         dimension.getDisabledComponents().add(ReservedFlag.RIVER_HYDROLOGY);
         assertFalse(MantleRiverHydrologyComponent.isEnabledFor(dimension));
+    }
+
+    @Test
+    public void adaptiveInputRadiusRetainsOnlyRequiredHydrologyHalos() {
+        bindMockPlatform();
+        try {
+            IrisDimension dimension = new IrisDimension();
+            dimension.setCarvingEnabled(true);
+            dimension.getRivers().setEnabled(true);
+            IrisRiverCaves caves = dimension.getRivers().getCaves();
+            caves.setMode(IrisRiverCaveMode.FLOOD_CLOSED_COMPONENT).setMaximumPerReach(1);
+            IrisRiverDeepPools deepPools = caves.getDeepPools();
+            deepPools.setEnabled(true).setMaximumPerReach(1);
+
+            Engine engine = mock(Engine.class);
+            EngineMantle engineMantle = mock(EngineMantle.class);
+            IrisComplex complex = mock(IrisComplex.class);
+            ChunkContext context = mock(ChunkContext.class);
+            IrisRiverRuntime runtime = mock(IrisRiverRuntime.class);
+            RiverAnchor anchor = mock(RiverAnchor.class);
+            when(engineMantle.getEngine()).thenReturn(engine);
+            when(engine.getDimension()).thenReturn(dimension);
+            when(engine.getComplex()).thenReturn(complex);
+            when(context.getComplex()).thenReturn(complex);
+            when(complex.getRiverRuntime()).thenReturn(runtime);
+            when(runtime.caveSettings()).thenReturn(caves);
+            when(runtime.maximumChannelWidth()).thenReturn(12D);
+            when(runtime.maximumTunnelWidthMultiplier()).thenReturn(1D);
+            when(runtime.tunnelMouthBlend()).thenReturn(0D);
+            when(runtime.candidateAnchors(
+                    anyInt(),
+                    anyInt(),
+                    anyInt(),
+                    anyInt(),
+                    anyDouble(),
+                    anyLong()
+            )).thenReturn(List.of(anchor));
+
+            MantleRiverHydrologyComponent component = new MantleRiverHydrologyComponent(engineMantle);
+            assertEquals(0, component.getInputRadius(0, 0, 0, context));
+
+            when(runtime.hasRiverFootprint(anyInt(), anyInt(), anyInt(), anyInt())).thenReturn(true);
+            assertEquals(
+                    RiverTopologyComplexity.tunnelHalo(12D, 1D, 0D),
+                    component.getInputRadius(0, 0, 0, context)
+            );
+
+            when(runtime.hasRiverFootprint(anyInt(), anyInt(), anyInt(), anyInt())).thenReturn(false);
+            when(runtime.acceptsCaveAnchor(anchor)).thenReturn(true);
+            assertEquals(
+                    MantleRiverHydrologyComponent.planningHalo(caves),
+                    component.getInputRadius(0, 0, 0, context)
+            );
+
+            when(runtime.acceptsCaveAnchor(anchor)).thenReturn(false);
+            when(runtime.acceptsDeepPoolAnchor(anchor)).thenReturn(true);
+            assertEquals(
+                    MantleRiverHydrologyComponent.deepPoolPlanningHalo(deepPools),
+                    component.getInputRadius(0, 0, 0, context)
+            );
+        } finally {
+            IrisPlatforms.unbind();
+        }
     }
 
     @Test
@@ -212,7 +302,7 @@ public class MantleRiverHydrologyComponentTest {
     }
 
     @Test
-    public void buriedChannelMayOpenOnlyIntoItsExactSurfaceRiverMouth() {
+    public void buriedChannelMouthMayFlareIntoTheWetSurfaceBank() {
         TestVoxelView view = new TestVoxelView();
         view.set(new CavePosition(1, 11, 0), CaveVoxel.COMPATIBLE_FLUID);
         view.set(new CavePosition(1, 12, 0), CaveVoxel.COMPATIBLE_FLUID);
@@ -225,7 +315,7 @@ public class MantleRiverHydrologyComponentTest {
                 14
         );
         IrisRiverSurfaceSample mouth = new IrisRiverSurfaceSample(
-                riverSample(RiverRouteState.WET, RiverSection.CHANNEL),
+                riverSample(RiverRouteState.WET, RiverSection.BANK),
                 14D,
                 10D,
                 12D,
@@ -411,7 +501,7 @@ public class MantleRiverHydrologyComponentTest {
         RiverCavePlan plan = planner.plan(view, source, settings);
 
         assertTrue(plan.accepted());
-        assertEquals(RiverCaveAction.FALLING_WATER, plan.actions().get(entry));
+        assertEquals(RiverCaveAction.FALLING_FLUID, plan.actions().get(entry));
         assertEquals(RiverCaveAction.WET_SOURCE, plan.actions().get(target));
         assertFalse(plan.actions().containsKey(connectedPit));
     }
@@ -517,8 +607,105 @@ public class MantleRiverHydrologyComponentTest {
         caves.setMode(IrisRiverCaveMode.SEALED);
         assertEquals(6, MantleRiverHydrologyComponent.inputRadius(caves, 6));
 
+        caves.getDeepPools()
+                .setEnabled(true)
+                .setSearchRadius(20)
+                .setHorizontalRadius(24);
+        assertEquals(180, MantleRiverHydrologyComponent.inputRadius(caves, 6));
+
+        caves.getDeepPools().setEnabled(false);
         caves.setMode(IrisRiverCaveMode.GENERATE_GROTTO).setMaximumPerReach(0);
         assertEquals(6, MantleRiverHydrologyComponent.inputRadius(caves, 6));
+    }
+
+    @Test
+    public void deepPoolSourceSearchUsesAbsoluteConfiguredHeightAndCaveFloor() {
+        IrisRiverDeepPools deepPools = new IrisRiverDeepPools()
+                .setMinimumFluidY(-180)
+                .setMaximumFluidY(-130)
+                .setSearchRadius(0)
+                .setSearchAttempts(1)
+                .setVerticalRadius(8)
+                .setDryHeadroom(4);
+        TestVoxelView view = new TestVoxelView();
+        view.set(new CavePosition(12, 101, 20), CaveVoxel.CAVE_AIR);
+        RiverAnchor anchor = new RiverAnchor(
+                new RiverEdgeId(new RiverNodeId(1L, 1L), new RiverNodeId(2L, 2L)),
+                0,
+                91L,
+                768D,
+                73L,
+                12D,
+                20D,
+                0.5D,
+                RiverRouteState.WET,
+                1,
+                1
+        );
+
+        RiverCaveSource source = MantleRiverHydrologyComponent.deepPoolSourceFor(
+                view,
+                deepPools,
+                anchor,
+                -256,
+                42L
+        );
+
+        assertNotNull(source);
+        assertEquals(new CavePosition(12, 100, 20), source.entry());
+        assertEquals(new CavePosition(12, 96, 20), source.target());
+        assertEquals(100, source.waterHeadY());
+        assertEquals(-156, source.waterHeadY() - 256);
+        assertEquals(RiverCaveMode.DEEP_POOL, source.mode());
+    }
+
+    @Test
+    public void deepPoolProofRadiusContainsNoisyDiagonalLobesAndShell() {
+        IrisRiverDeepPools deepPools = new IrisRiverDeepPools()
+                .setHorizontalRadius(24)
+                .setVerticalRadius(10)
+                .setDryHeadroom(5);
+
+        RiverCavePlannerSettings settings = MantleRiverHydrologyComponent.deepPoolPlannerSettings(
+                deepPools,
+                42L,
+                null
+        );
+
+        assertEquals(35, settings.maxHorizontalRadius());
+        assertEquals(16, settings.maxDepth());
+        assertEquals(35, settings.maxClosedComponentHorizontalRadius());
+    }
+
+    @Test
+    public void managedScaleWarpedDeepPoolPassesAsOneContainedBlob() {
+        IrisRiverDeepPools deepPools = new IrisRiverDeepPools()
+                .setHorizontalRadius(24)
+                .setVerticalRadius(10)
+                .setDryHeadroom(5)
+                .setShapeVariation(0.6D)
+                .setWarpStrength(8D)
+                .setMaximumVolume(65536);
+        TestVoxelView view = new TestVoxelView();
+        view.set(new CavePosition(0, 101, 0), CaveVoxel.CAVE_AIR);
+        RiverCaveSource source = new RiverCaveSource(
+                92L,
+                new CavePosition(0, 100, 0),
+                new CavePosition(0, 95, 0),
+                100,
+                RiverCaveMode.DEEP_POOL
+        );
+
+        RiverCavePlan plan = planner.plan(
+                view,
+                source,
+                MantleRiverHydrologyComponent.deepPoolPlannerSettings(deepPools, 42L, null)
+        );
+
+        assertTrue(plan.rejection().toString(), plan.accepted());
+        assertEquals(RiverCaveAction.WET_SOURCE, plan.actions().get(new CavePosition(0, 100, 0)));
+        assertEquals(RiverCaveAction.DRY_AIR, plan.actions().get(new CavePosition(0, 101, 0)));
+        assertTrue(plan.actions().size() > 10000);
     }
 
     @Test
@@ -778,9 +965,19 @@ public class MantleRiverHydrologyComponentTest {
         return Map.copyOf(owned);
     }
 
+    private static void bindMockPlatform() {
+        IrisPlatforms.unbind();
+        PlatformBlockState block = mock(PlatformBlockState.class);
+        PlatformRegistries registries = mock(PlatformRegistries.class);
+        when(registries.block(anyString())).thenReturn(block);
+        IrisPlatform platform = mock(IrisPlatform.class);
+        when(platform.registries()).thenReturn(registries);
+        IrisPlatforms.bind(platform);
+    }
+
     private static final class TestVoxelView implements MantleRiverHydrologyComponent.TunnelVoxelView {
         private final Map<CavePosition, CaveVoxel> voxels = new HashMap<>();
-        private final Map<CavePosition, RiverCaveAction> riverActions = new HashMap<>();
+        private final Map<CavePosition, RiverCaveHydrology> riverActions = new HashMap<>();
         private final Set<CavePosition> open = new HashSet<>();
 
         @Override
@@ -799,7 +996,7 @@ public class MantleRiverHydrologyComponentTest {
         }
 
         @Override
-        public RiverCaveAction riverActionAt(CavePosition position) {
+        public RiverCaveHydrology riverHydrologyAt(CavePosition position) {
             return riverActions.get(position);
         }
 
@@ -812,7 +1009,7 @@ public class MantleRiverHydrologyComponentTest {
         }
 
         private void publish(CavePosition position, RiverCaveAction action) {
-            riverActions.put(position, action);
+            riverActions.put(position, RiverCaveHydrology.of(action, RiverCaveFluidKind.RIVER));
             voxels.put(
                     position,
                     action == RiverCaveAction.WET_SOURCE

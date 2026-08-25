@@ -53,6 +53,8 @@ service-account*.json
 
 .qa/
 .repro/
+.perf/
+.release-gate/
 
 # Throwaway worktree copies used by the API / PlaceholderAPI rebuild lanes. Generated, never source.
 .apiwt/

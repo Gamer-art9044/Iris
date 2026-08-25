@@ -38,7 +38,7 @@ public final class RiverNetwork {
     private static final long BRANCH_SLOT_SALT = 0x94D049BB133111EBL;
     private static final long BRANCH_GATE_SALT = 0x2545F4914F6CDD1DL;
     private static final int MINIMUM_BODY_PROFILE_SAMPLES = 12;
-    private static final int MAXIMUM_BODY_PROFILE_SAMPLES = 32;
+    private static final int MAXIMUM_BODY_PROFILE_SAMPLES = 512;
     private static final double PERLIN_NORMALIZATION = 1.4142135623730951D;
 
     private final RiverNetworkOptions options;
@@ -670,7 +670,8 @@ public final class RiverNetwork {
                 worm.bodyDetailWavelength(),
                 worm.seed() ^ detailSalt
         );
-        return primary * 0.7D + detail * 0.3D;
+        double detailInfluence = worm.bodyDetailInfluence();
+        return primary * (1D - detailInfluence) + detail * detailInfluence;
     }
 
     private FlowTangent resolveFlowTangent(RiverNode node, RiverTerrainSampler terrain) {
@@ -1263,6 +1264,7 @@ public final class RiverNetwork {
                                                 BODY_WIDTH_DETAIL_SALT,
                                                 worm.widthVariation()
                                         )
+                                        + options.channelRadiusBonus() * 2D
                         )
                 );
                 double baseBankWidth = nonNegativeOrFallback(

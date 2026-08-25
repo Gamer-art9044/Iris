@@ -51,6 +51,14 @@ public class IrisImageMapSchemaTest {
                 properties.getJSONObject("curveExponent").getDouble("minimum"), 0D);
         assertEquals(IrisImageMap.MAXIMUM_COLOR_TOLERANCE,
                 properties.getJSONObject("colorTolerance").getDouble("maximum"), 0D);
+        JSONObject origin = properties.getJSONObject("origin");
+        JSONObject originProperties = mapSchema.getJSONObject("definitions")
+                .getJSONObject(origin.getString("$ref").substring("#/definitions/".length()))
+                .getJSONObject("properties");
+        assertTrue(originProperties.getJSONObject("x").getString("description")
+                .contains("X coordinate in world blocks for origin, or source pixels for sourceOrigin"));
+        assertTrue(originProperties.getJSONObject("z").getString("description")
+                .contains("Z coordinate in world blocks for origin, or source image Y pixels for sourceOrigin"));
     }
 
     @SuppressWarnings("unchecked")

@@ -70,6 +70,7 @@ public final class RiverCaveContainmentPlanner {
                     settings,
                     throat.positions()
             );
+            case DEEP_POOL -> planDeepPool(view, source, settings, throat.positions());
         };
     }
 
@@ -300,6 +301,111 @@ public final class RiverCaveContainmentPlanner {
             actions.put(position, RiverCaveAction.SEAL_GUARD);
         }
         return accepted(view, source, actions);
+    }
+
+    private RiverCavePlan planDeepPool(
+            CaveVoxelView view,
+            RiverCaveSource source,
+            RiverCavePlannerSettings settings,
+            List<CavePosition> throat
+    ) {
+        GrottoResult grotto = buildGrotto(source, settings);
+        if (grotto.rejection() != RiverCaveRejection.NONE) {
+            return rejected(source, grotto.rejection());
+        }
+        Set<CavePosition> chamber = grotto.positions();
+        Set<CavePosition> carve = new HashSet<>(chamber.size() + throat.size());
+        carve.addAll(chamber);
+        carve.addAll(throat);
+
+        RiverCaveRejection carveRejection = validateDeepPoolCarve(view, source, settings, carve);
+        if (carveRejection != RiverCaveRejection.NONE) {
+            return rejected(source, carveRejection);
+        }
+        BoundaryResult boundary = validateDeepPoolBoundary(view, source, settings, carve);
+        if (boundary.rejection() != RiverCaveRejection.NONE) {
+            return rejected(source, boundary.rejection());
+        }
+
+        Map<CavePosition, RiverCaveAction> actions = new HashMap<>();
+        addChamberActions(actions, chamber, source.waterHeadY());
+        addThroatActions(actions, throat, source);
+        for (CavePosition position : boundary.sealGuards()) {
+            actions.put(position, RiverCaveAction.SEAL_GUARD);
+        }
+        return accepted(view, source, actions);
+    }
+
+    private RiverCaveRejection validateDeepPoolCarve(
+            CaveVoxelView view,
+            RiverCaveSource source,
+            RiverCavePlannerSettings settings,
+            Set<CavePosition> carve
+    ) {
+        for (CavePosition position : carve) {
+            if (!view.isInWorld(position)) {
+                return RiverCaveRejection.WORLD_BOUNDARY;
+            }
+            RiverCaveRejection boundsRejection = validateBounds(source, settings, position);
+            if (boundsRejection != RiverCaveRejection.NONE) {
+                return boundsRejection;
+            }
+            CaveVoxel voxel = voxelAt(view, position);
+            RiverCaveRejection hazard = rejectionForHazard(voxel, settings);
+            if (hazard != RiverCaveRejection.NONE) {
+                return hazard;
+            }
+            if (voxel == CaveVoxel.SOLID) {
+                continue;
+            }
+            if (position.y() > source.waterHeadY()
+                    && voxel == CaveVoxel.CAVE_AIR
+                    && !view.isOpenToSurface(position)) {
+                continue;
+            }
+            return RiverCaveRejection.GROTTO_INTERSECTION;
+        }
+        return RiverCaveRejection.NONE;
+    }
+
+    private BoundaryResult validateDeepPoolBoundary(
+            CaveVoxelView view,
+            RiverCaveSource source,
+            RiverCavePlannerSettings settings,
+            Set<CavePosition> carve
+    ) {
+        Set<CavePosition> guards = new HashSet<>();
+        for (CavePosition position : carve) {
+            for (CavePosition direction : DIRECTIONS) {
+                CavePosition neighbor = position.offset(direction.x(), direction.y(), direction.z());
+                if (carve.contains(neighbor)) {
+                    continue;
+                }
+                if (!view.isInWorld(neighbor)) {
+                    return BoundaryResult.rejected(RiverCaveRejection.WORLD_BOUNDARY);
+                }
+                RiverCaveRejection boundsRejection = validateBounds(source, settings, neighbor);
+                if (boundsRejection != RiverCaveRejection.NONE) {
+                    return BoundaryResult.rejected(boundsRejection);
+                }
+                CaveVoxel voxel = voxelAt(view, neighbor);
+                RiverCaveRejection hazard = rejectionForHazard(voxel, settings);
+                if (hazard != RiverCaveRejection.NONE) {
+                    return BoundaryResult.rejected(hazard);
+                }
+                if (voxel == CaveVoxel.SOLID) {
+                    guards.add(neighbor);
+                    continue;
+                }
+                if (neighbor.y() > source.waterHeadY()
+                        && voxel == CaveVoxel.CAVE_AIR
+                        && !view.isOpenToSurface(neighbor)) {
+                    continue;
+                }
+                return BoundaryResult.rejected(RiverCaveRejection.GROTTO_SHELL_OPEN);
+            }
+        }
+        return BoundaryResult.accepted(guards);
     }
 
     private ComponentResult resolveClosedComponent(
@@ -732,7 +838,7 @@ public final class RiverCaveContainmentPlanner {
                 action = RiverCaveAction.WET_SOURCE;
             } else if (source.mode() == RiverCaveMode.WATERFALL_POOL
                     || source.mode() == RiverCaveMode.GENERATED_GROTTO) {
-                action = RiverCaveAction.FALLING_WATER;
+                action = RiverCaveAction.FALLING_FLUID;
             } else {
                 action = RiverCaveAction.DRY_AIR;
             }

@@ -27,6 +27,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.level.block.BreakBlockEvent;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLEnvironment;
@@ -75,6 +76,16 @@ public final class NeoForgeModdedLoader implements ModdedLoader {
     @Override
     public void invalidateLevelCache(MinecraftServer server) {
         server.markWorldsDirty();
+    }
+
+    @Override
+    public void fireDynamicLevelLoad(MinecraftServer server, ServerLevel level) {
+        NeoForge.EVENT_BUS.post(new LevelEvent.Load(level));
+    }
+
+    @Override
+    public void fireDynamicLevelUnload(MinecraftServer server, ServerLevel level) {
+        NeoForge.EVENT_BUS.post(new LevelEvent.Unload(level));
     }
 
     @Override

@@ -27,12 +27,27 @@ public class StudioOpenCoordinatorOpenKindTest {
     }
 
     @Test
-    public void allStudioKindsReuseOnlyAnUnchangedLoadedRuntime() {
+    public void ordinaryStudioKindsReuseOnlyAnUnchangedLoadedRuntime() {
         for (StudioOpenCoordinator.StudioOpenKind kind : StudioOpenCoordinator.StudioOpenKind.values()) {
+            if (kind == StudioOpenCoordinator.StudioOpenKind.FORCED_STANDARD) {
+                continue;
+            }
             assertEquals(
                     IrisCreator.DatapackPreparation.REUSE_LOADED_RUNTIME_IF_READY,
                     kind.datapackPreparation());
         }
+    }
+
+    @Test
+    public void forcedStandardStudioAttemptsTheLoadedRuntime() {
+        StudioOpenCoordinator.StudioOpenKind kind = StudioOpenCoordinator.StudioOpenKind.FORCED_STANDARD;
+
+        assertTrue(kind.openWorkspace());
+        assertTrue(kind.teleportThroughStandardEntry());
+        assertTrue(kind.prepareGeneratorState());
+        assertEquals(
+                IrisCreator.DatapackPreparation.FORCE_REUSE_LOADED_RUNTIME,
+                kind.datapackPreparation());
     }
 
     @Test
@@ -115,7 +130,7 @@ public class StudioOpenCoordinatorOpenKindTest {
         assertTrue(coordinatorMethod.contains(
                 "WorldRuntimeControlService.get().resolveEntryAnchor(world, provider)"));
         assertTrue(coordinatorMethod.contains(
-                "project.getActiveOpenKind() == StudioOpenKind.STANDARD"));
+                "project.getActiveOpenKind().teleportThroughStandardEntry()"));
         assertFalse(coordinatorMethod.contains("requestChunkAsync("));
         assertFalse(coordinatorMethod.contains("getHighestBlockYAt("));
         assertTrue(nativeDelegation >= 0);

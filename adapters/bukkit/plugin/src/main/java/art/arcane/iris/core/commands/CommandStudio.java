@@ -120,9 +120,11 @@ public class CommandStudio implements DirectorExecutor {
             @Param(description = "The dimension pack to open a studio for", descriptionKey = "iris.director.commandstudio.param.dimension_pack_open_studio", aliases = "dim", customHandler = DimensionHandler.class)
             IrisDimension dimension,
             @Param(defaultValue = "1337", description = "The seed to generate the studio with", descriptionKey = "iris.director.commandstudio.param.seed_generate_studio_with", aliases = "s")
-            long seed) {
+            long seed,
+            @Param(defaultValue = "false", description = "Attempt to open Studio before a required registry restart", aliases = "f")
+            boolean force) {
         sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_STUDIO_OPENING_STUDIO_PACK_SEED, MessageArgument.untrusted("value", dimension.getName()), MessageArgument.untrusted("seed", seed)));
-        Iris.service(StudioSVC.class).open(sender(), seed, dimension.getLoadKey());
+        Iris.service(StudioSVC.class).open(sender(), seed, dimension.getLoadKey(), force);
     }
 
     @Director(description = "Import vanilla trees, mushrooms & objects (and structures/jigsaw) from the server into a pack's objects/vanilla folder", descriptionKey = "iris.director.commandstudio.director.import_vanilla_trees_mushrooms_objects_structures_jigsaw_from_server_into_pack_s", aliases = {"importv", "iv"}, origin = DirectorOrigin.BOTH)

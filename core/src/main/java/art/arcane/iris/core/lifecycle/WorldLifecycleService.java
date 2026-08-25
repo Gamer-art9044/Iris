@@ -1,6 +1,5 @@
 package art.arcane.iris.core.lifecycle;
 
-import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.tools.IrisToolbelt;
@@ -77,7 +76,11 @@ public final class WorldLifecycleService {
     public CompletableFuture<World> create(WorldLifecycleRequest request) {
         WorldLifecycleBackend backend;
         try {
-            IrisStartupValidation.requireWorldCreationReady();
+            if (request.callerKind() == WorldLifecycleCaller.FORCED_STUDIO) {
+                ServerConfigurator.requireWorldCreationReady(true);
+            } else {
+                ServerConfigurator.requireWorldCreationReady(false);
+            }
             backend = selectCreateBackend(request);
         } catch (Throwable e) {
             IrisLogging.reportError("WorldLifecycle create backend selection failed for world=\"" + request.worldName()

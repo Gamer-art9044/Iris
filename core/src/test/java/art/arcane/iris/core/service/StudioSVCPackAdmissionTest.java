@@ -1,16 +1,27 @@
 package art.arcane.iris.core.service;
 
+import art.arcane.iris.core.IrisStartupValidation;
+import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.pack.BrokenPackException;
+import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.pack.PackValidationResult;
+import org.junit.After;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class StudioSVCPackAdmissionTest {
+    @After
+    public void disableStartupValidation() {
+        IrisStartupValidation.disable();
+    }
+
     @Test
     public void loadablePackIsAdmitted() {
         PackValidationResult validation = new PackValidationResult(
@@ -56,5 +67,26 @@ public class StudioSVCPackAdmissionTest {
                 "overworld", Optional.of(denial), validation);
 
         assertEquals(List.of(denial), failure.getReasons());
+    }
+
+    @Test
+    public void completedPackDownloadRetainsTheCreationGateWithoutDenyingLogin() throws Exception {
+        Field restartRequired = ServerConfigurator.class.getDeclaredField("loadedDatapackRestartRequired");
+        restartRequired.setAccessible(true);
+        boolean previous = restartRequired.getBoolean(null);
+        IrisStartupValidation.begin();
+        IrisStartupValidation.markDatapacksReady();
+        IrisStartupValidation.markPacksReady();
+
+        try {
+            StudioSVC.retainPackRestartRequirement(
+                    new PackDownloader.PackInstallResult("overworld", true, true));
+
+            assertTrue(ServerConfigurator.worldCreationDenialReason(false).isPresent());
+            assertTrue(ServerConfigurator.worldCreationDenialReason(true).isEmpty());
+            assertTrue(IrisStartupValidation.denialReason().isEmpty());
+        } finally {
+            restartRequired.setBoolean(null, previous);
+        }
     }
 }

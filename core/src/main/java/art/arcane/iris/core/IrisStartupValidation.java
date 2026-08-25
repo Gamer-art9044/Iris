@@ -85,7 +85,21 @@ public final class IrisStartupValidation {
     }
 
     public static Optional<String> denialReason() {
+        return denialReason(snapshot);
+    }
+
+    public static Optional<String> studioDenialReason(boolean force) {
         Snapshot current = snapshot;
+        if (force
+                && current.enforced()
+                && current.datapacks() == ValidationState.RESTART_REQUIRED
+                && current.packs() == ValidationState.READY) {
+            return Optional.empty();
+        }
+        return denialReason(current);
+    }
+
+    private static Optional<String> denialReason(Snapshot current) {
         if (!current.enforced() || isReady(current)) {
             return Optional.empty();
         }

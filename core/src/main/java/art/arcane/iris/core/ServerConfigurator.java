@@ -77,6 +77,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
@@ -171,12 +172,34 @@ public class ServerConfigurator {
     }
 
     public static void requireDatapackRestart() {
+        requireWorldCreationRestart();
+        IrisStartupValidation.requireRestart(
+                "Iris datapack changes require a restart before player admission or world creation.");
+    }
+
+    public static void requireWorldCreationRestart() {
         synchronized (DATAPACK_INSTALL_LOCK) {
             invalidateLoadedDatapackRuntime();
             loadedDatapackRestartRequired = true;
         }
-        IrisStartupValidation.requireRestart(
-                "Iris datapack changes require a restart before player admission or world creation.");
+    }
+
+    public static Optional<String> worldCreationDenialReason(boolean forceStudio) {
+        Optional<String> startupDenial = IrisStartupValidation.studioDenialReason(forceStudio);
+        if (startupDenial.isPresent()) {
+            return startupDenial;
+        }
+        if (!forceStudio && loadedDatapackRestartRequired) {
+            return Optional.of("Iris installed or updated a dimension pack that requires a server restart before world creation or Studio open.");
+        }
+        return Optional.empty();
+    }
+
+    public static void requireWorldCreationReady(boolean forceStudio) {
+        Optional<String> denial = worldCreationDenialReason(forceStudio);
+        if (denial.isPresent()) {
+            throw new IllegalStateException("Iris world creation is locked: " + denial.get());
+        }
     }
 
     public static void restoreLoadedDatapackRuntimeIfUnchanged(

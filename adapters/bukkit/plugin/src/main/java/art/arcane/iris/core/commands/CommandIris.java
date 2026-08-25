@@ -60,6 +60,7 @@ import java.nio.file.Files;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -131,6 +132,12 @@ public class CommandIris implements DirectorExecutor {
 
         if (IrisWorldStorage.dimensionRoot(worldName).exists()) {
             sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_IRIS_THAT_FOLDER_ALREADY_EXISTS));
+            return;
+        }
+
+        Optional<String> startupDenial = ServerConfigurator.worldCreationDenialReason(false);
+        if (startupDenial.isPresent()) {
+            sender().sendMessage(C.YELLOW + startupDenial.get());
             return;
         }
 

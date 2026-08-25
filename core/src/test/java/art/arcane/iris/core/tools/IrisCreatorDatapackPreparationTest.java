@@ -17,4 +17,11 @@ public class IrisCreatorDatapackPreparationTest {
         assertTrue(IrisCreator.DatapackPreparation.REUSE_LOADED_RUNTIME_IF_READY.requiresInstall(false));
         assertFalse(IrisCreator.DatapackPreparation.REUSE_LOADED_RUNTIME_IF_READY.requiresInstall(true));
     }
+
+    @Test
+    public void forcedStudioCreationNeverInstallsDatapacks() {
+        assertFalse(IrisCreator.DatapackPreparation.FORCE_REUSE_LOADED_RUNTIME.requiresInstall(false));
+        assertFalse(IrisCreator.DatapackPreparation.FORCE_REUSE_LOADED_RUNTIME.requiresInstall(true));
+        assertTrue(IrisCreator.DatapackPreparation.FORCE_REUSE_LOADED_RUNTIME.forcesLoadedRuntime());
+    }
 }

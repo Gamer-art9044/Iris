@@ -420,6 +420,7 @@ public class StudioSVC implements IrisService {
                 reporter.fail(null);
                 return;
             }
+            retainPackRestartRequirement(result);
             reporter.succeed(result);
         }, "Failed to download built-in Iris pack '" + key + "'.");
     }
@@ -447,6 +448,7 @@ public class StudioSVC implements IrisService {
                 reporter.fail(null);
                 return;
             }
+            retainPackRestartRequirement(result);
             reporter.succeed(result);
         }, "Failed to download Iris pack.");
     }
@@ -491,8 +493,15 @@ public class StudioSVC implements IrisService {
     }
 
     public void open(VolmitSender sender, long seed, String dimm) {
+        open(sender, seed, dimm, false);
+    }
+
+    public void open(VolmitSender sender, long seed, String dimm, boolean force) {
         try {
-            open(sender, seed, dimm, (w) -> {
+            StudioOpenCoordinator.StudioOpenKind openKind = force
+                    ? StudioOpenCoordinator.StudioOpenKind.FORCED_STANDARD
+                    : StudioOpenCoordinator.StudioOpenKind.STANDARD;
+            open(sender, seed, dimm, openKind, (w) -> {
             });
         } catch (Exception e) {
             IrisLogging.reportError("Failed to open studio world \"" + dimm + "\".", e);
@@ -501,8 +510,13 @@ public class StudioSVC implements IrisService {
     }
 
     private static BrokenPackException reportPackAdmissionFailure(
-            VolmitSender sender, String dimm) {
-        Optional<String> startupDenial = IrisStartupValidation.denialReason();
+            VolmitSender sender,
+            String dimm,
+            StudioOpenCoordinator.StudioOpenKind openKind
+    ) {
+        boolean force = openKind == StudioOpenCoordinator.StudioOpenKind.FORCED_STANDARD;
+        Optional<String> unforcedStartupDenial = ServerConfigurator.worldCreationDenialReason(false);
+        Optional<String> startupDenial = ServerConfigurator.worldCreationDenialReason(force);
         IrisDimension dimension = IrisToolbelt.getDimension(dimm);
         String packName = dimension == null || dimension.getLoader() == null
                 ? dimm
@@ -511,6 +525,9 @@ public class StudioSVC implements IrisService {
         BrokenPackException failure = resolvePackAdmissionFailure(
                 packName, startupDenial, validation);
         if (failure == null) {
+            if (force && unforcedStartupDenial.isPresent()) {
+                sender.sendMessage("Force-opening Studio with the currently loaded registry state. The open may fail; restart remains required.");
+            }
             return null;
         }
         if (startupDenial.isPresent()) {
@@ -523,6 +540,12 @@ public class StudioSVC implements IrisService {
         }
         sender.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.STUDIO_S_V_C_FIX_PACK_RUN_IRIS_PACK_VALIDATE_REVALIDATE, MessageArgument.untrusted("dimm", String.valueOf(packName))));
         return failure;
+    }
+
+    static void retainPackRestartRequirement(PackDownloader.PackInstallResult result) {
+        if (result != null && result.restartRequired()) {
+            ServerConfigurator.requireWorldCreationRestart();
+        }
     }
 
     static BrokenPackException resolvePackAdmissionFailure(
@@ -554,7 +577,7 @@ public class StudioSVC implements IrisService {
             Consumer<World> onDone
     ) throws IrisException {
         long requestedAtNanos = System.nanoTime();
-        if (reportPackAdmissionFailure(sender, dimm) != null) {
+        if (reportPackAdmissionFailure(sender, dimm, openKind) != null) {
             return;
         }
         StudioOpenCoordinator.StudioOpenKind requiredOpenKind = Objects.requireNonNull(
@@ -587,7 +610,7 @@ public class StudioSVC implements IrisService {
             Consumer<World> onDone
     ) {
         long requestedAtNanos = System.nanoTime();
-        BrokenPackException failure = reportPackAdmissionFailure(sender, dimension);
+        BrokenPackException failure = reportPackAdmissionFailure(sender, dimension, openKind);
         if (failure != null) {
             return CompletableFuture.failedFuture(failure);
         }
@@ -1027,9 +1050,7 @@ public class StudioSVC implements IrisService {
             closeLease(lease);
         }
 
-        if (outcome == CreationOutcome.RESTART) {
-            ServerConfigurator.restart();
-        } else if (outcome == CreationOutcome.OPEN) {
+        if (outcome == CreationOutcome.OPEN) {
             String completedProjectName = projectName;
             LifecycleOperationCoordinator.get().whenIdle(() -> open(sender, completedProjectName));
         }

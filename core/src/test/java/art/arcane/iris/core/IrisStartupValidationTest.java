@@ -108,6 +108,20 @@ public class IrisStartupValidationTest {
     }
 
     @Test
+    public void forceAllowsOnlyStudioAtACompletedRestartBoundary() {
+        IrisStartupValidation.begin();
+        IrisStartupValidation.markDatapacksReady();
+        IrisStartupValidation.markPacksReady();
+        IrisStartupValidation.requireRestart("restart boundary");
+
+        assertTrue(IrisStartupValidation.studioDenialReason(true).isEmpty());
+        assertThrows(IllegalStateException.class, IrisStartupValidation::requireWorldCreationReady);
+
+        IrisStartupValidation.markPacksInvalid(List.of("pack validation failed"));
+        assertFalse(IrisStartupValidation.studioDenialReason(true).isEmpty());
+    }
+
+    @Test
     public void packValidationInfrastructureFailureDeniesCreation() {
         IrisStartupValidation.begin();
         IrisStartupValidation.markDatapacksReady();

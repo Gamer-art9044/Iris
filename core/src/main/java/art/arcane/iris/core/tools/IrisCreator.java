@@ -26,7 +26,6 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.IrisRuntimeSchedulerMode;
-import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.DatapackInstallResult;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.IrisWorlds;
@@ -182,7 +181,7 @@ public class IrisCreator {
                 throw new IrisException("Dimension cannot be found for id " + dimension());
             }
             reportCreationProgress(creationReporter, 0.06D, "validate_pack");
-            IrisStartupValidation.requireWorldCreationReady();
+            ServerConfigurator.requireWorldCreationReady(datapackPreparation.forcesLoadedRuntime());
             PackValidationRegistry.requireLoadable(
                     resolvedDimension.getLoader().getDataFolder().getName());
             worldLease = coordinator.acquire(
@@ -253,10 +252,11 @@ public class IrisCreator {
             if (!datapackResult.succeeded()) {
                 throw new IrisException("Failed to compile datapacks for dimension \"" + dimension() + "\".");
             }
-            if (datapackResult.restartRequired() || !ServerConfigurator.verifyDataPackInstalled(resolvedDimension)) {
-                ServerConfigurator.restart();
+            if (!datapackPreparation.forcesLoadedRuntime()
+                    && (datapackResult.restartRequired()
+                    || !ServerConfigurator.verifyDataPackInstalled(resolvedDimension))) {
                 throw new IrisException("The dimension types for pack \"" + dimension() + "\" are not loaded yet. "
-                        + "Iris queued a restart; run the command again after the server returns.");
+                        + "Restart the server, then run the command again.");
             }
 
             IrisDimension installedDimension = resolvedDimension;
@@ -301,7 +301,13 @@ public class IrisCreator {
             reportCreationProgress(creationReporter, 0.44D, "create_world");
             long nmsStartNanos = System.nanoTime();
             try {
-                WorldLifecycleCaller callerKind = benchmark ? WorldLifecycleCaller.BENCHMARK : studio() ? WorldLifecycleCaller.STUDIO : WorldLifecycleCaller.CREATE;
+                WorldLifecycleCaller callerKind = benchmark
+                        ? WorldLifecycleCaller.BENCHMARK
+                        : studio() && datapackPreparation.forcesLoadedRuntime()
+                        ? WorldLifecycleCaller.FORCED_STUDIO
+                        : studio()
+                        ? WorldLifecycleCaller.STUDIO
+                        : WorldLifecycleCaller.CREATE;
                 WorldLifecycleRequest request = WorldLifecycleRequest.fromCreator(wc, studio(), benchmark, callerKind);
                 world = J.sfut(() -> INMS.get().createWorldAsync(wc, request))
                         .thenCompose(Function.identity())
@@ -319,9 +325,8 @@ public class IrisCreator {
                     throw new IrisException("Runtime world creation is blocked and the selected world lifecycle backend could not create the world.", e);
                 }
                 if (containsMissingDimensionTypes(e)) {
-                    ServerConfigurator.restart();
                     throw new IrisException("The dimension types for pack \"" + dimension() + "\" are not loaded on this server yet. "
-                            + "Iris queued a restart; run the command again after the server returns.", e);
+                            + "Restart the server, then run the command again.", e);
                 }
                 throw new IrisException("Failed to create world with backend family " + WorldLifecycleService.get().capabilities().serverFamily().id() + "!", e);
             } finally {
@@ -856,17 +861,24 @@ public class IrisCreator {
     }
 
     public enum DatapackPreparation {
-        INSTALL_IF_CHANGED(false),
-        REUSE_LOADED_RUNTIME_IF_READY(true);
+        INSTALL_IF_CHANGED(false, false),
+        REUSE_LOADED_RUNTIME_IF_READY(true, false),
+        FORCE_REUSE_LOADED_RUNTIME(true, true);
 
         private final boolean reusesLoadedRuntime;
+        private final boolean forcesLoadedRuntime;
 
-        DatapackPreparation(boolean reusesLoadedRuntime) {
+        DatapackPreparation(boolean reusesLoadedRuntime, boolean forcesLoadedRuntime) {
             this.reusesLoadedRuntime = reusesLoadedRuntime;
+            this.forcesLoadedRuntime = forcesLoadedRuntime;
         }
 
         boolean requiresInstall(boolean runtimeReady) {
-            return !reusesLoadedRuntime || !runtimeReady;
+            return !forcesLoadedRuntime && (!reusesLoadedRuntime || !runtimeReady);
+        }
+
+        public boolean forcesLoadedRuntime() {
+            return forcesLoadedRuntime;
         }
     }
 }

@@ -119,7 +119,7 @@ public final class StudioOpenCoordinator {
             return CompletableFuture.failedFuture(new IllegalStateException(
                     "Studio entry point could not be resolved."));
         }
-        CompletableFuture<Boolean> teleport = project.getActiveOpenKind() == StudioOpenKind.STANDARD
+        CompletableFuture<Boolean> teleport = project.getActiveOpenKind().teleportThroughStandardEntry()
                 ? WorldRuntimeControlService.get().teleportInMode(player, entry, GameMode.SPECTATOR)
                 : WorldRuntimeControlService.get().teleport(player, entry);
         if (teleport == null) {
@@ -914,6 +914,10 @@ public final class StudioOpenCoordinator {
                 true,
                 true,
                 IrisCreator.DatapackPreparation.REUSE_LOADED_RUNTIME_IF_READY),
+        FORCED_STANDARD(
+                true,
+                true,
+                IrisCreator.DatapackPreparation.FORCE_REUSE_LOADED_RUNTIME),
         OBJECT(
                 false,
                 true,

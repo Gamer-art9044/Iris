@@ -75,6 +75,7 @@ String bukkitArtifactName = irisArtifactName('CraftBukkit', bukkitMinecraftRange
 String fabricArtifactName = irisArtifactName('Fabric', "${minecraftVersion}+${loaderDisplayVersion(fabricLoaderVersion)}")
 String forgeArtifactName = irisArtifactName('Forge', "${minecraftVersion}+${loaderDisplayVersion(forgeVersion)}")
 String neoForgeArtifactName = irisArtifactName('NeoForge', "${minecraftVersion}+${loaderDisplayVersion(neoForgeVersion)}")
+File pluginOutDirectory = layout.projectDirectory.dir('../PluginOuts').asFile
 long maximumBukkitArtifactBytes = 7_000_000L
 apply plugin: ApiGenerator
 
@@ -281,12 +282,12 @@ tasks.register('buildBukkit', Copy) {
     group = 'iris'
     dependsOn('jar')
     from(layout.buildDirectory.file("libs/${bukkitArtifactName}"))
-    into(layout.projectDirectory.dir('dist'))
+    into(pluginOutDirectory)
     doFirst {
-        delete(fileTree(layout.projectDirectory.dir('dist')) {
+        delete(fileTree(pluginOutDirectory) {
             include('Iris v* [CraftBukkit] *.jar')
         })
-        delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}.jar"))
+        delete(new File(pluginOutDirectory, "Iris-${project.version}+mc${minecraftVersion}.jar"))
     }
 }
 
@@ -384,12 +385,12 @@ tasks.register('buildFabric', Copy) {
     group = 'iris'
     dependsOn('fabricJar')
     from(layout.projectDirectory.file("adapters/fabric/build/libs/${fabricArtifactName}"))
-    into(layout.projectDirectory.dir('dist'))
+    into(pluginOutDirectory)
     doFirst {
-        delete(fileTree(layout.projectDirectory.dir('dist')) {
+        delete(fileTree(pluginOutDirectory) {
             include('Iris v* [Fabric] *.jar')
         })
-        delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}-fabric.jar"))
+        delete(new File(pluginOutDirectory, "Iris-${project.version}+mc${minecraftVersion}-fabric.jar"))
     }
 }
 
@@ -422,12 +423,12 @@ tasks.register('buildForge', Copy) {
     group = 'iris'
     dependsOn('forgeJar')
     from(layout.projectDirectory.file("adapters/forge/build/libs/${forgeArtifactName}"))
-    into(layout.projectDirectory.dir('dist'))
+    into(pluginOutDirectory)
     doFirst {
-        delete(fileTree(layout.projectDirectory.dir('dist')) {
+        delete(fileTree(pluginOutDirectory) {
             include('Iris v* [Forge] *.jar')
         })
-        delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}-forge.jar"))
+        delete(new File(pluginOutDirectory, "Iris-${project.version}+mc${minecraftVersion}-forge.jar"))
     }
 }
 
@@ -460,12 +461,12 @@ tasks.register('buildNeoforge', Copy) {
     group = 'iris'
     dependsOn('neoforgeJar')
     from(layout.projectDirectory.file("adapters/neoforge/build/libs/${neoForgeArtifactName}"))
-    into(layout.projectDirectory.dir('dist'))
+    into(pluginOutDirectory)
     doFirst {
-        delete(fileTree(layout.projectDirectory.dir('dist')) {
+        delete(fileTree(pluginOutDirectory) {
             include('Iris v* [NeoForge] *.jar')
         })
-        delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}-neoforge.jar"))
+        delete(new File(pluginOutDirectory, "Iris-${project.version}+mc${minecraftVersion}-neoforge.jar"))
     }
 }
 
@@ -650,10 +651,9 @@ tasks.register('buildAllToOut') {
     group = 'iris'
     dependsOn('buildBukkit', 'buildFabric', 'buildForge', 'buildNeoforge', ':spi:jar')
     doLast {
-        File dist = layout.projectDirectory.dir('dist').asFile
-        File[] jars = dist.listFiles((java.io.FileFilter) { File f -> f.name.endsWith('.jar') })
+        File[] jars = pluginOutDirectory.listFiles((java.io.FileFilter) { File f -> f.name.startsWith('Iris v') && f.name.endsWith('.jar') })
         println('')
-        println('=== Iris buildAllToOut -> dist/ ===')
+        println('=== Iris buildAllToOut -> ' + pluginOutDirectory + ' ===')
         if (jars != null) {
             jars.sort { it.name }.each { File f ->
                 println(String.format('  %-60s %8d KB', f.name, (long) (f.length() / 1024)))

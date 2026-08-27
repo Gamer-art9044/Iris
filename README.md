@@ -64,22 +64,20 @@ content selecting on `#minecraft:is_overworld` and friends.
 **Plugin (Paper/Purpur/Leaf/Canvas/Folia/Spigot):** drop the plugin jar into `plugins/` and start
 the server. First boot performs no pack download. Run `/iris download pack=overworld`,
 `/iris download pack=underworld`, or `/iris download link=https://host/path/pack.zip`, waiting for
-each download to finish before starting another. The shipping Overworld declares Towns & Towers
-26.1 and Dungeons & Taverns 5.3.0. With the default automatic ingest enabled, the first restart
-after download installs those external datapacks and leaves admission restart-required; complete
-the ensuing clean restart so Minecraft loads them together with the Iris dimension types and
-biomes. If automatic ingest is disabled, run `/iris datapack ingest restart=true` instead and
-complete the restart it requests. Plain Spigot supports ordinary managed `/iris create`, but not
+each download to finish before starting another. The current built-in packs declare no external
+datapack imports. Restart after download so Minecraft loads their dimension types and biomes.
+Custom packs that declare `datapackImports` must complete their external-datapack installation and
+registry restart first. Plain Spigot supports ordinary managed `/iris create`, but not
 the early-bootstrap `/iris replace` path for canonical Overworld, Nether, or End slots.
 
 **Mod (Fabric/Forge/NeoForge):** drop the mod jar into `mods/` and start the server. The jar is
 self-contained (core, SPI, and required Fabric API modules are bundled). First boot compiles only
 packs already on disk and never accesses the network. `/iris download` installs a pack atomically
-without stopping the server. Before loading the shipping Overworld, manually place the exact
-compatible Towns & Towers 26.1 and Dungeons & Taverns 5.3.0 archives in that save's `datapacks/`
-directory; modded `/iris datapack ingest` is an explanatory stub and does not install them. Restart
-once only after the Iris pack and both external datapacks are present. Packs register their custom
-dimension types, height ranges, biomes, and external structure keys during that boot; worlds created
+without stopping the server. The current built-in packs declare no external datapack imports.
+Custom packs that declare them require compatible archives in that save's `datapacks/` directory;
+modded `/iris datapack ingest` is an explanatory stub and does not install them. Restart only after
+the Iris pack and all of its inputs are present. Packs register their custom dimension types,
+height ranges, biomes, and external structure keys during that boot; worlds created
 before it run with fallback registry data.
 
 **Singleplayer (modded clients):** installed Iris packs appear as selectable World Types on the
@@ -237,7 +235,7 @@ Requirements: JDK 25 (set `JAVA_HOME` to it). The Gradle wrapper handles everyth
 ./gradlew buildAllToOut
 ```
 
-builds every platform artifact into `dist/`:
+builds every platform artifact into the workspace-level `../PluginOuts/` directory:
 
 ```
 Iris v<version> [CraftBukkit] <mc>.jar

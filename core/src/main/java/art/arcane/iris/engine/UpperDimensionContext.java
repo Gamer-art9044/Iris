@@ -14,7 +14,6 @@ import art.arcane.iris.engine.object.IrisShapedGeneratorStyle;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.data.DataProvider;
-import art.arcane.volmlib.util.math.M;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.interpolation.NoiseBounds;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -67,8 +66,8 @@ public class UpperDimensionContext implements DataProvider {
                 engine.getDimension(),
                 engine.getData(),
                 chunkHeight,
-                complex.getNaturalHeightStream(),
-                complex.getNaturalTrueBiomeStream(),
+                complex.getHeightStream(),
+                complex.getTrueBiomeStream(),
                 complex.getRegionStream(),
                 complex.getRockStream(),
                 complex.getImageMapRuntime(),
@@ -100,25 +99,26 @@ public class UpperDimensionContext implements DataProvider {
         upperDim.getRegions().forEach(regionKey -> {
             IrisRegion region = upperData.getRegionLoader().load(regionKey);
             if (region != null) {
-                region.getNaturalBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
+                region.getAllBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
                         biome, dataProvider, allBiomes, generators));
             }
         });
         for (IrisRegion mappedRegion : imageMapRuntime.getMappedRegions()) {
-            mappedRegion.getNaturalBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
+            mappedRegion.getAllBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
                     biome, dataProvider, allBiomes, generators));
         }
         for (IrisBiome mappedBiome : imageMapRuntime.getMappedBiomes()) {
             registerBiomeGenerators(mappedBiome, dataProvider, allBiomes, generators);
         }
 
+        IrisComplex.GeneratorGroup[] generatorGroups = IrisComplex.freezeGeneratorGroups(generators);
         Map<IrisInterpolator, IdentityHashMap<IrisBiome, NoiseBounds>> generatorBounds = new HashMap<>();
-        for (Map.Entry<IrisInterpolator, Set<IrisGenerator>> entry : generators.entrySet()) {
+        for (IrisComplex.GeneratorGroup group : generatorGroups) {
             IdentityHashMap<IrisBiome, NoiseBounds> interpolatorBounds = new IdentityHashMap<>(Math.max(allBiomes.size(), 16));
             for (IrisBiome biome : allBiomes) {
                 double min = 0D;
                 double max = 0D;
-                for (IrisGenerator gen : entry.getValue()) {
+                for (IrisGenerator gen : group.generators()) {
                     String key = gen.getLoadKey();
                     if (key == null || key.isBlank()) {
                         continue;
@@ -128,7 +128,7 @@ public class UpperDimensionContext implements DataProvider {
                 }
                 interpolatorBounds.put(biome, new NoiseBounds(min, max));
             }
-            generatorBounds.put(entry.getKey(), interpolatorBounds);
+            generatorBounds.put(group.interpolator(), interpolatorBounds);
         }
 
         ProceduralStream<Double> regionStyleStream = upperDim.getRegionStyle()
@@ -204,10 +204,10 @@ public class UpperDimensionContext implements DataProvider {
                 return mappedTerrainHeight(imageMapRuntime, fluidHeight, x, z);
             }
             double interpolatedHeight = 0;
-            for (Map.Entry<IrisInterpolator, Set<IrisGenerator>> entry : generators.entrySet()) {
-                IrisInterpolator interpolator = entry.getKey();
-                Set<IrisGenerator> gens = entry.getValue();
-                if (gens.isEmpty()) {
+            for (IrisComplex.GeneratorGroup group : generatorGroups) {
+                IrisInterpolator interpolator = group.interpolator();
+                IrisGenerator[] groupGenerators = group.generators();
+                if (groupGenerators.length == 0) {
                     continue;
                 }
                 IdentityHashMap<IrisBiome, NoiseBounds> cachedBounds = generatorBounds.get(interpolator);
@@ -223,7 +223,7 @@ public class UpperDimensionContext implements DataProvider {
                         }
                         double bMin = 0D;
                         double bMax = 0D;
-                        for (IrisGenerator gen : gens) {
+                        for (IrisGenerator gen : groupGenerators) {
                             String key = gen.getLoadKey();
                             if (key == null || key.isBlank()) {
                                 continue;
@@ -239,11 +239,14 @@ public class UpperDimensionContext implements DataProvider {
                 });
                 double hi = sampledBounds.max();
                 double lo = sampledBounds.min();
-                double d = 0;
-                for (IrisGenerator gen : gens) {
-                    d += M.lerp(lo, hi, gen.getHeight(x, z, heightSeed + 239945));
-                }
-                interpolatedHeight += d / gens.size();
+                interpolatedHeight += IrisComplex.averageGeneratorHeights(
+                        groupGenerators,
+                        lo,
+                        hi,
+                        x,
+                        z,
+                        heightSeed + 239945
+                );
             }
             double proceduralHeight = Math.max(
                     Math.min(interpolatedHeight + fluidHeight + overlayStream.get(x, z), chunkHeight),

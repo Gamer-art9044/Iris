@@ -61,6 +61,51 @@ public class IrisComplexGridBoundsCacheTest {
         assertEquals(1, interpolator.getInvocations());
     }
 
+    @Test
+    public void horizontalGridAxisMatchesLegacyBilerpBitForBit() throws Exception {
+        IrisComplex complex = createComplex();
+        Method gridSampleBounds = gridSampleBoundsMethod();
+        CoordinateInterpolator interpolator = new CoordinateInterpolator();
+        double x = 67D;
+        double z = -32D;
+
+        NoiseBounds actual = invokeGridSampleBounds(complex, gridSampleBounds, interpolator, x, z);
+        NoiseBounds expected = legacyGridSampleBounds(x, z);
+
+        assertBoundsBitsEqual(expected, actual);
+        assertEquals(2, interpolator.getInvocations());
+    }
+
+    @Test
+    public void verticalGridAxisMatchesLegacyBilerpBitForBitAtNegativeCoordinates() throws Exception {
+        IrisComplex complex = createComplex();
+        Method gridSampleBounds = gridSampleBoundsMethod();
+        CoordinateInterpolator interpolator = new CoordinateInterpolator();
+        double x = -32D;
+        double z = -29D;
+
+        NoiseBounds actual = invokeGridSampleBounds(complex, gridSampleBounds, interpolator, x, z);
+        NoiseBounds expected = legacyGridSampleBounds(x, z);
+
+        assertBoundsBitsEqual(expected, actual);
+        assertEquals(2, interpolator.getInvocations());
+    }
+
+    @Test
+    public void interiorGridSampleMatchesLegacyBilerpBitForBit() throws Exception {
+        IrisComplex complex = createComplex();
+        Method gridSampleBounds = gridSampleBoundsMethod();
+        CoordinateInterpolator interpolator = new CoordinateInterpolator();
+        double x = -29D;
+        double z = 67D;
+
+        NoiseBounds actual = invokeGridSampleBounds(complex, gridSampleBounds, interpolator, x, z);
+        NoiseBounds expected = legacyGridSampleBounds(x, z);
+
+        assertBoundsBitsEqual(expected, actual);
+        assertEquals(4, interpolator.getInvocations());
+    }
+
     private IrisComplex createComplex() throws Exception {
         IrisComplex complex = mock(IrisComplex.class, CALLS_REAL_METHODS);
 
@@ -133,6 +178,50 @@ public class IrisComplexGridBoundsCacheTest {
         return (NoiseBounds) method.invoke(complex, null, interpolator, 0, new IrisGenerator[0], x, z);
     }
 
+    private NoiseBounds legacyGridSampleBounds(double x, double z) {
+        int grid = 4;
+        int xi = (int) Math.floor(x);
+        int zi = (int) Math.floor(z);
+        int mask = grid - 1;
+        int gx = xi & ~mask;
+        int gz = zi & ~mask;
+        double fx = (x - gx) / grid;
+        double fz = (z - gz) / grid;
+        NoiseBounds b00 = packedCoordinateBounds(gx, gz);
+        NoiseBounds b10 = packedCoordinateBounds(gx + grid, gz);
+        NoiseBounds b01 = packedCoordinateBounds(gx, gz + grid);
+        NoiseBounds b11 = packedCoordinateBounds(gx + grid, gz + grid);
+        return new NoiseBounds(
+                legacyBiLerp(b00.min(), b10.min(), b01.min(), b11.min(), fx, fz),
+                legacyBiLerp(b00.max(), b10.max(), b01.max(), b11.max(), fx, fz)
+        );
+    }
+
+    private NoiseBounds packedCoordinateBounds(int x, int z) {
+        return new NoiseBounds(
+                (float) CoordinateInterpolator.low(x, z),
+                (float) CoordinateInterpolator.high(x, z)
+        );
+    }
+
+    private double legacyBiLerp(
+            double v00,
+            double v10,
+            double v01,
+            double v11,
+            double fx,
+            double fz
+    ) {
+        double a = v00 + ((v10 - v00) * fx);
+        double b = v01 + ((v11 - v01) * fx);
+        return a + ((b - a) * fz);
+    }
+
+    private void assertBoundsBitsEqual(NoiseBounds expected, NoiseBounds actual) {
+        assertEquals(Double.doubleToRawLongBits(expected.min()), Double.doubleToRawLongBits(actual.min()));
+        assertEquals(Double.doubleToRawLongBits(expected.max()), Double.doubleToRawLongBits(actual.max()));
+    }
+
     private float unpackLow(long packed) {
         return Float.intBitsToFloat((int) (packed >>> 32));
     }
@@ -153,6 +242,28 @@ public class IrisComplexGridBoundsCacheTest {
         public NoiseBounds interpolateBounds(double x, double z, NoiseBoundsProvider provider) {
             invocations.incrementAndGet();
             return bounds;
+        }
+
+        private int getInvocations() {
+            return invocations.get();
+        }
+    }
+
+    private static final class CoordinateInterpolator extends IrisInterpolator {
+        private final AtomicInteger invocations = new AtomicInteger();
+
+        @Override
+        public NoiseBounds interpolateBounds(double x, double z, NoiseBoundsProvider provider) {
+            invocations.incrementAndGet();
+            return new NoiseBounds(low(x, z), high(x, z));
+        }
+
+        private static double low(double x, double z) {
+            return x * 0.125D - z * 0.0625D - 7.75D;
+        }
+
+        private static double high(double x, double z) {
+            return x * -0.03125D + z * 0.1875D + 12.5D;
         }
 
         private int getInvocations() {

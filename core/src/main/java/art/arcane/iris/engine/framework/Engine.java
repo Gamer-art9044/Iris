@@ -42,8 +42,6 @@ import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.IrisWorld;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrologyStorage;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -246,14 +244,6 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default IrisBiome getCaveOrMantleBiome(int x, int y, int z) {
-        RiverCaveHydrology hydrology = RiverCaveHydrologyStorage.getIfPresent(
-                getMantle().getMantle(), x, y, z);
-        if (hydrology != null && !hydrology.floodedBiomeKey().isEmpty()) {
-            IrisBiome biome = getData().getBiomeLoader().load(hydrology.floodedBiomeKey());
-            if (biome != null) {
-                return biome;
-            }
-        }
         MatterCavern m = getMantle().getMantle().get(x, y, z, MatterCavern.class);
 
         if (m != null && m.getCustomBiome() != null && !m.getCustomBiome().isEmpty()) {

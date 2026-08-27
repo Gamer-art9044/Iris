@@ -1,8 +1,6 @@
 package art.arcane.iris.engine.mantle.components;
 
 import art.arcane.iris.engine.object.IrisBiome;
-import art.arcane.iris.engine.river.cave.RiverCaveAction;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.volmlib.util.matter.MatterCavern;
 import org.junit.Test;
 
@@ -46,18 +44,6 @@ public class MantleObjectComponentCaveAnchorTest {
                 20,
                 8
         ));
-    }
-
-    @Test
-    public void protectedRiverHydrologyCannotBecomeAnObjectAnchor() {
-        MatterCavern water = new MatterCavern(true, "", (byte) 1);
-
-        assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
-                true, water, RiverCaveHydrology.of(RiverCaveAction.WET_SOURCE), 20, 8));
-        assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
-                true, water, RiverCaveHydrology.of(RiverCaveAction.FALLING_FLUID), 20, 8));
-        assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
-                true, null, RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD), 20, 8));
     }
 
     private static IrisBiome biome(String loadKey) {

@@ -24,9 +24,6 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeGeneratorLink;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.engine.river.RiverSample;
-import art.arcane.iris.engine.river.RiverSection;
-import art.arcane.iris.engine.river.runtime.IrisRiverRuntime;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 
 import java.awt.Color;
@@ -43,12 +40,6 @@ public final class IrisRenderer {
     private static final int BLUE = new Color(45, 91, 156).getRGB();
     private static final int YELLOW = new Color(211, 164, 67).getRGB();
     private static final int GREEN = new Color(78, 137, 83).getRGB();
-    private static final int RIVER_CHANNEL = new Color(48, 112, 190).getRGB();
-    private static final int RIVER_MOUTH = new Color(54, 164, 205).getRGB();
-    private static final int RIVER_BANK = new Color(92, 146, 78).getRGB();
-    private static final int DRY_CHANNEL = new Color(171, 128, 68).getRGB();
-    private static final int DRY_BANK = new Color(132, 105, 62).getRGB();
-    private static final int NO_RIVER = new Color(28, 31, 38).getRGB();
     private static final int DEEP_WATER = new Color(20, 48, 92).getRGB();
     private static final int SHALLOW_WATER = new Color(50, 112, 154).getRGB();
     private static final int LOWLAND = new Color(78, 128, 76).getRGB();
@@ -114,17 +105,9 @@ public final class IrisRenderer {
             renderHeightAtlas(pixels, resolution, sx, sz, step, renderer, cancelled);
             return image;
         }
-        PixelShader shader = shader(currentType, step, studio);
-        if (studio && currentType == RenderType.RIVER) {
-            Arrays.fill(pixels, NO_RIVER);
-            renderRiverAtlas(pixels, resolution, sx, sz, step, renderer.getComplex(), cancelled, false);
-            return image;
-        }
+        PixelShader shader = shader(currentType, studio);
         if (studio && adaptiveStudioType(currentType)) {
             renderAdaptiveAtlas(pixels, resolution, sx, sz, step, shader, cancelled);
-            if (currentType == RenderType.BIOME) {
-                renderRiverAtlas(pixels, resolution, sx, sz, step, renderer.getComplex(), cancelled, true);
-            }
             return image;
         }
         int groupSize = sampleGroup(step, resolution);
@@ -148,18 +131,6 @@ public final class IrisRenderer {
         }
 
         return image;
-    }
-
-    public static int riverColor(RiverSection section) {
-        Objects.requireNonNull(section, "section");
-        return switch (section) {
-            case CHANNEL -> RIVER_CHANNEL;
-            case MOUTH -> RIVER_MOUTH;
-            case BANK -> RIVER_BANK;
-            case DRY_CHANNEL -> DRY_CHANNEL;
-            case DRY_BANK -> DRY_BANK;
-            case NONE -> NO_RIVER;
-        };
     }
 
     public static int heightColor(double height, double maximumHeight, double fluidHeight) {
@@ -189,7 +160,7 @@ public final class IrisRenderer {
         return Math.max(1, Math.min(resolution, (int) Math.floor(16D / absoluteStep)));
     }
 
-    private PixelShader shader(RenderType currentType, double step, boolean studio) {
+    private PixelShader shader(RenderType currentType, boolean studio) {
         IrisComplex complex = renderer.getComplex();
         return switch (currentType) {
             case BIOME, DECORATOR_LOAD, OBJECT_LOAD, LAYER_LOAD -> biomeShader(
@@ -198,8 +169,7 @@ public final class IrisRenderer {
             case BIOME_SEA -> biomeShader(complex.getSeaBiomeStream(), currentType);
             case REGION -> regionShader(complex, currentType);
             case CAVE_LAND -> biomeShader(complex.getCaveBiomeStream(), currentType);
-            case HEIGHT -> heightShader(studio ? complex.getNaturalHeightStream() : complex.getHeightStream());
-            case RIVER -> (double x, double z) -> riverColor(complex, x, z, step);
+            case HEIGHT -> heightShader(complex.getHeightStream());
             case CONTINENT -> studio
                     ? continentShader(complex.getBaseBiomeStream())
                     : this::continentColor;
@@ -210,7 +180,7 @@ public final class IrisRenderer {
         return switch (type) {
             case BIOME, DECORATOR_LOAD, OBJECT_LOAD, LAYER_LOAD, BIOME_LAND, BIOME_SEA, REGION, CAVE_LAND,
                     CONTINENT -> true;
-            case HEIGHT, RIVER -> false;
+            case HEIGHT -> false;
         };
     }
 
@@ -254,7 +224,7 @@ public final class IrisRenderer {
                 startX,
                 startZ,
                 step,
-                complex.getNaturalHeightStream(),
+                complex.getHeightStream(),
                 engine.getHeight(),
                 fluidHeight,
                 cancelled
@@ -265,103 +235,6 @@ public final class IrisRenderer {
                 sampler.render(pixelX, pixelZ, Math.min(blockPixels, resolution - pixelX), height);
             }
         }
-    }
-
-    private static void renderRiverAtlas(
-            int[] pixels,
-            int resolution,
-            double startX,
-            double startZ,
-            double step,
-            IrisComplex complex,
-            BooleanSupplier cancelled,
-            boolean composite
-    ) {
-        IrisRiverRuntime runtime = complex.getRiverRuntime();
-        if (runtime == null) {
-            return;
-        }
-        int maximumPixels = Math.max(1, Math.min(16, (int) Math.floor(64D / step)));
-        int blockPixels = Integer.highestOneBit(maximumPixels);
-        for (int pixelZ = 0; pixelZ < resolution; pixelZ += blockPixels) {
-            int height = Math.min(blockPixels, resolution - pixelZ);
-            for (int pixelX = 0; pixelX < resolution; pixelX += blockPixels) {
-                renderRiverBlock(
-                        pixels,
-                        resolution,
-                        startX,
-                        startZ,
-                        step,
-                        runtime,
-                        cancelled,
-                        composite,
-                        pixelX,
-                        pixelZ,
-                        Math.min(blockPixels, resolution - pixelX),
-                        height
-                );
-            }
-        }
-    }
-
-    private static void renderRiverBlock(
-            int[] pixels,
-            int resolution,
-            double startX,
-            double startZ,
-            double step,
-            IrisRiverRuntime runtime,
-            BooleanSupplier cancelled,
-            boolean composite,
-            int pixelX,
-            int pixelZ,
-            int width,
-            int height
-    ) {
-        checkCancelled(cancelled);
-        RiverSample sample = runtime.sampleFootprint(
-                startX + pixelX * step,
-                startZ + pixelZ * step,
-                startX + (pixelX + width) * step,
-                startZ + (pixelZ + height) * step
-        );
-        if (!sample.present()) {
-            return;
-        }
-        if (width == 1 && height == 1) {
-            int index = pixelZ * resolution + pixelX;
-            int color = riverColor(sample.section());
-            pixels[index] = composite ? riverCompositeColor(pixels[index], sample.section(), color) : color;
-            return;
-        }
-        int leftWidth = Math.max(1, width / 2);
-        int rightWidth = width - leftWidth;
-        int topHeight = Math.max(1, height / 2);
-        int bottomHeight = height - topHeight;
-        renderRiverBlock(pixels, resolution, startX, startZ, step, runtime, cancelled, composite,
-                pixelX, pixelZ, leftWidth, topHeight);
-        if (rightWidth > 0) {
-            renderRiverBlock(pixels, resolution, startX, startZ, step, runtime, cancelled, composite,
-                    pixelX + leftWidth, pixelZ, rightWidth, topHeight);
-        }
-        if (bottomHeight > 0) {
-            renderRiverBlock(pixels, resolution, startX, startZ, step, runtime, cancelled, composite,
-                    pixelX, pixelZ + topHeight, leftWidth, bottomHeight);
-            if (rightWidth > 0) {
-                renderRiverBlock(pixels, resolution, startX, startZ, step, runtime, cancelled, composite,
-                        pixelX + leftWidth, pixelZ + topHeight, rightWidth, bottomHeight);
-            }
-        }
-    }
-
-    private static int riverCompositeColor(int base, RiverSection section, int river) {
-        return switch (section) {
-            case CHANNEL, MOUTH -> river;
-            case BANK -> blend(base, river, 0.68D);
-            case DRY_CHANNEL -> blend(base, river, 0.88D);
-            case DRY_BANK -> blend(base, river, 0.58D);
-            case NONE -> base;
-        };
     }
 
     private PixelShader biomeShader(ProceduralStream<IrisBiome> stream, RenderType currentType) {
@@ -396,22 +269,6 @@ public final class IrisRenderer {
         IrisDimension dimension = renderer.getDimension();
         double fluidHeight = dimension == null ? 0D : dimension.getFluidHeight();
         return (double x, double z) -> heightColor(stream.getDouble(x, z), maximumHeight, fluidHeight);
-    }
-
-    private int riverColor(IrisComplex complex, double x, double z, double step) {
-        IrisRiverRuntime runtime = complex.getRiverRuntime();
-        if (runtime == null) {
-            return riverColor(RiverSection.NONE);
-        }
-        double endX = x + step;
-        double endZ = z + step;
-        RiverSample sample = runtime.sampleFootprint(
-                StrictMath.min(x, endX),
-                StrictMath.min(z, endZ),
-                StrictMath.max(x, endX),
-                StrictMath.max(z, endZ)
-        );
-        return riverColor(sample.section());
     }
 
     private int continentColor(double x, double z) {

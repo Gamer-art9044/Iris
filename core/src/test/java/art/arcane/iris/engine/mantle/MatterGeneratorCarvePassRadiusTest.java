@@ -74,7 +74,7 @@ public class MatterGeneratorCarvePassRadiusTest {
 
         RecordingComponent carving = new RecordingComponent(ReservedFlag.CARVED, 0, 1);
         RecordingComponent conditional = new RecordingComponent(
-                ReservedFlag.RIVER_HYDROLOGY,
+                ReservedFlag.JIGSAW,
                 1,
                 0,
                 160,
@@ -111,7 +111,7 @@ public class MatterGeneratorCarvePassRadiusTest {
 
         RecordingComponent carving = new RecordingComponent(ReservedFlag.CARVED, 0, 0);
         RecordingComponent conditional = new RecordingComponent(
-                ReservedFlag.RIVER_HYDROLOGY,
+                ReservedFlag.JIGSAW,
                 1,
                 0,
                 0,

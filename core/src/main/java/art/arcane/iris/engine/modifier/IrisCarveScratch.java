@@ -140,7 +140,6 @@ final class CarveWallBuffer {
 
     private int[] keys;
     private MatterCavern[] values;
-    private boolean[] riverBoundaries;
     private int mask;
     private int resizeAt;
     private int size;
@@ -155,12 +154,11 @@ final class CarveWallBuffer {
         keys = new int[capacity];
         Arrays.fill(keys, EMPTY_KEY);
         values = new MatterCavern[capacity];
-        riverBoundaries = new boolean[capacity];
         mask = capacity - 1;
         resizeAt = Math.max(1, (int) (capacity * LOAD_FACTOR));
     }
 
-    void put(int x, int y, int z, MatterCavern value, boolean riverBoundary) {
+    void put(int x, int y, int z, MatterCavern value) {
         int key = pack(x, y, z);
         int index = mix(key) & mask;
 
@@ -169,7 +167,6 @@ final class CarveWallBuffer {
             if (existingKey == EMPTY_KEY) {
                 keys[index] = key;
                 values[index] = value;
-                riverBoundaries[index] = riverBoundary;
                 size++;
                 if (size >= resizeAt) {
                     resize();
@@ -179,7 +176,6 @@ final class CarveWallBuffer {
 
             if (existingKey == key) {
                 values[index] = value;
-                riverBoundaries[index] = riverBoundaries[index] || riverBoundary;
                 return;
             }
 
@@ -202,21 +198,6 @@ final class CarveWallBuffer {
         }
     }
 
-    boolean isRiverBoundary(int x, int y, int z) {
-        int key = pack(x, y, z);
-        int index = mix(key) & mask;
-        while (true) {
-            int existingKey = keys[index];
-            if (existingKey == EMPTY_KEY) {
-                return false;
-            }
-            if (existingKey == key) {
-                return riverBoundaries[index];
-            }
-            index = (index + 1) & mask;
-        }
-    }
-
     void forEach(Consumer consumer) {
         for (int index = 0; index < keys.length; index++) {
             int key = keys[index];
@@ -226,7 +207,7 @@ final class CarveWallBuffer {
 
             MatterCavern cavern = values[index];
             if (cavern != null) {
-                consumer.accept(unpackX(key), unpackY(key), unpackZ(key), cavern, riverBoundaries[index]);
+                consumer.accept(unpackX(key), unpackY(key), unpackZ(key), cavern);
             }
         }
     }
@@ -234,19 +215,16 @@ final class CarveWallBuffer {
     void clear() {
         Arrays.fill(keys, EMPTY_KEY);
         Arrays.fill(values, null);
-        Arrays.fill(riverBoundaries, false);
         size = 0;
     }
 
     private void resize() {
         int[] oldKeys = keys;
         MatterCavern[] oldValues = values;
-        boolean[] oldRiverBoundaries = riverBoundaries;
         int nextCapacity = oldKeys.length << 1;
         keys = new int[nextCapacity];
         Arrays.fill(keys, EMPTY_KEY);
         values = new MatterCavern[nextCapacity];
-        riverBoundaries = new boolean[nextCapacity];
         mask = nextCapacity - 1;
         resizeAt = Math.max(1, (int) (nextCapacity * LOAD_FACTOR));
         size = 0;
@@ -255,12 +233,12 @@ final class CarveWallBuffer {
             int key = oldKeys[index];
             MatterCavern value = oldValues[index];
             if (key != EMPTY_KEY && value != null) {
-                reinsert(key, value, oldRiverBoundaries[index]);
+                reinsert(key, value);
             }
         }
     }
 
-    private void reinsert(int key, MatterCavern value, boolean riverBoundary) {
+    private void reinsert(int key, MatterCavern value) {
         int index = mix(key) & mask;
         while (keys[index] != EMPTY_KEY) {
             index = (index + 1) & mask;
@@ -268,7 +246,6 @@ final class CarveWallBuffer {
 
         keys[index] = key;
         values[index] = value;
-        riverBoundaries[index] = riverBoundary;
         size++;
     }
 
@@ -295,6 +272,6 @@ final class CarveWallBuffer {
 
     @FunctionalInterface
     interface Consumer {
-        void accept(int x, int y, int z, MatterCavern cavern, boolean riverBoundary);
+        void accept(int x, int y, int z, MatterCavern cavern);
     }
 }

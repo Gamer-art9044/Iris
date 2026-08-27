@@ -88,10 +88,13 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         IrisData data = getData();
         IrisComplex complex = getComplex();
         RNG localRng = rng;
+        int fluidHeight = dimension.getFluidHeight();
+        int clampedFluidHeight = Math.min(chunkHeight, fluidHeight);
         boolean bedrockEnabled = dimension.isBedrock();
         boolean hideOres = dimension.isHideOresForHiddenOre();
         ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
         ChunkedDataCache<IrisRegion> regionCache = context.getRegion();
+        ChunkedDataCache<PlatformBlockState> fluidCache = context.getFluid();
         ChunkedDataCache<PlatformBlockState> rockCache = context.getRock();
         int realX = xf + x;
         UpperDimensionContext upperContext = getEngine().getUpperContext();
@@ -107,17 +110,13 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
             IrisBiome biome = biomeCache.get(xf, zf);
             IrisRegion region = regionCache.get(xf, zf);
             int he = Math.min(chunkHeight, context.getRoundedHeight(xf, zf));
-            int surfaceFluidHeight = Math.min(
-                    chunkHeight,
-                    (int) Math.round(complex.getRiverWaterSurfaceStream().get(realX, realZ))
-            );
-            int hf = Math.max(surfaceFluidHeight, he);
+            int hf = Math.max(clampedFluidHeight, he);
             if (hf < 0) {
                 continue;
             }
 
             int topY = Math.min(hf, chunkHeight - 1);
-            PlatformBlockState fluid = complex.resolveSurfaceFluid(realX, realZ);
+            PlatformBlockState fluid = fluidCache.get(xf, zf);
             PlatformBlockState rock = rockCache.get(xf, zf);
             PlatformBlockState mappedSurfaceBlock = complex.getImageMapRuntime().sampleSurfaceBlock(realX, realZ);
             KList<IrisOreGenerator> biomeSurfaceOres = hideOres ? null : biome.getSurfaceOreGenerators();

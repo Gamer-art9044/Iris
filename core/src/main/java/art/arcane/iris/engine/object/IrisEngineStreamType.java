@@ -28,9 +28,6 @@ public enum IrisEngineStreamType {
     @Desc("Represents the given slope at the x, z coordinates")
     SLOPE((f) -> f.getComplex().getSlopeStream()),
 
-    @Desc("Represents terrain height before river incision and river biome replacement.")
-    NATURAL_HEIGHT((f) -> f.getComplex().getNaturalHeightStream()),
-
     @Desc("Represents the base generator height at the given position. This includes only the biome generators / interpolation and noise features but does not include carving, caves.")
     HEIGHT((f) -> f.getComplex().getHeightStream()),
 
@@ -44,19 +41,7 @@ public enum IrisEngineStreamType {
     REGION_STYLE((f) -> f.getComplex().getRegionStyleStream()),
 
     @Desc("Represents the identity of regions. Each region has a unique number (very large numbers)")
-    REGION_IDENTITY((f) -> f.getComplex().getRegionIdentityStream()),
-
-    @Desc("Represents block distance from the nearest active river centerline.")
-    RIVER_DISTANCE((f) -> f.getComplex().getRiverDistanceStream()),
-
-    @Desc("Represents the merged upstream flow carried by the active river reach.")
-    RIVER_FLOW((f) -> f.getComplex().getRiverFlowStream()),
-
-    @Desc("Represents the normalized river terrain-incision weight.")
-    RIVER_CARVE_WEIGHT((f) -> f.getComplex().getRiverCarveWeightStream()),
-
-    @Desc("Represents the solved river water-surface height.")
-    RIVER_WATER_SURFACE((f) -> f.getComplex().getRiverWaterSurfaceStream());
+    REGION_IDENTITY((f) -> f.getComplex().getRegionIdentityStream());
 
     private final Function<Engine, ProceduralStream<Double>> getter;
 

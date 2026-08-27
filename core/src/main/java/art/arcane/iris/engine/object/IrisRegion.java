@@ -118,8 +118,6 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     private double caveBiomeZoom = 1;
     @Desc("Profile-driven 3D cave configuration")
     private IrisCaveProfile caveProfile = new IrisCaveProfile();
-    @Desc("Region-level river routing, shape, cave-entry, and biome-pool overrides. Omit to inherit dimension settings.")
-    private IrisRiverOverride riverOverride = null;
     @RegistryListResource(IrisBiome.class)
     @Required
     @ArrayType(min = 1, type = String.class)
@@ -279,33 +277,18 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     }
 
     public KSet<String> getAllBiomeIds() {
-        KSet<String> names = getNaturalBiomeIds();
-        if (riverOverride != null) {
-            names.addAll(riverOverride.getAllBiomeIds());
-        }
-        return names;
-    }
-
-    public KSet<String> getNaturalBiomeIds() {
         KSet<String> names = new KSet<>();
         names.addAll(landBiomes);
         names.addAll(caveBiomes);
         names.addAll(seaBiomes);
         names.addAll(shoreBiomes);
+
         return names;
     }
 
     public KList<IrisBiome> getAllBiomes(DataProvider g) {
-        return resolveBiomes(g, getAllBiomeIds());
-    }
-
-    public KList<IrisBiome> getNaturalBiomes(DataProvider g) {
-        return resolveBiomes(g, getNaturalBiomeIds());
-    }
-
-    private KList<IrisBiome> resolveBiomes(DataProvider g, KSet<String> biomeIds) {
         KMap<String, IrisBiome> b = new KMap<>();
-        KSet<String> names = biomeIds.copy();
+        KSet<String> names = getAllBiomeIds();
 
         while (!names.isEmpty()) {
             for (String i : new KList<>(names)) {

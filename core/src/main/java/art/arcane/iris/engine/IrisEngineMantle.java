@@ -30,9 +30,7 @@ import art.arcane.iris.engine.mantle.MantlePass;
 import art.arcane.iris.engine.mantle.components.MantleCarvingComponent;
 import art.arcane.iris.engine.mantle.components.MantleFloatingObjectComponent;
 import art.arcane.iris.engine.mantle.components.MantleObjectComponent;
-import art.arcane.iris.engine.mantle.components.MantleRiverHydrologyComponent;
 import art.arcane.iris.engine.mantle.components.IrisStructureComponent;
-import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.matter.IrisMatterContext;
@@ -90,7 +88,6 @@ public class IrisEngineMantle implements EngineMantle {
         this.mantle = createMantle(engine);
         components = new KMap<>();
         registerComponent(new MantleCarvingComponent(this));
-        registerComponent(new MantleRiverHydrologyComponent(this));
         object = new MantleObjectComponent(this);
         registerComponent(object);
         registerComponent(new MantleFloatingObjectComponent(this));
@@ -179,20 +176,8 @@ public class IrisEngineMantle implements EngineMantle {
             if (!getDimension().isCarvingEnabled()) {
                 disabled.addIfMissing(ReservedFlag.CARVED);
             }
-            if (disabled.contains(ReservedFlag.CARVED)
-                    || !isRiverHydrologyEnabled(getDimension())) {
-                disabled.addIfMissing(ReservedFlag.RIVER_HYDROLOGY);
-            }
             return Set.copyOf(disabled);
         });
-    }
-
-    static boolean isRiverHydrologyEnabled(IrisDimension dimension) {
-        return MantleRiverHydrologyComponent.isEnabledFor(dimension);
-    }
-
-    static boolean isRiverCaveHydrologyEnabled(IrisDimension dimension) {
-        return MantleRiverHydrologyComponent.isCaveConnectionsEnabledFor(dimension);
     }
 
     @Override

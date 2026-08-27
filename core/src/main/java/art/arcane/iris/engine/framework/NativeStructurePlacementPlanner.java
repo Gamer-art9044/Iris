@@ -157,10 +157,7 @@ public final class NativeStructurePlacementPlanner {
     }
 
     static boolean isSubmerged(Engine engine, int blockX, int blockZ) {
-        int localFluidHeight = engine.getComplex() == null
-                ? engine.getDimension().getFluidHeight()
-                : (int) Math.round(engine.getComplex().getRiverWaterSurfaceStream().get(blockX, blockZ));
-        return engine.getHeight(blockX, blockZ, true) < localFluidHeight;
+        return engine.getHeight(blockX, blockZ, true) < engine.getDimension().getFluidHeight();
     }
 
     private static int comparePlacementPriority(IrisStructurePlacement left, IrisStructurePlacement right) {

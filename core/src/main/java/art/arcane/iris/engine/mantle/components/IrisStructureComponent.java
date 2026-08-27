@@ -70,7 +70,7 @@ public class IrisStructureComponent extends IrisMantleComponent {
     private static final MatterCavern CARVE_CAVERN = new MatterCavern(true, "", (byte) 3);
 
     public IrisStructureComponent(EngineMantle engineMantle) {
-        super(engineMantle, ReservedFlag.JIGSAW, 4);
+        super(engineMantle, ReservedFlag.JIGSAW, 3);
     }
 
     @Override

@@ -32,17 +32,16 @@ final class SurfaceFluidBoundaryPlan {
             int[] chunkSurfaceHeights,
             double[] fieldSurfaceHeights,
             boolean[] fieldHasFluid,
-            double[] fieldFluidHeights,
             int fieldSize,
             int padding,
-            long[] boundaries
+            int fluidHeight,
+            int[] boundaryStartY
     ) {
         if (chunkSurfaceHeights == null || chunkSurfaceHeights.length < CHUNK_AREA
-                || boundaries == null || boundaries.length < CHUNK_AREA
+                || boundaryStartY == null || boundaryStartY.length < CHUNK_AREA
                 || padding < 1 || fieldSize < CHUNK_SIZE + (padding * 2)
                 || fieldSurfaceHeights == null || fieldSurfaceHeights.length < fieldSize * fieldSize
-                || fieldHasFluid == null || fieldHasFluid.length < fieldSize * fieldSize
-                || fieldFluidHeights == null || fieldFluidHeights.length < fieldSize * fieldSize) {
+                || fieldHasFluid == null || fieldHasFluid.length < fieldSize * fieldSize) {
             throw new IllegalArgumentException("Surface fluid boundary fields do not cover a padded chunk");
         }
 
@@ -52,67 +51,44 @@ final class SurfaceFluidBoundaryPlan {
                 int fieldZ = localZ + padding;
                 int columnIndex = PowerOfTwoCoordinates.packLocal16(localX, localZ);
                 int boundaryY = NO_BOUNDARY;
-                int boundaryEndY = Integer.MIN_VALUE;
                 int surfaceY = chunkSurfaceHeights[columnIndex];
                 int fieldIndex = (fieldX * fieldSize) + fieldZ;
-                int fluidHeight = roundedHeight(fieldFluidHeights[fieldIndex]);
                 if (fieldHasFluid[fieldIndex] && surfaceY < fluidHeight) {
                     boundaryY = surfaceY;
-                    boundaryEndY = fluidHeight;
                 }
 
-                long boundary = expandBoundary(boundaryY, boundaryEndY, fieldSurfaceHeights,
-                        fieldHasFluid, fieldFluidHeights, ((fieldX - 1) * fieldSize) + fieldZ);
-                boundary = expandBoundary(startY(boundary), endY(boundary), fieldSurfaceHeights,
-                        fieldHasFluid, fieldFluidHeights, ((fieldX + 1) * fieldSize) + fieldZ);
-                boundary = expandBoundary(startY(boundary), endY(boundary), fieldSurfaceHeights,
-                        fieldHasFluid, fieldFluidHeights, (fieldX * fieldSize) + fieldZ - 1);
-                boundaries[columnIndex] = expandBoundary(startY(boundary), endY(boundary), fieldSurfaceHeights,
-                        fieldHasFluid, fieldFluidHeights, (fieldX * fieldSize) + fieldZ + 1);
+                boundaryY = lowerBoundary(boundaryY, fieldSurfaceHeights, fieldHasFluid,
+                        ((fieldX - 1) * fieldSize) + fieldZ, fluidHeight);
+                boundaryY = lowerBoundary(boundaryY, fieldSurfaceHeights, fieldHasFluid,
+                        ((fieldX + 1) * fieldSize) + fieldZ, fluidHeight);
+                boundaryY = lowerBoundary(boundaryY, fieldSurfaceHeights, fieldHasFluid,
+                        (fieldX * fieldSize) + fieldZ - 1, fluidHeight);
+                boundaryY = lowerBoundary(boundaryY, fieldSurfaceHeights, fieldHasFluid,
+                        (fieldX * fieldSize) + fieldZ + 1, fluidHeight);
+                boundaryStartY[columnIndex] = boundaryY;
             }
         }
     }
 
-    static boolean protects(long[] boundaries, int columnIndex, int y) {
-        if (boundaries == null || columnIndex < 0 || columnIndex >= boundaries.length) {
-            return false;
-        }
-        long boundary = boundaries[columnIndex];
-        return y >= startY(boundary) && y <= endY(boundary);
+    static boolean protects(int[] boundaryStartY, int columnIndex, int y, int fluidHeight) {
+        return boundaryStartY != null
+                && columnIndex >= 0
+                && columnIndex < boundaryStartY.length
+                && y >= boundaryStartY[columnIndex]
+                && y <= fluidHeight;
     }
 
-    static int startY(long boundary) {
-        return (int) (boundary >> 32);
-    }
-
-    static int endY(long boundary) {
-        return (int) boundary;
-    }
-
-    private static long expandBoundary(
+    private static int lowerBoundary(
             int currentBoundaryY,
-            int currentBoundaryEndY,
             double[] fieldSurfaceHeights,
             boolean[] fieldHasFluid,
-            double[] fieldFluidHeights,
-            int fieldIndex
+            int fieldIndex,
+            int fluidHeight
     ) {
-        int fluidHeight = roundedHeight(fieldFluidHeights[fieldIndex]);
         int neighborSurfaceY = (int) Math.round(fieldSurfaceHeights[fieldIndex]);
         if (!fieldHasFluid[fieldIndex] || neighborSurfaceY >= fluidHeight) {
-            return boundary(currentBoundaryY, currentBoundaryEndY);
+            return currentBoundaryY;
         }
-        return boundary(
-                Math.min(currentBoundaryY, neighborSurfaceY + 1),
-                Math.max(currentBoundaryEndY, fluidHeight)
-        );
-    }
-
-    private static int roundedHeight(double height) {
-        return Double.isFinite(height) ? (int) Math.round(height) : Integer.MIN_VALUE;
-    }
-
-    static long boundary(int startY, int endY) {
-        return ((long) startY << 32) | (endY & 0xffffffffL);
+        return Math.min(currentBoundaryY, neighborSurfaceY + 1);
     }
 }

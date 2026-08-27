@@ -57,7 +57,7 @@ public class VisionRenderControllerTest {
         VisionRenderController.TileKey baseline = new VisionRenderController.TileKey(4L, RenderType.BIOME, 4D, 8L, 9L);
 
         assertNotEquals(baseline, new VisionRenderController.TileKey(5L, RenderType.BIOME, 4D, 8L, 9L));
-        assertNotEquals(baseline, new VisionRenderController.TileKey(4L, RenderType.RIVER, 4D, 8L, 9L));
+        assertNotEquals(baseline, new VisionRenderController.TileKey(4L, RenderType.HEIGHT, 4D, 8L, 9L));
         assertNotEquals(baseline, new VisionRenderController.TileKey(4L, RenderType.BIOME, 4.5D, 8L, 9L));
         assertNotEquals(baseline, new VisionRenderController.TileKey(4L, RenderType.BIOME, 4D, 7L, 9L));
     }

@@ -52,9 +52,7 @@ public class IrisInterpolator {
 
     @Override
     public int hashCode() {
-        // Bit-identical to Objects.hash(horizontalScale, function) without the Object[] + Double boxing.
-        // The exact value is load bearing: it decides HashMap bucket order for the generator maps in
-        // IrisComplex, and that order fixes the floating point summation order of interpolated heights.
+        // Bit-identical to Objects.hash(horizontalScale, function) without the Object[] or Double boxing.
         int result = 31 + Double.hashCode(horizontalScale);
         return (31 * result) + (function == null ? 0 : function.hashCode());
     }

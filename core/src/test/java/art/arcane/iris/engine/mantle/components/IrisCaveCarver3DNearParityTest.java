@@ -868,11 +868,10 @@ public class IrisCaveCarver3DNearParityTest {
         Engine engine = createEngine(80, 70);
         int[] surfaceHeights = filledHeights(70);
         surfaceHeights[0] = 60;
-        long[] boundaries = new long[256];
-        Arrays.fill(boundaries, SurfaceFluidBoundaryPlan.boundary(
-                SurfaceFluidBoundaryPlan.NO_BOUNDARY, Integer.MIN_VALUE));
-        boundaries[0] = SurfaceFluidBoundaryPlan.boundary(60, 64);
-        boundaries[16] = SurfaceFluidBoundaryPlan.boundary(61, 64);
+        int[] boundaryStartY = new int[256];
+        Arrays.fill(boundaryStartY, SurfaceFluidBoundaryPlan.NO_BOUNDARY);
+        boundaryStartY[0] = 60;
+        boundaryStartY[16] = 61;
         WriterCapture capture = createWriterCapture(80);
         CaveFluidSupportPlan supportPlan = new CaveFluidSupportPlan();
 
@@ -885,7 +884,7 @@ public class IrisCaveCarver3DNearParityTest {
                 0D,
                 null,
                 surfaceHeights,
-                boundaries,
+                boundaryStartY,
                 null,
                 supportPlan
         );

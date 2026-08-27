@@ -70,6 +70,28 @@ public class IrisDepositTuningTest {
     }
 
     @Test
+    public void clumpSaltIsStableAcrossEquivalentConfigInstances() {
+        IrisData data = mock(IrisData.class);
+        IrisDepositGenerator first = generatorWithState(data, false, "minecraft:granite");
+        IrisDepositGenerator second = generatorWithState(data, false, "minecraft:granite");
+
+        assertEquals(first.stableClumpSalt(data), second.stableClumpSalt(data));
+    }
+
+    @Test
+    public void clumpSaltIncludesAuthoredConfigAndPalette() {
+        IrisData data = mock(IrisData.class);
+        IrisDepositGenerator granite = generatorWithState(data, false, "minecraft:granite");
+        IrisDepositGenerator andesite = generatorWithState(data, false, "minecraft:andesite");
+        IrisDepositGenerator alteredShape = generatorWithState(data, false, "minecraft:granite");
+        alteredShape.setShape(IrisDepositShape.VANILLA_SCATTERED);
+
+        assertEquals(3112546198474861350L, granite.stableClumpSalt(data));
+        assertNotEquals(granite.stableClumpSalt(data), andesite.stableClumpSalt(data));
+        assertNotEquals(granite.stableClumpSalt(data), alteredShape.stableClumpSalt(data));
+    }
+
+    @Test
     public void onlyOreDepositPalettesReceiveBiomeTuning() {
         IrisData data = mock(IrisData.class);
         IrisDepositGenerator oreGenerator = generatorWithState(data, true);
@@ -143,10 +165,15 @@ public class IrisDepositTuningTest {
     }
 
     private IrisDepositGenerator generatorWithState(IrisData data, boolean ore) {
+        return generatorWithState(data, ore, ore ? "minecraft:iron_ore" : "minecraft:stone");
+    }
+
+    private IrisDepositGenerator generatorWithState(IrisData data, boolean ore, String key) {
         IrisBlockData block = mock(IrisBlockData.class);
         PlatformBlockState state = mock(PlatformBlockState.class);
         when(block.getBlockData(data)).thenReturn(state);
         when(state.isOre()).thenReturn(ore);
+        when(state.key()).thenReturn(key);
         IrisDepositGenerator generator = new IrisDepositGenerator();
         generator.getPalette().add(block);
         return generator;

@@ -2,7 +2,6 @@ package art.arcane.iris.engine.mantle;
 
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.engine.framework.TreeBlockMaterial;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -138,7 +137,6 @@ public class EngineMantleCleanupTest {
         verify(chunk).deleteSlices(MatterCavern.class);
         verify(chunk, never()).deleteSlices(TileWrapper.class);
         verify(chunk, never()).deleteSlices(Identifier.class);
-        verify(chunk, never()).deleteSlices(RiverCaveHydrology.class);
         InOrder order = inOrder(chunk);
         order.verify(chunk).raiseFlagUnchecked(eq(MantleFlag.CLEANED), any());
         order.verify(chunk).release();

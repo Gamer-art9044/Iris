@@ -275,8 +275,7 @@ final class VisionRenderController implements AutoCloseable {
             if (!isCurrent(work)) {
                 return;
             }
-            int admissionLimit = work.frame().spec().type() == RenderType.RIVER ? 1 : renderWorkerCount;
-            while (work.inFlight() < admissionLimit) {
+            while (work.inFlight() < renderWorkerCount) {
                 VisibleTile tile = work.nextMissing();
                 if (tile == null) {
                     return;

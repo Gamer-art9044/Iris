@@ -49,6 +49,9 @@ import lombok.experimental.Accessors;
 @Desc("Creates ore & other block deposits underground")
 @Data
 public class IrisDepositGenerator {
+    private static final long FNV_OFFSET_BASIS = 0xcbf29ce484222325L;
+    private static final long FNV_PRIME = 0x100000001b3L;
+
     private final transient ConcurrentMap<ClumpCacheKey, KList<IrisObject>> objects = new ConcurrentHashMap<>();
     private final transient AtomicCache<KList<PlatformBlockState>> blockData = new AtomicCache<>();
     private final transient AtomicCache<Boolean> ore = new AtomicCache<>();
@@ -135,7 +138,7 @@ public class IrisDepositGenerator {
 
         ClumpCacheKey cacheKey = new ClumpCacheKey(engine.getSeedManager().getDeposit(), minSize, maxSize);
         KList<IrisObject> objects = this.objects.computeIfAbsent(cacheKey, key -> {
-            RNG rngv = new RNG(key.depositSeed() + hashCode());
+            RNG rngv = new RNG(key.depositSeed() + stableClumpSalt(rdata));
             KList<IrisObject> objectsf = new KList<>();
 
             for (int i = 0; i < varience; i++) {
@@ -163,7 +166,7 @@ public class IrisDepositGenerator {
                 engine.getSeedManager().getDeposit(), scaledMinSize, scaledMaxSize);
         KList<IrisObject> objects = scaledObjects.computeIfAbsent(cacheKey, key -> {
             long sizeSeed = ((long) key.minSize() << 32) ^ (key.maxSize() & 0xffffffffL);
-            RNG rngv = new RNG(key.depositSeed() + hashCode() + sizeSeed);
+            RNG rngv = new RNG(key.depositSeed() + stableClumpSalt(rdata) + sizeSeed);
             KList<IrisObject> generated = new KList<>();
 
             for (int i = 0; i < varience; i++) {
@@ -182,6 +185,64 @@ public class IrisDepositGenerator {
 
     static int scaledDepositSize(int size, double multiplier) {
         return Math.max(0, Math.min(8192, (int) Math.round(size * multiplier)));
+    }
+
+    long stableClumpSalt(IrisData rdata) {
+        long hash = FNV_OFFSET_BASIS;
+        hash = mix(hash, minHeight);
+        hash = mix(hash, maxHeight);
+        hash = mixEnum(hash, heightDistribution);
+        hash = mixEnum(hash, placementScope);
+        hash = mix(hash, surfaceClearance);
+        hash = mix(hash, minSize);
+        hash = mix(hash, maxSize);
+        hash = mixEnum(hash, shape);
+        hash = mix(hash, maxPerChunk);
+        hash = mix(hash, minPerChunk);
+        hash = mix(hash, Double.doubleToLongBits(spawnChance));
+        hash = mix(hash, Double.doubleToLongBits(perClumpSpawnChance));
+        hash = mix(hash, Double.doubleToLongBits(discardChanceOnAirExposure));
+        KList<PlatformBlockState> resolvedPalette = getBlockData(rdata);
+        hash = mix(hash, resolvedPalette.size());
+        for (PlatformBlockState block : resolvedPalette) {
+            hash = mixString(hash, block == null ? null : block.key());
+        }
+        hash = mix(hash, varience);
+        hash = mixStrings(hash, replaceableBlocks);
+        hash = mixEnum(hash, biomeScope);
+        hash = mixStrings(hash, includedBiomes);
+        hash = mixStrings(hash, excludedBiomes);
+        return mix(hash, replaceBedrock ? 1L : 0L);
+    }
+
+    private static long mix(long hash, long value) {
+        return (hash ^ value) * FNV_PRIME;
+    }
+
+    private static long mixEnum(long hash, Enum<?> value) {
+        return mixString(hash, value == null ? null : value.name());
+    }
+
+    private static long mixString(long hash, String value) {
+        if (value == null) {
+            return mix(hash, -1L);
+        }
+        long mixed = mix(hash, value.length());
+        for (int i = 0; i < value.length(); i++) {
+            mixed = mix(mixed, value.charAt(i));
+        }
+        return mixed;
+    }
+
+    private static long mixStrings(long hash, KList<String> values) {
+        if (values == null) {
+            return mix(hash, -1L);
+        }
+        long mixed = mix(hash, values.size());
+        for (String value : values) {
+            mixed = mixString(mixed, value);
+        }
+        return mixed;
     }
 
     private IrisObject generateConfiguredClumpObject(RNG rng, IrisData rdata, int clumpMinSize, int clumpMaxSize) {

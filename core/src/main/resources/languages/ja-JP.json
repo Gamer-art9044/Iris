@@ -1398,7 +1398,6 @@
     "iris.desktop.vision.mode.biome_sea": "海洋バイオーム",
     "iris.desktop.vision.mode.region": "リージョン",
     "iris.desktop.vision.mode.cave_land": "洞窟地形",
-    "iris.desktop.vision.mode.river": "河川網",
     "iris.desktop.vision.mode.height": "高さ",
     "iris.desktop.vision.mode.object_load": "オブジェクト負荷",
     "iris.desktop.vision.mode.decorator_load": "デコレーター負荷",

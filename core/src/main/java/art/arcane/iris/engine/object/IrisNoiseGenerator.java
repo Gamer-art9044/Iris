@@ -19,7 +19,8 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.engine.data.cache.LazyBoundedCache;
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
@@ -30,10 +31,15 @@ import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.interpolation.IrisInterpolation;
 import art.arcane.iris.util.project.noise.CNG;
+import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import lombok.experimental.Accessors;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 @Snippet("generator")
 @Accessors(chain = true)
@@ -42,7 +48,16 @@ import lombok.experimental.Accessors;
 @Desc("A noise generator")
 @Data
 public class IrisNoiseGenerator {
-    private final transient AtomicCache<CNG> generator = new AtomicCache<>();
+    private static final int GENERATOR_CACHE_SIZE = 32;
+    private static final long GENERATOR_SEED_SALT = 33_955_677L;
+
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final transient LazyBoundedCache<GeneratorKey, CNG> generators =
+            new LazyBoundedCache<>(GENERATOR_CACHE_SIZE);
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final transient AtomicReference<CachedGenerator> recentGenerator = new AtomicReference<>();
     @MinNumber(0.0001)
     @Desc("The coordinate input zoom")
     private double zoom = 1;
@@ -87,7 +102,20 @@ public class IrisNoiseGenerator {
     }
 
     protected CNG getGenerator(long superSeed, IrisData data) {
-        return generator.aquire(() -> style.create(new RNG(superSeed + 33955677 - seed), data).oct(octaves));
+        Engine engine = data == null ? null : data.getEngine();
+        long generatorSeed = superSeed + GENERATOR_SEED_SALT - seed;
+        CachedGenerator recent = recentGenerator.get();
+        if (recent != null && recent.key.matches(data, engine, generatorSeed)) {
+            return recent.generator;
+        }
+
+        GeneratorKey key = new GeneratorKey(data, engine, generatorSeed);
+        CNG generator = generators.computeIfAbsent(key,
+                ignored -> style.createNoCache(new RNG(generatorSeed), data).oct(octaves));
+        if (generator != null) {
+            recentGenerator.set(new CachedGenerator(key, generator));
+        }
+        return generator;
     }
 
     public double getMax() {
@@ -135,5 +163,50 @@ public class IrisNoiseGenerator {
         }
 
         return g;
+    }
+
+    private static final class GeneratorKey {
+        private final IrisData data;
+        private final Engine engine;
+        private final long seed;
+
+        private GeneratorKey(IrisData data, Engine engine, long seed) {
+            this.data = data;
+            this.engine = engine;
+            this.seed = seed;
+        }
+
+        private boolean matches(IrisData data, Engine engine, long seed) {
+            return this.data == data && this.engine == engine && this.seed == seed;
+        }
+
+        @Override
+        public boolean equals(Object object) {
+            if (this == object) {
+                return true;
+            }
+            if (!(object instanceof GeneratorKey other)) {
+                return false;
+            }
+            return data == other.data && engine == other.engine && seed == other.seed;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = System.identityHashCode(data);
+            result = 31 * result + System.identityHashCode(engine);
+            result = 31 * result + Long.hashCode(seed);
+            return result;
+        }
+    }
+
+    private static final class CachedGenerator {
+        private final GeneratorKey key;
+        private final CNG generator;
+
+        private CachedGenerator(GeneratorKey key, CNG generator) {
+            this.key = key;
+            this.generator = generator;
+        }
     }
 }

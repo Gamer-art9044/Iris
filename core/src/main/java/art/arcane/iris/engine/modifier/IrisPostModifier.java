@@ -57,9 +57,10 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         IrisDimension dimension = getDimension();
         boolean walls = dimension.isPostProcessingWalls();
         boolean slabs = dimension.isPostProcessingSlabs();
+        int fluidHeight = dimension.getFluidHeight();
         for (int i = 0; i < width; i++) {
             for (int j = 0; j < depth; j++) {
-                post(i, j, sync, i + x, j + z, context, heights, planeWidth, walls, slabs);
+                post(i, j, sync, i + x, j + z, context, heights, planeWidth, walls, slabs, fluidHeight);
             }
         }
 
@@ -89,7 +90,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         return heights;
     }
 
-    private void post(int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData, int x, int z, ChunkContext context, int[] heights, int planeWidth, boolean walls, boolean slabs) {
+    private void post(int currentPostX, int currentPostZ, Hunk<PlatformBlockState> currentData, int x, int z, ChunkContext context, int[] heights, int planeWidth, boolean walls, boolean slabs, int fluidHeight) {
         // x/z are world coordinates, the hunk is indexed relative to this chunk origin.
         int originX = x - currentPostX;
         int originZ = z - currentPostZ;
@@ -99,7 +100,6 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         int hb = heights[center + planeWidth];
         int hc = heights[center - 1];
         int hd = heights[center - planeWidth];
-        int fluidHeight = (int) Math.round(getComplex().getRiverWaterSurfaceStream().get(x, z));
 
         // Floating Nibs
         int g = 0;

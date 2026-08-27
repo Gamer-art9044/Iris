@@ -25,7 +25,6 @@ import art.arcane.iris.util.project.matter.slices.EntityMatter;
 import art.arcane.iris.util.project.matter.slices.IdentifierMatter;
 import art.arcane.iris.util.project.matter.slices.NativeStructureOwnershipMatter;
 import art.arcane.iris.util.project.matter.slices.PlatformBlockMatter;
-import art.arcane.iris.util.project.matter.slices.RiverCaveHydrologyMatter;
 import art.arcane.iris.util.project.matter.slices.SpawnerMatter;
 import art.arcane.iris.util.project.matter.slices.TileMatter;
 import art.arcane.iris.util.project.matter.slices.TreeBlockMaterialMatter;
@@ -65,7 +64,6 @@ public final class IrisMatterSupport {
         IrisMatter.registerSliceType(new IdentifierMatter());
         IrisMatter.registerSliceType(new NativeStructureOwnershipMatter());
         IrisMatter.registerSliceType(new PlatformBlockMatter());
-        IrisMatter.registerSliceType(new RiverCaveHydrologyMatter());
         IrisMatter.registerSliceType(new SpawnerMatter());
         IrisMatter.registerSliceType(new TileMatter());
         IrisMatter.registerSliceType(new TreeBlockMaterialMatter());

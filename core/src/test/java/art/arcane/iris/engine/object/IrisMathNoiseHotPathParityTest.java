@@ -43,7 +43,7 @@ public class IrisMathNoiseHotPathParityTest {
                 .setOpacity(0.91D)
                 .setComposite(new KList<IrisNoiseGenerator>().qadd(noiseGenerator));
 
-        assertEquals(0.451949817597527D, generator.getHeight(63.0D, -27.0D, 445566L), 0D);
+        assertEquals(0.5671980255964687D, generator.getHeight(63.0D, -27.0D, 445566L), 0D);
     }
 
     @Test

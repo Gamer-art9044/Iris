@@ -66,7 +66,7 @@ public class StructurePlacementScopeTest {
     }
 
     @Test
-    public void dimensionOnlyPlacementsDoNotResolveRiverInclusiveBiomeScopes() {
+    public void dimensionOnlyPlacementsDoNotResolveBiomeScopes() {
         IrisStructurePlacement dimensionPlacement = new IrisStructurePlacement();
         Engine engine = mock(Engine.class, RETURNS_DEEP_STUBS);
         IrisComplex complex = engine.getComplex();

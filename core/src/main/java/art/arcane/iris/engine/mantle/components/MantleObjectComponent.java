@@ -48,7 +48,6 @@ import art.arcane.iris.engine.object.IrisProceduralPlacement;
 import art.arcane.iris.engine.object.IrisProceduralTree;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
@@ -84,7 +83,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
     private static final Set<String> MISSING_LOAD_KEY_WARNED = ConcurrentHashMap.newKeySet();
 
     public MantleObjectComponent(EngineMantle engineMantle) {
-        super(engineMantle, ReservedFlag.OBJECT, 2);
+        super(engineMantle, ReservedFlag.OBJECT, 1);
     }
 
     private static String placementMarker(IrisObject object, int id, String context) {
@@ -577,18 +576,11 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     minDepthBelowSurface,
                     anchorCache
             );
-            RiverCaveHydrology hydrology = candidateY < 0
-                    ? null
-                    : writer.getDataIfPresent(candidateX, candidateY, candidateZ, RiverCaveHydrology.class);
-            MatterCavern cavern = candidateY < 0
-                    ? null
-                    : writer.getDataIfPresent(candidateX, candidateY, candidateZ, MatterCavern.class);
             if (candidateY < 0
                     || caveAnchorBiomeConflicts(candidateX, candidateY, candidateZ, expectedCaveBiomeKey)
                     || !acceptsCaveAnchorFluid(
                             underwater,
-                            hydrology == null ? cavern : hydrology.asCavern(),
-                            hydrology,
+                            writer.getDataIfPresent(candidateX, candidateY, candidateZ, MatterCavern.class),
                             candidateY,
                             getDimension().getCaveLavaHeight())) {
                 continue;
@@ -599,19 +591,6 @@ public class MantleObjectComponent extends IrisMantleComponent {
     }
 
     static boolean acceptsCaveAnchorFluid(boolean underwater, MatterCavern cavern, int y, int lavaHeight) {
-        return acceptsCaveAnchorFluid(underwater, cavern, null, y, lavaHeight);
-    }
-
-    static boolean acceptsCaveAnchorFluid(
-            boolean underwater,
-            MatterCavern cavern,
-            RiverCaveHydrology hydrology,
-            int y,
-            int lavaHeight
-    ) {
-        if (hydrology != null && hydrology.protectsPlacement()) {
-            return false;
-        }
         if (cavern == null || !cavern.isCavern()) {
             return false;
         }

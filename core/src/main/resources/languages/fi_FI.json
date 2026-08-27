@@ -1398,7 +1398,6 @@
     "iris.desktop.vision.mode.biome_sea": "Biome-meri",
     "iris.desktop.vision.mode.region": "Alue",
     "iris.desktop.vision.mode.cave_land": "Luolamaa",
-    "iris.desktop.vision.mode.river": "Jokiverkosto",
     "iris.desktop.vision.mode.height": "Korkeus",
     "iris.desktop.vision.mode.object_load": "Kohteen kuormitus",
     "iris.desktop.vision.mode.decorator_load": "Koristuskuorma",

@@ -21,6 +21,7 @@ import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.data.IrisCustomData;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.volmlib.util.matter.MatterCavern;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import org.bukkit.Bukkit;
@@ -111,7 +112,7 @@ public class WorldObjectPlacer implements IObjectPlacer {
 
     @Override
     public boolean isCarved(int x, int y, int z) {
-        return mantle.isCarved(x, y, z);
+        return mantle.getMantle().get(x, y, z, MatterCavern.class) != null;
     }
 
     @Override

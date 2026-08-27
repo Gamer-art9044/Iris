@@ -40,17 +40,16 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
     @Override
     public void decorate(int x, int z, int realX, int realX1, int realX_1, int realZ, int realZ1, int realZ_1,
                          Hunk<PlatformBlockState> data, IrisBiome biome, int height, int max) {
-        double localFluidHeight = getComplex().getRiverWaterSurfaceStream().get(realX, realZ);
-        if (height != Math.round(localFluidHeight)) {
+        if (height != getDimension().getFluidHeight()) {
             return;
         }
 
+        double complexFluidHeight = getComplex().getFluidHeight();
         ProceduralStream<Double> heightStream = getComplex().getHeightStream();
-        ProceduralStream<Double> fluidStream = getComplex().getRiverWaterSurfaceStream();
-        if (Math.round(heightStream.get(realX1, realZ)) >= Math.round(fluidStream.get(realX1, realZ))
-                && Math.round(heightStream.get(realX_1, realZ)) >= Math.round(fluidStream.get(realX_1, realZ))
-                && Math.round(heightStream.get(realX, realZ1)) >= Math.round(fluidStream.get(realX, realZ1))
-                && Math.round(heightStream.get(realX, realZ_1)) >= Math.round(fluidStream.get(realX, realZ_1))) {
+        if (Math.round(heightStream.get(realX1, realZ)) >= complexFluidHeight
+                && Math.round(heightStream.get(realX_1, realZ)) >= complexFluidHeight
+                && Math.round(heightStream.get(realX, realZ1)) >= complexFluidHeight
+                && Math.round(heightStream.get(realX, realZ_1)) >= complexFluidHeight) {
             return;
         }
 

@@ -23,7 +23,6 @@ import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.TileData;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.volmlib.util.collection.KList;
@@ -71,12 +70,6 @@ final class CaveObjectPlacementTransaction implements IObjectPlacer {
             if (!isWithinBounds(mutation.x(), mutation.y(), mutation.z())) {
                 discard();
                 return CommitResult.REJECTED_BOUNDS;
-            }
-            RiverCaveHydrology hydrology = delegate.getData(
-                    mutation.x(), mutation.y(), mutation.z(), RiverCaveHydrology.class);
-            if (hydrology != null && hydrology.protectsPlacement()) {
-                discard();
-                return CommitResult.REJECTED_HYDROLOGY;
             }
         }
 
@@ -252,8 +245,7 @@ final class CaveObjectPlacementTransaction implements IObjectPlacer {
     enum CommitResult {
         COMMITTED,
         EMPTY,
-        REJECTED_BOUNDS,
-        REJECTED_HYDROLOGY
+        REJECTED_BOUNDS
     }
 
     private interface BufferedMutation {

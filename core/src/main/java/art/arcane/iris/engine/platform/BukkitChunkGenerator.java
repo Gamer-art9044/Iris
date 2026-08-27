@@ -311,14 +311,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     }
 
     private int resolveInitialSpawnY(World world, Location initialSpawn, int minY, int maxY) {
-        Engine activeEngine = engine;
-        if (activeEngine != null && activeEngine.getComplex() != null && activeEngine.getComplex().getHeightStream() != null) {
-            int generatedY = activeEngine.getMinHeight()
-                    + activeEngine.getComplex().getHeightStream().get(initialSpawn.getX(), initialSpawn.getZ()).intValue()
-                    + 1;
-            return Math.max(minY, Math.min(maxY, generatedY));
-        }
-
         return Math.max(minY, Math.min(maxY, world.getHighestBlockYAt(initialSpawn) + 1));
     }
 

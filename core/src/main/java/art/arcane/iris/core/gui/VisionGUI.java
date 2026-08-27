@@ -26,7 +26,6 @@ import art.arcane.iris.engine.framework.render.RenderType;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.engine.river.RiverSection;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.localization.MessageArgument;
@@ -70,7 +69,6 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -475,30 +473,8 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     }
 
     private void renderLegend(Graphics2D canvas) {
-        if (currentType == RenderType.RIVER) {
-            renderRiverLegend(canvas);
-        } else if (currentType == RenderType.HEIGHT) {
+        if (currentType == RenderType.HEIGHT) {
             renderHeightLegend(canvas);
-        }
-    }
-
-    private void renderRiverLegend(Graphics2D canvas) {
-        RiverSection[] sections = RiverSection.values();
-        int lineHeight = 18;
-        int width = 148;
-        int height = sections.length * lineHeight + CARD_PADDING * 2;
-        int x = getWidth() - width - CARD_PADDING;
-        int y = getHeight() - STATUS_HEIGHT - PROGRESS_HEIGHT - height - CARD_PADDING;
-        drawCardBackground(canvas, x, y, width, height);
-        canvas.setFont(BODY_FONT);
-        for (int index = 0; index < sections.length; index++) {
-            RiverSection section = sections[index];
-            int rowY = y + CARD_PADDING + index * lineHeight;
-            canvas.setColor(new Color(IrisRenderer.riverColor(section)));
-            canvas.fillRoundRect(x + CARD_PADDING, rowY + 2, 12, 12, 4, 4);
-            canvas.setColor(TEXT_SECONDARY);
-            String label = section.name().toLowerCase(Locale.ROOT).replace('_', ' ');
-            canvas.drawString(label, x + CARD_PADDING + 20, rowY + 13);
         }
     }
 
@@ -1027,7 +1003,6 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
             case BIOME_SEA -> DesktopUiMessages.VISION_MODE_BIOME_SEA;
             case REGION -> DesktopUiMessages.VISION_MODE_REGION;
             case CAVE_LAND -> DesktopUiMessages.VISION_MODE_CAVE_LAND;
-            case RIVER -> DesktopUiMessages.VISION_MODE_RIVER;
             case HEIGHT -> DesktopUiMessages.VISION_MODE_HEIGHT;
             case OBJECT_LOAD -> DesktopUiMessages.VISION_MODE_OBJECT_LOAD;
             case DECORATOR_LOAD -> DesktopUiMessages.VISION_MODE_DECORATOR_LOAD;

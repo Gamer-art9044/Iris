@@ -388,7 +388,7 @@ public final class DefaultPackBootstrapProvisioner {
             try {
                 validCache = validateArchive(archivePath, spec);
             } catch (IOException exception) {
-                feedback.accept("Cached Iris " + spec.key() + " beta archive is invalid; downloading a replacement.");
+                feedback.accept("Cached Iris " + spec.key() + " release archive is invalid; downloading a replacement.");
             }
         }
         String cachedSource = metadata.getProperty("source", "");
@@ -439,7 +439,7 @@ public final class DefaultPackBootstrapProvisioner {
                             copyLimited(input, output, options.maxArchiveBytes(), spec);
                         }
                         if (!validateArchive(temporary, spec)) {
-                            throw new IOException("Downloaded Iris " + spec.key() + " beta archive is invalid");
+                            throw new IOException("Downloaded Iris " + spec.key() + " release archive is invalid");
                         }
                         move(temporary, archivePath, true);
                     } finally {
@@ -452,11 +452,11 @@ public final class DefaultPackBootstrapProvisioner {
                     updated.setProperty("fetchedAt", Long.toString(options.clock().millis()));
                     updated.setProperty("sha256", sha256(archivePath));
                     storePropertiesAtomic(metadataPath, updated);
-                    feedback.accept("Downloaded the Iris " + spec.key() + " beta archive.");
+                    feedback.accept("Downloaded the Iris " + spec.key() + " release archive.");
                     return new Archive(archivePath, updated.getProperty("sha256"));
                 }
                 close(response.body());
-                IOException statusFailure = new IOException("Iris " + spec.key() + " beta download returned HTTP " + status);
+                IOException statusFailure = new IOException("Iris " + spec.key() + " release download returned HTTP " + status);
                 if (!retryableStatus(status)) {
                     networkFailure = statusFailure;
                     break;
@@ -464,7 +464,7 @@ public final class DefaultPackBootstrapProvisioner {
                 networkFailure = statusFailure;
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
-                throw new IOException("Iris " + spec.key() + " beta download was interrupted", exception);
+                throw new IOException("Iris " + spec.key() + " release download was interrupted", exception);
             } catch (IOException exception) {
                 networkFailure = exception;
             }
@@ -474,7 +474,7 @@ public final class DefaultPackBootstrapProvisioner {
         }
 
         if (cacheMatchesSource) {
-            feedback.accept("Iris " + spec.key() + " beta download failed; using the validated cached archive.");
+            feedback.accept("Iris " + spec.key() + " release download failed; using the validated cached archive.");
             return new Archive(archivePath, sha256(archivePath));
         }
         if (isManagedPackOutputUsable(marker, cacheRoot.getParent().getParent(), spec)) {
@@ -482,8 +482,8 @@ public final class DefaultPackBootstrapProvisioner {
             return new Archive(null, sourceSha);
         }
         throw networkFailure == null
-                ? new IOException("Iris " + spec.key() + " beta archive is unavailable and no valid cache exists")
-                : new IOException("Iris " + spec.key() + " beta archive is unavailable and no valid cache exists", networkFailure);
+                ? new IOException("Iris " + spec.key() + " release archive is unavailable and no valid cache exists")
+                : new IOException("Iris " + spec.key() + " release archive is unavailable and no valid cache exists", networkFailure);
     }
 
     private static boolean isManagedPackOutputUsable(Properties marker, Path dataDirectory, PackSpec spec) {
@@ -514,11 +514,11 @@ public final class DefaultPackBootstrapProvisioner {
             while ((entry = zip.getNextEntry()) != null) {
                 entries++;
                 if (entries > MAX_ARCHIVE_ENTRIES) {
-                    throw new IOException("Iris " + spec.key() + " beta archive contains too many entries");
+                    throw new IOException("Iris " + spec.key() + " release archive contains too many entries");
                 }
                 String name = normalizedZipEntry(entry.getName());
                 if (!paths.add(name)) {
-                    throw new IOException("Iris " + spec.key() + " beta archive contains duplicate path " + name);
+                    throw new IOException("Iris " + spec.key() + " release archive contains duplicate path " + name);
                 }
                 String requiredDimension = "dimensions/" + spec.requiredDimension() + ".json";
                 if (name.equals(requiredDimension) || name.endsWith("/" + requiredDimension)) {
@@ -530,7 +530,7 @@ public final class DefaultPackBootstrapProvisioner {
                     while ((read = zip.read(buffer)) >= 0) {
                         expanded += read;
                         if (expanded > MAX_EXPANDED_BYTES) {
-                            throw new IOException("Iris " + spec.key() + " beta archive expands beyond the safety limit");
+                            throw new IOException("Iris " + spec.key() + " release archive expands beyond the safety limit");
                         }
                     }
                 }
@@ -542,7 +542,7 @@ public final class DefaultPackBootstrapProvisioner {
 
     private static Path extractArchive(Path archive, Path extractionRoot, PackSpec spec) throws IOException {
         if (archive == null) {
-            throw new IOException("Cached Iris " + spec.key() + " beta archive is unavailable for required pack rebuild");
+            throw new IOException("Cached Iris " + spec.key() + " release archive is unavailable for required pack rebuild");
         }
         long expanded = 0L;
         int entries = 0;
@@ -551,12 +551,12 @@ public final class DefaultPackBootstrapProvisioner {
             while ((entry = zip.getNextEntry()) != null) {
                 entries++;
                 if (entries > MAX_ARCHIVE_ENTRIES) {
-                    throw new IOException("Iris " + spec.key() + " beta archive contains too many entries");
+                    throw new IOException("Iris " + spec.key() + " release archive contains too many entries");
                 }
                 String name = normalizedZipEntry(entry.getName());
                 Path output = extractionRoot.resolve(name).normalize();
                 if (!output.startsWith(extractionRoot)) {
-                    throw new IOException("Unsafe path in Iris " + spec.key() + " beta archive: " + entry.getName());
+                    throw new IOException("Unsafe path in Iris " + spec.key() + " release archive: " + entry.getName());
                 }
                 if (entry.isDirectory()) {
                     Files.createDirectories(output);
@@ -568,7 +568,7 @@ public final class DefaultPackBootstrapProvisioner {
                         while ((read = zip.read(buffer)) >= 0) {
                             expanded += read;
                             if (expanded > MAX_EXPANDED_BYTES) {
-                                throw new IOException("Iris " + spec.key() + " beta archive expands beyond the safety limit");
+                                throw new IOException("Iris " + spec.key() + " release archive expands beyond the safety limit");
                             }
                             file.write(buffer, 0, read);
                         }
@@ -589,7 +589,7 @@ public final class DefaultPackBootstrapProvisioner {
             }
         }
         if (candidates.size() != 1) {
-            throw new IOException("Iris " + spec.key() + " beta archive has an invalid root layout");
+            throw new IOException("Iris " + spec.key() + " release archive has an invalid root layout");
         }
         return candidates.getFirst();
     }
@@ -613,7 +613,7 @@ public final class DefaultPackBootstrapProvisioner {
 
     private static void validatePackRoot(Path path, PackSpec spec) throws IOException {
         if (!isPackRoot(path, spec)) {
-            throw new IOException("Iris " + spec.key() + " beta pack is missing dimensions/"
+            throw new IOException("Iris " + spec.key() + " release pack is missing dimensions/"
                     + spec.requiredDimension() + ".json at " + path);
         }
     }
@@ -822,7 +822,7 @@ public final class DefaultPackBootstrapProvisioner {
         while ((read = input.read(buffer)) >= 0) {
             total += read;
             if (total > limit) {
-                throw new IOException("Iris " + spec.key() + " beta archive exceeds the download size limit");
+                throw new IOException("Iris " + spec.key() + " release archive exceeds the download size limit");
             }
             output.write(buffer, 0, read);
         }

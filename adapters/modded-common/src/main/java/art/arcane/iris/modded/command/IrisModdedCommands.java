@@ -325,7 +325,7 @@ public final class IrisModdedCommands {
             return 0;
         }
         String target = downloadDisplayTarget(request);
-        String downloadSource = request.pack() == null ? "direct ZIP URL" : "built-in beta release";
+        String downloadSource = request.pack() == null ? "direct ZIP URL" : "built-in stable release";
         ModdedScheduler scheduler = ModdedEngineBootstrap.schedulerOrNull();
         if (scheduler == null) {
             fail(source, IrisLanguage.plain(

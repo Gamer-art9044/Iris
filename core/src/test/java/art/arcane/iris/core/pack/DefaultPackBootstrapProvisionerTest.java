@@ -458,7 +458,7 @@ public class DefaultPackBootstrapProvisionerTest {
     }
 
     @Test
-    public void betaPacksUpdateIndependentlyAndRecompileOneAggregateDatapack() throws Exception {
+    public void releasePacksUpdateIndependentlyAndRecompileOneAggregateDatapack() throws Exception {
         byte[] overworld = packArchive("overworld", "overworld_first");
         byte[] underworldFirst = underworldArchive("underworld_first");
         AtomicInteger requests = new AtomicInteger();

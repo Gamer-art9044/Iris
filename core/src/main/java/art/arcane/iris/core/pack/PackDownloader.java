@@ -63,10 +63,10 @@ import java.util.zip.ZipInputStream;
 public final class PackDownloader {
     private static final String DEFAULT_OVERWORLD_PACK = "overworld";
     private static final String DEFAULT_OVERWORLD_URL =
-            "https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip";
+            "https://github.com/IrisDimensions/overworld/releases/download/4002/overworld.zip";
     private static final String UNDERWORLD_PACK = "underworld";
     private static final String UNDERWORLD_URL =
-            "https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip";
+            "https://github.com/IrisDimensions/underworld/releases/download/1005/underworld.zip";
     private static final List<String> BUILT_IN_PACK_KEYS = List.of(DEFAULT_OVERWORLD_PACK, UNDERWORLD_PACK);
     private static final Map<String, String> BUILT_IN_PACK_URLS = Map.of(
             DEFAULT_OVERWORLD_PACK, DEFAULT_OVERWORLD_URL,

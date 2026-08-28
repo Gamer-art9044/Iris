@@ -33,7 +33,6 @@ dependencies {
     runtimeOnly(libs.lz4)
     runtimeOnly(libs.zip)
     runtimeOnly(libs.guava)
-    runtimeOnly(libs.sentry)
     runtimeOnly(libs.oshi)
     runtimeOnly(libs.byteBuddy.core)
     runtimeOnly(libs.byteBuddy.agent)

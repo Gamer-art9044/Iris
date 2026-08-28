@@ -87,7 +87,7 @@ final class ModdedCommandHelp {
                 Entry.group("datapack", ModdedHelpMessages.GROUP_DATAPACK_WORLD_DATAPACK_INSTALL_AND_STATUS_HELPERS, "datapacks", "dp"),
                 Entry.group("structure", ModdedHelpMessages.GROUP_STRUCTURE_IRIS_STRUCTURE_INDEX_INFO_AND_PLACEMENT_TOOLS, "struct", "str"),
                 Entry.command("goldenhash", "[radius] [threads] [capture|verify]", ModdedHelpMessages.COMMAND_GOLDENHASH_GENERATE_DETERMINISTIC_BLOCK_HASHES_FOR_PARITY_TESTING, "gold"),
-                Entry.group("developer", ModdedHelpMessages.GROUP_DEVELOPER_DEVELOPER_DIAGNOSTICS_SENTRY_TEST_NETWORK_INTERFACES_REGION_FILE_SCAN, "dev")
+                Entry.group("developer", ModdedHelpMessages.GROUP_DEVELOPER_DEVELOPER_DIAGNOSTICS_NETWORK_INTERFACES_REGION_FILE_SCAN, "dev")
         ));
         SECTIONS.put("what", List.of(
                 Entry.command("here", "", ModdedHelpMessages.COMMAND_WHAT_HERE_INSPECT_CURRENT_IRIS_CONTEXT),
@@ -197,7 +197,6 @@ final class ModdedCommandHelp {
         SECTIONS.put("struct", SECTIONS.get("structure"));
         SECTIONS.put("str", SECTIONS.get("structure"));
         SECTIONS.put("developer", List.of(
-                Entry.command("sentry", "", ModdedHelpMessages.COMMAND_SENTRY_SEND_A_TEST_EXCEPTION_TO_THE_IRIS_ERROR_REPORTER),
                 Entry.command("network", "", ModdedHelpMessages.COMMAND_NETWORK_LIST_NETWORK_INTERFACES_AND_THEIR_ADDRESSES, "ip")
         ));
         SECTIONS.put("dev", SECTIONS.get("developer"));

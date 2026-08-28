@@ -1,5 +1,4 @@
 import io.github.slimjar.resolver.data.Mirror
-import org.gradle.api.Task
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.TaskProvider
 import org.gradle.api.tasks.compile.JavaCompile
@@ -31,7 +30,6 @@ plugins {
     id 'java'
     id 'java-library'
     alias(libs.plugins.shadow)
-    alias(libs.plugins.sentry)
     alias(libs.plugins.slimjar)
 }
 
@@ -39,8 +37,6 @@ def lib = 'art.arcane.iris.util'
 String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
     .orElse('com.github.VolmitSoftware:VolmLib:e6574cf814b3dd670385a4d632a63fde2038e186')
     .get()
-String sentryAuthToken = findProperty('sentry.auth.token') as String ?: System.getenv('SENTRY_AUTH_TOKEN')
-boolean hasSentryAuthToken = sentryAuthToken != null && !sentryAuthToken.isBlank()
 
 /**
  * Dependencies.
@@ -97,8 +93,6 @@ dependencies {
     slim(libs.adventure.serializer.legacy)
     slim(libs.adventure.serializer.plain)
     slim(libs.bstats)
-    slim(libs.sentry)
-
     slim(libs.commons.io)
     slim(libs.commons.lang3)
     slim(libs.oshi)
@@ -134,16 +128,6 @@ java {
     }
 }
 
-sentry {
-    url = 'http://sentry.volmit.com:8080'
-    autoInstallation.enabled = false
-    includeSourceContext = true
-
-    org = 'sentry'
-    projectName = 'iris'
-    authToken = sentryAuthToken
-}
-
 slimJar {
     mirrors = [
         new Mirror(
@@ -158,7 +142,6 @@ slimJar {
     relocate('io.papermc.lib', "${lib}.paper")
     relocate('net.kyori', "${lib}.kyori")
     relocate('org.bstats', "${lib}.metrics")
-    relocate('io.sentry', "${lib}.sentry")
     relocate('org.apache.maven', "${lib}.maven")
     relocate('org.codehaus.plexus', "${lib}.plexus")
     relocate('org.eclipse.sisu', "${lib}.sisu")
@@ -461,22 +444,6 @@ tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.Shadow
     exclude(dependencyBuildMetadata)
     from(embeddedAgentJar.map { it.archiveFile }) {
         rename { String ignored -> 'agent.jar' }
-    }
-}
-
-tasks.named('sentryCollectSourcesJava').configure {
-    dependsOn(generateTemplates)
-}
-
-tasks.named('generateSentryBundleIdJava').configure {
-    dependsOn(generateTemplates)
-}
-
-tasks.matching { Task task ->
-    task.name.startsWith('sentry') || task.name.startsWith('generateSentry')
-}.configureEach {
-    onlyIf {
-        hasSentryAuthToken
     }
 }
 

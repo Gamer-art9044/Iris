@@ -86,4 +86,3 @@ art.arcane.iris.util.common.plugin.VolmitPlugin	BUKKIT_API	org.bukkit.event.List
 art.arcane.iris.util.common.plugin.VolmitSender	BUKKIT_API	org.bukkit.command.CommandSender
 art.arcane.iris.util.common.plugin.chunk.ChunkTickets	BUKKIT_API	org.bukkit.event.Listener
 art.arcane.iris.util.nbt.common.mca.NBTWorld$Holder	BUKKIT_API	org.bukkit.Material
-art.arcane.iris.util.project.sentry.ServerID$Holder	BUKKIT_API	org.bukkit.Bukkit

@@ -47,7 +47,6 @@ public class IrisSettings {
     private IrisSettingsStudio studio = new IrisSettingsStudio();
     private IrisSettingsPerformance performance = new IrisSettingsPerformance();
     private IrisSettingsPregen pregen = new IrisSettingsPregen();
-    private IrisSettingsSentry sentry = new IrisSettingsSentry();
     private IrisSettingsTreeFeller treeFeller = new IrisSettingsTreeFeller();
 
     public static int getThreadCount(int c) {
@@ -182,7 +181,6 @@ public class IrisSettings {
         studio = studio == null ? new IrisSettingsStudio() : studio;
         performance = performance == null ? new IrisSettingsPerformance() : performance;
         pregen = pregen == null ? new IrisSettingsPregen() : pregen;
-        sentry = sentry == null ? new IrisSettingsSentry() : sentry;
         treeFeller = treeFeller == null ? new IrisSettingsTreeFeller() : treeFeller;
     }
 
@@ -338,13 +336,6 @@ public class IrisSettings {
         public boolean canUseCustomColors(VolmitSender volmitSender) {
             return volmitSender.isPlayer() ? useCustomColorsIngame : useConsoleCustomColors;
         }
-    }
-
-    @Data
-    public static class IrisSettingsSentry {
-        public boolean includeServerId = true;
-        public boolean disableAutoReporting = false;
-        public boolean debug = false;
     }
 
     @Data

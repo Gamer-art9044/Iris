@@ -162,8 +162,7 @@ dependencies {
         libs.lru,
         libs.caffeine,
         libs.dom4j,
-        libs.jaxen,
-        libs.sentry
+        libs.jaxen
     ]
     shared.each { Object notation ->
         add('bundle', notation)
@@ -271,7 +270,6 @@ tasks.named('shadowJar', ShadowJar).configure {
     exclude('art/arcane/iris/platform/bukkit/**')
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     relocate('org.objectweb.asm', 'art.arcane.iris.shadow.asm')
-    relocate('io.sentry', 'art.arcane.iris.shadow.sentry')
     // Split-package guard. A co-installed mod that ships any of these at their original coordinates
     // puts two copies of the same package on one module layer, which the loaders reject at boot
     // (Terra ships paralithic; caffeine and dom4j are common in mod dependency trees). First-party

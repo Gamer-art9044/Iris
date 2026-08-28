@@ -503,10 +503,6 @@ public final class ModdedCommandMessages {
             "iris.modded.moddeddatapackcommands.message_2",
             "  - " + "{name}"
     );
-    public static final TextKey MODDED_DEVELOPER_COMMANDS_DISPATCHED_TEST_EXCEPTION_IRIS_ERROR_REPORTER_SENTRY_IF_ENABLED = TextKey.of(
-            "iris.modded.moddeddevelopercommands.dispatched_test_exception_iris_error_reporter_sentry_if_enabled",
-            "Dispatched a test exception to the Iris error reporter (Sentry if enabled)."
-    );
     public static final TextKey MODDED_DEVELOPER_COMMANDS_MESSAGE = TextKey.of(
             "iris.modded.moddeddevelopercommands.message",
             "  " + "{value}"
@@ -1369,7 +1365,6 @@ public final class ModdedCommandMessages {
             MODDED_DATAPACK_COMMANDS_MODRINTH_INGEST_IS_BUKKIT_ONLY_INSTALL_THESE_MANUALLY_INTO_WORLD,
             MODDED_DATAPACK_COMMANDS_INSTALLED_WORLD_DATAPACKS,
             MODDED_DATAPACK_COMMANDS_MESSAGE_2,
-            MODDED_DEVELOPER_COMMANDS_DISPATCHED_TEST_EXCEPTION_IRIS_ERROR_REPORTER_SENTRY_IF_ENABLED,
             MODDED_DEVELOPER_COMMANDS_MESSAGE,
             MODDED_DEVELOPER_COMMANDS_NETWORK_SCAN_FAILED,
             MODDED_GOLDEN_HASH_GOLDENHASH_SCAN_IS_ALREADY_RUNNING,

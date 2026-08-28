@@ -34,7 +34,6 @@ import art.arcane.iris.engine.IrisEngineMantle;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
-import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.iris.util.project.matter.IrisMatterContext;
 import art.arcane.iris.util.common.director.DirectorExecutor;
 import art.arcane.volmlib.util.director.DirectorOrigin;
@@ -77,19 +76,6 @@ public class CommandDeveloper implements DirectorExecutor {
     public void EngineStatus() {
         Iris.service(IrisEngineSVC.class)
                 .engineStatus(sender());
-    }
-
-    @Director(description = "Send a test exception to sentry", descriptionKey = "iris.director.commanddeveloper.director.send_test_exception_sentry")
-    public void Sentry() {
-        Engine engine = engine();
-        Exception testException = new Exception("This is a test");
-        if (engine == null) {
-            Iris.reportError(testException);
-            return;
-        }
-        try (IrisContext.Scope scope = IrisContext.open(engine, engine.getGenerationSessionId(), null)) {
-            Iris.reportError(testException);
-        }
     }
 
     @Director(description = "Hash generated block output of a fixed area for determinism/identity testing", descriptionKey = "iris.director.commanddeveloper.director.hash_generated_block_output_fixed_area_determinism_identity_testing", origin = DirectorOrigin.BOTH)

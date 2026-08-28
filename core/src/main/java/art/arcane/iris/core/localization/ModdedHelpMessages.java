@@ -98,9 +98,9 @@ public final class ModdedHelpMessages {
             "iris.modded.help.entry.command.goldenhash",
             "Generate deterministic block hashes for parity testing"
     );
-    public static final TextKey GROUP_DEVELOPER_DEVELOPER_DIAGNOSTICS_SENTRY_TEST_NETWORK_INTERFACES_REGION_FILE_SCAN = TextKey.of(
+    public static final TextKey GROUP_DEVELOPER_DEVELOPER_DIAGNOSTICS_NETWORK_INTERFACES_REGION_FILE_SCAN = TextKey.of(
             "iris.modded.help.entry.group.developer",
-            "Developer diagnostics: Sentry test, network interfaces, region-file scan"
+            "Developer diagnostics: network interfaces and region-file scan"
     );
     public static final TextKey COMMAND_BIOME_FIND_AN_IRIS_BIOME = TextKey.of(
             "iris.modded.help.entry.command.biome",
@@ -346,10 +346,6 @@ public final class ModdedHelpMessages {
             "iris.modded.help.entry.command.verify",
             "Report native and Iris structure reachability in the current dimension"
     );
-    public static final TextKey COMMAND_SENTRY_SEND_A_TEST_EXCEPTION_TO_THE_IRIS_ERROR_REPORTER = TextKey.of(
-            "iris.modded.help.entry.command.sentry",
-            "Send a test exception to the Iris error reporter"
-    );
     public static final TextKey COMMAND_NETWORK_LIST_NETWORK_INTERFACES_AND_THEIR_ADDRESSES = TextKey.of(
             "iris.modded.help.entry.command.network",
             "List network interfaces and their addresses"
@@ -443,7 +439,7 @@ public final class ModdedHelpMessages {
             GROUP_DATAPACK_WORLD_DATAPACK_INSTALL_AND_STATUS_HELPERS,
             GROUP_STRUCTURE_IRIS_STRUCTURE_INDEX_INFO_AND_PLACEMENT_TOOLS,
             COMMAND_GOLDENHASH_GENERATE_DETERMINISTIC_BLOCK_HASHES_FOR_PARITY_TESTING,
-            GROUP_DEVELOPER_DEVELOPER_DIAGNOSTICS_SENTRY_TEST_NETWORK_INTERFACES_REGION_FILE_SCAN,
+            GROUP_DEVELOPER_DEVELOPER_DIAGNOSTICS_NETWORK_INTERFACES_REGION_FILE_SCAN,
             COMMAND_BIOME_FIND_AN_IRIS_BIOME,
             COMMAND_REGION_FIND_AN_IRIS_REGION,
             COMMAND_OBJECT_FIND_AN_OBJECT_PLACEMENT,
@@ -505,7 +501,6 @@ public final class ModdedHelpMessages {
             COMMAND_IMPORT_EXPLAIN_BUKKIT_STRUCTURE_IMPORT_WORKFLOW,
             COMMAND_CAPTURE_EXPLAIN_BUKKIT_STRUCTURE_CAPTURE_WORKFLOW,
             COMMAND_VERIFY_REPORT_NATIVE_AND_IRIS_STRUCTURE_REACHABILITY_IN_THE_CURRENT_DIMENSION,
-            COMMAND_SENTRY_SEND_A_TEST_EXCEPTION_TO_THE_IRIS_ERROR_REPORTER,
             COMMAND_NETWORK_LIST_NETWORK_INTERFACES_AND_THEIR_ADDRESSES,
             COMMAND_WHAT_HERE_INSPECT_CURRENT_IRIS_CONTEXT,
             COMMAND_WHAT_BIOME_INSPECT_CURRENT_BIOME,

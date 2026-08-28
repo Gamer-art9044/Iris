@@ -47,7 +47,6 @@ public final class ModdedPlatform implements IrisPlatform {
     private static final ConcurrentHashMap<String, ErrorThrottle> ERROR_THROTTLES = new ConcurrentHashMap<>();
 
     private static volatile Consumer<Throwable> ERROR_SINK = null;
-    private static volatile Consumer<Throwable> CAPTURE_SINK = null;
 
     private final ModdedLoader loader;
     private final ModdedRegistries registries;
@@ -65,10 +64,6 @@ public final class ModdedPlatform implements IrisPlatform {
 
     public static void errorSink(Consumer<Throwable> sink) {
         ERROR_SINK = sink;
-    }
-
-    public static void captureSink(Consumer<Throwable> sink) {
-        CAPTURE_SINK = sink;
     }
 
     public MinecraftServer server() {
@@ -230,9 +225,8 @@ public final class ModdedPlatform implements IrisPlatform {
     }
 
     /**
-     * Throttled per exception signature. A single broken pack rule can fail on every generated chunk, and this
-     * feeds Sentry, so each distinct signature reports its first few occurrences and then only a periodic
-     * suppressed-count summary.
+     * Throttled per exception signature. A single broken pack rule can fail on every generated chunk, so each
+     * distinct signature reports its first few occurrences and then only a periodic suppressed-count summary.
      */
     @Override
     public void reportError(Throwable error) {
@@ -261,14 +255,6 @@ public final class ModdedPlatform implements IrisPlatform {
             return;
         }
         ModdedIrisLog.error(message, error);
-        Consumer<Throwable> capture = CAPTURE_SINK;
-        if (capture != null) {
-            try {
-                capture.accept(error);
-            } catch (Throwable captureFailure) {
-                ModdedIrisLog.error("Iris error-reporting sink failed", captureFailure);
-            }
-        }
     }
 
     static void resetErrorThrottles() {

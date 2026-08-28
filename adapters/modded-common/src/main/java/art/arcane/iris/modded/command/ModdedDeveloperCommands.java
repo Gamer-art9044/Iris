@@ -19,7 +19,6 @@
 package art.arcane.iris.modded.command;
 
 import art.arcane.iris.modded.ModdedIrisLog;
-import art.arcane.iris.spi.IrisPlatforms;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
@@ -44,18 +43,10 @@ final class ModdedDeveloperCommands {
     static LiteralArgumentBuilder<CommandSourceStack> tree(String name) {
         return Commands.literal(name).requires(GATE)
                 .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), "developer"))
-                .then(Commands.literal("sentry")
-                        .executes((CommandContext<CommandSourceStack> context) -> sentry(context.getSource())))
                 .then(Commands.literal("network")
                         .executes((CommandContext<CommandSourceStack> context) -> network(context.getSource())))
                 .then(Commands.literal("ip")
                         .executes((CommandContext<CommandSourceStack> context) -> network(context.getSource())));
-    }
-
-    private static int sentry(CommandSourceStack source) {
-        IrisPlatforms.get().reportError(new Exception("This is an Iris Sentry test exception"));
-        ModdedCommandFeedback.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_DEVELOPER_COMMANDS_DISPATCHED_TEST_EXCEPTION_IRIS_ERROR_REPORTER_SENTRY_IF_ENABLED));
-        return 1;
     }
 
     private static int network(CommandSourceStack source) {

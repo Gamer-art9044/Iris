@@ -38,10 +38,6 @@ public final class DirectorCommandMessages {
             "iris.director.commanddeveloper.director.get_loaded_tectonicplates_count",
             "Get Loaded TectonicPlates Count"
     );
-    public static final TextKey COMMAND_DEVELOPER_DIRECTOR_SEND_TEST_EXCEPTION_SENTRY = TextKey.of(
-            "iris.director.commanddeveloper.director.send_test_exception_sentry",
-            "Send a test exception to sentry"
-    );
     public static final TextKey COMMAND_DEVELOPER_DIRECTOR_HASH_GENERATED_BLOCK_OUTPUT_FIXED_AREA_DETERMINISM_IDENTITY_TESTING = TextKey.of(
             "iris.director.commanddeveloper.director.hash_generated_block_output_fixed_area_determinism_identity_testing",
             "Hash generated block output of a fixed area for determinism/identity testing"
@@ -876,7 +872,6 @@ public final class DirectorCommandMessages {
             COMMAND_DATAPACK_PARAM_DATAPACK_ID_FOLDER_NAME_SHOWN_BY_IRIS_DATAPACK_LIST,
             COMMAND_DEVELOPER_DIRECTOR_IRIS_WORLD_MANAGER,
             COMMAND_DEVELOPER_DIRECTOR_GET_LOADED_TECTONICPLATES_COUNT,
-            COMMAND_DEVELOPER_DIRECTOR_SEND_TEST_EXCEPTION_SENTRY,
             COMMAND_DEVELOPER_DIRECTOR_HASH_GENERATED_BLOCK_OUTPUT_FIXED_AREA_DETERMINISM_IDENTITY_TESTING,
             COMMAND_DEVELOPER_PARAM_WORLD_HASH,
             COMMAND_DEVELOPER_PARAM_RADIUS_CHUNKS_AROUND_CENTER,

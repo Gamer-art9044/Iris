@@ -55,7 +55,7 @@ public class IrisLanguageTest {
                     + "|\\b[A-Za-z0-9_*{}.-]+\\.(?:json|toml|ya?ml|jar|nbt|iob|properties|log|zip)\\b"
     );
     private static final Pattern PROPER_NAME = Pattern.compile(
-            "\\b(?:IrisDimensions|Iris|Minecraft|CraftBukkit|Bukkit|Paper|Folia|Fabric|NeoForge|Forge|Modrinth|GitHub|VSCode|Brigadier|Mantle|MiniMessage|Adventure|Sentry|NMS|NBT|JSON|TOML|YAML|GUI|HUD|TPS|MSPT|FPS|CPU|GPU|RAM|JAR|API|UUID|BUD|ETA|HD|LQ|ms)\\b"
+            "\\b(?:IrisDimensions|Iris|Minecraft|CraftBukkit|Bukkit|Paper|Folia|Fabric|NeoForge|Forge|Modrinth|GitHub|VSCode|Brigadier|Mantle|MiniMessage|Adventure|NMS|NBT|JSON|TOML|YAML|GUI|HUD|TPS|MSPT|FPS|CPU|GPU|RAM|JAR|API|UUID|BUD|ETA|HD|LQ|ms)\\b"
     );
     private static final List<String> IRIS_PRODUCT_NAMES = List.of(
             "Iris Vision",
@@ -66,7 +66,6 @@ public class IrisLanguageTest {
             "ResourceManager",
             "GoldenHash",
             "IGenData",
-            "Sentry",
             "TectonicPlates"
     );
     private static final Pattern MARKER_DEBRIS = Pattern.compile("(?:⟬|⟭|\\b(?:XQ|QZ)[A-Z0-9_]*\\b|[\\uE000-\\uF8FF])");

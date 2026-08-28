@@ -29,7 +29,6 @@ public final class BukkitArtifactVerifier {
             "art/arcane/iris/util/paper/",
             "art/arcane/iris/util/kyori/",
             "art/arcane/iris/util/metrics/",
-            "art/arcane/iris/util/sentry/",
             "art/arcane/iris/util/maven/",
             "art/arcane/iris/util/plexus/",
             "art/arcane/iris/util/sisu/",

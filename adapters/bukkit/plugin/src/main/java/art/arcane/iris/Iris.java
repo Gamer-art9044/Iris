@@ -423,7 +423,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             return;
         }
 
-        Bindings.capture(e);
         boolean debug = false;
         if (instance != null) {
             try {
@@ -455,6 +454,8 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
             Iris.debug("Exception Logged: " + e.getClass().getSimpleName() + ": " + C.RESET + "" + C.LIGHT_PURPLE + e.getMessage());
         }
+
+        e.printStackTrace(System.err);
     }
 
     public static void reportError(String context, Throwable e) {
@@ -473,7 +474,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
 
         reportError(error);
-        error.printStackTrace(System.err);
     }
 
     public static void dump() {
@@ -606,7 +606,6 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         SimdSupport.install();
         services = new KMap<>();
         BukkitPlatform.hostHud(new HudActionBar(this), new HudBossBarLane());
-        Bindings.setupSentry();
         // Explicit, ordered service list: the previous reflective jar scan gave hash-ordered
         // enable/disable and paid a full-jar class sweep at boot. Infrastructure first,
         // engine/world services next, commands last.

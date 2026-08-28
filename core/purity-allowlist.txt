@@ -187,5 +187,3 @@ art/arcane/iris/util/project/matter/IrisMatterSupport.java
 art/arcane/iris/util/project/matter/WorldMatter.java
 art/arcane/iris/util/project/matter/slices/EntityMatter.java
 art/arcane/iris/util/project/matter/slices/TileMatter.java
-art/arcane/iris/util/project/sentry/Attachments.java
-art/arcane/iris/util/project/sentry/ServerID.java

@@ -113,7 +113,6 @@ public final class ModdedEngineBootstrap {
         bindWorldGenerators(server);
         services().enableAll();
         ModdedProtocolHandler.start(server);
-        ModdedSentry.start(loader());
     }
 
     private static void bindWorldGenerators(MinecraftServer server) {
@@ -194,7 +193,6 @@ public final class ModdedEngineBootstrap {
             MultiBurst.burst.close();
             MultiBurst.ioBurst.close();
         });
-        failure = runStopStage(failure, "sentry", ModdedSentry::flush);
         failure = runStopStage(failure, "startup state", ModdedStartup::reset);
         failure = runStopStage(failure, "server state", () -> {
             currentServer = null;

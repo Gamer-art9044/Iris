@@ -121,7 +121,7 @@ public class J {
     }
 
     public static void aBukkit(Runnable a) {
-        if (!BUKKIT_PRESENT) {
+        if (!usesBukkitScheduler()) {
             if (IrisPlatforms.isBound()) {
                 IrisPlatforms.get().scheduler().async(a);
             }
@@ -186,7 +186,7 @@ public class J {
     }
 
     public static boolean isFolia() {
-        return BUKKIT_PRESENT && FoliaScheduler.isFolia(Bukkit.getServer());
+        return usesBukkitScheduler() && FoliaScheduler.isFolia(Bukkit.getServer());
     }
 
     public static boolean isPrimaryThread() {
@@ -345,7 +345,7 @@ public class J {
             return false;
         }
 
-        if (!BUKKIT_PRESENT) {
+        if (!usesBukkitScheduler()) {
             if (!IrisPlatforms.isBound()) {
                 return false;
             }
@@ -416,7 +416,7 @@ public class J {
 
     public static void cancelPluginTasks() {
         cancelTrackedRepeatingTasks();
-        if (!BukkitPlatform.hasPlugin()) {
+        if (!usesBukkitScheduler() || !BukkitPlatform.hasPlugin()) {
             return;
         }
 
@@ -442,7 +442,7 @@ public class J {
     }
 
     public static void s(Runnable r) {
-        if (!BUKKIT_PRESENT) {
+        if (!usesBukkitScheduler()) {
             if (IrisPlatforms.isBound()) {
                 IrisPlatforms.get().scheduler().global(r);
             }
@@ -566,7 +566,7 @@ public class J {
     }
 
     public static void s(Runnable r, int delay) {
-        if (!BUKKIT_PRESENT) {
+        if (!usesBukkitScheduler()) {
             if (IrisPlatforms.isBound()) {
                 IrisPlatforms.get().scheduler().laterGlobal(r, delay);
             }
@@ -667,7 +667,7 @@ public class J {
     }
 
     public static void a(Runnable r, int delay) {
-        if (!BUKKIT_PRESENT) {
+        if (!usesBukkitScheduler()) {
             if (IrisPlatforms.isBound()) {
                 if (delay <= 0) {
                     IrisPlatforms.get().scheduler().async(r);
@@ -772,11 +772,17 @@ public class J {
     }
 
     private static boolean isPluginEnabled() {
-        return BUKKIT_PRESENT && BukkitPlatform.hasPlugin() && Bukkit.getPluginManager().isPluginEnabled(BukkitPlatform.plugin());
+        return usesBukkitScheduler() && BukkitPlatform.hasPlugin() && Bukkit.getPluginManager().isPluginEnabled(BukkitPlatform.plugin());
     }
 
     private static boolean canSchedule() {
-        return BUKKIT_PRESENT ? isPluginEnabled() : IrisPlatforms.isBound();
+        return usesBukkitScheduler() ? isPluginEnabled() : IrisPlatforms.isBound();
+    }
+
+    static boolean usesBukkitScheduler() {
+        return BUKKIT_PRESENT
+                && IrisPlatforms.isBound()
+                && "bukkit".equalsIgnoreCase(IrisPlatforms.get().platformName());
     }
 
     private static long ticksToMilliseconds(int ticks) {

@@ -123,6 +123,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     private VisionRenderController.Frame renderFrame;
     private JComboBox<RenderType> modeSelector;
     private JToggleButton gridToggle;
+    private JToggleButton entitiesToggle;
     private JToggleButton followToggle;
     private RenderType currentType;
     private List<GuiMarker> players;
@@ -140,6 +141,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     private double blocksPerPixel;
     private int paintCadenceFps;
     private boolean grid;
+    private boolean entitiesVisible;
     private boolean follow;
     private boolean help;
     private boolean debug;
@@ -158,6 +160,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         this.notifications = new LinkedHashMap<>();
         this.players = List.of();
         this.entities = List.of();
+        this.entitiesVisible = false;
         this.currentType = RenderType.BIOME;
         this.blocksPerPixel = DEFAULT_BLOCKS_PER_PIXEL;
         this.contentRevision = 1L;
@@ -263,6 +266,12 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         vision.gridToggle = createToggle(IrisLanguage.plain(DesktopUiMessages.VISION_GRID), vision.grid);
         vision.gridToggle.addActionListener(event -> vision.toggleGrid());
         trailing.add(vision.gridToggle);
+        vision.entitiesToggle = createToggle(
+                IrisLanguage.plain(DesktopUiMessages.VISION_ENTITIES),
+                vision.entitiesVisible
+        );
+        vision.entitiesToggle.addActionListener(event -> vision.toggleEntities());
+        trailing.add(vision.entitiesToggle);
         vision.followToggle = createToggle(IrisLanguage.plain(DesktopUiMessages.VISION_FOLLOW), vision.follow);
         vision.followToggle.addActionListener(event -> vision.toggleFollow());
         trailing.add(vision.followToggle);
@@ -409,11 +418,13 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     }
 
     private void renderMarkers(Graphics2D canvas) {
-        for (GuiMarker marker : entities) {
-            int screenX = (int) Math.round(worldToScreenX(marker.worldX()));
-            int screenY = (int) Math.round(worldToScreenZ(marker.worldZ()));
-            canvas.setColor(MOB_COLOR);
-            canvas.fillRect(screenX - 2, screenY - 2, 5, 5);
+        if (entitiesVisible) {
+            for (GuiMarker marker : entities) {
+                int screenX = (int) Math.round(worldToScreenX(marker.worldX()));
+                int screenY = (int) Math.round(worldToScreenZ(marker.worldZ()));
+                canvas.setColor(MOB_COLOR);
+                canvas.fillRect(screenX - 2, screenY - 2, 5, 5);
+            }
         }
 
         for (GuiMarker marker : players) {
@@ -428,7 +439,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
             int labelWidth = canvas.getFontMetrics().stringWidth(marker.label());
             canvas.drawString(marker.label(), screenX - labelWidth / 2, screenY - 14);
         }
-        if (detailedHover) {
+        if (entitiesVisible && detailedHover) {
             renderNearestEntity(canvas);
         }
     }
@@ -759,12 +770,16 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         try {
             List<GuiMarker> nextPlayers = overlay.players();
             players = nextPlayers == null ? List.of() : List.copyOf(nextPlayers);
-            overlay.requestEntities(next -> EventQueue.invokeLater(() -> {
-                if (!closed) {
-                    entities = next == null ? List.of() : List.copyOf(next);
-                    repaint();
-                }
-            }));
+            if (entitiesVisible) {
+                overlay.requestEntities(next -> EventQueue.invokeLater(() -> {
+                    if (!closed && entitiesVisible) {
+                        entities = next == null ? List.of() : List.copyOf(next);
+                        repaint();
+                    }
+                }));
+            } else if (!entities.isEmpty()) {
+                entities = List.of();
+            }
             if (follow && !players.isEmpty()) {
                 GuiMarker player = players.get(0);
                 if (Math.abs(centerX - player.worldX()) > 0.5D || Math.abs(centerZ - player.worldZ()) > 0.5D) {
@@ -828,6 +843,22 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         notifyUser(IrisLanguage.plain(grid ? DesktopUiMessages.VISION_GRID_ENABLED : DesktopUiMessages.VISION_GRID_DISABLED));
     }
 
+    private void toggleEntities() {
+        entitiesVisible = !entitiesVisible;
+        if (entitiesVisible) {
+            refreshMarkers();
+        } else {
+            entities = List.of();
+            repaint();
+        }
+        syncControls();
+        notifyUser(IrisLanguage.plain(
+                entitiesVisible
+                        ? DesktopUiMessages.VISION_ENTITIES_ENABLED
+                        : DesktopUiMessages.VISION_ENTITIES_DISABLED
+        ));
+    }
+
     private void toggleFollow() {
         follow = !follow;
         if (follow && players.isEmpty()) {
@@ -856,6 +887,9 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
             }
             if (gridToggle != null) {
                 gridToggle.setSelected(grid);
+            }
+            if (entitiesToggle != null) {
+                entitiesToggle.setSelected(entitiesVisible);
             }
             if (followToggle != null) {
                 followToggle.setSelected(follow);

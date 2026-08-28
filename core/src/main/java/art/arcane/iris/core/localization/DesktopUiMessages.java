@@ -9,12 +9,15 @@ public final class DesktopUiMessages {
     public static final TextKey VISION_TITLE = TextKey.of("iris.desktop.vision.title", "Iris Vision");
     public static final TextKey VISION_VIEW = TextKey.of("iris.desktop.vision.view", "View:");
     public static final TextKey VISION_GRID = TextKey.of("iris.desktop.vision.grid", "Grid");
+    public static final TextKey VISION_ENTITIES = TextKey.of("iris.desktop.vision.entities", "Entities");
     public static final TextKey VISION_FOLLOW = TextKey.of("iris.desktop.vision.follow", "Follow");
     public static final TextKey VISION_REFRESHING = TextKey.of("iris.desktop.vision.refreshing", "Refreshing");
     public static final TextKey VISION_FPS = TextKey.of("iris.desktop.vision.fps", "{fps} FPS");
     public static final TextKey VISION_ZOOM_RESET = TextKey.of("iris.desktop.vision.zoom_reset", "Zoom reset");
     public static final TextKey VISION_GRID_ENABLED = TextKey.of("iris.desktop.vision.grid_enabled", "Grid enabled");
     public static final TextKey VISION_GRID_DISABLED = TextKey.of("iris.desktop.vision.grid_disabled", "Grid disabled");
+    public static final TextKey VISION_ENTITIES_ENABLED = TextKey.of("iris.desktop.vision.entities_enabled", "Entities enabled");
+    public static final TextKey VISION_ENTITIES_DISABLED = TextKey.of("iris.desktop.vision.entities_disabled", "Entities disabled");
     public static final TextKey VISION_FOLLOWING = TextKey.of("iris.desktop.vision.following", "Following {player}");
     public static final TextKey VISION_NO_PLAYER = TextKey.of("iris.desktop.vision.no_player", "No player in world");
     public static final TextKey VISION_FOLLOW_DISABLED = TextKey.of("iris.desktop.vision.follow_disabled", "Follow disabled");
@@ -157,8 +160,9 @@ public final class DesktopUiMessages {
     public static final TextKey IMAGEMAP_PREVIEW_STATUS = TextKey.of("iris.desktop.imagemap.preview_status", "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel");
 
     private static final List<MessageKey> KEYS = List.of(
-            VISION_TITLE, VISION_VIEW, VISION_GRID, VISION_FOLLOW,
+            VISION_TITLE, VISION_VIEW, VISION_GRID, VISION_ENTITIES, VISION_FOLLOW,
             VISION_REFRESHING, VISION_FPS, VISION_ZOOM_RESET, VISION_GRID_ENABLED, VISION_GRID_DISABLED,
+            VISION_ENTITIES_ENABLED, VISION_ENTITIES_DISABLED,
             VISION_FOLLOWING, VISION_NO_PLAYER, VISION_FOLLOW_DISABLED,
             VISION_STATUS_LEFT, VISION_STATUS_RIGHT, VISION_ENTITY_POSITION, VISION_ENTITY_HEALTH,
             VISION_BLOCK_POSITION, VISION_CHUNK_POSITION, VISION_REGION_POSITION, VISION_BIOME_KEY,

@@ -43,20 +43,10 @@ final class DecoratorCore {
     private static final String WEEPING_VINES_PLANT = "minecraft:weeping_vines_plant";
     private static final String TWISTING_VINES = "minecraft:twisting_vines";
     private static final String TWISTING_VINES_PLANT = "minecraft:twisting_vines_plant";
-    private static final boolean BUKKIT_PRESENT = detectBukkit();
     private static volatile PlatformBlockState weepingVines;
     private static volatile PlatformBlockState weepingVinesPlant;
     private static volatile PlatformBlockState twistingVines;
     private static volatile PlatformBlockState twistingVinesPlant;
-
-    private static boolean detectBukkit() {
-        try {
-            Class.forName("org.bukkit.Bukkit", false, DecoratorCore.class.getClassLoader());
-            return true;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
-    }
 
     static final ThreadLocal<PlaceOpts> SCRATCH_OPTS = ThreadLocal.withInitial(PlaceOpts::new);
 
@@ -391,9 +381,9 @@ final class DecoratorCore {
         if (!B.isVineBlock(b)) {
             return b;
         }
-        if (!BUKKIT_PRESENT) {
-            DecoratorPlatformHooks.FaceFixer fixer = DecoratorPlatformHooks.faceFixer();
-            return fixer == null ? b : fixer.fixFaces(b, hunk, rX, rZ, x, y, z, mantle);
+        DecoratorPlatformHooks.FaceFixer fixer = DecoratorPlatformHooks.faceFixer();
+        if (fixer != null) {
+            return fixer.fixFaces(b, hunk, rX, rZ, x, y, z, mantle);
         }
         BlockData rawB = (BlockData) b.nativeHandle();
         BlockData cloned = rawB.clone();
@@ -447,9 +437,9 @@ final class DecoratorCore {
         if (!B.canPlaceOnto(decorator, surface)) {
             return false;
         }
-        if (!BUKKIT_PRESENT) {
-            DecoratorPlatformHooks.SurfaceSturdiness sturdiness = DecoratorPlatformHooks.surfaceSturdiness();
-            return sturdiness == null ? B.isSolid(surface) : sturdiness.canGoOn(surface);
+        DecoratorPlatformHooks.SurfaceSturdiness sturdiness = DecoratorPlatformHooks.surfaceSturdiness();
+        if (sturdiness != null) {
+            return sturdiness.canGoOn(surface);
         }
         return ((BlockData) surface.nativeHandle()).isFaceSturdy(BlockFace.UP, BlockSupport.FULL);
     }

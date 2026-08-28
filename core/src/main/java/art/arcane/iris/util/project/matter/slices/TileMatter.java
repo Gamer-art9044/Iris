@@ -20,7 +20,7 @@ package art.arcane.iris.util.project.matter.slices;
 
 import art.arcane.iris.engine.object.TileData;
 
-import art.arcane.iris.util.project.matter.IrisMatterSupport;
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.project.matter.TileWrapper;
 import art.arcane.volmlib.util.data.palette.Palette;
 import art.arcane.volmlib.util.matter.Sliced;
@@ -42,7 +42,7 @@ public class TileMatter extends RawMatter<TileWrapper> {
 
     public TileMatter(int width, int height, int depth) {
         super(width, height, depth, TileWrapper.class);
-        if (IrisMatterSupport.isBukkitPresent()) {
+        if (IrisPlatforms.isBound() && IrisPlatforms.get().supportsMatterWorldIo()) {
             registerBukkitIO();
         }
     }

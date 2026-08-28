@@ -36,23 +36,9 @@ import art.arcane.iris.util.common.math.IrisBlockVector;
 import java.io.File;
 
 public final class IrisMatterSupport {
-    private static final boolean BUKKIT_PRESENT = detectBukkit();
     private static boolean registered;
 
     private IrisMatterSupport() {
-    }
-
-    public static boolean isBukkitPresent() {
-        return BUKKIT_PRESENT;
-    }
-
-    private static boolean detectBukkit() {
-        try {
-            Class.forName("org.bukkit.World", false, IrisMatterSupport.class.getClassLoader());
-            return true;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
     }
 
     public static synchronized void ensureRegistered() {

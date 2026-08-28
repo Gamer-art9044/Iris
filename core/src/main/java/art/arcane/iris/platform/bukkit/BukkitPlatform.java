@@ -175,7 +175,8 @@ public final class BukkitPlatform implements IrisPlatform {
         return BukkitBiome.of((Biome) biome);
     }
 
-    public static Class<?> classifyMantleValue(Object value) {
+    @Override
+    public Class<?> classifyMantleValue(Object value) {
         if (value instanceof World) {
             return World.class;
         }
@@ -189,6 +190,11 @@ public final class BukkitPlatform implements IrisPlatform {
         }
 
         return value.getClass();
+    }
+
+    @Override
+    public boolean supportsMatterWorldIo() {
+        return true;
     }
 
     public static void unregisterListener(Object candidate) {

@@ -429,6 +429,28 @@ public class DecoratorCoreTest {
         assertEquals("minecraft:twisting_vines", DecoratorCore.stackedVineKey(vine, 3, 2));
     }
 
+    @Test
+    public void boundDecoratorHooksWinWhenBukkitClassesArePresent() {
+        PlatformBlockState vine = mock(PlatformBlockState.class);
+        PlatformBlockState fixed = mock(PlatformBlockState.class);
+        PlatformBlockState decorator = mock(PlatformBlockState.class);
+        PlatformBlockState surface = mock(PlatformBlockState.class);
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 1, 1);
+        DecoratorPlatformHooks.FaceFixer faceFixer = mock(DecoratorPlatformHooks.FaceFixer.class);
+        DecoratorPlatformHooks.SurfaceSturdiness sturdiness = mock(DecoratorPlatformHooks.SurfaceSturdiness.class);
+        when(vine.isVineBlock()).thenReturn(true);
+        when(faceFixer.fixFaces(vine, output, 0, 0, 0, 0, 0, null)).thenReturn(fixed);
+        when(decorator.canPlaceOnto(surface)).thenReturn(true);
+        when(sturdiness.canGoOn(surface)).thenReturn(true);
+        DecoratorPlatformHooks.Bindings previous = DecoratorPlatformHooks.bind(faceFixer, sturdiness);
+        try {
+            assertSame(fixed, DecoratorCore.fixFacesForHunk(vine, output, 0, 0, 0, 0, 0, null));
+            assertTrue(DecoratorCore.canGoOn(decorator, surface));
+        } finally {
+            DecoratorPlatformHooks.restore(previous);
+        }
+    }
+
     private PlatformBlockState airState() {
         PlatformBlockState air = mock(PlatformBlockState.class);
         when(air.isAir()).thenReturn(true);

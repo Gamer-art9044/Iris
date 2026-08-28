@@ -9,7 +9,6 @@ import java.util.Objects;
 import java.util.function.Function;
 
 public final class BlockDataMergeSupport {
-    private static final boolean BUKKIT_PRESENT = detectBukkit();
     private static volatile StateMerger PLATFORM_MERGER = null;
 
     private BlockDataMergeSupport() {
@@ -29,29 +28,13 @@ public final class BlockDataMergeSupport {
         PLATFORM_MERGER = merger;
     }
 
-    private static boolean detectBukkit() {
-        try {
-            Class.forName("org.bukkit.Bukkit", false, BlockDataMergeSupport.class.getClassLoader());
-            return true;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
-    }
-
     static PlatformBlockState merge(PlatformBlockState base, PlatformBlockState update) {
-        if (!BUKKIT_PRESENT) {
-            StateMerger merger = requirePlatformMerger(PLATFORM_MERGER);
+        StateMerger merger = PLATFORM_MERGER;
+        if (merger != null) {
             return merger.merge(base, update);
         }
         BlockData merged = merge((BlockData) base.nativeHandle(), (BlockData) update.nativeHandle(), BukkitBlockResolution::get);
         return merged == null ? null : BukkitBlockState.of(merged);
-    }
-
-    static StateMerger requirePlatformMerger(StateMerger merger) {
-        if (merger == null) {
-            throw new IllegalStateException("No platform block-state merger is bound");
-        }
-        return merger;
     }
 
     static BlockData merge(BlockData base, BlockData update, Function<String, BlockData> resolver) {

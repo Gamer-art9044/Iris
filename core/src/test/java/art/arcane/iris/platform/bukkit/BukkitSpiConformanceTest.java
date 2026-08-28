@@ -26,7 +26,9 @@ import art.arcane.iris.spi.PlatformRegistries;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.Server;
+import org.bukkit.World;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Entity;
 import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -100,6 +102,16 @@ public class BukkitSpiConformanceTest {
         BlockData first = blockData("iristest:intern_block[axis=y]");
         BlockData second = blockData("iristest:intern_block[axis=y]");
         assertSame(BukkitBlockState.of(first), BukkitBlockState.of(second));
+    }
+
+    @Test
+    public void mantleValuesUseStableBukkitInterfaceSlices() {
+        BukkitPlatform platform = new BukkitPlatform();
+        assertTrue(platform.supportsMatterWorldIo());
+        assertSame(World.class, platform.classifyMantleValue(mock(World.class)));
+        assertSame(BlockData.class, platform.classifyMantleValue(blockData("minecraft:stone")));
+        assertSame(Entity.class, platform.classifyMantleValue(mock(Entity.class)));
+        assertSame(String.class, platform.classifyMantleValue("value"));
     }
 
     @Test

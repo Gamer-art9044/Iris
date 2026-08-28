@@ -66,6 +66,14 @@ public interface IrisPlatform {
      */
     PlatformBiomeWriter biomeWriter();
 
+    default Class<?> classifyMantleValue(Object value) {
+        return value.getClass();
+    }
+
+    default boolean supportsMatterWorldIo() {
+        return false;
+    }
+
     /**
      * Root folder Iris owns for packs, settings and generated data. Created if missing. Never null.
      */

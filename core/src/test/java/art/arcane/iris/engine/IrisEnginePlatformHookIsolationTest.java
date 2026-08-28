@@ -47,7 +47,7 @@ public class IrisEnginePlatformHookIsolationTest {
     );
 
     @Test
-    public void sharedGeneratorHotPathsDoNotLinkBukkitImplementations() throws IOException {
+    public void sharedGeneratorHotPathsDoNotLinkBukkitImplementations() throws IOException, ClassNotFoundException {
         assertNoClassLinks(IrisEngine.class, BUKKIT_ENGINE_CLASSES);
         assertNoClassLinks(EngineBackgroundTasks.class, BUKKIT_ENGINE_CLASSES);
         assertNoClassLinks(EngineDataStore.class, BUKKIT_ENGINE_CLASSES);
@@ -56,6 +56,8 @@ public class IrisEnginePlatformHookIsolationTest {
         assertNoClassLinks(EngineRuntimeBuilder.class, BUKKIT_ENGINE_CLASSES);
         assertNoClassLinks(EngineShutdownSequence.class, BUKKIT_ENGINE_CLASSES);
         assertNoClassLinks(EngineTickRegistry.class, BUKKIT_ENGINE_CLASSES);
+        assertNoClassLinks(IrisEngineMantle.class, BUKKIT_ENGINE_CLASSES);
+        assertNoClassLinks(Class.forName(IrisEngineMantle.class.getName() + "$1"), BUKKIT_ENGINE_CLASSES);
         assertNoClassLinks(Engine.class, ENGINE_POLICY_CLASSES);
         assertNoClassLinks(EngineMode.class, PLATFORM_POLICY_CLASSES);
         assertNoClassLinks(EngineMantle.class, PLATFORM_POLICY_CLASSES);
@@ -63,7 +65,8 @@ public class IrisEnginePlatformHookIsolationTest {
     }
 
     private static void assertNoClassLinks(Class<?> type, List<String> forbiddenClasses) throws IOException {
-        InputStream stream = type.getResourceAsStream(type.getSimpleName() + ".class");
+        String resourceName = type.getName().substring(type.getName().lastIndexOf('.') + 1) + ".class";
+        InputStream stream = type.getResourceAsStream(resourceName);
         assertNotNull(stream);
         String bytecode;
         try (InputStream input = stream) {

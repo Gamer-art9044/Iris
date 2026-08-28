@@ -53,7 +53,6 @@ import java.util.Set;
 @Desc("Configures rotation for iris")
 @Data
 public class IrisObjectRotation {
-    private static final boolean BUKKIT_PRESENT = detectBukkit();
     private static volatile StateRotator PLATFORM_ROTATOR = null;
 
     public interface StateRotator {
@@ -68,15 +67,6 @@ public class IrisObjectRotation {
 
     public static synchronized void restorePlatformRotator(StateRotator rotator) {
         PLATFORM_ROTATOR = rotator;
-    }
-
-    private static boolean detectBukkit() {
-        try {
-            Class.forName("org.bukkit.Bukkit", false, IrisObjectRotation.class.getClassLoader());
-            return true;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
     }
 
     private static final class Faces {
@@ -298,8 +288,8 @@ public class IrisObjectRotation {
             return null;
         }
 
-        if (!BUKKIT_PRESENT) {
-            StateRotator rotator = requirePlatformRotator(PLATFORM_ROTATOR);
+        StateRotator rotator = PLATFORM_ROTATOR;
+        if (rotator != null) {
             return rotator.rotate(this, state, spinx, spiny, spinz);
         }
 
@@ -311,13 +301,6 @@ public class IrisObjectRotation {
         BlockData raw = original.clone();
         BlockData rotated = rotate(raw, spinx, spiny, spinz);
         return rotated == null ? null : BukkitBlockState.of(rotated);
-    }
-
-    static StateRotator requirePlatformRotator(StateRotator rotator) {
-        if (rotator == null) {
-            throw new IllegalStateException("No platform block-state rotator is bound");
-        }
-        return rotator;
     }
 
     private static boolean canRotateBlockData(BlockData data) {

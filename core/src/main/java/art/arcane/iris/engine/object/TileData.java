@@ -64,7 +64,6 @@ public class TileData implements Cloneable {
      * never part of that walk. Bounded by the number of distinct material keys a pack can name.
      */
     private static final Map<String, Material> RESOLVED_MATERIALS = new ConcurrentHashMap<>();
-    private static final boolean BUKKIT_PRESENT = detectBukkit();
     private static volatile TileReader PLATFORM_READER = null;
     private static volatile TileFactory PLATFORM_FACTORY = null;
 
@@ -94,15 +93,6 @@ public class TileData implements Cloneable {
 
     public static synchronized void restorePlatformFactory(TileFactory factory) {
         PLATFORM_FACTORY = factory;
-    }
-
-    private static boolean detectBukkit() {
-        try {
-            Class.forName("org.bukkit.Bukkit", false, TileData.class.getClassLoader());
-            return true;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
     }
 
     /**
@@ -147,8 +137,9 @@ public class TileData implements Cloneable {
     }
 
     public static TileData of(PlatformBlockState state, KMap<String, Object> properties) {
-        if (!BUKKIT_PRESENT) {
-            return requirePlatformFactory(PLATFORM_FACTORY).create(state, properties);
+        TileFactory factory = PLATFORM_FACTORY;
+        if (factory != null) {
+            return factory.create(state, properties);
         }
         Object handle = state.nativeHandle();
         if (!(handle instanceof BlockData blockData)) {
@@ -158,8 +149,9 @@ public class TileData implements Cloneable {
     }
 
     public static TileData read(DataInputStream in) throws IOException {
-        if (!BUKKIT_PRESENT) {
-            return requirePlatformReader(PLATFORM_READER).read(in);
+        TileReader reader = PLATFORM_READER;
+        if (reader != null) {
+            return reader.read(in);
         }
         if (!in.markSupported())
             throw new IOException("Mark not supported");
@@ -213,20 +205,6 @@ public class TileData implements Cloneable {
         }
 
         return resolved;
-    }
-
-    static TileFactory requirePlatformFactory(TileFactory factory) {
-        if (factory == null) {
-            throw new IllegalStateException("No platform tile-data factory is bound");
-        }
-        return factory;
-    }
-
-    static TileReader requirePlatformReader(TileReader reader) throws IOException {
-        if (reader == null) {
-            throw new IOException("No platform tile-data reader is bound");
-        }
-        return reader;
     }
 
     public boolean isApplicable(BlockData data) {

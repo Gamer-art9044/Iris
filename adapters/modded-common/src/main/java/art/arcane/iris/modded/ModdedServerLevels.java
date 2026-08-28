@@ -23,7 +23,11 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelStorageSource;
+import net.minecraft.world.level.storage.PrimaryLevelData;
+import net.minecraft.world.level.storage.WorldData;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ConcurrentModificationException;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,6 +38,18 @@ import java.util.function.Consumer;
 
 public final class ModdedServerLevels implements ModdedServerAccess {
     private static final int CAPTURE_ATTEMPTS = 16;
+    private static final ClassValue<HostLevelPublication> HOST_LEVEL_PUBLICATIONS = new ClassValue<>() {
+        @Override
+        protected HostLevelPublication computeValue(Class<?> type) {
+            return HostLevelPublication.detect(type, ServerLevel.class);
+        }
+    };
+    private static final ClassValue<HostLevelDataAttachment> HOST_LEVEL_DATA_ATTACHMENTS = new ClassValue<>() {
+        @Override
+        protected HostLevelDataAttachment computeValue(Class<?> type) {
+            return HostLevelDataAttachment.detect(type, PrimaryLevelData.class, ResourceKey.class);
+        }
+    };
     private static volatile Snapshot snapshot;
 
     private final Consumer<MinecraftServer> levelCacheInvalidator;
@@ -43,8 +59,8 @@ public final class ModdedServerLevels implements ModdedServerAccess {
     }
 
     /**
-     * Immutable view of the loaded levels. {@code server.levels} is a plain map mutated on the server
-     * thread, so every off-server-thread reader must iterate this snapshot instead of
+     * Immutable view of the loaded levels. {@code server.levels} is loader-owned and published on the
+     * server thread, so every off-server-thread reader must iterate this snapshot instead of
      * {@code server.getAllLevels()} to avoid ConcurrentModificationException.
      */
     public static List<ServerLevel> levels(MinecraftServer server) {
@@ -138,7 +154,31 @@ public final class ModdedServerLevels implements ModdedServerAccess {
     }
 
     @Override
+    public void initializeLevelData(MinecraftServer server, ServerLevel level) {
+        Object levelData = level.getLevelData();
+        HostLevelDataAttachment attachment = HOST_LEVEL_DATA_ATTACHMENTS.get(levelData.getClass());
+        if (!attachment.supported()) {
+            return;
+        }
+        WorldData worldData = server.getWorldData();
+        if (!(worldData instanceof PrimaryLevelData rootData)) {
+            throw new IllegalStateException("Host level data attachment requires PrimaryLevelData, found "
+                    + worldData.getClass().getName());
+        }
+        attachment.attach(levelData, rootData, level.dimension());
+    }
+
+    @Override
     public ServerLevel putLevel(MinecraftServer server, ResourceKey<Level> key, ServerLevel level) {
+        HostLevelPublication hostPublication = HOST_LEVEL_PUBLICATIONS.get(server.getClass());
+        if (hostPublication.supported()) {
+            ServerLevel previous = server.levels.get(key);
+            if (previous != level) {
+                hostPublication.add(server, level);
+                capture(server);
+            }
+            return previous;
+        }
         ServerLevel previous = server.levels.put(key, level);
         if (previous != level) {
             capture(server);
@@ -149,6 +189,15 @@ public final class ModdedServerLevels implements ModdedServerAccess {
 
     @Override
     public ServerLevel putLevelIfAbsent(MinecraftServer server, ResourceKey<Level> key, ServerLevel level) {
+        HostLevelPublication hostPublication = HOST_LEVEL_PUBLICATIONS.get(server.getClass());
+        if (hostPublication.supported()) {
+            ServerLevel previous = server.levels.get(key);
+            if (previous == null) {
+                hostPublication.add(server, level);
+                capture(server);
+            }
+            return previous;
+        }
         ServerLevel previous = server.levels.putIfAbsent(key, level);
         if (previous == null) {
             capture(server);
@@ -159,6 +208,15 @@ public final class ModdedServerLevels implements ModdedServerAccess {
 
     @Override
     public ServerLevel removeLevel(MinecraftServer server, ResourceKey<Level> key) {
+        HostLevelPublication hostPublication = HOST_LEVEL_PUBLICATIONS.get(server.getClass());
+        if (hostPublication.supported()) {
+            ServerLevel removed = server.levels.get(key);
+            if (removed != null) {
+                hostPublication.remove(server, removed);
+                capture(server);
+            }
+            return removed;
+        }
         ServerLevel removed = server.levels.remove(key);
         if (removed != null) {
             capture(server);
@@ -174,5 +232,95 @@ public final class ModdedServerLevels implements ModdedServerAccess {
 
     private record Snapshot(MinecraftServer server, List<ServerLevel> levels,
                             Map<ResourceKey<Level>, ServerLevel> byKey) {
+    }
+
+    static final class HostLevelPublication {
+        private final Method addLevel;
+        private final Method removeLevel;
+
+        private HostLevelPublication(Method addLevel, Method removeLevel) {
+            this.addLevel = addLevel;
+            this.removeLevel = removeLevel;
+        }
+
+        static HostLevelPublication detect(Class<?> serverType, Class<?> levelType) {
+            try {
+                Method addLevel = serverType.getMethod("addLevel", levelType);
+                Method removeLevel = serverType.getMethod("removeLevel", levelType);
+                return new HostLevelPublication(addLevel, removeLevel);
+            } catch (NoSuchMethodException e) {
+                return new HostLevelPublication(null, null);
+            }
+        }
+
+        boolean supported() {
+            return addLevel != null && removeLevel != null;
+        }
+
+        void add(Object server, Object level) {
+            invoke(addLevel, server, level);
+        }
+
+        void remove(Object server, Object level) {
+            invoke(removeLevel, server, level);
+        }
+
+        private void invoke(Method method, Object server, Object level) {
+            try {
+                method.invoke(server, level);
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException("Iris cannot access host level publication method "
+                        + method.getName(), e);
+            } catch (InvocationTargetException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                if (cause instanceof Error fatalError) {
+                    throw fatalError;
+                }
+                throw new IllegalStateException("Host level publication method " + method.getName()
+                        + " failed", cause);
+            }
+        }
+    }
+
+    static final class HostLevelDataAttachment {
+        private final Method attach;
+
+        private HostLevelDataAttachment(Method attach) {
+            this.attach = attach;
+        }
+
+        static HostLevelDataAttachment detect(Class<?> levelDataType, Class<?> rootDataType,
+                                              Class<?> dimensionKeyType) {
+            try {
+                return new HostLevelDataAttachment(levelDataType.getMethod(
+                        "attach", rootDataType, dimensionKeyType));
+            } catch (NoSuchMethodException e) {
+                return new HostLevelDataAttachment(null);
+            }
+        }
+
+        boolean supported() {
+            return attach != null;
+        }
+
+        void attach(Object levelData, Object rootData, Object dimensionKey) {
+            try {
+                attach.invoke(levelData, rootData, dimensionKey);
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException("Iris cannot access host level data attachment method", e);
+            } catch (InvocationTargetException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                if (cause instanceof Error fatalError) {
+                    throw fatalError;
+                }
+                throw new IllegalStateException("Host level data attachment failed", cause);
+            }
+        }
     }
 }

@@ -31,6 +31,8 @@ public interface ModdedServerAccess {
 
     LevelStorageSource.LevelStorageAccess levelStorage(MinecraftServer server);
 
+    void initializeLevelData(MinecraftServer server, ServerLevel level);
+
     ServerLevel putLevel(MinecraftServer server, ResourceKey<Level> key, ServerLevel level);
 
     ServerLevel putLevelIfAbsent(MinecraftServer server, ResourceKey<Level> key, ServerLevel level);

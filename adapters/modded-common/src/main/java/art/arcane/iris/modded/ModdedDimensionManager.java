@@ -590,6 +590,7 @@ public final class ModdedDimensionManager {
 
         boolean loadEventStarted = false;
         try {
+            serverAccess.initializeLevelData(server, level);
             generator.bindLevel(level);
             Handle handle = new Handle(dimensionId, pack, packDimensionKey, seed, level, generator);
             ServerLevel previous = serverAccess.putLevelIfAbsent(server, key, level);
